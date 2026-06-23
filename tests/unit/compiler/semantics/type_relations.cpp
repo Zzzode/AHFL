@@ -3,6 +3,11 @@
 
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "compiler/semantics/std_container_types.hpp"
+
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -12,6 +17,32 @@ namespace {
 
 [[nodiscard]] ahfl::TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) {
     return ahfl::TypeContext::global().bounded_string(minimum, maximum);
+}
+
+[[nodiscard]] ahfl::TypePtr option_type(ahfl::TypeContext &tc, ahfl::TypePtr inner) {
+    return tc.enum_type(std::string{ahfl::stdlib_bridge::kOptionType},
+                        std::optional<ahfl::SymbolId>{},
+                        std::vector{inner});
+}
+
+[[nodiscard]] ahfl::TypePtr list_type(ahfl::TypeContext &tc, ahfl::TypePtr element) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kListType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element});
+}
+
+[[nodiscard]] ahfl::TypePtr set_type(ahfl::TypeContext &tc, ahfl::TypePtr element) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kSetType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element});
+}
+
+[[nodiscard]] ahfl::TypePtr map_type(ahfl::TypeContext &tc,
+                                     ahfl::TypePtr key,
+                                     ahfl::TypePtr value) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kMapType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{key, value});
 }
 
 } // namespace
@@ -29,12 +60,12 @@ TEST_CASE("type relations preserve bounded string subtyping") {
 
 TEST_CASE("type relations support covariant container element types") {
     auto &tc = ahfl::TypeContext::global();
-    const auto list_bounded = tc.list(bounded_string_type(2, 8));
-    const auto list_string = tc.list(string_type());
-    const auto set_bounded = tc.set(bounded_string_type(2, 8));
-    const auto set_string = tc.set(string_type());
-    const auto optional_bounded = tc.optional(bounded_string_type(2, 8));
-    const auto optional_string = tc.optional(string_type());
+    const auto list_bounded = list_type(tc, bounded_string_type(2, 8));
+    const auto list_string = list_type(tc, string_type());
+    const auto set_bounded = set_type(tc, bounded_string_type(2, 8));
+    const auto set_string = set_type(tc, string_type());
+    const auto optional_bounded = option_type(tc, bounded_string_type(2, 8));
+    const auto optional_string = option_type(tc, string_type());
 
     // Container covariance: List<A> <: List<B> if A <: B (same for Set, Optional)
     CHECK(ahfl::is_subtype_of(*list_bounded, *list_string));
@@ -49,10 +80,11 @@ TEST_CASE("type relations support covariant container element types") {
 
 TEST_CASE("type relations keep map keys invariant but values covariant") {
     auto &tc = ahfl::TypeContext::global();
-    const auto bounded_to_int = tc.map(bounded_string_type(2, 8), tc.make(ahfl::TypeKind::Int));
-    const auto string_to_int = tc.map(string_type(), tc.make(ahfl::TypeKind::Int));
-    const auto string_to_bounded = tc.map(string_type(), bounded_string_type(2, 8));
-    const auto string_to_string = tc.map(string_type(), string_type());
+    const auto bounded_to_int =
+        map_type(tc, bounded_string_type(2, 8), tc.make(ahfl::TypeKind::Int));
+    const auto string_to_int = map_type(tc, string_type(), tc.make(ahfl::TypeKind::Int));
+    const auto string_to_bounded = map_type(tc, string_type(), bounded_string_type(2, 8));
+    const auto string_to_string = map_type(tc, string_type(), string_type());
 
     // Map keys are invariant: BoundedString != String at the key position.
     CHECK_FALSE(ahfl::is_subtype_of(*bounded_to_int, *string_to_int));
@@ -118,6 +150,19 @@ TEST_CASE("nominal types prefer symbol identity over display names") {
     CHECK(ahfl::are_types_equivalent(*variant_fallback_left, *variant_fallback_right));
 }
 
+TEST_CASE("enum variant is assignable to generic parent enum instantiation") {
+    auto &tc = ahfl::TypeContext::global();
+    const auto u = tc.type_var(1, "U");
+    const auto e = tc.type_var(2, "E");
+    const ahfl::SymbolId result_symbol{42};
+
+    const auto result = tc.enum_type("std::result::Result", result_symbol, {u, e});
+    const auto err = tc.enum_variant_type("std::result::Result", "Err", result_symbol, {u, e});
+
+    CHECK(ahfl::is_subtype_of(*err, *result));
+    CHECK(ahfl::is_assignable_to(*err, *result));
+}
+
 TEST_CASE("constraint skeleton traces nested Map->List->Struct nominal mismatch") {
     using Kind = ahfl::TypeConstraintNode::Kind;
 
@@ -125,11 +170,11 @@ TEST_CASE("constraint skeleton traces nested Map->List->Struct nominal mismatch"
     const auto struct_a = tc.struct_type("pkg::StructA", ahfl::SymbolId{1});
     const auto struct_b = tc.struct_type("pkg::StructB", ahfl::SymbolId{2});
 
-    const auto list_a = tc.list(struct_a);
-    const auto list_b = tc.list(struct_b);
+    const auto list_a = list_type(tc, struct_a);
+    const auto list_b = list_type(tc, struct_b);
 
-    const auto src = tc.map(tc.string(), list_a);
-    const auto dst = tc.map(tc.string(), list_b);
+    const auto src = map_type(tc, tc.string(), list_a);
+    const auto dst = map_type(tc, tc.string(), list_b);
 
     ahfl::TypeRelationOptions opts;
     opts.emit_constraint_skeleton = true;
@@ -268,7 +313,7 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
     // List<int> vs List<string>
     {
         TypeRelationContext ctx(opts);
-        const bool ok = are_types_equivalent(*tc.list(i32), *tc.list(str), ctx);
+        const bool ok = are_types_equivalent(*list_type(tc, i32), *list_type(tc, str), ctx);
         CHECK_FALSE(ok);
         bool found = false;
         for (const auto &s : ctx.trace().steps) {
@@ -280,7 +325,8 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
     // Map<int, string> vs Map<string, string> → fails at key
     {
         TypeRelationContext ctx(opts);
-        const bool ok = are_types_equivalent(*tc.map(i32, str), *tc.map(str, str), ctx);
+        const bool ok =
+            are_types_equivalent(*map_type(tc, i32, str), *map_type(tc, str, str), ctx);
         CHECK_FALSE(ok);
         bool found_key = false, found_value = false;
         for (const auto &s : ctx.trace().steps) {
@@ -297,7 +343,8 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
     // Map<string, int> vs Map<string, string> → key matches, value fails
     {
         TypeRelationContext ctx(opts);
-        const bool ok = are_types_equivalent(*tc.map(str, i32), *tc.map(str, str), ctx);
+        const bool ok =
+            are_types_equivalent(*map_type(tc, str, i32), *map_type(tc, str, str), ctx);
         CHECK_FALSE(ok);
         bool found_value = false;
         for (const auto &s : ctx.trace().steps) {
@@ -387,8 +434,8 @@ TEST_CASE("MemoizedRelationSolver reuses proven and disproven relation states") 
     auto &tc = TypeContext::global();
     const auto bounded = tc.bounded_string(2, 8);
     const auto string = tc.string();
-    const auto list_bounded = tc.list(bounded);
-    const auto list_string = tc.list(string);
+    const auto list_bounded = list_type(tc, bounded);
+    const auto list_string = list_type(tc, string);
 
     TypeRelationContext ctx;
     MemoizedRelationSolver solver(ctx);
@@ -415,8 +462,16 @@ TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
 
     Type left;
     Type right;
-    left.payload = types::ListT{.element = &left};
-    right.payload = types::ListT{.element = &right};
+    left.payload = types::StructT{
+        .canonical_name = "pkg::Recursive",
+        .symbol = SymbolId{1},
+        .type_args = {&left},
+    };
+    right.payload = types::StructT{
+        .canonical_name = "pkg::Recursive",
+        .symbol = SymbolId{1},
+        .type_args = {&right},
+    };
 
     TypeRelationContext ctx;
     MemoizedRelationSolver solver(ctx);
@@ -428,8 +483,8 @@ TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
 TEST_CASE("MemoizedRelationSolver fails closed at depth guard") {
     using namespace ahfl;
     auto &tc = TypeContext::global();
-    const auto deep_int = tc.list(tc.list(tc.make(TypeKind::Int)));
-    const auto deep_string = tc.list(tc.list(tc.string()));
+    const auto deep_int = list_type(tc, list_type(tc, tc.make(TypeKind::Int)));
+    const auto deep_string = list_type(tc, list_type(tc, tc.string()));
 
     TypeRelationOptions opts;
     opts.max_solver_depth = 1;

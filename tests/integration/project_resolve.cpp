@@ -43,7 +43,11 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
     if (!resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
                                                     "app::main::UsesRequest") ||
         !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
-                                                    "lib::types::Request")) {
+                                                    "lib::types::Request") ||
+        !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
+                                                    "std::prelude::Option") ||
+        !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
+                                                    "std::option::Option")) {
         std::cerr << "missing expected canonical type symbols\n";
         return 1;
     }

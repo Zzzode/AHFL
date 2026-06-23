@@ -5,8 +5,8 @@
     {
       "kind": "module",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 0,
           "end_offset": 31
@@ -17,8 +17,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 33,
           "end_offset": 70
@@ -55,8 +55,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 72,
           "end_offset": 118
@@ -105,8 +105,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 120,
           "end_offset": 158
@@ -143,8 +143,8 @@
     {
       "kind": "agent",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 160,
           "end_offset": 358
@@ -208,8 +208,8 @@
     {
       "kind": "flow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 360,
           "end_offset": 517
@@ -332,8 +332,8 @@
     {
       "kind": "workflow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
           "begin_offset": 519,
           "end_offset": 747

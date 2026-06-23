@@ -708,31 +708,31 @@ ahfl_add_check_fail_test(
 ahfl_add_check_fail_test(
     ahflc.fail.container_variance_map_key_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_key_mismatch.ahfl"
-    "expected Map<String, Int>, got Map<String\\(2, 8\\), Int>"
+    "expected std::collections::Map<String, Int>, got std::collections::Map<String\\(2, 8\\), Int>"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.container_variance_optional_reverse_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_optional_reverse_mismatch.ahfl"
-    "expected Optional<String\\(2, 8\\)>, got Optional<String>"
+    "expected std::option::Option<String\\(2, 8\\)>, got std::option::Option<String>"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.container_variance_list_reverse_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_list_reverse_mismatch.ahfl"
-    "expected List<String\\(2, 8\\)>, got List<String>"
+    "expected std::collections::List<String\\(2, 8\\)>, got std::collections::List<String>"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.container_variance_set_reverse_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_set_reverse_mismatch.ahfl"
-    "expected Set<String\\(2, 8\\)>, got Set<String>"
+    "expected std::collections::Set<String\\(2, 8\\)>, got std::collections::Set<String>"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.container_variance_map_value_reverse_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_value_reverse_mismatch.ahfl"
-    "expected Map<String, String\\(2, 8\\)>, got Map<String, String>"
+    "expected std::collections::Map<String, String\\(2, 8\\)>, got std::collections::Map<String, String>"
 )
 
 ahfl_add_check_fail_test(

@@ -25,6 +25,10 @@
   "executable_targets": [
     {
       "kind": "agent",
+      "provenance": {
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl"
+      },
       "canonical_name": "ir::workflow_value_flow::EchoAgent",
       "input_type": "ir::workflow_value_flow::Request",
       "context_type": "ir::workflow_value_flow::Context",
@@ -41,6 +45,10 @@
     },
     {
       "kind": "workflow",
+      "provenance": {
+        "module_name": "ir::workflow_value_flow",
+        "source_path": "ir/workflow_value_flow.ahfl"
+      },
       "canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
       "input_type": "ir::workflow_value_flow::Request",
       "output_type": "ir::workflow_value_flow::Response",

@@ -70,6 +70,11 @@ void test_serialize_enum() {
     auto json = value_to_json(make_enum("Color", "Red"));
     check(json.find("\"_enum\":\"Color\"") != std::string::npos, "serialize.enum_name");
     check(json.find("\"_variant\":\"Red\"") != std::string::npos, "serialize.enum_variant");
+
+    std::vector<Value> payload;
+    payload.push_back(make_int(42));
+    auto payload_json = value_to_json(make_enum("std::result::Result", "Ok", std::move(payload)));
+    check(payload_json.find("\"_payload\":[42]") != std::string::npos, "serialize.enum_payload");
 }
 
 void test_serialize_list() {
@@ -207,6 +212,18 @@ void test_parse_enum() {
         if (ev) {
             check(ev->enum_name == "Status", "parse.enum_name");
             check(ev->variant == "Active", "parse.enum_variant");
+        }
+    }
+
+    auto with_payload =
+        value_from_json(R"({"_enum":"std::result::Result","_variant":"Ok","_payload":[42]})");
+    check(with_payload.has_value(), "parse.enum_payload_has_value");
+    if (with_payload) {
+        auto *ev = std::get_if<EnumValue>(&with_payload->node);
+        check(ev != nullptr && ev->payload.size() == 1, "parse.enum_payload_size");
+        if (ev != nullptr && ev->payload.size() == 1 && ev->payload.front()) {
+            auto *payload = std::get_if<IntValue>(&ev->payload.front()->node);
+            check(payload != nullptr && payload->value == 42, "parse.enum_payload_value");
         }
     }
 }

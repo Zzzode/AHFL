@@ -3,24 +3,24 @@
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo => agent ir::alias_const::EchoAgent called ir::alias_const::Echo
--- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0] @ <unknown>:613-646
--- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1] @ <unknown>:651-684
--- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state @ <unknown>:374-576
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__state => workflow ir::alias_const::EchoWorkflow node run state @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__phase => workflow ir::alias_const::EchoWorkflow node run lifecycle phase @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested => workflow ir::alias_const::EchoWorkflow node run environment failure request @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__started => workflow ir::alias_const::EchoWorkflow node run has started @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__running => workflow ir::alias_const::EchoWorkflow node run is running @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__completed => workflow ir::alias_const::EchoWorkflow node run completed @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failed => workflow ir::alias_const::EchoWorkflow node run failed @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovering => workflow ir::alias_const::EchoWorkflow node run recovering @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovered => workflow ir::alias_const::EchoWorkflow node run recovered @ <unknown>:993-1026
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828 committed
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828 failed
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828 committed
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828 failed
+-- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0] @ ir/alias_const.ahfl:613-646
+-- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1] @ ir/alias_const.ahfl:651-684
+-- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state @ ir/alias_const.ahfl:374-576
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__state => workflow ir::alias_const::EchoWorkflow node run state @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__phase => workflow ir::alias_const::EchoWorkflow node run lifecycle phase @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested => workflow ir::alias_const::EchoWorkflow node run environment failure request @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__started => workflow ir::alias_const::EchoWorkflow node run has started @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__running => workflow ir::alias_const::EchoWorkflow node run is running @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__completed => workflow ir::alias_const::EchoWorkflow node run completed @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failed => workflow ir::alias_const::EchoWorkflow node run failed @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovering => workflow ir::alias_const::EchoWorkflow node run recovering @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovered => workflow ir::alias_const::EchoWorkflow node run recovered @ ir/alias_const.ahfl:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ ir/alias_const.ahfl:719-828
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ ir/alias_const.ahfl:719-828 committed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ ir/alias_const.ahfl:719-828 failed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown => workflow ir::alias_const::EchoWorkflow node run effect unknown @ ir/alias_const.ahfl:719-828
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ ir/alias_const.ahfl:719-828 committed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ ir/alias_const.ahfl:719-828 failed
 MODULE main
 VAR
   agent__ir_alias_const_EchoAgent__state : {Init, Done};

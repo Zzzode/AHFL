@@ -5,30 +5,40 @@ formal_observations {
   observation contract_ir_alias_const_EchoAgent_1_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::alias_const::EchoAgent, clause=1, atom=0)
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 module ir::alias_const
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 import ir::alias_const as self
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 const ir::alias_const::DEFAULT_STATUS: String = "pending"
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 struct ir::alias_const::Request {
   field value: String
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 struct ir::alias_const::Context {
   field value: String = ir::alias_const::DEFAULT_STATUS
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 struct ir::alias_const::Response {
   field value: String
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 typealias ir::alias_const::RequestAlias = ir::alias_const::Request
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 capability ir::alias_const::Echo(request: ir::alias_const::Request) -> ir::alias_const::Response
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 predicate ir::alias_const::non_empty(value: String) -> Bool
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 agent ir::alias_const::EchoAgent {
   input: ir::alias_const::Request
   context: ir::alias_const::Context
@@ -40,11 +50,13 @@ agent ir::alias_const::EchoAgent {
   transition Init -> Done
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 contract ir::alias_const::EchoAgent {
   requires: ir::alias_const::non_empty(input.value)
   ensures: ir::alias_const::non_empty(output.value)
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 flow ir::alias_const::EchoAgent {
   state Init {
     summary {
@@ -72,6 +84,7 @@ flow ir::alias_const::EchoAgent {
   }
 }
 
+@provenance(module=ir::alias_const, source=ir/alias_const.ahfl)
 workflow ir::alias_const::EchoWorkflow {
   input: ir::alias_const::Request
   output: ir::alias_const::Response

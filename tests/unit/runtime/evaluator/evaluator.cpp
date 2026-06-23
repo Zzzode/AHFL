@@ -1,12 +1,17 @@
 #include "runtime/evaluator/evaluator.hpp"
+#include "ahfl/base/support/ownership.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/semantics/builtin_hooks.hpp"
+#include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/value.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
-#include "ahfl/base/support/ownership.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -40,6 +45,10 @@ ExprArena &test_expr_arena() {
 
 ExprRef make_expr_ptr(ExprNode node) {
     return test_expr_arena().make(std::move(node));
+}
+
+StatementPtr make_stmt_ptr(StatementNode node) {
+    return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
 // ============================================================================
@@ -101,6 +110,11 @@ void test_string_literal() {
     check(!result.has_errors(), "string_literal.no_error");
     auto *sv = std::get_if<StringValue>(&result.value.node);
     check(sv != nullptr && sv->value == "hello world", "string_literal.value");
+
+    auto quoted = eval_expr(make_expr(StringLiteralExpr{"\"hello\\nworld\""}), ctx);
+    check(!quoted.has_errors(), "string_literal_quoted.no_error");
+    auto *qv = std::get_if<StringValue>(&quoted.value.node);
+    check(qv != nullptr && qv->value == "hello\nworld", "string_literal_quoted.value");
 }
 
 void test_duration_literal() {
@@ -135,8 +149,7 @@ void test_unary_negate() {
 
 void test_unary_positive() {
     EvalContext ctx;
-    auto expr =
-        make_expr(UnaryExpr{ExprUnaryOp::Positive, make_expr_ptr(IntegerLiteralExpr{"7"})});
+    auto expr = make_expr(UnaryExpr{ExprUnaryOp::Positive, make_expr_ptr(IntegerLiteralExpr{"7"})});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "unary_positive.no_error");
     auto *iv = std::get_if<IntValue>(&result.value.node);
@@ -495,6 +508,321 @@ void test_call_expr_error() {
     check(result.has_errors(), "call_expr.has_error");
 }
 
+void test_std_builtin_allowlist_registered_in_runtime() {
+    const auto &table = BuiltinTable::instance();
+    const auto names = table.names();
+    check(std::is_sorted(names.begin(), names.end()), "std.builtin_table.names_sorted");
+
+    for (const auto hook : ahfl::known_builtin_hooks()) {
+        const std::string hook_name{hook};
+        check(table.find(hook) != nullptr, "std.builtin_table.find." + hook_name);
+        check(std::find(names.begin(), names.end(), hook_name) != names.end(),
+              "std.builtin_table.names." + hook_name);
+    }
+}
+
+void test_std_builtin_hooks() {
+    EvalContext ctx;
+
+    std::vector<ExprRef> list_items;
+    list_items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
+    list_items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
+    auto list_length = make_expr(CallExpr{
+        "list_raw_length",
+        {make_expr_ptr(ListLiteralExpr{std::move(list_items)})},
+    });
+    auto length_result = eval_expr(list_length, ctx);
+    check(!length_result.has_errors(), "std.list_raw_length.no_error");
+    auto *length = std::get_if<IntValue>(&length_result.value.node);
+    check(length != nullptr && length->value == 2, "std.list_raw_length.value");
+
+    std::vector<ExprRef> get_items;
+    get_items.push_back(make_expr_ptr(IntegerLiteralExpr{"4"}));
+    get_items.push_back(make_expr_ptr(IntegerLiteralExpr{"5"}));
+    auto list_get = make_expr(CallExpr{
+        "list_raw_get",
+        {make_expr_ptr(ListLiteralExpr{std::move(get_items)}),
+         make_expr_ptr(IntegerLiteralExpr{"1"})},
+    });
+    auto get_result = eval_expr(list_get, ctx);
+    check(!get_result.has_errors(), "std.list_raw_get.no_error");
+    auto *list_value = std::get_if<IntValue>(&get_result.value.node);
+    check(list_value != nullptr && list_value->value == 5, "std.list_raw_get.value");
+
+    std::vector<MapEntryExpr> map_entries;
+    map_entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"a"}),
+                                       make_expr_ptr(IntegerLiteralExpr{"10"})});
+    map_entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"b"}),
+                                       make_expr_ptr(IntegerLiteralExpr{"20"})});
+    auto map_get = make_expr(CallExpr{
+        "map_raw_get",
+        {make_expr_ptr(MapLiteralExpr{std::move(map_entries)}),
+         make_expr_ptr(StringLiteralExpr{"b"})},
+    });
+    auto map_result = eval_expr(map_get, ctx);
+    check(!map_result.has_errors(), "std.map_raw_get.no_error");
+    auto *map_value = std::get_if<IntValue>(&map_result.value.node);
+    check(map_value != nullptr && map_value->value == 20, "std.map_raw_get.value");
+
+    auto string_contains = make_expr(CallExpr{
+        "string_contains",
+        {make_expr_ptr(StringLiteralExpr{"abcdef"}), make_expr_ptr(StringLiteralExpr{"cd"})},
+    });
+    auto contains_result = eval_expr(string_contains, ctx);
+    check(!contains_result.has_errors(), "std.string_contains.no_error");
+    auto *contains = std::get_if<BoolValue>(&contains_result.value.node);
+    check(contains != nullptr && contains->value, "std.string_contains.value");
+
+    auto option_some = make_expr(CallExpr{
+        "std::option::Option::Some",
+        {make_expr_ptr(IntegerLiteralExpr{"99"})},
+    });
+    auto option_some_result = eval_expr(option_some, ctx);
+    check(!option_some_result.has_errors(), "std.option_constructor_some.no_error");
+    auto *some_value = std::get_if<OptionalValue>(&option_some_result.value.node);
+    check(some_value != nullptr && some_value->inner != nullptr,
+          "std.option_constructor_some.some");
+    if (some_value != nullptr && some_value->inner != nullptr) {
+        auto *value = std::get_if<IntValue>(&some_value->inner->node);
+        check(value != nullptr && value->value == 99, "std.option_constructor_some.value");
+    }
+
+    auto option_none = make_expr(CallExpr{
+        "std::option::Option::None",
+        {},
+    });
+    auto option_none_result = eval_expr(option_none, ctx);
+    check(!option_none_result.has_errors(), "std.option_constructor_none.no_error");
+    auto *none_value = std::get_if<OptionalValue>(&option_none_result.value.node);
+    check(none_value != nullptr && none_value->inner == nullptr,
+          "std.option_constructor_none.none");
+
+    auto result_ok = make_expr(CallExpr{
+        "std::result::Result::Ok",
+        {make_expr_ptr(IntegerLiteralExpr{"123"})},
+    });
+    auto result_ok_value = eval_expr(result_ok, ctx);
+    check(!result_ok_value.has_errors(), "std.result_constructor_ok.no_error");
+    auto *ok_enum = std::get_if<EnumValue>(&result_ok_value.value.node);
+    check(ok_enum != nullptr && ok_enum->enum_name == "std::result::Result" &&
+              ok_enum->variant == "Ok" && ok_enum->payload.size() == 1,
+          "std.result_constructor_ok.value");
+    if (ok_enum != nullptr && ok_enum->payload.size() == 1 && ok_enum->payload.front()) {
+        auto *payload = std::get_if<IntValue>(&ok_enum->payload.front()->node);
+        check(payload != nullptr && payload->value == 123, "std.result_constructor_ok.payload");
+    }
+
+    ctx.bind_local("t", make_timestamp(1000));
+    ctx.bind_local("delta", make_duration("2s"));
+    Path time_path;
+    time_path.root_name = "t";
+    Path delta_path;
+    delta_path.root_name = "delta";
+    auto time_add = make_expr(CallExpr{
+        "time_add",
+        {make_expr_ptr(PathExpr{time_path}), make_expr_ptr(PathExpr{delta_path})},
+    });
+    auto time_result = eval_expr(time_add, ctx);
+    check(!time_result.has_errors(), "std.time_add.no_error");
+    auto *timestamp = std::get_if<TimestampValue>(&time_result.value.node);
+    check(timestamp != nullptr && timestamp->unix_ms == 3000, "std.time_add.value");
+
+    auto uuid_value = make_uuid("550e8400-e29b-41d4-a716-446655440000");
+    check(uuid_value.has_value(), "std.uuid.seed_valid");
+    if (uuid_value.has_value()) {
+        ctx.bind_local("id", std::move(*uuid_value));
+        Path id_path;
+        id_path.root_name = "id";
+        auto uuid_to_string = make_expr(CallExpr{
+            "uuid_to_string",
+            {make_expr_ptr(PathExpr{id_path})},
+        });
+        auto uuid_string_result = eval_expr(uuid_to_string, ctx);
+        check(!uuid_string_result.has_errors(), "std.uuid_to_string.no_error");
+        auto *uuid_string = std::get_if<StringValue>(&uuid_string_result.value.node);
+        check(uuid_string != nullptr && uuid_string->value == "550e8400e29b41d4a716446655440000",
+              "std.uuid_to_string.value");
+    }
+}
+
+Path local_path(std::string name) {
+    Path path;
+    path.root_name = std::move(name);
+    return path;
+}
+
+ExprRef int_literal(std::string spelling) {
+    return make_expr_ptr(IntegerLiteralExpr{std::move(spelling)});
+}
+
+ExprRef local_expr(std::string name) {
+    return make_expr_ptr(PathExpr{local_path(std::move(name))});
+}
+
+void test_runtime_callable_calls() {
+    EvalContext ctx;
+    ctx.bind_local("offset", make_int(10));
+
+    auto increment_value = eval_expr(make_expr(LambdaExpr{{"x"},
+                                                          make_expr_ptr(BinaryExpr{
+                                                              ExprBinaryOp::Add,
+                                                              local_expr("x"),
+                                                              int_literal("1"),
+                                                          })}),
+                                     ctx);
+    check(!increment_value.has_errors(), "runtime.lambda_value.no_error");
+    ctx.bind_local("f", std::move(increment_value.value));
+    auto direct_callable_call = make_expr(CallExpr{"f", {int_literal("4")}});
+    auto direct_callable_result = eval_expr(direct_callable_call, ctx);
+    check(!direct_callable_result.has_errors(), "runtime.callable_call.no_error");
+    auto *direct_callable_value = std::get_if<IntValue>(&direct_callable_result.value.node);
+    check(direct_callable_value != nullptr && direct_callable_value->value == 5,
+          "runtime.callable_call.value");
+
+    auto captured_value = eval_expr(make_expr(LambdaExpr{{"x"},
+                                                         make_expr_ptr(BinaryExpr{
+                                                             ExprBinaryOp::Add,
+                                                             local_expr("x"),
+                                                             local_expr("offset"),
+                                                         })}),
+                                    ctx);
+    check(!captured_value.has_errors(), "runtime.lambda_capture.no_error");
+    ctx.bind_local("captured", std::move(captured_value.value));
+    ctx.bind_local("offset", make_int(99));
+    auto captured_callable_call = make_expr(CallExpr{"captured", {int_literal("5")}});
+    auto captured_callable_result = eval_expr(captured_callable_call, ctx);
+    check(!captured_callable_result.has_errors(), "runtime.callable_capture.no_error");
+    auto *captured_callable_value = std::get_if<IntValue>(&captured_callable_result.value.node);
+    check(captured_callable_value != nullptr && captured_callable_value->value == 15,
+          "runtime.callable_capture.value");
+}
+
+void test_match_expr_result_payload_binding() {
+    MatchExpr match_expr;
+    match_expr.scrutinee = make_expr_ptr(CallExpr{"std::result::Result::Ok", {int_literal("41")}});
+
+    VariantPattern ok_variant;
+    ok_variant.path = "Ok";
+    ok_variant.subpatterns.push_back(make_owned<MatchPattern>(MatchPattern{
+        .node = BindingPattern{.name = "value"},
+        .source_range = std::nullopt,
+        .text = "value",
+    }));
+    MatchArmExpr ok_arm;
+    ok_arm.pattern = MatchPattern{
+        .node = std::move(ok_variant),
+        .source_range = std::nullopt,
+        .text = "Ok(value)",
+    };
+    ok_arm.body = make_expr_ptr(BinaryExpr{
+        ExprBinaryOp::Add,
+        local_expr("value"),
+        int_literal("1"),
+    });
+    match_expr.arms.push_back(std::move(ok_arm));
+
+    VariantPattern err_variant;
+    err_variant.path = "Err";
+    err_variant.subpatterns.push_back(make_owned<MatchPattern>(MatchPattern{
+        .node = WildcardPattern{},
+        .source_range = std::nullopt,
+        .text = "_",
+    }));
+    MatchArmExpr err_arm;
+    err_arm.pattern = MatchPattern{
+        .node = std::move(err_variant),
+        .source_range = std::nullopt,
+        .text = "Err(_)",
+    };
+    err_arm.body = int_literal("0");
+    match_expr.arms.push_back(std::move(err_arm));
+
+    EvalContext ctx;
+    auto result = eval_expr(make_expr(std::move(match_expr)), ctx);
+    check(!result.has_errors(), "match_expr.result_payload.no_error");
+    auto *value = std::get_if<IntValue>(&result.value.node);
+    check(value != nullptr && value->value == 42, "match_expr.result_payload.value");
+}
+
+void test_program_function_call_eval() {
+    Program program;
+
+    Block add_one_body;
+    add_one_body.statements.push_back(make_stmt_ptr(ReturnStatement{
+        make_expr_ptr(BinaryExpr{
+            ExprBinaryOp::Add,
+            local_expr("x"),
+            int_literal("1"),
+        }),
+    }));
+    FnDecl add_one;
+    add_one.name = "add_one";
+    add_one.params.push_back(ParamDecl{.name = "x"});
+    add_one.has_body = true;
+    add_one.body = make_owned<Block>(std::move(add_one_body));
+    program.declarations.push_back(std::move(add_one));
+
+    Block add_two_body;
+    add_two_body.statements.push_back(make_stmt_ptr(ReturnStatement{
+        make_expr_ptr(CallExpr{
+            "add_one",
+            {make_expr_ptr(CallExpr{"add_one", {local_expr("x")}})},
+        }),
+    }));
+    FnDecl add_two;
+    add_two.name = "add_two";
+    add_two.params.push_back(ParamDecl{.name = "x"});
+    add_two.has_body = true;
+    add_two.body = make_owned<Block>(std::move(add_two_body));
+    program.declarations.push_back(std::move(add_two));
+
+    Block apply_body;
+    apply_body.statements.push_back(make_stmt_ptr(ReturnStatement{
+        make_expr_ptr(CallExpr{
+            "f",
+            {local_expr("x")},
+        }),
+    }));
+    FnDecl apply;
+    apply.name = "apply";
+    apply.params.push_back(ParamDecl{.name = "f"});
+    apply.params.push_back(ParamDecl{.name = "x"});
+    apply.has_body = true;
+    apply.body = make_owned<Block>(std::move(apply_body));
+    program.declarations.push_back(std::move(apply));
+
+    EvalContext ctx;
+    auto call_eval = make_program_call_eval(program);
+
+    auto add_two_call = make_expr(CallExpr{"add_two", {int_literal("40")}});
+    auto add_two_result = eval_expr(add_two_call, ctx, call_eval);
+    check(!add_two_result.has_errors(), "program_call.add_two.no_error");
+    auto *add_two_value = std::get_if<IntValue>(&add_two_result.value.node);
+    check(add_two_value != nullptr && add_two_value->value == 42, "program_call.add_two.value");
+
+    auto callback_call = make_expr(CallExpr{
+        "apply",
+        {make_expr_ptr(LambdaExpr{
+             {"y"},
+             make_expr_ptr(CallExpr{"add_one", {local_expr("y")}}),
+         }),
+         int_literal("41")},
+    });
+    auto callback_result = eval_expr(callback_call, ctx, call_eval);
+    check(!callback_result.has_errors(), "program_call.callable_callback.no_error");
+    auto *callback_value = std::get_if<IntValue>(&callback_result.value.node);
+    check(callback_value != nullptr && callback_value->value == 42,
+          "program_call.callable_callback.value");
+
+    auto builtin_call =
+        make_expr(CallExpr{"string_length", {make_expr_ptr(StringLiteralExpr{"abcd"})}});
+    auto builtin_result = eval_expr(builtin_call, ctx, call_eval);
+    check(!builtin_result.has_errors(), "program_call.builtin_fallback.no_error");
+    auto *builtin_value = std::get_if<IntValue>(&builtin_result.value.node);
+    check(builtin_value != nullptr && builtin_value->value == 4,
+          "program_call.builtin_fallback.value");
+}
+
 // ============================================================================
 // print_value test
 // ============================================================================
@@ -553,6 +881,11 @@ int main(int argc, char *argv[]) {
     test_some_expr();
     test_qualified_value();
     test_call_expr_error();
+    test_std_builtin_allowlist_registered_in_runtime();
+    test_std_builtin_hooks();
+    test_runtime_callable_calls();
+    test_match_expr_result_payload_binding();
+    test_program_function_call_eval();
     test_print_value();
 
     std::cout << pass_count << "/" << test_count << " tests passed.\n";

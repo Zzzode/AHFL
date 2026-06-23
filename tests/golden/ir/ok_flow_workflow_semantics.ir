@@ -3,20 +3,25 @@ formal_observations {
   observation workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0: embedded_bool_expr(scope=workflow_safety_clause, owner=formal::flow_workflow::ReviewWorkflow, clause=1, atom=0)
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 module formal::flow_workflow
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 struct formal::flow_workflow::Request {
   field allow_fast_track: Bool
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 struct formal::flow_workflow::Context {
   field tag: String = "seed"
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 struct formal::flow_workflow::Response {
   field tag: String
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 agent formal::flow_workflow::ReviewAgent {
   input: formal::flow_workflow::Request
   context: formal::flow_workflow::Context
@@ -32,6 +37,7 @@ agent formal::flow_workflow::ReviewAgent {
   transition Review -> Done
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 flow formal::flow_workflow::ReviewAgent {
   state Init {
     summary {
@@ -83,6 +89,7 @@ flow formal::flow_workflow::ReviewAgent {
   }
 }
 
+@provenance(module=formal::flow_workflow, source=formal/flow_workflow.ahfl)
 workflow formal::flow_workflow::ReviewWorkflow {
   input: formal::flow_workflow::Request
   output: formal::flow_workflow::Response

@@ -9,6 +9,10 @@
   "executable_targets": [
     {
       "kind": "agent",
+      "provenance": {
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl"
+      },
       "canonical_name": "ir::expr_temporal::ExprAgent",
       "input_type": "ir::expr_temporal::Request",
       "context_type": "ir::expr_temporal::Context",
@@ -27,6 +31,10 @@
     },
     {
       "kind": "workflow",
+      "provenance": {
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl"
+      },
       "canonical_name": "ir::expr_temporal::ExprWorkflow",
       "input_type": "ir::expr_temporal::Request",
       "output_type": "ir::expr_temporal::Response",

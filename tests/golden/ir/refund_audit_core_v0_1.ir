@@ -11,61 +11,78 @@ formal_observations {
   observation agent__refund_audit_RefundAudit__called__refund_audit_UserInfoModify: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::UserInfoModify)
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 module refund::audit
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::RefundRequest {
   field order_id: String
   field user_id: String
   field refund_amount: Decimal(2)
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::RefundContext {
   field result: refund::audit::AuditResult = refund::audit::AuditResult::Reject
   field reason: String = "pending"
-  field ticket_id: Optional<String> = none
+  field ticket_id: std::option::Option<String> = std::option::Option::None()
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::RefundDecision {
   field result: refund::audit::AuditResult
   field reason: String
-  field ticket_id: Optional<String>
+  field ticket_id: std::option::Option<String>
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::OrderInfo {
   field order_id: String
   field user_id: String
   field total_amount: Decimal(2)
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::AuditReply {
   field result: refund::audit::AuditResult
   field reason: String
   field need_ticket: Bool
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 enum refund::audit::AuditResult {
   variant Approve
   variant Reject
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 capability refund::audit::OrderQuery(order_id: String) -> refund::audit::OrderInfo
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 capability refund::audit::AuditDecision(order: refund::audit::OrderInfo, request: refund::audit::RefundRequest) -> refund::audit::AuditReply
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 capability refund::audit::TicketCreate(order_id: String, reason: String) -> String
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 capability refund::audit::RefundExecute(order_id: String, amount: Decimal(2)) -> Unit
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 capability refund::audit::UserInfoModify(user_id: String) -> Unit
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 predicate refund::audit::order_exists(order_id: String) -> Bool
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 predicate refund::audit::order_belongs_to_user(order_id: String, user_id: String) -> Bool
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 predicate refund::audit::refund_amount_within_total(order_id: String, amount: Decimal(2)) -> Bool
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 predicate refund::audit::non_empty(value: String) -> Bool
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 agent refund::audit::RefundAudit {
   input: refund::audit::RefundRequest
   context: refund::audit::RefundContext
@@ -85,6 +102,7 @@ agent refund::audit::RefundAudit {
   transition Rejected -> Terminated
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 contract refund::audit::RefundAudit {
   requires: refund::audit::order_exists(input.order_id)
   requires: refund::audit::order_belongs_to_user(input.order_id, input.user_id)
@@ -94,6 +112,7 @@ contract refund::audit::RefundAudit {
   forbid: G(!(called(refund::audit::UserInfoModify)))
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 flow refund::audit::RefundAudit {
   state Init {
     summary {
@@ -115,7 +134,7 @@ flow refund::audit::RefundAudit {
       may_return: false
       may_fallthrough: false
       assigned_paths: [ctx.result, ctx.reason, ctx.ticket_id]
-      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, refund::audit::TicketCreate]
+      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate, std::option::Option::None]
       assert_count: 0
     }
     let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
@@ -123,10 +142,10 @@ flow refund::audit::RefundAudit {
     ctx.result = decision.result
     ctx.reason = decision.reason
     if (decision.result == refund::audit::AuditResult::Approve) {
-      ctx.ticket_id = some(refund::audit::TicketCreate(input.order_id, decision.reason))
+      ctx.ticket_id = std::option::Option::Some(refund::audit::TicketCreate(input.order_id, decision.reason))
       goto Approved
     } else {
-      ctx.ticket_id = none
+      ctx.ticket_id = std::option::Option::None()
       goto Rejected
     }
   }
@@ -165,6 +184,7 @@ flow refund::audit::RefundAudit {
   }
 }
 
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 workflow refund::audit::RefundAuditWorkflow {
   input: refund::audit::RefundRequest
   output: refund::audit::RefundDecision

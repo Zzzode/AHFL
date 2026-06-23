@@ -11,8 +11,10 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -81,16 +83,15 @@ namespace {
 
 // Look up a Function symbol in the typed program's resolver snapshot. Returns
 // nullptr when the fn name is not registered.
-[[nodiscard]] const ahfl::Symbol *
-find_function_symbol(const ahfl::TypeCheckResult &result, std::string_view name) {
-    const auto found = result.typed_program.find_local_symbol(
-        ahfl::SymbolNamespace::Functions, name);
+[[nodiscard]] const ahfl::Symbol *find_function_symbol(const ahfl::TypeCheckResult &result,
+                                                       std::string_view name) {
+    const auto found =
+        result.typed_program.find_local_symbol(ahfl::SymbolNamespace::Functions, name);
     return found.has_value() ? &found.value().get() : nullptr;
 }
 
 // True when a TypedDecl of kind FnDecl is present for the given fn name.
-[[nodiscard]] bool has_fn_typed_decl(const ahfl::TypeCheckResult &result,
-                                     std::string_view name) {
+[[nodiscard]] bool has_fn_typed_decl(const ahfl::TypeCheckResult &result, std::string_view name) {
     const auto *symbol = find_function_symbol(result, name);
     if (symbol == nullptr) {
         return false;
@@ -263,9 +264,134 @@ flow for ClosureShapesAgent {
 }
 
 // ---------------------------------------------------------------------------
-// TC6: SKIPPED — needs generic type param scoping + explicit type-arg call
-// syntax + monomorphization pass logic. P2 semantic follow-up.
+// TC6 (P2 acceptance): explicit generic fn calls record concrete type args.
+// The call `id<Int>(1)` must parse, resolve as a Function call, infer/result
+// type to Int, and feed monomorphization with the concrete `[Int]` instantiation.
 // ---------------------------------------------------------------------------
+TEST_CASE("Explicit generic fn call records type args for monomorphization") {
+    const std::string source = R"AHFL(
+fn id<T>(x: T) -> T effect Pure decreases 0 {
+    return x;
+}
+
+fn caller() -> Int effect Pure decreases 0 {
+    return id<Int>(1);
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_explicit_generic_call.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *id_symbol = find_function_symbol(result, "id");
+    REQUIRE(id_symbol != nullptr);
+
+    bool found_id_int_call = false;
+    for (const auto &site : result.typed_program.fn_call_sites) {
+        if (site.fn_symbol == id_symbol->id && site.type_args.size() == 1 &&
+            site.type_args.front() != nullptr && site.type_args.front()->describe() == "Int") {
+            found_id_int_call = true;
+            break;
+        }
+    }
+    CHECK(found_id_int_call);
+
+    auto &types = ahfl::TypeContext::global();
+    const auto mono = ahfl::run_monomorphization(result.typed_program, types);
+    bool found_id_int_instance = false;
+    for (const auto &inst : mono.instances) {
+        if (inst.decl_canonical_name.find("id") != std::string::npos &&
+            inst.type_args_canonical.find("Int") != std::string::npos) {
+            found_id_int_instance = true;
+            break;
+        }
+    }
+    CHECK(found_id_int_instance);
+}
+
+TEST_CASE("@builtin attributes are rejected outside std modules") {
+    const std::string source = R"AHFL(
+module app::main;
+
+@builtin("string_raw_length")
+fn length(s: String) -> Int effect Pure;
+)AHFL";
+
+    auto result = typecheck_source("fn_invalid_builtin.ahfl", source);
+    REQUIRE(result.has_errors());
+
+    bool saw_invalid_builtin = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "typecheck.INVALID_BUILTIN_ATTRIBUTE") {
+            saw_invalid_builtin = true;
+            CHECK(entry.message.find("@builtin is only allowed in std modules") !=
+                  std::string::npos);
+        }
+    }
+    CHECK(saw_invalid_builtin);
+}
+
+TEST_CASE("@builtin attributes require known hooks") {
+    const std::string source = R"AHFL(
+module std::custom;
+
+@builtin("not_a_registered_hook")
+fn mystery() -> Int effect Pure;
+)AHFL";
+
+    auto result = typecheck_source("fn_unknown_builtin.ahfl", source);
+    REQUIRE(result.has_errors());
+
+    bool saw_unknown_builtin = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "typecheck.UNKNOWN_BUILTIN_HOOK") {
+            saw_unknown_builtin = true;
+            CHECK(entry.message.find("unknown @builtin hook") != std::string::npos);
+        }
+    }
+    CHECK(saw_unknown_builtin);
+}
+
+TEST_CASE("@builtin attributes require explicit effect clauses") {
+    const std::string source = R"AHFL(
+module std::custom;
+
+@builtin("string_raw_length")
+fn length(s: String) -> Int;
+)AHFL";
+
+    auto result = typecheck_source("fn_builtin_missing_effect.ahfl", source);
+    REQUIRE(result.has_errors());
+
+    bool saw_missing_effect = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "typecheck.MISSING_BUILTIN_EFFECT") {
+            saw_missing_effect = true;
+            CHECK(entry.message.find("must declare an explicit effect clause") !=
+                  std::string::npos);
+        }
+    }
+    CHECK(saw_missing_effect);
+}
+
+// ---------------------------------------------------------------------------
+// TC6b (P2 acceptance): closures are first-class Fn values. A lambda passed to
+// a `Fn(Int) -> Int` parameter must typecheck as that Fn type, and the callee
+// body may call the parameter as a callable value (`f(x)`).
+// ---------------------------------------------------------------------------
+TEST_CASE("Lambda can be passed to Fn parameter and called through that parameter") {
+    const std::string source = R"AHFL(
+fn apply(x: Int, f: Fn(Int) -> Int) -> Int effect Pure decreases 0 {
+    return f(x);
+}
+
+fn caller() -> Int effect Pure decreases 0 {
+    return apply(1, \n: Int -> n + 1);
+}
+)AHFL";
+
+    const auto result = typecheck_source("fn_lambda_as_fn_argument.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
 
 // ---------------------------------------------------------------------------
 // TC7: Monomorphization over a program with no generic call sites yields an
@@ -497,42 +623,49 @@ TEST_CASE("substitute_type replaces TypeVar with concrete type") {
     CHECK(ahfl::substitute_type(nullptr, subst, types) == nullptr);
 }
 
-// ---------------------------------------------------------------------------
-// TC15 (P2d): substitute_type recurses into composite types.
-// ---------------------------------------------------------------------------
-TEST_CASE("substitute_type recurses into composite types") {
+TEST_CASE("substitute_type recurses into fn types") {
     auto &types = ahfl::TypeContext::global();
     const auto int_type = types.make(ahfl::TypeKind::Int);
 
     ahfl::TypeSubstitutionMap subst;
     subst.push_back(int_type);
 
-    // Optional<T> -> Optional<Int>
-    const auto opt_t = types.optional(types.type_var(0, "T"));
-    const auto opt_int = ahfl::substitute_type(opt_t, subst, types);
-    CHECK(opt_int->describe() == "Optional<Int>");
-
-    // List<T> -> List<Int>
-    const auto list_t = types.list(types.type_var(0, "T"));
-    const auto list_int = ahfl::substitute_type(list_t, subst, types);
-    CHECK(list_int->describe() == "List<Int>");
-
-    // Set<T> -> Set<Int>
-    const auto set_t = types.set(types.type_var(0, "T"));
-    const auto set_int = ahfl::substitute_type(set_t, subst, types);
-    CHECK(set_int->describe() == "Set<Int>");
-
-    // Map<T, T> -> Map<Int, Int>
-    const auto map_tt = types.map(types.type_var(0, "T"), types.type_var(0, "T"));
-    const auto map_int = ahfl::substitute_type(map_tt, subst, types);
-    CHECK(map_int->describe() == "Map<Int, Int>");
-
     // Fn(T) -> T becomes Fn(Int) -> Int
     std::vector<ahfl::TypePtr> params = {types.type_var(0, "T")};
-    const auto fn_t = types.fn(std::move(params), types.type_var(0, "T"),
-                               ahfl::EffectJudgement::make_pure());
+    const auto fn_t =
+        types.fn(std::move(params), types.type_var(0, "T"), ahfl::EffectJudgement::make_pure());
     const auto fn_int = ahfl::substitute_type(fn_t, subst, types);
     CHECK(fn_int->describe().find("Int") != std::string::npos);
+}
+
+TEST_CASE("substitute_type recurses into nominal std container type arguments") {
+    auto &types = ahfl::TypeContext::global();
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+    const auto t_var = types.type_var(0, "T");
+
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(int_type);
+
+    const auto option_t = types.enum_type(
+        "std::option::Option", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
+    const auto option_int = ahfl::substitute_type(option_t, subst, types);
+    CHECK(option_int->describe() == "std::option::Option<Int>");
+
+    const auto list_t = types.struct_type(
+        "std::collections::List", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
+    const auto list_int = ahfl::substitute_type(list_t, subst, types);
+    CHECK(list_int->describe() == "std::collections::List<Int>");
+
+    const auto set_t = types.struct_type(
+        "std::collections::Set", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
+    const auto set_int = ahfl::substitute_type(set_t, subst, types);
+    CHECK(set_int->describe() == "std::collections::Set<Int>");
+
+    const auto map_tt = types.struct_type("std::collections::Map",
+                                          std::optional<ahfl::SymbolId>{},
+                                          std::vector{t_var, t_var});
+    const auto map_int = ahfl::substitute_type(map_tt, subst, types);
+    CHECK(map_int->describe() == "std::collections::Map<Int, Int>");
 }
 
 // ---------------------------------------------------------------------------
@@ -616,8 +749,7 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     ahfl::TypeSubstitutionMap subst;
     subst.push_back(types.make(ahfl::TypeKind::Int));
 
-    const auto inst = ahfl::instantiate_fn_body(
-        result.typed_program, orig_body_idx, subst, types);
+    const auto inst = ahfl::instantiate_fn_body(result.typed_program, orig_body_idx, subst, types);
 
     CHECK(inst.body_block_index != UINT32_MAX);
     CHECK(inst.body_block_index != orig_body_idx);
@@ -630,8 +762,7 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     CHECK(clone_block.statement_indexes.size() == orig_stmt_count);
 
     // Original body should still have the same number of statements (untouched).
-    CHECK(result.typed_program.blocks[orig_body_idx].statement_indexes.size() ==
-          orig_stmt_count);
+    CHECK(result.typed_program.blocks[orig_body_idx].statement_indexes.size() == orig_stmt_count);
 
     // All expression types in the cloned body should be Int (no TypeVars left).
     bool found_int = false;
@@ -646,7 +777,8 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
         }
         // Check child expression types.
         for (const auto expr_idx : stmt.children_expr_index) {
-            if (expr_idx == UINT32_MAX) continue;
+            if (expr_idx == UINT32_MAX)
+                continue;
             const auto &expr = result.typed_program.expressions[expr_idx];
             if (expr.type != nullptr) {
                 CHECK(expr.type->describe() != "T");
@@ -667,14 +799,16 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     for (const auto stmt_idx : orig_stmts) {
         const auto &stmt = result.typed_program.statements[stmt_idx];
         for (const auto expr_idx : stmt.children_expr_index) {
-            if (expr_idx == UINT32_MAX) continue;
+            if (expr_idx == UINT32_MAX)
+                continue;
             const auto &expr = result.typed_program.expressions[expr_idx];
             if (expr.type != nullptr && expr.type->describe() == "T") {
                 orig_has_typevar = true;
                 break;
             }
         }
-        if (orig_has_typevar) break;
+        if (orig_has_typevar)
+            break;
     }
     CHECK(orig_has_typevar);
 }
@@ -714,15 +848,16 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     // Two independent clones at different indexes.
     CHECK(inst1.body_block_index != inst2.body_block_index);
     CHECK(inst1.block_count == inst2.block_count);
-    CHECK(result.typed_program.blocks.size() == before_blocks + inst1.block_count + inst2.block_count);
+    CHECK(result.typed_program.blocks.size() ==
+          before_blocks + inst1.block_count + inst2.block_count);
 }
 
 // ---------------------------------------------------------------------------
 // TC19 (P2d): Monomorphization pass produces deduped instances — two call
 // sites of the same (fn, type_args) produce one instance, not two.
 //
-// Note: today fn_call_sites type_args are always empty (no <T> call syntax),
-// so we test the non-generic dedup case (which exercises the same cache path).
+// This non-generic case exercises the same cache path as generic dedup without
+// depending on generic type-argument inference.
 // ---------------------------------------------------------------------------
 TEST_CASE("Monomorphization dedups identical call sites") {
     const std::string source = R"AHFL(

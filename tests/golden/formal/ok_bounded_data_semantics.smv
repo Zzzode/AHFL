@@ -2,16 +2,16 @@
 -- This lowering preserves validated state-machine, flow, and workflow structure.
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP agent__formal_bounded_data_semantics_BoundedAgent__state => agent formal::bounded_data_semantics::BoundedAgent state @ <unknown>:151-352
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state => workflow formal::bounded_data_semantics::BoundedWorkflow node run state @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase => workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle phase @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested => workflow formal::bounded_data_semantics::BoundedWorkflow node run environment failure request @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__started => workflow formal::bounded_data_semantics::BoundedWorkflow node run has started @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running => workflow formal::bounded_data_semantics::BoundedWorkflow node run is running @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed => workflow formal::bounded_data_semantics::BoundedWorkflow node run completed @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failed => workflow formal::bounded_data_semantics::BoundedWorkflow node run failed @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovering => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovering @ <unknown>:698-728
--- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovered => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovered @ <unknown>:698-728
+-- AHFL_MAP agent__formal_bounded_data_semantics_BoundedAgent__state => agent formal::bounded_data_semantics::BoundedAgent state @ formal/bounded_data_semantics.ahfl:151-352
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state => workflow formal::bounded_data_semantics::BoundedWorkflow node run state @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase => workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle phase @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested => workflow formal::bounded_data_semantics::BoundedWorkflow node run environment failure request @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__started => workflow formal::bounded_data_semantics::BoundedWorkflow node run has started @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running => workflow formal::bounded_data_semantics::BoundedWorkflow node run is running @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed => workflow formal::bounded_data_semantics::BoundedWorkflow node run completed @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failed => workflow formal::bounded_data_semantics::BoundedWorkflow node run failed @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovering => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovering @ formal/bounded_data_semantics.ahfl:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovered => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovered @ formal/bounded_data_semantics.ahfl:698-728
 MODULE main
 VAR
   agent__formal_bounded_data_semantics_BoundedAgent__state : {Init, Done};

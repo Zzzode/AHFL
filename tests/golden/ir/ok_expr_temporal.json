@@ -32,8 +32,8 @@
     {
       "kind": "module",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 0,
           "end_offset": 25
@@ -44,8 +44,8 @@
     {
       "kind": "import",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 26,
           "end_offset": 59
@@ -57,8 +57,8 @@
     {
       "kind": "const",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 61,
           "end_offset": 97
@@ -98,8 +98,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 99,
           "end_offset": 172
@@ -116,14 +116,17 @@
       "fields": [
         {
           "name": "values",
-          "type": "List<Int>",
+          "type": "std::collections::List<Int>",
           "type_ref": {
-            "kind": "list",
-            "display_name": "List<Int>",
-            "element_type": {
-              "kind": "int",
-              "display_name": "Int"
-            },
+            "kind": "struct",
+            "display_name": "std::collections::List<Int>",
+            "canonical_name": "std::collections::List",
+            "type_args": [
+              {
+                "kind": "int",
+                "display_name": "Int"
+              }
+            ],
             "source_range": {
               "begin_offset": 120,
               "end_offset": 138
@@ -137,18 +140,21 @@
         },
         {
           "name": "attrs",
-          "type": "Map<String, String>",
+          "type": "std::collections::Map<String, String>",
           "type_ref": {
-            "kind": "map",
-            "display_name": "Map<String, String>",
-            "key_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
-            "value_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              },
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ],
             "source_range": {
               "begin_offset": 143,
               "end_offset": 170
@@ -165,8 +171,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 174,
           "end_offset": 655
@@ -212,14 +218,17 @@
         },
         {
           "name": "numbers",
-          "type": "List<Int>",
+          "type": "std::collections::List<Int>",
           "type_ref": {
-            "kind": "list",
-            "display_name": "List<Int>",
-            "element_type": {
-              "kind": "int",
-              "display_name": "Int"
-            },
+            "kind": "struct",
+            "display_name": "std::collections::List<Int>",
+            "canonical_name": "std::collections::List",
+            "type_args": [
+              {
+                "kind": "int",
+                "display_name": "Int"
+              }
+            ],
             "source_range": {
               "begin_offset": 234,
               "end_offset": 265
@@ -230,21 +239,25 @@
             "end_offset": 265
           },
           "default_value": {
-            "kind": "list_literal",
+            "kind": "call",
             "id": 5,
             "source_range": {
               "begin_offset": 255,
               "end_offset": 264
             },
             "resolved_type": {
-              "kind": "list",
-              "display_name": "List<Int>",
-              "element_type": {
-                "kind": "int",
-                "display_name": "Int"
-              }
+              "kind": "struct",
+              "display_name": "std::collections::List<Int>",
+              "canonical_name": "std::collections::List",
+              "type_args": [
+                {
+                  "kind": "int",
+                  "display_name": "Int"
+                }
+              ]
             },
-            "items": [
+            "callee": "list_from_array",
+            "arguments": [
               {
                 "kind": "integer_literal",
                 "id": 2,
@@ -289,14 +302,17 @@
         },
         {
           "name": "labels",
-          "type": "Set<String>",
+          "type": "std::collections::Set<String>",
           "type_ref": {
-            "kind": "set",
-            "display_name": "Set<String>",
-            "element_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
+            "kind": "struct",
+            "display_name": "std::collections::Set<String>",
+            "canonical_name": "std::collections::Set",
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ],
             "source_range": {
               "begin_offset": 270,
               "end_offset": 313
@@ -307,21 +323,25 @@
             "end_offset": 313
           },
           "default_value": {
-            "kind": "set_literal",
+            "kind": "call",
             "id": 8,
             "source_range": {
               "begin_offset": 292,
               "end_offset": 312
             },
             "resolved_type": {
-              "kind": "set",
-              "display_name": "Set<String>",
-              "element_type": {
-                "kind": "string",
-                "display_name": "String"
-              }
+              "kind": "struct",
+              "display_name": "std::collections::Set<String>",
+              "canonical_name": "std::collections::Set",
+              "type_args": [
+                {
+                  "kind": "string",
+                  "display_name": "String"
+                }
+              ]
             },
-            "items": [
+            "callee": "set_from_array",
+            "arguments": [
               {
                 "kind": "string_literal",
                 "id": 6,
@@ -353,18 +373,21 @@
         },
         {
           "name": "lookup",
-          "type": "Map<String, String>",
+          "type": "std::collections::Map<String, String>",
           "type_ref": {
-            "kind": "map",
-            "display_name": "Map<String, String>",
-            "key_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
-            "value_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              },
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ],
             "source_range": {
               "begin_offset": 318,
               "end_offset": 380
@@ -375,52 +398,54 @@
             "end_offset": 380
           },
           "default_value": {
-            "kind": "map_literal",
+            "kind": "call",
             "id": 11,
             "source_range": {
               "begin_offset": 348,
               "end_offset": 379
             },
             "resolved_type": {
-              "kind": "map",
-              "display_name": "Map<String, String>",
-              "key_type": {
-                "kind": "string",
-                "display_name": "String"
-              },
-              "value_type": {
-                "kind": "string",
-                "display_name": "String"
-              }
-            },
-            "entries": [
-              {
-                "key": {
-                  "kind": "string_literal",
-                  "id": 9,
-                  "source_range": {
-                    "begin_offset": 352,
-                    "end_offset": 358
-                  },
-                  "resolved_type": {
-                    "kind": "string",
-                    "display_name": "String"
-                  },
-                  "spelling": "\"seed\""
+              "kind": "struct",
+              "display_name": "std::collections::Map<String, String>",
+              "canonical_name": "std::collections::Map",
+              "type_args": [
+                {
+                  "kind": "string",
+                  "display_name": "String"
                 },
-                "value": {
-                  "kind": "qualified_value",
-                  "id": 10,
-                  "source_range": {
-                    "begin_offset": 360,
-                    "end_offset": 378
-                  },
-                  "resolved_type": {
-                    "kind": "string",
-                    "display_name": "String"
-                  },
-                  "value": "ir::expr_temporal::DEFAULT_NOTE"
+                {
+                  "kind": "string",
+                  "display_name": "String"
                 }
+              ]
+            },
+            "callee": "map_from_entries",
+            "arguments": [
+              {
+                "kind": "string_literal",
+                "id": 9,
+                "source_range": {
+                  "begin_offset": 352,
+                  "end_offset": 358
+                },
+                "resolved_type": {
+                  "kind": "string",
+                  "display_name": "String"
+                },
+                "spelling": "\"seed\""
+              },
+              {
+                "kind": "qualified_value",
+                "id": 10,
+                "source_range": {
+                  "begin_offset": 360,
+                  "end_offset": 378
+                },
+                "resolved_type": {
+                  "kind": "string",
+                  "display_name": "String"
+                },
+                "value": "ir::expr_temporal::DEFAULT_NOTE"
               }
             ]
           }
@@ -441,7 +466,7 @@
             "end_offset": 417
           },
           "default_value": {
-            "kind": "index_access",
+            "kind": "call",
             "id": 17,
             "source_range": {
               "begin_offset": 404,
@@ -451,76 +476,83 @@
               "kind": "int",
               "display_name": "Int"
             },
-            "base": {
-              "kind": "list_literal",
-              "id": 15,
-              "source_range": {
-                "begin_offset": 404,
-                "end_offset": 413
+            "callee": "list_raw_get",
+            "arguments": [
+              {
+                "kind": "call",
+                "id": 15,
+                "source_range": {
+                  "begin_offset": 404,
+                  "end_offset": 413
+                },
+                "resolved_type": {
+                  "kind": "struct",
+                  "display_name": "std::collections::List<Int>",
+                  "canonical_name": "std::collections::List",
+                  "type_args": [
+                    {
+                      "kind": "int",
+                      "display_name": "Int"
+                    }
+                  ]
+                },
+                "callee": "list_from_array",
+                "arguments": [
+                  {
+                    "kind": "integer_literal",
+                    "id": 12,
+                    "source_range": {
+                      "begin_offset": 405,
+                      "end_offset": 406
+                    },
+                    "resolved_type": {
+                      "kind": "int",
+                      "display_name": "Int"
+                    },
+                    "spelling": "1"
+                  },
+                  {
+                    "kind": "integer_literal",
+                    "id": 13,
+                    "source_range": {
+                      "begin_offset": 408,
+                      "end_offset": 409
+                    },
+                    "resolved_type": {
+                      "kind": "int",
+                      "display_name": "Int"
+                    },
+                    "spelling": "2"
+                  },
+                  {
+                    "kind": "integer_literal",
+                    "id": 14,
+                    "source_range": {
+                      "begin_offset": 411,
+                      "end_offset": 412
+                    },
+                    "resolved_type": {
+                      "kind": "int",
+                      "display_name": "Int"
+                    },
+                    "spelling": "3"
+                  }
+                ]
               },
-              "resolved_type": {
-                "kind": "list",
-                "display_name": "List<Int>",
-                "element_type": {
+              {
+                "kind": "integer_literal",
+                "id": 16,
+                "source_range": {
+                  "begin_offset": 414,
+                  "end_offset": 415
+                },
+                "resolved_type": {
                   "kind": "int",
                   "display_name": "Int"
-                }
-              },
-              "items": [
-                {
-                  "kind": "integer_literal",
-                  "id": 12,
-                  "source_range": {
-                    "begin_offset": 405,
-                    "end_offset": 406
-                  },
-                  "resolved_type": {
-                    "kind": "int",
-                    "display_name": "Int"
-                  },
-                  "spelling": "1"
                 },
-                {
-                  "kind": "integer_literal",
-                  "id": 13,
-                  "source_range": {
-                    "begin_offset": 408,
-                    "end_offset": 409
-                  },
-                  "resolved_type": {
-                    "kind": "int",
-                    "display_name": "Int"
-                  },
-                  "spelling": "2"
-                },
-                {
-                  "kind": "integer_literal",
-                  "id": 14,
-                  "source_range": {
-                    "begin_offset": 411,
-                    "end_offset": 412
-                  },
-                  "resolved_type": {
-                    "kind": "int",
-                    "display_name": "Int"
-                  },
-                  "spelling": "3"
-                }
-              ]
-            },
-            "index": {
-              "kind": "integer_literal",
-              "id": 16,
-              "source_range": {
-                "begin_offset": 414,
-                "end_offset": 415
-              },
-              "resolved_type": {
-                "kind": "int",
-                "display_name": "Int"
-              },
-              "spelling": "0"
-            }
+                "spelling": "0"
+              }
+            ]
           }
         },
         {
@@ -539,7 +571,7 @@
             "end_offset": 485
           },
           "default_value": {
-            "kind": "index_access",
+            "kind": "call",
             "id": 22,
             "source_range": {
               "begin_offset": 445,
@@ -549,28 +581,33 @@
               "kind": "string",
               "display_name": "String"
             },
-            "base": {
-              "kind": "map_literal",
-              "id": 20,
-              "source_range": {
-                "begin_offset": 445,
-                "end_offset": 476
-              },
-              "resolved_type": {
-                "kind": "map",
-                "display_name": "Map<String, String>",
-                "key_type": {
-                  "kind": "string",
-                  "display_name": "String"
+            "callee": "map_raw_get",
+            "arguments": [
+              {
+                "kind": "call",
+                "id": 20,
+                "source_range": {
+                  "begin_offset": 445,
+                  "end_offset": 476
                 },
-                "value_type": {
-                  "kind": "string",
-                  "display_name": "String"
-                }
-              },
-              "entries": [
-                {
-                  "key": {
+                "resolved_type": {
+                  "kind": "struct",
+                  "display_name": "std::collections::Map<String, String>",
+                  "canonical_name": "std::collections::Map",
+                  "type_args": [
+                    {
+                      "kind": "string",
+                      "display_name": "String"
+                    },
+                    {
+                      "kind": "string",
+                      "display_name": "String"
+                    }
+                  ]
+                },
+                "callee": "map_from_entries",
+                "arguments": [
+                  {
                     "kind": "string_literal",
                     "id": 18,
                     "source_range": {
@@ -583,7 +620,7 @@
                     },
                     "spelling": "\"seed\""
                   },
-                  "value": {
+                  {
                     "kind": "qualified_value",
                     "id": 19,
                     "source_range": {
@@ -596,22 +633,22 @@
                     },
                     "value": "ir::expr_temporal::DEFAULT_NOTE"
                   }
-                }
-              ]
-            },
-            "index": {
-              "kind": "string_literal",
-              "id": 21,
-              "source_range": {
-                "begin_offset": 477,
-                "end_offset": 483
+                ]
               },
-              "resolved_type": {
-                "kind": "string",
-                "display_name": "String"
-              },
-              "spelling": "\"seed\""
-            }
+              {
+                "kind": "string_literal",
+                "id": 21,
+                "source_range": {
+                  "begin_offset": 477,
+                  "end_offset": 483
+                },
+                "resolved_type": {
+                  "kind": "string",
+                  "display_name": "String"
+                },
+                "spelling": "\"seed\""
+              }
+            ]
           }
         },
         {
@@ -682,14 +719,17 @@
         },
         {
           "name": "maybe_note",
-          "type": "Optional<String>",
+          "type": "std::option::Option<String>",
           "type_ref": {
-            "kind": "optional",
-            "display_name": "Optional<String>",
-            "element_type": {
-              "kind": "string",
-              "display_name": "String"
-            },
+            "kind": "enum",
+            "display_name": "std::option::Option<String>",
+            "canonical_name": "std::option::Option",
+            "type_args": [
+              {
+                "kind": "string",
+                "display_name": "String"
+              }
+            ],
             "source_range": {
               "begin_offset": 597,
               "end_offset": 653
@@ -700,33 +740,39 @@
             "end_offset": 653
           },
           "default_value": {
-            "kind": "some",
+            "kind": "call",
             "id": 27,
             "source_range": {
               "begin_offset": 628,
               "end_offset": 652
             },
             "resolved_type": {
-              "kind": "optional",
-              "display_name": "Optional<String>",
-              "element_type": {
-                "kind": "string",
-                "display_name": "String"
-              }
+              "kind": "enum",
+              "display_name": "std::option::Option<String>",
+              "canonical_name": "std::option::Option",
+              "type_args": [
+                {
+                  "kind": "string",
+                  "display_name": "String"
+                }
+              ]
             },
-            "value": {
-              "kind": "qualified_value",
-              "id": 26,
-              "source_range": {
-                "begin_offset": 633,
-                "end_offset": 651
-              },
-              "resolved_type": {
-                "kind": "string",
-                "display_name": "String"
-              },
-              "value": "ir::expr_temporal::DEFAULT_NOTE"
-            }
+            "callee": "std::option::Option::Some",
+            "arguments": [
+              {
+                "kind": "qualified_value",
+                "id": 26,
+                "source_range": {
+                  "begin_offset": 633,
+                  "end_offset": 651
+                },
+                "resolved_type": {
+                  "kind": "string",
+                  "display_name": "String"
+                },
+                "value": "ir::expr_temporal::DEFAULT_NOTE"
+              }
+            ]
           }
         }
       ]
@@ -734,8 +780,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 657,
           "end_offset": 714
@@ -790,8 +836,8 @@
     {
       "kind": "enum",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 716,
           "end_offset": 772
@@ -814,8 +860,8 @@
     {
       "kind": "capability",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 774,
           "end_offset": 822
@@ -862,8 +908,8 @@
     {
       "kind": "predicate",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 823,
           "end_offset": 862
@@ -900,8 +946,8 @@
     {
       "kind": "agent",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 864,
           "end_offset": 1068
@@ -976,8 +1022,8 @@
     {
       "kind": "contract",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 1070,
           "end_offset": 1218
@@ -1012,7 +1058,7 @@
             "callee": "ir::expr_temporal::ready",
             "arguments": [
               {
-                "kind": "index_access",
+                "kind": "call",
                 "id": 30,
                 "source_range": {
                   "begin_offset": 1121,
@@ -1022,46 +1068,52 @@
                   "kind": "string",
                   "display_name": "String"
                 },
-                "base": {
-                  "kind": "path",
-                  "id": 28,
-                  "source_range": {
-                    "begin_offset": 1121,
-                    "end_offset": 1132
+                "callee": "map_raw_get",
+                "arguments": [
+                  {
+                    "kind": "path",
+                    "id": 28,
+                    "source_range": {
+                      "begin_offset": 1121,
+                      "end_offset": 1132
+                    },
+                    "resolved_type": {
+                      "kind": "struct",
+                      "display_name": "std::collections::Map<String, String>",
+                      "canonical_name": "std::collections::Map",
+                      "type_args": [
+                        {
+                          "kind": "string",
+                          "display_name": "String"
+                        },
+                        {
+                          "kind": "string",
+                          "display_name": "String"
+                        }
+                      ]
+                    },
+                    "path": {
+                      "root_kind": "input",
+                      "root_name": "input",
+                      "members": [
+                        "attrs"
+                      ]
+                    }
                   },
-                  "resolved_type": {
-                    "kind": "map",
-                    "display_name": "Map<String, String>",
-                    "key_type": {
+                  {
+                    "kind": "string_literal",
+                    "id": 29,
+                    "source_range": {
+                      "begin_offset": 1133,
+                      "end_offset": 1139
+                    },
+                    "resolved_type": {
                       "kind": "string",
                       "display_name": "String"
                     },
-                    "value_type": {
-                      "kind": "string",
-                      "display_name": "String"
-                    }
-                  },
-                  "path": {
-                    "root_kind": "input",
-                    "root_name": "input",
-                    "members": [
-                      "attrs"
-                    ]
+                    "spelling": "\"seed\""
                   }
-                },
-                "index": {
-                  "kind": "string_literal",
-                  "id": 29,
-                  "source_range": {
-                    "begin_offset": 1133,
-                    "end_offset": 1139
-                  },
-                  "resolved_type": {
-                    "kind": "string",
-                    "display_name": "String"
-                  },
-                  "spelling": "\"seed\""
-                }
+                ]
               }
             ]
           }
@@ -1122,7 +1174,7 @@
                   "callee": "ir::expr_temporal::ready",
                   "arguments": [
                     {
-                      "kind": "index_access",
+                      "kind": "call",
                       "id": 34,
                       "source_range": {
                         "begin_offset": 1194,
@@ -1132,46 +1184,52 @@
                         "kind": "string",
                         "display_name": "String"
                       },
-                      "base": {
-                        "kind": "path",
-                        "id": 32,
-                        "source_range": {
-                          "begin_offset": 1194,
-                          "end_offset": 1205
+                      "callee": "map_raw_get",
+                      "arguments": [
+                        {
+                          "kind": "path",
+                          "id": 32,
+                          "source_range": {
+                            "begin_offset": 1194,
+                            "end_offset": 1205
+                          },
+                          "resolved_type": {
+                            "kind": "struct",
+                            "display_name": "std::collections::Map<String, String>",
+                            "canonical_name": "std::collections::Map",
+                            "type_args": [
+                              {
+                                "kind": "string",
+                                "display_name": "String"
+                              },
+                              {
+                                "kind": "string",
+                                "display_name": "String"
+                              }
+                            ]
+                          },
+                          "path": {
+                            "root_kind": "input",
+                            "root_name": "input",
+                            "members": [
+                              "attrs"
+                            ]
+                          }
                         },
-                        "resolved_type": {
-                          "kind": "map",
-                          "display_name": "Map<String, String>",
-                          "key_type": {
+                        {
+                          "kind": "string_literal",
+                          "id": 33,
+                          "source_range": {
+                            "begin_offset": 1206,
+                            "end_offset": 1212
+                          },
+                          "resolved_type": {
                             "kind": "string",
                             "display_name": "String"
                           },
-                          "value_type": {
-                            "kind": "string",
-                            "display_name": "String"
-                          }
-                        },
-                        "path": {
-                          "root_kind": "input",
-                          "root_name": "input",
-                          "members": [
-                            "attrs"
-                          ]
+                          "spelling": "\"seed\""
                         }
-                      },
-                      "index": {
-                        "kind": "string_literal",
-                        "id": 33,
-                        "source_range": {
-                          "begin_offset": 1206,
-                          "end_offset": 1212
-                        },
-                        "resolved_type": {
-                          "kind": "string",
-                          "display_name": "String"
-                        },
-                        "spelling": "\"seed\""
-                      }
+                      ]
                     }
                   ]
                 }
@@ -1184,8 +1242,8 @@
     {
       "kind": "flow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 1220,
           "end_offset": 1904
@@ -1224,6 +1282,7 @@
             ],
             "called_targets": [
               "ir::expr_temporal::Decide",
+              "list_raw_get",
               "ir::expr_temporal::ready"
             ],
             "assert_count": 1
@@ -1415,7 +1474,7 @@
                       },
                       "op": "add",
                       "lhs": {
-                        "kind": "index_access",
+                        "kind": "call",
                         "id": 52,
                         "source_range": {
                           "begin_offset": 1459,
@@ -1425,42 +1484,48 @@
                           "kind": "int",
                           "display_name": "Int"
                         },
-                        "base": {
-                          "kind": "path",
-                          "id": 50,
-                          "source_range": {
-                            "begin_offset": 1459,
-                            "end_offset": 1471
-                          },
-                          "resolved_type": {
-                            "kind": "list",
-                            "display_name": "List<Int>",
-                            "element_type": {
-                              "kind": "int",
-                              "display_name": "Int"
+                        "callee": "list_raw_get",
+                        "arguments": [
+                          {
+                            "kind": "path",
+                            "id": 50,
+                            "source_range": {
+                              "begin_offset": 1459,
+                              "end_offset": 1471
+                            },
+                            "resolved_type": {
+                              "kind": "struct",
+                              "display_name": "std::collections::List<Int>",
+                              "canonical_name": "std::collections::List",
+                              "type_args": [
+                                {
+                                  "kind": "int",
+                                  "display_name": "Int"
+                                }
+                              ]
+                            },
+                            "path": {
+                              "root_kind": "input",
+                              "root_name": "input",
+                              "members": [
+                                "values"
+                              ]
                             }
                           },
-                          "path": {
-                            "root_kind": "input",
-                            "root_name": "input",
-                            "members": [
-                              "values"
-                            ]
+                          {
+                            "kind": "integer_literal",
+                            "id": 51,
+                            "source_range": {
+                              "begin_offset": 1472,
+                              "end_offset": 1473
+                            },
+                            "resolved_type": {
+                              "kind": "int",
+                              "display_name": "Int"
+                            },
+                            "spelling": "0"
                           }
-                        },
-                        "index": {
-                          "kind": "integer_literal",
-                          "id": 51,
-                          "source_range": {
-                            "begin_offset": 1472,
-                            "end_offset": 1473
-                          },
-                          "resolved_type": {
-                            "kind": "int",
-                            "display_name": "Int"
-                          },
-                          "spelling": "0"
-                        }
+                        ]
                       },
                       "rhs": {
                         "kind": "integer_literal",
@@ -1787,8 +1852,8 @@
     {
       "kind": "workflow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "ir::expr_temporal",
+        "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 1906,
           "end_offset": 2143

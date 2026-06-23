@@ -696,36 +696,38 @@ int run_validate_package_rejects_unknown_capability(
 int run_file_expr_temporal(const std::filesystem::path &input_file) {
     const ahfl::Frontend frontend;
 
-    auto parse_result = frontend.parse_file(input_file);
-    if (parse_result.has_errors() || !parse_result.program) {
-        parse_result.diagnostics.render(std::cout, std::cref(parse_result.source));
+    auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {input_file},
+    });
+    if (parse_result.has_errors()) {
+        parse_result.diagnostics.render(std::cout);
         return 1;
     }
 
     const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
+    const auto resolve_result = resolver.resolve(parse_result.graph);
     if (resolve_result.has_errors()) {
-        resolve_result.diagnostics.render(std::cout, std::cref(parse_result.source));
+        resolve_result.diagnostics.render(std::cout);
         return 1;
     }
 
     const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_check_result = type_checker.check(parse_result.graph, resolve_result);
     if (type_check_result.has_errors()) {
-        type_check_result.diagnostics.render(std::cout, std::cref(parse_result.source));
+        type_check_result.diagnostics.render(std::cout);
         return 1;
     }
 
     const ahfl::Validator validator;
     const auto validation_result =
-        validator.validate(*parse_result.program, resolve_result, type_check_result);
+        validator.validate(parse_result.graph, resolve_result, type_check_result);
     if (validation_result.has_errors()) {
-        validation_result.diagnostics.render(std::cout, std::cref(parse_result.source));
+        validation_result.diagnostics.render(std::cout);
         return 1;
     }
 
     const auto package = ahfl::handoff::lower_package(
-        ahfl::lower_program_ir(*parse_result.program, resolve_result, type_check_result));
+        ahfl::lower_program_ir(parse_result.graph, resolve_result, type_check_result));
 
     const auto *capability_slot =
         ahfl::handoff::find_capability_binding_slot(package, "ir::expr_temporal::Decide");

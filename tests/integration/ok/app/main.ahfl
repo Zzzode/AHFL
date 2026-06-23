@@ -3,4 +3,5 @@ import lib::types as types;
 
 struct UsesRequest {
     request: types::Request;
+    maybe: Option<Int>;
 }

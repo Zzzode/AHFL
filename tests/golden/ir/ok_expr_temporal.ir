@@ -5,43 +5,53 @@ formal_observations {
   observation contract_ir_expr_temporal_ExprAgent_1_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::expr_temporal::ExprAgent, clause=1, atom=0)
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 module ir::expr_temporal
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 import ir::expr_temporal as self
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 const ir::expr_temporal::DEFAULT_NOTE: String = "seed"
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 struct ir::expr_temporal::Request {
-  field values: List<Int>
-  field attrs: Map<String, String>
+  field values: std::collections::List<Int>
+  field attrs: std::collections::Map<String, String>
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 struct ir::expr_temporal::Context {
   field note: String = ir::expr_temporal::DEFAULT_NOTE
-  field numbers: List<Int> = [1, 2, 3]
-  field labels: Set<String> = {"alpha", "beta"}
-  field lookup: Map<String, String> = {"seed": ir::expr_temporal::DEFAULT_NOTE}
-  field first_value: Int = [1, 2, 3][0]
-  field mapped_value: String = {"seed": ir::expr_temporal::DEFAULT_NOTE}["seed"]
+  field numbers: std::collections::List<Int> = list_from_array(1, 2, 3)
+  field labels: std::collections::Set<String> = set_from_array("alpha", "beta")
+  field lookup: std::collections::Map<String, String> = map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE)
+  field first_value: Int = list_raw_get(list_from_array(1, 2, 3), 0)
+  field mapped_value: String = map_raw_get(map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE), "seed")
   field reply: ir::expr_temporal::Response = ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }
-  field maybe_note: Optional<String> = some(ir::expr_temporal::DEFAULT_NOTE)
+  field maybe_note: std::option::Option<String> = std::option::Option::Some(ir::expr_temporal::DEFAULT_NOTE)
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 struct ir::expr_temporal::Response {
   field note: String
   field result: ir::expr_temporal::Status
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 enum ir::expr_temporal::Status {
   variant Pending
   variant Approved
   variant Rejected
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 capability ir::expr_temporal::Decide(request: ir::expr_temporal::Request) -> ir::expr_temporal::Response
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 predicate ir::expr_temporal::ready(value: String) -> Bool
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 agent ir::expr_temporal::ExprAgent {
   input: ir::expr_temporal::Request
   context: ir::expr_temporal::Context
@@ -53,11 +63,13 @@ agent ir::expr_temporal::ExprAgent {
   transition Init -> Done
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 contract ir::expr_temporal::ExprAgent {
-  requires: ir::expr_temporal::ready(input.attrs["seed"])
-  invariant: G((!(called(ir::expr_temporal::Decide)) || ir::expr_temporal::ready(input.attrs["seed"])))
+  requires: ir::expr_temporal::ready(map_raw_get(input.attrs, "seed"))
+  invariant: G((!(called(ir::expr_temporal::Decide)) || ir::expr_temporal::ready(map_raw_get(input.attrs, "seed"))))
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 flow ir::expr_temporal::ExprAgent {
   state Init {
     summary {
@@ -65,12 +77,12 @@ flow ir::expr_temporal::ExprAgent {
       may_return: false
       may_fallthrough: false
       assigned_paths: [ctx.note]
-      called_targets: [ir::expr_temporal::Decide, ir::expr_temporal::ready]
+      called_targets: [ir::expr_temporal::Decide, list_raw_get, ir::expr_temporal::ready]
       assert_count: 1
     }
     let reply: ir::expr_temporal::Response = ir::expr_temporal::Decide(input)
     assert (ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }.note == ir::expr_temporal::DEFAULT_NOTE)
-    if (((input.values[0] + 1) > 2) && ir::expr_temporal::ready(reply.note)) {
+    if (((list_raw_get(input.values, 0) + 1) > 2) && ir::expr_temporal::ready(reply.note)) {
       ctx.note = reply.note
       goto Done
     } else {
@@ -91,6 +103,7 @@ flow ir::expr_temporal::ExprAgent {
   }
 }
 
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 workflow ir::expr_temporal::ExprWorkflow {
   input: ir::expr_temporal::Request
   output: ir::expr_temporal::Response

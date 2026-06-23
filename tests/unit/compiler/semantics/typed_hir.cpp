@@ -17,17 +17,22 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
+#include "ahfl/compiler/ir/verify.hpp"
+#include "ahfl/compiler/semantics/builtin_hooks.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -40,6 +45,32 @@ namespace {
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+[[nodiscard]] ahfl::TypePtr option_type(ahfl::TypeContext &tc, ahfl::TypePtr inner) {
+    return tc.enum_type(std::string{ahfl::stdlib_bridge::kOptionType},
+                        std::optional<ahfl::SymbolId>{},
+                        std::vector{inner});
+}
+
+[[nodiscard]] ahfl::TypePtr list_type(ahfl::TypeContext &tc, ahfl::TypePtr element) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kListType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element});
+}
+
+[[nodiscard]] ahfl::TypePtr set_type(ahfl::TypeContext &tc, ahfl::TypePtr element) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kSetType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element});
+}
+
+[[nodiscard]] ahfl::TypePtr map_type(ahfl::TypeContext &tc,
+                                     ahfl::TypePtr key,
+                                     ahfl::TypePtr value) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kMapType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{key, value});
+}
 
 struct TypedHIRFixture {
     ahfl::Frontend frontend;
@@ -79,7 +110,14 @@ struct TypedHIRFixture {
     [[nodiscard]] ahfl::TypeCheckResult
     check_project(const std::filesystem::path &root,
                   const std::vector<std::filesystem::path> &entry_files) const {
-        const auto parse = frontend.parse_project(ahfl::ProjectInput{
+        return check_project_with_frontend(frontend, root, entry_files);
+    }
+
+    [[nodiscard]] ahfl::TypeCheckResult
+    check_project_with_frontend(const ahfl::Frontend &selected_frontend,
+                                const std::filesystem::path &root,
+                                const std::vector<std::filesystem::path> &entry_files) const {
+        const auto parse = selected_frontend.parse_project(ahfl::ProjectInput{
             .entry_files = entry_files,
             .search_roots = {root},
         });
@@ -126,6 +164,35 @@ struct TypedHIRFixture {
         ahfl::TypeChecker checker;
         return checker.check(*parse.program, resolve);
     }
+
+    [[nodiscard]] ahfl::TypeCheckResult
+    check_project_with_errors(const std::filesystem::path &root,
+                              const std::vector<std::filesystem::path> &entry_files) const {
+        const auto parse = frontend.parse_project(ahfl::ProjectInput{
+            .entry_files = entry_files,
+            .search_roots = {root},
+        });
+        if (parse.has_errors()) {
+            std::ostringstream ss;
+            parse.diagnostics.render(ss);
+            std::fprintf(
+                stderr, "=== PROJECT PARSE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+        }
+        REQUIRE_FALSE(parse.has_errors());
+
+        ahfl::Resolver resolver;
+        const auto resolve = resolver.resolve(parse.graph);
+        if (resolve.has_errors()) {
+            std::ostringstream ss;
+            resolve.diagnostics.render(ss);
+            std::fprintf(
+                stderr, "=== PROJECT RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+        }
+        REQUIRE_FALSE(resolve.has_errors());
+
+        ahfl::TypeChecker checker;
+        return checker.check(parse.graph, resolve);
+    }
 };
 
 void write_file(const std::filesystem::path &path, const std::string &content) {
@@ -140,6 +207,52 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     return root;
+}
+
+[[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
+                                                       std::string_view module_name) {
+    auto path = root;
+    std::string module{module_name};
+    std::size_t start = 0;
+    while (true) {
+        const auto separator = module.find("::", start);
+        const auto segment = module.substr(start, separator - start);
+        if (separator == std::string::npos) {
+            path /= segment + ".ahfl";
+            return path;
+        }
+        path /= segment;
+        start = separator + 2;
+    }
+}
+
+[[nodiscard]] std::optional<ahfl::SourceId>
+source_id_for_module(const ahfl::TypedProgram &program, std::string_view module_name) {
+    for (const auto &decl : program.declarations) {
+        if (decl.kind != ahfl::ast::NodeKind::ModuleDecl ||
+            !std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload)) {
+            continue;
+        }
+        const auto &module = std::get<ahfl::ModuleDeclInfo>(decl.payload);
+        if (module.name == module_name) {
+            return decl.source_id;
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] const ahfl::SourceUnit *source_unit_for_module(const ahfl::SourceGraph &graph,
+                                                             std::string_view module_name) {
+    const auto found = graph.module_to_source.find(std::string(module_name));
+    if (found == graph.module_to_source.end()) {
+        return nullptr;
+    }
+    for (const auto &source : graph.sources) {
+        if (source.id == found->second) {
+            return &source;
+        }
+    }
+    return nullptr;
 }
 
 [[nodiscard]] std::size_t diagnostic_count_with_code(const ahfl::DiagnosticBag &diagnostics,
@@ -210,6 +323,18 @@ const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
     return nullptr;
 }
 
+const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
+                                     ahfl::SourceRange range,
+                                     std::optional<ahfl::SourceId> source_id) {
+    for (const auto &e : exprs) {
+        if (e.range.begin_offset == range.begin_offset && e.range.end_offset == range.end_offset &&
+            e.source_id == source_id) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
 [[nodiscard]] std::string const_value_signature(const ahfl::ConstValue &value) {
     std::string signature = std::to_string(static_cast<unsigned>(value.kind));
     signature += "(";
@@ -239,7 +364,9 @@ const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
 // ============================================================================
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "T1.2 typed HIR covers all literal kinds") {
-    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+    const auto root = make_temp_project("literal_kinds_project");
+    const auto source_path = module_source_path(root, "typed::literals");
+    const std::string source = std::string("module typed::literals;\n") + kSharedPrefix + R"AHFL(
 agent LiteralAgent {
     input: Request;
     context: Context;
@@ -289,7 +416,8 @@ flow for LiteralAgent {
 }
 )AHFL";
 
-    const auto r = check(source);
+    write_file(source_path, source);
+    const auto r = check_project(root, {source_path});
     const auto &exprs = r.typed_program.expressions;
     REQUIRE_FALSE(exprs.empty());
 
@@ -312,7 +440,8 @@ flow for LiteralAgent {
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::IndexAccess));
 
     // Decimal + Duration are parsed differently.
-    const std::string source2 = std::string(kSharedPrefix) + R"AHFL(
+    const auto source2_path = module_source_path(root, "typed::decimals");
+    const std::string source2 = std::string("module typed::decimals;\n") + kSharedPrefix + R"AHFL(
 agent DecimalAgent {
     input: Request;
     context: Context;
@@ -332,7 +461,8 @@ flow for DecimalAgent {
     }
 }
 )AHFL";
-    const auto r2 = check(source2);
+    write_file(source2_path, source2);
+    const auto r2 = check_project(root, {source2_path});
     CHECK(has_kind(r2.typed_program.expressions, ahfl::ast::ExprSyntaxKind::DecimalLiteral));
     CHECK(has_kind(r2.typed_program.expressions, ahfl::ast::ExprSyntaxKind::DurationLiteral));
 }
@@ -419,6 +549,8 @@ flow for A {
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR carries serializable const value trees") {
+    const auto root = make_temp_project("const_eval_project");
+    const auto source_path = module_source_path(root, "typed::const_eval");
     const std::string source = R"AHFL(
 module typed::const_eval;
 import typed::const_eval as self;
@@ -458,8 +590,11 @@ const DurationLess: Bool = 500ms < 1s;
 const DurationEquivalent: Bool = 60s == 1m;
 	)AHFL";
 
-    const auto result = check(source);
+    write_file(source_path, source);
+    const auto result = check_project(root, {source_path});
     const auto &program = result.typed_program;
+    const auto source_id = source_id_for_module(program, "typed::const_eval");
+    REQUIRE(source_id.has_value());
 
     const auto default_label_symbol =
         std::find_if(program.symbols.begin(), program.symbols.end(), [](const ahfl::Symbol &sym) {
@@ -473,9 +608,10 @@ const DurationEquivalent: Bool = 60s == 1m;
     REQUIRE(priority_symbol != program.symbols.end());
 
     const auto settings_literal = std::find_if(
-        program.expressions.begin(), program.expressions.end(), [](const ahfl::TypedExpr &expr) {
+        program.expressions.begin(), program.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
-                   expr.semantic_name == "Settings" && expr.const_value.has_value();
+                   expr.semantic_name == "Settings" && expr.const_value.has_value() &&
+                   expr.source_id == source_id;
         });
     REQUIRE(settings_literal != program.expressions.end());
     REQUIRE(settings_literal->const_value.has_value());
@@ -526,7 +662,8 @@ const DurationEquivalent: Bool = 60s == 1m;
     CHECK(*settings_value.children[4].symbol == priority_symbol->id);
 
     const auto *settings_label =
-        find_by_range(program.expressions, range_of(source, "self::DefaultSettings.label"));
+        find_by_range(
+            program.expressions, range_of(source, "self::DefaultSettings.label"), source_id);
     REQUIRE(settings_label != nullptr);
     REQUIRE(settings_label->const_value.has_value());
     CHECK(settings_label->const_value->kind == ahfl::ConstValueKind::ConstReference);
@@ -535,70 +672,76 @@ const DurationEquivalent: Bool = 60s == 1m;
     CHECK(settings_label->const_value->children[0].scalar == "\"stable\"");
 
     const auto second_tag = std::find_if(
-        program.expressions.begin(), program.expressions.end(), [](const ahfl::TypedExpr &expr) {
+        program.expressions.begin(), program.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::IndexAccess &&
                    expr.const_value.has_value() &&
                    expr.const_value->kind == ahfl::ConstValueKind::String &&
-                   expr.const_value->scalar == "\"runtime\"";
+                   expr.const_value->scalar == "\"runtime\"" && expr.source_id == source_id;
         });
     REQUIRE(second_tag != program.expressions.end());
 
     const auto *label_matches = find_by_range(
-        program.expressions, range_of(source, "self::DefaultSettings.label == self::DefaultLabel"));
+        program.expressions,
+        range_of(source, "self::DefaultSettings.label == self::DefaultLabel"),
+        source_id);
     REQUIRE(label_matches != nullptr);
     REQUIRE(label_matches->const_value.has_value());
     CHECK(label_matches->const_value->kind == ahfl::ConstValueKind::Bool);
     CHECK(label_matches->const_value->scalar == "true");
 
     const auto *forward_code =
-        find_by_range(program.expressions, range_of(source, "self::LaterCode + 1"));
+        find_by_range(program.expressions, range_of(source, "self::LaterCode + 1"), source_id);
     REQUIRE(forward_code != nullptr);
     REQUIRE(forward_code->const_value.has_value());
     CHECK(forward_code->const_value->kind == ahfl::ConstValueKind::Integer);
     CHECK(forward_code->const_value->scalar == "42");
 
-    const auto *float_sum = find_by_range(program.expressions, range_of(source, "1.5 + 2.25"));
+    const auto *float_sum =
+        find_by_range(program.expressions, range_of(source, "1.5 + 2.25"), source_id);
     REQUIRE(float_sum != nullptr);
     REQUIRE(float_sum->const_value.has_value());
     CHECK(float_sum->const_value->kind == ahfl::ConstValueKind::Float);
     CHECK(float_sum->const_value->scalar == "3.75");
 
     const auto *decimal_delta =
-        find_by_range(program.expressions, range_of(source, "3.50d - 1.25d"));
+        find_by_range(program.expressions, range_of(source, "3.50d - 1.25d"), source_id);
     REQUIRE(decimal_delta != nullptr);
     REQUIRE(decimal_delta->const_value.has_value());
     CHECK(decimal_delta->const_value->kind == ahfl::ConstValueKind::Decimal);
     CHECK(decimal_delta->const_value->scalar == "2.25d");
 
     const auto *decimal_less =
-        find_by_range(program.expressions, range_of(source, "1.25d < 3.50d"));
+        find_by_range(program.expressions, range_of(source, "1.25d < 3.50d"), source_id);
     REQUIRE(decimal_less != nullptr);
     REQUIRE(decimal_less->const_value.has_value());
     CHECK(decimal_less->const_value->kind == ahfl::ConstValueKind::Bool);
     CHECK(decimal_less->const_value->scalar == "true");
 
     const auto *combined_label =
-        find_by_range(program.expressions, range_of(source, "\"ops\" + \"runtime\""));
+        find_by_range(program.expressions, range_of(source, "\"ops\" + \"runtime\""), source_id);
     REQUIRE(combined_label != nullptr);
     REQUIRE(combined_label->const_value.has_value());
     CHECK(combined_label->const_value->kind == ahfl::ConstValueKind::String);
     CHECK(combined_label->const_value->scalar == "\"opsruntime\"");
 
-    const auto *duration_less = find_by_range(program.expressions, range_of(source, "500ms < 1s"));
+    const auto *duration_less =
+        find_by_range(program.expressions, range_of(source, "500ms < 1s"), source_id);
     REQUIRE(duration_less != nullptr);
     REQUIRE(duration_less->const_value.has_value());
     CHECK(duration_less->const_value->kind == ahfl::ConstValueKind::Bool);
     CHECK(duration_less->const_value->scalar == "true");
 
     const auto *duration_equivalent =
-        find_by_range(program.expressions, range_of(source, "60s == 1m"));
+        find_by_range(program.expressions, range_of(source, "60s == 1m"), source_id);
     REQUIRE(duration_equivalent != nullptr);
     REQUIRE(duration_equivalent->const_value.has_value());
     CHECK(duration_equivalent->const_value->kind == ahfl::ConstValueKind::Bool);
     CHECK(duration_equivalent->const_value->scalar == "true");
 
-    const auto *duration_seconds = find_by_range(program.expressions, range_of(source, "60s"));
-    const auto *duration_minutes = find_by_range(program.expressions, range_of(source, "1m"));
+    const auto *duration_seconds =
+        find_by_range(program.expressions, range_of(source, "60s"), source_id);
+    const auto *duration_minutes =
+        find_by_range(program.expressions, range_of(source, "1m"), source_id);
     REQUIRE(duration_seconds != nullptr);
     REQUIRE(duration_minutes != nullptr);
     REQUIRE(duration_seconds->const_value.has_value());
@@ -617,6 +760,8 @@ const DurationEquivalent: Bool = 60s == 1m;
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR normalizes Set and Map const values") {
+    const auto root = make_temp_project("const_normalize_project");
+    const auto source_path = module_source_path(root, "typed::const_normalize");
     const std::string source = R"AHFL(
 module typed::const_normalize;
 
@@ -627,11 +772,14 @@ const SourceMap: Map<String, Int> = map ["b": 2, "a": 1];
 const CanonicalMap: Map<String, Int> = map ["a": 1, "b": 2];
 )AHFL";
 
-    const auto result = check(source);
+    write_file(source_path, source);
+    const auto result = check_project(root, {source_path});
     const auto &program = result.typed_program;
+    const auto source_id = source_id_for_module(program, "typed::const_normalize");
+    REQUIRE(source_id.has_value());
 
     const auto *source_list =
-        find_by_range(program.expressions, range_of(source, "[\"b\", \"a\"]"));
+        find_by_range(program.expressions, range_of(source, "[\"b\", \"a\"]"), source_id);
     REQUIRE(source_list != nullptr);
     REQUIRE(source_list->const_value.has_value());
     CHECK(source_list->const_value->kind == ahfl::ConstValueKind::List);
@@ -640,9 +788,9 @@ const CanonicalMap: Map<String, Int> = map ["a": 1, "b": 2];
     CHECK(source_list->const_value->children[1].scalar == "\"a\"");
 
     const auto *source_set =
-        find_by_range(program.expressions, range_of(source, "set [\"b\", \"a\"]"));
+        find_by_range(program.expressions, range_of(source, "set [\"b\", \"a\"]"), source_id);
     const auto *canonical_set =
-        find_by_range(program.expressions, range_of(source, "set [\"a\", \"b\"]"));
+        find_by_range(program.expressions, range_of(source, "set [\"a\", \"b\"]"), source_id);
     REQUIRE(source_set != nullptr);
     REQUIRE(canonical_set != nullptr);
     REQUIRE(source_set->const_value.has_value());
@@ -655,9 +803,11 @@ const CanonicalMap: Map<String, Int> = map ["a": 1, "b": 2];
           const_value_signature(*canonical_set->const_value));
 
     const auto *source_map =
-        find_by_range(program.expressions, range_of(source, "map [\"b\": 2, \"a\": 1]"));
+        find_by_range(
+            program.expressions, range_of(source, "map [\"b\": 2, \"a\": 1]"), source_id);
     const auto *canonical_map =
-        find_by_range(program.expressions, range_of(source, "map [\"a\": 1, \"b\": 2]"));
+        find_by_range(
+            program.expressions, range_of(source, "map [\"a\": 1, \"b\": 2]"), source_id);
     REQUIRE(source_map != nullptr);
     REQUIRE(canonical_map != nullptr);
     REQUIRE(source_map->const_value.has_value());
@@ -750,6 +900,1308 @@ const ProjectAnswer: Int = defs::CrossForward + 1;
     REQUIRE(restored.has_value());
     REQUIRE(restored->const_dependencies.size() == program.const_dependencies.size());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project prelude resolves unqualified stdlib type aliases") {
+    const auto root = make_temp_project("prelude_alias_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+
+struct Request {
+    maybe: Option<Int>;
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+    const auto request_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Types, "Request", "app::main");
+    REQUIRE(request_symbol.has_value());
+
+    const auto request = result.environment.get_struct(request_symbol->get().id);
+    REQUIRE(request.has_value());
+    const auto maybe = request->get().find_field("maybe");
+    REQUIRE(maybe.has_value());
+    REQUIRE(maybe->get().type != nullptr);
+    CHECK(maybe->get().type->describe() == "std::option::Option<Int>");
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+
+    const auto prelude_option =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Option", "std::prelude");
+    REQUIRE(prelude_option.has_value());
+    const auto prelude_decl = std::find_if(
+        restored->declarations.begin(),
+        restored->declarations.end(),
+        [&](const ahfl::TypedDecl &decl) { return decl.symbol == prelude_option->get().id; });
+    REQUIRE(prelude_decl != restored->declarations.end());
+    const auto *prelude_alias = std::get_if<ahfl::TypeAliasDeclInfo>(&prelude_decl->payload);
+    REQUIRE(prelude_alias != nullptr);
+    CHECK(prelude_alias->type_param_names == std::vector<std::string>{"T"});
+
+    const auto std_option =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Option", "std::option");
+    REQUIRE(std_option.has_value());
+    const auto std_option_decl = std::find_if(
+        restored->declarations.begin(),
+        restored->declarations.end(),
+        [&](const ahfl::TypedDecl &decl) { return decl.symbol == std_option->get().id; });
+    REQUIRE(std_option_decl != restored->declarations.end());
+    const auto *option_enum = std::get_if<ahfl::EnumTypeInfo>(&std_option_decl->payload);
+    REQUIRE(option_enum != nullptr);
+    CHECK(option_enum->type_param_names == std::vector<std::string>{"T"});
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "P5 Optional type sugar desugars to stdlib Option when enabled") {
+    const ahfl::Frontend desugaring_frontend{ahfl::FrontendOptions{.enable_desugaring = true}};
+    const auto root = make_temp_project("optional_desugar_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+
+struct Request {
+    maybe: Optional<Int>;
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project_with_frontend(desugaring_frontend, root, {main_path});
+    const auto request_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Types, "Request", "app::main");
+    REQUIRE(request_symbol.has_value());
+
+    const auto request = result.environment.get_struct(request_symbol->get().id);
+    REQUIRE(request.has_value());
+    const auto maybe = request->get().find_field("maybe");
+    REQUIRE(maybe.has_value());
+    REQUIRE(maybe->get().type != nullptr);
+    CHECK(maybe->get().type->describe() == "std::option::Option<Int>");
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std option and result APIs") {
+    const auto root = make_temp_project("option_result_api_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+import std::option as option;
+import std::result as results;
+
+fn has_value(value: Option<Int>) -> Bool {
+    return option::is_some<Int>(value);
+}
+
+fn is_empty(value: Option<Int>) -> Bool {
+    return option::is_none<Int>(value);
+}
+
+fn mapped(value: Option<Int>) -> Option<Int> {
+    return option::map<Int, Int>(value, \x: Int -> x + 1);
+}
+
+fn chained(value: Option<Int>) -> Option<Int> {
+    return option::and_then<Int, Int>(value, \x: Int -> some(x + 1));
+}
+
+fn default_value(value: Option<Int>) -> Int {
+    return option::unwrap_or<Int>(value, 0);
+}
+
+fn lazy_default(value: Option<Int>) -> Int {
+    return option::unwrap_or_else<Int>(value, \ -> 9);
+}
+
+fn recover(value: Option<Int>) -> Option<Int> {
+    return option::or_else<Int>(value, \ -> some(7));
+}
+
+fn filtered(value: Option<Int>) -> Option<Int> {
+    return option::filter<Int>(value, \x: Int -> x > 0);
+}
+
+fn inserted(value: Option<Int>) -> Int {
+    return option::get_or_insert<Int>(value, 6);
+}
+
+fn bumped(value: Result<Int, String>) -> Result<Int, String> {
+    return results::map<Int, Int, String>(value, \x: Int -> x + 1);
+}
+
+fn error_bumped(value: Result<Int, String>) -> Result<Int, String> {
+    return results::map_err<Int, String, String>(value, \e: String -> e);
+}
+
+fn result_chained(value: Result<Int, String>) -> Result<Int, String> {
+    return results::and_then<Int, Int, String>(value, \x: Int -> value);
+}
+
+fn result_recovered(value: Result<Int, String>) -> Result<Int, String> {
+    return results::or_else<Int, String, String>(value, \e: String -> value);
+}
+
+fn result_has_value(value: Result<Int, String>) -> Bool {
+    return results::is_ok<Int, String>(value);
+}
+
+fn result_is_error(value: Result<Int, String>) -> Bool {
+    return results::is_err<Int, String>(value);
+}
+
+fn result_default(value: Result<Int, String>) -> Int {
+    return results::unwrap_or<Int, String>(value, 0);
+}
+
+fn ok_value(value: Result<Int, String>) -> Option<Int> {
+    return results::ok<Int, String>(value);
+}
+
+fn err_value(value: Result<Int, String>) -> Option<String> {
+    return results::err<Int, String>(value);
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+
+    const auto expect_wrapper = [&](std::string_view canonical_name) {
+        const auto symbol =
+            std::find_if(result.typed_program.symbols.begin(),
+                         result.typed_program.symbols.end(),
+                         [&](const ahfl::Symbol &candidate) {
+                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
+                                    candidate.canonical_name == canonical_name;
+                         });
+        REQUIRE(symbol != result.typed_program.symbols.end());
+
+        const auto decl = std::find_if(
+            result.typed_program.declarations.begin(),
+            result.typed_program.declarations.end(),
+            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
+        REQUIRE(decl != result.typed_program.declarations.end());
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
+        REQUIRE(fn != nullptr);
+        CHECK_FALSE(fn->builtin_name.has_value());
+        CHECK(fn->has_body);
+        CHECK(fn->body_block_index != UINT32_MAX);
+    };
+
+    expect_wrapper("std::option::is_some");
+    expect_wrapper("std::option::is_none");
+    expect_wrapper("std::option::map");
+    expect_wrapper("std::option::and_then");
+    expect_wrapper("std::option::or_else");
+    expect_wrapper("std::option::filter");
+    expect_wrapper("std::option::unwrap_or");
+    expect_wrapper("std::option::unwrap_or_else");
+    expect_wrapper("std::option::get_or_insert");
+    expect_wrapper("std::result::is_ok");
+    expect_wrapper("std::result::is_err");
+    expect_wrapper("std::result::map");
+    expect_wrapper("std::result::map_err");
+    expect_wrapper("std::result::and_then");
+    expect_wrapper("std::result::or_else");
+    expect_wrapper("std::result::unwrap_or");
+    expect_wrapper("std::result::ok");
+    expect_wrapper("std::result::err");
+
+    bool saw_option_is_some = false;
+    bool saw_option_is_none = false;
+    bool saw_option_map = false;
+    bool saw_option_and_then = false;
+    bool saw_option_or_else = false;
+    bool saw_option_filter = false;
+    bool saw_option_unwrap = false;
+    bool saw_option_unwrap_wrapper = false;
+    bool saw_option_unwrap_or_else = false;
+    bool saw_option_get_or_insert = false;
+    bool saw_result_is_ok = false;
+    bool saw_result_is_err = false;
+    bool saw_result_map = false;
+    bool saw_result_map_err = false;
+    bool saw_result_and_then = false;
+    bool saw_result_or_else = false;
+    bool saw_result_unwrap_or = false;
+    bool saw_result_ok = false;
+    bool saw_result_err = false;
+    for (const auto &site : result.typed_program.fn_call_sites) {
+        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
+        if (!symbol.has_value()) {
+            continue;
+        }
+        if (symbol->get().canonical_name == "std::option::is_some") {
+            saw_option_is_some = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::is_none") {
+            saw_option_is_none = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::map") {
+            saw_option_map = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::and_then") {
+            saw_option_and_then = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::or_else") {
+            saw_option_or_else = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::filter") {
+            saw_option_filter = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::unwrap_or") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            const auto arg_type = site.type_args[0]->describe();
+            if (arg_type == "Int") {
+                saw_option_unwrap = true;
+            } else if (arg_type == "T") {
+                saw_option_unwrap_wrapper = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::option::unwrap_or_else") {
+            saw_option_unwrap_or_else = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::option::get_or_insert") {
+            saw_option_get_or_insert = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args[0] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::result::is_ok") {
+            saw_result_is_ok = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::is_err") {
+            saw_result_is_err = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::map") {
+            saw_result_map = true;
+            REQUIRE(site.type_args.size() == 3);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+            CHECK(site.type_args[2]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::map_err") {
+            saw_result_map_err = true;
+            REQUIRE(site.type_args.size() == 3);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+            CHECK(site.type_args[2]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::and_then") {
+            saw_result_and_then = true;
+            REQUIRE(site.type_args.size() == 3);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+            CHECK(site.type_args[2]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::or_else") {
+            saw_result_or_else = true;
+            REQUIRE(site.type_args.size() == 3);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+            CHECK(site.type_args[2]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::unwrap_or") {
+            saw_result_unwrap_or = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::ok") {
+            saw_result_ok = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+        } else if (symbol->get().canonical_name == "std::result::err") {
+            saw_result_err = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "String");
+        }
+    }
+    CHECK(saw_option_is_some);
+    CHECK(saw_option_is_none);
+    CHECK(saw_option_map);
+    CHECK(saw_option_and_then);
+    CHECK(saw_option_or_else);
+    CHECK(saw_option_filter);
+    CHECK(saw_option_unwrap);
+    CHECK(saw_option_unwrap_wrapper);
+    CHECK(saw_option_unwrap_or_else);
+    CHECK(saw_option_get_or_insert);
+    CHECK(saw_result_is_ok);
+    CHECK(saw_result_is_err);
+    CHECK(saw_result_map);
+    CHECK(saw_result_map_err);
+    CHECK(saw_result_and_then);
+    CHECK(saw_result_or_else);
+    CHECK(saw_result_unwrap_or);
+    CHECK(saw_result_ok);
+    CHECK(saw_result_err);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std collections List API") {
+    const auto root = make_temp_project("collections_api_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+import std::collections as collections;
+
+struct QualifiedBag {
+    xs: std::collections::List<Int>;
+}
+
+fn size(xs: List<Int>) -> Int {
+    return collections::length(xs);
+}
+
+fn empty(xs: List<Int>) -> Bool {
+    return collections::is_empty(xs);
+}
+
+fn inc_all(xs: List<Int>) -> List<Int> {
+    return collections::map<Int, Int>(xs, \x: Int -> x + 1);
+}
+
+fn total(xs: List<Int>) -> Int {
+    return collections::fold<Int, Int>(xs, 0, \(acc: Int, x: Int) -> acc + x);
+}
+
+fn joined(xs: List<Int>, ys: List<Int>) -> List<Int> {
+    return collections::append<Int>(xs, ys);
+}
+
+fn keep_positive(xs: List<Int>) -> List<Int> {
+    return collections::filter<Int>(xs, \x: Int -> x > 0);
+}
+
+fn empty_list_value() -> List<Int> {
+    return collections::empty<Int>();
+}
+
+fn singleton_list_value(value: Int) -> List<Int> {
+    return collections::singleton<Int>(value);
+}
+
+fn literal_first() -> Int {
+    let xs: List<Int> = [1, 2, 3];
+    return xs[0];
+}
+
+fn literal_length() -> Int {
+    let xs: List<Int> = [1, 2, 3];
+    return collections::length(xs);
+}
+
+fn maybe_at(xs: List<Int>, i: Int) -> Option<Int> {
+    return collections::list_get<Int>(xs, i);
+}
+
+fn maybe_first(xs: List<Int>) -> Option<Int> {
+    return collections::first<Int>(xs);
+}
+
+fn maybe_last(xs: List<Int>) -> Option<Int> {
+    return collections::last<Int>(xs);
+}
+
+fn maybe_one() -> Option<Int> {
+    return some(1);
+}
+
+fn maybe_none() -> Option<Int> {
+    return none;
+}
+
+fn none_check(value: Option<Int>) -> Bool {
+    return value == none;
+}
+
+fn has_member(values: Set<Int>, value: Int) -> Bool {
+    return collections::contains<Int>(values, value);
+}
+
+fn set_empty_check(values: Set<Int>) -> Bool {
+    return collections::set_is_empty<Int>(values);
+}
+
+fn empty_set_value() -> Set<Int> {
+    return collections::set_empty<Int>();
+}
+
+fn singleton_set_value(value: Int) -> Set<Int> {
+    return collections::set_singleton<Int>(value);
+}
+
+fn has_key(values: Map<String, Int>, key: String) -> Bool {
+    return collections::contains_key<String, Int>(values, key);
+}
+
+fn map_empty_check(values: Map<String, Int>) -> Bool {
+    return collections::map_is_empty<String, Int>(values);
+}
+
+fn empty_map_value() -> Map<String, Int> {
+    return collections::map_empty<String, Int>();
+}
+
+fn singleton_map_value(key: String, value: Int) -> Map<String, Int> {
+    return collections::map_singleton<String, Int>(key, value);
+}
+
+fn find_value(values: Map<String, Int>, key: String) -> Option<Int> {
+    return collections::map_get<String, Int>(values, key);
+}
+
+fn raw_first(xs: List<Int>) -> Int {
+    return collections::list_raw_get<Int>(xs, 0);
+}
+
+fn raw_replace(xs: List<Int>, value: Int) -> List<Int> {
+    return collections::list_raw_set<Int>(xs, 0, value);
+}
+
+fn raw_length(xs: List<Int>) -> Int {
+    return collections::list_raw_length<Int>(xs);
+}
+
+fn raw_alloc(n: Int) -> List<Int> {
+    return collections::list_raw_alloc<Int>(n);
+}
+
+fn raw_has_member(values: Set<Int>, value: Int) -> Bool {
+    return collections::set_raw_contains<Int>(values, value);
+}
+
+fn raw_set_size(values: Set<Int>) -> Int {
+    return collections::set_raw_size<Int>(values);
+}
+
+fn raw_find_value(values: Map<String, Int>, key: String) -> Int {
+    return collections::map_raw_get<String, Int>(values, key);
+}
+
+fn raw_has_key(values: Map<String, Int>, key: String) -> Bool {
+    return collections::map_raw_contains_key<String, Int>(values, key);
+}
+
+fn raw_map_size(values: Map<String, Int>) -> Int {
+    return collections::map_raw_size<String, Int>(values);
+}
+
+fn inferred_first() -> Int {
+    let xs = [4, 5, 6];
+    return xs[0];
+}
+
+fn inferred_some_is_none() -> Bool {
+    let value = some(42);
+    return value == none;
+}
+
+fn inferred_has_member() -> Bool {
+    let values = set [7, 8];
+    return collections::contains<Int>(values, 7);
+}
+
+fn inferred_missing_value() -> Bool {
+    let values = map ["z": 9];
+    return collections::map_get<String, Int>(values, "missing") == none;
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+    const auto bag_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Types, "QualifiedBag", "app::main");
+    REQUIRE(bag_symbol.has_value());
+    const auto bag = result.environment.get_struct(bag_symbol->get().id);
+    REQUIRE(bag.has_value());
+    const auto xs = bag->get().find_field("xs");
+    REQUIRE(xs.has_value());
+    REQUIRE(xs->get().type != nullptr);
+    CHECK(xs->get().type->describe() == "std::collections::List<Int>");
+    REQUIRE(bag_symbol->get().source_id.has_value());
+    const auto app_source_id = bag_symbol->get().source_id;
+
+    const auto expect_expr_type = [&](std::string_view text, std::string_view type) {
+        const auto *expr = result.typed_program.find_expr_by_range(
+            range_of(main_source, std::string{text}), app_source_id);
+        REQUIRE(expr != nullptr);
+        REQUIRE(expr->type != nullptr);
+        CHECK(expr->type->describe() == type);
+    };
+
+    expect_expr_type("[4, 5, 6]", "std::collections::List<Int>");
+    expect_expr_type("some(42)", "std::option::Option<Int>");
+    expect_expr_type("set [7, 8]", "std::collections::Set<Int>");
+    expect_expr_type("map [\"z\": 9]", "std::collections::Map<String, Int>");
+
+    const auto literal_first_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Functions, "literal_first", "app::main");
+    REQUIRE(literal_first_symbol.has_value());
+    const auto literal_first_fn = result.environment.get_fn(literal_first_symbol->get().id);
+    REQUIRE(literal_first_fn.has_value());
+    REQUIRE(literal_first_fn->get().return_type != nullptr);
+    CHECK(literal_first_fn->get().return_type->describe() == "Int");
+
+    const auto none_check_symbol = result.typed_program.find_local_symbol(
+        ahfl::SymbolNamespace::Functions, "none_check", "app::main");
+    REQUIRE(none_check_symbol.has_value());
+    const auto none_check_fn = result.environment.get_fn(none_check_symbol->get().id);
+    REQUIRE(none_check_fn.has_value());
+    REQUIRE(none_check_fn->get().params.size() == 1);
+    REQUIRE(none_check_fn->get().params.front().type != nullptr);
+    CHECK(none_check_fn->get().params.front().type->describe() == "std::option::Option<Int>");
+
+    const auto expect_collection_builtin = [&](std::string_view canonical_name,
+                                               std::string_view builtin_name) {
+        const auto symbol =
+            std::find_if(result.typed_program.symbols.begin(),
+                         result.typed_program.symbols.end(),
+                         [&](const ahfl::Symbol &candidate) {
+                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
+                                    candidate.canonical_name == canonical_name;
+                         });
+        REQUIRE(symbol != result.typed_program.symbols.end());
+
+        const auto decl = std::find_if(
+            result.typed_program.declarations.begin(),
+            result.typed_program.declarations.end(),
+            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
+        REQUIRE(decl != result.typed_program.declarations.end());
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
+        REQUIRE(fn != nullptr);
+        REQUIRE(fn->builtin_name.has_value());
+        CHECK(*fn->builtin_name == builtin_name);
+    };
+
+    const auto expect_collection_wrapper = [&](std::string_view canonical_name) {
+        const auto symbol =
+            std::find_if(result.typed_program.symbols.begin(),
+                         result.typed_program.symbols.end(),
+                         [&](const ahfl::Symbol &candidate) {
+                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
+                                    candidate.canonical_name == canonical_name;
+                         });
+        REQUIRE(symbol != result.typed_program.symbols.end());
+
+        const auto decl = std::find_if(
+            result.typed_program.declarations.begin(),
+            result.typed_program.declarations.end(),
+            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
+        REQUIRE(decl != result.typed_program.declarations.end());
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
+        REQUIRE(fn != nullptr);
+        CHECK_FALSE(fn->builtin_name.has_value());
+        CHECK(fn->has_body);
+        CHECK(fn->body_block_index != UINT32_MAX);
+    };
+
+    expect_collection_wrapper("std::collections::length");
+    expect_collection_wrapper("std::collections::is_empty");
+    expect_collection_wrapper("std::collections::empty");
+    expect_collection_wrapper("std::collections::singleton");
+    expect_collection_wrapper("std::collections::list_get");
+    expect_collection_wrapper("std::collections::first");
+    expect_collection_wrapper("std::collections::last");
+    expect_collection_wrapper("std::collections::contains");
+    expect_collection_wrapper("std::collections::set_is_empty");
+    expect_collection_wrapper("std::collections::set_empty");
+    expect_collection_wrapper("std::collections::set_singleton");
+    expect_collection_wrapper("std::collections::contains_key");
+    expect_collection_wrapper("std::collections::map_is_empty");
+    expect_collection_wrapper("std::collections::map_empty");
+    expect_collection_wrapper("std::collections::map_singleton");
+    expect_collection_wrapper("std::collections::map_get");
+    expect_collection_wrapper("std::collections::append");
+    expect_collection_wrapper("std::collections::map");
+    expect_collection_wrapper("std::collections::filter");
+    expect_collection_wrapper("std::collections::fold");
+    expect_collection_builtin("std::collections::list_raw_get", "list_raw_get");
+    expect_collection_builtin("std::collections::list_raw_set", "list_raw_set");
+    expect_collection_builtin("std::collections::list_raw_length", "list_raw_length");
+    expect_collection_builtin("std::collections::list_raw_alloc", "list_raw_alloc");
+    expect_collection_builtin("std::collections::set_raw_contains", "set_raw_contains");
+    expect_collection_builtin("std::collections::set_raw_size", "set_raw_size");
+    expect_collection_builtin("std::collections::set_raw_empty", "set_raw_empty");
+    expect_collection_builtin("std::collections::set_raw_singleton", "set_raw_singleton");
+    expect_collection_builtin("std::collections::map_raw_get", "map_raw_get");
+    expect_collection_builtin("std::collections::map_raw_contains_key", "map_raw_contains_key");
+    expect_collection_builtin("std::collections::map_raw_size", "map_raw_size");
+    expect_collection_builtin("std::collections::map_raw_empty", "map_raw_empty");
+    expect_collection_builtin("std::collections::map_raw_singleton", "map_raw_singleton");
+
+    bool saw_length_call = false;
+    bool saw_is_empty_call = false;
+    bool saw_empty_call = false;
+    bool saw_empty_wrapper_call = false;
+    bool saw_singleton_call = false;
+    bool saw_singleton_wrapper_call = false;
+    bool saw_append_call = false;
+    bool saw_append_wrapper_call = false;
+    bool saw_map_call = false;
+    bool saw_filter_call = false;
+    bool saw_fold_call = false;
+    bool saw_list_get_call = false;
+    bool saw_first_call = false;
+    bool saw_last_call = false;
+    bool saw_contains_call = false;
+    bool saw_set_is_empty_call = false;
+    bool saw_set_empty_call = false;
+    bool saw_set_singleton_call = false;
+    bool saw_contains_key_call = false;
+    bool saw_map_is_empty_call = false;
+    bool saw_map_empty_call = false;
+    bool saw_map_singleton_call = false;
+    bool saw_map_get_call = false;
+    bool saw_list_raw_get_call = false;
+    bool saw_list_raw_get_wrapper_call = false;
+    bool saw_list_raw_set_call = false;
+    bool saw_list_raw_set_wrapper_call = false;
+    bool saw_list_raw_length_call = false;
+    bool saw_list_raw_length_wrapper_call = false;
+    bool saw_list_raw_alloc_call = false;
+    bool saw_list_raw_alloc_wrapper_call = false;
+    bool saw_set_raw_contains_call = false;
+    bool saw_set_raw_contains_wrapper_call = false;
+    bool saw_set_raw_size_call = false;
+    bool saw_set_raw_size_wrapper_call = false;
+    bool saw_set_raw_empty_wrapper_call = false;
+    bool saw_set_raw_singleton_wrapper_call = false;
+    bool saw_map_raw_get_call = false;
+    bool saw_map_raw_get_wrapper_call = false;
+    bool saw_map_raw_contains_key_call = false;
+    bool saw_map_raw_contains_key_wrapper_call = false;
+    bool saw_map_raw_size_call = false;
+    bool saw_map_raw_size_wrapper_call = false;
+    bool saw_map_raw_empty_wrapper_call = false;
+    bool saw_map_raw_singleton_wrapper_call = false;
+    for (const auto &site : result.typed_program.fn_call_sites) {
+        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
+        if (!symbol.has_value()) {
+            continue;
+        }
+
+        if (symbol->get().canonical_name == "std::collections::length") {
+            saw_length_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::is_empty") {
+            saw_is_empty_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::empty") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_empty_call = true;
+            } else if (arg_type == "T") {
+                saw_empty_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::singleton") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_singleton_call = true;
+            } else if (arg_type == "T") {
+                saw_singleton_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::append") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_append_call = true;
+            } else if (arg_type == "T") {
+                saw_append_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::map") {
+            saw_map_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::filter") {
+            saw_filter_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::fold") {
+            saw_fold_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::list_get") {
+            saw_list_get_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::first") {
+            saw_first_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::last") {
+            saw_last_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::contains") {
+            saw_contains_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::set_is_empty") {
+            saw_set_is_empty_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::set_empty") {
+            saw_set_empty_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::set_singleton") {
+            saw_set_singleton_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::contains_key") {
+            saw_contains_key_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "String");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::map_is_empty") {
+            saw_map_is_empty_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "String");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::map_empty") {
+            saw_map_empty_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "String");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::map_singleton") {
+            saw_map_singleton_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "String");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::map_get") {
+            saw_map_get_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "String");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_list_raw_get_call = true;
+            } else if (arg_type == "T") {
+                saw_list_raw_get_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::list_raw_set") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_list_raw_set_call = true;
+            } else if (arg_type == "T" || arg_type == "U") {
+                saw_list_raw_set_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::list_raw_length") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_list_raw_length_call = true;
+            } else if (arg_type == "T") {
+                saw_list_raw_length_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::list_raw_alloc") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_list_raw_alloc_call = true;
+            } else if (arg_type == "T" || arg_type == "U") {
+                saw_list_raw_alloc_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::set_raw_contains") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_set_raw_contains_call = true;
+            } else if (arg_type == "T") {
+                saw_set_raw_contains_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::set_raw_size") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                saw_set_raw_size_call = true;
+            } else if (arg_type == "T") {
+                saw_set_raw_size_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::set_raw_empty") {
+            saw_set_raw_empty_wrapper_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "T");
+        } else if (symbol->get().canonical_name == "std::collections::set_raw_singleton") {
+            saw_set_raw_singleton_wrapper_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "T");
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_get") {
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            const auto key_type = site.type_args[0]->describe();
+            const auto value_type = site.type_args[1]->describe();
+            if (key_type == "String" && value_type == "Int") {
+                saw_map_raw_get_call = true;
+            } else if (key_type == "K" && value_type == "V") {
+                saw_map_raw_get_wrapper_call = true;
+            } else {
+                CHECK(key_type == "String");
+                CHECK(value_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_contains_key") {
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            const auto key_type = site.type_args[0]->describe();
+            const auto value_type = site.type_args[1]->describe();
+            if (key_type == "String" && value_type == "Int") {
+                saw_map_raw_contains_key_call = true;
+            } else if (key_type == "K" && value_type == "V") {
+                saw_map_raw_contains_key_wrapper_call = true;
+            } else {
+                CHECK(key_type == "String");
+                CHECK(value_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_size") {
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            const auto key_type = site.type_args[0]->describe();
+            const auto value_type = site.type_args[1]->describe();
+            if (key_type == "String" && value_type == "Int") {
+                saw_map_raw_size_call = true;
+            } else if (key_type == "K" && value_type == "V") {
+                saw_map_raw_size_wrapper_call = true;
+            } else {
+                CHECK(key_type == "String");
+                CHECK(value_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_empty") {
+            saw_map_raw_empty_wrapper_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "K");
+            CHECK(site.type_args[1]->describe() == "V");
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_singleton") {
+            saw_map_raw_singleton_wrapper_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "K");
+            CHECK(site.type_args[1]->describe() == "V");
+        }
+    }
+    CHECK(saw_length_call);
+    CHECK(saw_is_empty_call);
+    CHECK(saw_empty_call);
+    CHECK(saw_empty_wrapper_call);
+    CHECK(saw_singleton_call);
+    CHECK(saw_singleton_wrapper_call);
+    CHECK(saw_append_call);
+    CHECK(saw_append_wrapper_call);
+    CHECK(saw_map_call);
+    CHECK(saw_filter_call);
+    CHECK(saw_fold_call);
+    CHECK(saw_list_get_call);
+    CHECK(saw_first_call);
+    CHECK(saw_last_call);
+    CHECK(saw_contains_call);
+    CHECK(saw_set_is_empty_call);
+    CHECK(saw_set_empty_call);
+    CHECK(saw_set_singleton_call);
+    CHECK(saw_contains_key_call);
+    CHECK(saw_map_is_empty_call);
+    CHECK(saw_map_empty_call);
+    CHECK(saw_map_singleton_call);
+    CHECK(saw_map_get_call);
+    CHECK(saw_list_raw_get_call);
+    CHECK(saw_list_raw_get_wrapper_call);
+    CHECK(saw_list_raw_set_call);
+    CHECK(saw_list_raw_set_wrapper_call);
+    CHECK(saw_list_raw_length_call);
+    CHECK(saw_list_raw_length_wrapper_call);
+    CHECK(saw_list_raw_alloc_call);
+    CHECK(saw_list_raw_alloc_wrapper_call);
+    CHECK(saw_set_raw_contains_call);
+    CHECK(saw_set_raw_contains_wrapper_call);
+    CHECK(saw_set_raw_size_call);
+    CHECK(saw_set_raw_size_wrapper_call);
+    CHECK(saw_set_raw_empty_wrapper_call);
+    CHECK(saw_set_raw_singleton_wrapper_call);
+    CHECK(saw_map_raw_get_call);
+    CHECK(saw_map_raw_get_wrapper_call);
+    CHECK(saw_map_raw_contains_key_call);
+    CHECK(saw_map_raw_contains_key_wrapper_call);
+    CHECK(saw_map_raw_size_call);
+    CHECK(saw_map_raw_size_wrapper_call);
+    CHECK(saw_map_raw_empty_wrapper_call);
+    CHECK(saw_map_raw_singleton_wrapper_call);
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+
+    bool restored_length_call = false;
+    bool restored_is_empty_call = false;
+    bool restored_map_call = false;
+    bool restored_fold_call = false;
+    bool restored_list_raw_get_call = false;
+    bool restored_list_raw_get_wrapper_call = false;
+    bool restored_map_raw_get_call = false;
+    bool restored_map_raw_get_wrapper_call = false;
+    for (const auto &site : restored->fn_call_sites) {
+        const auto symbol = restored->find_symbol(site.fn_symbol);
+        if (!symbol.has_value()) {
+            continue;
+        }
+        if (symbol->get().canonical_name == "std::collections::length") {
+            restored_length_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::is_empty") {
+            restored_is_empty_call = true;
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            CHECK(site.type_args.front()->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::map") {
+            restored_map_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::fold") {
+            restored_fold_call = true;
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(site.type_args[0]->describe() == "Int");
+            CHECK(site.type_args[1]->describe() == "Int");
+        } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
+            REQUIRE(site.type_args.size() == 1);
+            REQUIRE(site.type_args.front() != nullptr);
+            const auto arg_type = site.type_args.front()->describe();
+            if (arg_type == "Int") {
+                restored_list_raw_get_call = true;
+            } else if (arg_type == "T") {
+                restored_list_raw_get_wrapper_call = true;
+            } else {
+                CHECK(arg_type == "Int");
+            }
+        } else if (symbol->get().canonical_name == "std::collections::map_raw_get") {
+            REQUIRE(site.type_args.size() == 2);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            const auto key_type = site.type_args[0]->describe();
+            const auto value_type = site.type_args[1]->describe();
+            if (key_type == "String" && value_type == "Int") {
+                restored_map_raw_get_call = true;
+            } else if (key_type == "K" && value_type == "V") {
+                restored_map_raw_get_wrapper_call = true;
+            } else {
+                CHECK(key_type == "String");
+                CHECK(value_type == "Int");
+            }
+        }
+    }
+    CHECK(restored_length_call);
+    CHECK(restored_is_empty_call);
+    CHECK(restored_map_call);
+    CHECK(restored_fold_call);
+    CHECK(restored_list_raw_get_call);
+    CHECK(restored_list_raw_get_wrapper_call);
+    CHECK(restored_map_raw_get_call);
+    CHECK(restored_map_raw_get_wrapper_call);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std string time uuid APIs") {
+    const auto root = make_temp_project("stdlib_api_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+import std::string as strings;
+import std::time as time;
+import std::uuid as uuid;
+
+fn title_len(s: String) -> Int {
+    return strings::length(s);
+}
+
+fn title_empty(s: String) -> Bool {
+    return strings::is_empty(s);
+}
+
+fn title_join(left: String, right: String) -> String {
+    return strings::concat(left, right);
+}
+
+fn title_raw_len(s: String) -> Int {
+    return strings::raw_length(s);
+}
+
+fn title_raw_join(left: String, right: String) -> String {
+    return strings::raw_concat(left, right);
+}
+
+fn later(t: Timestamp, d: Duration) -> Timestamp {
+    return time::add(t, d);
+}
+
+fn parse_id(s: String) -> Option<UUID> {
+    return uuid::parse(s);
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+
+    const auto expect_builtin = [&](std::string_view canonical_name,
+                                    std::string_view builtin_name) {
+        const auto symbol =
+            std::find_if(result.typed_program.symbols.begin(),
+                         result.typed_program.symbols.end(),
+                         [&](const ahfl::Symbol &candidate) {
+                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
+                                    candidate.canonical_name == canonical_name;
+                         });
+        REQUIRE(symbol != result.typed_program.symbols.end());
+
+        const auto decl = std::find_if(
+            result.typed_program.declarations.begin(),
+            result.typed_program.declarations.end(),
+            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
+        REQUIRE(decl != result.typed_program.declarations.end());
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
+        REQUIRE(fn != nullptr);
+        REQUIRE(fn->builtin_name.has_value());
+        CHECK(*fn->builtin_name == builtin_name);
+    };
+
+    const auto expect_wrapper = [&](std::string_view canonical_name) {
+        const auto symbol =
+            std::find_if(result.typed_program.symbols.begin(),
+                         result.typed_program.symbols.end(),
+                         [&](const ahfl::Symbol &candidate) {
+                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
+                                    candidate.canonical_name == canonical_name;
+                         });
+        REQUIRE(symbol != result.typed_program.symbols.end());
+
+        const auto decl = std::find_if(
+            result.typed_program.declarations.begin(),
+            result.typed_program.declarations.end(),
+            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
+        REQUIRE(decl != result.typed_program.declarations.end());
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
+        REQUIRE(fn != nullptr);
+        CHECK_FALSE(fn->builtin_name.has_value());
+        CHECK(fn->has_body);
+        CHECK(fn->body_block_index != UINT32_MAX);
+    };
+
+    expect_wrapper("std::string::length");
+    expect_wrapper("std::string::is_empty");
+    expect_wrapper("std::string::concat");
+    expect_builtin("std::string::raw_length", "string_raw_length");
+    expect_builtin("std::string::raw_concat", "string_raw_concat");
+    expect_builtin("std::string::contains", "string_contains");
+    expect_builtin("std::string::starts_with", "string_starts_with");
+    expect_builtin("std::string::ends_with", "string_ends_with");
+    expect_builtin("std::time::add", "time_add");
+    expect_builtin("std::uuid::parse", "uuid_parse");
+
+    bool saw_string_length = false;
+    bool saw_string_is_empty = false;
+    bool saw_string_concat = false;
+    bool saw_string_raw_length = false;
+    bool saw_string_raw_concat = false;
+    bool saw_time = false;
+    bool saw_uuid = false;
+    for (const auto &site : result.typed_program.fn_call_sites) {
+        const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
+        if (!symbol.has_value()) {
+            continue;
+        }
+        saw_string_length =
+            saw_string_length || symbol->get().canonical_name == "std::string::length";
+        saw_string_is_empty =
+            saw_string_is_empty || symbol->get().canonical_name == "std::string::is_empty";
+        saw_string_concat =
+            saw_string_concat || symbol->get().canonical_name == "std::string::concat";
+        saw_string_raw_length =
+            saw_string_raw_length || symbol->get().canonical_name == "std::string::raw_length";
+        saw_string_raw_concat =
+            saw_string_raw_concat || symbol->get().canonical_name == "std::string::raw_concat";
+        saw_time = saw_time || symbol->get().canonical_name == "std::time::add";
+        saw_uuid = saw_uuid || symbol->get().canonical_name == "std::uuid::parse";
+    }
+
+    CHECK(saw_string_length);
+    CHECK(saw_string_is_empty);
+    CHECK(saw_string_concat);
+    CHECK(saw_string_raw_length);
+    CHECK(saw_string_raw_concat);
+    CHECK(saw_time);
+    CHECK(saw_uuid);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "P6 stdlib builtin declarations match compiler hook allowlist") {
+    const auto root = make_temp_project("stdlib_builtin_contract_project");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string main_source = R"AHFL(
+module app::main;
+import std::collections as collections;
+import std::option as option;
+import std::result as results;
+import std::string as strings;
+import std::time as time;
+import std::uuid as uuid;
+
+fn smoke() -> Int {
+    return 0;
+}
+)AHFL";
+
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+
+    std::unordered_set<std::string> declared_hooks;
+    for (const auto &decl : result.typed_program.declarations) {
+        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl.payload);
+        if (fn == nullptr || !fn->builtin_name.has_value()) {
+            continue;
+        }
+
+        const auto symbol = result.typed_program.find_symbol(decl.symbol);
+        REQUIRE(symbol.has_value());
+        if (!symbol->get().canonical_name.starts_with("std::")) {
+            continue;
+        }
+
+        CAPTURE(symbol->get().canonical_name);
+        CHECK(ahfl::is_known_builtin_hook(*fn->builtin_name));
+        CHECK(declared_hooks.emplace(*fn->builtin_name).second);
+    }
+
+    CHECK(declared_hooks.size() == ahfl::known_builtin_hooks().size());
+    for (const auto hook : ahfl::known_builtin_hooks()) {
+        CAPTURE(hook);
+        CHECK(declared_hooks.contains(std::string(hook)));
+    }
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr dependency cycles report structured diagnostics") {
@@ -905,14 +2357,18 @@ const Broken: Mode = Mode::MissingVariant;
 
 TEST_CASE_FIXTURE(TypedHIRFixture,
                   "Schema boundary declaration diagnostics use stable code and template") {
+    const auto root = make_temp_project("schema_boundary_project");
+    const auto source_path = module_source_path(root, "typed::schema_boundary");
     const std::string source = R"AHFL(
+module typed::schema_boundary;
+
 struct Request { value: String; }
 struct Context { value: String = ""; }
 struct Response { value: String; }
 
 agent InvalidAgent {
     input: Int;
-    context: List<String>;
+    context: Optional<String>;
     output: Optional<String>;
     states: [Init, Done];
     initial: Init;
@@ -933,14 +2389,15 @@ agent Worker {
 }
 
 workflow InvalidWorkflow {
-    input: List<String>;
+    input: Int;
     output: Optional<String>;
     node run: Worker(Request { value: "ok" });
     return: run;
 }
 )AHFL";
 
-    const auto result = check_with_errors(source);
+    write_file(source_path, source);
+    const auto result = check_project_with_errors(root, {source_path});
     REQUIRE(result.has_errors());
     CHECK(diagnostic_with_code_and_message(
         result.diagnostics,
@@ -967,6 +2424,8 @@ workflow InvalidWorkflow {
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck applies covariant container variance rules") {
+    const auto root = make_temp_project("container_variance_project");
+    const auto source_path = root / "typed" / "variance.ahfl";
     const std::string source = R"AHFL(
 module typed::variance;
 import typed::variance as self;
@@ -983,8 +2442,9 @@ const WideSet: Set<String> = self::NarrowSet;
 const NarrowMapValue: Map<String, String(2, 8)> = map [];
 const WideMapValue: Map<String, String> = self::NarrowMapValue;
 )AHFL";
+    write_file(source_path, source);
 
-    const auto result = check(source);
+    const auto result = check_project(root, {source_path});
     const auto require_const_type = [&](std::string_view name, std::string_view expected) {
         const auto symbol = result.typed_program.find_local_symbol(
             ahfl::SymbolNamespace::Consts, name, "typed::variance");
@@ -994,13 +2454,15 @@ const WideMapValue: Map<String, String> = self::NarrowMapValue;
         CHECK(type->get().describe() == expected);
     };
 
-    require_const_type("WideOptional", "Optional<String>");
-    require_const_type("WideList", "List<String>");
-    require_const_type("WideSet", "Set<String>");
-    require_const_type("WideMapValue", "Map<String, String>");
+    require_const_type("WideOptional", "std::option::Option<String>");
+    require_const_type("WideList", "std::collections::List<String>");
+    require_const_type("WideSet", "std::collections::Set<String>");
+    require_const_type("WideMapValue", "std::collections::Map<String, String>");
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck keeps map keys invariant") {
+    const auto root = make_temp_project("container_map_key_variance_project");
+    const auto source_path = root / "typed" / "variance.ahfl";
     const std::string source = R"AHFL(
 module typed::variance;
 import typed::variance as self;
@@ -1008,14 +2470,17 @@ import typed::variance as self;
 const NarrowMapKey: Map<String(2, 8), Int> = map [];
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 )AHFL";
+    write_file(source_path, source);
 
-    const auto result = check_with_errors(source);
+    const auto result = check_project_with_errors(root, {source_path});
     REQUIRE(result.has_errors());
     CHECK(diagnostic_with_code_and_message(
         result.diagnostics,
         "typecheck.TYPE_MISMATCH",
         ahfl::messages::typecheck::TypeMismatch.format_with(
-            "const initializer", "Map<String, Int>", "Map<String(2, 8), Int>")));
+            "const initializer",
+            "std::collections::Map<String, Int>",
+            "std::collections::Map<String(2, 8), Int>")));
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "TypeEnvironment nominal lookup is SymbolId-first") {
@@ -1268,8 +2733,49 @@ flow for A {
     CHECK(ast_fp == detached_fp);
 }
 
+TEST_CASE_FIXTURE(TypedHIRFixture, "P2 lowered IR carries top-level fn body block") {
+    const std::string source = R"AHFL(
+fn inc(x: Int) -> Int effect Pure decreases 0 {
+    let y: Int = x + 1;
+    return y;
+}
+)AHFL";
+
+    const auto parse = frontend.parse_text("typed_hir_fn_body_lowering.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+
+    ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    const auto lowered = ahfl::lower_typed_program(tc.typed_program, *parse.program);
+    CHECK_FALSE(ahfl::ir::verify_ir_program(lowered).has_errors());
+
+    const ahfl::ir::FnDecl *fn = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *candidate = std::get_if<ahfl::ir::FnDecl>(&decl);
+            candidate != nullptr && candidate->name == "inc") {
+            fn = candidate;
+            break;
+        }
+    }
+    REQUIRE(fn != nullptr);
+    CHECK(fn->has_body);
+    REQUIRE(fn->body != nullptr);
+    REQUIRE(fn->body->statements.size() == 2);
+    CHECK(std::get_if<ahfl::ir::LetStatement>(&fn->body->statements[0]->node) != nullptr);
+    CHECK(std::get_if<ahfl::ir::ReturnStatement>(&fn->body->statements[1]->node) != nullptr);
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
+    const auto root = make_temp_project("snapshot_project");
+    const auto source_path = module_source_path(root, "typed::snapshot");
     const std::string source = R"AHFL(
 module typed::snapshot;
 
@@ -1320,7 +2826,8 @@ workflow RunWorker {
 }
 )AHFL";
 
-    const auto tc = check(source);
+    write_file(source_path, source);
+    const auto tc = check_project(root, {source_path});
     const auto snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
     REQUIRE(snapshot.find("AHFL_TYPED_HIR_V1") != std::string::npos);
     REQUIRE(snapshot.find(std::string(ahfl::kConstValueArtifactSchemaVersion)) !=
@@ -1350,19 +2857,25 @@ workflow RunWorker {
                      restored->declarations.end(),
                      [](const ahfl::TypedDecl &decl) {
                          return decl.kind == ahfl::ast::NodeKind::ModuleDecl &&
-                                std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload);
+                                std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload) &&
+                                std::get<ahfl::ModuleDeclInfo>(decl.payload).name ==
+                                    "typed::snapshot";
                      });
     REQUIRE(module_it != restored->declarations.end());
     const auto *module_info = std::get_if<ahfl::ModuleDeclInfo>(&module_it->payload);
     REQUIRE(module_info != nullptr);
     CHECK(module_info->name == "typed::snapshot");
 
+    const auto default_code_symbol = restored->find_local_symbol(
+        ahfl::SymbolNamespace::Consts, "DefaultCode", "typed::snapshot");
+    REQUIRE(default_code_symbol.has_value());
     const auto const_it =
         std::find_if(restored->declarations.begin(),
                      restored->declarations.end(),
-                     [](const ahfl::TypedDecl &decl) {
+                     [&](const ahfl::TypedDecl &decl) {
                          return decl.kind == ahfl::ast::NodeKind::ConstDecl &&
-                                std::holds_alternative<ahfl::ConstDeclInfo>(decl.payload);
+                                std::holds_alternative<ahfl::ConstDeclInfo>(decl.payload) &&
+                                decl.symbol == default_code_symbol->get().id;
                      });
     REQUIRE(const_it != restored->declarations.end());
     const auto *const_info = std::get_if<ahfl::ConstDeclInfo>(&const_it->payload);
@@ -1371,12 +2884,16 @@ workflow RunWorker {
     REQUIRE(const_info->type != nullptr);
     CHECK(const_info->type->describe() == "Int");
 
+    const auto label_symbol =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Label", "typed::snapshot");
+    REQUIRE(label_symbol.has_value());
     const auto alias_it =
         std::find_if(restored->declarations.begin(),
                      restored->declarations.end(),
-                     [](const ahfl::TypedDecl &decl) {
+                     [&](const ahfl::TypedDecl &decl) {
                          return decl.kind == ahfl::ast::NodeKind::TypeAliasDecl &&
-                                std::holds_alternative<ahfl::TypeAliasDeclInfo>(decl.payload);
+                                std::holds_alternative<ahfl::TypeAliasDeclInfo>(decl.payload) &&
+                                decl.symbol == label_symbol->get().id;
                      });
     REQUIRE(alias_it != restored->declarations.end());
     const auto *alias_info = std::get_if<ahfl::TypeAliasDeclInfo>(&alias_it->payload);
@@ -1409,12 +2926,16 @@ workflow RunWorker {
     CHECK(indexed_expr->type->describe() == expr_it->type->describe());
     CHECK(ahfl::resolve_child(*restored, expr_it->children.front()) != nullptr);
 
+    const auto req_symbol =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Req", "typed::snapshot");
+    REQUIRE(req_symbol.has_value());
     const auto struct_it =
         std::find_if(restored->declarations.begin(),
                      restored->declarations.end(),
-                     [](const ahfl::TypedDecl &decl) {
+                     [&](const ahfl::TypedDecl &decl) {
                          return decl.kind == ahfl::ast::NodeKind::StructDecl &&
-                                std::holds_alternative<ahfl::StructTypeInfo>(decl.payload);
+                                std::holds_alternative<ahfl::StructTypeInfo>(decl.payload) &&
+                                decl.symbol == req_symbol->get().id;
                      });
     REQUIRE(struct_it != restored->declarations.end());
     const auto *struct_info = std::get_if<ahfl::StructTypeInfo>(&struct_it->payload);
@@ -1544,10 +3065,11 @@ TEST_CASE("T5.4 same-shape types get identical pointers in one context") {
           tc.enum_type("pkg::Bar", ahfl::SymbolId{9}));
 
     const auto s = tc.string();
-    CHECK(tc.optional(s) == tc.optional(s));
-    CHECK(tc.list(s) == tc.list(s));
-    CHECK(tc.set(s) == tc.set(s));
-    CHECK(tc.map(s, tc.make(ahfl::TypeKind::Int)) == tc.map(s, tc.make(ahfl::TypeKind::Int)));
+    CHECK(option_type(tc, s) == option_type(tc, s));
+    CHECK(list_type(tc, s) == list_type(tc, s));
+    CHECK(set_type(tc, s) == set_type(tc, s));
+    CHECK(map_type(tc, s, tc.make(ahfl::TypeKind::Int)) ==
+          map_type(tc, s, tc.make(ahfl::TypeKind::Int)));
 }
 
 TEST_CASE("T5.4 two independent contexts: different pointers, structural eq") {
@@ -1564,8 +3086,8 @@ TEST_CASE("T5.4 two independent contexts: different pointers, structural eq") {
     CHECK(static_cast<const void *>(ls) != static_cast<const void *>(rs));
     CHECK(ctx.equivalent(*ls, *rs));
 
-    const auto *lo = left.optional(left.make(ahfl::TypeKind::Int));
-    const auto *ro = right.optional(right.make(ahfl::TypeKind::Int));
+    const auto *lo = option_type(left, left.make(ahfl::TypeKind::Int));
+    const auto *ro = option_type(right, right.make(ahfl::TypeKind::Int));
     CHECK(static_cast<const void *>(lo) != static_cast<const void *>(ro));
     CHECK(ctx.equivalent(*lo, *ro));
 
@@ -1600,10 +3122,10 @@ TEST_CASE("T5.4 multi-thread intern of same-shape is stable and crash-free") {
                 return;
             }
 
-            const auto *c =
-                tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
-            const auto *d =
-                tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
+            const auto *c = map_type(
+                tc, list_type(tc, option_type(tc, tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
+            const auto *d = map_type(
+                tc, list_type(tc, option_type(tc, tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
             if (c != d || c == nullptr) {
                 errors.fetch_add(1);
                 return;
@@ -1897,7 +3419,11 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     //   state Done   -> let / return
     // The `if` branches also contain statements so nested BlockSyntax nodes
     // are exercised for parity and TypedProgram.blocks coverage.
+    const auto root = make_temp_project("statement_parity_project");
+    const auto source_path = module_source_path(root, "typed::statement_parity");
     const std::string source = R"AHFL(
+module typed::statement_parity;
+
 struct Req { v: String; token: Optional<String> = none; }
 struct Ctx { v: String = ""; count: Int = 0; }
 struct Resp { v: String; code: Int = 200; }
@@ -1952,20 +3478,31 @@ flow for Worker {
 }
 )AHFL";
 
-    // Parse + resolve + typecheck via fixture.
-    const auto parse = frontend.parse_text("t16_p3_parity.ahfl", source);
+    write_file(source_path, source);
+    const auto parse = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {source_path},
+        .search_roots = {root},
+    });
     REQUIRE_FALSE(parse.has_errors());
-    REQUIRE(parse.program != nullptr);
+    const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_parity");
+    REQUIRE(source_unit != nullptr);
+    REQUIRE(source_unit->program != nullptr);
+
     ahfl::Resolver resolver;
-    const auto resolve = resolver.resolve(*parse.program);
+    const auto resolve = resolver.resolve(parse.graph);
     REQUIRE_FALSE(resolve.has_errors());
     ahfl::TypeChecker checker;
-    const auto tc = checker.check(*parse.program, resolve);
+    const auto tc = checker.check(parse.graph, resolve);
     REQUIRE_FALSE(tc.has_errors());
 
     // --- TC1 assertions ----------------------------------------------------
-    const std::size_t total_ast_stmt_count = total_flow_statement_count(*parse.program);
-    const std::size_t typed_stmt_count = tc.typed_program.statements.size();
+    const std::size_t total_ast_stmt_count = total_flow_statement_count(*source_unit->program);
+    std::size_t typed_stmt_count = 0;
+    for (const auto &statement : tc.typed_program.statements) {
+        if (statement.source_id.has_value() && *statement.source_id == source_unit->id) {
+            ++typed_stmt_count;
+        }
+    }
 
     // The typechecker records exactly one TypedStatement per AST
     // StatementSyntax (including statements inside nested if/then/else
@@ -1979,14 +3516,24 @@ flow for Worker {
     //   * then block of the `if (input.token != none)`
     //   * else block of the same if
     //   (state Done body is an additional fourth)
-    CHECK(tc.typed_program.blocks.size() >= 3);
+    std::size_t typed_block_count = 0;
+    for (const auto &block : tc.typed_program.blocks) {
+        if (block.source_id.has_value() && *block.source_id == source_unit->id) {
+            ++typed_block_count;
+        }
+    }
+    CHECK(typed_block_count >= 3);
 
     // Secondary structural check: at least one TypedStatement per kind must
     // appear in the flat store for the 7 kinds we explicitly used.
     using K = ahfl::TypedStmtKind;
     std::unordered_set<K> seen_kinds;
-    for (const auto &s : tc.typed_program.statements)
+    for (const auto &s : tc.typed_program.statements) {
+        if (!s.source_id.has_value() || *s.source_id != source_unit->id) {
+            continue;
+        }
         seen_kinds.insert(s.kind);
+    }
     CHECK(seen_kinds.contains(K::Let));
     CHECK(seen_kinds.contains(K::Assign));
     CHECK(seen_kinds.contains(K::If));
@@ -2000,7 +3547,11 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
                   "T1.6 P2 TypedStatement children resolve to valid TypedExpr records") {
     // Use the same rich source as TC1 so every statement kind has a chance
     // to carry non-trivial children_expr_index entries.
+    const auto root = make_temp_project("statement_children_project");
+    const auto source_path = module_source_path(root, "typed::statement_children");
     const std::string source = R"AHFL(
+module typed::statement_children;
+
 struct Req { v: String; token: Optional<String> = none; }
 struct Ctx { v: String = ""; count: Int = 0; }
 struct Resp { v: String; code: Int = 200; }
@@ -2045,14 +3596,20 @@ flow for Worker {
 }
 )AHFL";
 
-    const auto parse = frontend.parse_text("t16_p3_children.ahfl", source);
+    write_file(source_path, source);
+    const auto parse = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {source_path},
+        .search_roots = {root},
+    });
     REQUIRE_FALSE(parse.has_errors());
-    REQUIRE(parse.program != nullptr);
+    const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_children");
+    REQUIRE(source_unit != nullptr);
+
     ahfl::Resolver resolver;
-    const auto resolve = resolver.resolve(*parse.program);
+    const auto resolve = resolver.resolve(parse.graph);
     REQUIRE_FALSE(resolve.has_errors());
     ahfl::TypeChecker checker;
-    const auto tc = checker.check(*parse.program, resolve);
+    const auto tc = checker.check(parse.graph, resolve);
     REQUIRE_FALSE(tc.has_errors());
 
     // --- TC2 assertions ----------------------------------------------------
@@ -2064,6 +3621,9 @@ flow for Worker {
     std::size_t total_slots = 0;
     std::size_t valid_slots = 0;
     for (const auto &s : stmts) {
+        if (!s.source_id.has_value() || *s.source_id != source_unit->id) {
+            continue;
+        }
         for (const auto idx : s.children_expr_index) {
             ++total_slots;
             if (idx == UINT32_MAX) {

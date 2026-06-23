@@ -18,6 +18,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <ios>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -128,6 +131,19 @@ class RenameTemporalCalledRewriter final : public ahfl::ir::ProgramRewriter {
 [[nodiscard]] bool contains_string(const std::vector<std::string> &values,
                                    const std::string &needle) {
     return std::find(values.begin(), values.end(), needle) != values.end();
+}
+
+void write_file(const std::filesystem::path &path, const std::string &content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out << content;
+}
+
+[[nodiscard]] std::filesystem::path make_temp_project(std::string_view name) {
+    const auto root = std::filesystem::temp_directory_path() / ("ahfl_ir_" + std::string(name));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    return root;
 }
 
 [[nodiscard]] bool has_formal_observation_symbol(const ahfl::ir::Program &program,
@@ -714,6 +730,366 @@ flow for DetachedHirAgent {
     CHECK(let_statement->type_ref.display_name == "Int");
 }
 
+TEST_CASE("Typed HIR lowering desugars std List and Map indexing to raw builtin calls") {
+    const auto root = make_temp_project("std_index_raw_lowering");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string source = R"AHFL(
+module app::main;
+
+struct Request {
+    xs: List<Int>;
+    lookup: Map<String, Int>;
+}
+
+struct Context {}
+
+struct Response {
+    item: Int;
+    value: Int;
+}
+
+agent IndexAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for IndexAgent {
+    state Done {
+        let item = input.xs[0];
+        let value = input.lookup["k"];
+        return Response { item: item, value: value };
+    }
+}
+)AHFL";
+
+    write_file(main_path, source);
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered = ahfl::lower_program_ir(parse_result.graph, resolve_result, type_result);
+
+    const ahfl::ir::FlowDecl *flow = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        const auto *candidate = std::get_if<ahfl::ir::FlowDecl>(&decl);
+        if (candidate != nullptr && candidate->target_ref.local_name == "IndexAgent") {
+            flow = candidate;
+            break;
+        }
+    }
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE(flow->state_handlers.front().body.statements.size() >= 2);
+
+    const auto *list_let =
+        std::get_if<ahfl::ir::LetStatement>(&flow->state_handlers.front().body.statements[0]->node);
+    REQUIRE(list_let != nullptr);
+    REQUIRE(list_let->initializer != nullptr);
+    const auto *list_call = std::get_if<ahfl::ir::CallExpr>(&list_let->initializer->node);
+    REQUIRE(list_call != nullptr);
+    CHECK(list_call->callee == "list_raw_get");
+    CHECK(list_call->arguments.size() == 2);
+
+    const auto *map_let =
+        std::get_if<ahfl::ir::LetStatement>(&flow->state_handlers.front().body.statements[1]->node);
+    REQUIRE(map_let != nullptr);
+    REQUIRE(map_let->initializer != nullptr);
+    const auto *map_call = std::get_if<ahfl::ir::CallExpr>(&map_let->initializer->node);
+    REQUIRE(map_call != nullptr);
+    CHECK(map_call->callee == "map_raw_get");
+    CHECK(map_call->arguments.size() == 2);
+}
+
+TEST_CASE("Typed HIR lowering desugars std collection literals to runtime builtin calls") {
+    const auto root = make_temp_project("std_literal_builtin_lowering");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string source = R"AHFL(
+module app::main;
+
+struct Request {}
+struct Context {}
+
+struct Response {
+    value: Int;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let xs = [1, 2];
+        let values = set [1, 2];
+        let lookup = map ["a": 1];
+        return Response { value: xs[0] };
+    }
+}
+)AHFL";
+
+    write_file(main_path, source);
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered = ahfl::lower_program_ir(parse_result.graph, resolve_result, type_result);
+
+    const ahfl::ir::FlowDecl *flow = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        const auto *candidate = std::get_if<ahfl::ir::FlowDecl>(&decl);
+        if (candidate != nullptr && candidate->target_ref.local_name == "LiteralAgent") {
+            flow = candidate;
+            break;
+        }
+    }
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE(flow->state_handlers.front().body.statements.size() >= 3);
+
+    const auto expect_let_call =
+        [&](std::size_t statement_index, std::string_view callee, std::size_t argument_count) {
+            const auto *let = std::get_if<ahfl::ir::LetStatement>(
+                &flow->state_handlers.front().body.statements[statement_index]->node);
+            REQUIRE(let != nullptr);
+            REQUIRE(let->initializer != nullptr);
+            const auto *call = std::get_if<ahfl::ir::CallExpr>(&let->initializer->node);
+            REQUIRE(call != nullptr);
+            CHECK(call->callee == callee);
+            CHECK(call->arguments.size() == argument_count);
+        };
+
+    expect_let_call(0, "list_from_array", 2);
+    expect_let_call(1, "set_from_array", 2);
+    expect_let_call(2, "map_from_entries", 2);
+
+    const auto expect_let_type = [&](std::size_t statement_index,
+                                     ahfl::ir::TypeRefKind kind,
+                                     std::string_view canonical_name,
+                                     std::size_t type_arg_count) {
+        const auto *let = std::get_if<ahfl::ir::LetStatement>(
+            &flow->state_handlers.front().body.statements[statement_index]->node);
+        REQUIRE(let != nullptr);
+        CHECK(let->type_ref.kind == kind);
+        CHECK(let->type_ref.canonical_name == canonical_name);
+        CHECK(let->type_ref.params.size() == type_arg_count);
+    };
+
+    expect_let_type(0, ahfl::ir::TypeRefKind::Struct, "std::collections::List", 1);
+    expect_let_type(1, ahfl::ir::TypeRefKind::Struct, "std::collections::Set", 1);
+    expect_let_type(2, ahfl::ir::TypeRefKind::Struct, "std::collections::Map", 2);
+}
+
+TEST_CASE("Typed HIR lowering desugars std Option sugar to ADT constructor calls") {
+    const auto root = make_temp_project("std_option_constructor_lowering");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string source = R"AHFL(
+module app::main;
+
+struct Request {}
+struct Context {}
+
+struct Response {
+    value: Int;
+}
+
+agent OptionAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for OptionAgent {
+    state Done {
+        let present = some(1);
+        let missing: Option<Int> = none;
+        return Response { value: 0 };
+    }
+}
+)AHFL";
+
+    write_file(main_path, source);
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered = ahfl::lower_program_ir(parse_result.graph, resolve_result, type_result);
+
+    const ahfl::ir::FlowDecl *flow = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        const auto *candidate = std::get_if<ahfl::ir::FlowDecl>(&decl);
+        if (candidate != nullptr && candidate->target_ref.local_name == "OptionAgent") {
+            flow = candidate;
+            break;
+        }
+    }
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE(flow->state_handlers.front().body.statements.size() >= 2);
+
+    const auto expect_let_call =
+        [&](std::size_t statement_index, std::string_view callee, std::size_t argument_count) {
+            const auto *let = std::get_if<ahfl::ir::LetStatement>(
+                &flow->state_handlers.front().body.statements[statement_index]->node);
+            REQUIRE(let != nullptr);
+            REQUIRE(let->initializer != nullptr);
+            const auto *call = std::get_if<ahfl::ir::CallExpr>(&let->initializer->node);
+            REQUIRE(call != nullptr);
+            CHECK(call->callee == callee);
+            CHECK(call->arguments.size() == argument_count);
+        };
+
+    expect_let_call(0, "std::option::Option::Some", 1);
+    expect_let_call(1, "std::option::Option::None", 0);
+
+    const auto *present_let =
+        std::get_if<ahfl::ir::LetStatement>(&flow->state_handlers.front().body.statements[0]->node);
+    REQUIRE(present_let != nullptr);
+    CHECK(present_let->type_ref.kind == ahfl::ir::TypeRefKind::Enum);
+    CHECK(present_let->type_ref.canonical_name == "std::option::Option");
+    CHECK(present_let->type_ref.params.size() == 1);
+}
+
+TEST_CASE("Typed HIR lowering carries std higher-order lambda arguments into IR") {
+    const auto root = make_temp_project("std_higher_order_lambda_lowering");
+    const auto main_path = root / "app" / "main.ahfl";
+
+    const std::string source = R"AHFL(
+module app::main;
+
+import std::collections as collections;
+
+struct Request {}
+struct Context {}
+
+struct Response {
+    value: Int;
+}
+
+agent HigherOrderAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for HigherOrderAgent {
+    state Done {
+        let mapped = collections::map<Int, Int>([1, 2], \x: Int -> x + 1);
+        return Response { value: mapped[0] };
+    }
+}
+)AHFL";
+
+    write_file(main_path, source);
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(parse_result.graph, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered = ahfl::lower_program_ir(parse_result.graph, resolve_result, type_result);
+
+    const ahfl::ir::FlowDecl *flow = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        const auto *candidate = std::get_if<ahfl::ir::FlowDecl>(&decl);
+        if (candidate != nullptr && candidate->target_ref.local_name == "HigherOrderAgent") {
+            flow = candidate;
+            break;
+        }
+    }
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
+
+    const auto *let = std::get_if<ahfl::ir::LetStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(let != nullptr);
+    REQUIRE(let->initializer != nullptr);
+    const auto *call = std::get_if<ahfl::ir::CallExpr>(&let->initializer->node);
+    REQUIRE(call != nullptr);
+    CHECK(call->callee == "std::collections::map");
+    REQUIRE(call->arguments.size() == 2);
+
+    const auto *source_list = std::get_if<ahfl::ir::CallExpr>(&call->arguments[0]->node);
+    REQUIRE(source_list != nullptr);
+    CHECK(source_list->callee == "list_from_array");
+
+    const auto *lambda = std::get_if<ahfl::ir::LambdaExpr>(&call->arguments[1]->node);
+    REQUIRE(lambda != nullptr);
+    CHECK(lambda->params == std::vector<std::string>{"x"});
+    REQUIRE(lambda->body != nullptr);
+    const auto *body = std::get_if<ahfl::ir::BinaryExpr>(&lambda->body->node);
+    REQUIRE(body != nullptr);
+    CHECK(body->op == ahfl::ir::ExprBinaryOp::Add);
+}
+
 TEST_CASE("Typed HIR lowering prefers resolved call target metadata over AST references") {
     const std::string source = R"AHFL(
 struct Request {
@@ -792,6 +1168,86 @@ flow for MetadataCallAgent {
     const auto *return_call = std::get_if<ahfl::ir::CallExpr>(&return_statement->value->node);
     REQUIRE(return_call != nullptr);
     CHECK(return_call->callee == "Redirected");
+}
+
+TEST_CASE("Typed HIR lowering lowers method calls through impl metadata") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    value: Int;
+}
+
+impl Request {
+    fn positive(self: Request) -> Bool effect Pure decreases 0 {
+        return self.value > 0;
+    }
+}
+
+agent MethodCallAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+contract for MethodCallAgent {
+    requires: input.positive();
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_method_call_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto lowered =
+        ahfl::lower_typed_program(type_result.typed_program, *parse_result.program);
+
+    const ahfl::ir::ContractDecl *contract = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *candidate = std::get_if<ahfl::ir::ContractDecl>(&decl);
+            candidate != nullptr) {
+            contract = candidate;
+            break;
+        }
+        const bool supported_decl = std::get_if<ahfl::ir::FnDecl>(&decl) != nullptr ||
+                                    std::get_if<ahfl::ir::StructDecl>(&decl) != nullptr ||
+                                    std::get_if<ahfl::ir::AgentDecl>(&decl) != nullptr ||
+                                    std::get_if<ahfl::ir::ModuleDecl>(&decl) != nullptr;
+        CHECK(supported_decl);
+    }
+    REQUIRE(contract != nullptr);
+    REQUIRE(contract->clauses.size() == 1);
+
+    const auto *expr_ref = std::get_if<ahfl::ir::ExprRef>(&contract->clauses.front().value);
+    REQUIRE(expr_ref != nullptr);
+    REQUIRE(*expr_ref != nullptr);
+    const auto *call = std::get_if<ahfl::ir::CallExpr>(&(*expr_ref)->node);
+    REQUIRE(call != nullptr);
+    CHECK(call->callee == "impl#0::positive");
+    REQUIRE(call->arguments.size() == 1);
+    const auto *receiver = std::get_if<ahfl::ir::PathExpr>(&call->arguments.front()->node);
+    REQUIRE(receiver != nullptr);
+    CHECK(receiver->path.root_kind == ahfl::ir::PathRootKind::Input);
+    CHECK(receiver->path.root_name == "input");
 }
 
 TEST_CASE("Typed HIR lowering prefers resolved struct target metadata over AST references") {

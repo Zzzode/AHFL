@@ -98,14 +98,20 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
         return 1;
     }
 
-    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() != 2 ||
-        result.graph.import_edges.size() != 1) {
-        std::cerr << "unexpected source graph shape\n";
+    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() != 6 ||
+        result.graph.import_edges.size() != 8) {
+        std::cerr << "unexpected source graph shape: entries=" << result.graph.entry_sources.size()
+                  << " sources=" << result.graph.sources.size()
+                  << " imports=" << result.graph.import_edges.size() << '\n';
         return 1;
     }
 
     if (!result.graph.module_to_source.contains("app::main") ||
-        !result.graph.module_to_source.contains("lib::types")) {
+        !result.graph.module_to_source.contains("lib::types") ||
+        !result.graph.module_to_source.contains("std::prelude") ||
+        !result.graph.module_to_source.contains("std::option") ||
+        !result.graph.module_to_source.contains("std::result") ||
+        !result.graph.module_to_source.contains("std::collections")) {
         std::cerr << "missing expected module ownership entries\n";
         return 1;
     }

@@ -1,3 +1,5 @@
+module typecheck::workflow_input_schema;
+
 struct Request {
     value: String;
 }
@@ -34,7 +36,7 @@ flow for EchoAgent {
 }
 
 workflow InvalidInputWorkflow {
-    input: List<String>;
+    input: Int;
     output: Response;
     node run: EchoAgent(Request { value: "ok" });
     return: run;

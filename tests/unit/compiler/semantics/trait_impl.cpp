@@ -19,14 +19,11 @@ namespace {
 // corelib-type-system.zh.md §1.3 trait EBNF, §1.4 impl EBNF, §2 trait
 // resolution + coherence + orphan rule).
 //
-// P3a (grammar / AST TraitDecl + ImplDecl) and P3b (typecheck records the
-// trait method set, resolves the impl target/trait symbols, enforces coherence
-// under the strict orphan rule, and structurally matches impl method
-// signatures against the trait) are landed. These tests exercise the
+// P3a-b (grammar / AST TraitDecl + ImplDecl, trait/impl signature checking)
+// and the first P3c dispatch slices are landed. These tests exercise the
 // parse -> resolve -> typecheck pipeline plus, where the RFC requires
 // module-level reasoning, a hand-built multi-module SourceGraph (the same
-// construction the effects.cpp session-equivalence test uses). They assert
-// only what P3a-b commit to today:
+// construction the effects.cpp session-equivalence test uses). They assert:
 //
 //   - a `trait` declaration + a matching `impl Trait for Type` block
 //     typecheck clean (signature match passes, no orphan, no duplicate);
@@ -45,12 +42,9 @@ namespace {
 // accept `Name<args>` at the impl-header position, so a generic trait's
 // *application* (`impl Trait<T> for Type`) is out of scope for P3a-b.
 //
-// They deliberately avoid over-constraining trait *method-call dispatch*
-// still in flight — the resolver does not yet register impl method names as
-// standalone Function symbols (impl methods are reached through
-// `Type::method` / `e.method` resolution, which is a P3c follow-up). The
-// "trait method call" surface these tests validate is therefore the
-// declaration + impl + signature-matching path the dispatch will hook into.
+// Method dispatch is intentionally metadata-based for now: the resolver does
+// not register impl method names as standalone Function symbols, so `e.method`
+// resolves during expression typecheck against the ImplTypeInfo table.
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] std::string module_preamble() {
@@ -62,8 +56,8 @@ module trait_impl;
 // Run the full single-program pipeline and return the typecheck result. On
 // unexpected parse or resolve failures the diagnostic is surfaced via MESSAGE
 // so a failing test reports an actionable cause rather than a silent boolean.
-[[nodiscard]] ahfl::TypeCheckResult
-typecheck_source(std::string_view filename, const std::string &source) {
+[[nodiscard]] ahfl::TypeCheckResult typecheck_source(std::string_view filename,
+                                                     const std::string &source) {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_text(std::string(filename), source);
     if (parse_result.has_errors()) {
@@ -248,9 +242,8 @@ impl PairOps for Pair {
 // a `self: Type` receiver and the impl provides a body, the program parses,
 // resolves and typechecks clean. This is the "trait Show { fn show(self) -> T
 // }; impl Show for Type { fn show(self) -> T { ... } }" acceptance shape from
-// RFC §6 P3. (Method-call *dispatch* — `x.show()` — is a P3c follow-up; these
-// tests validate the declaration + impl + signature-match path the dispatch
-// hooks into.)
+// RFC §6 P3. Direct `x.show()` dispatch is covered by the later P3c tests
+// below.
 // ---------------------------------------------------------------------------
 TEST_CASE("trait method with self receiver typechecks through impl") {
     const std::string source = module_preamble() + R"AHFL(
@@ -531,7 +524,126 @@ trait Describe {
 }
 
 // ---------------------------------------------------------------------------
-// TC11: Backward compatibility — a program with no P3 trait/impl constructs at
+// TC11 (P3c): Inherent method dispatch. A value receiver call `c.add(1)` should
+// resolve to the unique inherent impl method for the receiver's nominal type,
+// check the receiver against the method's explicit `self` parameter, and return
+// the method's declared return type.
+// ---------------------------------------------------------------------------
+TEST_CASE("inherent method call dispatches through impl signature") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn add(self: Counter, delta: Int) -> Int effect Pure decreases 0 {
+        return self.value + delta;
+    }
+}
+
+fn caller(c: Counter) -> Int effect Pure decreases 0 {
+    return c.add(1);
+}
+)AHFL";
+
+    const auto result = typecheck_source("inherent_method_dispatch.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// ---------------------------------------------------------------------------
+// TC12 (P3c): Trait method dispatch. With no inherent method present,
+// `c.show()` should resolve to the unique trait impl method for Counter.
+// ---------------------------------------------------------------------------
+TEST_CASE("trait method call dispatches through impl signature") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+trait Show {
+    fn show(self: Counter) -> Int;
+}
+
+impl Show for Counter {
+    fn show(self: Counter) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+
+fn caller(c: Counter) -> Int effect Pure decreases 0 {
+    return c.show();
+}
+)AHFL";
+
+    const auto result = typecheck_source("trait_method_dispatch.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+TEST_CASE("impl method body with wrong return type produces error") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn bad(self: Counter) -> String effect Pure decreases 0 {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("impl_method_bad_return.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("impl method body effect underdeclared is diagnosed") {
+    const std::string source = module_preamble() + R"AHFL(
+fn nondet_source() -> Int effect Nondet {
+    return 1;
+}
+
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn bad_effect(self: Counter) -> Int effect Pure decreases 0 {
+        return nondet_source();
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("impl_method_underdeclared.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "EFFECT_UNDERDECLARED"));
+}
+
+TEST_CASE("impl method body block index is recorded") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn value(self: Counter) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("impl_method_body_index.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    const auto &impls = result.environment.impls();
+    REQUIRE(impls.size() == 1);
+    const auto &impl = impls.begin()->second;
+    REQUIRE(impl.methods.size() == 1);
+    CHECK(impl.methods.front().body_block_index != UINT32_MAX);
+    CHECK(impl.methods.front().body_block_index < result.typed_program.blocks.size());
+}
+
+// ---------------------------------------------------------------------------
+// TC13: Backward compatibility — a program with no P3 trait/impl constructs at
 // all still typechecks clean. Guards the RFC §6 "P3 纯新增, 不破 956"
 // constraint.
 // ---------------------------------------------------------------------------

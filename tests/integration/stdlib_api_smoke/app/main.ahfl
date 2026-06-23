@@ -1,0 +1,116 @@
+module app::main;
+
+import std::collections as collections;
+import std::option as option;
+import std::result as results;
+import std::string as strings;
+import std::time as time;
+import std::uuid as uuid;
+
+fn smoke(
+    maybe: Option<Int>,
+    outcome: Result<Int, String>,
+    xs: collections::List<Int>,
+    numbers: Set<Int>,
+    lookup: Map<String, Int>,
+    text: String,
+    stamp: Timestamp,
+    delta: Duration,
+    id: UUID
+) -> Int {
+    let none_int: Option<Int> = none;
+    let mapped = option::map<Int, Int>(maybe, \x: Int -> x + 1);
+    let chained = option::and_then<Int, Int>(mapped, \x: Int -> some(x + 2));
+    let recovered = option::or_else<Int>(none_int, \ -> some(7));
+    let filtered_option = option::filter<Int>(chained, \x: Int -> x > 0);
+    let lazy_default = option::unwrap_or_else<Int>(none_int, \ -> 5);
+    let inserted = option::get_or_insert<Int>(none_int, 6);
+    let has_value = option::is_some<Int>(mapped);
+    let is_empty = option::is_none<Int>(none_int);
+    let a = option::unwrap_or<Int>(mapped, 0);
+    let option_total = option::unwrap_or<Int>(filtered_option, 0)
+        + option::unwrap_or<Int>(recovered, 0)
+        + lazy_default
+        + inserted;
+
+    let result_mapped = results::map<Int, Int, String>(outcome, \x: Int -> x + 2);
+    let result_error_mapped = results::map_err<Int, String, String>(outcome, \e: String -> e);
+    let result_chained = results::and_then<Int, Int, String>(outcome, \x: Int -> result_mapped);
+    let result_recovered = results::or_else<Int, String, String>(
+        result_error_mapped,
+        \e: String -> result_mapped
+    );
+    let result_ok = results::is_ok<Int, String>(result_chained);
+    let result_err = results::is_err<Int, String>(result_recovered);
+    let ok_option = results::ok<Int, String>(result_chained);
+    let err_option = results::err<Int, String>(result_recovered);
+    let b = results::unwrap_or<Int, String>(result_recovered, 0);
+
+    let empty_list = collections::empty<Int>();
+    let singleton = collections::singleton<Int>(a);
+    let empty_check = collections::is_empty<Int>(empty_list);
+    let item = collections::list_get<Int>(xs, 0);
+    let first_item = collections::first<Int>(xs);
+    let last_item = collections::last<Int>(xs);
+    let kept = collections::filter<Int>(xs, \x: Int -> true);
+    let appended = collections::append<Int>(singleton, kept);
+    let total = collections::fold<Int, Int>(kept, 0, \(acc: Int, x: Int) -> acc + x);
+    let appended_total = collections::fold<Int, Int>(
+        appended,
+        0,
+        \(acc: Int, x: Int) -> acc + x
+    );
+    let empty_set = collections::set_empty<Int>();
+    let singleton_set = collections::set_singleton<Int>(a);
+    let set_empty_check = collections::set_is_empty<Int>(empty_set);
+    let has_number = collections::contains<Int>(numbers, a);
+    let singleton_has_number = collections::contains<Int>(singleton_set, a);
+    let empty_map = collections::map_empty<String, Int>();
+    let singleton_map = collections::map_singleton<String, Int>(text, a);
+    let map_empty_check = collections::map_is_empty<String, Int>(empty_map);
+    let has_key = collections::contains_key<String, Int>(lookup, text);
+    let singleton_has_key = collections::contains_key<String, Int>(singleton_map, text);
+    let found = collections::map_get<String, Int>(lookup, text);
+    let parsed_id = uuid::parse(uuid::to_string(id));
+    let shifted = time::sub(time::add(stamp, delta), delta);
+
+    return a + b + total + appended_total + option_total
+        + option::unwrap_or<Int>(ok_option, 0)
+        + strings::length(text)
+        + strings::length(uuid::to_string(id));
+}
+
+fn runtime_bump(x: Int) -> Int effect Pure decreases 0 {
+    return strings::length(strings::concat("ab", "cd")) + x;
+}
+
+fn runtime_collections_score() -> Int effect Pure decreases 0 {
+    let xs: List<Int> = [1, 2, 3];
+    let mapped = collections::map<Int, Int>(xs, \x: Int -> runtime_bump(x));
+    let filtered = collections::filter<Int>(mapped, \x: Int -> x > 5);
+    let total = collections::fold<Int, Int>(
+        filtered,
+        0,
+        \(acc: Int, x: Int) -> acc + x
+    );
+    let first = collections::first<Int>(filtered);
+    let last = collections::last<Int>(filtered);
+    return total
+        + option::unwrap_or<Int>(first, 0)
+        + option::unwrap_or<Int>(last, 0);
+}
+
+fn runtime_option_result_score() -> Int effect Pure decreases 0 {
+    let maybe: Option<Int> = some(3);
+    let mapped = option::map<Int, Int>(maybe, \x: Int -> runtime_bump(x));
+    let filtered = option::filter<Int>(mapped, \x: Int -> x > 5);
+    let option_score = option::unwrap_or_else<Int>(filtered, \ -> 0);
+
+    let outcome: Result<Int, String> = results::Result::Ok(4);
+    let result_mapped = results::map<Int, Int, String>(
+        outcome,
+        \x: Int -> runtime_bump(x)
+    );
+    let result_score = results::unwrap_or<Int, String>(result_mapped, 0);
+    return option_score + result_score;
+}

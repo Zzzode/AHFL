@@ -4,6 +4,8 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -56,6 +58,50 @@ TypeRef make_optional_of(TypeRefKind inner_kind) {
     t.first = std::make_unique<TypeRef>();
     t.first->kind = inner_kind;
     return t;
+}
+
+TypeRef
+make_nominal_generic(TypeRefKind kind, std::string canonical_name, std::vector<TypeRef> type_args) {
+    TypeRef t;
+    t.kind = kind;
+    t.canonical_name = std::move(canonical_name);
+    t.params.reserve(type_args.size());
+    for (auto &arg : type_args) {
+        t.params.push_back(std::make_unique<TypeRef>(std::move(arg)));
+    }
+    return t;
+}
+
+std::vector<TypeRef> type_args(TypeRef first) {
+    std::vector<TypeRef> args;
+    args.push_back(std::move(first));
+    return args;
+}
+
+std::vector<TypeRef> type_args(TypeRef first, TypeRef second) {
+    std::vector<TypeRef> args;
+    args.push_back(std::move(first));
+    args.push_back(std::move(second));
+    return args;
+}
+
+std::vector<Value> values(Value first) {
+    std::vector<Value> result;
+    result.push_back(std::move(first));
+    return result;
+}
+
+std::vector<Value> values(Value first, Value second) {
+    std::vector<Value> result;
+    result.push_back(std::move(first));
+    result.push_back(std::move(second));
+    return result;
+}
+
+std::vector<std::pair<Value, Value>> map_entries(Value key, Value value) {
+    std::vector<std::pair<Value, Value>> result;
+    result.emplace_back(std::move(key), std::move(value));
+    return result;
 }
 
 FieldDecl make_field(const std::string &name, TypeRef type_ref) {
@@ -232,6 +278,15 @@ void test_optional_validation() {
     check(validate_value_against_schema(make_none(), schema).valid, "optional.none_valid");
     check(validate_value_against_schema(make_int(42), schema).valid, "optional.inner_valid");
     check(!validate_value_against_schema(make_string("x"), schema).valid, "optional.inner_invalid");
+
+    auto nominal = make_nominal_generic(
+        TypeRefKind::Enum, "std::option::Option", type_args(make_type(TypeRefKind::Int)));
+    check(validate_value_against_schema(make_optional_none(), nominal).valid,
+          "optional.nominal_none_valid");
+    check(validate_value_against_schema(make_optional_some(make_int(42)), nominal).valid,
+          "optional.nominal_some_valid");
+    check(!validate_value_against_schema(make_optional_some(make_string("x")), nominal).valid,
+          "optional.nominal_inner_invalid");
 }
 
 // ============================================================================
@@ -243,6 +298,35 @@ void test_list_validation() {
     auto good = make_list({});
     check(validate_value_against_schema(good, schema).valid, "list.valid");
     check(!validate_value_against_schema(make_int(1), schema).valid, "list.reject_int");
+
+    auto nominal_list = make_nominal_generic(
+        TypeRefKind::Struct, "std::collections::List", type_args(make_type(TypeRefKind::Int)));
+    check(validate_value_against_schema(make_list(values(make_int(1), make_int(2))), nominal_list)
+              .valid,
+          "list.nominal_valid");
+    check(!validate_value_against_schema(make_list(values(make_string("x"))), nominal_list).valid,
+          "list.nominal_reject_bad_item");
+
+    auto nominal_set = make_nominal_generic(
+        TypeRefKind::Struct, "std::collections::Set", type_args(make_type(TypeRefKind::Int)));
+    check(validate_value_against_schema(make_set(values(make_int(1), make_int(2))), nominal_set)
+              .valid,
+          "set.nominal_valid");
+    check(!validate_value_against_schema(make_list(values(make_int(1))), nominal_set).valid,
+          "set.nominal_reject_list");
+
+    auto nominal_map = make_nominal_generic(
+        TypeRefKind::Struct,
+        "std::collections::Map",
+        type_args(make_type(TypeRefKind::String), make_type(TypeRefKind::Int)));
+    check(validate_value_against_schema(make_map(map_entries(make_string("a"), make_int(1))),
+                                        nominal_map)
+              .valid,
+          "map.nominal_valid");
+    check(!validate_value_against_schema(
+               make_map(map_entries(make_string("a"), make_string("bad"))), nominal_map)
+               .valid,
+          "map.nominal_reject_bad_value");
 }
 
 void test_duration_validation() {

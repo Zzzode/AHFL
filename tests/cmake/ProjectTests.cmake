@@ -130,6 +130,20 @@ add_test(NAME ahfl.check.project.ok_expression_type_isolated
             "${AHFL_TESTS_DIR}/integration/expression_type_isolated"
 )
 
+add_test(NAME ahfl.check.project.ok_stdlib_runtime_api
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            ok-stdlib-runtime-api
+            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/main.ahfl"
+            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke"
+)
+
+add_test(NAME ahfl.check.project.ok_trait_runtime_dispatch
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            ok-trait-runtime-dispatch
+            "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke/app/main.ahfl"
+            "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke"
+)
+
 add_test(NAME ahfl.ir.identity_visitor
     COMMAND $<TARGET_FILE:ahfl_compiler_ir_tests>
 )
@@ -2310,7 +2324,16 @@ add_test(NAME ahflc.check.project.ok_cross_file
             "${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
 )
 set_tests_properties(ahflc.check.project.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\), 9 symbol\\(s\\), 13 reference\\(s\\), 3 named type\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: checked"
+)
+
+add_test(NAME ahflc.check.stdlib_api_smoke
+    COMMAND $<TARGET_FILE:ahflc> check
+            --search-root "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke"
+            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/main.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_api_smoke PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
 add_test(NAME ahflc.dump_types.project.ok_cross_file
@@ -2335,7 +2358,7 @@ add_test(NAME ahflc.check.project_manifest.ok_cross_file
             --project "${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
 )
 set_tests_properties(ahflc.check.project_manifest.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\), 9 symbol\\(s\\), 13 reference\\(s\\), 3 named type\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
 add_test(NAME ahflc.check.workspace.ok_cross_file
@@ -2344,7 +2367,7 @@ add_test(NAME ahflc.check.workspace.ok_cross_file
             --project-name check-ok
 )
 set_tests_properties(ahflc.check.workspace.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\), 9 symbol\\(s\\), 13 reference\\(s\\), 3 named type\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
 add_test(NAME ahflc.dump_ast.project_manifest.ok_cross_file

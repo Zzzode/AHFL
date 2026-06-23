@@ -14,7 +14,7 @@ function flow::ir::expr_temporal::ExprAgent::Init args=3 return=unresolved sourc
     %6 _tmp2 temp type=string(String) source=[1320,1422)
     %7 _tmp3 temp type=bool(Bool) source=[1320,1444)
     %8 _tmp4 temp type=bool(Bool) source=[1320,1444)
-    %9 _tmp5 temp type=list(List<Int>) source=[1459,1471)
+    %9 _tmp5 temp type=struct(std::collections::List<Int>)<int(Int)> source=[1459,1471)
     %10 _tmp6 temp type=int(Int) source=[1459,1473)
     %11 _tmp7 temp type=int(Int) source=[1459,1478)
     %12 _tmp8 temp type=bool(Bool) source=[1458,1483)
@@ -37,8 +37,8 @@ function flow::ir::expr_temporal::ExprAgent::Init args=3 return=unresolved sourc
     stmt assign %7 = binary op=eq operands=[local(%6), constant("ir::expr_temporal::DEFAULT_NOTE")] type=bool(Bool) source=[1320,1444)
     term assert cond=%7 resume=bb1 source=[1313,1445)
   bb1 after.assert:
-    stmt assign %9 = field field=values operands=[local(%0)] type=list(List<Int>) source=[1459,1471)
-    stmt assign %10 = index operands=[local(%9), constant(0)] type=int(Int) source=[1459,1473)
+    stmt assign %9 = field field=values operands=[local(%0)] type=struct(std::collections::List<Int>)<int(Int)> source=[1459,1471)
+    stmt assign %10 = call callee=list_raw_get operands=[local(%9), constant(0)] type=int(Int) source=[1459,1473)
     stmt assign %11 = binary op=add operands=[local(%10), constant(1)] type=int(Int) source=[1459,1478)
     stmt assign %12 = binary op=gt operands=[local(%11), constant(2)] type=bool(Bool) source=[1458,1483)
     stmt assign %13 = field field=note operands=[local(%3)] type=string(String) source=[1494,1504)
@@ -79,13 +79,13 @@ function contract::ir::expr_temporal::ExprAgent::clause::0 args=3 return=bool(Bo
     %0 input type=struct(ir::expr_temporal::Request)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=map(Map<String, String>) source=[1121,1132)
+    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1121,1132)
     %4 _tmp1 temp type=string(String) source=[1121,1139)
     %5 _tmp2 temp type=bool(Bool) source=[1115,1141)
   blocks:
   bb0 entry:
-    stmt assign %3 = field field=attrs operands=[local(%0)] type=map(Map<String, String>) source=[1121,1132)
-    stmt assign %4 = index operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1121,1139)
+    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1121,1132)
+    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1121,1139)
     stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1115,1141)
     term return value=%5 source=[1115,1141)
 }
@@ -94,13 +94,13 @@ function contract::ir::expr_temporal::ExprAgent::clause::1::embedded::0 args=3 r
     %0 input type=struct(ir::expr_temporal::Request)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=map(Map<String, String>) source=[1194,1205)
+    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1194,1205)
     %4 _tmp1 temp type=string(String) source=[1194,1212)
     %5 _tmp2 temp type=bool(Bool) source=[1188,1214)
   blocks:
   bb0 entry:
-    stmt assign %3 = field field=attrs operands=[local(%0)] type=map(Map<String, String>) source=[1194,1205)
-    stmt assign %4 = index operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1194,1212)
+    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1194,1205)
+    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1194,1212)
     stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1188,1214)
     term return value=%5 source=[1188,1214)
 }

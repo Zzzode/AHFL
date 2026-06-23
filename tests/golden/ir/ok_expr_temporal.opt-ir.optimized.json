@@ -189,14 +189,16 @@
           "id": 9,
           "name": "_tmp5",
           "type": {
-            "kind": "list",
-            "display_name": "List<Int>",
-            "canonical_name": "",
-            "first": {
-              "kind": "int",
-              "display_name": "Int",
-              "canonical_name": ""
-            }
+            "kind": "struct",
+            "display_name": "std::collections::List<Int>",
+            "canonical_name": "std::collections::List",
+            "type_args": [
+{
+                "kind": "int",
+                "display_name": "Int",
+                "canonical_name": ""
+              }
+            ]
           },
           "is_temp": true,
           "source_range": {
@@ -565,14 +567,16 @@
                   }
                 ],
                 "result_type": {
-                  "kind": "list",
-                  "display_name": "List<Int>",
-                  "canonical_name": "",
-                  "first": {
-                    "kind": "int",
-                    "display_name": "Int",
-                    "canonical_name": ""
-                  }
+                  "kind": "struct",
+                  "display_name": "std::collections::List<Int>",
+                  "canonical_name": "std::collections::List",
+                  "type_args": [
+{
+                      "kind": "int",
+                      "display_name": "Int",
+                      "canonical_name": ""
+                    }
+                  ]
                 }
               },
               "source_range": {
@@ -584,9 +588,9 @@
               "kind": "assign",
               "dest": 10,
               "rvalue": {
-                "kind": "index",
+                "kind": "call",
                 "op": "",
-                "callee": "",
+                "callee": "list_raw_get",
                 "field_name": "",
                 "operands": [
                   {
@@ -1216,19 +1220,21 @@
           "id": 3,
           "name": "_tmp0",
           "type": {
-            "kind": "map",
-            "display_name": "Map<String, String>",
-            "canonical_name": "",
-            "first": {
-              "kind": "string",
-              "display_name": "String",
-              "canonical_name": ""
-            },
-            "second": {
-              "kind": "string",
-              "display_name": "String",
-              "canonical_name": ""
-            }
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "type_args": [
+{
+                "kind": "string",
+                "display_name": "String",
+                "canonical_name": ""
+              },
+{
+                "kind": "string",
+                "display_name": "String",
+                "canonical_name": ""
+              }
+            ]
           },
           "is_temp": true,
           "source_range": {
@@ -1287,19 +1293,21 @@
                   }
                 ],
                 "result_type": {
-                  "kind": "map",
-                  "display_name": "Map<String, String>",
-                  "canonical_name": "",
-                  "first": {
-                    "kind": "string",
-                    "display_name": "String",
-                    "canonical_name": ""
-                  },
-                  "second": {
-                    "kind": "string",
-                    "display_name": "String",
-                    "canonical_name": ""
-                  }
+                  "kind": "struct",
+                  "display_name": "std::collections::Map<String, String>",
+                  "canonical_name": "std::collections::Map",
+                  "type_args": [
+{
+                      "kind": "string",
+                      "display_name": "String",
+                      "canonical_name": ""
+                    },
+{
+                      "kind": "string",
+                      "display_name": "String",
+                      "canonical_name": ""
+                    }
+                  ]
                 }
               },
               "source_range": {
@@ -1311,9 +1319,9 @@
               "kind": "assign",
               "dest": 4,
               "rvalue": {
-                "kind": "index",
+                "kind": "call",
                 "op": "",
-                "callee": "",
+                "callee": "map_raw_get",
                 "field_name": "",
                 "operands": [
                   {
@@ -1449,19 +1457,21 @@
           "id": 3,
           "name": "_tmp0",
           "type": {
-            "kind": "map",
-            "display_name": "Map<String, String>",
-            "canonical_name": "",
-            "first": {
-              "kind": "string",
-              "display_name": "String",
-              "canonical_name": ""
-            },
-            "second": {
-              "kind": "string",
-              "display_name": "String",
-              "canonical_name": ""
-            }
+            "kind": "struct",
+            "display_name": "std::collections::Map<String, String>",
+            "canonical_name": "std::collections::Map",
+            "type_args": [
+{
+                "kind": "string",
+                "display_name": "String",
+                "canonical_name": ""
+              },
+{
+                "kind": "string",
+                "display_name": "String",
+                "canonical_name": ""
+              }
+            ]
           },
           "is_temp": true,
           "source_range": {
@@ -1520,19 +1530,21 @@
                   }
                 ],
                 "result_type": {
-                  "kind": "map",
-                  "display_name": "Map<String, String>",
-                  "canonical_name": "",
-                  "first": {
-                    "kind": "string",
-                    "display_name": "String",
-                    "canonical_name": ""
-                  },
-                  "second": {
-                    "kind": "string",
-                    "display_name": "String",
-                    "canonical_name": ""
-                  }
+                  "kind": "struct",
+                  "display_name": "std::collections::Map<String, String>",
+                  "canonical_name": "std::collections::Map",
+                  "type_args": [
+{
+                      "kind": "string",
+                      "display_name": "String",
+                      "canonical_name": ""
+                    },
+{
+                      "kind": "string",
+                      "display_name": "String",
+                      "canonical_name": ""
+                    }
+                  ]
                 }
               },
               "source_range": {
@@ -1544,9 +1556,9 @@
               "kind": "assign",
               "dest": 4,
               "rvalue": {
-                "kind": "index",
+                "kind": "call",
                 "op": "",
-                "callee": "",
+                "callee": "map_raw_get",
                 "field_name": "",
                 "operands": [
                   {

@@ -1,0 +1,26 @@
+module app::main;
+
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn add(self: Counter, delta: Int) -> Int effect Pure decreases 0 {
+        return self.value + delta;
+    }
+}
+
+trait Show {
+    fn show(self: Counter) -> Int;
+}
+
+impl Show for Counter {
+    fn show(self: Counter) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+
+fn runtime_trait_dispatch_score() -> Int effect Pure decreases 0 {
+    let counter = Counter { value: 7 };
+    return counter.add(5) + counter.show();
+}

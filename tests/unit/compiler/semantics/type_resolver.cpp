@@ -105,7 +105,8 @@ struct TypeResolverFixture {
                                       }
                                       REQUIRE(resolver != nullptr);
                                       return resolver->resolve_type(aliased_type);
-                                  }};
+                                  },
+                                  {}};
     }
 };
 
@@ -168,4 +169,58 @@ type B = A;
     REQUIRE_FALSE(fixture.diagnostics.empty());
     CHECK(fixture.diagnostics.front().code == "typecheck.INVALID_TYPE_REFERENCE");
     CHECK(fixture.diagnostics.front().message == "type alias cycle reached during type resolution");
+}
+
+TEST_CASE("TypeResolver reports unavailable stdlib containers without stdlib symbols") {
+    TypeResolverFixture fixture{R"AHFL(
+module resolver;
+
+type Maybe = Optional<Int>;
+type Ints = List<Int>;
+type UniqueInts = Set<Int>;
+type Lookup = Map<String, Int>;
+)AHFL"};
+    REQUIRE_FALSE(fixture.resolve.has_errors());
+
+    struct Case {
+        std::string_view alias_name;
+        std::string_view std_container_name;
+    };
+    const std::vector<Case> cases{
+        Case{
+            .alias_name = "Maybe",
+            .std_container_name = "std::option::Option",
+        },
+        Case{
+            .alias_name = "Ints",
+            .std_container_name = "std::collections::List",
+        },
+        Case{
+            .alias_name = "UniqueInts",
+            .std_container_name = "std::collections::Set",
+        },
+        Case{
+            .alias_name = "Lookup",
+            .std_container_name = "std::collections::Map",
+        },
+    };
+
+    std::size_t alias_body_resolution_count = 0;
+    auto resolver = fixture.make_resolver(&alias_body_resolution_count);
+    fixture.resolver = &resolver;
+
+    for (const auto &test_case : cases) {
+        const auto alias_symbol = fixture.type_symbol(test_case.alias_name);
+        const auto result =
+            resolver.resolve_type_alias(alias_symbol, fixture.alias_decl(test_case.alias_name).range);
+        REQUIRE(result != nullptr);
+        CHECK(result->holds<ahfl::types::ErrorT>());
+        REQUIRE_FALSE(fixture.diagnostics.empty());
+        const auto &diagnostic = fixture.diagnostics.back();
+        CHECK(diagnostic.code == "typecheck.INVALID_TYPE_REFERENCE");
+        CHECK(diagnostic.message ==
+              "stdlib container type '" + std::string{test_case.std_container_name} +
+                  "' is unavailable");
+    }
+    CHECK(alias_body_resolution_count == cases.size());
 }

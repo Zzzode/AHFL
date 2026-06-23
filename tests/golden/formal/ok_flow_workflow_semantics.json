@@ -16,8 +16,8 @@
     {
       "kind": "module",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 0,
           "end_offset": 29
@@ -28,8 +28,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 31,
           "end_offset": 77
@@ -66,8 +66,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 79,
           "end_offset": 123
@@ -116,8 +116,8 @@
     {
       "kind": "struct",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 125,
           "end_offset": 161
@@ -154,8 +154,8 @@
     {
       "kind": "agent",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 163,
           "end_offset": 512
@@ -237,8 +237,8 @@
     {
       "kind": "flow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 514,
           "end_offset": 857
@@ -480,8 +480,8 @@
     {
       "kind": "workflow",
       "provenance": {
-        "module_name": "",
-        "source_path": "",
+        "module_name": "formal::flow_workflow",
+        "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
           "begin_offset": 859,
           "end_offset": 1217

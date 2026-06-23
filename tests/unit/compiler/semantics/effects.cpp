@@ -9,6 +9,8 @@
 #include "compiler/semantics/typecheck_internal.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -99,6 +101,79 @@ namespace {
 
     const ahfl::TypeChecker type_checker;
     return type_checker.check(*parse_result.program, resolve_result);
+}
+
+void write_file(const std::filesystem::path &path, const std::string &content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out << content;
+}
+
+[[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
+                                                       std::string_view module_name) {
+    auto path = root;
+    std::string module{module_name};
+    std::size_t start = 0;
+    while (true) {
+        const auto separator = module.find("::", start);
+        const auto segment = module.substr(start, separator - start);
+        if (separator == std::string::npos) {
+            path /= segment + ".ahfl";
+            return path;
+        }
+        path /= segment;
+        start = separator + 2;
+    }
+}
+
+[[nodiscard]] ahfl::TypeCheckResult typecheck_project_source(std::string_view filename,
+                                                             std::string_view source,
+                                                             ahfl::TypeCheckOptions options = {}) {
+    const auto root = std::filesystem::temp_directory_path() /
+                      ("ahfl_effects_" + std::string{filename});
+    std::filesystem::remove_all(root);
+    const auto main_path = root / "app" / "main.ahfl";
+    write_file(main_path, "module app::main;\n" + std::string{source});
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    return type_checker.check(parse_result.graph, resolve_result, options);
+}
+
+[[nodiscard]] ahfl::TypeCheckResult
+typecheck_project_module_source(std::string_view module_name,
+                                std::string_view source,
+                                ahfl::TypeCheckOptions options = {}) {
+    std::string root_name{module_name};
+    std::replace(root_name.begin(), root_name.end(), ':', '_');
+    const auto root = std::filesystem::temp_directory_path() / ("ahfl_effects_" + root_name);
+    std::filesystem::remove_all(root);
+    const auto source_path = module_source_path(root, module_name);
+    write_file(source_path, std::string{source});
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {source_path},
+        .search_roots = {root},
+    });
+    REQUIRE_FALSE(parse_result.has_errors());
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    return type_checker.check(parse_result.graph, resolve_result, options);
 }
 
 TEST_CASE("DiagnosticReporter preserves source-present and source-absent ranges") {
@@ -398,6 +473,160 @@ workflow NonPureWorkflow {
                               "assert condition must be pure; expression effect: capability call"));
 }
 
+TEST_CASE("P4 Pure function body without decreases reports NO_DECREASES") {
+    const std::string source = R"AHFL(
+fn missing_measure() -> Int effect Pure {
+    return 1;
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("p4_missing_decreases.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NO_DECREASES") == 1);
+}
+
+TEST_CASE("P4 verified contract rejects Nondet function calls with subset codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    value: Int;
+}
+
+fn nondet_source() -> Int effect Nondet {
+    return 1;
+}
+
+agent VerifiedContractAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+contract for VerifiedContractAgent {
+    requires: nondet_source() > 0;
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("p4_contract_nondet.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NOT_IN_VERIFIED_SUBSET") ==
+          1);
+}
+
+TEST_CASE("P4 invariant rejects Nondet function calls with invariant code") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    value: Int;
+}
+
+fn nondet_flag() -> Bool effect Nondet {
+    return true;
+}
+
+agent InvariantAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+contract for InvariantAgent {
+    invariant: always nondet_flag();
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("p4_invariant_nondet.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NOT_IN_VERIFIED_SUBSET") ==
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NONDET_IN_INVARIANT") ==
+          1);
+}
+
+TEST_CASE("P4 verified contract rejects Nondet method calls with subset codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    value: Int;
+}
+
+impl Request {
+    fn unstable(self: Request) -> Bool effect Nondet {
+        return true;
+    }
+}
+
+agent MethodVerifiedAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+contract for MethodVerifiedAgent {
+    requires: input.unstable();
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("p4_contract_nondet_method.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NOT_IN_VERIFIED_SUBSET") ==
+          1);
+}
+
+TEST_CASE("P4 Pure impl method body without decreases reports NO_DECREASES") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+impl Request {
+    fn missing_measure(self: Request) -> Int effect Pure {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("p4_impl_missing_decreases.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NO_DECREASES") == 1);
+}
+
 TEST_CASE("Bool semantic boundary diagnostics use stable typecheck codes") {
     const std::string source = R"AHFL(
 struct Request {
@@ -588,17 +817,7 @@ flow for FieldLiteralAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("field_literal_diagnostic_codes.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("field_literal_diagnostic_codes.ahfl", source);
     REQUIRE(type_result.has_errors());
 
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_MEMBER_ACCESS") ==
@@ -615,8 +834,9 @@ flow for FieldLiteralAgent {
 
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "member access requires a struct value, got String"));
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "unknown field 'valu' on struct 'Request'; did you mean 'value'?"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "unknown field 'valu' on struct 'app::main::Request'; did you mean 'value'?"));
     CHECK(
         diagnostics_contain(type_result.diagnostics, "duplicate field 'value' in struct literal"));
     CHECK(diagnostics_contain(type_result.diagnostics, "missing field 'value' in struct literal"));
@@ -1465,17 +1685,7 @@ flow for NarrowAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("optional_narrowing.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("optional_narrowing.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
 }
 
@@ -1515,17 +1725,7 @@ flow for NarrowAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("optional_invalidation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("optional_invalidation.ahfl", source);
     CHECK(type_result.has_errors());
 }
 
@@ -1564,29 +1764,23 @@ flow for NarrowDebugAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("optional_narrowing_debug.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto default_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto default_result =
+        typecheck_project_source("optional_narrowing_debug_default.ahfl", source);
     REQUIRE_FALSE(default_result.has_errors());
     CHECK(default_result.diagnostics.entries().empty());
 
-    const auto debug_result = type_checker.check(
-        *parse_result.program, resolve_result, ahfl::TypeCheckOptions{.explain_narrowing = true});
+    const auto debug_result =
+        typecheck_project_source("optional_narrowing_debug.ahfl",
+                                 source,
+                                 ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition 'ctx.token != none' narrows 'ctx.token' to non-none on then branch"));
+        "narrowing: condition '(ctx.token != none)' narrows 'ctx.token' to non-none on then "
+        "branch"));
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition 'ctx.token != none' narrows 'ctx.token' to none on else branch"));
+        "narrowing: condition '(ctx.token != none)' narrows 'ctx.token' to none on else branch"));
 }
 
 TEST_CASE("Optional narrowing explanations describe unsupported disjunctive conditions") {
@@ -1624,23 +1818,14 @@ flow for NarrowDebugUnsupportedAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result =
-        frontend.parse_text("optional_narrowing_debug_unsupported.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto debug_result = type_checker.check(
-        *parse_result.program, resolve_result, ahfl::TypeCheckOptions{.explain_narrowing = true});
+    const auto debug_result = typecheck_project_source(
+        "optional_narrowing_debug_unsupported.ahfl",
+        source,
+        ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition 'ctx.token != none || input.fallback != \"\"' did not produce "
+        "narrowing: condition '(ctx.token != none || input.fallback != \"\")' did not produce "
         "Optional narrowing facts because disjunctive conditions are not represented"));
 }
 
@@ -1820,17 +2005,8 @@ flow for NestedExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("struct_field_list_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result =
+        typecheck_project_source("struct_field_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "expected type 'String' from struct field 'values' declared here"));
@@ -1867,18 +2043,8 @@ flow for GroupedExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result =
-        frontend.parse_text("struct_field_grouped_list_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result =
+        typecheck_project_source("struct_field_grouped_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "expected type 'String' from struct field 'values' declared here"));
@@ -1961,17 +2127,7 @@ flow for ReturnExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("flow_return_list_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("flow_return_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "expected type 'String' from flow return declared here"));
@@ -2009,18 +2165,8 @@ flow for AssignmentExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result =
-        frontend.parse_text("assignment_target_list_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result =
+        typecheck_project_source("assignment_target_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(
         type_result.diagnostics,
@@ -2082,17 +2228,7 @@ const NarrowMapKey: Map<String(2, 8), Int> = map [];
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("const_initializer_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_module_source("typed::diagnostics", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 1);
     const auto *diagnostic =
@@ -2101,10 +2237,11 @@ const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
     CHECK(diagnostic->related.size() == 2);
     CHECK(diagnostics_contain(
         type_result.diagnostics,
-        "expected type 'Map<String, Int>' from declared type of const 'RejectedMapKey' declared "
-        "here"));
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "actual expression has type 'Map<String(2, 8), Int>' here"));
+        "expected type 'std::collections::Map<String, Int>' from declared type of const "
+        "'RejectedMapKey' declared here"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "actual expression has type 'std::collections::Map<String(2, 8), Int>' here"));
 }
 
 TEST_CASE("Const agent context defaults preserve exact schema expectation") {
@@ -2202,17 +2339,7 @@ flow for SomeExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("some_assignment_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("some_assignment_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 1);
     const auto *diagnostic =
@@ -2259,17 +2386,8 @@ flow for InferredCollectionExpectationAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("inferred_collection_expectation.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result =
+        typecheck_project_source("inferred_collection_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 4);
 
@@ -2428,45 +2546,60 @@ flow for HirAgent {
 }
 )AHFL";
 
+    const auto root = std::filesystem::temp_directory_path() / "ahfl_effects_typed_hir_project";
+    std::filesystem::remove_all(root);
+    const auto main_path = root / "app" / "main.ahfl";
+    write_file(main_path, "module app::main;\n" + source);
+
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("typed_hir.ahfl", source);
+    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {main_path},
+        .search_roots = {root},
+    });
     REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
 
     const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
+    const auto resolve_result = resolver.resolve(parse_result.graph);
     REQUIRE_FALSE(resolve_result.has_errors());
 
     const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = type_checker.check(parse_result.graph, resolve_result);
     REQUIRE_FALSE(type_result.has_errors());
 
-    const auto response_symbol =
-        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "Response");
+    const auto response_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Types, "Response", "app::main");
     REQUIRE(response_symbol.has_value());
-    const auto do_symbol =
-        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Capabilities, "Do");
+    const auto do_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Capabilities, "Do", "app::main");
     REQUIRE(do_symbol.has_value());
-    const auto ready_symbol =
-        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Predicates, "Ready");
+    const auto ready_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Predicates, "Ready", "app::main");
     REQUIRE(ready_symbol.has_value());
+    REQUIRE(response_symbol->get().source_id.has_value());
+    const auto app_source_id = response_symbol->get().source_id;
 
     REQUIRE_FALSE(type_result.typed_program.expressions.empty());
     CHECK_FALSE(type_result.typed_program.declarations.empty());
 
-    const auto &expression = type_result.typed_program.expressions.front();
+    const auto expression = std::find_if(type_result.typed_program.expressions.begin(),
+                                         type_result.typed_program.expressions.end(),
+                                         [&](const ahfl::TypedExpr &expr) {
+                                             return expr.source_id == app_source_id;
+                                         });
+    REQUIRE(expression != type_result.typed_program.expressions.end());
     const auto *typed_expr =
-        type_result.typed_program.find_expr(expression.node_id, expression.source_id);
+        type_result.typed_program.find_expr(expression->node_id, expression->source_id);
     REQUIRE(typed_expr != nullptr);
-    CHECK(typed_expr->type == expression.type);
-    CHECK(typed_expr->effect == expression.effect);
-    CHECK(typed_expr->is_pure == expression.is_pure);
+    CHECK(typed_expr->type == expression->type);
+    CHECK(typed_expr->effect == expression->effect);
+    CHECK(typed_expr->is_pure == expression->is_pure);
 
     const auto struct_literal =
         std::find_if(type_result.typed_program.expressions.begin(),
                      type_result.typed_program.expressions.end(),
-                     [](const ahfl::TypedExpr &expr) {
-                         return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral;
+                     [&](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
+                                expr.source_id == app_source_id;
                      });
     REQUIRE(struct_literal != type_result.typed_program.expressions.end());
     REQUIRE(struct_literal->resolved_symbol.has_value());
@@ -2486,8 +2619,9 @@ flow for HirAgent {
 
     const auto &tp = type_result.typed_program;
     const auto grouped_struct_literal = std::find_if(
-        tp.expressions.begin(), tp.expressions.end(), [&tp](const ahfl::TypedExpr &expr) {
+        tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
+                   expr.source_id == app_source_id &&
                    expr.children.size() == 1 &&
                    ahfl::resolve_child(tp, expr.children.front()) != nullptr &&
                    ahfl::resolve_child(tp, expr.children.front())->kind ==
@@ -2500,8 +2634,9 @@ flow for HirAgent {
     CHECK(grouped_child->member_path == std::vector<std::string>{"value"});
 
     const auto call =
-        std::find_if(tp.expressions.begin(), tp.expressions.end(), [](const ahfl::TypedExpr &expr) {
-            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Do";
+        std::find_if(tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Do" &&
+                   expr.source_id == app_source_id;
         });
     REQUIRE(call != tp.expressions.end());
     REQUIRE(call->resolved_symbol.has_value());
@@ -2518,8 +2653,9 @@ flow for HirAgent {
     CHECK(call_child->member_path == std::vector<std::string>{"value"});
 
     const auto predicate_call =
-        std::find_if(tp.expressions.begin(), tp.expressions.end(), [](const ahfl::TypedExpr &expr) {
-            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Ready";
+        std::find_if(tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Ready" &&
+                   expr.source_id == app_source_id;
         });
     REQUIRE(predicate_call != tp.expressions.end());
     REQUIRE(predicate_call->resolved_symbol.has_value());
@@ -2538,8 +2674,9 @@ flow for HirAgent {
     const auto bool_literal =
         std::find_if(type_result.typed_program.expressions.begin(),
                      type_result.typed_program.expressions.end(),
-                     [](const ahfl::TypedExpr &expr) {
-                         return expr.kind == ahfl::ast::ExprSyntaxKind::BoolLiteral;
+                     [&](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::BoolLiteral &&
+                                expr.source_id == app_source_id;
                      });
     REQUIRE(bool_literal != type_result.typed_program.expressions.end());
     CHECK(bool_literal->semantic_name == "true");
@@ -2547,8 +2684,9 @@ flow for HirAgent {
     const auto none_literal =
         std::find_if(type_result.typed_program.expressions.begin(),
                      type_result.typed_program.expressions.end(),
-                     [](const ahfl::TypedExpr &expr) {
-                         return expr.kind == ahfl::ast::ExprSyntaxKind::NoneLiteral;
+                     [&](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::NoneLiteral &&
+                                expr.source_id == app_source_id;
                      });
     REQUIRE(none_literal != type_result.typed_program.expressions.end());
     CHECK(none_literal->semantic_name == "none");
