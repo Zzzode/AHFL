@@ -49,6 +49,20 @@ fn map_raw_empty<K, V>() -> Map<K, V> effect Pure;
 @builtin("map_raw_singleton")
 fn map_raw_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure;
 
+// P5.6a: stdlib declarations for AST sugar desugaring targets.
+// The compiler rewrites sugar list/set/map literals into these calls during
+// lowering; the runtime evaluator dispatches via the `@builtin(...)` hooks
+// which accept any arity. The surface signature provides the nominal type
+// contract.
+@builtin("list_from_array")
+fn list_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> List<T> effect Pure;
+
+@builtin("set_from_array")
+fn set_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> Set<T> effect Pure;
+
+@builtin("map_from_entries")
+fn map_from_entries<K, V>(k0: K, v0: V, k1: K, v1: V, k2: K, v2: V, k3: K, v3: V) -> Map<K, V> effect Pure;
+
 fn empty<T>() -> List<T> effect Pure decreases 0 {
     return list_raw_alloc<T>(0);
 }

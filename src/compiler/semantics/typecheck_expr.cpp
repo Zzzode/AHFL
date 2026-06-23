@@ -1511,7 +1511,17 @@ class ExpressionChecker final {
             }
         }
 
-        if (call.arguments.size() != fn->get().params.size()) {
+        // P5.6a: @builtin("list_from_array") / @builtin("set_from_array") /
+        // @builtin("map_from_entries") are variadic — the runtime evaluator
+        // accepts any arity (they are the compiler lowering targets for
+        // sugar-style collection literals). Skip arity checking for these.
+        const bool is_variadic_collection_builtin =
+            fn->get().builtin_name.has_value() &&
+            (*fn->get().builtin_name == "list_from_array" ||
+             *fn->get().builtin_name == "set_from_array" ||
+             *fn->get().builtin_name == "map_from_entries");
+        if (!is_variadic_collection_builtin &&
+            call.arguments.size() != fn->get().params.size()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::WrongArity,
                 messages::typecheck::WrongArity.format_with("function",

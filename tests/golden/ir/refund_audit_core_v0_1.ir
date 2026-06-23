@@ -25,7 +25,7 @@ struct refund::audit::RefundRequest {
 struct refund::audit::RefundContext {
   field result: refund::audit::AuditResult = refund::audit::AuditResult::Reject
   field reason: String = "pending"
-  field ticket_id: std::option::Option<String> = std::option::Option::None()
+  field ticket_id: std::option::Option<String> = std::option::Option::None
 }
 
 @provenance(module=refund::audit, source=refund/audit.ahfl)
@@ -134,7 +134,7 @@ flow refund::audit::RefundAudit {
       may_return: false
       may_fallthrough: false
       assigned_paths: [ctx.result, ctx.reason, ctx.ticket_id]
-      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate, std::option::Option::None]
+      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate]
       assert_count: 0
     }
     let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
@@ -145,7 +145,7 @@ flow refund::audit::RefundAudit {
       ctx.ticket_id = std::option::Option::Some(refund::audit::TicketCreate(input.order_id, decision.reason))
       goto Approved
     } else {
-      ctx.ticket_id = std::option::Option::None()
+      ctx.ticket_id = std::option::Option::None
       goto Rejected
     }
   }

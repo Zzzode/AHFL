@@ -1,5 +1,6 @@
 module typecheck::variance;
 import typecheck::variance as self;
+import std::collections;
 
-const WideMapValue: Map<String, String> = map [];
+const WideMapValue: Map<String, String> = map_raw_empty<String, String>();
 const RejectedMapValue: Map<String, String(2, 8)> = self::WideMapValue;

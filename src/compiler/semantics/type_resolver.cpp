@@ -82,7 +82,7 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
         const auto &head = name.segments.front();
         std::string_view canonical_name;
         std::size_t expected_arity = 0;
-        if (head == "Option") {
+        if (head == "Option" || head == "Optional") {
             canonical_name = stdlib_bridge::kOptionType;
             expected_arity = 1;
         } else if (head == "List") {

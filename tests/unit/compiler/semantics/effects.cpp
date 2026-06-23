@@ -138,7 +138,7 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -164,7 +164,7 @@ typecheck_project_module_source(std::string_view module_name,
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -803,10 +803,10 @@ flow for FieldLiteralAgent {
         let bad_field = input.valu;
         let bad_string_index = input.value[0];
         let bad_list_index = input.numbers["zero"];
-        let empty_list = [];
+        let empty_list = std::collections::list_from_array<Int>();
         let empty_set = set[];
         let empty_map = map[];
-        let none_value = none;
+        let none_value = std::option::Option::None;
         let missing = Response {};
         return Response {
             value: input.value,
@@ -845,7 +845,7 @@ flow for FieldLiteralAgent {
     CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty map literal"));
     CHECK(
         diagnostics_contain(type_result.diagnostics,
-                            "cannot infer type of 'none' without an expected Optional<T> context"));
+                            "cannot infer type of 'std::option::Option::None' without an expected Optional<T> context"));
     CHECK(diagnostics_contain(type_result.diagnostics, "list index must have type Int"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "index access requires a List or Map value, got String"));
@@ -881,7 +881,7 @@ flow for OperationDiagnosticAgent {
     state Done {
         let bad_not = not input.text;
         let bad_unary = -input.text;
-        let bad_none = input.text == none;
+        let bad_none = input.text == std::option::Option::None;
         let bad_logic = input.flag and input.text;
         let bad_compare = input.text < input.count;
         let bad_add = input.text + input.count;
@@ -915,7 +915,7 @@ flow for OperationDiagnosticAgent {
         diagnostics_contain(type_result.diagnostics,
                             "numeric unary operator requires Int, Float, or Decimal, got String"));
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "comparison with none requires Optional<T>, got String"));
+                              "comparison with std::option::Option::None requires Optional<T>, got String"));
     CHECK(diagnostics_contain(type_result.diagnostics, "logical operator requires Bool operands"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "comparison operands are not type-compatible: String vs Int"));
@@ -1653,7 +1653,7 @@ struct Request {
 }
 
 struct Context {
-    token: Optional<String> = none;
+    token: Optional<String> = std::option::Option::None;
 }
 
 struct Response {
@@ -1672,10 +1672,10 @@ agent NarrowAgent {
 
 flow for NarrowAgent {
     state Done {
-        if (none != ctx.token) {
+        if (std::option::Option::None != ctx.token) {
             return Response { value: ctx.token };
         } else {
-            if (ctx.token == none) {
+            if (ctx.token == std::option::Option::None) {
                 return Response { value: input.fallback };
             } else {
                 return Response { value: ctx.token };
@@ -1696,7 +1696,7 @@ struct Request {
 }
 
 struct Context {
-    token: Optional<String> = some("seed");
+    token: Optional<String> = std::option::Option::Some("seed");
 }
 
 struct Response {
@@ -1715,8 +1715,8 @@ agent NarrowAgent {
 
 flow for NarrowAgent {
     state Done {
-        if (ctx.token != none) {
-            ctx.token = none;
+        if (ctx.token != std::option::Option::None) {
+            ctx.token = std::option::Option::None;
             return Response { value: ctx.token };
         } else {
             return Response { value: input.fallback };
@@ -1736,7 +1736,7 @@ struct Request {
 }
 
 struct Context {
-    token: Optional<String> = none;
+    token: Optional<String> = std::option::Option::None;
 }
 
 struct Response {
@@ -1755,7 +1755,7 @@ agent NarrowDebugAgent {
 
 flow for NarrowDebugAgent {
     state Done {
-        if (ctx.token != none) {
+        if (ctx.token != std::option::Option::None) {
             return Response { value: ctx.token };
         } else {
             return Response { value: input.fallback };
@@ -1776,11 +1776,11 @@ flow for NarrowDebugAgent {
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != none)' narrows 'ctx.token' to non-none on then "
+        "narrowing: condition '(ctx.token != std::option::Option::None)' narrows 'ctx.token' to non-none on then "
         "branch"));
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != none)' narrows 'ctx.token' to none on else branch"));
+        "narrowing: condition '(ctx.token != std::option::Option::None)' narrows 'ctx.token' to none on else branch"));
 }
 
 TEST_CASE("Optional narrowing explanations describe unsupported disjunctive conditions") {
@@ -1790,7 +1790,7 @@ struct Request {
 }
 
 struct Context {
-    token: Optional<String> = none;
+    token: Optional<String> = std::option::Option::None;
 }
 
 struct Response {
@@ -1809,7 +1809,7 @@ agent NarrowDebugUnsupportedAgent {
 
 flow for NarrowDebugUnsupportedAgent {
     state Done {
-        if (ctx.token != none || input.fallback != "") {
+        if (ctx.token != std::option::Option::None || input.fallback != "") {
             return Response { value: input.fallback };
         } else {
             return Response { value: input.fallback };
@@ -1825,7 +1825,7 @@ flow for NarrowDebugUnsupportedAgent {
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != none || input.fallback != \"\")' did not produce "
+        "narrowing: condition '(ctx.token != std::option::Option::None || input.fallback != \"\")' did not produce "
         "Optional narrowing facts because disjunctive conditions are not represented"));
 }
 
@@ -2000,7 +2000,7 @@ agent NestedExpectationAgent {
 
 flow for NestedExpectationAgent {
     state Done {
-        return Response { values: [1] };
+        return Response { values: std::collections::list_from_array<Int>(1) };
     }
 }
 )AHFL";
@@ -2038,7 +2038,7 @@ agent GroupedExpectationAgent {
 
 flow for GroupedExpectationAgent {
     state Done {
-        return Response { values: ([1]) };
+        return Response { values: (std::collections::list_from_array<Int>(1)) };
     }
 }
 )AHFL";
@@ -2140,7 +2140,7 @@ struct Request {
 }
 
 struct Context {
-    values: List<String> = [];
+    values: List<String> = std::collections::list_from_array<Int>();
 }
 
 struct Response {
@@ -2159,7 +2159,7 @@ agent AssignmentExpectationAgent {
 
 flow for AssignmentExpectationAgent {
     state Done {
-        ctx.values = [1];
+        ctx.values = std::collections::list_from_array<Int>(1);
         return Response { value: input.fallback };
     }
 }
@@ -2224,7 +2224,7 @@ TEST_CASE("Const initializer diagnostics preserve declared type expectation") {
 module typed::diagnostics;
 import typed::diagnostics as self;
 
-const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const NarrowMapKey: Map<String(2, 8), Int> = std::collections::map_from_entries<Int, Int>();
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 )AHFL";
 
@@ -2314,7 +2314,7 @@ struct Request {
 }
 
 struct Context {
-    token: Optional<String> = none;
+    token: Optional<String> = std::option::Option::None;
 }
 
 struct Response {
@@ -2333,7 +2333,7 @@ agent SomeExpectationAgent {
 
 flow for SomeExpectationAgent {
     state Done {
-        ctx.token = some(1);
+        ctx.token = std::option::Option::Some(1);
         return Response { value: input.fallback };
     }
 }
@@ -2378,9 +2378,9 @@ agent InferredCollectionExpectationAgent {
 
 flow for InferredCollectionExpectationAgent {
     state Done {
-        let mixedList = [1, "x"];
-        let mixedSet = set [1, "x"];
-        let mixedMap = map ["a": 1, 2: "x"];
+        let mixedList = std::collections::list_from_array<Int>(1, "x");
+        let mixedSet = std::collections::set_from_array<Int>(1, "x");
+        let mixedMap = std::collections::map_from_entries<auto, auto>("a", 1, 2, "x");
         return Response { value: input.value };
     }
 }
@@ -2537,7 +2537,7 @@ agent HirAgent {
 flow for HirAgent {
     state Done {
         let ok = true;
-        let token: Optional<String> = none;
+        let token: Optional<String> = std::option::Option::None;
         let reply = Response { value: input.value };
         let grouped = Response { value: (input.value) };
         let ready = Ready((reply).value);
@@ -2554,7 +2554,7 @@ flow for HirAgent {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     REQUIRE_FALSE(parse_result.has_errors());
 

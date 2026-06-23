@@ -5,7 +5,7 @@ enum Status {
 
 type InputAlias = Status;
 type ContextAlias = Int;
-type OutputAlias = List<String>;
+type OutputAlias = String;
 
 agent InvalidAgent {
     input: InputAlias;

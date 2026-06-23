@@ -175,7 +175,7 @@
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
           "begin_offset": 174,
-          "end_offset": 655
+          "end_offset": 883
         }
       },
       "name": "ir::expr_temporal::Context",
@@ -231,19 +231,19 @@
             ],
             "source_range": {
               "begin_offset": 234,
-              "end_offset": 265
+              "end_offset": 303
             }
           },
           "source_range": {
             "begin_offset": 234,
-            "end_offset": 265
+            "end_offset": 303
           },
           "default_value": {
             "kind": "call",
             "id": 5,
             "source_range": {
               "begin_offset": 255,
-              "end_offset": 264
+              "end_offset": 302
             },
             "resolved_type": {
               "kind": "struct",
@@ -262,8 +262,8 @@
                 "kind": "integer_literal",
                 "id": 2,
                 "source_range": {
-                  "begin_offset": 256,
-                  "end_offset": 257
+                  "begin_offset": 294,
+                  "end_offset": 295
                 },
                 "resolved_type": {
                   "kind": "int",
@@ -275,8 +275,8 @@
                 "kind": "integer_literal",
                 "id": 3,
                 "source_range": {
-                  "begin_offset": 259,
-                  "end_offset": 260
+                  "begin_offset": 297,
+                  "end_offset": 298
                 },
                 "resolved_type": {
                   "kind": "int",
@@ -288,8 +288,8 @@
                 "kind": "integer_literal",
                 "id": 4,
                 "source_range": {
-                  "begin_offset": 262,
-                  "end_offset": 263
+                  "begin_offset": 300,
+                  "end_offset": 301
                 },
                 "resolved_type": {
                   "kind": "int",
@@ -314,20 +314,20 @@
               }
             ],
             "source_range": {
-              "begin_offset": 270,
-              "end_offset": 313
+              "begin_offset": 308,
+              "end_offset": 388
             }
           },
           "source_range": {
-            "begin_offset": 270,
-            "end_offset": 313
+            "begin_offset": 308,
+            "end_offset": 388
           },
           "default_value": {
             "kind": "call",
             "id": 8,
             "source_range": {
-              "begin_offset": 292,
-              "end_offset": 312
+              "begin_offset": 330,
+              "end_offset": 387
             },
             "resolved_type": {
               "kind": "struct",
@@ -346,8 +346,8 @@
                 "kind": "string_literal",
                 "id": 6,
                 "source_range": {
-                  "begin_offset": 296,
-                  "end_offset": 303
+                  "begin_offset": 371,
+                  "end_offset": 378
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -359,8 +359,8 @@
                 "kind": "string_literal",
                 "id": 7,
                 "source_range": {
-                  "begin_offset": 305,
-                  "end_offset": 311
+                  "begin_offset": 380,
+                  "end_offset": 386
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -389,20 +389,20 @@
               }
             ],
             "source_range": {
-              "begin_offset": 318,
-              "end_offset": 380
+              "begin_offset": 393,
+              "end_offset": 502
             }
           },
           "source_range": {
-            "begin_offset": 318,
-            "end_offset": 380
+            "begin_offset": 393,
+            "end_offset": 502
           },
           "default_value": {
             "kind": "call",
             "id": 11,
             "source_range": {
-              "begin_offset": 348,
-              "end_offset": 379
+              "begin_offset": 423,
+              "end_offset": 501
             },
             "resolved_type": {
               "kind": "struct",
@@ -425,8 +425,8 @@
                 "kind": "string_literal",
                 "id": 9,
                 "source_range": {
-                  "begin_offset": 352,
-                  "end_offset": 358
+                  "begin_offset": 474,
+                  "end_offset": 480
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -438,8 +438,8 @@
                 "kind": "qualified_value",
                 "id": 10,
                 "source_range": {
-                  "begin_offset": 360,
-                  "end_offset": 378
+                  "begin_offset": 482,
+                  "end_offset": 500
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -457,20 +457,20 @@
             "kind": "int",
             "display_name": "Int",
             "source_range": {
-              "begin_offset": 385,
-              "end_offset": 417
+              "begin_offset": 507,
+              "end_offset": 577
             }
           },
           "source_range": {
-            "begin_offset": 385,
-            "end_offset": 417
+            "begin_offset": 507,
+            "end_offset": 577
           },
           "default_value": {
             "kind": "call",
             "id": 17,
             "source_range": {
-              "begin_offset": 404,
-              "end_offset": 415
+              "begin_offset": 526,
+              "end_offset": 575
             },
             "resolved_type": {
               "kind": "int",
@@ -482,8 +482,8 @@
                 "kind": "call",
                 "id": 15,
                 "source_range": {
-                  "begin_offset": 404,
-                  "end_offset": 413
+                  "begin_offset": 526,
+                  "end_offset": 573
                 },
                 "resolved_type": {
                   "kind": "struct",
@@ -502,8 +502,8 @@
                     "kind": "integer_literal",
                     "id": 12,
                     "source_range": {
-                      "begin_offset": 405,
-                      "end_offset": 406
+                      "begin_offset": 565,
+                      "end_offset": 566
                     },
                     "resolved_type": {
                       "kind": "int",
@@ -515,8 +515,8 @@
                     "kind": "integer_literal",
                     "id": 13,
                     "source_range": {
-                      "begin_offset": 408,
-                      "end_offset": 409
+                      "begin_offset": 568,
+                      "end_offset": 569
                     },
                     "resolved_type": {
                       "kind": "int",
@@ -528,8 +528,8 @@
                     "kind": "integer_literal",
                     "id": 14,
                     "source_range": {
-                      "begin_offset": 411,
-                      "end_offset": 412
+                      "begin_offset": 571,
+                      "end_offset": 572
                     },
                     "resolved_type": {
                       "kind": "int",
@@ -543,8 +543,8 @@
                 "kind": "integer_literal",
                 "id": 16,
                 "source_range": {
-                  "begin_offset": 414,
-                  "end_offset": 415
+                  "begin_offset": 574,
+                  "end_offset": 575
                 },
                 "resolved_type": {
                   "kind": "int",
@@ -562,20 +562,20 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 422,
-              "end_offset": 485
+              "begin_offset": 582,
+              "end_offset": 692
             }
           },
           "source_range": {
-            "begin_offset": 422,
-            "end_offset": 485
+            "begin_offset": 582,
+            "end_offset": 692
           },
           "default_value": {
             "kind": "call",
             "id": 22,
             "source_range": {
-              "begin_offset": 445,
-              "end_offset": 483
+              "begin_offset": 605,
+              "end_offset": 690
             },
             "resolved_type": {
               "kind": "string",
@@ -587,8 +587,8 @@
                 "kind": "call",
                 "id": 20,
                 "source_range": {
-                  "begin_offset": 445,
-                  "end_offset": 476
+                  "begin_offset": 605,
+                  "end_offset": 683
                 },
                 "resolved_type": {
                   "kind": "struct",
@@ -611,8 +611,8 @@
                     "kind": "string_literal",
                     "id": 18,
                     "source_range": {
-                      "begin_offset": 449,
-                      "end_offset": 455
+                      "begin_offset": 656,
+                      "end_offset": 662
                     },
                     "resolved_type": {
                       "kind": "string",
@@ -624,8 +624,8 @@
                     "kind": "qualified_value",
                     "id": 19,
                     "source_range": {
-                      "begin_offset": 457,
-                      "end_offset": 475
+                      "begin_offset": 664,
+                      "end_offset": 682
                     },
                     "resolved_type": {
                       "kind": "string",
@@ -639,8 +639,8 @@
                 "kind": "string_literal",
                 "id": 21,
                 "source_range": {
-                  "begin_offset": 477,
-                  "end_offset": 483
+                  "begin_offset": 684,
+                  "end_offset": 690
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -659,20 +659,20 @@
             "display_name": "ir::expr_temporal::Response",
             "canonical_name": "ir::expr_temporal::Response",
             "source_range": {
-              "begin_offset": 490,
-              "end_offset": 592
+              "begin_offset": 697,
+              "end_offset": 799
             }
           },
           "source_range": {
-            "begin_offset": 490,
-            "end_offset": 592
+            "begin_offset": 697,
+            "end_offset": 799
           },
           "default_value": {
             "kind": "struct_literal",
             "id": 25,
             "source_range": {
-              "begin_offset": 508,
-              "end_offset": 591
+              "begin_offset": 715,
+              "end_offset": 798
             },
             "resolved_type": {
               "kind": "struct",
@@ -687,8 +687,8 @@
                   "kind": "qualified_value",
                   "id": 23,
                   "source_range": {
-                    "begin_offset": 533,
-                    "end_offset": 551
+                    "begin_offset": 740,
+                    "end_offset": 758
                   },
                   "resolved_type": {
                     "kind": "string",
@@ -703,8 +703,8 @@
                   "kind": "qualified_value",
                   "id": 24,
                   "source_range": {
-                    "begin_offset": 569,
-                    "end_offset": 584
+                    "begin_offset": 776,
+                    "end_offset": 791
                   },
                   "resolved_type": {
                     "kind": "enum",
@@ -731,20 +731,20 @@
               }
             ],
             "source_range": {
-              "begin_offset": 597,
-              "end_offset": 653
+              "begin_offset": 804,
+              "end_offset": 881
             }
           },
           "source_range": {
-            "begin_offset": 597,
-            "end_offset": 653
+            "begin_offset": 804,
+            "end_offset": 881
           },
           "default_value": {
             "kind": "call",
             "id": 27,
             "source_range": {
-              "begin_offset": 628,
-              "end_offset": 652
+              "begin_offset": 835,
+              "end_offset": 880
             },
             "resolved_type": {
               "kind": "enum",
@@ -763,8 +763,8 @@
                 "kind": "qualified_value",
                 "id": 26,
                 "source_range": {
-                  "begin_offset": 633,
-                  "end_offset": 651
+                  "begin_offset": 861,
+                  "end_offset": 879
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -783,8 +783,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 657,
-          "end_offset": 714
+          "begin_offset": 885,
+          "end_offset": 942
         }
       },
       "name": "ir::expr_temporal::Response",
@@ -803,13 +803,13 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 679,
-              "end_offset": 692
+              "begin_offset": 907,
+              "end_offset": 920
             }
           },
           "source_range": {
-            "begin_offset": 679,
-            "end_offset": 692
+            "begin_offset": 907,
+            "end_offset": 920
           },
           "default_value": null
         },
@@ -821,13 +821,13 @@
             "display_name": "ir::expr_temporal::Status",
             "canonical_name": "ir::expr_temporal::Status",
             "source_range": {
-              "begin_offset": 697,
-              "end_offset": 712
+              "begin_offset": 925,
+              "end_offset": 940
             }
           },
           "source_range": {
-            "begin_offset": 697,
-            "end_offset": 712
+            "begin_offset": 925,
+            "end_offset": 940
           },
           "default_value": null
         }
@@ -839,8 +839,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 716,
-          "end_offset": 772
+          "begin_offset": 944,
+          "end_offset": 1000
         }
       },
       "name": "ir::expr_temporal::Status",
@@ -863,8 +863,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 774,
-          "end_offset": 822
+          "begin_offset": 1002,
+          "end_offset": 1050
         }
       },
       "name": "ir::expr_temporal::Decide",
@@ -884,13 +884,13 @@
             "display_name": "ir::expr_temporal::Request",
             "canonical_name": "ir::expr_temporal::Request",
             "source_range": {
-              "begin_offset": 792,
-              "end_offset": 808
+              "begin_offset": 1020,
+              "end_offset": 1036
             }
           },
           "source_range": {
-            "begin_offset": 792,
-            "end_offset": 808
+            "begin_offset": 1020,
+            "end_offset": 1036
           }
         }
       ],
@@ -900,8 +900,8 @@
         "display_name": "ir::expr_temporal::Response",
         "canonical_name": "ir::expr_temporal::Response",
         "source_range": {
-          "begin_offset": 774,
-          "end_offset": 822
+          "begin_offset": 1002,
+          "end_offset": 1050
         }
       }
     },
@@ -911,8 +911,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 823,
-          "end_offset": 862
+          "begin_offset": 1051,
+          "end_offset": 1090
         }
       },
       "name": "ir::expr_temporal::ready",
@@ -931,13 +931,13 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 839,
-              "end_offset": 852
+              "begin_offset": 1067,
+              "end_offset": 1080
             }
           },
           "source_range": {
-            "begin_offset": 839,
-            "end_offset": 852
+            "begin_offset": 1067,
+            "end_offset": 1080
           }
         }
       ],
@@ -949,8 +949,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 864,
-          "end_offset": 1068
+          "begin_offset": 1092,
+          "end_offset": 1296
         }
       },
       "name": "ir::expr_temporal::ExprAgent",
@@ -967,8 +967,8 @@
         "display_name": "ir::expr_temporal::Request",
         "canonical_name": "ir::expr_temporal::Request",
         "source_range": {
-          "begin_offset": 864,
-          "end_offset": 1068
+          "begin_offset": 1092,
+          "end_offset": 1296
         }
       },
       "context_type": "ir::expr_temporal::Context",
@@ -977,8 +977,8 @@
         "display_name": "ir::expr_temporal::Context",
         "canonical_name": "ir::expr_temporal::Context",
         "source_range": {
-          "begin_offset": 864,
-          "end_offset": 1068
+          "begin_offset": 1092,
+          "end_offset": 1296
         }
       },
       "output_type": "ir::expr_temporal::Response",
@@ -987,8 +987,8 @@
         "display_name": "ir::expr_temporal::Response",
         "canonical_name": "ir::expr_temporal::Response",
         "source_range": {
-          "begin_offset": 864,
-          "end_offset": 1068
+          "begin_offset": 1092,
+          "end_offset": 1296
         }
       },
       "states": [
@@ -1025,8 +1025,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 1070,
-          "end_offset": 1218
+          "begin_offset": 1298,
+          "end_offset": 1446
         }
       },
       "target": "ir::expr_temporal::ExprAgent",
@@ -1041,15 +1041,15 @@
         {
           "kind": "requires",
           "source_range": {
-            "begin_offset": 1105,
-            "end_offset": 1142
+            "begin_offset": 1333,
+            "end_offset": 1370
           },
           "expr": {
             "kind": "call",
             "id": 31,
             "source_range": {
-              "begin_offset": 1115,
-              "end_offset": 1141
+              "begin_offset": 1343,
+              "end_offset": 1369
             },
             "resolved_type": {
               "kind": "bool",
@@ -1061,8 +1061,8 @@
                 "kind": "call",
                 "id": 30,
                 "source_range": {
-                  "begin_offset": 1121,
-                  "end_offset": 1139
+                  "begin_offset": 1349,
+                  "end_offset": 1367
                 },
                 "resolved_type": {
                   "kind": "string",
@@ -1074,8 +1074,8 @@
                     "kind": "path",
                     "id": 28,
                     "source_range": {
-                      "begin_offset": 1121,
-                      "end_offset": 1132
+                      "begin_offset": 1349,
+                      "end_offset": 1360
                     },
                     "resolved_type": {
                       "kind": "struct",
@@ -1104,8 +1104,8 @@
                     "kind": "string_literal",
                     "id": 29,
                     "source_range": {
-                      "begin_offset": 1133,
-                      "end_offset": 1139
+                      "begin_offset": 1361,
+                      "end_offset": 1367
                     },
                     "resolved_type": {
                       "kind": "string",
@@ -1121,35 +1121,35 @@
         {
           "kind": "invariant",
           "source_range": {
-            "begin_offset": 1147,
-            "end_offset": 1216
+            "begin_offset": 1375,
+            "end_offset": 1444
           },
           "temporal": {
             "kind": "unary",
             "source_range": {
-              "begin_offset": 1158,
-              "end_offset": 1215
+              "begin_offset": 1386,
+              "end_offset": 1443
             },
             "op": "always",
             "operand": {
               "kind": "binary",
               "source_range": {
-                "begin_offset": 1166,
-                "end_offset": 1214
+                "begin_offset": 1394,
+                "end_offset": 1442
               },
               "op": "or",
               "lhs": {
                 "kind": "unary",
                 "source_range": {
-                  "begin_offset": 1166,
-                  "end_offset": 1184
+                  "begin_offset": 1394,
+                  "end_offset": 1412
                 },
                 "op": "not",
                 "operand": {
                   "kind": "called",
                   "source_range": {
-                    "begin_offset": 1170,
-                    "end_offset": 1184
+                    "begin_offset": 1398,
+                    "end_offset": 1412
                   },
                   "capability": "ir::expr_temporal::Decide"
                 }
@@ -1157,15 +1157,15 @@
               "rhs": {
                 "kind": "embedded_expr",
                 "source_range": {
-                  "begin_offset": 1188,
-                  "end_offset": 1214
+                  "begin_offset": 1416,
+                  "end_offset": 1442
                 },
                 "expr": {
                   "kind": "call",
                   "id": 35,
                   "source_range": {
-                    "begin_offset": 1188,
-                    "end_offset": 1214
+                    "begin_offset": 1416,
+                    "end_offset": 1442
                   },
                   "resolved_type": {
                     "kind": "bool",
@@ -1177,8 +1177,8 @@
                       "kind": "call",
                       "id": 34,
                       "source_range": {
-                        "begin_offset": 1194,
-                        "end_offset": 1212
+                        "begin_offset": 1422,
+                        "end_offset": 1440
                       },
                       "resolved_type": {
                         "kind": "string",
@@ -1190,8 +1190,8 @@
                           "kind": "path",
                           "id": 32,
                           "source_range": {
-                            "begin_offset": 1194,
-                            "end_offset": 1205
+                            "begin_offset": 1422,
+                            "end_offset": 1433
                           },
                           "resolved_type": {
                             "kind": "struct",
@@ -1220,8 +1220,8 @@
                           "kind": "string_literal",
                           "id": 33,
                           "source_range": {
-                            "begin_offset": 1206,
-                            "end_offset": 1212
+                            "begin_offset": 1434,
+                            "end_offset": 1440
                           },
                           "resolved_type": {
                             "kind": "string",
@@ -1245,8 +1245,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 1220,
-          "end_offset": 1904
+          "begin_offset": 1448,
+          "end_offset": 2132
         }
       },
       "target": "ir::expr_temporal::ExprAgent",
@@ -1261,8 +1261,8 @@
         {
           "state_name": "Init",
           "source_range": {
-            "begin_offset": 1251,
-            "end_offset": 1775
+            "begin_offset": 1479,
+            "end_offset": 2003
           },
           "policy": [],
           "summary": {
@@ -1289,15 +1289,15 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 1262,
-              "end_offset": 1775
+              "begin_offset": 1490,
+              "end_offset": 2003
             },
             "statements": [
               {
                 "kind": "let",
                 "source_range": {
-                  "begin_offset": 1272,
-                  "end_offset": 1304
+                  "begin_offset": 1500,
+                  "end_offset": 1532
                 },
                 "name": "reply",
                 "type": "ir::expr_temporal::Response",
@@ -1305,8 +1305,8 @@
                   "kind": "call",
                   "id": 37,
                   "source_range": {
-                    "begin_offset": 1284,
-                    "end_offset": 1303
+                    "begin_offset": 1512,
+                    "end_offset": 1531
                   },
                   "resolved_type": {
                     "kind": "struct",
@@ -1319,8 +1319,8 @@
                       "kind": "path",
                       "id": 36,
                       "source_range": {
-                        "begin_offset": 1297,
-                        "end_offset": 1302
+                        "begin_offset": 1525,
+                        "end_offset": 1530
                       },
                       "resolved_type": {
                         "kind": "struct",
@@ -1339,15 +1339,15 @@
               {
                 "kind": "assert",
                 "source_range": {
-                  "begin_offset": 1313,
-                  "end_offset": 1445
+                  "begin_offset": 1541,
+                  "end_offset": 1673
                 },
                 "condition": {
                   "kind": "binary",
                   "id": 43,
                   "source_range": {
-                    "begin_offset": 1320,
-                    "end_offset": 1444
+                    "begin_offset": 1548,
+                    "end_offset": 1672
                   },
                   "resolved_type": {
                     "kind": "bool",
@@ -1358,8 +1358,8 @@
                     "kind": "member_access",
                     "id": 41,
                     "source_range": {
-                      "begin_offset": 1320,
-                      "end_offset": 1422
+                      "begin_offset": 1548,
+                      "end_offset": 1650
                     },
                     "resolved_type": {
                       "kind": "string",
@@ -1369,8 +1369,8 @@
                       "kind": "struct_literal",
                       "id": 40,
                       "source_range": {
-                        "begin_offset": 1321,
-                        "end_offset": 1416
+                        "begin_offset": 1549,
+                        "end_offset": 1644
                       },
                       "resolved_type": {
                         "kind": "struct",
@@ -1385,8 +1385,8 @@
                             "kind": "qualified_value",
                             "id": 38,
                             "source_range": {
-                              "begin_offset": 1350,
-                              "end_offset": 1368
+                              "begin_offset": 1578,
+                              "end_offset": 1596
                             },
                             "resolved_type": {
                               "kind": "string",
@@ -1401,8 +1401,8 @@
                             "kind": "qualified_value",
                             "id": 39,
                             "source_range": {
-                              "begin_offset": 1390,
-                              "end_offset": 1405
+                              "begin_offset": 1618,
+                              "end_offset": 1633
                             },
                             "resolved_type": {
                               "kind": "enum",
@@ -1420,8 +1420,8 @@
                     "kind": "qualified_value",
                     "id": 42,
                     "source_range": {
-                      "begin_offset": 1426,
-                      "end_offset": 1444
+                      "begin_offset": 1654,
+                      "end_offset": 1672
                     },
                     "resolved_type": {
                       "kind": "string",
@@ -1434,15 +1434,15 @@
               {
                 "kind": "if",
                 "source_range": {
-                  "begin_offset": 1455,
-                  "end_offset": 1769
+                  "begin_offset": 1683,
+                  "end_offset": 1997
                 },
                 "condition": {
                   "kind": "binary",
                   "id": 59,
                   "source_range": {
-                    "begin_offset": 1458,
-                    "end_offset": 1505
+                    "begin_offset": 1686,
+                    "end_offset": 1733
                   },
                   "resolved_type": {
                     "kind": "bool",
@@ -1453,8 +1453,8 @@
                     "kind": "binary",
                     "id": 56,
                     "source_range": {
-                      "begin_offset": 1458,
-                      "end_offset": 1483
+                      "begin_offset": 1686,
+                      "end_offset": 1711
                     },
                     "resolved_type": {
                       "kind": "bool",
@@ -1465,8 +1465,8 @@
                       "kind": "binary",
                       "id": 54,
                       "source_range": {
-                        "begin_offset": 1459,
-                        "end_offset": 1478
+                        "begin_offset": 1687,
+                        "end_offset": 1706
                       },
                       "resolved_type": {
                         "kind": "int",
@@ -1477,8 +1477,8 @@
                         "kind": "call",
                         "id": 52,
                         "source_range": {
-                          "begin_offset": 1459,
-                          "end_offset": 1473
+                          "begin_offset": 1687,
+                          "end_offset": 1701
                         },
                         "resolved_type": {
                           "kind": "int",
@@ -1490,8 +1490,8 @@
                             "kind": "path",
                             "id": 50,
                             "source_range": {
-                              "begin_offset": 1459,
-                              "end_offset": 1471
+                              "begin_offset": 1687,
+                              "end_offset": 1699
                             },
                             "resolved_type": {
                               "kind": "struct",
@@ -1516,8 +1516,8 @@
                             "kind": "integer_literal",
                             "id": 51,
                             "source_range": {
-                              "begin_offset": 1472,
-                              "end_offset": 1473
+                              "begin_offset": 1700,
+                              "end_offset": 1701
                             },
                             "resolved_type": {
                               "kind": "int",
@@ -1531,8 +1531,8 @@
                         "kind": "integer_literal",
                         "id": 53,
                         "source_range": {
-                          "begin_offset": 1477,
-                          "end_offset": 1478
+                          "begin_offset": 1705,
+                          "end_offset": 1706
                         },
                         "resolved_type": {
                           "kind": "int",
@@ -1545,8 +1545,8 @@
                       "kind": "integer_literal",
                       "id": 55,
                       "source_range": {
-                        "begin_offset": 1482,
-                        "end_offset": 1483
+                        "begin_offset": 1710,
+                        "end_offset": 1711
                       },
                       "resolved_type": {
                         "kind": "int",
@@ -1559,8 +1559,8 @@
                     "kind": "call",
                     "id": 58,
                     "source_range": {
-                      "begin_offset": 1488,
-                      "end_offset": 1505
+                      "begin_offset": 1716,
+                      "end_offset": 1733
                     },
                     "resolved_type": {
                       "kind": "bool",
@@ -1572,8 +1572,8 @@
                         "kind": "path",
                         "id": 57,
                         "source_range": {
-                          "begin_offset": 1494,
-                          "end_offset": 1504
+                          "begin_offset": 1722,
+                          "end_offset": 1732
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -1592,15 +1592,15 @@
                 },
                 "then_block": {
                   "source_range": {
-                    "begin_offset": 1506,
-                    "end_offset": 1575
+                    "begin_offset": 1734,
+                    "end_offset": 1803
                   },
                   "statements": [
                     {
                       "kind": "assign",
                       "source_range": {
-                        "begin_offset": 1520,
-                        "end_offset": 1542
+                        "begin_offset": 1748,
+                        "end_offset": 1770
                       },
                       "target": {
                         "root_kind": "context",
@@ -1613,8 +1613,8 @@
                         "kind": "path",
                         "id": 60,
                         "source_range": {
-                          "begin_offset": 1531,
-                          "end_offset": 1541
+                          "begin_offset": 1759,
+                          "end_offset": 1769
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -1632,8 +1632,8 @@
                     {
                       "kind": "goto",
                       "source_range": {
-                        "begin_offset": 1555,
-                        "end_offset": 1565
+                        "begin_offset": 1783,
+                        "end_offset": 1793
                       },
                       "target_state": "Done"
                     }
@@ -1641,15 +1641,15 @@
                 },
                 "else_block": {
                   "source_range": {
-                    "begin_offset": 1581,
-                    "end_offset": 1769
+                    "begin_offset": 1809,
+                    "end_offset": 1997
                   },
                   "statements": [
                     {
                       "kind": "assign",
                       "source_range": {
-                        "begin_offset": 1595,
-                        "end_offset": 1736
+                        "begin_offset": 1823,
+                        "end_offset": 1964
                       },
                       "target": {
                         "root_kind": "context",
@@ -1662,8 +1662,8 @@
                         "kind": "member_access",
                         "id": 49,
                         "source_range": {
-                          "begin_offset": 1606,
-                          "end_offset": 1735
+                          "begin_offset": 1834,
+                          "end_offset": 1963
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -1673,8 +1673,8 @@
                           "kind": "struct_literal",
                           "id": 48,
                           "source_range": {
-                            "begin_offset": 1607,
-                            "end_offset": 1729
+                            "begin_offset": 1835,
+                            "end_offset": 1957
                           },
                           "resolved_type": {
                             "kind": "struct",
@@ -1689,8 +1689,8 @@
                                 "kind": "binary",
                                 "id": 46,
                                 "source_range": {
-                                  "begin_offset": 1640,
-                                  "end_offset": 1672
+                                  "begin_offset": 1868,
+                                  "end_offset": 1900
                                 },
                                 "resolved_type": {
                                   "kind": "string",
@@ -1701,8 +1701,8 @@
                                   "kind": "qualified_value",
                                   "id": 44,
                                   "source_range": {
-                                    "begin_offset": 1640,
-                                    "end_offset": 1658
+                                    "begin_offset": 1868,
+                                    "end_offset": 1886
                                   },
                                   "resolved_type": {
                                     "kind": "string",
@@ -1714,8 +1714,8 @@
                                   "kind": "string_literal",
                                   "id": 45,
                                   "source_range": {
-                                    "begin_offset": 1661,
-                                    "end_offset": 1672
+                                    "begin_offset": 1889,
+                                    "end_offset": 1900
                                   },
                                   "resolved_type": {
                                     "kind": "string",
@@ -1731,8 +1731,8 @@
                                 "kind": "qualified_value",
                                 "id": 47,
                                 "source_range": {
-                                  "begin_offset": 1698,
-                                  "end_offset": 1714
+                                  "begin_offset": 1926,
+                                  "end_offset": 1942
                                 },
                                 "resolved_type": {
                                   "kind": "enum",
@@ -1750,8 +1750,8 @@
                     {
                       "kind": "goto",
                       "source_range": {
-                        "begin_offset": 1749,
-                        "end_offset": 1759
+                        "begin_offset": 1977,
+                        "end_offset": 1987
                       },
                       "target_state": "Done"
                     }
@@ -1764,8 +1764,8 @@
         {
           "state_name": "Done",
           "source_range": {
-            "begin_offset": 1781,
-            "end_offset": 1902
+            "begin_offset": 2009,
+            "end_offset": 2130
           },
           "policy": [],
           "summary": {
@@ -1778,22 +1778,22 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 1792,
-              "end_offset": 1902
+              "begin_offset": 2020,
+              "end_offset": 2130
             },
             "statements": [
               {
                 "kind": "return",
                 "source_range": {
-                  "begin_offset": 1802,
-                  "end_offset": 1896
+                  "begin_offset": 2030,
+                  "end_offset": 2124
                 },
                 "value": {
                   "kind": "struct_literal",
                   "id": 63,
                   "source_range": {
-                    "begin_offset": 1809,
-                    "end_offset": 1895
+                    "begin_offset": 2037,
+                    "end_offset": 2123
                   },
                   "resolved_type": {
                     "kind": "struct",
@@ -1808,8 +1808,8 @@
                         "kind": "path",
                         "id": 61,
                         "source_range": {
-                          "begin_offset": 1838,
-                          "end_offset": 1846
+                          "begin_offset": 2066,
+                          "end_offset": 2074
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -1830,8 +1830,8 @@
                         "kind": "qualified_value",
                         "id": 62,
                         "source_range": {
-                          "begin_offset": 1868,
-                          "end_offset": 1884
+                          "begin_offset": 2096,
+                          "end_offset": 2112
                         },
                         "resolved_type": {
                           "kind": "enum",
@@ -1855,8 +1855,8 @@
         "module_name": "ir::expr_temporal",
         "source_path": "ir/expr_temporal.ahfl",
         "source_range": {
-          "begin_offset": 1906,
-          "end_offset": 2143
+          "begin_offset": 2134,
+          "end_offset": 2371
         }
       },
       "name": "ir::expr_temporal::ExprWorkflow",
@@ -1873,8 +1873,8 @@
         "display_name": "ir::expr_temporal::Request",
         "canonical_name": "ir::expr_temporal::Request",
         "source_range": {
-          "begin_offset": 1906,
-          "end_offset": 2143
+          "begin_offset": 2134,
+          "end_offset": 2371
         }
       },
       "output_type": "ir::expr_temporal::Response",
@@ -1883,16 +1883,16 @@
         "display_name": "ir::expr_temporal::Response",
         "canonical_name": "ir::expr_temporal::Response",
         "source_range": {
-          "begin_offset": 1906,
-          "end_offset": 2143
+          "begin_offset": 2134,
+          "end_offset": 2371
         }
       },
       "nodes": [
         {
           "name": "run",
           "source_range": {
-            "begin_offset": 1976,
-            "end_offset": 2009
+            "begin_offset": 2204,
+            "end_offset": 2237
           },
           "target": "ir::expr_temporal::ExprAgent",
           "target_ref": {
@@ -1906,8 +1906,8 @@
             "kind": "path",
             "id": 65,
             "source_range": {
-              "begin_offset": 2002,
-              "end_offset": 2007
+              "begin_offset": 2230,
+              "end_offset": 2235
             },
             "resolved_type": {
               "kind": "struct",
@@ -1936,29 +1936,29 @@
         {
           "kind": "unary",
           "source_range": {
-            "begin_offset": 2022,
-            "end_offset": 2076
+            "begin_offset": 2250,
+            "end_offset": 2304
           },
           "op": "always",
           "operand": {
             "kind": "binary",
             "source_range": {
-              "begin_offset": 2030,
-              "end_offset": 2075
+              "begin_offset": 2258,
+              "end_offset": 2303
             },
             "op": "or",
             "lhs": {
               "kind": "unary",
               "source_range": {
-                "begin_offset": 2030,
-                "end_offset": 2046
+                "begin_offset": 2258,
+                "end_offset": 2274
               },
               "op": "not",
               "operand": {
                 "kind": "running",
                 "source_range": {
-                  "begin_offset": 2034,
-                  "end_offset": 2046
+                  "begin_offset": 2262,
+                  "end_offset": 2274
                 },
                 "node": "run"
               }
@@ -1966,15 +1966,15 @@
             "rhs": {
               "kind": "unary",
               "source_range": {
-                "begin_offset": 2050,
-                "end_offset": 2075
+                "begin_offset": 2278,
+                "end_offset": 2303
               },
               "op": "eventually",
               "operand": {
                 "kind": "completed",
                 "source_range": {
-                  "begin_offset": 2061,
-                  "end_offset": 2075
+                  "begin_offset": 2289,
+                  "end_offset": 2303
                 },
                 "node": "run",
                 "state_name": null
@@ -1987,15 +1987,15 @@
         {
           "kind": "unary",
           "source_range": {
-            "begin_offset": 2092,
-            "end_offset": 2123
+            "begin_offset": 2320,
+            "end_offset": 2351
           },
           "op": "eventually",
           "operand": {
             "kind": "completed",
             "source_range": {
-              "begin_offset": 2103,
-              "end_offset": 2123
+              "begin_offset": 2331,
+              "end_offset": 2351
             },
             "node": "run",
             "state_name": "Done"
@@ -2015,8 +2015,8 @@
         "kind": "path",
         "id": 64,
         "source_range": {
-          "begin_offset": 2137,
-          "end_offset": 2140
+          "begin_offset": 2365,
+          "end_offset": 2368
         },
         "resolved_type": {
           "kind": "struct",

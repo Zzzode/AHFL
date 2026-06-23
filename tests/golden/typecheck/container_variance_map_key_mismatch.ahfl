@@ -1,5 +1,6 @@
 module typecheck::variance;
 import typecheck::variance as self;
+import std::collections;
 
-const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const NarrowMapKey: Map<String(2, 8), Int> = map_raw_empty<String(2, 8), Int>();
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;

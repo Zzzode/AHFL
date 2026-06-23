@@ -3,24 +3,24 @@
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide => agent ir::expr_temporal::ExprAgent called ir::expr_temporal::Decide
--- AHFL_MAP contract_ir_expr_temporal_ExprAgent_0_atom_0 => observation contract ir::expr_temporal::ExprAgent[0] @ ir/expr_temporal.ahfl:1105-1142
--- AHFL_MAP contract_ir_expr_temporal_ExprAgent_1_atom_0 => observation contract ir::expr_temporal::ExprAgent[1] @ ir/expr_temporal.ahfl:1147-1216
--- AHFL_MAP agent__ir_expr_temporal_ExprAgent__state => agent ir::expr_temporal::ExprAgent state @ ir/expr_temporal.ahfl:864-1068
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__state => workflow ir::expr_temporal::ExprWorkflow node run state @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__phase => workflow ir::expr_temporal::ExprWorkflow node run lifecycle phase @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested => workflow ir::expr_temporal::ExprWorkflow node run environment failure request @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__started => workflow ir::expr_temporal::ExprWorkflow node run has started @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__running => workflow ir::expr_temporal::ExprWorkflow node run is running @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__completed => workflow ir::expr_temporal::ExprWorkflow node run completed @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failed => workflow ir::expr_temporal::ExprWorkflow node run failed @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovering => workflow ir::expr_temporal::ExprWorkflow node run recovering @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovered => workflow ir::expr_temporal::ExprWorkflow node run recovered @ ir/expr_temporal.ahfl:1976-2009
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1251-1775
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1251-1775 committed
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1251-1775 failed
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1251-1775
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1251-1775 committed
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1251-1775 failed
+-- AHFL_MAP contract_ir_expr_temporal_ExprAgent_0_atom_0 => observation contract ir::expr_temporal::ExprAgent[0] @ ir/expr_temporal.ahfl:1333-1370
+-- AHFL_MAP contract_ir_expr_temporal_ExprAgent_1_atom_0 => observation contract ir::expr_temporal::ExprAgent[1] @ ir/expr_temporal.ahfl:1375-1444
+-- AHFL_MAP agent__ir_expr_temporal_ExprAgent__state => agent ir::expr_temporal::ExprAgent state @ ir/expr_temporal.ahfl:1092-1296
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__state => workflow ir::expr_temporal::ExprWorkflow node run state @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__phase => workflow ir::expr_temporal::ExprWorkflow node run lifecycle phase @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested => workflow ir::expr_temporal::ExprWorkflow node run environment failure request @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__started => workflow ir::expr_temporal::ExprWorkflow node run has started @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__running => workflow ir::expr_temporal::ExprWorkflow node run is running @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__completed => workflow ir::expr_temporal::ExprWorkflow node run completed @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failed => workflow ir::expr_temporal::ExprWorkflow node run failed @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovering => workflow ir::expr_temporal::ExprWorkflow node run recovering @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovered => workflow ir::expr_temporal::ExprWorkflow node run recovered @ ir/expr_temporal.ahfl:2204-2237
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1479-2003
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1479-2003 committed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1479-2003 failed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1479-2003
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1479-2003 committed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1479-2003 failed
 MODULE main
 VAR
   agent__ir_expr_temporal_ExprAgent__state : {Init, Done};

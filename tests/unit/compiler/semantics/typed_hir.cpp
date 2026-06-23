@@ -119,7 +119,7 @@ struct TypedHIRFixture {
                                 const std::vector<std::filesystem::path> &entry_files) const {
         const auto parse = selected_frontend.parse_project(ahfl::ProjectInput{
             .entry_files = entry_files,
-            .search_roots = {root},
+            .search_roots = {root, std::filesystem::path{"std"}},
         });
         if (parse.has_errors()) {
             std::ostringstream ss;
@@ -170,7 +170,7 @@ struct TypedHIRFixture {
                               const std::vector<std::filesystem::path> &entry_files) const {
         const auto parse = frontend.parse_project(ahfl::ProjectInput{
             .entry_files = entry_files,
-            .search_roots = {root},
+            .search_roots = {root, std::filesystem::path{"std"}},
         });
         if (parse.has_errors()) {
             std::ostringstream ss;
@@ -279,7 +279,7 @@ source_id_for_module(const ahfl::TypedProgram &program, std::string_view module_
 
 // Small prefix providing Request/Response/Capability shared by many cases.
 const char *kSharedPrefix = R"AHFL(
-struct Request { value: String; token: Optional<String> = none; }
+struct Request { value: String; token: Optional<String> = std::option::Option::None; }
 struct Context { value: String = ""; }
 struct Response { value: String; code: Int = 200; }
 
@@ -385,22 +385,22 @@ contract for LiteralAgent {
 flow for LiteralAgent {
     state Init {
         // Bool / Int / Float / Decimal / String / None / Some literal.
-        let t_bools: List<Bool> = [true, false];
-        let t_ints: List<Int> = [1, 2, 3];
-        let t_floats: List<Float> = [1.5, 2.5];
-        let t_none: Optional<String> = none;
-        let t_some: Optional<String> = some("world");
+        let t_bools: List<Bool> = std::collections::list_from_array<Bool>(true, false);
+        let t_ints: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
+        let t_floats: List<Float> = std::collections::list_from_array<Float>(1.5, 2.5);
+        let t_none: Optional<String> = std::option::Option::None;
+        let t_some: Optional<String> = std::option::Option::Some("world");
         // Collections.
-        let t_list: List<Int> = [1, 2, 3];
-        let t_set: Set<String> = set ["a", "b"];
-        let t_map: Map<String, Int> = map ["x": 1, "y": 2];
+        let t_list: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
+        let t_set: Set<String> = std::collections::set_from_array<String>("a", "b");
+        let t_map: Map<String, Int> = std::collections::map_from_entries<String, Int>("x", 1, "y", 2);
         // Struct literal.
         let t_lit: Response = Response { value: "ok", code: 200 };
         // Path, call, member.
         let t_path = input.value;
         let t_call = Echo(input.value);
         // MemberAccess: postfix index-then-member triggers postfixExpr branch.
-        let t_struct_list: List<Response> = [t_lit];
+        let t_struct_list: List<Response> = std::collections::list_from_array<Response>(t_lit);
         let t_member = t_struct_list[0].value;
         // Unary / binary / group.
         let t_unary = -1;
@@ -572,8 +572,8 @@ const LaterCode: Int = 41;
 const DefaultSettings: Settings = Settings {
     label: self::DefaultLabel,
     code: self::BaseCode + 2,
-    tags: ["ops", "runtime"],
-    fallback: some(self::DefaultLabel),
+    tags: std::collections::list_from_array<String>("ops", "runtime"),
+    fallback: std::option::Option::Some(self::DefaultLabel),
     priority: Priority::High
 };
 const SettingsLabel: String = self::DefaultSettings.label;
@@ -762,11 +762,11 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR normalizes Set and Map c
     const std::string source = R"AHFL(
 module typed::const_normalize;
 
-const SourceList: List<String> = ["b", "a"];
-const SourceSet: Set<String> = set ["b", "a"];
-const CanonicalSet: Set<String> = set ["a", "b"];
-const SourceMap: Map<String, Int> = map ["b": 2, "a": 1];
-const CanonicalMap: Map<String, Int> = map ["a": 1, "b": 2];
+const SourceList: List<String> = std::collections::list_from_array<String>("b", "a");
+const SourceSet: Set<String> = std::collections::set_from_array<String>("b", "a");
+const CanonicalSet: Set<String> = std::collections::set_from_array<String>("a", "b");
+const SourceMap: Map<String, Int> = std::collections::map_from_entries<String, Int>("b", 2, "a", 1);
+const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String, Int>("a", 1, "b", 2);
 )AHFL";
 
     write_file(source_path, source);
@@ -1006,7 +1006,7 @@ fn mapped(value: Option<Int>) -> Option<Int> {
 }
 
 fn chained(value: Option<Int>) -> Option<Int> {
-    return option::and_then<Int, Int>(value, \x: Int -> some(x + 1));
+    return option::and_then<Int, Int>(value, \x: Int -> std::option::Option::Some(x + 1));
 }
 
 fn default_value(value: Option<Int>) -> Int {
@@ -1018,7 +1018,7 @@ fn lazy_default(value: Option<Int>) -> Int {
 }
 
 fn recover(value: Option<Int>) -> Option<Int> {
-    return option::or_else<Int>(value, \ -> some(7));
+    return option::or_else<Int>(value, \ -> std::option::Option::Some(7));
 }
 
 fn filtered(value: Option<Int>) -> Option<Int> {
@@ -1093,7 +1093,7 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
     };
 
     expect_wrapper("std::option::is_some");
-    expect_wrapper("std::option::is_none");
+    expect_wrapper("std::option::is_std::option::Option::None");
     expect_wrapper("std::option::map");
     expect_wrapper("std::option::and_then");
     expect_wrapper("std::option::or_else");
@@ -1140,7 +1140,7 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
             CHECK(site.type_args[0]->describe() == "Int");
-        } else if (symbol->get().canonical_name == "std::option::is_none") {
+        } else if (symbol->get().canonical_name == "std::option::is_std::option::Option::None") {
             saw_option_is_none = true;
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
@@ -1329,12 +1329,12 @@ fn singleton_list_value(value: Int) -> List<Int> {
 }
 
 fn literal_first() -> Int {
-    let xs: List<Int> = [1, 2, 3];
+    let xs: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
     return xs[0];
 }
 
 fn literal_length() -> Int {
-    let xs: List<Int> = [1, 2, 3];
+    let xs: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
     return collections::length(xs);
 }
 
@@ -1351,15 +1351,15 @@ fn maybe_last(xs: List<Int>) -> Option<Int> {
 }
 
 fn maybe_one() -> Option<Int> {
-    return some(1);
+    return std::option::Option::Some(1);
 }
 
 fn maybe_none() -> Option<Int> {
-    return none;
+    return std::option::Option::None;
 }
 
 fn none_check(value: Option<Int>) -> Bool {
-    return value == none;
+    return value == std::option::Option::None;
 }
 
 fn has_member(values: Set<Int>, value: Int) -> Bool {
@@ -1435,23 +1435,23 @@ fn raw_map_size(values: Map<String, Int>) -> Int {
 }
 
 fn inferred_first() -> Int {
-    let xs = [4, 5, 6];
+    let xs = std::collections::list_from_array<Int>(4, 5, 6);
     return xs[0];
 }
 
 fn inferred_some_is_none() -> Bool {
-    let value = some(42);
-    return value == none;
+    let value = std::option::Option::Some(42);
+    return value == std::option::Option::None;
 }
 
 fn inferred_has_member() -> Bool {
-    let values = set [7, 8];
+    let values = std::collections::set_from_array<Int>(7, 8);
     return collections::contains<Int>(values, 7);
 }
 
 fn inferred_missing_value() -> Bool {
-    let values = map ["z": 9];
-    return collections::map_get<String, Int>(values, "missing") == none;
+    let values = std::collections::map_from_entries<String, Int>("z", 9);
+    return collections::map_get<String, Int>(values, "missing") == std::option::Option::None;
 }
 )AHFL";
 
@@ -1479,7 +1479,7 @@ fn inferred_missing_value() -> Bool {
     };
 
     expect_expr_type("[4, 5, 6]", "std::collections::List<Int>");
-    expect_expr_type("some(42)", "std::option::Option<Int>");
+    expect_expr_type("std::option::Option::Some(42)", "std::option::Option<Int>");
     expect_expr_type("set [7, 8]", "std::collections::Set<Int>");
     expect_expr_type("map [\"z\": 9]", "std::collections::Map<String, Int>");
 
@@ -2427,16 +2427,16 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck applies covariant container
 module typed::variance;
 import typed::variance as self;
 
-const NarrowOptional: Optional<String(2, 8)> = none;
+const NarrowOptional: Optional<String(2, 8)> = std::option::Option::None;
 const WideOptional: Optional<String> = self::NarrowOptional;
 
-const NarrowList: List<String(2, 8)> = [];
+const NarrowList: List<String(2, 8)> = std::collections::list_from_array<String(2, 8)>();
 const WideList: List<String> = self::NarrowList;
 
-const NarrowSet: Set<String(2, 8)> = set [];
+const NarrowSet: Set<String(2, 8)> = std::collections::set_from_array<Int>();
 const WideSet: Set<String> = self::NarrowSet;
 
-const NarrowMapValue: Map<String, String(2, 8)> = map [];
+const NarrowMapValue: Map<String, String(2, 8)> = std::collections::map_from_entries<Int, Int>();
 const WideMapValue: Map<String, String> = self::NarrowMapValue;
 )AHFL";
     write_file(source_path, source);
@@ -2464,7 +2464,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck keeps map keys invariant") 
 module typed::variance;
 import typed::variance as self;
 
-const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const NarrowMapKey: Map<String(2, 8), Int> = std::collections::map_from_entries<String(2, 8), Int>();
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 )AHFL";
     write_file(source_path, source);
@@ -2779,7 +2779,7 @@ module typed::snapshot;
 type Label = String;
 const DefaultCode: Int = 200;
 
-struct Req { v: String; token: Optional<String> = none; }
+struct Req { v: String; token: Optional<String> = std::option::Option::None; }
 struct Ctx { v: String = ""; count: Int = 0; }
 struct Resp { v: String; code: Int = 200; }
 enum Priority { Low, High }
@@ -3421,7 +3421,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     const std::string source = R"AHFL(
 module typed::statement_parity;
 
-struct Req { v: String; token: Optional<String> = none; }
+struct Req { v: String; token: Optional<String> = std::option::Option::None; }
 struct Ctx { v: String = ""; count: Int = 0; }
 struct Resp { v: String; code: Int = 200; }
 
@@ -3452,7 +3452,7 @@ flow for Worker {
         // 5) If with else. Both branches contain additional Let / Assign /
         //    ExprStatement statements so that nested BlockSyntax is created
         //    and visited.
-        if (input.token != none) {
+        if (input.token != std::option::Option::None) {
             let tok = input.token;
             ctx.count = ctx.count + 2;
             SideEffect(ctx.v);
@@ -3478,7 +3478,7 @@ flow for Worker {
     write_file(source_path, source);
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_parity");
@@ -3549,7 +3549,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     const std::string source = R"AHFL(
 module typed::statement_children;
 
-struct Req { v: String; token: Optional<String> = none; }
+struct Req { v: String; token: Optional<String> = std::option::Option::None; }
 struct Ctx { v: String = ""; count: Int = 0; }
 struct Resp { v: String; code: Int = 200; }
 
@@ -3573,7 +3573,7 @@ flow for Worker {
         ctx.v = greeting;
         assert(ctx.v == "hello");
         SideEffect(input.v);
-        if (input.token != none) {
+        if (input.token != std::option::Option::None) {
             let tok = input.token;
             ctx.count = ctx.count + 2;
             SideEffect(ctx.v);
@@ -3596,7 +3596,7 @@ flow for Worker {
     write_file(source_path, source);
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_children");

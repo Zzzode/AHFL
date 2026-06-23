@@ -825,6 +825,9 @@ TEST_CASE("Typed HIR lowering desugars std collection literals to runtime builti
     const std::string source = R"AHFL(
 module app::main;
 
+import std::collections as collections;
+import std::option as option;
+
 struct Request {}
 struct Context {}
 
@@ -844,9 +847,9 @@ agent LiteralAgent {
 
 flow for LiteralAgent {
     state Done {
-        let xs = [1, 2];
-        let values = set [1, 2];
-        let lookup = map ["a": 1];
+        let xs = collections::list_from_array<Int>(1, 2);
+        let values = collections::set_from_array<Int>(1, 2);
+        let lookup = collections::map_from_entries<String, Int>("a", 1);
         return Response { value: xs[0] };
     }
 }
@@ -923,6 +926,8 @@ TEST_CASE("Typed HIR lowering desugars std Option sugar to ADT constructor calls
     const std::string source = R"AHFL(
 module app::main;
 
+import std::option as option;
+
 struct Request {}
 struct Context {}
 
@@ -942,8 +947,8 @@ agent OptionAgent {
 
 flow for OptionAgent {
     state Done {
-        let present = some(1);
-        let missing: Option<Int> = none;
+        let present = option::Option::Some(1);
+        let missing: Option<Int> = option::Option::None;
         return Response { value: 0 };
     }
 }
@@ -992,8 +997,19 @@ flow for OptionAgent {
             CHECK(call->arguments.size() == argument_count);
         };
 
+    const auto expect_let_qualified_value =
+        [&](std::size_t statement_index, std::string_view value) {
+            const auto *let = std::get_if<ahfl::ir::LetStatement>(
+                &flow->state_handlers.front().body.statements[statement_index]->node);
+            REQUIRE(let != nullptr);
+            REQUIRE(let->initializer != nullptr);
+            const auto *qve = std::get_if<ahfl::ir::QualifiedValueExpr>(&let->initializer->node);
+            REQUIRE(qve != nullptr);
+            CHECK(qve->value == value);
+        };
+
     expect_let_call(0, "std::option::Option::Some", 1);
-    expect_let_call(1, "std::option::Option::None", 0);
+    expect_let_qualified_value(1, "std::option::Option::None");
 
     const auto *present_let =
         std::get_if<ahfl::ir::LetStatement>(&flow->state_handlers.front().body.statements[0]->node);
@@ -1002,7 +1018,6 @@ flow for OptionAgent {
     CHECK(present_let->type_ref.canonical_name == "std::option::Option");
     CHECK(present_let->type_ref.params.size() == 1);
 }
-
 TEST_CASE("Typed HIR lowering carries std higher-order lambda arguments into IR") {
     const auto root = make_temp_project("std_higher_order_lambda_lowering");
     const auto main_path = root / "app" / "main.ahfl";
@@ -1031,7 +1046,7 @@ agent HigherOrderAgent {
 
 flow for HigherOrderAgent {
     state Done {
-        let mapped = collections::map<Int, Int>([1, 2], \x: Int -> x + 1);
+        let mapped = collections::map<Int, Int>(collections::list_from_array<Int>(1, 2), \x: Int -> x + 1);
         return Response { value: mapped[0] };
     }
 }

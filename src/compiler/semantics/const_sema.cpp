@@ -333,7 +333,39 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 reason = "runtime path references are not compile-time constants";
                 return false;
             },
-            [&reason](const ast::CallExpr &) {
+            [&reason](const ast::CallExpr &e) {
+                // P5.6a integration fix: calls to recognised stdlib collection
+                // sugar lowering targets (list_from_array / set_from_array /
+                // map_from_entries) and enum-variant ADT constructors are
+                // accepted as const expressions when every argument is itself
+                // a constant. This mirrors the legacy sugar-literal const-
+                // folding behaviour dropped with the grammar productions.
+                static constexpr std::string_view kVariadicBuiltins[] = {
+                    "list_from_array",
+                    "set_from_array",
+                    "map_from_entries",
+                    "Some",
+                    "None",
+                };
+                auto is_whitelisted_head = [](std::string_view head) -> bool {
+                    for (const auto name : kVariadicBuiltins) {
+                        if (head == name) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                if (e.callee && !e.callee->segments.empty()) {
+                    const auto &head = e.callee->segments.back();
+                    if (is_whitelisted_head(head)) {
+                        for (const auto &arg : e.arguments) {
+                            if (!arg || !is_const_expr_syntax(*arg, reason)) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                }
                 reason = "capability and predicate calls are not compile-time constants";
                 return false;
             },

@@ -75,8 +75,8 @@ struct Payload {
 }
 
 struct Context {
-    token: Optional<String> = none;
-    payload: Optional<Payload> = none;
+    token: Optional<String> = std::option::Option::None;
+    payload: Optional<Payload> = std::option::Option::None;
 }
 )AHFL";
 
@@ -188,7 +188,7 @@ struct ProjectTypeCheckResult {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
-        .search_roots = {root},
+        .search_roots = {root, std::filesystem::path{"std"}},
     });
     if (parse_result.has_errors()) {
         std::ostringstream ss;
@@ -347,7 +347,7 @@ struct NoneComparisonFinder {
 // ---------------------------------------------------------------------------
 TEST_CASE("Optional simple narrow unwraps type on then branch") {
     const std::string body =
-        "        if (ctx.token != none) {\n"
+        "        if (ctx.token != std::option::Option::None) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
         "            return Response { value: input.fallback };\n"
@@ -360,7 +360,7 @@ TEST_CASE("Optional simple narrow unwraps type on then branch") {
 
     // The LHS of the `!= none` comparison is evaluated *before* the narrowing
     // merges, so it must keep the declared std nominal Option<String>.
-    const auto cmp_range = range_of(source, "ctx.token != none");
+    const auto cmp_range = range_of(source, "ctx.token != std::option::Option::None");
     const auto cmp_lhs =
         std::find_if(result.typed_program.expressions.begin(),
                      result.typed_program.expressions.end(),
@@ -412,7 +412,7 @@ TEST_CASE("Optional &&-chain narrow propagates into second conjunct") {
     // exact same narrowing facts it would see for a bare `x != none`
     // condition.
     const std::string body =
-        "        if (ctx.token != none && true) {\n"
+        "        if (ctx.token != std::option::Option::None && true) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
         "            return Response { value: input.fallback };\n"
@@ -438,7 +438,7 @@ TEST_CASE("Optional &&-chain narrow propagates into second conjunct") {
 
 TEST_CASE("Optional narrowing applies inside nested if conditions") {
     const std::string body =
-        "        if (ctx.token != none) {\n"
+        "        if (ctx.token != std::option::Option::None) {\n"
         "            if (ctx.token == input.fallback) {\n"
         "                return Response { value: ctx.token };\n"
         "            }\n"
@@ -459,10 +459,10 @@ TEST_CASE("Optional narrowing applies inside nested if conditions") {
 // ---------------------------------------------------------------------------
 TEST_CASE("Negated condition does not incorrectly narrow on then branch") {
     const std::string body =
-        "        if (!(ctx.token != none)) {\n"
+        "        if (!(ctx.token != std::option::Option::None)) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
-        "            return Response { value: some(input.fallback) };\n"
+        "            return Response { value: std::option::Option::Some(input.fallback) };\n"
         "        }\n";
     const auto legacy_source = render_body(body, kSkeletonOptional);
 
@@ -486,11 +486,11 @@ TEST_CASE("Negated condition does not incorrectly narrow on then branch") {
 // ---------------------------------------------------------------------------
 TEST_CASE("Assignment invalidates earlier narrowing for the same place") {
     const std::string body =
-        "        if (ctx.token != none) {\n"
-        "            ctx.token = none;\n"
+        "        if (ctx.token != std::option::Option::None) {\n"
+        "            ctx.token = std::option::Option::None;\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
-        "            return Response { value: some(input.fallback) };\n"
+        "            return Response { value: std::option::Option::Some(input.fallback) };\n"
         "        }\n";
     const auto legacy_source = render_body(body, kSkeletonOptional);
 
@@ -525,7 +525,7 @@ TEST_CASE("Assignment invalidates earlier narrowing for the same place") {
 // ---------------------------------------------------------------------------
 TEST_CASE("ConditionFacts records complementary then/else facts") {
     const std::string body =
-        "        if (ctx.token != none) {\n"
+        "        if (ctx.token != std::option::Option::None) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
         "            return Response { value: input.fallback };\n"
@@ -579,7 +579,7 @@ TEST_CASE("ConditionFacts records complementary then/else facts") {
 
 TEST_CASE("ConditionFacts treats qualified None value as Optional none comparison") {
     const std::string body =
-        "        if (ctx.token != Option::None) {\n"
+        "        if (ctx.token != std::option::Option::None) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
         "            return Response { value: input.fallback };\n"
@@ -628,7 +628,7 @@ TEST_CASE("ConditionFacts treats qualified None value as Optional none compariso
 // ---------------------------------------------------------------------------
 TEST_CASE("Reversed none comparison (none != x) narrows symmetrically") {
     const std::string body =
-        "        if (none != ctx.token) {\n"
+        "        if (std::option::Option::None != ctx.token) {\n"
         "            return Response { value: ctx.token };\n"
         "        } else {\n"
         "            return Response { value: input.fallback };\n"

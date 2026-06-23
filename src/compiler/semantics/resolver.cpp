@@ -1125,6 +1125,58 @@ class ResolverPass final {
                     // TypeName reference. resolve_std_container_type in
                     // type_resolver.cpp handles the fallback case where no
                     // such declaration exists (stdlib-less pipelines).
+                    //
+                    // P5.6a integration fix: the four recognised container
+                    // names (Optional / List / Set / Map) are allowed to
+                    // remain unresolved at the Resolver phase. The actual
+                    // diagnostic (`stdlib container type unavailable`) is
+                    // emitted later by the TypeResolver so stdlib-less
+                    // pipelines surface a targeted message rather than a
+                    // generic "unknown type".
+                    if (t.name->segments.size() == 1 && !t.type_args.empty()) {
+                        const auto &head = t.name->segments.front();
+                        if (head == "Option" || head == "Optional" ||
+                            head == "List" || head == "Set" || head == "Map") {
+                            // Silent lookup first — only record a symbol
+                            // reference if the symbol actually exists. Do not
+                            // call resolve_reference() because it emits an
+                            // "unknown type" diagnostic on miss.
+                            const auto pre_existing =
+                                lookup(SymbolNamespace::Types, *t.name);
+                            if (!pre_existing.has_value()) {
+                                for (const auto &arg : t.type_args) {
+                                    if (arg) {
+                                        resolve_type(*arg);
+                                    }
+                                }
+                                return;
+                            }
+                            // Container symbol IS available: register the
+                            // reference and type-alias dependency tracking.
+                            result_.add_reference(ResolvedReference{
+                                .kind = ReferenceKind::TypeName,
+                                .text = t.name->spelling(),
+                                .source_id = current_source_id_,
+                                .range = t.name->range,
+                                .target = *pre_existing,
+                            });
+                            if (current_type_alias_.has_value()) {
+                                const auto symbol =
+                                    result_.symbol_table.get(*pre_existing);
+                                if (symbol.has_value() &&
+                                    symbol->get().kind == SymbolKind::TypeAlias) {
+                                    type_alias_dependencies_[current_type_alias_->value]
+                                        .push_back(*pre_existing);
+                                }
+                            }
+                            for (const auto &arg : t.type_args) {
+                                if (arg) {
+                                    resolve_type(*arg);
+                                }
+                            }
+                            return;
+                        }
+                    }
                     const auto resolved = resolve_reference(
                         SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
