@@ -296,30 +296,12 @@ struct DecimalType {
     std::uint8_t scale;
 };
 
-/// Named type: references a struct/enum/type alias
+/// Named type: references a struct/enum/type alias or parameterised
+/// built-in such as Optional<T>, List<T>, Set<T>, Map<K, V>. When
+/// `type_args` is empty the type is a simple named reference.
 struct NamedType {
     Owned<QualifiedName> name;
-};
-
-/// Optional type: T?
-struct OptionalType {
-    Owned<TypeSyntax> inner;
-};
-
-/// List type: list<T>
-struct ListType {
-    Owned<TypeSyntax> element;
-};
-
-/// Set type: set<T>
-struct SetType {
-    Owned<TypeSyntax> element;
-};
-
-/// Map type: map<K, V>
-struct MapType {
-    Owned<TypeSyntax> key_type;
-    Owned<TypeSyntax> value_type;
+    std::vector<Owned<TypeSyntax>> type_args;
 };
 
 /// Function type: Fn(A1, A2, ...) -> Ret [effect Spec]
@@ -351,10 +333,6 @@ using TypeSyntaxNode = std::variant<UnitType,
                                     DurationType,
                                     DecimalType,
                                     NamedType,
-                                    OptionalType,
-                                    ListType,
-                                    SetType,
-                                    MapType,
                                     FnType,
                                     AppType>;
 

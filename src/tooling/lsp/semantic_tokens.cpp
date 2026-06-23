@@ -160,28 +160,20 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                 if (t.name != nullptr) {
                     collect_qualified_name_tokens(*t.name, source, tokens, SemanticTokenType::Type);
                 }
-            },
-            [&](const ast::OptionalType &t) {
-                if (t.inner != nullptr) {
-                    collect_type_syntax_tokens(*t.inner, source, tokens);
+                for (const auto &arg : t.type_args) {
+                    if (arg != nullptr) {
+                        collect_type_syntax_tokens(*arg, source, tokens);
+                    }
                 }
             },
-            [&](const ast::ListType &t) {
-                if (t.element != nullptr) {
-                    collect_type_syntax_tokens(*t.element, source, tokens);
+            [&](const ast::FnType &t) {
+                for (const auto &param : t.params) {
+                    if (param != nullptr) {
+                        collect_type_syntax_tokens(*param, source, tokens);
+                    }
                 }
-            },
-            [&](const ast::SetType &t) {
-                if (t.element != nullptr) {
-                    collect_type_syntax_tokens(*t.element, source, tokens);
-                }
-            },
-            [&](const ast::MapType &t) {
-                if (t.key_type != nullptr) {
-                    collect_type_syntax_tokens(*t.key_type, source, tokens);
-                }
-                if (t.value_type != nullptr) {
-                    collect_type_syntax_tokens(*t.value_type, source, tokens);
+                if (t.return_type != nullptr) {
+                    collect_type_syntax_tokens(*t.return_type, source, tokens);
                 }
             },
             [&](const ast::AppType &t) {

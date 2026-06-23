@@ -42,63 +42,13 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
             [&](const ast::DecimalType &t) {
                 return types_.decimal(static_cast<std::int64_t>(t.scale));
             },
-            [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
-            [&](const ast::OptionalType &t) {
-                TypePtr inner = resolve_type(*t.inner);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kOptionType, {inner}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
+            [&](const ast::NamedType &t) {
+                std::vector<TypePtr> args;
+                args.reserve(t.type_args.size());
+                for (const auto &arg : t.type_args) {
+                    args.push_back(resolve_type(*arg));
                 }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kOptionType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::ListType &t) {
-                TypePtr element = resolve_type(*t.element);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kListType, {element}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kListType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::SetType &t) {
-                TypePtr element = resolve_type(*t.element);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kSetType, {element}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kSetType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::MapType &t) {
-                TypePtr key = resolve_type(*t.key_type);
-                TypePtr value = resolve_type(*t.value_type);
-                if (TypePtr nominal = resolve_std_container_type(
-                        stdlib_bridge::kMapType, {key, value}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kMapType),
-                    type.range);
-                return make_error_type();
+                return resolve_named_type(*t.name, std::move(args), t.name->range);
             },
             [&](const ast::FnType &t) {
                 std::vector<TypePtr> param_types;
@@ -119,6 +69,37 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
         type.node);
 
     return make_error_type();
+}
+
+TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
+                                         std::vector<TypePtr> args,
+                                         SourceRange use_range) {
+    // Dispatch the built-in parameterised types that used to have dedicated
+    // syntax nodes (Optional/List/Set/Map). Any other type is expected to have
+    // no generic arguments and is resolved as a plain named reference.
+    if (name.segments.size() == 1) {
+        const auto &head = name.segments.front();
+        if (head == "Optional" && args.size() == 1) {
+            return types_.optional(std::move(args.front()));
+        }
+        if (head == "List" && args.size() == 1) {
+            return types_.list(std::move(args.front()));
+        }
+        if (head == "Set" && args.size() == 1) {
+            return types_.set(std::move(args.front()));
+        }
+        if (head == "Map" && args.size() == 2) {
+            return types_.map(std::move(args[0]), std::move(args[1]));
+        }
+    }
+
+    if (!args.empty()) {
+        diagnose_(error_codes::typecheck::UnknownType,
+                  messages::typecheck::UnknownType.format_with(name.spelling()),
+                  use_range);
+        return make_error_type();
+    }
+    return resolve_named_type(name);
 }
 
 TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name) {

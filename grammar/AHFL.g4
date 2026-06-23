@@ -44,15 +44,7 @@ qualifiedIdentListOpt: qualifiedIdentList?;
 type_:
 	primitiveType
 	| fnType
-	| 'Optional' '<' type_ '>'
-	| 'List' '<' type_ '>'
-	| 'Set' '<' type_ '>'
-	| 'Map' '<' type_ ',' type_ '>'
-	| appType
-	| qualifiedIdent;
-
-// Generic type application: Vec<Int>, std::collections::Map<String, Int>
-appType: qualifiedIdent '<' typeList '>';
+	| qualifiedIdent ('<' type_ (',' type_)* '>')?;
 
 primitiveType:
 	'Unit'

@@ -113,33 +113,11 @@ class AstInvariantValidator final {
                 },
                 [&](const NamedType &t) {
                     validate_qualified_name(t.name.get(), type.range, "NamedType.name");
-                },
-                [&](const OptionalType &t) {
-                    require(t.inner != nullptr, type.range, "OptionalType is missing inner");
-                    if (t.inner) {
-                        validate_type(*t.inner);
-                    }
-                },
-                [&](const ListType &t) {
-                    require(t.element != nullptr, type.range, "ListType is missing element");
-                    if (t.element) {
-                        validate_type(*t.element);
-                    }
-                },
-                [&](const SetType &t) {
-                    require(t.element != nullptr, type.range, "SetType is missing element");
-                    if (t.element) {
-                        validate_type(*t.element);
-                    }
-                },
-                [&](const MapType &t) {
-                    require(t.key_type != nullptr, type.range, "MapType is missing key type");
-                    require(t.value_type != nullptr, type.range, "MapType is missing value type");
-                    if (t.key_type) {
-                        validate_type(*t.key_type);
-                    }
-                    if (t.value_type) {
-                        validate_type(*t.value_type);
+                    for (const auto &arg : t.type_args) {
+                        require(arg != nullptr, type.range, "NamedType is missing a type argument");
+                        if (arg) {
+                            validate_type(*arg);
+                        }
                     }
                 },
                 [&](const FnType &t) {
@@ -1303,19 +1281,18 @@ struct TypeSyntaxSpellingVisitor {
         return builder.str();
     }
     std::string operator()(const NamedType &t) const {
-        return t.name->spelling();
-    }
-    std::string operator()(const OptionalType &t) const {
-        return "Optional<" + t.inner->spelling() + ">";
-    }
-    std::string operator()(const ListType &t) const {
-        return "List<" + t.element->spelling() + ">";
-    }
-    std::string operator()(const SetType &t) const {
-        return "Set<" + t.element->spelling() + ">";
-    }
-    std::string operator()(const MapType &t) const {
-        return "Map<" + t.key_type->spelling() + ", " + t.value_type->spelling() + ">";
+        std::string result = t.name->spelling();
+        if (!t.type_args.empty()) {
+            result.push_back('<');
+            for (std::size_t i = 0; i < t.type_args.size(); ++i) {
+                if (i != 0) {
+                    result.append(", ");
+                }
+                result.append(t.type_args[i]->spelling());
+            }
+            result.push_back('>');
+        }
+        return result;
     }
     std::string operator()(const FnType &t) const {
         std::ostringstream builder;

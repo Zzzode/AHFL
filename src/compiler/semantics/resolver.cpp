@@ -1118,13 +1118,11 @@ class ResolverPass final {
                                 *resolved);
                         }
                     }
-                },
-                [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
-                [&](const ast::ListType &t) { resolve_type(*t.element); },
-                [&](const ast::SetType &t) { resolve_type(*t.element); },
-                [&](const ast::MapType &t) {
-                    resolve_type(*t.key_type);
-                    resolve_type(*t.value_type);
+                    for (const auto &arg : t.type_args) {
+                        if (arg) {
+                            resolve_type(*arg);
+                        }
+                    }
                 },
                 [&](const ast::FnType &t) {
                     // P2 (RFC §3.3): first-class Fn type. Recurse into

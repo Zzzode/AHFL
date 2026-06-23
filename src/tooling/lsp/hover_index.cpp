@@ -592,7 +592,15 @@ void add_agent_capability_targets(HoverTargetIndex &index,
     return std::visit(
         Overloaded{
             [](const ast::UnitType &) -> std::string_view { return {}; },
-            [](const ast::NamedType &) -> std::string_view { return {}; },
+            [](const ast::NamedType &t) -> std::string_view {
+                if (!t.type_args.empty() && t.name && t.name->segments.size() == 1) {
+                    const auto &head = t.name->segments.front();
+                    if (head == "Optional" || head == "List" || head == "Set" || head == "Map") {
+                        return head;
+                    }
+                }
+                return {};
+            },
             [](const ast::BoolType &) -> std::string_view { return "Bool"; },
             [](const ast::IntType &) -> std::string_view { return "Int"; },
             [](const ast::FloatType &) -> std::string_view { return "Float"; },
@@ -602,10 +610,6 @@ void add_agent_capability_targets(HoverTargetIndex &index,
             [](const ast::TimestampType &) -> std::string_view { return "Timestamp"; },
             [](const ast::DurationType &) -> std::string_view { return "Duration"; },
             [](const ast::DecimalType &) -> std::string_view { return "Decimal"; },
-            [](const ast::OptionalType &) -> std::string_view { return "Optional"; },
-            [](const ast::ListType &) -> std::string_view { return "List"; },
-            [](const ast::SetType &) -> std::string_view { return "Set"; },
-            [](const ast::MapType &) -> std::string_view { return "Map"; },
             [](const ast::FnType &) -> std::string_view { return "Fn"; },
             [](const ast::AppType &) -> std::string_view { return {}; },
         },
@@ -662,19 +666,9 @@ void add_type_syntax_targets(HoverTargetIndex &index,
                                });
                            }
                        }
-                   },
-                   [&](const ast::OptionalType &t) {
-                       add_type_syntax_targets(index, snapshot, source, t.inner.get());
-                   },
-                   [&](const ast::ListType &t) {
-                       add_type_syntax_targets(index, snapshot, source, t.element.get());
-                   },
-                   [&](const ast::SetType &t) {
-                       add_type_syntax_targets(index, snapshot, source, t.element.get());
-                   },
-                   [&](const ast::MapType &t) {
-                       add_type_syntax_targets(index, snapshot, source, t.key_type.get());
-                       add_type_syntax_targets(index, snapshot, source, t.value_type.get());
+                       for (const auto &arg : t.type_args) {
+                           add_type_syntax_targets(index, snapshot, source, arg.get());
+                       }
                    },
                    [&](const ast::AppType &t) {
                        if (t.name &&

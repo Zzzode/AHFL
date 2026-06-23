@@ -2106,48 +2106,19 @@ class ProgramBuilder {
         auto type = make_owned<ast::TypeSyntax>();
         type->range = context_range(context, source_);
 
-        if (const auto qualified_name = borrow(context.qualifiedIdent())) {
-            type->node = ast::NamedType{.name = build_qualified_name(qualified_name->get())};
-            return type;
+        const auto qualified_name =
+            borrow(context.qualifiedIdent());
+        require(qualified_name.has_value(), context, "type must have a name");
+
+        ast::NamedType named{.name = build_qualified_name(qualified_name->get())};
+        const auto &child_types = context.type_();
+        named.type_args.reserve(child_types.size());
+        for (auto *child : child_types) {
+            named.type_args.push_back(build_type_syntax(
+                require(child, "generic type argument is missing")));
         }
-
-        const auto type_keyword =
-            require(context.getStart(), "type start token is missing").getText();
-
-        if (type_keyword == "Optional") {
-            type->node = ast::OptionalType{
-                .inner = build_type_syntax(
-                    require(context.type_(0), "optional element type is missing")),
-            };
-            return type;
-        }
-
-        if (type_keyword == "List") {
-            type->node = ast::ListType{
-                .element =
-                    build_type_syntax(require(context.type_(0), "list element type is missing")),
-            };
-            return type;
-        }
-
-        if (type_keyword == "Set") {
-            type->node = ast::SetType{
-                .element =
-                    build_type_syntax(require(context.type_(0), "set element type is missing")),
-            };
-            return type;
-        }
-
-        if (type_keyword == "Map") {
-            type->node = ast::MapType{
-                .key_type = build_type_syntax(require(context.type_(0), "map key type is missing")),
-                .value_type =
-                    build_type_syntax(require(context.type_(1), "map value type is missing")),
-            };
-            return type;
-        }
-
-        throw std::logic_error("type did not match any supported AHFL type syntax kind");
+        type->node = std::move(named);
+        return type;
     }
 
     [[nodiscard]] Owned<ast::TypeSyntax>

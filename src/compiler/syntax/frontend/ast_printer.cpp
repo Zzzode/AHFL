@@ -694,25 +694,14 @@ class AstPrinter final {
                 [&](const ast::DecimalType &t) {
                     line(indent_level, "decimal Decimal(" + std::to_string(t.scale) + ")");
                 },
-                [&](const ast::NamedType &t) { line(indent_level, "named " + t.name->spelling()); },
-                [&](const ast::OptionalType &t) {
-                    line(indent_level, "optional");
-                    print_type(*t.inner, indent_level + 1);
-                },
-                [&](const ast::ListType &t) {
-                    line(indent_level, "list");
-                    print_type(*t.element, indent_level + 1);
-                },
-                [&](const ast::SetType &t) {
-                    line(indent_level, "set");
-                    print_type(*t.element, indent_level + 1);
-                },
-                [&](const ast::MapType &t) {
-                    line(indent_level, "map");
-                    line(indent_level + 1, "key");
-                    print_type(*t.key_type, indent_level + 2);
-                    line(indent_level + 1, "value");
-                    print_type(*t.value_type, indent_level + 2);
+                [&](const ast::NamedType &t) {
+                    line(indent_level, "named " + t.name->spelling());
+                    if (!t.type_args.empty()) {
+                        line(indent_level, "type_arguments(" + std::to_string(t.type_args.size()) + ")");
+                        for (const auto &arg : t.type_args) {
+                            print_type(*arg, indent_level + 1);
+                        }
+                    }
                 },
                 [&](const ast::FnType &t) {
                     line(indent_level, "fn");
