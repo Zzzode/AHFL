@@ -273,7 +273,6 @@ struct ContractClauseInfo {
     bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
     SourceRange expr_range;
     SourceRange source_range;
-
     // P4.S3: decreases clause plumbing. The three clause kinds (requires,
     // ensures, invariant) all carry the same optional decreases metadata
     // because termination / ranking proofs can be attached to any contract
@@ -281,6 +280,11 @@ struct ContractClauseInfo {
     bool has_decreases{false};
     std::vector<DecreasesExprInfo> decreases_exprs;
     bool decreases_is_wildcard{false};
+    // P4.S6: explicit ranges used by typed-hir serialization round-trip and
+    // the downstream IR pipeline (mirrors naming in ir::ContractClause).
+    // Either decreases_is_wildcard is true OR decreases_expr_ranges is
+    // populated; both are sourced from the same AST attach point.
+    std::vector<SourceRange> decreases_expr_ranges;
     SourceRange decreases_range;
 };
 

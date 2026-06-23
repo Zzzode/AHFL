@@ -176,7 +176,16 @@ struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
     std::variant<ExprRef, TemporalExprPtr> value; // Plain expression or temporal-logic expression
     SourceRangeOpt source_range;
+    // P4.S5a: wildcard flag used when kind == ContractClauseKind::Decreases
+    // and the writer used `decreases: *;` (no concrete metric supplied).
     bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
+    // P4.S6: optional termination measure attached to the clause.
+    // `decreases_wildcard` is true when the writer used the wildcard form
+    // `decreases *`; `decreases_terms` carries the ordered list of measure
+    // expressions for the explicit lexical-order form. The two fields are
+    // mutually exclusive: when wildcard is true, `decreases_terms` is empty.
+    bool decreases_wildcard{false};
+    std::vector<ExprRef> decreases_terms;
 };
 
 /// Contract declaration: contract for AgentName { requires ...; ensures ...; }
