@@ -1045,6 +1045,23 @@ struct WorkflowNodeDeclSyntax {
     std::vector<std::string> after; // DAG dependencies (predecessor node names)
 };
 
+/// Single bound entry within a where clause: Type: Capability1 + Capability2
+/// (placeholder structure — detailed parsing & semantic checking lives in later tasks).
+struct WhereBoundSyntax {
+    ahfl::SourceRange range;
+    Owned<TypeSyntax> subject;      // the type parameter being constrained
+    std::vector<Owned<QualifiedName>> traits; // required capability / trait names
+};
+
+/// Where-clause syntax: where T:Eq, U:Show+Serialize
+/// Attached to generic struct / enum / capability / function declarations.
+/// Currently a pure plumbing node — the parser and bound verification will be
+/// added in a follow-up; tests construct it manually.
+struct WhereClauseSyntax {
+    ahfl::SourceRange range;
+    std::vector<Owned<WhereBoundSyntax>> bounds;
+};
+
 // ----------------------------------------------------------------------------
 // Core AST node class hierarchy
 // ----------------------------------------------------------------------------
@@ -1138,6 +1155,7 @@ struct StructDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     StructDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1152,6 +1170,7 @@ struct EnumDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     EnumDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1165,6 +1184,7 @@ struct CapabilityDecl final : Decl {
     std::vector<Owned<ParamDeclSyntax>> params;
     Owned<TypeSyntax> return_type;
     Owned<CapabilityEffectSyntax> effect;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     CapabilityDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
