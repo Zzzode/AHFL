@@ -368,13 +368,8 @@ primaryExpr:
 	| structLiteral
 	| qualifiedValueExpr
 	| pathExpr
-	| listLiteral
-	| setLiteral
-	| mapLiteral
 	| matchExpr
 	| lambdaExpr
-	| 'some' '(' expr ')'
-	| 'none'
 	| '(' expr ')';
 
 // P1 (ADT): `match` expression. `match scrutinee { arm1; arm2; ... }`.
@@ -461,16 +456,6 @@ decimalLiteral: DECIMAL_LITERAL;
 stringLiteral: STRING_LITERAL;
 
 durationLiteral: DURATION_LITERAL;
-
-listLiteral: '[' exprList? ']';
-
-setLiteral: 'set' '[' exprList? ']';
-
-mapLiteral: 'map' '[' mapEntryList? ']';
-
-mapEntryList: mapEntry (',' mapEntry)* ','?;
-
-mapEntry: expr ':' expr;
 
 structLiteral: qualifiedIdent '{' structInitList? '}';
 
