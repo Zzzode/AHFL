@@ -1645,7 +1645,7 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
     }
 
     // List.length
-    if (auto *lv = std::get_if<ListValue>(&base.value.node)) {
+    if (auto *lv = get_list_if(base.value)) {
         if (expr.member == "length") {
             return EvalResult{make_int(static_cast<int64_t>(lv->items.size())), {}};
         }
@@ -1688,7 +1688,7 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
     if (index.has_errors())
         return index;
 
-    auto *lv = std::get_if<ListValue>(&base.value.node);
+    auto *lv = get_list_if(base.value);
     if (lv) {
         auto *iv = std::get_if<IntValue>(&index.value.node);
         if (!iv) {

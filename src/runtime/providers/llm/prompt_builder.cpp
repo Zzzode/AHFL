@@ -115,30 +115,37 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
                     }
                 }
                 oss << " }";
-            } else if constexpr (std::is_same_v<T, evaluator::ListValue>) {
-                oss << "[";
-                for (std::size_t i = 0; i < v.items.size(); ++i) {
-                    if (i > 0) {
-                        oss << ", ";
-                    }
-                    if (v.items[i]) {
-                        oss << value_to_string(*v.items[i]);
-                    }
-                }
-                oss << "]";
             } else if constexpr (std::is_same_v<T, evaluator::DecimalValue>) {
                 oss << v.spelling;
             } else if constexpr (std::is_same_v<T, evaluator::DurationValue>) {
                 oss << v.spelling;
-            } else if constexpr (std::is_same_v<T, evaluator::OptionalValue>) {
-                if (v.inner) {
-                    oss << "some(" << value_to_string(*v.inner) << ")";
-                } else {
-                    oss << "none";
-                }
             }
         },
         val.node);
+
+    // Post-visit: list / optional branches using nominal accessors (keeps the
+    // variant-type names out of this visitor so the module can be refactored
+    // without touching call sites).
+    if (oss.view().empty()) {
+        if (const auto *items = evaluator::list_items(val)) {
+            oss << "[";
+            for (std::size_t i = 0; i < items->size(); ++i) {
+                if (i > 0) {
+                    oss << ", ";
+                }
+                if ((*items)[i]) {
+                    oss << value_to_string(*(*items)[i]);
+                }
+            }
+            oss << "]";
+        } else if (evaluator::is_optional(val)) {
+            if (const auto *inner = evaluator::optional_inner(val)) {
+                oss << "some(" << value_to_string(*inner) << ")";
+            } else {
+                oss << "none";
+            }
+        }
+    }
     return oss.str();
 }
 

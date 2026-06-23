@@ -12,48 +12,41 @@ namespace ahfl::runtime {
 namespace {
 
 [[nodiscard]] const char *kind_label(const evaluator::Value &v) {
-    using namespace ahfl::evaluator;
-    return std::visit(
-        [](const auto &inner) -> const char * {
-            using T = std::decay_t<decltype(inner)>;
-            if constexpr (std::is_same_v<T, NoneValue>)
-                return "None";
-            else if constexpr (std::is_same_v<T, BoolValue>)
-                return "Bool";
-            else if constexpr (std::is_same_v<T, IntValue>)
-                return "Int";
-            else if constexpr (std::is_same_v<T, FloatValue>)
-                return "Float";
-            else if constexpr (std::is_same_v<T, StringValue>)
-                return "String";
-            else if constexpr (std::is_same_v<T, DecimalValue>)
-                return "Decimal";
-            else if constexpr (std::is_same_v<T, DurationValue>)
-                return "Duration";
-            else if constexpr (std::is_same_v<T, StructValue>)
-                return "Struct";
-            else if constexpr (std::is_same_v<T, ListValue>)
-                return "List";
-            else if constexpr (std::is_same_v<T, EnumValue>)
-                // P5.11a transition: recognise nominal Option enum
-                if (inner.enum_name == "std::option::Option")
-                    return "Optional";
-                else
-                    return "Enum";
-            else if constexpr (std::is_same_v<T, OptionalValue>)
-                return "Optional";
-            else if constexpr (std::is_same_v<T, SetValue>)
-                return "Set";
-            else if constexpr (std::is_same_v<T, MapValue>)
-                return "Map";
-            else if constexpr (std::is_same_v<T, UuidValue>)
-                return "UUID";
-            else if constexpr (std::is_same_v<T, TimestampValue>)
-                return "Timestamp";
-            else
-                return "Unknown";
-        },
-        v.node);
+    switch (evaluator::value_kind(v)) {
+    case evaluator::ValueKind::None:
+        return "None";
+    case evaluator::ValueKind::Bool:
+        return "Bool";
+    case evaluator::ValueKind::Int:
+        return "Int";
+    case evaluator::ValueKind::Float:
+        return "Float";
+    case evaluator::ValueKind::String:
+        return "String";
+    case evaluator::ValueKind::Decimal:
+        return "Decimal";
+    case evaluator::ValueKind::Duration:
+        return "Duration";
+    case evaluator::ValueKind::Struct:
+        return "Struct";
+    case evaluator::ValueKind::List:
+        return "List";
+    case evaluator::ValueKind::Enum:
+        return "Enum";
+    case evaluator::ValueKind::Optional:
+        return "Optional";
+    case evaluator::ValueKind::Set:
+        return "Set";
+    case evaluator::ValueKind::Map:
+        return "Map";
+    case evaluator::ValueKind::Uuid:
+        return "UUID";
+    case evaluator::ValueKind::Timestamp:
+        return "Timestamp";
+    case evaluator::ValueKind::Callable:
+        return "Callable";
+    }
+    return "Unknown";
 }
 
 [[nodiscard]] std::string type_name(const ir::TypeRef &type) {
@@ -178,25 +171,22 @@ namespace {
         if (is_none(value)) {
             return SchemaValidationResult::ok();
         }
-        // P5.11a transition: check nominal EnumValue Option first, then legacy OptionalValue
-        if (auto *ev = std::get_if<EnumValue>(&value.node);
+        // P5.11a + P5.11b dual-aware: check nominal EnumValue Option (Some/None
+        // with associated payload) first, then legacy OptionalValue via the
+        // nominal accessor.
+        if (const auto *ev = std::get_if<evaluator::EnumValue>(&value.node);
             ev != nullptr && ev->enum_name == "std::option::Option") {
             if (ev->variant == "None") {
                 return SchemaValidationResult::ok();
             }
             if (ev->variant == "Some" && ev->associated) {
-                if (expected.first) {
-                    return check(*ev->associated, *expected.first, index, path);
+                if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
+                    return check(*ev->associated, *inner_type, index, path);
                 }
                 return SchemaValidationResult::ok();
             }
-            // Unknown Option variant: treat as transparent validation
-            if (expected.first) {
-                return check(value, *expected.first, index, path);
-            }
-            return SchemaValidationResult::ok();
-        }
-        if (auto *opt = std::get_if<OptionalValue>(&value.node)) {
+            // Unknown Option variant: fall through to bare inner-type check.
+        } else if (auto *opt = evaluator::get_optional_if(value)) {
             if (!opt->inner) {
                 return SchemaValidationResult::ok();
             }

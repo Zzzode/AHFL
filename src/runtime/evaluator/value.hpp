@@ -172,6 +172,93 @@ void print_value(const Value &v, std::ostream &out);
 [[nodiscard]] bool structurally_equal(const Value &lhs, const Value &rhs);
 
 // ============================================================================
+// Nominal accessors (preferred over spelling variant names at call sites)
+// ============================================================================
+
+// List accessors -----------------------------------------------------------
+[[nodiscard]] inline bool is_list(const Value &v) {
+    return std::holds_alternative<ListValue>(v.node);
+}
+
+[[nodiscard]] inline ListValue *get_list_if(Value &v) {
+    return std::get_if<ListValue>(&v.node);
+}
+
+[[nodiscard]] inline const ListValue *get_list_if(const Value &v) {
+    return std::get_if<ListValue>(&v.node);
+}
+
+[[nodiscard]] inline const std::vector<std::unique_ptr<Value>> *list_items(const Value &v) {
+    if (const auto *lv = get_list_if(v)) {
+        return &lv->items;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] inline std::vector<std::unique_ptr<Value>> *list_items(Value &v) {
+    if (auto *lv = get_list_if(v)) {
+        return &lv->items;
+    }
+    return nullptr;
+}
+
+// Optional accessors -------------------------------------------------------
+// Dual-aware (P5.11a + P5.11b transition): recognise both legacy OptionalValue
+// and the nominal EnumValue std::option::Option produced by the evaluator.
+[[nodiscard]] inline bool is_optional(const Value &v) {
+    if (std::holds_alternative<OptionalValue>(v.node))
+        return true;
+    if (const auto *ev = std::get_if<EnumValue>(&v.node);
+        ev != nullptr && ev->enum_name == "std::option::Option")
+        return true;
+    return false;
+}
+
+[[nodiscard]] inline OptionalValue *get_optional_if(Value &v) {
+    return std::get_if<OptionalValue>(&v.node);
+}
+
+[[nodiscard]] inline const OptionalValue *get_optional_if(const Value &v) {
+    return std::get_if<OptionalValue>(&v.node);
+}
+
+[[nodiscard]] inline bool is_some(const Value &v) {
+    if (const auto *ov = get_optional_if(v))
+        return ov->inner != nullptr;
+    if (const auto *ev = std::get_if<EnumValue>(&v.node);
+        ev != nullptr && ev->enum_name == "std::option::Option")
+        return ev->variant == "Some" && ev->associated != nullptr;
+    return false;
+}
+
+[[nodiscard]] inline bool is_optional_none(const Value &v) {
+    if (const auto *ov = get_optional_if(v))
+        return ov->inner == nullptr;
+    if (const auto *ev = std::get_if<EnumValue>(&v.node);
+        ev != nullptr && ev->enum_name == "std::option::Option")
+        return ev->variant == "None";
+    return false;
+}
+
+[[nodiscard]] inline const Value *optional_inner(const Value &v) {
+    if (const auto *ov = get_optional_if(v))
+        return ov->inner.get();
+    if (const auto *ev = std::get_if<EnumValue>(&v.node);
+        ev != nullptr && ev->enum_name == "std::option::Option")
+        return ev->variant == "Some" ? ev->associated.get() : nullptr;
+    return nullptr;
+}
+
+[[nodiscard]] inline Value *optional_inner(Value &v) {
+    if (auto *ov = get_optional_if(v))
+        return ov->inner.get();
+    if (auto *ev = std::get_if<EnumValue>(&v.node);
+        ev != nullptr && ev->enum_name == "std::option::Option")
+        return ev->variant == "Some" ? ev->associated.get() : nullptr;
+    return nullptr;
+}
+
+// ============================================================================
 // Convenience constructors
 // ============================================================================
 
