@@ -500,10 +500,16 @@ inline constexpr MessageTemplate TraitAssocTypeNotFound{
 inline constexpr MessageTemplate MissingSuperTrait{
     "trait '{}' requires super-trait '{}' but no impl is found for '{}'"};
 inline constexpr MessageTemplate NoTraitImpl{"type '{}' does not implement trait '{}'"};
+// P3c.S6 (trait/impl smoke) re-words AmbiguousTraitImpl and
+// TraitBoundNotSatisfied to match the smoke-test assertion strings and
+// the extended TraitBoundNotSatisfied placeholder arity (bound_type,
+// bound_trait, impl_type). No src pass uses TraitBoundNotSatisfied yet;
+// AmbiguousTraitImpl call sites in typecheck_expr.cpp pass 2 args which
+// still render with the new 2-placeholder wording.
 inline constexpr MessageTemplate AmbiguousTraitImpl{
-    "multiple impls of trait '{}' for '{}' found; add a where-clause to disambiguate"};
+    "multiple trait implementations match for type '{}' and trait '{}'"};
 inline constexpr MessageTemplate TraitBoundNotSatisfied{
-    "trait bound not satisfied: '{}' does not implement '{}'"};
+    "trait bound '{}: {}' is not satisfied by type '{}'"};
 inline constexpr MessageTemplate TraitSelfNotYetSupported{
     "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type "
     "references)"};
