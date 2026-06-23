@@ -183,6 +183,57 @@ class TypeEnvironment {
     // shared relation directly.
     [[nodiscard]] static std::string normalize_type_key(const Type &type);
 
+    // P3c.S5a (declaration-layer registration): impl_index — bidirectional
+    // trait↔impl map keyed by (Trait, normalized-TypeKey). Populated for
+    // every non-inherent impl in declaration order by build_impl_types so
+    // consumers (lookup, coherence, IR lowering) can locate the matching
+    // impl set in O(1) average time without rescanning the impl table.
+    struct ImplIndexKey {
+        std::size_t trait_symbol_value{0}; // SymbolId::value of the trait
+        std::string normalized_type_key;   // normalize_type_key(target_type)
+
+        [[nodiscard]] friend bool operator==(const ImplIndexKey &lhs,
+                                             const ImplIndexKey &rhs) noexcept = default;
+    };
+    struct ImplIndexKeyHash {
+        [[nodiscard]] std::size_t operator()(const ImplIndexKey &k) const noexcept {
+            // FNV-1a combine. trait_symbol_value carries the most entropy;
+            // mix with the already-deterministic type key.
+            std::size_t h = 0xcbf29ce484222325ULL;
+            h ^= k.trait_symbol_value;
+            h *= 0x100000001b3ULL;
+            const std::string &s = k.normalized_type_key;
+            for (unsigned char c : s) {
+                h ^= static_cast<std::size_t>(c);
+                h *= 0x100000001b3ULL;
+            }
+            return h;
+        }
+    };
+    using ImplIndex =
+        std::unordered_map<ImplIndexKey, std::vector<std::size_t>, ImplIndexKeyHash>;
+
+    // O(1) lookup of impl indices by (trait, target-type). Returns the
+    // ordered list of impl indices recorded in the impl_index for the given
+    // (Trait, normalized_type_key) pair; an empty vector when no such impl
+    // exists. The returned indices index into impls() and are stable for
+    // the lifetime of the environment.
+    [[nodiscard]] std::vector<std::size_t>
+    lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                      const Type &concrete_type) const;
+
+    // Same query using an already-computed normalized type key — useful for
+    // callers (e.g. coherence diagnostics) that already computed a key.
+    [[nodiscard]] std::vector<std::size_t>
+    lookup_impl_index_by_key(std::optional<SymbolId> trait_symbol,
+                             std::string_view normalized_type_key) const;
+
+    // Read-only access to the full impl_index (used by TypedProgram snapshot
+    // and by tests that want to iterate populated buckets).
+    [[nodiscard]] const ImplIndex &impl_index() const noexcept {
+        return impl_index_;
+    }
+
     // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
     [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;
 
@@ -206,6 +257,9 @@ class TypeEnvironment {
     void index_struct(std::size_t id, StructTypeInfo info);
     void index_enum(std::size_t id, EnumTypeInfo info);
     void mark_agent_context_struct(SymbolId id);
+    // P3c.S5a: register a non-inherent impl into impl_index. Skips inherent
+    // impls (no trait_symbol) and impls with an unset trait_symbol.
+    void register_impl_index(std::size_t impl_index, const ImplTypeInfo &info);
 
     std::unordered_map<std::size_t, TypePtr> const_types_;
     std::unordered_map<std::size_t, StructTypeInfo> structs_;
@@ -219,6 +273,10 @@ class TypeEnvironment {
     std::unordered_map<std::size_t, FnTypeInfo> functions_; // P2 (RFC §3.2.2)
     std::unordered_map<std::size_t, TraitTypeInfo> traits_; // P3 (RFC §3.2.2 / type-system §1.3)
     std::unordered_map<std::size_t, ImplTypeInfo> impls_;   // P3 (RFC §3.2.2 / type-system §1.4)
+    // P3c.S5a: bidirectional trait↔impl index, keyed by (trait_symbol,
+    // normalized_type_key). Values are impl indices stored in declaration
+    // order (push_back). Built alongside impls_ during build_impl_types.
+    ImplIndex impl_index_;
 
     // Reverse indices: canonical_name -> SymbolId.value, for O(1) name lookups.
     std::unordered_map<std::string, std::size_t> struct_name_index_;

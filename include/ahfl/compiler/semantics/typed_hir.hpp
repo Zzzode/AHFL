@@ -578,6 +578,58 @@ struct TypedProgram {
     find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
 
     // ------------------------------------------------------------------------
+    // Impl index (P3c.S5a): bidirectional trait↔impl snapshot
+    // ------------------------------------------------------------------------
+    //
+    // Mirrors TypeEnvironment::impl_index into TypedProgram so typed-tree
+    // consumers (IR lowering, LSP impl lookup, coherence re-check) can
+    // locate the matching impl set for a (Trait, normalized-type) pair
+    // without re-entering TypeEnvironment. The bucket type matches the
+    // TypeEnvironment definition; keys carry stable normalized strings so
+    // a snapshot remains consistent across move operations.
+    struct ImplIndexKey {
+        std::size_t trait_symbol_value{0};
+        std::string normalized_type_key;
+
+        [[nodiscard]] friend bool operator==(const ImplIndexKey &lhs,
+                                             const ImplIndexKey &rhs) noexcept = default;
+    };
+    struct ImplIndexKeyHash {
+        [[nodiscard]] std::size_t operator()(const ImplIndexKey &k) const noexcept {
+            std::size_t h = 0xcbf29ce484222325ULL;
+            h ^= k.trait_symbol_value;
+            h *= 0x100000001b3ULL;
+            const std::string &s = k.normalized_type_key;
+            for (unsigned char c : s) {
+                h ^= static_cast<std::size_t>(c);
+                h *= 0x100000001b3ULL;
+            }
+            return h;
+        }
+    };
+    using ImplIndex =
+        std::unordered_map<ImplIndexKey, std::vector<std::uint32_t>, ImplIndexKeyHash>;
+
+    // Impl-declaration flat store. Each entry is an index into the parallel
+    // `declarations` vector that holds the corresponding ImplTypeInfo.
+    // Append-only; populated by the typecheck pass alongside impl_index_.
+    std::vector<std::uint32_t> impl_declaration_indexes;
+    ImplIndex impl_index;
+
+    // O(1) lookup of impl-declaration indexes by (trait, concrete type).
+    // Returns a list of indexes into `impl_declaration_indexes`, each of
+    // which can be dereferenced into `declarations` via the returned
+    // uint32 values. Empty vector when no impl exists.
+    [[nodiscard]] std::vector<std::uint32_t>
+    lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                      const Type &concrete_type) const;
+
+    // Same lookup with a precomputed normalized-type key.
+    [[nodiscard]] std::vector<std::uint32_t>
+    lookup_impl_index_by_key(std::optional<SymbolId> trait_symbol,
+                             std::string_view normalized_type_key) const;
+
+    // ------------------------------------------------------------------------
     // Monomorphization (P2d.S4a)
     // ------------------------------------------------------------------------
     //

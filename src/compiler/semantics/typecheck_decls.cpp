@@ -1443,11 +1443,22 @@ void TypeCheckPass::build_impl_types() {
                 (void)coherence_conflict(info);
             }
 
+            // Record whether the impl is a non-inherent trait impl *before*
+            // moving `info` into the environment map, so the value is well
+            // defined when we push onto the coherence seen-impls list below.
+            const bool register_as_trait_impl =
+                !info.is_inherent && info.trait_symbol.has_value();
+
             environment().impls_.emplace(impl_index, std::move(info));
+            // P3c.S5a: register the impl into the declaration-layer impl_index
+            // right after it lands in the stable environment map. The index is
+            // keyed by (trait, normalized-type) so downstream O(1) lookups
+            // never need to rescan impls_.
+            const auto &stored = environment().impls_.at(impl_index);
+            environment().register_impl_index(impl_index, stored);
             // Track the reference now-pointing into the environment's
             // stable ImplTypeInfo.
-            if (!info.is_inherent && info.trait_symbol.has_value()) {
-                const auto &stored = environment().impls_.at(impl_index);
+            if (register_as_trait_impl) {
                 seen_impls.emplace_back(stored);
             }
         });

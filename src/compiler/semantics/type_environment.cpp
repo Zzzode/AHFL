@@ -361,6 +361,22 @@ bool TypeEnvironment::impls_conflict_for_type(const ImplTypeInfo &lhs,
 std::vector<ImplRef>
 TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
                             const Type &concrete_type) const {
+    // Fast path: if impl_index_ is populated use the O(1) lookup rather than
+    // rescanning impls_. Fall back to the linear scan when the index has not
+    // been built (e.g. for environments constructed manually in tests).
+    if (!impl_index_.empty()) {
+        const auto hits = lookup_impl_index(trait_symbol, concrete_type);
+        std::vector<ImplRef> matches;
+        matches.reserve(hits.size());
+        for (const auto idx : hits) {
+            const auto iter = impls_.find(idx);
+            if (iter != impls_.end()) {
+                matches.push_back(ImplRef{idx, &iter->second});
+            }
+        }
+        return matches;
+    }
+
     std::vector<ImplRef> matches;
     const auto query_key = normalize_type_key(concrete_type);
     for (const auto &[index, impl] : impls_) {
@@ -380,6 +396,50 @@ TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
         }
     }
     return matches;
+}
+
+// P3c.S5a: register a non-inherent impl into impl_index_ using its
+// (trait_symbol, normalized_type_key) pair. No-op for inherent impls or any
+// impl that does not carry a resolved trait symbol / target type.
+void TypeEnvironment::register_impl_index(std::size_t impl_index,
+                                          const ImplTypeInfo &info) {
+    if (info.is_inherent || !info.trait_symbol.has_value() || info.target_type == nullptr) {
+        return;
+    }
+    const ImplIndexKey key{
+        .trait_symbol_value = info.trait_symbol->value,
+        .normalized_type_key = normalize_type_key(*info.target_type),
+    };
+    impl_index_[key].push_back(impl_index);
+}
+
+std::vector<std::size_t>
+TypeEnvironment::lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                                   const Type &concrete_type) const {
+    return lookup_impl_index_by_key(trait_symbol, normalize_type_key(concrete_type));
+}
+
+std::vector<std::size_t> TypeEnvironment::lookup_impl_index_by_key(
+    std::optional<SymbolId> trait_symbol, std::string_view normalized_type_key) const {
+    if (!trait_symbol.has_value()) {
+        // No trait filter: scan all buckets whose normalized type key matches.
+        std::vector<std::size_t> out;
+        for (const auto &[key, indices] : impl_index_) {
+            if (key.normalized_type_key == normalized_type_key) {
+                out.insert(out.end(), indices.begin(), indices.end());
+            }
+        }
+        return out;
+    }
+    const ImplIndexKey probe{
+        .trait_symbol_value = trait_symbol->value,
+        .normalized_type_key = std::string(normalized_type_key),
+    };
+    const auto iter = impl_index_.find(probe);
+    if (iter == impl_index_.end()) {
+        return {};
+    }
+    return iter->second;
 }
 
 bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
