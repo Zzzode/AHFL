@@ -491,6 +491,15 @@ using Json = json::JsonValue;
             clause_json->set("is_temporal", Json::make_bool(clause.is_temporal));
             clause_json->set("expr_range", j_range(clause.expr_range));
             clause_json->set("source_range", j_range(clause.source_range));
+            clause_json->set("has_decreases", Json::make_bool(clause.has_decreases));
+            clause_json->set("decreases_is_wildcard",
+                             Json::make_bool(clause.decreases_is_wildcard));
+            clause_json->set("decreases_range", j_range(clause.decreases_range));
+            auto decrs = Json::make_array();
+            for (const auto &d : clause.decreases_exprs) {
+                decrs->push(j_range(d.expr_range));
+            }
+            clause_json->set("decreases_exprs", std::move(decrs));
             clauses->push(std::move(clause_json));
         }
         value->set("clauses", std::move(clauses));
@@ -1375,12 +1384,29 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         if (clauses != nullptr && clauses->kind == json::Kind::Array) {
             info.clauses.reserve(clauses->array_items.size());
             for (const auto &item : clauses->array_items) {
-                info.clauses.push_back(ContractClauseInfo{
+                ContractClauseInfo clause_info{
                     .clause_kind = static_cast<int>(reader.int_field(*item, "clause_kind")),
                     .is_temporal = reader.bool_field(*item, "is_temporal"),
                     .expr_range = reader.range_field(*item, "expr_range"),
                     .source_range = reader.range_field(*item, "source_range"),
-                });
+                    // P4.S3: decreases metadata; defaults to the zero-value sentinel
+                    // (false / empty / false) when restoring snapshots produced before
+                    // this plumbing was introduced.
+                    .has_decreases = reader.bool_field(*item, "has_decreases"),
+                    .decreases_exprs = {},
+                    .decreases_is_wildcard = reader.bool_field(*item, "decreases_is_wildcard"),
+                    .decreases_range = reader.range_field(*item, "decreases_range"),
+                };
+                if (const auto *decr_arr = reader.field(*item, "decreases_exprs");
+                    decr_arr != nullptr && decr_arr->kind == json::Kind::Array) {
+                    clause_info.decreases_exprs.reserve(decr_arr->array_items.size());
+                    for (const auto &decr_item : decr_arr->array_items) {
+                        clause_info.decreases_exprs.push_back(DecreasesExprInfo{
+                            .expr_range = reader.range_value(decr_item.get()),
+                        });
+                    }
+                }
+                info.clauses.push_back(std::move(clause_info));
             }
         }
         return info;

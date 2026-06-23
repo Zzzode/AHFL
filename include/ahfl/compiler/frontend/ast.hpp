@@ -993,12 +993,27 @@ struct AgentQuotaSyntax {
     std::vector<Owned<AgentQuotaItemSyntax>> items;
 };
 
+/// Decreases clause attached to a contract clause:
+///   * `decreases *`        -> decreases_is_wildcard = true
+///   * `decreases (a, b, c)` -> decreases_exprs populated with owned exprs
+/// The default-constructed state (empty + !wildcard) means the user did not
+/// write a decreases clause; ContractClauseInfo::has_decreases reflects that
+/// after typecheck plumbing.
+struct ContractDecreasesSyntax {
+    ahfl::SourceRange range;
+    bool decreases_is_wildcard{false};
+    std::vector<Owned<ExprSyntax>> decreases_exprs;
+};
+
 /// Contract clause: requires/ensures/invariant/forbid expr
 struct ContractClauseSyntax {
     ahfl::SourceRange range;
     ContractClauseKind kind{ContractClauseKind::Requires};
     Owned<ExprSyntax> expr;                  // plain expression condition
     Owned<TemporalExprSyntax> temporal_expr; // temporal logic condition
+    // P4.S3: optional decreases clause attached to the contract clause.
+    // Owned<T> (nullptr) means no decreases was written.
+    Owned<ContractDecreasesSyntax> decreases;
 };
 
 /// Decreases / termination-measure clause.

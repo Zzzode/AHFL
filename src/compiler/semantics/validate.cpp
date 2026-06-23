@@ -66,6 +66,17 @@ class ValidationPass final {
         check_contracts();
         check_flows();
         check_workflows();
+        // R-04 / P4.S3: Walk every contract clause in the typed program even
+        // though the ValidationPass does not yet enforce decreases-related
+        // rules. This keeps the traversal gate explicit so S5a (decreases
+        // typechecking + well-formedness diagnostics) has an obvious insertion
+        // point instead of silently re-reading the AST.
+        // TODO(P4.S5a): move decreases_wf checks here:
+        //   * wildcard + expr-list mutual exclusion
+        //   * decreases expression type ∈ ordered type
+        //   * requires/ensures clauses carry at most one decreases
+        //   * cross-clause ranking consistency (decreasing tuples)
+        walk_typed_contract_clauses();
         return std::move(result_);
     }
 
@@ -441,6 +452,46 @@ class ValidationPass final {
         }
 
         check_contracts_in_program(require(program_, "validate program must exist"));
+    }
+
+    // R-04: explicit typed-program walk over every contract clause.
+    // Today this is a no-op traversal whose sole purpose is to keep the
+    // iteration surface visible for S5a. Decreases-specific validation
+    // should be inserted here instead of being scattered into AST-level
+    // check_contracts() above, because the decreases metadata lives on
+    // TypedProgram/ContractClauseInfo after P4.S3 plumbing.
+    void walk_typed_contract_clauses_in_program(const ast::Program &program) {
+        (void)program;
+        const auto &typed_decls = type_check_result_.typed_program.declarations;
+        for (const auto &decl : typed_decls) {
+            if (decl.kind != ast::NodeKind::ContractDecl) {
+                continue;
+            }
+            const auto *contract_info = std::get_if<ContractTypeInfo>(&decl.payload);
+            if (contract_info == nullptr) {
+                continue;
+            }
+            for (const auto &clause : contract_info->clauses) {
+                // TODO(P4.S5a): validate clause.decreases_{exprs,is_wildcard,range}
+                // and cross-clause termination ranking rules here.
+                (void)clause;
+            }
+        }
+    }
+
+    void walk_typed_contract_clauses() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                walk_typed_contract_clauses_in_program(require(
+                    source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        walk_typed_contract_clauses_in_program(
+            require(program_, "validate program must exist"));
     }
 
     [[nodiscard]] bool has_transition(const ast::AgentDecl &agent_decl,

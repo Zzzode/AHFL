@@ -1580,7 +1580,19 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
                 .is_temporal = is_temporal,
                 .expr_range = expr_range,
                 .source_range = clause->range,
+                .has_decreases = static_cast<bool>(clause->decreases),
+                .decreases_exprs = {},
+                .decreases_is_wildcard =
+                    clause->decreases ? clause->decreases->decreases_is_wildcard : false,
+                .decreases_range = clause->decreases ? clause->decreases->range : SourceRange{},
             };
+            if (clause->decreases) {
+                clause_info.decreases_exprs.reserve(clause->decreases->decreases_exprs.size());
+                for (const auto &decr_expr : clause->decreases->decreases_exprs) {
+                    clause_info.decreases_exprs.push_back(
+                        DecreasesExprInfo{.expr_range = decr_expr ? decr_expr->range : SourceRange{}});
+                }
+            }
             info.clauses.push_back(std::move(clause_info));
         }
 
