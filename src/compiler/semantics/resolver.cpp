@@ -589,6 +589,21 @@ class ResolverPass final {
         }
 
         if (node.trait_ref) {
+            // R-10 (P3c pre-research TODO): trait-name lookup order today is
+            //   (1) resolver-recorded TypeName reference (cross-module paths
+            //       through `Module::Trait` + imports), then
+            //   (2) local SymbolNamespace::Types lookup in the canonical-name
+            //       index (TypeEnvironment trait_name_index_ is a downstream
+            //       mirror of the resolver's write).
+            // This matches how regular type references resolve, but the trait
+            // system RFC additionally requires: (a) trait aliases / blanket
+            // imports, (b) prelude trait shadowing rules, (c) when a trait
+            // name collides with a type/type-alias of the same spelling in
+            // Types namespace we prefer the Trait-symbol variant when the
+            // reference appears in a bound (`T: Name`) or impl-header
+            // (`impl Name for T`) position. All three items are deferred to
+            // S4b; the current path is sufficient for P3c coherence and
+            // diagnostic coverage.
             // trait_ref is a TypeSyntax (NamedType) — resolve the trait name.
             resolve_type(*node.trait_ref);
         }

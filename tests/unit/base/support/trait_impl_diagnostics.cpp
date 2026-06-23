@@ -7,6 +7,20 @@
 //      AST-level field names used in the trait/impl nodes (trait_name,
 //      impl_type, method_name, assoc_name, bound_trait, bound_type,
 //      expected_signature, actual_signature).
+//
+// Semantic placeholder ↔ AST-field equivalence (kept stable for all 8 codes
+// so the P3b/P4a passes that emit these diagnostics know exactly which
+// AST accessor to reach for each slot):
+//
+//   impl_type            ↔ ImplDecl.target_type                (ast.hpp)
+//   trait_name           ↔ TraitDecl.name / ImplDecl.trait_ref (as NamedType)
+//   bound_type           ↔ WhereClauseConstraint.subject
+//   bound_trait          ↔ WhereClauseConstraint.bounds[i]
+//   method_name          ↔ TraitItemSyntax.name / FnDecl.name
+//   expected_signature   ↔ TraitItemSyntax::Fn rendered signature
+//   actual_signature     ↔ FnDecl (impl method) rendered signature
+//   assoc_name           ↔ AssocItemDefSyntax.name / AssocTypeDecl.name
+//   member_name          ↔ FnDecl.name (inherent vs trait conflict side)
 
 #include "ahfl/base/support/diagnostics.hpp"
 
@@ -146,8 +160,12 @@ void test_method_not_found() {
     check_code(bag, "typecheck.METHOD_NOT_FOUND", expected);
 }
 
-// 5. METHOD_SIGNATURE_MISMATCH — placeholders:
-//    method_name, impl_type, trait_name, expected_signature, actual_signature
+// 5. METHOD_SIGNATURE_MISMATCH — placeholders map to AST fields:
+//    method_name          = TraitItemSyntax::Fn.name / FnDecl.name
+//    impl_type            = ImplDecl.target_type   (impl's nominal target)
+//    trait_name           = ImplDecl.trait_ref     (trait symbol looked up)
+//    expected_signature   = rendered trait method signature (trait side)
+//    actual_signature     = rendered impl  FnDecl signature          (impl side)
 void test_method_signature_mismatch() {
     DiagnosticBag bag;
     bag.error()

@@ -97,6 +97,34 @@ module trait_impl;
     return false;
 }
 
+// Exact full-code match (golden-string assertion: category.id, not a substring).
+// Guards against false positives like a "resolve.TRAIT_ORPHAN_IMPL" lookup
+// passing a test that actually requires the typecheck-category orphan code.
+[[nodiscard]] bool has_exact_diagnostic_code(const ahfl::TypeCheckResult &result,
+                                             std::string_view exact_full_code) {
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == exact_full_code) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Exact (code + message) golden match. Used for the ORPHAN_IMPL and
+// AMBIGUOUS_TRAIT_IMPL integration negatives so a future wording tweak
+// or category move is flagged immediately.
+[[nodiscard]] bool has_exact_diagnostic(const ahfl::TypeCheckResult &result,
+                                        std::string_view exact_full_code,
+                                        std::string_view message_substring) {
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == exact_full_code &&
+            entry.message.find(message_substring) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // Multi-module SourceGraph harness.
 //
@@ -680,4 +708,128 @@ flow for LegacyAgent {
 
     const auto result = typecheck_source("trait_backward_compat.ahfl", source);
     CHECK_FALSE(result.has_errors());
+}
+
+// ---------------------------------------------------------------------------
+// TC14 (P3c.S6-W7): ORPHAN_IMPL negative — exact golden-string assertion.
+//
+// Strengthens TC8 by asserting the *exact* fully qualified diagnostic
+// (typecheck.ORPHAN_IMPL) and the rendered "orphan" wording, so neither a
+// category move (resolve → typecheck) nor a silent pass would slip through.
+// Same multi-module fixture as TC8.
+// ---------------------------------------------------------------------------
+TEST_CASE("orphan impl reports exact typecheck.ORPHAN_IMPL golden") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "shapes.ahfl",
+            .module_name = "shapes",
+            .text = R"AHFL(
+module shapes;
+
+struct Circle {
+    radius: Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "fmtlib.ahfl",
+            .module_name = "fmtlib",
+            .text = R"AHFL(
+module fmtlib;
+
+trait Describe {
+    fn describe(self: shapes::Circle) -> Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            // The orphan. Neither the type (shapes::Circle) nor the trait
+            // (fmtlib::Describe) is defined in `handlers` → orphan rule fires.
+            .display_name = "handlers.ahfl",
+            .module_name = "handlers",
+            .text = R"AHFL(
+module handlers;
+
+impl fmtlib::Describe for shapes::Circle {
+    fn describe(self: shapes::Circle) -> Int {
+        return self.radius;
+    }
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, /*expect_resolve_clean=*/true);
+    CHECK(result.has_errors());
+
+    // Exact full code: the orphan rule is enforced by the typecheck pass after
+    // module resolution, so the diagnostic category is TypeCheck.
+    CHECK(has_exact_diagnostic_code(result, "typecheck.ORPHAN_IMPL"));
+
+    // Golden message substring (see diagnostics.hpp messages::typecheck::OrphanImpl).
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.ORPHAN_IMPL",
+                               "is an orphan: neither the type nor the trait is defined in module"));
+
+    // Sanity guard: there is *no* resolve-category orphan code emitted for
+    // this fixture (resolver is resolution-only; orphan rule lives downstream).
+    CHECK_FALSE(has_exact_diagnostic_code(result, "resolve.TRAIT_ORPHAN_IMPL"));
+}
+
+// ---------------------------------------------------------------------------
+// TC15 (P3c.S6-W7): AMBIGUOUS_TRAIT_IMPL placeholder negative — trigger code
+// through the method-dispatch path.
+//
+// Two different traits (A, B) each declare a method of the same spelling
+// (`len()`) and the same nominal target type; the receiver `Counter` then
+// implements both traits. A call `c.len()` produces two trait candidates in
+// ExpressionChecker::check_method_call → trait_candidates.size() > 1 fires
+// AmbiguousTraitImpl. The actual S4b coherence judgment (generic-arg
+// unification across impls of the same trait) is intentionally not modelled
+// here; this test is the smoke hook that guarantees the diagnostic code is
+// exercised through a production call path.
+// ---------------------------------------------------------------------------
+TEST_CASE("duplicate trait candidates on dispatch report AMBIGUOUS_TRAIT_IMPL") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+trait MeasurableA {
+    fn len(self: Counter) -> Int;
+}
+
+trait MeasurableB {
+    fn len(self: Counter) -> Int;
+}
+
+impl MeasurableA for Counter {
+    fn len(self: Counter) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+
+impl MeasurableB for Counter {
+    fn len(self: Counter) -> Int effect Pure decreases 0 {
+        return self.value + 1;
+    }
+}
+
+fn caller(c: Counter) -> Int effect Pure decreases 0 {
+    return c.len();
+}
+)AHFL";
+
+    const auto result = typecheck_source("trait_ambiguous_dispatch.ahfl", source);
+    CHECK(result.has_errors());
+
+    // Exact full code — triggered by the method-dispatch ambiguity path.
+    CHECK(has_exact_diagnostic_code(result, "typecheck.AMBIGUOUS_TRAIT_IMPL"));
+
+    // The dispatch path passes (impl_type, trait_name)-shape args to the
+    // AmbiguousTraitImpl template (upstream wording from diagnostics.hpp
+    // reads "multiple trait implementations match for type ...").
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.AMBIGUOUS_TRAIT_IMPL",
+                               "multiple trait implementations match for type"));
 }
