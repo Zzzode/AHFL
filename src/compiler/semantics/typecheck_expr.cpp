@@ -477,22 +477,17 @@ class ExpressionChecker final {
     [[nodiscard]] TypedValue check(const ast::ExprSyntax &expr) const {
         return std::visit(
             overloaded{
-                [&](const ast::NoneLiteralExpr &) { return visit_none_literal(expr); },
                 [&](const ast::BoolLiteralExpr &) { return visit_bool_literal(expr); },
                 [&](const ast::IntegerLiteralExpr &) { return visit_integer_literal(expr); },
                 [&](const ast::FloatLiteralExpr &) { return visit_float_literal(expr); },
                 [&](const ast::DecimalLiteralExpr &) { return visit_decimal_literal(expr); },
                 [&](const ast::StringLiteralExpr &) { return visit_string_literal(expr); },
                 [&](const ast::DurationLiteralExpr &) { return visit_duration_literal(expr); },
-                [&](const ast::SomeExpr &) { return visit_some(expr); },
                 [&](const ast::PathExpr &) { return visit_path(expr); },
                 [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
                 [&](const ast::CallExpr &) { return visit_call(expr); },
                 [&](const ast::MethodCallExpr &) { return visit_method_call(expr); },
                 [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
-                [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
-                [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
-                [&](const ast::MapLiteralExpr &) { return visit_map_literal(expr); },
                 [&](const ast::UnaryExpr &) { return visit_unary(expr); },
                 [&](const ast::BinaryExpr &) { return visit_binary(expr); },
                 [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
@@ -529,62 +524,6 @@ class ExpressionChecker final {
         return values_.typed(values_.make_type(TypeKind::Duration));
     }
 
-    [[nodiscard]] TypedValue visit_none_literal(const ast::ExprSyntax &expr) const {
-        if (expected_type_.has_value()) {
-            const auto expected_optional =
-                stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (expected_optional.has_value() &&
-                expected_optional->kind == stdlib_bridge::StdContainerKind::Option) {
-                return values_.typed(expected_type_->get().clone());
-            }
-        }
-        services_.typecheck_error_here(error_codes::typecheck::NoneWithoutContext,
-                                       messages::typecheck::NoneWithoutContext.format_with(),
-                                       expr.range);
-        return values_.error_typed();
-    }
-
-    [[nodiscard]] TypedValue visit_some(const ast::ExprSyntax &expr) const {
-        const auto &some = expr.as<ast::SomeExpr>();
-        MaybeCRef<Type> inner_expected = std::nullopt;
-        std::optional<TypeExpectation> inner_expectation;
-        if (expected_type_.has_value()) {
-            const auto optional = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (optional.has_value() && optional->kind == stdlib_bridge::StdContainerKind::Option) {
-                inner_expected = std::cref(*optional->first);
-                inner_expectation = derive_expectation(expectation_, optional->first);
-            }
-        }
-        const auto inner = inner_expectation.has_value()
-                               ? services_.check_expr(*some.value, context_, *inner_expectation)
-                               : services_.check_expr(*some.value, context_, inner_expected);
-        if (inner_expectation.has_value() && inner_expectation->expected != nullptr) {
-            (void)services_.check_assignable(*inner.type,
-                                             *inner_expectation->expected,
-                                             some.value->range,
-                                             "optional payload",
-                                             *inner_expectation);
-            return values_.typed_effect(expected_type_->get().clone(), inner.effect);
-        }
-        if (inner_expected.has_value()) {
-            (void)services_.check_assignable(
-                *inner.type, inner_expected->get(), some.value->range, "optional payload");
-            return values_.typed_effect(expected_type_->get().clone(), inner.effect);
-        }
-        TypePtr payload_type = inner.type ? inner.type->clone() : values_.make_error_type();
-        TypePtr option_type =
-            services_.std_container_type(stdlib_bridge::kOptionType, {payload_type});
-        if (option_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kOptionType),
-                expr.range);
-            return values_.error_typed_effect(inner.effect);
-        }
-        return values_.typed_effect(option_type, inner.effect);
-    }
-
     [[nodiscard]] TypedValue visit_path(const ast::ExprSyntax &expr) const {
         return check_path(*expr.as<ast::PathExpr>().path);
     }
@@ -603,18 +542,6 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue visit_struct_literal(const ast::ExprSyntax &expr) const {
         return check_struct_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_list_literal(const ast::ExprSyntax &expr) const {
-        return check_list_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_set_literal(const ast::ExprSyntax &expr) const {
-        return check_set_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_map_literal(const ast::ExprSyntax &expr) const {
-        return check_map_literal(expr);
     }
 
     [[nodiscard]] TypedValue visit_unary(const ast::ExprSyntax &expr) const {
@@ -1197,268 +1124,6 @@ class ExpressionChecker final {
         return values_.typed_effect(std::move(struct_type), effect);
     }
 
-    [[nodiscard]] TypedValue check_list_literal(const ast::ExprSyntax &expr) const {
-        const auto &list = expr.as<ast::ListLiteralExpr>();
-        MaybeCRef<Type> element_expected = std::nullopt;
-        std::optional<TypeExpectation> element_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_list;
-        if (expected_type_.has_value()) {
-            const auto list_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (list_type.has_value() && list_type->kind == stdlib_bridge::StdContainerKind::List) {
-                expected_list = *list_type;
-                element_expected = std::cref(*list_type->first);
-                element_expectation = derive_expectation(expectation_, list_type->first);
-            }
-        }
-
-        if (list.items.empty()) {
-            if (expected_type_.has_value() && expected_list.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptyListWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto element_type = values_.clone_or_any(element_expected);
-        bool have_element_type = element_expected.has_value();
-        std::optional<SourceRange> inferred_element_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &item : list.items) {
-            const auto value = element_expectation.has_value()
-                                   ? services_.check_expr(*item, context_, *element_expectation)
-                                   : services_.check_expr(*item, context_, element_expected);
-            effect = join_effects(effect, value.effect);
-
-            if (!have_element_type) {
-                element_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_element_type = true;
-                if (!element_expected.has_value()) {
-                    inferred_element_origin = item->range;
-                }
-                continue;
-            }
-
-            if (element_expectation.has_value()) {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element", *element_expectation);
-            } else if (inferred_element_origin.has_value()) {
-                const auto inferred_expectation = inferred_collection_expectation(
-                    *element_type, *inferred_element_origin, "previous list element");
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element", inferred_expectation);
-            } else {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element");
-            }
-        }
-
-        if (expected_list.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr list_type = services_.std_container_type(stdlib_bridge::kListType, {element_type});
-        if (list_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kListType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(list_type, effect);
-    }
-
-    [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr) const {
-        const auto &set = expr.as<ast::SetLiteralExpr>();
-        MaybeCRef<Type> element_expected = std::nullopt;
-        std::optional<TypeExpectation> element_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_set;
-        if (expected_type_.has_value()) {
-            const auto set_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (set_type.has_value() && set_type->kind == stdlib_bridge::StdContainerKind::Set) {
-                expected_set = *set_type;
-                element_expected = std::cref(*set_type->first);
-                element_expectation = derive_expectation(expectation_, set_type->first);
-            }
-        }
-
-        if (set.items.empty()) {
-            if (expected_type_.has_value() && expected_set.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptySetWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto element_type = values_.clone_or_any(element_expected);
-        bool have_element_type = element_expected.has_value();
-        std::optional<SourceRange> inferred_element_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &item : set.items) {
-            const auto value = element_expectation.has_value()
-                                   ? services_.check_expr(*item, context_, *element_expectation)
-                                   : services_.check_expr(*item, context_, element_expected);
-            effect = join_effects(effect, value.effect);
-
-            if (!have_element_type) {
-                element_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_element_type = true;
-                if (!element_expected.has_value()) {
-                    inferred_element_origin = item->range;
-                }
-                continue;
-            }
-
-            if (element_expectation.has_value()) {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element", *element_expectation);
-            } else if (inferred_element_origin.has_value()) {
-                const auto inferred_expectation = inferred_collection_expectation(
-                    *element_type, *inferred_element_origin, "previous set element");
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element", inferred_expectation);
-            } else {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element");
-            }
-        }
-
-        if (expected_set.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr set_type = services_.std_container_type(stdlib_bridge::kSetType, {element_type});
-        if (set_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kSetType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(set_type, effect);
-    }
-
-    [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr) const {
-        const auto &map = expr.as<ast::MapLiteralExpr>();
-        MaybeCRef<Type> key_expected = std::nullopt;
-        MaybeCRef<Type> value_expected = std::nullopt;
-        std::optional<TypeExpectation> key_expectation;
-        std::optional<TypeExpectation> value_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_map;
-        if (expected_type_.has_value()) {
-            const auto map_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (map_type.has_value() && map_type->kind == stdlib_bridge::StdContainerKind::Map) {
-                expected_map = *map_type;
-                key_expected = std::cref(*map_type->first);
-                value_expected = std::cref(*map_type->second);
-                key_expectation = derive_expectation(expectation_, map_type->first);
-                value_expectation = derive_expectation(expectation_, map_type->second);
-            }
-        }
-
-        if (map.entries.empty()) {
-            if (expected_type_.has_value() && expected_map.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptyMapWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto key_type = values_.clone_or_any(key_expected);
-        auto value_type = values_.clone_or_any(value_expected);
-        bool have_key_type = key_expected.has_value();
-        bool have_value_type = value_expected.has_value();
-        std::optional<SourceRange> inferred_key_origin;
-        std::optional<SourceRange> inferred_value_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &entry : map.entries) {
-            const auto key = key_expectation.has_value()
-                                 ? services_.check_expr(*entry->key, context_, *key_expectation)
-                                 : services_.check_expr(*entry->key, context_, key_expected);
-            const auto value =
-                value_expectation.has_value()
-                    ? services_.check_expr(*entry->value, context_, *value_expectation)
-                    : services_.check_expr(*entry->value, context_, value_expected);
-            effect = join_effects(effect, join_effects(key.effect, value.effect));
-
-            if (!have_key_type) {
-                key_type = key.type ? key.type->clone() : values_.make_error_type();
-                have_key_type = true;
-                if (!key_expected.has_value()) {
-                    inferred_key_origin = entry->key->range;
-                }
-            } else {
-                if (key_expectation.has_value()) {
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key", *key_expectation);
-                } else if (inferred_key_origin.has_value()) {
-                    const auto inferred_expectation = inferred_collection_expectation(
-                        *key_type, *inferred_key_origin, "previous map key");
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key", inferred_expectation);
-                } else {
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key");
-                }
-            }
-
-            if (!have_value_type) {
-                value_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_value_type = true;
-                if (!value_expected.has_value()) {
-                    inferred_value_origin = entry->value->range;
-                }
-            } else {
-                if (value_expectation.has_value()) {
-                    (void)services_.check_assignable(*value.type,
-                                                     *value_type,
-                                                     entry->value->range,
-                                                     "map value",
-                                                     *value_expectation);
-                } else if (inferred_value_origin.has_value()) {
-                    const auto inferred_expectation = inferred_collection_expectation(
-                        *value_type, *inferred_value_origin, "previous map value");
-                    (void)services_.check_assignable(*value.type,
-                                                     *value_type,
-                                                     entry->value->range,
-                                                     "map value",
-                                                     inferred_expectation);
-                } else {
-                    (void)services_.check_assignable(
-                        *value.type, *value_type, entry->value->range, "map value");
-                }
-            }
-        }
-
-        if (expected_map.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr map_type =
-            services_.std_container_type(stdlib_bridge::kMapType, {key_type, value_type});
-        if (map_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kMapType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(map_type, effect);
-    }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
         const auto &call = expr.as<ast::CallExpr>();
@@ -2284,13 +1949,13 @@ class ExpressionChecker final {
             return owner_enum != nullptr &&
                    std::string_view{owner_enum->canonical_name} == stdlib_bridge::kOptionType;
         };
-        const auto is_none_like = [&](const ast::ExprSyntax &candidate) {
-            return candidate.is<ast::NoneLiteralExpr>() || is_option_none_value(candidate);
-        };
         if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
-            binary.lhs && binary.rhs && (is_none_like(*binary.lhs) || is_none_like(*binary.rhs))) {
-            const auto &none_operand = is_none_like(*binary.lhs) ? *binary.lhs : *binary.rhs;
-            const auto &value_operand = is_none_like(*binary.lhs) ? *binary.rhs : *binary.lhs;
+            binary.lhs && binary.rhs &&
+            (is_option_none_value(*binary.lhs) || is_option_none_value(*binary.rhs))) {
+            const auto &none_operand =
+                is_option_none_value(*binary.lhs) ? *binary.lhs : *binary.rhs;
+            const auto &value_operand =
+                is_option_none_value(*binary.lhs) ? *binary.rhs : *binary.lhs;
             const auto value = services_.check_expr(value_operand, context_, std::nullopt);
             const auto none = services_.check_expr(none_operand, context_, std::cref(*value.type));
             const auto effect = join_effects(value.effect, none.effect);
@@ -2306,6 +1971,7 @@ class ExpressionChecker final {
             }
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
+
 
         const auto lhs = services_.check_expr(*binary.lhs, context_, std::nullopt);
         const auto rhs = services_.check_expr(*binary.rhs, context_, std::nullopt);

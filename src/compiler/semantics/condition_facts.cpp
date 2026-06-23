@@ -43,9 +43,6 @@ namespace {
 }
 
 [[nodiscard]] bool is_none_like(const ast::ExprSyntax &expr) noexcept {
-    if (expr.is<ast::NoneLiteralExpr>()) {
-        return true;
-    }
     if (!expr.is<ast::QualifiedValueExpr>()) {
         return false;
     }

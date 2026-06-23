@@ -209,7 +209,7 @@ struct TypedProgram;
                                            const TypedExprChild &child) noexcept;
 
 struct TypedExpr {
-    ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::NoneLiteral};
+    ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::Group};
     SourceRange range;
     std::optional<SourceId> source_id;
     std::uint64_t node_id{0};

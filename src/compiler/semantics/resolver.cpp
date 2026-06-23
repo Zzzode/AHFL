@@ -1174,7 +1174,6 @@ class ResolverPass final {
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
         std::visit(Overloaded{
-                       [&](const ast::SomeExpr &e) { resolve_declaration_expr(*e.value); },
                        [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
                        [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
                        [&](const ast::BinaryExpr &e) {
@@ -1210,22 +1209,6 @@ class ResolverPass final {
                                                    "type");
                            for (const auto &field : e.fields) {
                                resolve_declaration_expr(*field->value);
-                           }
-                       },
-                       [&](const ast::ListLiteralExpr &e) {
-                           for (const auto &item : e.items) {
-                               resolve_declaration_expr(*item);
-                           }
-                       },
-                       [&](const ast::SetLiteralExpr &e) {
-                           for (const auto &item : e.items) {
-                               resolve_declaration_expr(*item);
-                           }
-                       },
-                       [&](const ast::MapLiteralExpr &e) {
-                           for (const auto &entry : e.entries) {
-                               resolve_declaration_expr(*entry->key);
-                               resolve_declaration_expr(*entry->value);
                            }
                        },
                        [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },

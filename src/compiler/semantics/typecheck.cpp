@@ -88,17 +88,12 @@ void append_typed_child(std::vector<TypedExprChild> &children,
     std::vector<TypedExprChild> children;
     std::visit(
         Overloaded{
-            [&](const ast::NoneLiteralExpr &) {},
             [&](const ast::BoolLiteralExpr &) {},
             [&](const ast::IntegerLiteralExpr &) {},
             [&](const ast::FloatLiteralExpr &) {},
             [&](const ast::DecimalLiteralExpr &) {},
             [&](const ast::StringLiteralExpr &) {},
             [&](const ast::DurationLiteralExpr &) {},
-            [&](const ast::SomeExpr &e) {
-                append_typed_child(
-                    children, program, e.value.get(), source_id, TypedExprChildRole::Operand);
-            },
             [&](const ast::PathExpr &) {},
             [&](const ast::QualifiedValueExpr &) {},
             [&](const ast::CallExpr &e) {
@@ -166,35 +161,6 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                        source_id,
                                        TypedExprChildRole::StructFieldValue,
                                        field->field_name);
-                }
-            },
-            [&](const ast::ListLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    append_typed_child(children,
-                                       program,
-                                       item.get(),
-                                       source_id,
-                                       TypedExprChildRole::CollectionElement);
-                }
-            },
-            [&](const ast::SetLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    append_typed_child(children,
-                                       program,
-                                       item.get(),
-                                       source_id,
-                                       TypedExprChildRole::CollectionElement);
-                }
-            },
-            [&](const ast::MapLiteralExpr &e) {
-                for (const auto &entry : e.entries) {
-                    append_typed_child(
-                        children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
-                    append_typed_child(children,
-                                       program,
-                                       entry->value.get(),
-                                       source_id,
-                                       TypedExprChildRole::MapValue);
                 }
             },
             [&](const ast::UnaryExpr &e) {
@@ -369,7 +335,6 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 [[nodiscard]] std::string expr_spelling(const ast::ExprSyntax &expr) {
     return std::visit(
         Overloaded{
-            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
             [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
             [](const ast::IntegerLiteralExpr &e) -> std::string {
                 if (e.literal)
@@ -557,7 +522,6 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
                 return e.inner ? expr_spelling(*e.inner) : std::string{};
             },
             [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
-            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
             [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
             [](const ast::IntegerLiteralExpr &e) -> std::string {
                 return e.literal ? e.literal->spelling : std::string{};

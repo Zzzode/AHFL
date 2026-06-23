@@ -788,27 +788,6 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
                            add_expr_syntax_targets(index, snapshot, source, item.get());
                        }
                    },
-                   [&](const ast::ListLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           add_expr_syntax_targets(index, snapshot, source, item.get());
-                       }
-                   },
-                   [&](const ast::SetLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           add_expr_syntax_targets(index, snapshot, source, item.get());
-                       }
-                   },
-                   [&](const ast::MapLiteralExpr &e) {
-                       for (const auto &entry : e.entries) {
-                           if (entry) {
-                               add_expr_syntax_targets(index, snapshot, source, entry->key.get());
-                               add_expr_syntax_targets(index, snapshot, source, entry->value.get());
-                           }
-                       }
-                   },
-                   [&](const ast::SomeExpr &e) {
-                       add_expr_syntax_targets(index, snapshot, source, e.value.get());
-                   },
                    [&](const ast::UnaryExpr &e) {
                        add_expr_syntax_targets(index, snapshot, source, e.operand.get());
                    },
