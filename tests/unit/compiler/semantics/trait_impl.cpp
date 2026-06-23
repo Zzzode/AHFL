@@ -3,6 +3,7 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
@@ -853,8 +854,8 @@ namespace {
 // by the find_impls positive tests so each test can construct a concrete
 // Type (via TypeContext) and query find_impls against the produced env.
 struct NamedSymbols {
-    std::optional<SymbolId> trait_id;
-    std::optional<SymbolId> target_id;
+    std::optional<ahfl::SymbolId> trait_id;
+    std::optional<ahfl::SymbolId> target_id;
 };
 
 [[nodiscard]] NamedSymbols resolve_named(const ahfl::SymbolTable &symbols,
@@ -862,8 +863,7 @@ struct NamedSymbols {
                                          std::string_view target_local_name,
                                          std::string_view module_name = "trait_impl") {
     NamedSymbols out;
-    for (const auto &entry : symbols.entries()) {
-        const auto &sym = entry.get();
+    for (const auto &sym : symbols.symbols()) {
         const auto canonical = std::string(module_name) + "::" + std::string(trait_local_name);
         if (sym.kind == ahfl::SymbolKind::Trait &&
             (sym.canonical_name == canonical || sym.local_name == trait_local_name)) {
@@ -909,7 +909,7 @@ impl HasWeight for Widget {
     const auto parse = frontend.parse_text("s4a_single_impl.ahfl", source);
     const ahfl::Resolver resolver;
     const auto resolve_result = resolver.resolve(*parse.program);
-    const auto names = resolve_named(resolve_result.symbols, "HasWeight", "Widget");
+    const auto names = resolve_named(resolve_result.symbol_table, "HasWeight", "Widget");
     REQUIRE(names.trait_id.has_value());
     REQUIRE(names.target_id.has_value());
 
@@ -942,7 +942,7 @@ trait HasWeight {
     const auto parse = frontend.parse_text("s4a_no_impl.ahfl", source);
     const ahfl::Resolver resolver;
     const auto resolve_result = resolver.resolve(*parse.program);
-    const auto names = resolve_named(resolve_result.symbols, "HasWeight", "Gadget");
+    const auto names = resolve_named(resolve_result.symbol_table, "HasWeight", "Gadget");
     REQUIRE(names.trait_id.has_value());
     REQUIRE(names.target_id.has_value());
 
@@ -989,10 +989,10 @@ impl Valuable for Item {
     const auto resolve_result = resolver.resolve(*parse.program);
 
     ahfl::TypeContext &types = ahfl::TypeContext::global();
-    const auto item_name = resolve_named(resolve_result.symbols, "Measurable", "Item");
+    const auto item_name = resolve_named(resolve_result.symbol_table, "Measurable", "Item");
     REQUIRE(item_name.trait_id.has_value());
     REQUIRE(item_name.target_id.has_value());
-    const auto valuable_name = resolve_named(resolve_result.symbols, "Valuable", "Item");
+    const auto valuable_name = resolve_named(resolve_result.symbol_table, "Valuable", "Item");
     REQUIRE(valuable_name.trait_id.has_value());
 
     const auto target_type = types.struct_type("trait_impl::Item", *item_name.target_id);
@@ -1163,11 +1163,11 @@ impl Get for A {
     const auto resolve_result = resolver.resolve(*parse.program);
 
     ahfl::TypeContext &types = ahfl::TypeContext::global();
-    const auto names_a = resolve_named(resolve_result.symbols, "Get", "A");
+    const auto names_a = resolve_named(resolve_result.symbol_table, "Get", "A");
     REQUIRE(names_a.trait_id.has_value());
     REQUIRE(names_a.target_id.has_value());
     // B should not have a Get impl — find_impls for Get on B returns empty.
-    const auto b_name = resolve_named(resolve_result.symbols, "Get", "B");
+    const auto b_name = resolve_named(resolve_result.symbol_table, "Get", "B");
     REQUIRE(b_name.target_id.has_value());
     const auto type_a = types.struct_type("trait_impl::A", *names_a.target_id);
     const auto type_b = types.struct_type("trait_impl::B", *b_name.target_id);
@@ -1184,32 +1184,32 @@ TEST_CASE("impls_conflict_for_type shared predicate equality holds") {
     // type but differ on unrelated fields (method name, source ranges). The
     // shared predicate must still report a conflict.
     ahfl::TypeContext &types = ahfl::TypeContext::global();
-    const auto ty = types.struct_type("S4aTest::Shared", SymbolId{42});
+    const auto ty = types.struct_type("S4aTest::Shared", ahfl::SymbolId{42});
 
     ahfl::ImplTypeInfo lhs{
         .index = 0,
         .is_inherent = false,
-        .trait_symbol = SymbolId{7},
+        .trait_symbol = ahfl::SymbolId{7},
         .trait_name = "Shared",
         .target_type = ty,
-        .target_symbol = SymbolId{42},
+        .target_symbol = ahfl::SymbolId{42},
     };
     ahfl::ImplTypeInfo rhs{
         .index = 1,
         .is_inherent = false,
-        .trait_symbol = SymbolId{7},
+        .trait_symbol = ahfl::SymbolId{7},
         .trait_name = "Shared",
         .target_type = ty,
-        .target_symbol = SymbolId{42},
+        .target_symbol = ahfl::SymbolId{42},
     };
     CHECK(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
 
     // Vary the trait symbol → no conflict.
-    rhs.trait_symbol = SymbolId{8};
+    rhs.trait_symbol = ahfl::SymbolId{8};
     CHECK_FALSE(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
 
     // Restore trait symbol but mark one as inherent → no conflict.
-    rhs.trait_symbol = SymbolId{7};
+    rhs.trait_symbol = ahfl::SymbolId{7};
     rhs.is_inherent = true;
     CHECK_FALSE(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
 }
@@ -1218,9 +1218,9 @@ TEST_CASE("impls_conflict_for_type shared predicate equality holds") {
 // nominal type, and different keys for different names.
 TEST_CASE("normalize_type_key distinguishes nominal types by symbol") {
     ahfl::TypeContext &types = ahfl::TypeContext::global();
-    const auto t1 = types.struct_type("S4a::A", SymbolId{11});
-    const auto t2 = types.struct_type("S4a::A", SymbolId{11});
-    const auto t3 = types.struct_type("S4a::B", SymbolId{12});
+    const auto t1 = types.struct_type("S4a::A", ahfl::SymbolId{11});
+    const auto t2 = types.struct_type("S4a::A", ahfl::SymbolId{11});
+    const auto t3 = types.struct_type("S4a::B", ahfl::SymbolId{12});
     CHECK(ahfl::TypeEnvironment::normalize_type_key(*t1) ==
           ahfl::TypeEnvironment::normalize_type_key(*t2));
     CHECK(ahfl::TypeEnvironment::normalize_type_key(*t1) !=
@@ -1234,16 +1234,22 @@ TEST_CASE("normalize_type_key distinguishes generic struct instantiations") {
     // Build two nominal types that differ structurally via their describe()
     // output: StructT vs EnumT. The coherence key uses variant-specific
     // encoding so it must distinguish them.
-    const auto s = types.struct_type("S4a::Nom", SymbolId{50});
-    const auto e = types.enum_type("S4a::Nom", SymbolId{50});
+    const auto s = types.struct_type("S4a::Nom", ahfl::SymbolId{50});
+    const auto e = types.enum_type("S4a::Nom", ahfl::SymbolId{50});
     CHECK(ahfl::TypeEnvironment::normalize_type_key(*s) !=
           ahfl::TypeEnvironment::normalize_type_key(*e));
 
-    // Composite types also get distinct keys.
-    const auto list_int = types.list(types.make(ahfl::TypeKind::Int));
-    const auto list_float = types.list(types.make(ahfl::TypeKind::Float));
-    CHECK(ahfl::TypeEnvironment::normalize_type_key(*list_int) !=
-          ahfl::TypeEnvironment::normalize_type_key(*list_float));
+    // Composite types also get distinct keys. Use two fn types that differ
+    // structurally via their hash-consed identity — this avoids relying on
+    // legacy Optional/List sugar types that TypeContext deliberately does not
+    // expose as flat payload builders, while still exercising the non-nominal
+    // visitor branch.
+    const auto int_t = types.make(ahfl::TypeKind::Int);
+    const auto float_t = types.make(ahfl::TypeKind::Float);
+    const auto fn_int = types.fn({int_t}, int_t, ahfl::EffectJudgement::make_pure());
+    const auto fn_float = types.fn({float_t}, float_t, ahfl::EffectJudgement::make_pure());
+    CHECK(ahfl::TypeEnvironment::normalize_type_key(*fn_int) !=
+          ahfl::TypeEnvironment::normalize_type_key(*fn_float));
 }
 
 // S4a-TC12: coherence conflict fires in multi-module setup where each impl

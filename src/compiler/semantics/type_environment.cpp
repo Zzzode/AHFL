@@ -320,20 +320,13 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
             return "enum_variant:" + v.canonical_name + "::" + v.variant_name + "<" +
                    normalize_args_key(v.type_args) + ">";
         },
-        [](const types::OptionalT &o) {
-            return "Optional<" + std::string{o.inner ? normalize_type_key(*o.inner) : "Any"} + ">";
+        [](const types::FnT &f) {
+            return "fn<" + normalize_args_key(f.params) + "->" +
+                   std::string{f.return_type ? normalize_type_key(*f.return_type) : std::string{"void"}} +
+                   ">";
         },
-        [](const types::ListT &l) {
-            return "List<" + std::string{l.element ? normalize_type_key(*l.element) : "Any"} + ">";
-        },
-        [](const types::SetT &s) {
-            return "Set<" + std::string{s.element ? normalize_type_key(*s.element) : "Any"} + ">";
-        },
-        [](const types::MapT &m) {
-            return "Map<" + std::string{m.key ? normalize_type_key(*m.key) : "Any"} + "," +
-                   std::string{m.value ? normalize_type_key(*m.value) : "Any"} + ">";
-        },
-        [](const auto &) { return type.describe(); },
+        [](const types::TypeVarT &v) { return "type_var:" + v.name; },
+        [&type](const auto &) { return type.describe(); },
     });
 }
 
