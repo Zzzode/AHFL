@@ -2108,7 +2108,9 @@ class ProgramBuilder {
 
         const auto qualified_name =
             borrow(context.qualifiedIdent());
-        require(qualified_name.has_value(), context, "type must have a name");
+        if (!qualified_name) {
+            throw std::logic_error("type did not match any supported AHFL type syntax kind");
+        }
 
         ast::NamedType named{.name = build_qualified_name(qualified_name->get())};
         const auto &child_types = context.type_();

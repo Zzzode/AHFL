@@ -1108,14 +1108,26 @@ class ResolverPass final {
                     if (generic_type_params_.count(t.name->spelling()) > 0) {
                         return;
                     }
-                    const auto resolved = resolve_reference(
-                        SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                    // Parameterised built-ins (Optional, List, Set, Map) are
+                    // handled directly by the type resolver; they have no
+                    // user-declared symbol, so skip reference lookup.
+                    const bool is_parameterised_builtin = !t.type_args.empty() &&
+                        t.name && t.name->segments.size() == 1 &&
+                        (t.name->segments.front() == "Optional" ||
+                         t.name->segments.front() == "List" ||
+                         t.name->segments.front() == "Set" ||
+                         t.name->segments.front() == "Map");
 
-                    if (resolved.has_value() && current_type_alias_.has_value()) {
-                        const auto symbol = result_.symbol_table.get(*resolved);
-                        if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
-                            type_alias_dependencies_[current_type_alias_->value].push_back(
-                                *resolved);
+                    if (!is_parameterised_builtin) {
+                        const auto resolved = resolve_reference(
+                            SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+
+                        if (resolved.has_value() && current_type_alias_.has_value()) {
+                            const auto symbol = result_.symbol_table.get(*resolved);
+                            if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
+                                type_alias_dependencies_[current_type_alias_->value].push_back(
+                                    *resolved);
+                            }
                         }
                     }
                     for (const auto &arg : t.type_args) {
