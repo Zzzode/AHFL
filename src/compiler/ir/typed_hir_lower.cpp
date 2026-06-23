@@ -1087,6 +1087,23 @@ class TypedIrLowerer final {
         return std::nullopt;
     }
 
+    [[nodiscard]] const TypedProgram::FnCallSiteRecord *
+    find_fn_call_site(const TypedExpr &call_expr) const noexcept {
+        if (!call_expr.resolved_symbol.has_value()) return nullptr;
+        if (call_expr.call_target_kind != TypedCallTargetKind::Function) return nullptr;
+        const SymbolId target = *call_expr.resolved_symbol;
+        const auto &want_source = call_expr.source_id;
+        const auto &want_range = call_expr.range;
+        for (const auto &site : typed_program_->fn_call_sites) {
+            if (site.fn_symbol != target) continue;
+            if (site.source_id != want_source) continue;
+            if (site.call_range.begin_offset != want_range.begin_offset) continue;
+            if (site.call_range.end_offset != want_range.end_offset) continue;
+            return &site;
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] std::string render_call_target(const TypedExpr &expr) const {
         if (expr.resolved_symbol.has_value()) {
             const auto symbol = typed_program_->find_symbol(*expr.resolved_symbol);
@@ -1107,6 +1124,35 @@ class TypedIrLowerer final {
                     const auto *fn_info = std::get_if<FnTypeInfo>(&decl->payload);
                     if (fn_info != nullptr && fn_info->builtin_name.has_value()) {
                         return *fn_info->builtin_name;
+                    }
+                }
+                // P2d.S5: dispatch a user-defined `fn` call through a mangled
+                // instance key whenever the call carries concrete type
+                // arguments. Non-generic / monomorphic calls keep the
+                // canonical name. The mangled form matches the key stored on
+                // InstanceDecl so the evaluator's find_function(mangled) can
+                // locate the body without re-entering type information.
+                //
+                // Stdlib fns (`std::*` canonical prefix) deliberately keep
+                // the canonical name: their bodies are either declared in
+                // stdlib facade modules (installed separately by the stdlib
+                // evaluator runtime) or mapped to C++ builtin hooks, neither
+                // of which participates in the user-side mangled fn-instance
+                // runtime table.
+                if (expr.call_target_kind == TypedCallTargetKind::Function) {
+                    if (!symbol->get().canonical_name.starts_with("std::")) {
+                        if (const auto *site = find_fn_call_site(expr);
+                            site != nullptr && !site->type_args.empty()) {
+                            const auto resolver =
+                                [this](SymbolId id) -> std::optional<std::string> {
+                                const auto sym = typed_program_->find_symbol(id);
+                                if (!sym.has_value()) return std::nullopt;
+                                return sym->get().canonical_name;
+                            };
+                            return mangle::mangle_instance(site->fn_symbol,
+                                                           std::span<const TypePtr>(site->type_args),
+                                                           resolver);
+                        }
                     }
                 }
                 return symbol->get().canonical_name;
@@ -2599,7 +2645,7 @@ class TypedIrLowerer final {
         }
     };
 
-    enum class InstanceBuildKind { Capability, Predicate, Agent, Workflow };
+    enum class InstanceBuildKind { Capability, Predicate, Agent, Workflow, Fn };
 
     struct InstanceBuildInfo {
         InstanceBuildKind kind{InstanceBuildKind::Capability};
@@ -2610,6 +2656,7 @@ class TypedIrLowerer final {
         const PredicateTypeInfo *predicate{nullptr};
         const AgentTypeInfo *agent{nullptr};
         const WorkflowTypeInfo *workflow{nullptr};
+        const FnTypeInfo *fn{nullptr};
         // Range used for provenance.
         SourceRange provenance_range{};
     };
@@ -2662,7 +2709,35 @@ class TypedIrLowerer final {
             instances.emplace(std::move(key), std::move(info));
         }
 
-        // --- Source 2: Workflow node agent targets ---------------------
+        // --- Source 2: Fn call sites (top-level `fn` generic instantiations) -
+        for (const auto &site : typed_program_->fn_call_sites) {
+            if (site.type_args.empty()) continue;
+            // NOTE: SymbolId 0 is valid (first registered fn); only treat a
+            // symbol as missing when its id fails to resolve in the program.
+            const auto sym = typed_program_->find_symbol(site.fn_symbol);
+            if (!sym.has_value()) continue;
+            // Stdlib fns (`std::*` canonical prefix) keep the nominal
+            // dispatch path and do not produce a user-facing InstanceDecl:
+            // their bodies are sourced from the facade stdlib runtime and
+            // indexed by canonical name in the RuntimeFunctionTable.
+            if (sym->get().canonical_name.starts_with("std::")) continue;
+
+            InstanceKey key{
+                .symbol_value = static_cast<std::size_t>(site.fn_symbol.value),
+                .type_args = site.type_args,
+            };
+            if (instances.contains(key)) continue;
+
+            InstanceBuildInfo info;
+            info.kind = InstanceBuildKind::Fn;
+            info.symbol = site.fn_symbol;
+            info.type_args = site.type_args;
+            info.fn = find_fn_info(site.fn_symbol);
+            info.provenance_range = site.call_range;
+            instances.emplace(std::move(key), std::move(info));
+        }
+
+        // --- Source 3: Workflow node agent targets ---------------------
         for (const auto &decl : typed_program_->declarations) {
             const auto *workflow = payload_as<WorkflowTypeInfo>(&decl);
             if (workflow == nullptr) continue;
@@ -2759,6 +2834,15 @@ class TypedIrLowerer final {
         }
         return nullptr;
     }
+    [[nodiscard]] const FnTypeInfo *find_fn_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<FnTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
 
     [[nodiscard]] ir::InstanceDecl
     build_instance_decl(const InstanceBuildInfo &info,
@@ -2840,6 +2924,15 @@ class TypedIrLowerer final {
                 decl.workflow_output_type_ref = type_ref_from_optional_type(
                     info.workflow->output_type, info.workflow->output_type_range,
                     "workflow instance output type");
+            }
+            break;
+        case InstanceBuildKind::Fn:
+            decl.kind = ir::InstanceKind::Fn;
+            if (info.fn != nullptr) {
+                decl.params = lower_params(info.fn->params);
+                decl.return_type_ref = type_ref_from_optional_type(
+                    info.fn->return_type, info.fn->return_type_range,
+                    "fn instance return type");
             }
             break;
         }
