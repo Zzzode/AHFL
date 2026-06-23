@@ -2,6 +2,7 @@
 #include "base/json/json_value.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -18,6 +19,8 @@
 namespace ahfl {
 
 namespace {
+
+constexpr std::string_view kStdPreludeModule = "std::prelude";
 
 [[nodiscard]] SourceRange
 clamp_range(std::size_t begin_offset, std::size_t end_offset, const SourceFile &source) {
@@ -112,6 +115,14 @@ struct ProgramImports {
     source.content = buffer.str();
     source.invalidate_line_starts_cache();
     return true;
+}
+
+void append_unique_normalized_path(std::vector<std::filesystem::path> &paths,
+                                   const std::filesystem::path &path) {
+    const auto normalized = normalize_path(path);
+    if (std::find(paths.begin(), paths.end(), normalized) == paths.end()) {
+        paths.push_back(normalized);
+    }
 }
 
 [[nodiscard]] SourceRange json_value_range(const SourceFile &source, const json::JsonValue *value) {
@@ -722,29 +733,77 @@ bool append_descriptor_paths(PathContainerT &out,
     return relative;
 }
 
-[[nodiscard]] std::vector<std::filesystem::path> effective_search_roots(const ProjectInput &input) {
+[[nodiscard]] bool has_std_prelude(const std::filesystem::path &search_root) {
+    std::error_code error;
+    const auto prelude_path = normalize_path(search_root / "std" / "prelude.ahfl");
+    return std::filesystem::exists(prelude_path, error) && !error;
+}
+
+[[nodiscard]] std::vector<std::filesystem::path> builtin_stdlib_search_roots() {
     std::vector<std::filesystem::path> roots;
-    roots.reserve(input.search_roots.size() + input.entry_files.size());
 
-    for (const auto &root : input.search_roots) {
-        const auto normalized = normalize_path(root);
-        if (std::find(roots.begin(), roots.end(), normalized) == roots.end()) {
-            roots.push_back(normalized);
-        }
+    if (const char *env_root = std::getenv("AHFL_STDLIB_SEARCH_ROOT");
+        env_root != nullptr && *env_root != '\0') {
+        append_unique_normalized_path(roots, std::filesystem::path(env_root));
     }
 
-    if (!roots.empty()) {
-        return roots;
-    }
+#ifdef AHFL_SOURCE_DIR
+    append_unique_normalized_path(roots, std::filesystem::path(AHFL_SOURCE_DIR));
+#endif
 
-    for (const auto &entry_file : input.entry_files) {
-        const auto normalized = normalize_path(entry_file).parent_path();
-        if (std::find(roots.begin(), roots.end(), normalized) == roots.end()) {
-            roots.push_back(normalized);
+    std::error_code error;
+    auto current = std::filesystem::current_path(error);
+    if (!error) {
+        current = normalize_path(current);
+        while (!current.empty()) {
+            if (has_std_prelude(current)) {
+                append_unique_normalized_path(roots, current);
+                break;
+            }
+            const auto parent = current.parent_path();
+            if (parent == current) {
+                break;
+            }
+            current = parent;
         }
     }
 
     return roots;
+}
+
+[[nodiscard]] std::vector<std::filesystem::path> effective_search_roots(const ProjectInput &input) {
+    std::vector<std::filesystem::path> roots;
+    roots.reserve(input.search_roots.size() + input.entry_files.size() +
+                  input.stdlib_search_roots.size() + 2);
+
+    for (const auto &root : input.search_roots) {
+        append_unique_normalized_path(roots, root);
+    }
+
+    if (roots.empty()) {
+        for (const auto &entry_file : input.entry_files) {
+            append_unique_normalized_path(roots, normalize_path(entry_file).parent_path());
+        }
+    }
+
+    if (input.include_stdlib) {
+        for (const auto &root : input.stdlib_search_roots) {
+            append_unique_normalized_path(roots, root);
+        }
+        for (const auto &root : builtin_stdlib_search_roots()) {
+            append_unique_normalized_path(roots, root);
+        }
+    }
+
+    return roots;
+}
+
+[[nodiscard]] bool is_std_module(std::string_view module_name) {
+    return module_name == "std" || module_name.starts_with("std::");
+}
+
+[[nodiscard]] bool should_inject_prelude(const ProjectInput &input, std::string_view module_name) {
+    return input.include_stdlib && input.inject_prelude && !is_std_module(module_name);
 }
 
 [[nodiscard]] std::optional<std::filesystem::path>
@@ -768,8 +827,8 @@ resolve_import_path(std::string_view module_name,
         }
         // Try directory-module layout: root/path/to/module/mod.ahfl
         // (Rust-style: directory with mod.ahfl as the entry point)
-        const auto dir_candidate = normalize_path(
-            root / relative.parent_path() / relative.stem() / "mod.ahfl");
+        const auto dir_candidate =
+            normalize_path(root / relative.parent_path() / relative.stem() / "mod.ahfl");
         if (std::filesystem::exists(dir_candidate, error) && !error) {
             if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
                 candidates.end()) {
@@ -1199,7 +1258,22 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                     loaded_id = source_id;
 
                     auto &source_unit = result.graph.sources.back();
+                    if (should_inject_prelude(input, source_unit.module_name)) {
+                        source_unit.imports.push_back(ImportRequest{
+                            .module_name = std::string(kStdPreludeModule),
+                            .alias = "",
+                            .range = source_unit.module_range,
+                        });
+                    }
                     for (const auto &import_request : source_unit.imports) {
+                        if (import_request.module_name == source_unit.module_name) {
+                            result.graph.import_edges.push_back(ImportEdge{
+                                .importer = source_id,
+                                .imported = source_id,
+                                .request = import_request,
+                            });
+                            continue;
+                        }
                         const auto imported_path =
                             resolve_import_path(import_request.module_name,
                                                 search_roots,
@@ -1258,16 +1332,49 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
 }
 
 void dump_project_outline(const SourceGraph &graph, std::ostream &out) {
-    out << "source_graph (" << graph.entry_sources.size() << " entry, " << graph.sources.size()
-        << " sources, " << graph.import_edges.size() << " import"
-        << (graph.import_edges.size() == 1 ? "" : "s") << ")\n";
+    const auto visible_source = [](const SourceUnit &source) {
+        return !is_std_module(source.module_name);
+    };
+    const auto visible_import = [&](const ImportEdge &edge) {
+        const auto source_by_id = [&](SourceId id) -> const SourceUnit * {
+            for (const auto &source : graph.sources) {
+                if (source.id == id) {
+                    return &source;
+                }
+            }
+            return nullptr;
+        };
+        const auto *importer = source_by_id(edge.importer);
+        const auto *imported = source_by_id(edge.imported);
+        return importer != nullptr && imported != nullptr && visible_source(*importer) &&
+               visible_source(*imported);
+    };
+
+    const auto source_count =
+        std::count_if(graph.sources.begin(), graph.sources.end(), visible_source);
+    const auto import_count =
+        std::count_if(graph.import_edges.begin(), graph.import_edges.end(), visible_import);
+
+    out << "source_graph (" << graph.entry_sources.size() << " entry, " << source_count
+        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s")
+        << ")\n";
 
     for (const auto &source : graph.sources) {
+        if (!visible_source(source)) {
+            continue;
+        }
         out << "source " << source.source.display_name << '\n';
         out << "  module " << source.module_name << '\n';
-        if (!source.imports.empty()) {
+        const auto visible_imports =
+            std::count_if(source.imports.begin(), source.imports.end(), [](const auto &request) {
+                return !is_std_module(request.module_name);
+            });
+        if (visible_imports > 0) {
             out << "  imports\n";
             for (const auto &import_request : source.imports) {
+                if (is_std_module(import_request.module_name)) {
+                    continue;
+                }
                 out << "    " << import_request.module_name;
                 if (!import_request.alias.empty()) {
                     out << " as " << import_request.alias;

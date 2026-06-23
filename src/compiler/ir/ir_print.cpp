@@ -199,17 +199,19 @@ namespace {
                           [](const ir::PathExpr &) { return false; },
                           [](const ir::QualifiedValueExpr &) { return false; },
                           [](const ir::CallExpr &) { return false; },
+                          [](const ir::LambdaExpr &) { return false; },
                           [](const ir::StructLiteralExpr &) { return false; },
                           [](const ir::ListLiteralExpr &) { return false; },
                           [](const ir::SetLiteralExpr &) { return false; },
                           [](const ir::MapLiteralExpr &) { return false; },
-                          [](const ir::MemberAccessExpr &) { return false; },
-                          [](const ir::IndexAccessExpr &) { return false; },
-                          [](const ir::SomeExpr &) { return true; },
-                          [](const ir::UnaryExpr &) { return true; },
-                          [](const ir::BinaryExpr &) { return true; },
-                      },
-                      expr.node);
+	                          [](const ir::MemberAccessExpr &) { return false; },
+	                          [](const ir::IndexAccessExpr &) { return false; },
+	                          [](const ir::SomeExpr &) { return true; },
+	                          [](const ir::UnaryExpr &) { return true; },
+	                          [](const ir::BinaryExpr &) { return true; },
+	                          [](const ir::MatchExpr &) { return true; },
+	                      },
+	                      expr.node);
 }
 
 class IrProgramPrinter final {
@@ -385,6 +387,50 @@ class IrProgramPrinter final {
         return rendered;
     }
 
+    [[nodiscard]] std::string render_pattern(const ir::MatchPattern &pattern) const {
+        return std::visit(
+            Overloaded{
+                [](const ir::LiteralPattern &value) { return value.spelling; },
+                [this](const ir::VariantPattern &value) {
+                    std::vector<std::string> subpatterns;
+                    subpatterns.reserve(value.subpatterns.size());
+                    for (const auto &subpattern : value.subpatterns) {
+                        subpatterns.push_back(subpattern ? render_pattern(*subpattern)
+                                                          : std::string{"_"});
+                    }
+                    if (subpatterns.empty()) {
+                        return value.path;
+                    }
+                    return value.path + "(" + join(subpatterns, ", ") + ")";
+                },
+                [](const ir::WildcardPattern &) { return std::string{"_"}; },
+                [this](const ir::BindingPattern &value) {
+                    std::string rendered = value.is_mut ? "mut " + value.name : value.name;
+                    if (value.nested) {
+                        rendered += " @ " + render_pattern(*value.nested);
+                    }
+                    return rendered;
+                },
+                [this](const ir::TuplePattern &value) {
+                    std::vector<std::string> elements;
+                    elements.reserve(value.elements.size());
+                    for (const auto &element : value.elements) {
+                        elements.push_back(element ? render_pattern(*element) : std::string{"_"});
+                    }
+                    return "(" + join(elements, ", ") + ")";
+                },
+                [this](const ir::OrPattern &value) {
+                    std::vector<std::string> branches;
+                    branches.reserve(value.branches.size());
+                    for (const auto &branch : value.branches) {
+                        branches.push_back(branch ? render_pattern(*branch) : std::string{"_"});
+                    }
+                    return join(branches, " | ");
+                },
+            },
+            pattern.node);
+    }
+
     [[nodiscard]] std::string render_expr(const ir::Expr &expr) const {
         return std::visit(
             Overloaded{
@@ -410,6 +456,10 @@ class IrProgramPrinter final {
                     }
 
                     return value.callee + "(" + join(arguments, ", ") + ")";
+                },
+                [this](const ir::LambdaExpr &value) {
+                    const auto body = value.body ? render_expr(*value.body) : std::string{"none"};
+                    return "\\" + join(value.params, ", ") + " -> " + body;
                 },
                 [this](const ir::StructLiteralExpr &value) {
                     std::vector<std::string> fields;
@@ -460,6 +510,23 @@ class IrProgramPrinter final {
                 },
                 [this](const ir::IndexAccessExpr &value) {
                     return render_suffix_base(*value.base) + "[" + render_expr(*value.index) + "]";
+                },
+                [this](const ir::MatchExpr &value) {
+                    std::vector<std::string> arms;
+                    arms.reserve(value.arms.size());
+                    for (const auto &arm : value.arms) {
+                        std::string rendered = render_pattern(arm.pattern);
+                        if (arm.guard) {
+                            rendered += " if " + render_expr(*arm.guard);
+                        }
+                        rendered += " => " +
+                                    (arm.body ? render_expr(*arm.body) : std::string{"none"});
+                        arms.push_back(std::move(rendered));
+                    }
+                    return "match " +
+                           (value.scrutinee ? render_expr(*value.scrutinee)
+                                            : std::string{"none"}) +
+                           " { " + join(arms, ", ") + " }";
                 },
             },
             expr.node);
@@ -780,8 +847,13 @@ class IrProgramPrinter final {
         line(1, std::string("effect: ") + std::string(effect_name(declaration.effect.kind)));
         if (!declaration.effect.capabilities.empty()) {
             line(1,
-                 "capabilities: [" +
-                     join(symbol_names(declaration.effect.capabilities), ", ") + "]");
+                 "capabilities: [" + join(symbol_names(declaration.effect.capabilities), ", ") +
+                     "]");
+        }
+        if (declaration.body) {
+            line(1, "body {");
+            print_block(*declaration.body, 2);
+            line(1, "}");
         }
     }
 };

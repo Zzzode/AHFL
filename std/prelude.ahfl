@@ -1,0 +1,12 @@
+module std::prelude;
+
+import std::option as option;
+import std::result as result;
+import std::collections as collections;
+
+type Optional<T> = option::Option<T>;
+type Option<T> = option::Option<T>;
+type Result<T, E> = result::Result<T, E>;
+type List<T> = collections::List<T>;
+type Set<T> = collections::Set<T>;
+type Map<K, V> = collections::Map<K, V>;

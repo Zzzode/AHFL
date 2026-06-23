@@ -1,0 +1,221 @@
+module std::collections;
+
+import std::option as option;
+
+struct List<T> {}
+struct Set<T> {}
+struct Map<K, V> {}
+
+// Bare List/Set/Map resolve to these nominal stdlib types when stdlib is
+// loaded. Literal and indexing syntax typecheck through the nominal API and
+// lower to the runtime builtin hooks declared below.
+
+@builtin("list_raw_get")
+fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
+
+@builtin("list_raw_set")
+fn list_raw_set<T>(xs: List<T>, i: Int, x: T) -> List<T> effect Pure;
+
+@builtin("list_raw_length")
+fn list_raw_length<T>(xs: List<T>) -> Int effect Pure;
+
+@builtin("list_raw_alloc")
+fn list_raw_alloc<T>(n: Int) -> List<T> effect Pure;
+
+@builtin("set_raw_contains")
+fn set_raw_contains<T>(s: Set<T>, x: T) -> Bool effect Pure;
+
+@builtin("set_raw_size")
+fn set_raw_size<T>(s: Set<T>) -> Int effect Pure;
+
+@builtin("set_raw_empty")
+fn set_raw_empty<T>() -> Set<T> effect Pure;
+
+@builtin("set_raw_singleton")
+fn set_raw_singleton<T>(x: T) -> Set<T> effect Pure;
+
+@builtin("map_raw_get")
+fn map_raw_get<K, V>(m: Map<K, V>, k: K) -> V effect Pure;
+
+@builtin("map_raw_contains_key")
+fn map_raw_contains_key<K, V>(m: Map<K, V>, k: K) -> Bool effect Pure;
+
+@builtin("map_raw_size")
+fn map_raw_size<K, V>(m: Map<K, V>) -> Int effect Pure;
+
+@builtin("map_raw_empty")
+fn map_raw_empty<K, V>() -> Map<K, V> effect Pure;
+
+@builtin("map_raw_singleton")
+fn map_raw_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure;
+
+fn empty<T>() -> List<T> effect Pure decreases 0 {
+    return list_raw_alloc<T>(0);
+}
+
+fn singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
+    let xs: List<T> = list_raw_alloc<T>(1);
+    return list_raw_set<T>(xs, 0, x);
+}
+
+fn is_empty<T>(self: List<T>) -> Bool effect Pure decreases 0 {
+    return list_raw_length<T>(self) == 0;
+}
+
+fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
+    return list_raw_length<T>(self);
+}
+
+fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
+    if i < 0 {
+        return none;
+    }
+    if i >= list_raw_length<T>(self) {
+        return none;
+    }
+    return some(list_raw_get<T>(self, i));
+}
+
+fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
+    if list_raw_length<T>(self) == 0 {
+        return none;
+    }
+    return some(list_raw_get<T>(self, 0));
+}
+
+fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
+    let n: Int = list_raw_length<T>(self);
+    if n == 0 {
+        return none;
+    }
+    return some(list_raw_get<T>(self, n - 1));
+}
+
+fn list_copy_into<T>(
+    source: List<T>,
+    source_i: Int,
+    out: List<T>,
+    out_i: Int
+) -> List<T> effect Pure decreases list_raw_length<T>(source) - source_i {
+    if source_i >= list_raw_length<T>(source) {
+        return out;
+    }
+    let updated: List<T> = list_raw_set<T>(out, out_i, list_raw_get<T>(source, source_i));
+    return list_copy_into<T>(source, source_i + 1, updated, out_i + 1);
+}
+
+fn append<T>(
+    self: List<T>,
+    other: List<T>
+) -> List<T> effect Pure decreases list_raw_length<T>(self) + list_raw_length<T>(other) {
+    let left_n: Int = list_raw_length<T>(self);
+    let right_n: Int = list_raw_length<T>(other);
+    let out: List<T> = list_raw_alloc<T>(left_n + right_n);
+    let with_left: List<T> = list_copy_into<T>(self, 0, out, 0);
+    return list_copy_into<T>(other, 0, with_left, left_n);
+}
+
+fn list_map_into<T, U>(
+    self: List<T>,
+    f: Fn(T) -> U,
+    i: Int,
+    out: List<U>
+) -> List<U> effect Pure decreases list_raw_length<T>(self) - i {
+    if i >= list_raw_length<T>(self) {
+        return out;
+    }
+    let mapped: U = f(list_raw_get<T>(self, i));
+    let updated: List<U> = list_raw_set<U>(out, i, mapped);
+    return list_map_into<T, U>(self, f, i + 1, updated);
+}
+
+fn map<T, U>(
+    self: List<T>,
+    f: Fn(T) -> U
+) -> List<U> effect Pure decreases list_raw_length<T>(self) {
+    let out: List<U> = list_raw_alloc<U>(list_raw_length<T>(self));
+    return list_map_into<T, U>(self, f, 0, out);
+}
+
+fn list_filter_from<T>(
+    self: List<T>,
+    p: Fn(T) -> Bool,
+    i: Int
+) -> List<T> effect Pure decreases list_raw_length<T>(self) - i {
+    if i >= list_raw_length<T>(self) {
+        return empty<T>();
+    }
+    let item: T = list_raw_get<T>(self, i);
+    let rest: List<T> = list_filter_from<T>(self, p, i + 1);
+    if p(item) {
+        return append<T>(singleton<T>(item), rest);
+    }
+    return rest;
+}
+
+fn filter<T>(
+    self: List<T>,
+    p: Fn(T) -> Bool
+) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+    return list_filter_from<T>(self, p, 0);
+}
+
+fn list_fold_from<T, U>(
+    self: List<T>,
+    acc: U,
+    f: Fn(U, T) -> U,
+    i: Int
+) -> U effect Pure decreases list_raw_length<T>(self) - i {
+    if i >= list_raw_length<T>(self) {
+        return acc;
+    }
+    let updated: U = f(acc, list_raw_get<T>(self, i));
+    return list_fold_from<T, U>(self, updated, f, i + 1);
+}
+
+fn fold<T, U>(
+    self: List<T>,
+    init: U,
+    f: Fn(U, T) -> U
+) -> U effect Pure decreases list_raw_length<T>(self) {
+    return list_fold_from<T, U>(self, init, f, 0);
+}
+
+fn set_empty<T>() -> Set<T> effect Pure decreases 0 {
+    return set_raw_empty<T>();
+}
+
+fn set_singleton<T>(x: T) -> Set<T> effect Pure decreases 0 {
+    return set_raw_singleton<T>(x);
+}
+
+fn set_is_empty<T>(self: Set<T>) -> Bool effect Pure decreases 0 {
+    return set_raw_size<T>(self) == 0;
+}
+
+fn contains<T>(self: Set<T>, x: T) -> Bool effect Pure decreases 0 {
+    return set_raw_contains<T>(self, x);
+}
+
+fn map_empty<K, V>() -> Map<K, V> effect Pure decreases 0 {
+    return map_raw_empty<K, V>();
+}
+
+fn map_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0 {
+    return map_raw_singleton<K, V>(key, value);
+}
+
+fn map_is_empty<K, V>(self: Map<K, V>) -> Bool effect Pure decreases 0 {
+    return map_raw_size<K, V>(self) == 0;
+}
+
+fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
+    return map_raw_contains_key<K, V>(self, key);
+}
+
+fn map_get<K, V>(self: Map<K, V>, key: K) -> option::Option<V> effect Pure decreases 0 {
+    if map_raw_contains_key<K, V>(self, key) {
+        return some(map_raw_get<K, V>(self, key));
+    }
+    return none;
+}

@@ -442,7 +442,7 @@ class IrJsonPrinter final {
         return ref.kind != ir::TypeRefKind::Unresolved || !ref.display_name.empty() ||
                !ref.canonical_name.empty() || !ref.variant_name.empty() ||
                ref.string_bounds.has_value() || ref.decimal_scale.has_value() || ref.first ||
-               ref.second || has_source_range(ref.source_range);
+               ref.second || !ref.params.empty() || has_source_range(ref.source_range);
     }
 
     void print_symbol_ref(const ir::SymbolRef &ref, int indent_level) {
@@ -489,6 +489,21 @@ class IrJsonPrinter final {
             }
             if (ref.second) {
                 field("value_type", [&]() { print_type_ref(*ref.second, indent_level + 1); });
+            }
+            if (!ref.params.empty()) {
+                field("type_args", [&]() {
+                    print_array(indent_level + 1, [&](const auto &item) {
+                        for (const auto &param : ref.params) {
+                            item([&]() {
+                                if (param) {
+                                    print_type_ref(*param, indent_level + 2);
+                                } else {
+                                    write_null();
+                                }
+                            });
+                        }
+                    });
+                });
             }
             print_source_range_field(field, ref.source_range, indent_level + 1);
         });
@@ -603,16 +618,116 @@ class IrJsonPrinter final {
                    observation.node);
     }
 
-    void print_path(const ir::Path &path, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("root_kind", [&]() { write_string(path_root_kind_name(path.root_kind)); });
-            field("root_name", [&]() { write_string(path.root_name); });
-            field("members", [&]() { write_string_array(path.members, indent_level + 1); });
-        });
-    }
+	    void print_path(const ir::Path &path, int indent_level) {
+	        print_object(indent_level, [&](const auto &field) {
+	            field("root_kind", [&]() { write_string(path_root_kind_name(path.root_kind)); });
+	            field("root_name", [&]() { write_string(path.root_name); });
+	            field("members", [&]() { write_string_array(path.members, indent_level + 1); });
+	        });
+	    }
 
-    void print_expr(const ir::Expr &expr, int indent_level) {
-        std::visit(
+	    void print_match_pattern_common(const auto &field,
+	                                    const ir::MatchPattern &pattern,
+	                                    int indent_level) {
+	        field("text", [&]() { write_string(pattern.text); });
+	        print_source_range_field(field, pattern.source_range, indent_level);
+	    }
+
+	    void print_match_pattern(const ir::MatchPattern &pattern, int indent_level) {
+	        std::visit(
+	            Overloaded{
+	                [&](const ir::LiteralPattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("literal"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("spelling", [&]() { write_string(value.spelling); });
+	                    });
+	                },
+	                [&](const ir::VariantPattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("variant"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("path", [&]() { write_string(value.path); });
+	                        field("subpatterns", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &subpattern : value.subpatterns) {
+	                                    item([&]() {
+	                                        if (subpattern) {
+	                                            print_match_pattern(*subpattern, indent_level + 2);
+	                                        } else {
+	                                            write_null();
+	                                        }
+	                                    });
+	                                }
+	                            });
+	                        });
+	                    });
+	                },
+	                [&](const ir::WildcardPattern &) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("wildcard"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                    });
+	                },
+	                [&](const ir::BindingPattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("binding"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("name", [&]() { write_string(value.name); });
+	                        field("is_mut", [&]() { write_bool(value.is_mut); });
+	                        field("nested", [&]() {
+	                            if (value.nested) {
+	                                print_match_pattern(*value.nested, indent_level + 1);
+	                            } else {
+	                                write_null();
+	                            }
+	                        });
+	                    });
+	                },
+	                [&](const ir::TuplePattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("tuple"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("elements", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &element : value.elements) {
+	                                    item([&]() {
+	                                        if (element) {
+	                                            print_match_pattern(*element, indent_level + 2);
+	                                        } else {
+	                                            write_null();
+	                                        }
+	                                    });
+	                                }
+	                            });
+	                        });
+	                    });
+	                },
+	                [&](const ir::OrPattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("or"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("branches", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &branch : value.branches) {
+	                                    item([&]() {
+	                                        if (branch) {
+	                                            print_match_pattern(*branch, indent_level + 2);
+	                                        } else {
+	                                            write_null();
+	                                        }
+	                                    });
+	                                }
+	                            });
+	                        });
+	                    });
+	                },
+	            },
+	            pattern.node);
+	    }
+
+	    void print_expr(const ir::Expr &expr, int indent_level) {
+	        std::visit(
             Overloaded{
                 [&](const ir::NoneLiteralExpr &) {
                     print_object(indent_level, [&](const auto &field) {
@@ -694,6 +809,21 @@ class IrJsonPrinter final {
                                     item([&]() { print_expr(*argument, indent_level + 2); });
                                 }
                             });
+                        });
+                    });
+                },
+                [&](const ir::LambdaExpr &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("lambda"); });
+                        print_expr_common_fields(field, expr, indent_level + 1);
+                        field("params",
+                              [&]() { write_string_array(value.params, indent_level + 1); });
+                        field("body", [&]() {
+                            if (value.body) {
+                                print_expr(*value.body, indent_level + 1);
+                            } else {
+                                out_ << "null";
+                            }
                         });
                     });
                 },
@@ -793,17 +923,49 @@ class IrJsonPrinter final {
                         field("member", [&]() { write_string(value.member); });
                     });
                 },
-                [&](const ir::IndexAccessExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("index_access"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("base", [&]() { print_expr(*value.base, indent_level + 1); });
-                        field("index", [&]() { print_expr(*value.index, indent_level + 1); });
-                    });
-                },
-            },
-            expr.node);
-    }
+	                [&](const ir::IndexAccessExpr &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("index_access"); });
+	                        print_expr_common_fields(field, expr, indent_level + 1);
+	                        field("base", [&]() { print_expr(*value.base, indent_level + 1); });
+	                        field("index", [&]() { print_expr(*value.index, indent_level + 1); });
+	                    });
+	                },
+	                [&](const ir::MatchExpr &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("match"); });
+	                        print_expr_common_fields(field, expr, indent_level + 1);
+	                        field("scrutinee", [&]() { print_expr(*value.scrutinee, indent_level + 1); });
+	                        field("arms", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &arm : value.arms) {
+	                                    item([&]() {
+	                                        print_object(
+	                                            indent_level + 2, [&](const auto &arm_field) {
+	                                                arm_field("pattern", [&]() {
+	                                                    print_match_pattern(arm.pattern,
+	                                                                        indent_level + 3);
+	                                                });
+	                                                arm_field("guard", [&]() {
+	                                                    if (arm.guard) {
+	                                                        print_expr(*arm.guard, indent_level + 3);
+	                                                    } else {
+	                                                        write_null();
+	                                                    }
+	                                                });
+	                                                arm_field("body", [&]() {
+	                                                    print_expr(*arm.body, indent_level + 3);
+	                                                });
+	                                            });
+	                                    });
+	                                }
+	                            });
+	                        });
+	                    });
+	                },
+	            },
+	            expr.node);
+	    }
 
     void print_temporal_expr(const ir::TemporalExpr &expr, int indent_level) {
         std::visit(
@@ -1520,7 +1682,8 @@ class IrJsonPrinter final {
                                 if (!value.effect.capabilities.empty()) {
                                     entry("capabilities", [&]() {
                                         print_array(indent_level + 2, [&](const auto &item) {
-                                            for (const auto &capability : value.effect.capabilities) {
+                                            for (const auto &capability :
+                                                 value.effect.capabilities) {
                                                 item([&]() {
                                                     print_symbol_ref(capability, indent_level + 3);
                                                 });
@@ -1530,6 +1693,9 @@ class IrJsonPrinter final {
                                 }
                             });
                         });
+                        if (value.body) {
+                            field("body", [&]() { print_block(*value.body, indent_level + 1); });
+                        }
                         if (has_symbol_ref(value.symbol_ref)) {
                             field("symbol_ref",
                                   [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });

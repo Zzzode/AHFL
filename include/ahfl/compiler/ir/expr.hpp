@@ -30,6 +30,7 @@ struct Path {
 // ----------------------------------------------------------------------------
 
 struct Expr;
+struct MatchPattern;
 
 /// Stable handle for an arena-owned expression node.
 ///
@@ -92,6 +93,54 @@ using StatementPtr = Owned<Statement>;
 
 using SourceRangeOpt = std::optional<SourceRange>;
 
+// ----------------------------------------------------------------------------
+// Pattern Layer
+// ----------------------------------------------------------------------------
+
+/// Literal pattern: true / false / integer / string / none.
+struct LiteralPattern {
+    std::string spelling;
+};
+
+/// Variant pattern: Result::Ok(value), Some(_), Err(error).
+struct VariantPattern {
+    std::string path;
+    std::vector<Owned<MatchPattern>> subpatterns;
+};
+
+/// Wildcard pattern: _.
+struct WildcardPattern {};
+
+/// Binding pattern: name or name @ nested.
+struct BindingPattern {
+    std::string name;
+    bool is_mut{false};
+    Owned<MatchPattern> nested;
+};
+
+/// Tuple pattern: (a, b, c).
+struct TuplePattern {
+    std::vector<Owned<MatchPattern>> elements;
+};
+
+/// Or pattern: a | b.
+struct OrPattern {
+    std::vector<Owned<MatchPattern>> branches;
+};
+
+using MatchPatternNode = std::variant<LiteralPattern,
+                                      VariantPattern,
+                                      WildcardPattern,
+                                      BindingPattern,
+                                      TuplePattern,
+                                      OrPattern>;
+
+struct MatchPattern {
+    MatchPatternNode node;
+    SourceRangeOpt source_range;
+    std::string text;
+};
+
 /// none literal
 struct NoneLiteralExpr {};
 
@@ -144,6 +193,12 @@ struct QualifiedValueExpr {
 struct CallExpr {
     std::string callee;             // Callee name (capability name)
     std::vector<ExprRef> arguments; // Argument list
+};
+
+/// Pure lambda expression lowered from a typed closure.
+struct LambdaExpr {
+    std::vector<std::string> params;
+    ExprRef body;
 };
 
 /// Struct field initializer
@@ -204,7 +259,20 @@ struct IndexAccessExpr {
     ExprRef index; // Index expression
 };
 
-/// Expression node (19 variant alternatives)
+/// A single match expression arm.
+struct MatchArmExpr {
+    MatchPattern pattern;
+    ExprRef guard;
+    ExprRef body;
+};
+
+/// Match expression: match scrutinee { pattern [if guard] => body, ... }.
+struct MatchExpr {
+    ExprRef scrutinee;
+    std::vector<MatchArmExpr> arms;
+};
+
+/// Expression node (21 variant alternatives)
 using ExprNode = std::variant<NoneLiteralExpr,
                               BoolLiteralExpr,
                               IntegerLiteralExpr,
@@ -216,6 +284,7 @@ using ExprNode = std::variant<NoneLiteralExpr,
                               PathExpr,
                               QualifiedValueExpr,
                               CallExpr,
+                              LambdaExpr,
                               StructLiteralExpr,
                               ListLiteralExpr,
                               SetLiteralExpr,
@@ -223,7 +292,8 @@ using ExprNode = std::variant<NoneLiteralExpr,
                               UnaryExpr,
                               BinaryExpr,
                               MemberAccessExpr,
-                              IndexAccessExpr>;
+                              IndexAccessExpr,
+                              MatchExpr>;
 
 /// Expression wrapper struct
 struct Expr {

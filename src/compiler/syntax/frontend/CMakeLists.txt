@@ -15,6 +15,7 @@ target_link_libraries(ahfl_compiler_syntax
 )
 
 target_include_directories(ahfl_compiler_syntax PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(ahfl_compiler_syntax PRIVATE AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 ahfl_apply_project_warnings(ahfl_compiler_syntax)
 

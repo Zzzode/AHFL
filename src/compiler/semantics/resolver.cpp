@@ -19,6 +19,8 @@ namespace ahfl {
 
 namespace {
 
+constexpr std::string_view kStdPreludeModule = "std::prelude";
+
 [[nodiscard]] std::string join_segments(const std::vector<std::string> &segments) {
     std::ostringstream builder;
 
@@ -236,7 +238,17 @@ class ResolverPass final {
 
         if (current_pass_ == Pass::ResolveReferences) {
             current_type_alias_ = find_registered_symbol(SymbolNamespace::Types, node.name);
+            const auto previous_type_params = generic_type_params_;
+            for (const auto &type_param : node.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
+            for (const auto &type_param : node.type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
+            }
             resolve_type(*node.aliased_type);
+            generic_type_params_ = previous_type_params;
             current_type_alias_.reset();
         }
     }
@@ -510,8 +522,7 @@ class ResolverPass final {
         // (including the implicit Self) enter scope so they are opaque during
         // signature resolution.
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Types, SymbolKind::Trait, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Types, SymbolKind::Trait, node.name, node.range);
             return;
         }
 
@@ -815,6 +826,25 @@ class ResolverPass final {
         return std::nullopt;
     }
 
+    [[nodiscard]] std::optional<SymbolId>
+    lookup_prelude_symbol(const SymbolTable::NamespaceIndex &index,
+                          const ast::QualifiedName &name) const {
+        if (!source_graph_mode_ || name.segments.size() != 1 ||
+            module_name_.value_or("") == kStdPreludeModule) {
+            return std::nullopt;
+        }
+
+        if (const auto module_iter = index.module_local_names.find(std::string(kStdPreludeModule));
+            module_iter != index.module_local_names.end()) {
+            if (const auto local = module_iter->second.find(name.spelling());
+                local != module_iter->second.end()) {
+                return local->second;
+            }
+        }
+
+        return std::nullopt;
+    }
+
     [[nodiscard]] std::string normalize_name(const ast::QualifiedName &name) const {
         if (name.segments.empty()) {
             return "";
@@ -860,6 +890,10 @@ class ResolverPass final {
                     return local->second;
                 }
             }
+        }
+
+        if (const auto prelude = lookup_prelude_symbol(index, name); prelude.has_value()) {
+            return prelude;
         }
 
         if (const auto canonical = index.canonical_names.find(name.spelling());
@@ -981,11 +1015,9 @@ class ResolverPass final {
         // EnumTypeInfo.
         if (name.segments.size() > 1) {
             const auto owner = owner_name_of(name);
-            if (const auto owner_id = lookup(SymbolNamespace::Types, owner);
-                owner_id.has_value()) {
+            if (const auto owner_id = lookup(SymbolNamespace::Types, owner); owner_id.has_value()) {
                 const auto owner_symbol = result_.symbol_table.get(*owner_id);
-                if (owner_symbol.has_value() &&
-                    owner_symbol->get().kind == SymbolKind::Enum) {
+                if (owner_symbol.has_value() && owner_symbol->get().kind == SymbolKind::Enum) {
                     result_.add_reference(ResolvedReference{
                         .kind = ReferenceKind::EnumVariantConstructor,
                         .text = name.spelling(),
@@ -996,6 +1028,14 @@ class ResolverPass final {
                     return owner_id;
                 }
             }
+        }
+
+        // P2 callable values: an unresolved single-segment callee may be a local
+        // binding whose type is Fn(...). The resolver has no value-binding type
+        // environment, so defer the final unknown-callable diagnostic to
+        // typecheck, where local bindings are available.
+        if (name.segments.size() == 1) {
+            return std::nullopt;
         }
 
         emit_error("unknown callable '" + name.spelling() + "'", current_source_, name.range);
@@ -1060,66 +1100,66 @@ class ResolverPass final {
     }
 
     void resolve_type(const ast::TypeSyntax &type) {
-        std::visit(Overloaded{
-                       [&](const ast::NamedType &t) {
-                           // P2: if this name is a generic type param in scope,
-                           // skip resolution — it's an opaque type variable.
-                           if (generic_type_params_.count(t.name->spelling()) > 0) {
-                               return;
-                           }
-                           const auto resolved = resolve_reference(
-                               SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+        std::visit(
+            Overloaded{
+                [&](const ast::NamedType &t) {
+                    // P2: if this name is a generic type param in scope,
+                    // skip resolution — it's an opaque type variable.
+                    if (generic_type_params_.count(t.name->spelling()) > 0) {
+                        return;
+                    }
+                    const auto resolved = resolve_reference(
+                        SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
-                           if (resolved.has_value() && current_type_alias_.has_value()) {
-                               const auto symbol = result_.symbol_table.get(*resolved);
-                               if (symbol.has_value() &&
-                                   symbol->get().kind == SymbolKind::TypeAlias) {
-                                   type_alias_dependencies_[current_type_alias_->value].push_back(
-                                       *resolved);
-                               }
-                           }
-                       },
-                       [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
-                       [&](const ast::ListType &t) { resolve_type(*t.element); },
-                       [&](const ast::SetType &t) { resolve_type(*t.element); },
-                       [&](const ast::MapType &t) {
-                           resolve_type(*t.key_type);
-                           resolve_type(*t.value_type);
-                       },
-                       [&](const ast::FnType &t) {
-                           // P2 (RFC §3.3): first-class Fn type. Recurse into
-                           // parameter types and the return type so named/App
-                           // types inside a Fn signature (e.g. the Option<U> in
-                           // `Fn(T) -> Option<U>`) are resolved like any other
-                           // type position. The effect clause capabilities are
-                           // resolved separately by resolve_effect_clause.
-                           for (const auto &param : t.params) {
-                               if (param) {
-                                   resolve_type(*param);
-                               }
-                           }
-                           if (t.return_type) {
-                               resolve_type(*t.return_type);
-                           }
-                       },
-                       [&](const ast::AppType &t) {
-                           // Resolve the base name (same as NamedType).
-                           // P2: if this name is a generic type param in scope,
-                           // skip resolution — it's an opaque type variable.
-                           if (generic_type_params_.count(t.name->spelling()) == 0) {
-                               (void)resolve_reference(
-                                   SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
-                           }
-                           // Recurse into type arguments.
-                           for (const auto &arg : t.arguments) {
-                               if (arg) {
-                                   resolve_type(*arg);
-                               }
-                           }
-                       },
-                       [](const auto &) { /* leaf types: nothing to resolve */ },
-                   },
-                   type.node);
+                    if (resolved.has_value() && current_type_alias_.has_value()) {
+                        const auto symbol = result_.symbol_table.get(*resolved);
+                        if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
+                            type_alias_dependencies_[current_type_alias_->value].push_back(
+                                *resolved);
+                        }
+                    }
+                },
+                [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
+                [&](const ast::ListType &t) { resolve_type(*t.element); },
+                [&](const ast::SetType &t) { resolve_type(*t.element); },
+                [&](const ast::MapType &t) {
+                    resolve_type(*t.key_type);
+                    resolve_type(*t.value_type);
+                },
+                [&](const ast::FnType &t) {
+                    // P2 (RFC §3.3): first-class Fn type. Recurse into
+                    // parameter types and the return type so named/App
+                    // types inside a Fn signature (e.g. the Option<U> in
+                    // `Fn(T) -> Option<U>`) are resolved like any other
+                    // type position. The effect clause capabilities are
+                    // resolved separately by resolve_effect_clause.
+                    for (const auto &param : t.params) {
+                        if (param) {
+                            resolve_type(*param);
+                        }
+                    }
+                    if (t.return_type) {
+                        resolve_type(*t.return_type);
+                    }
+                },
+                [&](const ast::AppType &t) {
+                    // Resolve the base name (same as NamedType).
+                    // P2: if this name is a generic type param in scope,
+                    // skip resolution — it's an opaque type variable.
+                    if (generic_type_params_.count(t.name->spelling()) == 0) {
+                        (void)resolve_reference(
+                            SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                    }
+                    // Recurse into type arguments.
+                    for (const auto &arg : t.arguments) {
+                        if (arg) {
+                            resolve_type(*arg);
+                        }
+                    }
+                },
+                [](const auto &) { /* leaf types: nothing to resolve */ },
+            },
+            type.node);
     }
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
@@ -1137,6 +1177,18 @@ class ResolverPass final {
                        },
                        [&](const ast::CallExpr &e) {
                            (void)resolve_callable_reference(*e.callee);
+                           for (const auto &type_arg : e.type_args) {
+                               resolve_type(*type_arg);
+                           }
+                           for (const auto &arg : e.arguments) {
+                               resolve_declaration_expr(*arg);
+                           }
+                       },
+                       [&](const ast::MethodCallExpr &e) {
+                           resolve_declaration_expr(*e.receiver);
+                           for (const auto &type_arg : e.type_args) {
+                               resolve_type(*type_arg);
+                           }
                            for (const auto &arg : e.arguments) {
                                resolve_declaration_expr(*arg);
                            }

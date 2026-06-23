@@ -2,14 +2,20 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 
+#include <algorithm>
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 namespace ahfl {
 
 namespace {
+
+[[nodiscard]] bool is_std_module_name(std::string_view module_name) noexcept {
+    return module_name == "std" || module_name.starts_with("std::");
+}
 
 [[nodiscard]] std::string expr_unary_name(ast::ExprUnaryOp op) {
     switch (op) {
@@ -710,8 +716,7 @@ class AstPrinter final {
                 },
                 [&](const ast::FnType &t) {
                     line(indent_level, "fn");
-                    line(indent_level + 1,
-                         "params (" + std::to_string(t.params.size()) + ")");
+                    line(indent_level + 1, "params (" + std::to_string(t.params.size()) + ")");
                     for (const auto &param : t.params) {
                         if (param) {
                             print_type(*param, indent_level + 2);
@@ -722,8 +727,7 @@ class AstPrinter final {
                         print_type(*t.return_type, indent_level + 2);
                     }
                     if (t.has_effect_clause) {
-                        line(indent_level + 1,
-                             "effect " + std::string(to_string(t.effect_kind)));
+                        line(indent_level + 1, "effect " + std::string(to_string(t.effect_kind)));
                     }
                 },
                 [&](const ast::AppType &t) {
@@ -778,6 +782,23 @@ class AstPrinter final {
                 },
                 [&](const ast::CallExpr &e) {
                     line(indent_level, "call " + e.callee->spelling());
+                    for (std::size_t index = 0; index < e.type_args.size(); ++index) {
+                        line(indent_level + 1, "type_arg " + std::to_string(index));
+                        print_type(*e.type_args[index], indent_level + 2);
+                    }
+                    for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                        line(indent_level + 1, "arg " + std::to_string(index));
+                        print_expr(*e.arguments[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::MethodCallExpr &e) {
+                    line(indent_level, "method_call ." + e.method);
+                    line(indent_level + 1, "receiver");
+                    print_expr(*e.receiver, indent_level + 2);
+                    for (std::size_t index = 0; index < e.type_args.size(); ++index) {
+                        line(indent_level + 1, "type_arg " + std::to_string(index));
+                        print_type(*e.type_args[index], indent_level + 2);
+                    }
                     for (std::size_t index = 0; index < e.arguments.size(); ++index) {
                         line(indent_level + 1, "arg " + std::to_string(index));
                         print_expr(*e.arguments[index], indent_level + 2);
@@ -885,9 +906,7 @@ class AstPrinter final {
                         print_pattern(*p.subpatterns[index], indent_level + 2);
                     }
                 },
-                [&](const ast::WildcardPattern &) {
-                    line(indent_level, "pattern_wildcard");
-                },
+                [&](const ast::WildcardPattern &) { line(indent_level, "pattern_wildcard"); },
                 [&](const ast::BindingPattern &p) {
                     line(indent_level,
                          std::string("pattern_binding ") + (p.is_mut ? "mut " : "") + p.name);
@@ -1014,9 +1033,31 @@ void dump_program_outline(const ast::Program &program, std::ostream &out) {
 }
 
 void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
-    out << "project_ast (" << graph.entry_sources.size() << " entry, " << graph.sources.size()
-        << " sources, " << graph.import_edges.size() << " import"
-        << (graph.import_edges.size() == 1 ? "" : "s") << ")\n";
+    const auto visible_source = [](const SourceUnit &source) {
+        return !is_std_module_name(source.module_name);
+    };
+    const auto source_by_id = [&](SourceId id) -> const SourceUnit * {
+        for (const auto &source : graph.sources) {
+            if (source.id == id) {
+                return &source;
+            }
+        }
+        return nullptr;
+    };
+    const auto visible_import = [&](const ImportEdge &edge) {
+        const auto *importer = source_by_id(edge.importer);
+        const auto *imported = source_by_id(edge.imported);
+        return importer != nullptr && imported != nullptr && visible_source(*importer) &&
+               visible_source(*imported);
+    };
+    const auto source_count =
+        std::count_if(graph.sources.begin(), graph.sources.end(), visible_source);
+    const auto import_count =
+        std::count_if(graph.import_edges.begin(), graph.import_edges.end(), visible_import);
+
+    out << "project_ast (" << graph.entry_sources.size() << " entry, " << source_count
+        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s")
+        << ")\n";
 
     std::unordered_set<std::size_t> entry_ids;
     entry_ids.reserve(graph.entry_sources.size());
@@ -1025,6 +1066,9 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
     }
 
     for (const auto &source : graph.sources) {
+        if (!visible_source(source)) {
+            continue;
+        }
         out << "source " << source.source.display_name;
         if (entry_ids.contains(source.id.value)) {
             out << " [entry]";

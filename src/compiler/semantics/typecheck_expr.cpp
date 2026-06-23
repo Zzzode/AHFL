@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -50,6 +51,51 @@ template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
     return scale;
 }
 
+[[nodiscard]] ExprEffect expr_effect_from_judgement(const EffectJudgement &judgement) noexcept {
+    switch (judgement.kind) {
+    case EffectJudgement::Kind::Pure:
+    case EffectJudgement::Kind::Bottom:
+        return ExprEffect::Pure;
+    case EffectJudgement::Kind::Nondet:
+        return ExprEffect::Nondet;
+    case EffectJudgement::Kind::CapabilitySet:
+        return ExprEffect::ExternalEffect;
+    }
+    return ExprEffect::Pure;
+}
+
+struct MethodCandidate {
+    const ImplTypeInfo *impl{nullptr};
+    const ImplMethodInfo *method{nullptr};
+};
+
+[[nodiscard]] const ImplMethodInfo *find_method_ptr(const ImplTypeInfo &impl,
+                                                    std::string_view name) noexcept {
+    for (const auto &method : impl.methods) {
+        if (method.name == name) {
+            return &method;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<SymbolId> nominal_symbol_of_type(const Type &type) noexcept {
+    if (const auto *structure = type.get_if<types::StructT>(); structure != nullptr) {
+        return structure->symbol;
+    }
+    if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
+        return enumeration->symbol;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::string method_call_name(const Type &receiver_type, std::string_view method) {
+    std::string name = receiver_type.describe();
+    name.push_back('.');
+    name.append(method);
+    return name;
+}
+
 // P2d (RFC §3.5): unification for generic fn call-site type-argument inference.
 //
 // Walks a declared parameter type (which may contain TypeVars bound to the
@@ -76,6 +122,22 @@ void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMa
             subst[tv->index] = &arg;
         }
         return;
+    }
+    const auto param_container = stdlib_bridge::std_container_type_view(param);
+    const auto arg_container = stdlib_bridge::std_container_type_view(arg);
+    if (param_container.has_value() && arg_container.has_value() &&
+        param_container->kind == arg_container->kind) {
+        switch (param_container->kind) {
+        case stdlib_bridge::StdContainerKind::Option:
+        case stdlib_bridge::StdContainerKind::List:
+        case stdlib_bridge::StdContainerKind::Set:
+            unify_param_with_arg(*param_container->first, *arg_container->first, subst);
+            return;
+        case stdlib_bridge::StdContainerKind::Map:
+            unify_param_with_arg(*param_container->first, *arg_container->first, subst);
+            unify_param_with_arg(*param_container->second, *arg_container->second, subst);
+            return;
+        }
     }
     // EnumT: same symbol, recurse type_args.
     if (const auto *pe = param.get_if<types::EnumT>(); pe != nullptr) {
@@ -111,39 +173,6 @@ void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMa
         for (std::size_t i = 0; i < ps->type_args.size(); ++i) {
             if (ps->type_args[i] != nullptr && as->type_args[i] != nullptr) {
                 unify_param_with_arg(*ps->type_args[i], *as->type_args[i], subst);
-            }
-        }
-        return;
-    }
-    if (const auto *po = param.get_if<types::OptionalT>(); po != nullptr) {
-        const auto *ao = arg.get_if<types::OptionalT>();
-        if (ao != nullptr && po->inner != nullptr && ao->inner != nullptr) {
-            unify_param_with_arg(*po->inner, *ao->inner, subst);
-        }
-        return;
-    }
-    if (const auto *pl = param.get_if<types::ListT>(); pl != nullptr) {
-        const auto *al = arg.get_if<types::ListT>();
-        if (al != nullptr && pl->element != nullptr && al->element != nullptr) {
-            unify_param_with_arg(*pl->element, *al->element, subst);
-        }
-        return;
-    }
-    if (const auto *pset = param.get_if<types::SetT>(); pset != nullptr) {
-        const auto *aset = arg.get_if<types::SetT>();
-        if (aset != nullptr && pset->element != nullptr && aset->element != nullptr) {
-            unify_param_with_arg(*pset->element, *aset->element, subst);
-        }
-        return;
-    }
-    if (const auto *pm = param.get_if<types::MapT>(); pm != nullptr) {
-        const auto *am = arg.get_if<types::MapT>();
-        if (am != nullptr) {
-            if (pm->key != nullptr && am->key != nullptr) {
-                unify_param_with_arg(*pm->key, *am->key, subst);
-            }
-            if (pm->value != nullptr && am->value != nullptr) {
-                unify_param_with_arg(*pm->value, *am->value, subst);
             }
         }
         return;
@@ -341,6 +370,29 @@ class ExpressionCheckerServices final {
         return environment_.get_fn(id);
     }
 
+    // P3c: collect impl methods that match a receiver nominal type and method
+    // name. The caller applies inherent-before-trait priority and ambiguity
+    // diagnostics.
+    [[nodiscard]] std::vector<MethodCandidate>
+    method_candidates(const Type &receiver_type, std::string_view method_name) const {
+        std::vector<MethodCandidate> candidates;
+        const auto target_symbol = nominal_symbol_of_type(receiver_type);
+        if (!target_symbol.has_value()) {
+            return candidates;
+        }
+
+        for (const auto &[impl_index, impl] : environment_.impls()) {
+            (void)impl_index;
+            if (!impl.target_symbol.has_value() || *impl.target_symbol != *target_symbol) {
+                continue;
+            }
+            if (const auto *method = find_method_ptr(impl, method_name); method != nullptr) {
+                candidates.push_back(MethodCandidate{.impl = &impl, .method = method});
+            }
+        }
+        return candidates;
+    }
+
     // P2d (RFC §3.5): TypeContext access for generic fn call-site type-argument
     // inference — unify param types against argument types, then substitute the
     // inferred TypeSubstitutionMap into the declared return type so the call
@@ -348,6 +400,43 @@ class ExpressionCheckerServices final {
     // receives the type_args it needs to instantiate the body.
     [[nodiscard]] TypeContext &types() const noexcept {
         return types_;
+    }
+
+    [[nodiscard]] TypePtr std_container_type(std::string_view canonical_name,
+                                             const std::vector<TypePtr> &arguments) const {
+        const auto symbol =
+            resolve_result_.symbol_table.find_canonical(SymbolNamespace::Types, canonical_name);
+        if (!symbol.has_value()) {
+            return nullptr;
+        }
+
+        switch (symbol->get().kind) {
+        case SymbolKind::Struct:
+            if (const auto info = environment_.get_struct(symbol->get().id);
+                info.has_value() && info->get().type_param_names.size() != arguments.size()) {
+                return nullptr;
+            }
+            return types_.struct_type(
+                symbol->get().canonical_name, symbol->get().id, std::vector<TypePtr>(arguments));
+        case SymbolKind::Enum:
+            if (const auto info = environment_.get_enum(symbol->get().id);
+                info.has_value() && info->get().type_param_names.size() != arguments.size()) {
+                return nullptr;
+            }
+            return types_.enum_type(
+                symbol->get().canonical_name, symbol->get().id, std::vector<TypePtr>(arguments));
+        case SymbolKind::TypeAlias:
+        case SymbolKind::Const:
+        case SymbolKind::Capability:
+        case SymbolKind::Predicate:
+        case SymbolKind::Agent:
+        case SymbolKind::Workflow:
+        case SymbolKind::Function:
+        case SymbolKind::Trait:
+            return nullptr;
+        }
+
+        return nullptr;
     }
 
     [[nodiscard]] TypePtr
@@ -399,6 +488,7 @@ class ExpressionChecker final {
                 [&](const ast::PathExpr &) { return visit_path(expr); },
                 [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
                 [&](const ast::CallExpr &) { return visit_call(expr); },
+                [&](const ast::MethodCallExpr &) { return visit_method_call(expr); },
                 [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
                 [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
                 [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
@@ -440,8 +530,13 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_none_literal(const ast::ExprSyntax &expr) const {
-        if (expected_type_.has_value() && expected_type_->get().holds<types::OptionalT>()) {
-            return values_.typed(expected_type_->get().clone());
+        if (expected_type_.has_value()) {
+            const auto expected_optional =
+                stdlib_bridge::std_container_type_view(expected_type_->get());
+            if (expected_optional.has_value() &&
+                expected_optional->kind == stdlib_bridge::StdContainerKind::Option) {
+                return values_.typed(expected_type_->get().clone());
+            }
         }
         services_.typecheck_error_here(error_codes::typecheck::NoneWithoutContext,
                                        messages::typecheck::NoneWithoutContext.format_with(),
@@ -454,10 +549,10 @@ class ExpressionChecker final {
         MaybeCRef<Type> inner_expected = std::nullopt;
         std::optional<TypeExpectation> inner_expectation;
         if (expected_type_.has_value()) {
-            if (const auto *optional = expected_type_->get().get_if<types::OptionalT>();
-                optional != nullptr && optional->inner != nullptr) {
-                inner_expected = std::cref(*optional->inner);
-                inner_expectation = derive_expectation(expectation_, optional->inner);
+            const auto optional = stdlib_bridge::std_container_type_view(expected_type_->get());
+            if (optional.has_value() && optional->kind == stdlib_bridge::StdContainerKind::Option) {
+                inner_expected = std::cref(*optional->first);
+                inner_expectation = derive_expectation(expectation_, optional->first);
             }
         }
         const auto inner = inner_expectation.has_value()
@@ -476,9 +571,18 @@ class ExpressionChecker final {
                 *inner.type, inner_expected->get(), some.value->range, "optional payload");
             return values_.typed_effect(expected_type_->get().clone(), inner.effect);
         }
-        return values_.typed_effect(
-            values_.optional_type(inner.type ? inner.type->clone() : values_.make_error_type()),
-            inner.effect);
+        TypePtr payload_type = inner.type ? inner.type->clone() : values_.make_error_type();
+        TypePtr option_type =
+            services_.std_container_type(stdlib_bridge::kOptionType, {payload_type});
+        if (option_type == nullptr) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidTypeReference,
+                messages::typecheck::StdContainerTypeUnavailable.format_with(
+                    stdlib_bridge::kOptionType),
+                expr.range);
+            return values_.error_typed_effect(inner.effect);
+        }
+        return values_.typed_effect(option_type, inner.effect);
     }
 
     [[nodiscard]] TypedValue visit_path(const ast::ExprSyntax &expr) const {
@@ -491,6 +595,10 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue visit_call(const ast::ExprSyntax &expr) const {
         return check_call(expr);
+    }
+
+    [[nodiscard]] TypedValue visit_method_call(const ast::ExprSyntax &expr) const {
+        return check_method_call(expr);
     }
 
     [[nodiscard]] TypedValue visit_struct_literal(const ast::ExprSyntax &expr) const {
@@ -533,49 +641,72 @@ class ExpressionChecker final {
         return services_.check_expr(*group.inner, context_, expected_type_);
     }
 
-    // P2 (RFC §6 / §2.6.3): lambda (closure) typecheck. RFC §2.6.3 note 3
-    // restricts the P2/P4 closure model to Pure closures only; the structural
-    // `Fn(A) -> B` closure type itself (RFC §1.8) lands with the type-system
-    // extension that introduces it, since the current TypeContext has no Fn
-    // type representation. To keep the parse surface honest in the meantime
-    // this pass:
-    //   1. Walks the closure body so nested references/expressions are still
-    //      type-checked (and their typed-tree entries recorded) — the body's
-    //      free-variable references thus resolve and surface ordinary
-    //      type/diagnostic errors instead of being silently skipped.
-    //   2. Emits LAMBDA_NOT_YET_SUPPORTED and returns the error type, since a
-    //      real `Fn` return type cannot be constructed yet. This keeps the
-    //      closure from being mis-typed to a concrete shape before the Fn
-    //      type lands.
-    // Capture inference (RFC §4.1/§4.2) and effect propagation (§4.4) are
-    // deferred alongside the Fn type.
+    // P2 (RFC §6 / §2.6.3): lambda (closure) typecheck. The current P2/P4
+    // closure model supports Pure closures only, represented structurally as
+    // `Fn(params) -> return`. When an expected Fn type is available, it drives
+    // parameter and return checking bidirectionally; otherwise annotated
+    // parameter types and the body type form the structural Fn type.
     [[nodiscard]] TypedValue visit_lambda(const ast::ExprSyntax &expr) const {
         const auto &lambda = expr.as<ast::LambdaExpr>();
+        const auto *expected_fn =
+            expected_type_.has_value() ? expected_type_->get().get_if<types::FnT>() : nullptr;
+
+        if (expected_fn != nullptr && expected_fn->params.size() != lambda.params.size()) {
+            services_.typecheck_error_here(error_codes::typecheck::WrongArity,
+                                           messages::typecheck::WrongArity.format_with(
+                                               "lambda",
+                                               "<closure>",
+                                               std::to_string(expected_fn->params.size()),
+                                               std::to_string(lambda.params.size())),
+                                           expr.range);
+        }
 
         // Bind the closure's parameters into a child value context so the
-        // body can reference them by name. Parameters without a type
-        // annotation are bound to the error type so a missing annotation
-        // surfaces as an ordinary type error rather than a binding miss.
+        // body can reference them by name.
         ValueContext body_context{
             .bindings = context_.bindings,
             .flow_facts = {},
             .call_context = CallContext::PureOnly,
             .current_agent = context_.current_agent,
         };
-        for (const auto &param : lambda.params) {
-            body_context.bindings.emplace(
-                param->name,
-                param->type ? services_.resolve_type_syntax(*param->type)
-                            : values_.make_error_type());
+        std::vector<TypePtr> param_types;
+        param_types.reserve(lambda.params.size());
+        for (std::size_t index = 0; index < lambda.params.size(); ++index) {
+            const auto &param = lambda.params[index];
+            TypePtr param_type = nullptr;
+            if (param->type) {
+                param_type = services_.resolve_type_syntax(*param->type);
+            } else if (expected_fn != nullptr && index < expected_fn->params.size() &&
+                       expected_fn->params[index] != nullptr) {
+                param_type = expected_fn->params[index]->clone();
+            } else {
+                param_type = values_.make_error_type();
+            }
+            param_types.push_back(param_type);
+            body_context.bindings.emplace(param->name, param_type);
         }
 
         if (lambda.body) {
-            const auto body_result = services_.check_expr(*lambda.body, body_context, std::nullopt);
-            // Return the body type as the lambda's inferred return type.
-            // Full Fn(A)->B type construction and closure capture analysis
-            // (RFC §4) are deferred; for now the lambda type-checks as
-            // its body type, which suffices for simple callback usage.
-            return body_result;
+            TypedValue body_result;
+            if (expected_fn != nullptr && expected_fn->return_type != nullptr) {
+                const auto return_expectation = TypeExpectation{
+                    .expected = expected_fn->return_type,
+                    .origin_kind = TypeExpectationOriginKind::ReturnType,
+                    .origin_range = expr.range,
+                    .description = "lambda return",
+                };
+                body_result = services_.check_expr(*lambda.body, body_context, return_expectation);
+            } else {
+                body_result = services_.check_expr(*lambda.body, body_context, std::nullopt);
+            }
+            const auto return_type =
+                (expected_fn != nullptr && expected_fn->return_type != nullptr)
+                    ? expected_fn->return_type->clone()
+                    : (body_result.type != nullptr ? body_result.type->clone()
+                                                   : values_.make_error_type());
+            auto fn_type = services_.types().fn(
+                std::move(param_types), return_type, EffectJudgement::make_pure());
+            return values_.typed_effect(fn_type, body_result.effect);
         }
 
         return values_.error_typed();
@@ -623,19 +754,22 @@ class ExpressionChecker final {
         std::unordered_set<std::string> covered_variants;
         std::optional<TypePtr> unified_body_type;
         bool unified_is_error = false;
+        if (expected_type_.has_value()) {
+            unified_body_type = expected_type_->get().clone();
+            unified_is_error = is_error_type(**unified_body_type);
+        }
 
         for (const auto &arm : match.arms) {
             // Build a per-arm value context that layers the pattern's bindings
             // on top of the surrounding bindings. Bindings introduced by the
             // pattern shadow any same-named outer binding (match-arm scope).
             ValueContext arm_context = context_;
-            const bool arm_catches_all =
-                lower_pattern(*arm->pattern,
-                              scrutinee.type,
-                              enum_info,
-                              arm_context.bindings,
-                              covered_variants,
-                              arm->pattern->range);
+            const bool arm_catches_all = lower_pattern(*arm->pattern,
+                                                       scrutinee.type,
+                                                       enum_info,
+                                                       arm_context.bindings,
+                                                       covered_variants,
+                                                       arm->pattern->range);
 
             if (arm_catches_all) {
                 has_catch_all = true;
@@ -653,16 +787,8 @@ class ExpressionChecker final {
             MaybeCRef<Type> arm_expected = std::nullopt;
             if (unified_body_type.has_value()) {
                 arm_expected = std::cref(**unified_body_type);
-            } else if (expected_type_.has_value()) {
-                // Propagate the match's expected type to the first arm so a
-                // generic enum unit variant used as an arm body (e.g.
-                // `Some(_) => Option::None`) can infer its type arguments from
-                // context via bidirectional inference, instead of falling back
-                // to the un-instantiated enum type.
-                arm_expected = expected_type_;
             }
-            const auto body =
-                services_.check_expr(*arm->body, arm_context, arm_expected);
+            const auto body = services_.check_expr(*arm->body, arm_context, arm_expected);
             joined = join_effects(joined, body.effect);
 
             if (!unified_body_type.has_value()) {
@@ -672,12 +798,9 @@ class ExpressionChecker final {
                 } else {
                     unified_is_error = true;
                 }
-            } else if (!unified_is_error && body.type != nullptr &&
-                       !is_error_type(*body.type)) {
-                (void)services_.check_assignable(*body.type,
-                                                 **unified_body_type,
-                                                 arm->body->range,
-                                                 "match arm body");
+            } else if (!unified_is_error && body.type != nullptr && !is_error_type(*body.type)) {
+                (void)services_.check_assignable(
+                    *body.type, **unified_body_type, arm->body->range, "match arm body");
             }
         }
 
@@ -711,10 +834,9 @@ class ExpressionChecker final {
             // diagnostic above already flags the real problem.
         }
 
-        TypePtr result_type =
-            unified_body_type.has_value() && !unified_is_error
-                ? *unified_body_type
-                : values_.make_error_type();
+        TypePtr result_type = unified_body_type.has_value() && !unified_is_error
+                                  ? *unified_body_type
+                                  : values_.make_error_type();
         return values_.typed_effect(std::move(result_type), joined);
     }
 
@@ -739,12 +861,13 @@ class ExpressionChecker final {
     // at the top level, the slot type inside a variant payload). `enum_info`
     // is the looked-up EnumTypeInfo for the top-level scrutinee; sub-pattern
     // recursion passes std::nullopt since nested scrutinees are not enums.
-    [[nodiscard]] bool lower_pattern(const ast::PatternSyntax &pattern,
-                                     TypePtr scrutinee_type,
-                                     std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
-                                     BindingMap &bindings,
-                                     std::unordered_set<std::string> &covered_variants,
-                                     SourceRange range) const {
+    [[nodiscard]] bool
+    lower_pattern(const ast::PatternSyntax &pattern,
+                  TypePtr scrutinee_type,
+                  std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                  BindingMap &bindings,
+                  std::unordered_set<std::string> &covered_variants,
+                  SourceRange range) const {
         return std::visit(
             overloaded{
                 [&](const ast::LiteralPattern &) {
@@ -783,10 +906,9 @@ class ExpressionChecker final {
                     // its own bindings; the outer name still binds the whole.
                     if (!binding.name.empty()) {
                         const auto [iter, inserted] = bindings.emplace(
-                            binding.name, scrutinee_type != nullptr ? scrutinee_type
-                                                                    : values_.make_error_type());
-                        if (!inserted &&
-                            (!iter->second || !is_error_type(*iter->second))) {
+                            binding.name,
+                            scrutinee_type != nullptr ? scrutinee_type : values_.make_error_type());
+                        if (!inserted && (!iter->second || !is_error_type(*iter->second))) {
                             services_.typecheck_error_here(
                                 error_codes::typecheck::MatchDuplicateBinding,
                                 messages::typecheck::MatchDuplicateBinding.format_with(
@@ -804,8 +926,7 @@ class ExpressionChecker final {
                     }
                     // A binding is a catch-all unless it is constrained by an
                     // `@`-bound variant sub-pattern.
-                    if (binding.nested &&
-                        binding.nested->is<ast::VariantPattern>()) {
+                    if (binding.nested && binding.nested->is<ast::VariantPattern>()) {
                         return false;
                     }
                     return true;
@@ -845,8 +966,7 @@ class ExpressionChecker final {
                         services_.typecheck_error_here(
                             error_codes::typecheck::MatchUnknownVariant,
                             messages::typecheck::MatchUnknownVariant.format_with(
-                                variant.path->spelling(),
-                                enum_info->get().canonical_name),
+                                variant.path->spelling(), enum_info->get().canonical_name),
                             range);
                         return false;
                     }
@@ -865,8 +985,7 @@ class ExpressionChecker final {
                             range);
                     }
 
-                    const std::size_t limit =
-                        std::min(variant.subpatterns.size(), payload.size());
+                    const std::size_t limit = std::min(variant.subpatterns.size(), payload.size());
                     for (std::size_t index = 0; index < limit; ++index) {
                         (void)lower_pattern(*variant.subpatterns[index],
                                             payload[index],
@@ -981,11 +1100,9 @@ class ExpressionChecker final {
             const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
             const auto *owner_enum = owner_type->get_if<types::EnumT>();
             if (expected_enum != nullptr && owner_enum != nullptr &&
-                !expected_enum->type_args.empty() &&
-                expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
-                *expected_enum->symbol == *owner_enum->symbol) {
-                return values_.typed_effect(expected_type_->get().clone(),
-                                            ExprEffect::ConstOnly);
+                !expected_enum->type_args.empty() && expected_enum->symbol.has_value() &&
+                owner_enum->symbol.has_value() && *expected_enum->symbol == *owner_enum->symbol) {
+                return values_.typed_effect(expected_type_->get().clone(), ExprEffect::ConstOnly);
             }
         }
 
@@ -1084,16 +1201,18 @@ class ExpressionChecker final {
         const auto &list = expr.as<ast::ListLiteralExpr>();
         MaybeCRef<Type> element_expected = std::nullopt;
         std::optional<TypeExpectation> element_expectation;
+        std::optional<stdlib_bridge::StdContainerTypeView> expected_list;
         if (expected_type_.has_value()) {
-            if (const auto *list_type = expected_type_->get().get_if<types::ListT>();
-                list_type != nullptr && list_type->element != nullptr) {
-                element_expected = std::cref(*list_type->element);
-                element_expectation = derive_expectation(expectation_, list_type->element);
+            const auto list_type = stdlib_bridge::std_container_type_view(expected_type_->get());
+            if (list_type.has_value() && list_type->kind == stdlib_bridge::StdContainerKind::List) {
+                expected_list = *list_type;
+                element_expected = std::cref(*list_type->first);
+                element_expectation = derive_expectation(expectation_, list_type->first);
             }
         }
 
         if (list.items.empty()) {
-            if (expected_type_.has_value() && expected_type_->get().holds<types::ListT>()) {
+            if (expected_type_.has_value() && expected_list.has_value()) {
                 return values_.typed(expected_type_->get().clone());
             }
 
@@ -1101,7 +1220,7 @@ class ExpressionChecker final {
                 error_codes::typecheck::EmptyLiteralWithoutContext,
                 messages::typecheck::EmptyListWithoutContext.format_with(),
                 expr.range);
-            return values_.typed(values_.list_type(values_.make_error_type()));
+            return values_.error_typed();
         }
 
         auto element_type = values_.clone_or_any(element_expected);
@@ -1138,23 +1257,37 @@ class ExpressionChecker final {
             }
         }
 
-        return values_.typed_effect(values_.list_type(std::move(element_type)), effect);
+        if (expected_list.has_value()) {
+            return values_.typed_effect(expected_type_->get().clone(), effect);
+        }
+        TypePtr list_type = services_.std_container_type(stdlib_bridge::kListType, {element_type});
+        if (list_type == nullptr) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidTypeReference,
+                messages::typecheck::StdContainerTypeUnavailable.format_with(
+                    stdlib_bridge::kListType),
+                expr.range);
+            return values_.error_typed_effect(effect);
+        }
+        return values_.typed_effect(list_type, effect);
     }
 
     [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr) const {
         const auto &set = expr.as<ast::SetLiteralExpr>();
         MaybeCRef<Type> element_expected = std::nullopt;
         std::optional<TypeExpectation> element_expectation;
+        std::optional<stdlib_bridge::StdContainerTypeView> expected_set;
         if (expected_type_.has_value()) {
-            if (const auto *set_type = expected_type_->get().get_if<types::SetT>();
-                set_type != nullptr && set_type->element != nullptr) {
-                element_expected = std::cref(*set_type->element);
-                element_expectation = derive_expectation(expectation_, set_type->element);
+            const auto set_type = stdlib_bridge::std_container_type_view(expected_type_->get());
+            if (set_type.has_value() && set_type->kind == stdlib_bridge::StdContainerKind::Set) {
+                expected_set = *set_type;
+                element_expected = std::cref(*set_type->first);
+                element_expectation = derive_expectation(expectation_, set_type->first);
             }
         }
 
         if (set.items.empty()) {
-            if (expected_type_.has_value() && expected_type_->get().holds<types::SetT>()) {
+            if (expected_type_.has_value() && expected_set.has_value()) {
                 return values_.typed(expected_type_->get().clone());
             }
 
@@ -1162,7 +1295,7 @@ class ExpressionChecker final {
                 error_codes::typecheck::EmptyLiteralWithoutContext,
                 messages::typecheck::EmptySetWithoutContext.format_with(),
                 expr.range);
-            return values_.typed(values_.set_type(values_.make_error_type()));
+            return values_.error_typed();
         }
 
         auto element_type = values_.clone_or_any(element_expected);
@@ -1199,7 +1332,19 @@ class ExpressionChecker final {
             }
         }
 
-        return values_.typed_effect(values_.set_type(std::move(element_type)), effect);
+        if (expected_set.has_value()) {
+            return values_.typed_effect(expected_type_->get().clone(), effect);
+        }
+        TypePtr set_type = services_.std_container_type(stdlib_bridge::kSetType, {element_type});
+        if (set_type == nullptr) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidTypeReference,
+                messages::typecheck::StdContainerTypeUnavailable.format_with(
+                    stdlib_bridge::kSetType),
+                expr.range);
+            return values_.error_typed_effect(effect);
+        }
+        return values_.typed_effect(set_type, effect);
     }
 
     [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr) const {
@@ -1208,18 +1353,20 @@ class ExpressionChecker final {
         MaybeCRef<Type> value_expected = std::nullopt;
         std::optional<TypeExpectation> key_expectation;
         std::optional<TypeExpectation> value_expectation;
+        std::optional<stdlib_bridge::StdContainerTypeView> expected_map;
         if (expected_type_.has_value()) {
-            if (const auto *map_type = expected_type_->get().get_if<types::MapT>();
-                map_type != nullptr && map_type->key != nullptr && map_type->value != nullptr) {
-                key_expected = std::cref(*map_type->key);
-                value_expected = std::cref(*map_type->value);
-                key_expectation = derive_expectation(expectation_, map_type->key);
-                value_expectation = derive_expectation(expectation_, map_type->value);
+            const auto map_type = stdlib_bridge::std_container_type_view(expected_type_->get());
+            if (map_type.has_value() && map_type->kind == stdlib_bridge::StdContainerKind::Map) {
+                expected_map = *map_type;
+                key_expected = std::cref(*map_type->first);
+                value_expected = std::cref(*map_type->second);
+                key_expectation = derive_expectation(expectation_, map_type->first);
+                value_expectation = derive_expectation(expectation_, map_type->second);
             }
         }
 
         if (map.entries.empty()) {
-            if (expected_type_.has_value() && expected_type_->get().holds<types::MapT>()) {
+            if (expected_type_.has_value() && expected_map.has_value()) {
                 return values_.typed(expected_type_->get().clone());
             }
 
@@ -1227,8 +1374,7 @@ class ExpressionChecker final {
                 error_codes::typecheck::EmptyLiteralWithoutContext,
                 messages::typecheck::EmptyMapWithoutContext.format_with(),
                 expr.range);
-            return values_.typed(
-                values_.map_type(values_.make_error_type(), values_.make_error_type()));
+            return values_.error_typed();
         }
 
         auto key_type = values_.clone_or_any(key_expected);
@@ -1298,8 +1444,20 @@ class ExpressionChecker final {
             }
         }
 
-        return values_.typed_effect(values_.map_type(std::move(key_type), std::move(value_type)),
-                                    effect);
+        if (expected_map.has_value()) {
+            return values_.typed_effect(expected_type_->get().clone(), effect);
+        }
+        TypePtr map_type =
+            services_.std_container_type(stdlib_bridge::kMapType, {key_type, value_type});
+        if (map_type == nullptr) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidTypeReference,
+                messages::typecheck::StdContainerTypeUnavailable.format_with(
+                    stdlib_bridge::kMapType),
+                expr.range);
+            return values_.error_typed_effect(effect);
+        }
+        return values_.typed_effect(map_type, effect);
     }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
@@ -1320,8 +1478,8 @@ class ExpressionChecker final {
         // at the enum symbol; validate the variant name and payload arity here
         // and build the variant value type (inferring type_args for generic
         // enums from the argument types, mirroring generic fn call inference).
-        if (const auto variant_reference = services_.find_reference(
-                ReferenceKind::EnumVariantConstructor, call.callee->range);
+        if (const auto variant_reference =
+                services_.find_reference(ReferenceKind::EnumVariantConstructor, call.callee->range);
             variant_reference.has_value()) {
             return check_enum_variant_constructor(expr, variant_reference->get().target);
         }
@@ -1329,6 +1487,9 @@ class ExpressionChecker final {
         const auto reference =
             services_.find_reference(ReferenceKind::CallTarget, call.callee->range);
         if (!reference.has_value()) {
+            if (const auto value_call = check_fn_value_call(expr); value_call.has_value()) {
+                return *value_call;
+            }
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownCallable,
                 messages::typecheck::UnknownCallable.format_with(call.callee->spelling()),
@@ -1361,15 +1522,289 @@ class ExpressionChecker final {
         return check_predicate_call(expr, reference->get().target);
     }
 
+    [[nodiscard]] TypedValue check_method_call(const ast::ExprSyntax &expr) const {
+        const auto &call = expr.as<ast::MethodCallExpr>();
+        if (call.receiver == nullptr) {
+            return values_.error_typed();
+        }
+
+        const auto receiver = services_.check_expr(*call.receiver, context_, std::nullopt);
+        if (receiver.type == nullptr || is_error_type(*receiver.type)) {
+            return values_.error_typed_effect(receiver.effect);
+        }
+
+        const auto candidates = services_.method_candidates(*receiver.type, call.method);
+        std::vector<MethodCandidate> inherent_candidates;
+        std::vector<MethodCandidate> trait_candidates;
+        for (const auto &candidate : candidates) {
+            if (candidate.impl == nullptr || candidate.method == nullptr) {
+                continue;
+            }
+            if (candidate.impl->is_inherent) {
+                inherent_candidates.push_back(candidate);
+            } else {
+                trait_candidates.push_back(candidate);
+            }
+        }
+
+        const MethodCandidate *selected = nullptr;
+        if (inherent_candidates.size() == 1) {
+            selected = &inherent_candidates.front();
+        } else if (inherent_candidates.size() > 1) {
+            services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
+                                           messages::typecheck::AmbiguousTraitImpl.format_with(
+                                               call.method, receiver.type->describe()),
+                                           expr.range);
+            return values_.error_typed_effect(receiver.effect);
+        } else if (trait_candidates.size() == 1) {
+            selected = &trait_candidates.front();
+        } else if (trait_candidates.size() > 1) {
+            services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
+                                           messages::typecheck::AmbiguousTraitImpl.format_with(
+                                               call.method, receiver.type->describe()),
+                                           expr.range);
+            return values_.error_typed_effect(receiver.effect);
+        }
+
+        if (selected == nullptr || selected->method == nullptr) {
+            services_.typecheck_error_here(error_codes::typecheck::UnknownCallable,
+                                           messages::typecheck::UnknownCallable.format_with(
+                                               method_call_name(*receiver.type, call.method)),
+                                           expr.range);
+            return values_.error_typed_effect(receiver.effect);
+        }
+
+        return check_impl_method_call(expr, receiver, *selected);
+    }
+
+    [[nodiscard]] TypedValue check_impl_method_call(const ast::ExprSyntax &expr,
+                                                    const TypedValue &receiver,
+                                                    const MethodCandidate &candidate) const {
+        const auto &call = expr.as<ast::MethodCallExpr>();
+        const auto &method = *candidate.method;
+        const auto method_name =
+            receiver.type != nullptr ? method_call_name(*receiver.type, call.method) : call.method;
+
+        const auto &judgement = method.effect.judgement;
+        if (context_.verification_context != VerificationContext::None && !judgement.is_pure()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::EffectNotPure,
+                messages::typecheck::EffectNotPure.format_with(method_name, to_string(judgement)),
+                expr.range);
+            services_.typecheck_error_here(error_codes::typecheck::NotInVerifiedSubset,
+                                           messages::typecheck::NotInVerifiedSubset.format_with(
+                                               method_name, "declared effect is not Pure"),
+                                           expr.range);
+
+            if (context_.verification_context == VerificationContext::InvariantSafetyLiveness &&
+                judgement.kind == EffectJudgement::Kind::Nondet) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::NondetInInvariant,
+                    messages::typecheck::NondetInInvariant.format_with(method_name),
+                    expr.range);
+            }
+        }
+
+        const std::size_t receiver_param_count = method.params.empty() ? 0U : 1U;
+        const std::size_t expected_arg_count = method.params.size() >= receiver_param_count
+                                                   ? method.params.size() - receiver_param_count
+                                                   : 0U;
+        if (call.arguments.size() != expected_arg_count) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("method",
+                                                            method_name,
+                                                            std::to_string(expected_arg_count),
+                                                            std::to_string(call.arguments.size())),
+                expr.range);
+        }
+
+        ExprEffect effect = join_effects(expr_effect_from_judgement(judgement), receiver.effect);
+        const bool is_generic = !method.type_param_names.empty();
+        TypeSubstitutionMap subst;
+        if (is_generic) {
+            subst.assign(method.type_param_names.size(), nullptr);
+            if (call.type_args.size() > method.type_param_names.size()) {
+                services_.typecheck_error_here(error_codes::typecheck::WrongArity,
+                                               messages::typecheck::WrongArity.format_with(
+                                                   "method type arguments",
+                                                   method_name,
+                                                   std::to_string(method.type_param_names.size()),
+                                                   std::to_string(call.type_args.size())),
+                                               expr.range);
+            }
+            const auto explicit_limit =
+                std::min(call.type_args.size(), method.type_param_names.size());
+            for (std::size_t index = 0; index < explicit_limit; ++index) {
+                subst[index] = services_.resolve_type_syntax(*call.type_args[index]);
+            }
+        } else if (!call.type_args.empty()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("method type arguments",
+                                                            method_name,
+                                                            "0",
+                                                            std::to_string(call.type_args.size())),
+                expr.range);
+        }
+
+        if (!method.params.empty() && receiver.type != nullptr) {
+            const auto &self_param = method.params.front();
+            if (is_generic && self_param.type != nullptr) {
+                unify_param_with_arg(*self_param.type, *receiver.type, subst);
+            }
+            const auto expected_self =
+                is_generic ? substitute_type(self_param.type, subst, services_.types())
+                           : self_param.type;
+            if (expected_self != nullptr) {
+                const auto expectation = TypeExpectation{
+                    .expected = expected_self,
+                    .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                    .origin_range = self_param.declaration_range,
+                    .description = "method receiver",
+                };
+                (void)services_.check_assignable(*receiver.type,
+                                                 *expected_self,
+                                                 call.receiver->range,
+                                                 "method receiver",
+                                                 expectation);
+            }
+        }
+
+        const auto limit = std::min(call.arguments.size(), expected_arg_count);
+        std::vector<TypePtr> arg_types(limit, nullptr);
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &param = method.params[index + receiver_param_count];
+            const auto expected_param =
+                is_generic ? substitute_type(param.type, subst, services_.types()) : param.type;
+            const auto expectation = TypeExpectation{
+                .expected = expected_param,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = param.declaration_range,
+                .description = "parameter '" + param.name + "'",
+            };
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
+            effect = join_effects(effect, argument.effect);
+            arg_types[index] = argument.type;
+        }
+
+        if (is_generic) {
+            for (std::size_t index = 0; index < limit; ++index) {
+                const auto &param = method.params[index + receiver_param_count];
+                if (param.type != nullptr && arg_types[index] != nullptr) {
+                    unify_param_with_arg(*param.type, *arg_types[index], subst);
+                }
+            }
+        }
+
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &param = method.params[index + receiver_param_count];
+            if (param.type == nullptr || arg_types[index] == nullptr) {
+                continue;
+            }
+            const auto expectation = TypeExpectation{
+                .expected = param.type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = param.declaration_range,
+                .description = "parameter '" + param.name + "'",
+            };
+            if (is_generic) {
+                const auto instantiated_param =
+                    substitute_type(param.type, subst, services_.types());
+                (void)services_.check_assignable(*arg_types[index],
+                                                 *instantiated_param,
+                                                 call.arguments[index]->range,
+                                                 "method argument",
+                                                 expectation);
+            } else {
+                (void)services_.check_assignable(*arg_types[index],
+                                                 *param.type,
+                                                 call.arguments[index]->range,
+                                                 "method argument",
+                                                 expectation);
+            }
+        }
+
+        TypePtr result_type = nullptr;
+        if (method.return_type != nullptr) {
+            result_type = is_generic ? substitute_type(method.return_type, subst, services_.types())
+                                     : method.return_type;
+        }
+        return values_.typed_effect(
+            result_type != nullptr ? result_type->clone() : values_.make_error_type(), effect);
+    }
+
+    [[nodiscard]] std::optional<TypedValue> check_fn_value_call(const ast::ExprSyntax &expr) const {
+        const auto &call = expr.as<ast::CallExpr>();
+        if (call.callee == nullptr || call.callee->segments.size() != 1) {
+            return std::nullopt;
+        }
+
+        const auto iter = context_.bindings.find(call.callee->segments.front());
+        if (iter == context_.bindings.end() || iter->second == nullptr) {
+            return std::nullopt;
+        }
+
+        const auto *fn_type = iter->second->get_if<types::FnT>();
+        if (fn_type == nullptr) {
+            return std::nullopt;
+        }
+
+        if (!call.type_args.empty()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("function value",
+                                                            call.callee->spelling(),
+                                                            "0",
+                                                            std::to_string(call.type_args.size())),
+                expr.range);
+        }
+
+        if (call.arguments.size() != fn_type->params.size()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("function value",
+                                                            call.callee->spelling(),
+                                                            std::to_string(fn_type->params.size()),
+                                                            std::to_string(call.arguments.size())),
+                expr.range);
+        }
+
+        ExprEffect effect = expr_effect_from_judgement(fn_type->effect);
+        const auto limit = std::min(call.arguments.size(), fn_type->params.size());
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto param_type = fn_type->params[index] != nullptr ? fn_type->params[index]
+                                                                      : values_.make_error_type();
+            const auto expectation = TypeExpectation{
+                .expected = param_type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = expr.range,
+                .description = "function value parameter",
+            };
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
+            effect = join_effects(effect, argument.effect);
+            if (argument.type == nullptr) {
+                continue;
+            }
+            (void)services_.check_assignable(*argument.type,
+                                             *param_type,
+                                             call.arguments[index]->range,
+                                             "function value argument",
+                                             expectation);
+        }
+
+        return values_.typed_effect(fn_type->return_type != nullptr ? fn_type->return_type->clone()
+                                                                    : values_.make_error_type(),
+                                    effect);
+    }
+
     // P2 (RFC §3.2.2 / §2.6.1): resolve a fn call against its FnTypeInfo
     // signature. Matches positional arguments to declared params, applies the
-    // declared effect clause to derive the call-site ExprEffect (Pure stays
-    // Pure; Nondet/Capability widen to the existing ExprEffect lattice), and
-    // returns the declared return type. Generic instantiation at the call
-    // site (substituting type_args into a generic fn) and the (fn_decl,
-    // type_args) recording for monomorphization land in P2d; for now a
-    // generic fn is treated structurally — the resolved signature types are
-    // already the declared param/return types.
+    // declared effect clause to derive the call-site ExprEffect, substitutes
+    // explicit and inferred type arguments for generic fns, and records the
+    // concrete instantiation for monomorphization.
     [[nodiscard]] TypedValue check_fn_call(const ast::ExprSyntax &expr, SymbolId target) const {
         const auto &call = expr.as<ast::CallExpr>();
         const auto fn = services_.get_fn(target);
@@ -1380,13 +1815,6 @@ class ExpressionChecker final {
                 expr.range);
             return values_.error_typed();
         }
-
-        // P2d (RFC §3.5): the fn call site is recorded after generic
-        // type-argument inference so the monomorphization pass receives the
-        // inferred type_args (empty for non-generic fns). See below.
-        // Explicit type arguments are empty today (the grammar's call surface
-        // does not carry `foo<T>(...)` syntax); instantiation is inferred from
-        // argument types.
 
         // P4a (RFC corelib-effect-system.zh.md §4.5): verified-subset effect
         // check. When the expression context is a contract clause, an
@@ -1399,24 +1827,20 @@ class ExpressionChecker final {
             const auto &judgement = fn->get().effect.judgement;
             if (!judgement.is_pure()) {
                 const auto callee_name = call.callee->spelling();
-                services_.typecheck_error_here(
-                    error_codes::typecheck::EffectNotPure,
-                    messages::typecheck::EffectNotPure.format_with(
-                        callee_name, to_string(judgement)),
-                    expr.range);
-                services_.typecheck_error_here(
-                    error_codes::typecheck::NotInVerifiedSubset,
-                    messages::typecheck::NotInVerifiedSubset.format_with(
-                        callee_name, "declared effect is not Pure"),
-                    expr.range);
+                services_.typecheck_error_here(error_codes::typecheck::EffectNotPure,
+                                               messages::typecheck::EffectNotPure.format_with(
+                                                   callee_name, to_string(judgement)),
+                                               expr.range);
+                services_.typecheck_error_here(error_codes::typecheck::NotInVerifiedSubset,
+                                               messages::typecheck::NotInVerifiedSubset.format_with(
+                                                   callee_name, "declared effect is not Pure"),
+                                               expr.range);
 
-                if (context_.verification_context ==
-                        VerificationContext::InvariantSafetyLiveness &&
+                if (context_.verification_context == VerificationContext::InvariantSafetyLiveness &&
                     judgement.kind == EffectJudgement::Kind::Nondet) {
                     services_.typecheck_error_here(
                         error_codes::typecheck::NondetInInvariant,
-                        messages::typecheck::NondetInInvariant.format_with(
-                            callee_name),
+                        messages::typecheck::NondetInInvariant.format_with(callee_name),
                         expr.range);
                 }
             }
@@ -1435,33 +1859,42 @@ class ExpressionChecker final {
         // RFC §2.6.1: the call-site effect is the join of the declared fn
         // effect and each argument's effect. P4a derives the declared
         // contribution from the signature-level EffectJudgement (RFC §2.2 /
-        // §6.1): Pure projects to ExprEffect::Pure; Nondet and CapabilitySet
-        // widen to ExternalEffect (capability-identity is captured on the
-        // judgement; ExprEffect only needs the rank for the call-site join and
-        // the Pure-only gate). Bottom (recovery) is treated as Pure so a
+        // §6.1): Pure projects to ExprEffect::Pure, Nondet remains distinct
+        // for body-effect recovery, and CapabilitySet widens to
+        // ExternalEffect. Bottom (recovery) is treated as Pure so a
         // previously-recovered fn does not spuriously taint callers.
-        ExprEffect declared_effect = ExprEffect::Pure;
-        switch (fn->get().effect.judgement.kind) {
-        case EffectJudgement::Kind::Pure:
-        case EffectJudgement::Kind::Bottom:
-            declared_effect = ExprEffect::Pure;
-            break;
-        case EffectJudgement::Kind::Nondet:
-            // P2 (RFC §2.2): keep Nondet distinct from CapabilitySet so the
-            // body-effect projection recovers a Nondet judgement rather than
-            // collapsing to CapabilitySet (which is incomparable with Nondet
-            // and would spuriously flag a Nondet fn calling another Nondet fn
-            // as under-declared).
-            declared_effect = ExprEffect::Nondet;
-            break;
-        case EffectJudgement::Kind::CapabilitySet:
-            declared_effect = ExprEffect::ExternalEffect;
-            break;
-        }
+        ExprEffect declared_effect = expr_effect_from_judgement(fn->get().effect.judgement);
 
         ExprEffect effect = declared_effect;
         const auto limit = std::min(call.arguments.size(), fn->get().params.size());
         const bool is_generic = !fn->get().type_param_names.empty();
+        TypeSubstitutionMap subst;
+        if (is_generic) {
+            subst.assign(fn->get().type_param_names.size(), nullptr);
+            if (call.type_args.size() > fn->get().type_param_names.size()) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::WrongArity,
+                    messages::typecheck::WrongArity.format_with(
+                        "function type arguments",
+                        call.callee->spelling(),
+                        std::to_string(fn->get().type_param_names.size()),
+                        std::to_string(call.type_args.size())),
+                    expr.range);
+            }
+            const auto explicit_limit =
+                std::min(call.type_args.size(), fn->get().type_param_names.size());
+            for (std::size_t index = 0; index < explicit_limit; ++index) {
+                subst[index] = services_.resolve_type_syntax(*call.type_args[index]);
+            }
+        } else if (!call.type_args.empty()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("function type arguments",
+                                                            call.callee->spelling(),
+                                                            "0",
+                                                            std::to_string(call.type_args.size())),
+                expr.range);
+        }
 
         // Type-check every argument carrying the declared param as the expected
         // type so bidirectional inference still applies (e.g. an `Option::None`
@@ -1472,8 +1905,10 @@ class ExpressionChecker final {
         std::vector<TypePtr> arg_types(limit, nullptr);
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = fn->get().params[index];
+            const auto expected_param =
+                is_generic ? substitute_type(param.type, subst, services_.types()) : param.type;
             const auto expectation = TypeExpectation{
-                .expected = param.type,
+                .expected = expected_param,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
@@ -1488,9 +1923,7 @@ class ExpressionChecker final {
         // unifying each declared param type with the corresponding argument
         // type, then substitute them into the param types (for the
         // assignability check) and the return type (for the call's result).
-        TypeSubstitutionMap subst;
         if (is_generic) {
-            subst.assign(fn->get().type_param_names.size(), nullptr);
             for (std::size_t index = 0; index < limit; ++index) {
                 const auto &param = fn->get().params[index];
                 if (param.type != nullptr && arg_types[index] != nullptr) {
@@ -1499,8 +1932,9 @@ class ExpressionChecker final {
             }
         }
 
-        // Record the call site exactly once with the inferred type_args (empty
-        // for non-generic fns) so monomorphization can instantiate the body.
+        // Record the call site exactly once with concrete type_args from
+        // explicit syntax plus inference (empty for non-generic fns) so
+        // monomorphization can instantiate the body.
         services_.record_fn_call_site(target, expr.range, subst);
 
         // Assignability check against the (instantiated, for generic fns) param.
@@ -1540,8 +1974,7 @@ class ExpressionChecker final {
                               : fn->get().return_type;
         }
         return values_.typed_effect(
-            result_type != nullptr ? result_type->clone() : values_.make_error_type(),
-            effect);
+            result_type != nullptr ? result_type->clone() : values_.make_error_type(), effect);
     }
 
     // M3 (RFC §1.5): typecheck an enum variant constructor call
@@ -1583,13 +2016,13 @@ class ExpressionChecker final {
         }
 
         if (call.arguments.size() != variant->get().payload.size()) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::WrongArity,
-                messages::typecheck::WrongArity.format_with("enum variant",
-                                                            call.callee->spelling(),
-                                                            std::to_string(variant->get().payload.size()),
-                                                            std::to_string(call.arguments.size())),
-                expr.range);
+            services_.typecheck_error_here(error_codes::typecheck::WrongArity,
+                                           messages::typecheck::WrongArity.format_with(
+                                               "enum variant",
+                                               call.callee->spelling(),
+                                               std::to_string(variant->get().payload.size()),
+                                               std::to_string(call.arguments.size())),
+                                           expr.range);
         }
 
         const bool is_generic = !enum_info->get().type_param_names.empty();
@@ -1626,6 +2059,20 @@ class ExpressionChecker final {
                     unify_param_with_arg(*payload_type, *arg_types[index], subst);
                 }
             }
+            if (expected_type_.has_value()) {
+                const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+                const auto *owner_enum = owner_type->get_if<types::EnumT>();
+                if (expected_enum != nullptr && owner_enum != nullptr &&
+                    expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
+                    *expected_enum->symbol == *owner_enum->symbol &&
+                    expected_enum->type_args.size() == subst.size()) {
+                    for (std::size_t index = 0; index < subst.size(); ++index) {
+                        if (subst[index] == nullptr && expected_enum->type_args[index] != nullptr) {
+                            subst[index] = expected_enum->type_args[index];
+                        }
+                    }
+                }
+            }
         }
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &payload_type = variant->get().payload[index];
@@ -1652,6 +2099,14 @@ class ExpressionChecker final {
             owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
         const auto result_type = services_.types().enum_variant_type(
             canonical_name, std::string(segments.back()), enum_symbol, subst);
+        if (expected_type_.has_value()) {
+            const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+            if (expected_enum != nullptr && owner_enum != nullptr &&
+                expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
+                *expected_enum->symbol == *owner_enum->symbol) {
+                return values_.typed_effect(expected_type_->get().clone(), effect);
+            }
+        }
         return values_.typed_effect(result_type->clone(), effect);
     }
 
@@ -1808,17 +2263,41 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_binary_expr(const ast::ExprSyntax &expr) const {
         const auto &binary = expr.as<ast::BinaryExpr>();
+        const auto is_option_none_value = [&](const ast::ExprSyntax &candidate) {
+            if (!candidate.is<ast::QualifiedValueExpr>()) {
+                return false;
+            }
+            const auto &qualified = candidate.as<ast::QualifiedValueExpr>();
+            if (qualified.name == nullptr || qualified.name->segments.empty() ||
+                qualified.name->segments.back() != "None") {
+                return false;
+            }
+            const auto owner_reference = services_.find_reference(
+                ReferenceKind::QualifiedValueOwnerType, qualified.name->range);
+            if (!owner_reference.has_value()) {
+                return false;
+            }
+            const auto owner_type =
+                services_.resolve_type_symbol(owner_reference->get().target, candidate.range);
+            const auto *owner_enum = owner_type != nullptr ? owner_type->get_if<types::EnumT>()
+                                                           : nullptr;
+            return owner_enum != nullptr &&
+                   std::string_view{owner_enum->canonical_name} == stdlib_bridge::kOptionType;
+        };
+        const auto is_none_like = [&](const ast::ExprSyntax &candidate) {
+            return candidate.is<ast::NoneLiteralExpr>() || is_option_none_value(candidate);
+        };
         if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
-            binary.lhs && binary.rhs &&
-            (binary.lhs->is<ast::NoneLiteralExpr>() || binary.rhs->is<ast::NoneLiteralExpr>())) {
-            const auto &none_operand =
-                binary.lhs->is<ast::NoneLiteralExpr>() ? *binary.lhs : *binary.rhs;
-            const auto &value_operand =
-                binary.lhs->is<ast::NoneLiteralExpr>() ? *binary.rhs : *binary.lhs;
+            binary.lhs && binary.rhs && (is_none_like(*binary.lhs) || is_none_like(*binary.rhs))) {
+            const auto &none_operand = is_none_like(*binary.lhs) ? *binary.lhs : *binary.rhs;
+            const auto &value_operand = is_none_like(*binary.lhs) ? *binary.rhs : *binary.lhs;
             const auto value = services_.check_expr(value_operand, context_, std::nullopt);
             const auto none = services_.check_expr(none_operand, context_, std::cref(*value.type));
             const auto effect = join_effects(value.effect, none.effect);
-            if (!is_error_type(*value.type) && !value.type->holds<types::OptionalT>()) {
+            const auto optional = stdlib_bridge::std_container_type_view(*value.type);
+            if (!is_error_type(*value.type) &&
+                (!optional.has_value() ||
+                 optional->kind != stdlib_bridge::StdContainerKind::Option)) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::InvalidOperation,
                     messages::typecheck::NoneComparisonRequiresOptional.format_with(
@@ -1962,7 +2441,9 @@ class ExpressionChecker final {
         const auto index = services_.check_expr(*index_access.index, context_, std::nullopt);
         const auto effect = join_effects(collection.effect, index.effect);
 
-        if (const auto *list = collection.type->get_if<types::ListT>(); list != nullptr) {
+        const auto collection_view = stdlib_bridge::std_container_type_view(*collection.type);
+        if (collection_view.has_value() &&
+            collection_view->kind == stdlib_bridge::StdContainerKind::List) {
             if (!index.type->holds<types::IntT>() && !is_error_type(*index.type)) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::InvalidIndexAccess,
@@ -1970,21 +2451,22 @@ class ExpressionChecker final {
                     index_access.index->range);
             }
 
-            if (list->element != nullptr) {
-                return values_.typed_effect(list->element->clone(), effect);
+            if (collection_view->first != nullptr) {
+                return values_.typed_effect(collection_view->first->clone(), effect);
             }
 
             return values_.error_typed_effect(effect);
         }
 
-        if (const auto *map = collection.type->get_if<types::MapT>(); map != nullptr) {
-            if (map->key != nullptr) {
+        if (collection_view.has_value() &&
+            collection_view->kind == stdlib_bridge::StdContainerKind::Map) {
+            if (collection_view->first != nullptr) {
                 (void)services_.check_assignable(
-                    *index.type, *map->key, index_access.index->range, "map index");
+                    *index.type, *collection_view->first, index_access.index->range, "map index");
             }
 
-            if (map->value != nullptr) {
-                return values_.typed_effect(map->value->clone(), effect);
+            if (collection_view->second != nullptr) {
+                return values_.typed_effect(collection_view->second->clone(), effect);
             }
 
             return values_.error_typed_effect(effect);

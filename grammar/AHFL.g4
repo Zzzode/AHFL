@@ -29,7 +29,9 @@ moduleDecl: 'module' qualifiedIdent ';';
 
 importDecl: 'import' qualifiedIdent ('as' IDENT)? ';';
 
-qualifiedIdent: IDENT ('::' IDENT)*;
+identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set';
+
+qualifiedIdent: identifier ('::' identifier)*;
 
 qualifiedIdentList: qualifiedIdent (',' qualifiedIdent)* ','?;
 
@@ -42,12 +44,12 @@ qualifiedIdentListOpt: qualifiedIdentList?;
 type_:
 	primitiveType
 	| fnType
-	| appType
-	| qualifiedIdent
 	| 'Optional' '<' type_ '>'
 	| 'List' '<' type_ '>'
 	| 'Set' '<' type_ '>'
-	| 'Map' '<' type_ ',' type_ '>';
+	| 'Map' '<' type_ ',' type_ '>'
+	| appType
+	| qualifiedIdent;
 
 // Generic type application: Vec<Int>, std::collections::Map<String, Int>
 appType: qualifiedIdent '<' typeList '>';
@@ -66,14 +68,14 @@ primitiveType:
 
 constDecl: 'const' IDENT ':' type_ '=' constExpr ';';
 
-typeAliasDecl: 'type' IDENT typeParams? '=' type_ ';';
+typeAliasDecl: 'type' identifier typeParams? '=' type_ ';';
 
-structDecl: 'struct' IDENT typeParams? '{' structFieldDecl* '}';
+structDecl: 'struct' identifier typeParams? '{' structFieldDecl* '}';
 
 structFieldDecl: IDENT ':' type_ ('=' constExpr)? ';';
 
 enumDecl:
-	'enum' IDENT typeParams? '{' enumVariant (',' enumVariant)* ','? '}';
+	'enum' identifier typeParams? '{' enumVariant (',' enumVariant)* ','? '}';
 
 // P1 (ADT): an enum variant optionally carries a positional tuple payload,
 // e.g. `Some(T)`, `Err(E)`. Existing payload-less variants parse unchanged
@@ -223,7 +225,7 @@ builtinAttr: '@builtin' '(' STRING_LITERAL ')';
 // The grammar models syntax only: purity/effect enforcement and where-clause
 // evaluation are deferred to the typecheck pass (P2b).
 fnDecl:
-	DOC_COMMENT? builtinAttr? 'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	DOC_COMMENT? builtinAttr? 'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 		whereClause? (fnBody | ';');
 
 typeParams: '<' typeParam (',' typeParam)* ','? '>';
@@ -264,7 +266,7 @@ decreasesClause: 'decreases' expr;
 whereClause: 'where' whereConstraint (',' whereConstraint)* ','?;
 
 whereConstraint:
-	type_ '::' IDENT ('(' typeList ')')?  // type predicate, e.g. T::Addable(U)
+	type_ '::' identifier ('(' typeList ')')?  // type predicate, e.g. T::Addable(U)
 	| type_ ':' typeBoundList;             // bound list, e.g. T: Hashable
 
 // P2 (RFC §6): lambda (closure) expression as a primaryExpr.
@@ -275,7 +277,7 @@ whereConstraint:
 lambdaExpr: BACKSLASH lambdaParamList? '->' expr;
 
 lambdaParamList:
-	IDENT                                   // single unparenthesised param
+	lambdaParam                             // single unparenthesised param
 	| '(' (lambdaParam (',' lambdaParam)*)? ','? ')';
 
 lambdaParam: IDENT (':' type_)?;
@@ -292,11 +294,11 @@ traitDecl:
 traitItem: traitFnItem | assocTypeItem;
 
 traitFnItem:
-	'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 		whereClause? ';';
 
 assocTypeItem:
-	'type' IDENT typeParams? (':' typeBoundList)? ('=' type_)? ';';
+	'type' identifier typeParams? (':' typeBoundList)? ('=' type_)? ';';
 
 implDecl:
 	DOC_COMMENT? 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{'
@@ -310,10 +312,10 @@ traitRef: type_;
 // Method definition inside an impl block: same surface as fnDecl but the body
 // is mandatory (RFC §1.4: `FnDef ::= ... FnBody`).
 fnDef:
-	'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
-		whereClause? fnBody;
+	'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	whereClause? fnBody;
 
-assocItemDef: 'type' IDENT '=' type_ ';';
+assocItemDef: 'type' identifier '=' type_ ';';
 
 block: '{' statement* '}';
 
@@ -360,7 +362,13 @@ mulExpr: unaryExpr (('*' | '/' | '%') unaryExpr)*;
 
 unaryExpr: ('not' | '!' | '-' | '+') unaryExpr | postfixExpr;
 
-postfixExpr: primaryExpr ('.' IDENT | '[' expr ']')*;
+postfixExpr:
+	primaryExpr
+	(
+		'.' identifier ('<' typeList '>')? '(' exprList? ')'
+		| '.' identifier
+		| '[' expr ']'
+	)*;
 
 primaryExpr:
 	literal
@@ -437,9 +445,9 @@ pathExpr: pathRoot ('.' IDENT)*;
 
 pathRoot: IDENT | 'input' | 'output';
 
-qualifiedValueExpr: IDENT '::' IDENT ('::' IDENT)*;
+qualifiedValueExpr: identifier '::' identifier ('::' identifier)*;
 
-callExpr: qualifiedIdent '(' exprList? ')';
+callExpr: qualifiedIdent ('<' typeList '>')? '(' exprList? ')';
 
 exprList: expr (',' expr)* ','?;
 

@@ -152,8 +152,7 @@ class AstInvariantValidator final {
                     if (t.return_type) {
                         validate_type(*t.return_type);
                     }
-                    if (t.has_effect_clause &&
-                        t.effect_kind == EffectClauseKind::Capability) {
+                    if (t.has_effect_clause && t.effect_kind == EffectClauseKind::Capability) {
                         for (const auto &cap : t.effect_capabilities) {
                             require(cap != nullptr,
                                     type.range,
@@ -223,8 +222,38 @@ class AstInvariantValidator final {
                 },
                 [&](const CallExpr &e) {
                     validate_qualified_name(e.callee.get(), expr.range, "CallExpr.callee");
+                    for (const auto &type_arg : e.type_args) {
+                        require(
+                            type_arg != nullptr, expr.range, "CallExpr.type_args contains null");
+                        if (type_arg) {
+                            validate_type(*type_arg);
+                        }
+                    }
                     for (const auto &arg : e.arguments) {
                         require(arg != nullptr, expr.range, "CallExpr.arguments contains null");
+                        if (arg) {
+                            validate_expr(*arg);
+                        }
+                    }
+                },
+                [&](const MethodCallExpr &e) {
+                    require(
+                        e.receiver != nullptr, expr.range, "MethodCallExpr is missing receiver");
+                    require(!e.method.empty(), expr.range, "MethodCallExpr is missing method");
+                    if (e.receiver) {
+                        validate_expr(*e.receiver);
+                    }
+                    for (const auto &type_arg : e.type_args) {
+                        require(type_arg != nullptr,
+                                expr.range,
+                                "MethodCallExpr.type_args contains null");
+                        if (type_arg) {
+                            validate_type(*type_arg);
+                        }
+                    }
+                    for (const auto &arg : e.arguments) {
+                        require(
+                            arg != nullptr, expr.range, "MethodCallExpr.arguments contains null");
                         if (arg) {
                             validate_expr(*arg);
                         }
@@ -326,9 +355,7 @@ class AstInvariantValidator final {
                     }
                 },
                 [&](const MatchExpr &e) {
-                    require(e.scrutinee != nullptr,
-                            expr.range,
-                            "MatchExpr is missing scrutinee");
+                    require(e.scrutinee != nullptr, expr.range, "MatchExpr is missing scrutinee");
                     if (e.scrutinee) {
                         validate_expr(*e.scrutinee);
                     }
@@ -377,13 +404,11 @@ class AstInvariantValidator final {
         std::visit(
             Overloaded{
                 [&](const LiteralPattern &) {
-                    require(!pattern.text.empty(),
-                            pattern.range,
-                            "LiteralPattern is missing spelling");
+                    require(
+                        !pattern.text.empty(), pattern.range, "LiteralPattern is missing spelling");
                 },
                 [&](const VariantPattern &p) {
-                    validate_qualified_name(
-                        p.path.get(), pattern.range, "VariantPattern.path");
+                    validate_qualified_name(p.path.get(), pattern.range, "VariantPattern.path");
                     for (const auto &sub : p.subpatterns) {
                         require(sub != nullptr, pattern.range, "VariantPattern.subpatterns null");
                         if (sub) {
@@ -676,13 +701,10 @@ class AstInvariantValidator final {
             for (const auto &param : node.type_params) {
                 require(param != nullptr, node.range, "TypeAliasDecl.type_params contains null");
                 if (param) {
-                    require(!param->name.empty(),
-                            param->range,
-                            "TypeParamSyntax is missing name");
+                    require(!param->name.empty(), param->range, "TypeParamSyntax is missing name");
                     for (const auto &bound : param->bounds) {
-                        require(bound != nullptr,
-                                param->range,
-                                "TypeParamSyntax.bounds contains null");
+                        require(
+                            bound != nullptr, param->range, "TypeParamSyntax.bounds contains null");
                         if (bound) {
                             validate_type(*bound);
                         }
@@ -700,13 +722,10 @@ class AstInvariantValidator final {
             for (const auto &param : node.type_params) {
                 require(param != nullptr, node.range, "StructDecl.type_params contains null");
                 if (param) {
-                    require(!param->name.empty(),
-                            param->range,
-                            "TypeParamSyntax is missing name");
+                    require(!param->name.empty(), param->range, "TypeParamSyntax is missing name");
                     for (const auto &bound : param->bounds) {
-                        require(bound != nullptr,
-                                param->range,
-                                "TypeParamSyntax.bounds contains null");
+                        require(
+                            bound != nullptr, param->range, "TypeParamSyntax.bounds contains null");
                         if (bound) {
                             validate_type(*bound);
                         }
@@ -737,13 +756,10 @@ class AstInvariantValidator final {
             for (const auto &param : node.type_params) {
                 require(param != nullptr, node.range, "EnumDecl.type_params contains null");
                 if (param) {
-                    require(!param->name.empty(),
-                            param->range,
-                            "TypeParamSyntax is missing name");
+                    require(!param->name.empty(), param->range, "TypeParamSyntax is missing name");
                     for (const auto &bound : param->bounds) {
-                        require(bound != nullptr,
-                                param->range,
-                                "TypeParamSyntax.bounds contains null");
+                        require(
+                            bound != nullptr, param->range, "TypeParamSyntax.bounds contains null");
                         if (bound) {
                             validate_type(*bound);
                         }
@@ -940,7 +956,8 @@ class AstInvariantValidator final {
                 require(param != nullptr, node.range, "FnDecl.params contains null");
                 if (param) {
                     require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
-                    require(param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+                    require(
+                        param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
                     if (param->type) {
                         validate_type(*param->type);
                     }
@@ -977,9 +994,7 @@ class AstInvariantValidator final {
                 }
             }
             for (const auto &super_trait : node.super_traits) {
-                require(super_trait != nullptr,
-                        node.range,
-                        "TraitDecl.super_traits contains null");
+                require(super_trait != nullptr, node.range, "TraitDecl.super_traits contains null");
                 if (super_trait) {
                     validate_type(*super_trait);
                 }
@@ -992,7 +1007,8 @@ class AstInvariantValidator final {
                 require(!item->name.empty(), item->range, "TraitItemSyntax is missing name");
                 if (item->kind == TraitItemKind::Fn) {
                     for (const auto &param : item->params) {
-                        require(param != nullptr, item->range, "trait fn item params contains null");
+                        require(
+                            param != nullptr, item->range, "trait fn item params contains null");
                         if (param) {
                             require(!param->name.empty(),
                                     param->range,
@@ -1110,7 +1126,8 @@ class AstInvariantValidator final {
     /// Validate a where-clause (P2, RFC §6).
     void validate_where_clause(const WhereClauseSyntax &clause) {
         for (const auto &constraint : clause.constraints) {
-            require(constraint != nullptr, clause.range, "WhereClauseSyntax.constraints contains null");
+            require(
+                constraint != nullptr, clause.range, "WhereClauseSyntax.constraints contains null");
             if (!constraint) {
                 continue;
             }

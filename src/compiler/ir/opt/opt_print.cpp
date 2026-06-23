@@ -156,6 +156,20 @@ void print_type_ref(const TypeRef &type, std::ostream &out) {
         }
         out << ')';
     }
+    if (!type.params.empty()) {
+        out << '<';
+        for (std::size_t index = 0; index < type.params.size(); ++index) {
+            if (index > 0) {
+                out << ", ";
+            }
+            if (type.params[index]) {
+                print_type_ref(*type.params[index], out);
+            } else {
+                out << "<null>";
+            }
+        }
+        out << '>';
+    }
 }
 
 void print_source_range(const std::optional<SourceRange> &source_range, std::ostream &out) {

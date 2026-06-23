@@ -229,6 +229,12 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> LambdaNotYetSupported{
 // a parsed fn body is not silently skipped before the fn pass exists.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> FnDeclNotYetSupported{
     "FN_DECL_NOT_YET_SUPPORTED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidBuiltinAttribute{
+    "INVALID_BUILTIN_ATTRIBUTE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownBuiltinHook{
+    "UNKNOWN_BUILTIN_HOOK"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingBuiltinEffect{
+    "MISSING_BUILTIN_EFFECT"};
 // P3 (RFC §3.2.2 / type-system §2): trait resolution + coherence diagnostics.
 // Surfaced by the P3b trait/impl typecheck pass: orphan rule, impl-trait
 // signature matching, super-trait coverage, and (later) method-call resolution.
@@ -236,16 +242,14 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> OrphanImpl{"ORPHAN_IMP
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateTraitImpl{
     "DUPLICATE_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTraitUnknown{"IMPL_TRAIT_UNKNOWN"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTargetUnknown{
-    "IMPL_TARGET_UNKNOWN"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTargetUnknown{"IMPL_TARGET_UNKNOWN"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodNotFound{
     "TRAIT_METHOD_NOT_FOUND"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodSignatureMismatch{
     "TRAIT_METHOD_SIGNATURE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitAssocTypeNotFound{
     "TRAIT_ASSOC_TYPE_NOT_FOUND"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingSuperTrait{
-    "MISSING_SUPER_TRAIT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingSuperTrait{"MISSING_SUPER_TRAIT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoTraitImpl{"NO_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AmbiguousTraitImpl{
     "AMBIGUOUS_TRAIT_IMPL"};
@@ -273,12 +277,9 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NotInVerifiedSubset{
     "NOT_IN_VERIFIED_SUBSET"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectUnderdeclared{
     "EFFECT_UNDERDECLARED"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectIncompatible{
-    "EFFECT_INCOMPATIBLE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{
-    "EFFECT_ON_PREDICATE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{
-    "NONDET_IN_INVARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectIncompatible{"EFFECT_INCOMPATIBLE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{"EFFECT_ON_PREDICATE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NONDET_IN_INVARIANT"};
 } // namespace typecheck
 
 namespace validation {
@@ -356,6 +357,8 @@ inline constexpr MessageTemplate SymbolDoesNotNameType{"symbol '{}' does not nam
 inline constexpr MessageTemplate TypeAliasCycleDuringResolution{
     "type alias cycle reached during type resolution"};
 inline constexpr MessageTemplate TypeAliasDeclarationMissing{"type alias declaration is missing"};
+inline constexpr MessageTemplate StdContainerTypeUnavailable{
+    "stdlib container type '{}' is unavailable"};
 inline constexpr MessageTemplate CallTargetSymbolMissing{"call target symbol is missing"};
 inline constexpr MessageTemplate SymbolDoesNotNameCallable{"symbol '{}' does not name a callable"};
 inline constexpr MessageTemplate CapabilityTypeInfoMissing{
@@ -406,8 +409,7 @@ inline constexpr MessageTemplate MatchNotExhaustive{
     "match is not exhaustive: variant(s) not covered: {}"};
 inline constexpr MessageTemplate MatchArmTypeMismatch{
     "match arm body type mismatch: expected {}, got {}"};
-inline constexpr MessageTemplate MatchDuplicateBinding{
-    "duplicate binding '{}' in match pattern"};
+inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
 inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
     "match binding '{}' expects type {}, got payload slot type {}"};
 // P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers.
@@ -416,6 +418,10 @@ inline constexpr MessageTemplate LambdaNotYetSupported{
 // P2 (RFC §3.2.2): fn-declaration typecheck lands in P2b; surfaced by P2a.
 inline constexpr MessageTemplate FnDeclNotYetSupported{
     "'fn' declarations are not yet type-checked (function support is in progress)"};
+inline constexpr MessageTemplate InvalidBuiltinAttribute{"@builtin is only allowed in std modules"};
+inline constexpr MessageTemplate UnknownBuiltinHook{"unknown @builtin hook '{}'"};
+inline constexpr MessageTemplate MissingBuiltinEffect{
+    "@builtin functions must declare an explicit effect clause"};
 inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
 inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
 inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};
@@ -471,21 +477,25 @@ inline constexpr MessageTemplate AmbiguousTraitImpl{
 inline constexpr MessageTemplate TraitBoundNotSatisfied{
     "trait bound not satisfied: '{}' does not implement '{}'"};
 inline constexpr MessageTemplate TraitSelfNotYetSupported{
-    "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type references)"};
+    "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type "
+    "references)"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // messages. Mirror the §4.5 diagnostic catalogue.
 inline constexpr MessageTemplate EffectNotPure{
-    "function call '{}' in a verified-subset context must be effect Pure, but its declared effect is {}"};
+    "function call '{}' in a verified-subset context must be effect Pure, but its declared effect "
+    "is {}"};
 inline constexpr MessageTemplate NoDecreases{
     "effect Pure function '{}' must declare a decreases termination measure"};
 inline constexpr MessageTemplate NotInVerifiedSubset{
     "call to '{}' is not in the verifiable subset: {}"};
 inline constexpr MessageTemplate EffectUnderdeclared{
-    "function '{}' declares effect {} but its body infers effect {}; declared effect must be an upper bound of the body effect"};
+    "function '{}' declares effect {} but its body infers effect {}; declared effect must be an "
+    "upper bound of the body effect"};
 inline constexpr MessageTemplate EffectIncompatible{
     "incompatible effects: Nondet and capability effects cannot be combined in the same judgement"};
 inline constexpr MessageTemplate EffectOnPredicate{
-    "predicate declarations may not carry an explicit effect clause; predicates are implicitly effect Pure"};
+    "predicate declarations may not carry an explicit effect clause; predicates are implicitly "
+    "effect Pure"};
 inline constexpr MessageTemplate NondetInInvariant{
     "non-deterministic expression in invariant/safety/liveness formula: {}"};
 } // namespace typecheck

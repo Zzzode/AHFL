@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -42,45 +42,46 @@ public:
 
   enum {
     RuleProgram = 0, RuleTopLevelDecl = 1, RuleModuleDecl = 2, RuleImportDecl = 3,
-    RuleQualifiedIdent = 4, RuleQualifiedIdentList = 5, RuleIdentList = 6,
-    RuleIdentListOpt = 7, RuleQualifiedIdentListOpt = 8, RuleType_ = 9,
-    RuleAppType = 10, RulePrimitiveType = 11, RuleConstDecl = 12, RuleTypeAliasDecl = 13,
-    RuleStructDecl = 14, RuleStructFieldDecl = 15, RuleEnumDecl = 16, RuleEnumVariant = 17,
-    RuleTypeList = 18, RuleFnType = 19, RuleCapabilityDecl = 20, RuleCapabilityEffectBlock = 21,
-    RuleCapabilityEffectItem = 22, RuleCapabilityEffectKind = 23, RuleCapabilityReceiptMode = 24,
-    RuleCapabilityRetryMode = 25, RulePredicateDecl = 26, RuleParamList = 27,
-    RuleParam = 28, RuleAgentDecl = 29, RuleInputDecl = 30, RuleContextDecl = 31,
-    RuleOutputDecl = 32, RuleStatesDecl = 33, RuleInitialDecl = 34, RuleFinalDecl = 35,
-    RuleCapabilitiesDecl = 36, RuleQuotaDecl = 37, RuleQuotaItem = 38, RuleTransitionDecl = 39,
-    RuleContractDecl = 40, RuleContractItem = 41, RuleRequiresDecl = 42,
-    RuleEnsuresDecl = 43, RuleInvariantDecl = 44, RuleForbidDecl = 45, RuleFlowDecl = 46,
-    RuleStateHandler = 47, RuleStatePolicy = 48, RuleStatePolicyItem = 49,
-    RuleWorkflowDecl = 50, RuleWorkflowInputDecl = 51, RuleWorkflowOutputDecl = 52,
-    RuleWorkflowItem = 53, RuleWorkflowNodeDecl = 54, RuleWorkflowSafetyDecl = 55,
-    RuleWorkflowLivenessDecl = 56, RuleWorkflowReturnDecl = 57, RuleBuiltinAttr = 58,
-    RuleFnDecl = 59, RuleTypeParams = 60, RuleTypeParam = 61, RuleTypeBoundList = 62,
-    RuleFnBody = 63, RuleEffectClause = 64, RuleEffectSpec = 65, RuleCapabilityRef = 66,
-    RuleDecreasesClause = 67, RuleWhereClause = 68, RuleWhereConstraint = 69,
-    RuleLambdaExpr = 70, RuleLambdaParamList = 71, RuleLambdaParam = 72,
-    RuleTraitDecl = 73, RuleTraitItem = 74, RuleTraitFnItem = 75, RuleAssocTypeItem = 76,
-    RuleImplDecl = 77, RuleTraitRef = 78, RuleFnDef = 79, RuleAssocItemDef = 80,
-    RuleBlock = 81, RuleStatement = 82, RuleLetStmt = 83, RuleAssignStmt = 84,
-    RuleIfStmt = 85, RuleGotoStmt = 86, RuleReturnStmt = 87, RuleAssertStmt = 88,
-    RuleExprStmt = 89, RuleLValue = 90, RuleExpr = 91, RuleImpliesExpr = 92,
-    RuleOrExpr = 93, RuleAndExpr = 94, RuleEqualityExpr = 95, RuleCompareExpr = 96,
-    RuleAddExpr = 97, RuleMulExpr = 98, RuleUnaryExpr = 99, RulePostfixExpr = 100,
-    RulePrimaryExpr = 101, RuleMatchExpr = 102, RuleMatchArm = 103, RulePattern = 104,
-    RuleOrPattern = 105, RuleConcatPattern = 106, RuleLiteralPattern = 107,
-    RuleVariantPattern = 108, RuleWildcardPattern = 109, RuleBindingPattern = 110,
-    RuleTuplePattern = 111, RulePatternList = 112, RulePathExpr = 113, RulePathRoot = 114,
-    RuleQualifiedValueExpr = 115, RuleCallExpr = 116, RuleExprList = 117,
-    RuleLiteral = 118, RuleIntegerLiteral = 119, RuleFloatLiteral = 120,
-    RuleDecimalLiteral = 121, RuleStringLiteral = 122, RuleDurationLiteral = 123,
-    RuleListLiteral = 124, RuleSetLiteral = 125, RuleMapLiteral = 126, RuleMapEntryList = 127,
-    RuleMapEntry = 128, RuleStructLiteral = 129, RuleStructInitList = 130,
-    RuleStructInit = 131, RuleConstExpr = 132, RuleTemporalExpr = 133, RuleWorkflowTemporalExpr = 134,
-    RuleTemporalImpliesExpr = 135, RuleTemporalOrExpr = 136, RuleTemporalAndExpr = 137,
-    RuleTemporalUntilExpr = 138, RuleTemporalUnaryExpr = 139, RuleTemporalAtom = 140
+    RuleIdentifier = 4, RuleQualifiedIdent = 5, RuleQualifiedIdentList = 6,
+    RuleIdentList = 7, RuleIdentListOpt = 8, RuleQualifiedIdentListOpt = 9,
+    RuleType_ = 10, RuleAppType = 11, RulePrimitiveType = 12, RuleConstDecl = 13,
+    RuleTypeAliasDecl = 14, RuleStructDecl = 15, RuleStructFieldDecl = 16,
+    RuleEnumDecl = 17, RuleEnumVariant = 18, RuleTypeList = 19, RuleFnType = 20,
+    RuleCapabilityDecl = 21, RuleCapabilityEffectBlock = 22, RuleCapabilityEffectItem = 23,
+    RuleCapabilityEffectKind = 24, RuleCapabilityReceiptMode = 25, RuleCapabilityRetryMode = 26,
+    RulePredicateDecl = 27, RuleParamList = 28, RuleParam = 29, RuleAgentDecl = 30,
+    RuleInputDecl = 31, RuleContextDecl = 32, RuleOutputDecl = 33, RuleStatesDecl = 34,
+    RuleInitialDecl = 35, RuleFinalDecl = 36, RuleCapabilitiesDecl = 37,
+    RuleQuotaDecl = 38, RuleQuotaItem = 39, RuleTransitionDecl = 40, RuleContractDecl = 41,
+    RuleContractItem = 42, RuleRequiresDecl = 43, RuleEnsuresDecl = 44,
+    RuleInvariantDecl = 45, RuleForbidDecl = 46, RuleFlowDecl = 47, RuleStateHandler = 48,
+    RuleStatePolicy = 49, RuleStatePolicyItem = 50, RuleWorkflowDecl = 51,
+    RuleWorkflowInputDecl = 52, RuleWorkflowOutputDecl = 53, RuleWorkflowItem = 54,
+    RuleWorkflowNodeDecl = 55, RuleWorkflowSafetyDecl = 56, RuleWorkflowLivenessDecl = 57,
+    RuleWorkflowReturnDecl = 58, RuleBuiltinAttr = 59, RuleFnDecl = 60,
+    RuleTypeParams = 61, RuleTypeParam = 62, RuleTypeBoundList = 63, RuleFnBody = 64,
+    RuleEffectClause = 65, RuleEffectSpec = 66, RuleCapabilityRef = 67,
+    RuleDecreasesClause = 68, RuleWhereClause = 69, RuleWhereConstraint = 70,
+    RuleLambdaExpr = 71, RuleLambdaParamList = 72, RuleLambdaParam = 73,
+    RuleTraitDecl = 74, RuleTraitItem = 75, RuleTraitFnItem = 76, RuleAssocTypeItem = 77,
+    RuleImplDecl = 78, RuleTraitRef = 79, RuleFnDef = 80, RuleAssocItemDef = 81,
+    RuleBlock = 82, RuleStatement = 83, RuleLetStmt = 84, RuleAssignStmt = 85,
+    RuleIfStmt = 86, RuleGotoStmt = 87, RuleReturnStmt = 88, RuleAssertStmt = 89,
+    RuleExprStmt = 90, RuleLValue = 91, RuleExpr = 92, RuleImpliesExpr = 93,
+    RuleOrExpr = 94, RuleAndExpr = 95, RuleEqualityExpr = 96, RuleCompareExpr = 97,
+    RuleAddExpr = 98, RuleMulExpr = 99, RuleUnaryExpr = 100, RulePostfixExpr = 101,
+    RulePrimaryExpr = 102, RuleMatchExpr = 103, RuleMatchArm = 104, RulePattern = 105,
+    RuleOrPattern = 106, RuleConcatPattern = 107, RuleLiteralPattern = 108,
+    RuleVariantPattern = 109, RuleWildcardPattern = 110, RuleBindingPattern = 111,
+    RuleTuplePattern = 112, RulePatternList = 113, RulePathExpr = 114, RulePathRoot = 115,
+    RuleQualifiedValueExpr = 116, RuleCallExpr = 117, RuleExprList = 118,
+    RuleLiteral = 119, RuleIntegerLiteral = 120, RuleFloatLiteral = 121,
+    RuleDecimalLiteral = 122, RuleStringLiteral = 123, RuleDurationLiteral = 124,
+    RuleListLiteral = 125, RuleSetLiteral = 126, RuleMapLiteral = 127, RuleMapEntryList = 128,
+    RuleMapEntry = 129, RuleStructLiteral = 130, RuleStructInitList = 131,
+    RuleStructInit = 132, RuleConstExpr = 133, RuleTemporalExpr = 134, RuleWorkflowTemporalExpr = 135,
+    RuleTemporalImpliesExpr = 136, RuleTemporalOrExpr = 137, RuleTemporalAndExpr = 138,
+    RuleTemporalUntilExpr = 139, RuleTemporalUnaryExpr = 140, RuleTemporalAtom = 141
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -104,6 +105,7 @@ public:
   class TopLevelDeclContext;
   class ModuleDeclContext;
   class ImportDeclContext;
+  class IdentifierContext;
   class QualifiedIdentContext;
   class QualifiedIdentListContext;
   class IdentListContext;
@@ -313,12 +315,25 @@ public:
 
   ImportDeclContext* importDecl();
 
+  class  IdentifierContext : public antlr4::ParserRuleContext {
+  public:
+    IdentifierContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *IDENT();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  IdentifierContext* identifier();
+
   class  QualifiedIdentContext : public antlr4::ParserRuleContext {
   public:
     QualifiedIdentContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<antlr4::tree::TerminalNode *> IDENT();
-    antlr4::tree::TerminalNode* IDENT(size_t i);
+    std::vector<IdentifierContext *> identifier();
+    IdentifierContext* identifier(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -387,10 +402,10 @@ public:
     virtual size_t getRuleIndex() const override;
     PrimitiveTypeContext *primitiveType();
     FnTypeContext *fnType();
-    AppTypeContext *appType();
-    QualifiedIdentContext *qualifiedIdent();
     std::vector<Type_Context *> type_();
     Type_Context* type_(size_t i);
+    AppTypeContext *appType();
+    QualifiedIdentContext *qualifiedIdent();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -446,7 +461,7 @@ public:
   public:
     TypeAliasDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     Type_Context *type_();
     TypeParamsContext *typeParams();
 
@@ -461,7 +476,7 @@ public:
   public:
     StructDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     TypeParamsContext *typeParams();
     std::vector<StructFieldDeclContext *> structFieldDecl();
     StructFieldDeclContext* structFieldDecl(size_t i);
@@ -492,7 +507,7 @@ public:
   public:
     EnumDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     std::vector<EnumVariantContext *> enumVariant();
     EnumVariantContext* enumVariant(size_t i);
     TypeParamsContext *typeParams();
@@ -1103,7 +1118,7 @@ public:
   public:
     FnDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     FnBodyContext *fnBody();
     antlr4::tree::TerminalNode *DOC_COMMENT();
     BuiltinAttrContext *builtinAttr();
@@ -1248,7 +1263,7 @@ public:
     WhereConstraintContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     Type_Context *type_();
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     TypeListContext *typeList();
     TypeBoundListContext *typeBoundList();
 
@@ -1278,7 +1293,6 @@ public:
   public:
     LambdaParamListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
     std::vector<LambdaParamContext *> lambdaParam();
     LambdaParamContext* lambdaParam(size_t i);
 
@@ -1339,7 +1353,7 @@ public:
   public:
     TraitFnItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     TypeParamsContext *typeParams();
     ParamListContext *paramList();
     Type_Context *type_();
@@ -1357,7 +1371,7 @@ public:
   public:
     AssocTypeItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     TypeParamsContext *typeParams();
     TypeBoundListContext *typeBoundList();
     Type_Context *type_();
@@ -1407,7 +1421,7 @@ public:
   public:
     FnDefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     FnBodyContext *fnBody();
     TypeParamsContext *typeParams();
     ParamListContext *paramList();
@@ -1426,7 +1440,7 @@ public:
   public:
     AssocItemDefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
+    IdentifierContext *identifier();
     Type_Context *type_();
 
 
@@ -1708,10 +1722,14 @@ public:
     PostfixExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     PrimaryExprContext *primaryExpr();
-    std::vector<antlr4::tree::TerminalNode *> IDENT();
-    antlr4::tree::TerminalNode* IDENT(size_t i);
+    std::vector<IdentifierContext *> identifier();
+    IdentifierContext* identifier(size_t i);
     std::vector<ExprContext *> expr();
     ExprContext* expr(size_t i);
+    std::vector<TypeListContext *> typeList();
+    TypeListContext* typeList(size_t i);
+    std::vector<ExprListContext *> exprList();
+    ExprListContext* exprList(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -1932,8 +1950,8 @@ public:
   public:
     QualifiedValueExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<antlr4::tree::TerminalNode *> IDENT();
-    antlr4::tree::TerminalNode* IDENT(size_t i);
+    std::vector<IdentifierContext *> identifier();
+    IdentifierContext* identifier(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -1947,6 +1965,7 @@ public:
     CallExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     QualifiedIdentContext *qualifiedIdent();
+    TypeListContext *typeList();
     ExprListContext *exprList();
 
 

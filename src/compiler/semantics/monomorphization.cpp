@@ -252,19 +252,6 @@ namespace {
             // Not in substitution map — keep the TypeVar as-is.
             return types.type_var(tv.index, tv.name);
         },
-        [&](const types::OptionalT &opt) -> TypePtr {
-            return types.optional(substitute(opt.inner, subst, types));
-        },
-        [&](const types::ListT &list) -> TypePtr {
-            return types.list(substitute(list.element, subst, types));
-        },
-        [&](const types::SetT &set) -> TypePtr {
-            return types.set(substitute(set.element, subst, types));
-        },
-        [&](const types::MapT &map) -> TypePtr {
-            return types.map(substitute(map.key, subst, types),
-                             substitute(map.value, subst, types));
-        },
         [&](const types::FnT &fn) -> TypePtr {
             std::vector<TypePtr> new_params;
             new_params.reserve(fn.params.size());

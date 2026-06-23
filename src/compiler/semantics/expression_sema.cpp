@@ -4,6 +4,7 @@
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <algorithm>
 #include <string_view>
@@ -50,22 +51,6 @@ TypePtr ExpressionValueFactory::decimal_type(std::int64_t scale) const {
 
 TypePtr ExpressionValueFactory::make_error_type() const {
     return types_->error_type();
-}
-
-TypePtr ExpressionValueFactory::optional_type(TypePtr value_type) const {
-    return types_->optional(value_type);
-}
-
-TypePtr ExpressionValueFactory::list_type(TypePtr element_type) const {
-    return types_->list(element_type);
-}
-
-TypePtr ExpressionValueFactory::set_type(TypePtr element_type) const {
-    return types_->set(element_type);
-}
-
-TypePtr ExpressionValueFactory::map_type(TypePtr key_type, TypePtr value_type) const {
-    return types_->map(key_type, value_type);
 }
 
 TypePtr ExpressionValueFactory::clone_or_any(MaybeCRef<Type> type) const {
@@ -166,9 +151,10 @@ TypePtr apply_expression_flow_narrowing(TypePtr type,
     }
 
     if (facts.has_fact(place, TypeFactKind::IsNotNone)) {
-        if (const auto *optional = type->get_if<types::OptionalT>();
-            optional != nullptr && optional->inner != nullptr) {
-            type = optional->inner->clone();
+        const auto optional = stdlib_bridge::std_container_type_view(*type);
+        if (optional.has_value() && optional->kind == stdlib_bridge::StdContainerKind::Option &&
+            optional->first != nullptr) {
+            type = optional->first->clone();
         }
     }
 

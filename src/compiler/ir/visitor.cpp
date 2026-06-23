@@ -152,6 +152,11 @@ void ProgramVisitor::visit_decl(const Decl &declaration) {
                            visit_expr(*value.return_value);
                        }
                    },
+                   [&](const FnDecl &value) {
+                       if (value.body) {
+                           visit_block(*value.body);
+                       }
+                   },
                    [](const auto &) {},
                },
                declaration);
@@ -195,6 +200,11 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
                            if (argument) {
                                visit_expr(*argument);
                            }
+                       }
+                   },
+                   [&](const LambdaExpr &value) {
+                       if (value.body) {
+                           visit_expr(*value.body);
                        }
                    },
                    [&](const StructLiteralExpr &value) {
@@ -258,16 +268,32 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
                            visit_expr(*value.base);
                        }
                    },
-                   [&](const IndexAccessExpr &value) {
-                       if (value.base) {
-                           visit_expr(*value.base);
-                       }
-                       if (!aborted_ && value.index) {
-                           visit_expr(*value.index);
-                       }
-                   },
-               },
-               expr.node);
+	                   [&](const IndexAccessExpr &value) {
+	                       if (value.base) {
+	                           visit_expr(*value.base);
+	                       }
+	                       if (!aborted_ && value.index) {
+	                           visit_expr(*value.index);
+	                       }
+	                   },
+	                   [&](const MatchExpr &value) {
+	                       if (value.scrutinee) {
+	                           visit_expr(*value.scrutinee);
+	                       }
+	                       for (const auto &arm : value.arms) {
+	                           if (aborted_) {
+	                               break;
+	                           }
+	                           if (arm.guard) {
+	                               visit_expr(*arm.guard);
+	                           }
+	                           if (!aborted_ && arm.body) {
+	                               visit_expr(*arm.body);
+	                           }
+	                       }
+	                   },
+	               },
+	               expr.node);
 
     if (!aborted_) {
         visit_expr_post(expr);
@@ -556,6 +582,9 @@ bool ProgramRewriter::rewrite_decl(Decl &declaration) {
                                   }
                                   return changed;
                               },
+                              [&](FnDecl &value) {
+                                  return value.body != nullptr && rewrite_block(*value.body);
+                              },
                               [](auto &) { return false; },
                           },
                           declaration) ||
@@ -602,6 +631,9 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
                                       }
                                   }
                                   return changed;
+                              },
+                              [&](LambdaExpr &value) {
+                                  return value.body != nullptr && rewrite_expr(*value.body);
                               },
                               [&](StructLiteralExpr &value) {
                                   bool changed = false;
@@ -670,18 +702,36 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
                               [&](MemberAccessExpr &value) {
                                   return value.base != nullptr && rewrite_expr(*value.base);
                               },
-                              [&](IndexAccessExpr &value) {
-                                  bool changed = false;
-                                  if (value.base) {
-                                      changed = rewrite_expr(*value.base) || changed;
+	                              [&](IndexAccessExpr &value) {
+	                                  bool changed = false;
+	                                  if (value.base) {
+	                                      changed = rewrite_expr(*value.base) || changed;
                                   }
                                   if (!aborted_ && value.index) {
                                       changed = rewrite_expr(*value.index) || changed;
-                                  }
-                                  return changed;
-                              },
-                          },
-                          expr.node) ||
+	                                  }
+	                                  return changed;
+	                              },
+	                              [&](MatchExpr &value) {
+	                                  bool changed = false;
+	                                  if (value.scrutinee) {
+	                                      changed = rewrite_expr(*value.scrutinee) || changed;
+	                                  }
+	                                  for (auto &arm : value.arms) {
+	                                      if (aborted_) {
+	                                          break;
+	                                      }
+	                                      if (arm.guard) {
+	                                          changed = rewrite_expr(*arm.guard) || changed;
+	                                      }
+	                                      if (!aborted_ && arm.body) {
+	                                          changed = rewrite_expr(*arm.body) || changed;
+	                                      }
+	                                  }
+	                                  return changed;
+	                              },
+	                          },
+	                          expr.node) ||
                modified;
 
     if (!aborted_) {

@@ -334,12 +334,11 @@ class ProgramVerifier {
         verify_required_expr_ref(decl.return_value, path + ".return_value");
     }
 
-    // P2c (RFC §3.2.2): verify a top-level fn declaration. The signature
-    // surface (params, optional return type, effect clause capabilities) and
-    // the self symbol reference are checked; the body is not lowered into the
-    // IR yet (see lower_typed_fn), so there is no block to verify here.
+    // P2c/P2d: verify a top-level fn declaration. Prototypes and @builtin
+    // declarations have no body; source fn definitions carry a lowered block.
     void verify_decl(const FnDecl &decl, const std::string &path) {
-        verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Function, decl.name);
+        verify_symbol_ref(
+            decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Function, decl.name);
         verify_params(decl.params, path + ".params");
         if (decl.has_return_type) {
             verify_type_ref(decl.return_type_ref, path + ".return_type_ref");
@@ -348,9 +347,17 @@ class ProgramVerifier {
         for (std::uint32_t index = 0; index < decl.effect.capabilities.size(); ++index) {
             const auto capability_path =
                 path + ".effect.capabilities[" + std::to_string(index) + "]";
-            verify_symbol_ref(decl.effect.capabilities[index],
-                              capability_path,
-                              SymbolRefKind::Capability);
+            verify_symbol_ref(
+                decl.effect.capabilities[index], capability_path, SymbolRefKind::Capability);
+        }
+        if (decl.has_body) {
+            if (decl.body) {
+                verify_block(*decl.body, path + ".body");
+            } else {
+                add_error(path + ".body", "function has_body is true but body is null");
+            }
+        } else if (decl.body) {
+            add_error(path + ".body", "function body is present but has_body is false");
         }
     }
 
@@ -456,6 +463,18 @@ class ProgramVerifier {
         }
     }
 
+    void verify_expr_node(const LambdaExpr &expr, const std::string &path) {
+        if (is_backend_ready_mode(mode_)) {
+            for (std::uint32_t index = 0; index < expr.params.size(); ++index) {
+                if (contains_sentinel(expr.params[index])) {
+                    add_error(path + ".params[" + std::to_string(index) + "]",
+                              "lambda parameter contains sentinel name");
+                }
+            }
+        }
+        verify_required_expr_ref(expr.body, path + ".body");
+    }
+
     void verify_expr_node(const StructLiteralExpr &expr, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(expr.type_name)) {
             add_error(path, "struct literal contains sentinel type name");
@@ -504,6 +523,72 @@ class ProgramVerifier {
     void verify_expr_node(const IndexAccessExpr &expr, const std::string &path) {
         verify_required_expr_ref(expr.base, path + ".base");
         verify_required_expr_ref(expr.index, path + ".index");
+    }
+
+    void verify_expr_node(const MatchExpr &expr, const std::string &path) {
+        verify_required_expr_ref(expr.scrutinee, path + ".scrutinee");
+        for (std::uint32_t index = 0; index < expr.arms.size(); ++index) {
+            const auto arm_path = path + ".arms[" + std::to_string(index) + "]";
+            verify_match_pattern(expr.arms[index].pattern, arm_path + ".pattern");
+            verify_optional_expr_ref(expr.arms[index].guard, arm_path + ".guard");
+            verify_required_expr_ref(expr.arms[index].body, arm_path + ".body");
+        }
+    }
+
+    void verify_match_pattern(const MatchPattern &pattern, const std::string &path) {
+        if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.text)) {
+            add_error(path, "match pattern contains sentinel text");
+        }
+        std::visit([this, &path](const auto &node) { verify_match_pattern_node(node, path); },
+                   pattern.node);
+    }
+
+    template <typename PatternT>
+    void verify_match_pattern_node(const PatternT & /*pattern*/, const std::string & /*path*/) {}
+
+    void verify_match_pattern_node(const VariantPattern &pattern, const std::string &path) {
+        if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.path)) {
+            add_error(path, "variant pattern contains sentinel path");
+        }
+        for (std::uint32_t index = 0; index < pattern.subpatterns.size(); ++index) {
+            const auto subpattern_path = path + ".subpatterns[" + std::to_string(index) + "]";
+            if (!pattern.subpatterns[index]) {
+                add_error(subpattern_path, "match subpattern pointer is null");
+                continue;
+            }
+            verify_match_pattern(*pattern.subpatterns[index], subpattern_path);
+        }
+    }
+
+    void verify_match_pattern_node(const BindingPattern &pattern, const std::string &path) {
+        if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.name)) {
+            add_error(path, "binding pattern contains sentinel name");
+        }
+        if (pattern.nested) {
+            verify_match_pattern(*pattern.nested, path + ".nested");
+        }
+    }
+
+    void verify_match_pattern_node(const TuplePattern &pattern, const std::string &path) {
+        for (std::uint32_t index = 0; index < pattern.elements.size(); ++index) {
+            const auto element_path = path + ".elements[" + std::to_string(index) + "]";
+            if (!pattern.elements[index]) {
+                add_error(element_path, "tuple pattern element pointer is null");
+                continue;
+            }
+            verify_match_pattern(*pattern.elements[index], element_path);
+        }
+    }
+
+    void verify_match_pattern_node(const OrPattern &pattern, const std::string &path) {
+        for (std::uint32_t index = 0; index < pattern.branches.size(); ++index) {
+            const auto branch_path = path + ".branches[" + std::to_string(index) + "]";
+            if (!pattern.branches[index]) {
+                add_error(branch_path, "or pattern branch pointer is null");
+                continue;
+            }
+            verify_match_pattern(*pattern.branches[index], branch_path);
+        }
     }
 
     void verify_expr_ref_list(const std::vector<ExprRef> &exprs, const std::string &path) {
@@ -705,6 +790,14 @@ class ProgramVerifier {
                 verify_type_ref(*type.second, path + ".second");
             }
             break;
+        }
+        for (std::size_t index = 0; index < type.params.size(); ++index) {
+            if (!type.params[index]) {
+                add_error(path + ".params[" + std::to_string(index) + "]",
+                          "type argument reference is null");
+                continue;
+            }
+            verify_type_ref(*type.params[index], path + ".params[" + std::to_string(index) + "]");
         }
     }
 

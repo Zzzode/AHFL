@@ -41,10 +41,6 @@ enum class TypeKind {
     EnumVariant,
 
     // Source-level composite kinds.
-    Optional,
-    List,
-    Set,
-    Map,
     Fn,
 };
 
@@ -109,19 +105,6 @@ struct EnumVariantT {
     // Concrete type arguments of the parent enum's instantiation.
     std::vector<TypePtr> type_args;
 };
-struct OptionalT {
-    TypePtr inner{nullptr};
-};
-struct ListT {
-    TypePtr element{nullptr};
-};
-struct SetT {
-    TypePtr element{nullptr};
-};
-struct MapT {
-    TypePtr key{nullptr};
-    TypePtr value{nullptr};
-};
 struct FnT {
     std::vector<TypePtr> params;
     TypePtr return_type{nullptr};
@@ -159,10 +142,6 @@ using Payload = std::variant<AnyT,
                              StructT,
                              EnumT,
                              EnumVariantT,
-                             OptionalT,
-                             ListT,
-                             SetT,
-                             MapT,
                              FnT,
                              TypeVarT>;
 
@@ -170,7 +149,7 @@ using Payload = std::variant<AnyT,
 //
 //   type->visit(types::Overloads{
 //       [](const types::IntT &) { ... },
-//       [](const types::ListT &list) { ... list.element ... },
+//       [](const types::StructT &structure) { ... structure.type_args ... },
 //       [](const auto &) { /* fallback */ },
 //   });
 template <class... Fs> struct Overloads : Fs... {
@@ -276,22 +255,6 @@ struct Type {
                 result += "::" + value.variant_name;
                 return result;
             },
-            [](const types::OptionalT &value) {
-                return "Optional<" + (value.inner ? value.inner->describe() : std::string{"Any"}) +
-                       ">";
-            },
-            [](const types::ListT &value) {
-                return "List<" + (value.element ? value.element->describe() : std::string{"Any"}) +
-                       ">";
-            },
-            [](const types::SetT &value) {
-                return "Set<" + (value.element ? value.element->describe() : std::string{"Any"}) +
-                       ">";
-            },
-            [](const types::MapT &value) {
-                return "Map<" + (value.key ? value.key->describe() : std::string{"Any"}) + ", " +
-                       (value.value ? value.value->describe() : std::string{"Any"}) + ">";
-            },
             [](const types::FnT &value) {
                 std::ostringstream builder;
                 builder << "Fn(";
@@ -319,10 +282,6 @@ struct Type {
 
 [[nodiscard]] inline bool is_source_type_kind(TypeKind kind) noexcept {
     return !is_internal_type_kind(kind);
-}
-
-[[nodiscard]] inline bool is_collection(TypeKind kind) noexcept {
-    return kind == TypeKind::List || kind == TypeKind::Set || kind == TypeKind::Map;
 }
 
 [[nodiscard]] inline bool is_schema_type_kind(TypeKind kind) noexcept {

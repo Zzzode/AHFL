@@ -233,8 +233,9 @@ struct TypedExpr {
     bool bool_value{false};                                  // BoolLiteral
     ast::ExprUnaryOp unary_op{ast::ExprUnaryOp::Not};        // Unary
     ast::ExprBinaryOp binary_op{ast::ExprBinaryOp::Implies}; // Binary
-    std::string literal_spelling; // Integer/Float/Decimal/String/Duration literal
-    std::string member_name;      // MemberAccess (right-hand field name)
+    std::string literal_spelling;           // Integer/Float/Decimal/String/Duration literal
+    std::string member_name;                // MemberAccess (right-hand field name)
+    std::vector<std::string> lambda_params; // Lambda parameter names in declaration order.
     std::optional<ConstValue> const_value;
 };
 
@@ -375,21 +376,17 @@ struct TypedProgram {
     std::vector<TypedStatement> statements;
     std::vector<TypedTemporalExpr> temporal_exprs;
 
-    // P2 (RFC §3.5 / §5): recorded generic fn call sites for the
-    // monomorphization pass (P2d). Each entry ties a fn declaration (by its
-    // Function symbol id) to the explicit type arguments supplied at the call
-    // site (empty for a non-generic or inference-driven call). The
-    // monomorphization pass consumes this to build the (decl, type_args)
-    // instantiation set; P2b only records the sites so the pass has stable
-    // input without re-walking the typed-tree.
+    // P2 (RFC §3.5 / §5): recorded fn call sites for the monomorphization
+    // pass. Each entry ties a fn declaration (by its Function symbol id) to
+    // the concrete type arguments selected at the call site, whether supplied
+    // explicitly or inferred from argument types. Monomorphic calls use an
+    // empty type-args list.
     struct FnCallSiteRecord {
         SymbolId fn_symbol{0};
         SourceRange call_range;
         std::optional<SourceId> source_id;
-        // Explicit type arguments in source order. Empty when the call omits
-        // them (the typecheck pass currently treats such calls structurally;
-        // inference of type args from argument types lands with the generic
-        // instantiation work in P2c/P2d).
+        // Concrete type arguments in declaration order. Empty for monomorphic
+        // calls.
         std::vector<TypePtr> type_args;
     };
     std::vector<FnCallSiteRecord> fn_call_sites;
@@ -492,6 +489,7 @@ struct TypedProgram {
 // typed lowering preserves stable IR fingerprints:
 //   * Some           -> [Operand]
 //   * Call           -> [Argument, ...]          (each child.name == param name)
+//   * MethodCall     -> [Base, Argument, ...]
 //   * StructLiteral  -> [StructFieldValue, ...]  (each child.name == field name)
 //   * List/Set       -> [CollectionElement, ...]
 //   * Map            -> [MapKey, MapValue, ...]  (interleaved pairs)
@@ -528,6 +526,8 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_qualified_value(expr);
     case ast::ExprSyntaxKind::Call:
         return std::forward<Visitor>(visitor).visit_call(expr);
+    case ast::ExprSyntaxKind::MethodCall:
+        return std::forward<Visitor>(visitor).visit_method_call(expr);
     case ast::ExprSyntaxKind::StructLiteral:
         return std::forward<Visitor>(visitor).visit_struct_literal(expr);
     case ast::ExprSyntaxKind::ListLiteral:
@@ -547,22 +547,9 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
     case ast::ExprSyntaxKind::Group:
         return std::forward<Visitor>(visitor).visit_group(expr);
     case ast::ExprSyntaxKind::Match:
-        // P1 (ADT, RFC §1.6): `match` parsing landed in P1a; lowering of
-        // fully-typed match (with exhaustiveness/narrowing) arrives in P1b.
-        // Until then, route match through `visit_unknown` so the typed-tree
-        // lowering pipeline keeps compiling without forcing every per-kind
-        // visitor to grow a `visit_match` arm. A P1a-parsed match already
-        // surfaces MATCH_NOT_YET_SUPPORTED at typecheck, so it never reaches
-        // lowering with a real type.
-        return std::forward<Visitor>(visitor).visit_unknown(expr);
+        return std::forward<Visitor>(visitor).visit_match(expr);
     case ast::ExprSyntaxKind::Lambda:
-        // P2 (RFC §6): closure parsing landed in P2a; typed lowering of
-        // closures (capture inference, effect propagation) arrives in P2c.
-        // Route through `visit_unknown` so the typed-tree pipeline keeps
-        // compiling; a P2a-parsed lambda already surfaces
-        // LAMBDA_NOT_YET_SUPPORTED at typecheck and never reaches lowering
-        // with a real type.
-        return std::forward<Visitor>(visitor).visit_unknown(expr);
+        return std::forward<Visitor>(visitor).visit_lambda(expr);
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);

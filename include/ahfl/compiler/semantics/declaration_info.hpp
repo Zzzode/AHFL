@@ -299,9 +299,9 @@ struct FnTypeInfo {
 // These mirror the FnTypeInfo pattern: resolved shallow type information keyed
 // by SymbolId. The trait method/impl method signatures reuse ParamTypeInfo +
 // FnEffectClauseInfo so the same signature-matching helpers work on both
-// trait-declared and impl-provided methods. Body typecheck (RFC §1.4 `FnDef`
-// requires a body) and trait-method-call resolution (RFC §2.1) are deferred
-// to a follow-up pass that has the typed call-site environment.
+// trait-declared and impl-provided methods. Impl method bodies are checked by
+// ImplSema after all signatures are available, mirroring the FnSema split for
+// top-level function declarations.
 
 /// One method signature declared inside a `trait` block (RFC §1.3 TraitFnItem).
 /// Trait methods carry no body (interface-only in P3).
@@ -351,10 +351,10 @@ struct ImplAssocItemInfo {
     SourceRange declaration_range;
 };
 
-/// One method defined inside an `impl` block (RFC §1.4 FnDef). `symbol` is the
-/// Function symbol registered for the method so callers can resolve
-/// `Type::method` / `e.method` to the impl's fn. The resolved signature mirrors
-/// TraitMethodInfo so signature-matching is structural compare.
+/// One method defined inside an `impl` block (RFC §1.4 FnDef). Impl methods do
+/// not have standalone public Function symbols yet; call-site dispatch resolves
+/// through the owning ImplTypeInfo plus method name. The resolved signature
+/// mirrors TraitMethodInfo so signature-matching is structural compare.
 struct ImplMethodInfo {
     std::string name;
     SymbolId symbol{0};
@@ -365,6 +365,10 @@ struct ImplMethodInfo {
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;
+    // P3c: index of the method body's TypedBlock in TypedProgram::blocks.
+    // UINT32_MAX when the method has no body or body checking failed before a
+    // block was recorded. Populated by ImplSema after the environment is built.
+    std::uint32_t body_block_index{UINT32_MAX};
 };
 
 /// Resolved impl block (RFC §3.2.2 / type-system §1.4). `is_inherent` is true

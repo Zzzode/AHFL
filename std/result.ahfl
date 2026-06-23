@@ -1,0 +1,44 @@
+module std::result;
+
+import std::option as option;
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn is_ok<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
+    return match self { Ok(_) => true, Err(_) => false };
+}
+
+fn is_err<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
+    return match self { Ok(_) => false, Err(_) => true };
+}
+
+fn map<T, U, E>(self: Result<T, E>, f: Fn(T) -> U) -> Result<U, E> effect Pure decreases 0 {
+    return match self { Ok(value) => Result::Ok(f(value)), Err(error) => Result::Err(error) };
+}
+
+fn map_err<T, E, F>(self: Result<T, E>, f: Fn(E) -> F) -> Result<T, F> effect Pure decreases 0 {
+    return match self { Ok(value) => Result::Ok(value), Err(error) => Result::Err(f(error)) };
+}
+
+fn and_then<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E> effect Pure decreases 0 {
+    return match self { Ok(value) => f(value), Err(error) => Result::Err(error) };
+}
+
+fn or_else<T, E, F>(self: Result<T, E>, alt: Fn(E) -> Result<T, F>) -> Result<T, F> effect Pure decreases 0 {
+    return match self { Ok(value) => Result::Ok(value), Err(error) => alt(error) };
+}
+
+fn unwrap_or<T, E>(self: Result<T, E>, default: T) -> T effect Pure decreases 0 {
+    return match self { Ok(value) => value, Err(_) => default };
+}
+
+fn ok<T, E>(self: Result<T, E>) -> option::Option<T> effect Pure decreases 0 {
+    return match self { Ok(value) => some(value), Err(_) => none };
+}
+
+fn err<T, E>(self: Result<T, E>) -> option::Option<E> effect Pure decreases 0 {
+    return match self { Ok(_) => none, Err(error) => some(error) };
+}

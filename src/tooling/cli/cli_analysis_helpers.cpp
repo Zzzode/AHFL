@@ -53,21 +53,23 @@ namespace {
 std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
                                          std::ostream &diagnostics) {
     const Frontend frontend;
-    const auto parse_result = frontend.parse_file(file_path);
-    if (parse_result.has_errors() || !parse_result.program) {
+    const auto parse_result = frontend.parse_project(ProjectInput{
+        .entry_files = {file_path},
+    });
+    if (parse_result.has_errors()) {
         parse_result.diagnostics.render(diagnostics);
         return std::nullopt;
     }
 
     const Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
+    const auto resolve_result = resolver.resolve(parse_result.graph);
     if (resolve_result.has_errors()) {
         resolve_result.diagnostics.render(diagnostics);
         return std::nullopt;
     }
 
     const TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_check_result = type_checker.check(parse_result.graph, resolve_result);
     if (type_check_result.has_errors()) {
         type_check_result.diagnostics.render(diagnostics);
         return std::nullopt;
@@ -75,13 +77,13 @@ std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
 
     const Validator validator;
     const auto validation_result =
-        validator.validate(*parse_result.program, resolve_result, type_check_result);
+        validator.validate(parse_result.graph, resolve_result, type_check_result);
     if (validation_result.has_errors()) {
         validation_result.diagnostics.render(diagnostics);
         return std::nullopt;
     }
 
-    return lower_program_ir(*parse_result.program, resolve_result, type_check_result);
+    return lower_program_ir(parse_result.graph, resolve_result, type_check_result);
 }
 
 // ---------------------------------------------------------------------------

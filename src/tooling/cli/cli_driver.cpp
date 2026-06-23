@@ -86,6 +86,12 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
     return seconds;
 }
 
+[[nodiscard]] bool has_module_declaration(const ahfl::ast::Program &program) noexcept {
+    return std::any_of(program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
+        return decl && decl->kind == ahfl::ast::NodeKind::ModuleDecl;
+    });
+}
+
 void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
                                                   const CommandLineOptions &options,
                                                   std::ostream &err) {
@@ -971,18 +977,41 @@ ExitCode CliDriver::execute() {
         return run_analysis(project_result.graph, std::nullopt);
     }
 
-    auto parse_result = frontend_.parse_file(std::string(options_.positional.front()));
-    render_diagnostics(*diag_consumer_, parse_result, std::cref(parse_result.source));
-
-    if (parse_result.program && effective_command_ == CommandKind::DumpAst) {
-        dump_ast_outline(*parse_result.program, std::cout);
+    if (effective_command_ == CommandKind::DumpAst) {
+        auto parse_result = frontend_.parse_file(std::string(options_.positional.front()));
+        render_diagnostics(*diag_consumer_, parse_result, std::cref(parse_result.source));
+        if (parse_result.program) {
+            dump_ast_outline(*parse_result.program, std::cout);
+        }
+        if (parse_result.has_errors() || !parse_result.program) {
+            return parse_result.has_errors() ? ExitCode::CompileError : ExitCode::Success;
+        }
+        return ExitCode::Success;
     }
 
+    auto parse_result = frontend_.parse_file(std::string(options_.positional.front()));
+    render_diagnostics(*diag_consumer_, parse_result, std::cref(parse_result.source));
     if (parse_result.has_errors() || !parse_result.program) {
         return parse_result.has_errors() ? ExitCode::CompileError : ExitCode::Success;
     }
+    if (!has_module_declaration(*parse_result.program)) {
+        return run_analysis(*parse_result.program, std::cref(parse_result.source));
+    }
 
-    return run_analysis(*parse_result.program, std::cref(parse_result.source));
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(std::string(options_.positional.front()));
+    input.search_roots.reserve(options_.search_roots.size());
+    for (const auto search_root : options_.search_roots) {
+        input.search_roots.push_back(std::string(search_root));
+    }
+
+    auto project_result = frontend_.parse_project(input);
+    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
+    if (project_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    return run_analysis(project_result.graph, std::nullopt);
 }
 
 ExitCode CliDriver::format_source_file() {

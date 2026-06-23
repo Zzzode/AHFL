@@ -154,52 +154,51 @@ void collect_qualified_name_tokens(const ast::QualifiedName &qname,
 void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                                 const SourceFile &source,
                                 std::vector<TokenEntry> &tokens) {
-    std::visit(Overloaded{
-                   [&](const ast::NamedType &t) {
-                       if (t.name != nullptr) {
-                           collect_qualified_name_tokens(
-                               *t.name, source, tokens, SemanticTokenType::Type);
-                       }
-                   },
-                   [&](const ast::OptionalType &t) {
-                       if (t.inner != nullptr) {
-                           collect_type_syntax_tokens(*t.inner, source, tokens);
-                       }
-                   },
-                   [&](const ast::ListType &t) {
-                       if (t.element != nullptr) {
-                           collect_type_syntax_tokens(*t.element, source, tokens);
-                       }
-                   },
-                   [&](const ast::SetType &t) {
-                       if (t.element != nullptr) {
-                           collect_type_syntax_tokens(*t.element, source, tokens);
-                       }
-                   },
-                   [&](const ast::MapType &t) {
-                       if (t.key_type != nullptr) {
-                           collect_type_syntax_tokens(*t.key_type, source, tokens);
-                       }
-                       if (t.value_type != nullptr) {
-                           collect_type_syntax_tokens(*t.value_type, source, tokens);
-                       }
-                   },
-                   [&](const ast::AppType &t) {
-                       if (t.name != nullptr) {
-                           collect_qualified_name_tokens(
-                               *t.name, source, tokens, SemanticTokenType::Type);
-                       }
-                       for (const auto &arg : t.arguments) {
-                           if (arg != nullptr) {
-                               collect_type_syntax_tokens(*arg, source, tokens);
-                           }
-                       }
-                   },
-                   [](const auto &) {
-                       // Built-in types — no tokens for now (could add Keyword/Type later)
-                   },
-               },
-               type.node);
+    std::visit(
+        Overloaded{
+            [&](const ast::NamedType &t) {
+                if (t.name != nullptr) {
+                    collect_qualified_name_tokens(*t.name, source, tokens, SemanticTokenType::Type);
+                }
+            },
+            [&](const ast::OptionalType &t) {
+                if (t.inner != nullptr) {
+                    collect_type_syntax_tokens(*t.inner, source, tokens);
+                }
+            },
+            [&](const ast::ListType &t) {
+                if (t.element != nullptr) {
+                    collect_type_syntax_tokens(*t.element, source, tokens);
+                }
+            },
+            [&](const ast::SetType &t) {
+                if (t.element != nullptr) {
+                    collect_type_syntax_tokens(*t.element, source, tokens);
+                }
+            },
+            [&](const ast::MapType &t) {
+                if (t.key_type != nullptr) {
+                    collect_type_syntax_tokens(*t.key_type, source, tokens);
+                }
+                if (t.value_type != nullptr) {
+                    collect_type_syntax_tokens(*t.value_type, source, tokens);
+                }
+            },
+            [&](const ast::AppType &t) {
+                if (t.name != nullptr) {
+                    collect_qualified_name_tokens(*t.name, source, tokens, SemanticTokenType::Type);
+                }
+                for (const auto &arg : t.arguments) {
+                    if (arg != nullptr) {
+                        collect_type_syntax_tokens(*arg, source, tokens);
+                    }
+                }
+            },
+            [](const auto &) {
+                // Built-in types — no tokens for now (could add Keyword/Type later)
+            },
+        },
+        type.node);
 }
 
 // ---- Parameters ----
@@ -290,6 +289,28 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                        if (e.callee != nullptr) {
                            collect_qualified_name_tokens(
                                *e.callee, source, tokens, SemanticTokenType::Function);
+                       }
+                       for (const auto &type_arg : e.type_args) {
+                           if (type_arg != nullptr) {
+                               collect_type_syntax_tokens(*type_arg, source, tokens);
+                           }
+                       }
+                       for (const auto &arg : e.arguments) {
+                           if (arg != nullptr) {
+                               collect_expr_tokens(*arg, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::MethodCallExpr &e) {
+                       if (e.receiver != nullptr) {
+                           collect_expr_tokens(*e.receiver, source, tokens);
+                       }
+                       add_token_for_name(
+                           tokens, source, expr.range, e.method, SemanticTokenType::Function);
+                       for (const auto &type_arg : e.type_args) {
+                           if (type_arg != nullptr) {
+                               collect_type_syntax_tokens(*type_arg, source, tokens);
+                           }
                        }
                        for (const auto &arg : e.arguments) {
                            if (arg != nullptr) {

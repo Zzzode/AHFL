@@ -39,8 +39,6 @@ std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexc
     if (key.decimal_scale.has_value()) {
         seed = hash_mix(seed, std::hash<std::int64_t>{}(*key.decimal_scale));
     }
-    seed = hash_mix(seed, std::hash<const void *>{}(key.first));
-    seed = hash_mix(seed, std::hash<const void *>{}(key.second));
     seed = hash_mix(seed, std::hash<bool>{}(key.nominal_symbol.has_value()));
     if (key.nominal_symbol.has_value()) {
         seed = hash_mix(seed, std::hash<std::size_t>{}(key.nominal_symbol->value));
@@ -126,14 +124,6 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
             .variant_name = key.variant_name,
             .type_args = key.type_args,
         };
-    case TypeKind::Optional:
-        return types::OptionalT{.inner = key.first};
-    case TypeKind::List:
-        return types::ListT{.element = key.first};
-    case TypeKind::Set:
-        return types::SetT{.element = key.first};
-    case TypeKind::Map:
-        return types::MapT{.key = key.first, .value = key.second};
     case TypeKind::Fn:
         // Fn types use the dedicated fn_pool_; build_payload should not be
         // called with TypeKind::Fn. Fall back defensively.
@@ -155,8 +145,6 @@ TypePtr TypeContext::make(TypeKind kind) {
         .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = std::nullopt,
     });
 }
@@ -176,8 +164,6 @@ TypePtr TypeContext::bounded_string(std::int64_t minimum, std::int64_t maximum) 
         .variant_name = {},
         .string_bounds = std::make_pair(minimum, maximum),
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = std::nullopt,
     });
 }
@@ -189,8 +175,6 @@ TypePtr TypeContext::decimal(std::int64_t scale) {
         .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = scale,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = std::nullopt,
     });
 }
@@ -223,8 +207,6 @@ TypePtr TypeContext::struct_type(std::string canonical_name,
         .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = symbol,
         .type_var_index = std::nullopt,
         .type_args = std::move(type_args),
@@ -259,8 +241,6 @@ TypePtr TypeContext::enum_type(std::string canonical_name,
         .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = symbol,
         .type_var_index = std::nullopt,
         .type_args = std::move(type_args),
@@ -305,63 +285,9 @@ TypePtr TypeContext::enum_variant_type(std::string canonical_name,
         .variant_name = std::move(variant_name),
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = symbol,
         .type_var_index = std::nullopt,
         .type_args = std::move(type_args),
-    });
-}
-
-TypePtr TypeContext::optional(TypePtr value_type) {
-    return intern(TypeKey{
-        .kind = TypeKind::Optional,
-        .name = {},
-        .variant_name = {},
-        .string_bounds = std::nullopt,
-        .decimal_scale = std::nullopt,
-        .first = value_type,
-        .second = nullptr,
-        .nominal_symbol = std::nullopt,
-    });
-}
-
-TypePtr TypeContext::list(TypePtr element_type) {
-    return intern(TypeKey{
-        .kind = TypeKind::List,
-        .name = {},
-        .variant_name = {},
-        .string_bounds = std::nullopt,
-        .decimal_scale = std::nullopt,
-        .first = element_type,
-        .second = nullptr,
-        .nominal_symbol = std::nullopt,
-    });
-}
-
-TypePtr TypeContext::set(TypePtr element_type) {
-    return intern(TypeKey{
-        .kind = TypeKind::Set,
-        .name = {},
-        .variant_name = {},
-        .string_bounds = std::nullopt,
-        .decimal_scale = std::nullopt,
-        .first = element_type,
-        .second = nullptr,
-        .nominal_symbol = std::nullopt,
-    });
-}
-
-TypePtr TypeContext::map(TypePtr key_type, TypePtr value_type) {
-    return intern(TypeKey{
-        .kind = TypeKind::Map,
-        .name = {},
-        .variant_name = {},
-        .string_bounds = std::nullopt,
-        .decimal_scale = std::nullopt,
-        .first = key_type,
-        .second = value_type,
-        .nominal_symbol = std::nullopt,
     });
 }
 
@@ -424,8 +350,6 @@ TypePtr TypeContext::type_var(std::uint32_t index, std::string name) {
         .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
-        .first = nullptr,
-        .second = nullptr,
         .nominal_symbol = std::nullopt,
         .type_var_index = index,
     });

@@ -302,6 +302,32 @@ class FnSema {
     void check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl);
 };
 
+// P3c: impl-method body type-check pass. Signatures are resolved during
+// EnvironmentBuilder::build_impl_types so method calls and trait signature
+// matching can see every impl before bodies are walked. This pass mirrors
+// FnSema for the method bodies themselves.
+class ImplSema {
+  public:
+    explicit ImplSema(TypeCheckPass &driver) : driver_(&driver) {}
+
+    void run();
+
+  private:
+    TypeCheckPass *driver_{nullptr};
+
+    void check_impls();
+    void check_impl_body(std::size_t impl_index,
+                         const ast::ImplDecl &decl,
+                         const ImplTypeInfo &impl_info);
+    void check_impl_method_body(std::size_t impl_index,
+                                const ast::FnDecl &method_decl,
+                                const ImplTypeInfo &impl_info,
+                                const ImplMethodInfo &method_info);
+    void record_impl_method_body_index(std::size_t impl_index,
+                                       std::string_view method_name,
+                                       std::uint32_t body_block_index);
+};
+
 class TypedHirBuilder {
   public:
     explicit TypedHirBuilder(TypedProgram &program) : program_(&program) {}
@@ -340,10 +366,8 @@ class TypeCheckPass final {
           predicate_decls_(declaration_index_.predicate_decls),
           agent_decls_(declaration_index_.agent_decls),
           workflow_decls_(declaration_index_.workflow_decls),
-          fn_decls_(declaration_index_.fn_decls),
-          trait_decls_(declaration_index_.trait_decls),
-          impl_decls_(declaration_index_.impl_decls),
-          hir_builder_(state_.result.typed_program) {}
+          fn_decls_(declaration_index_.fn_decls), trait_decls_(declaration_index_.trait_decls),
+          impl_decls_(declaration_index_.impl_decls), hir_builder_(state_.result.typed_program) {}
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
         : TypeCheckPass(TypeCheckSession(
               &program, nullptr, resolve_result, TypeContext::global(), TypeCheckOptions{})) {}
@@ -389,6 +413,7 @@ class TypeCheckPass final {
     friend class FlowSema;
     friend class WorkflowSema;
     friend class FnSema;
+    friend class ImplSema;
 
     // Re-export internal aliases inside the class so existing implementation
     // files can keep referring to them by their unqualified names.
@@ -485,15 +510,16 @@ class TypeCheckPass final {
     // P3 (RFC §3.2.2 / type-system §1.3): resolve trait signatures (methods,
     // assoc types, super-traits, generic params) and register TraitTypeInfo in
     // the environment keyed by Trait symbol id. Method bodies are absent by
-    // definition; trait-method-call resolution is deferred to the call-site
-    // typecheck (no call sites today).
+    // definition; trait-method-call resolution happens at the typed call site
+    // against the impl metadata built below.
     void build_trait_types();
     // P3 (RFC §3.2.2 / type-system §1.4): resolve each impl block — target
     // type, trait_ref (when present), method signatures, associated types —
     // and enforce coherence (orphan rule RFC §2.2), impl-vs-trait signature
     // matching, super-trait coverage, and per-trait duplicate-impl detection.
-    // Impl method *bodies* are not type-checked here (same deferral as fn
-    // bodies): the impl method signature is what the matcher needs.
+    // Impl method *bodies* are checked later by ImplSema after the full
+    // environment exists; this signature pass is what dispatch and trait
+    // matching need.
     void build_impl_types();
     // P3 effect-clause + trait-method signature resolvers (member functions so
     // they can reach private resolve_type / make_error_type / find_reference_here).
@@ -568,9 +594,8 @@ class TypeCheckPass final {
     [[nodiscard]] TypePtr resolve_type_syntax(const ast::TypeSyntax &type);
     // P2c (RFC §3.5): record a resolved fn call site into the typed program
     // for the monomorphization pass. Called by PassExpressionSemaDelegate.
-    void record_fn_call_site(SymbolId fn_symbol,
-                             SourceRange call_range,
-                             std::vector<TypePtr> type_args);
+    void
+    record_fn_call_site(SymbolId fn_symbol, SourceRange call_range, std::vector<TypePtr> type_args);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);
@@ -696,18 +721,6 @@ class TypeCheckPass final {
         return types_->enum_variant_type(
             std::move(canonical_name), std::move(variant_name), symbol);
     }
-    [[nodiscard]] TypePtr optional_type(TypePtr value_type) const {
-        return types_->optional(value_type);
-    }
-    [[nodiscard]] TypePtr list_type(TypePtr element_type) const {
-        return types_->list(element_type);
-    }
-    [[nodiscard]] TypePtr set_type(TypePtr element_type) const {
-        return types_->set(element_type);
-    }
-    [[nodiscard]] TypePtr map_type(TypePtr key_type, TypePtr value_type) const {
-        return types_->map(key_type, value_type);
-    }
     [[nodiscard]] TypedValue typed(TypePtr type, bool is_pure = true) const;
     [[nodiscard]] TypedValue typed_effect(TypePtr type, ExprEffect effect) const;
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
@@ -805,8 +818,8 @@ decltype(auto) TypeCheckPass::with_symbol_context_for_impl(std::optional<SourceI
 // and std::unordered_set have no std::hash specialisation for pairs, so the
 // coherence check carries its own.
 struct PairHash {
-    [[nodiscard]] std::size_t operator()(
-        const std::pair<std::size_t, std::size_t> &value) const noexcept {
+    [[nodiscard]] std::size_t
+    operator()(const std::pair<std::size_t, std::size_t> &value) const noexcept {
         return hash_mix(value.first, value.second);
     }
 

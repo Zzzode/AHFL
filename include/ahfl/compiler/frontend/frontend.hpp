@@ -64,6 +64,12 @@ struct SourceGraph {
 struct ProjectInput {
     std::vector<std::filesystem::path> entry_files{};
     std::vector<std::filesystem::path> search_roots{};
+    // P6: project-aware parses include the repository stdlib by default and
+    // inject std::prelude for non-std source units. Tests and specialized
+    // tools may disable these while exercising raw source-graph behavior.
+    bool include_stdlib{true};
+    bool inject_prelude{true};
+    std::vector<std::filesystem::path> stdlib_search_roots{};
     // Normalized absolute path string -> unsaved document text. LSP and other
     // project-aware tooling use this to overlay open editor buffers while
     // reusing the canonical SourceGraph loader.

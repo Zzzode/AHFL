@@ -10,8 +10,10 @@
 
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace ahfl {
 
@@ -30,8 +32,7 @@ using TypeAliasBodyResolver = std::function<TypePtr(SymbolId, const ast::TypeSyn
 // M2 (nominal generics): given a type symbol id, return its type-parameter
 // names in declaration order. Returns nullopt for monomorphic types or for
 // symbols that do not name a type (struct/enum/typealias).
-using TypeParamInfoProvider =
-    std::function<std::optional<std::vector<std::string>>(SymbolId)>;
+using TypeParamInfoProvider = std::function<std::optional<std::vector<std::string>>(SymbolId)>;
 
 class TypeResolver final {
   public:
@@ -64,6 +65,9 @@ class TypeResolver final {
 
   private:
     [[nodiscard]] TypePtr make_error_type() const;
+    [[nodiscard]] TypePtr resolve_std_container_type(std::string_view canonical_name,
+                                                     std::vector<TypePtr> arguments,
+                                                     SourceRange use_range);
     [[nodiscard]] EffectJudgement
     resolve_effect_judgement(ast::EffectClauseKind kind,
                              const std::vector<Owned<ast::QualifiedName>> &capabilities);

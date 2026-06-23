@@ -1,0 +1,12 @@
+module std::uuid;
+
+import std::option as option;
+
+@builtin("uuid_new_v4")
+fn new_v4() -> UUID effect Nondet;
+
+@builtin("uuid_parse")
+fn parse(self: String) -> option::Option<UUID> effect Pure;
+
+@builtin("uuid_to_string")
+fn to_string(self: UUID) -> String effect Pure;

@@ -168,7 +168,8 @@ class AstFormatter {
 
     // Render the `<T: Bound, U>` generic parameter list (shared by fn / trait /
     // impl). Returns an empty string when there are no type params.
-    std::string format_type_params(const std::vector<ahfl::Owned<ahfl::ast::TypeParamSyntax>> &params) {
+    std::string
+    format_type_params(const std::vector<ahfl::Owned<ahfl::ast::TypeParamSyntax>> &params) {
         if (params.empty()) {
             return {};
         }
@@ -778,6 +779,43 @@ class AstFormatter {
                     if (e.callee) {
                         write(e.callee->spelling());
                     }
+                    if (!e.type_args.empty()) {
+                        write("<");
+                        for (std::size_t i = 0; i < e.type_args.size(); ++i) {
+                            if (i > 0)
+                                out_ << ", ";
+                            if (e.type_args[i]) {
+                                write(e.type_args[i]->spelling());
+                            }
+                        }
+                        write(">");
+                    }
+                    write("(");
+                    for (std::size_t i = 0; i < e.arguments.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        if (e.arguments[i]) {
+                            format_expr(*e.arguments[i]);
+                        }
+                    }
+                    write(")");
+                },
+                [&](const ahfl::ast::MethodCallExpr &e) {
+                    if (e.receiver) {
+                        format_expr(*e.receiver);
+                    }
+                    out_ << "." << e.method;
+                    if (!e.type_args.empty()) {
+                        write("<");
+                        for (std::size_t i = 0; i < e.type_args.size(); ++i) {
+                            if (i > 0)
+                                out_ << ", ";
+                            if (e.type_args[i]) {
+                                write(e.type_args[i]->spelling());
+                            }
+                        }
+                        write(">");
+                    }
                     write("(");
                     for (std::size_t i = 0; i < e.arguments.size(); ++i) {
                         if (i > 0)
@@ -941,61 +979,60 @@ class AstFormatter {
     }
 
     void format_pattern(const ahfl::ast::PatternSyntax &pattern) {
-        std::visit(
-            Overloaded{
-                [&](const ahfl::ast::LiteralPattern &p) { write(p.spelling); },
-                [&](const ahfl::ast::VariantPattern &p) {
-                    if (p.path) {
-                        write(p.path->spelling());
-                    }
-                    if (!p.subpatterns.empty()) {
-                        write("(");
-                        for (std::size_t i = 0; i < p.subpatterns.size(); ++i) {
-                            if (i > 0) {
-                                out_ << ", ";
-                            }
-                            if (p.subpatterns[i]) {
-                                format_pattern(*p.subpatterns[i]);
-                            }
-                        }
-                        write(")");
-                    }
-                },
-                [&](const ahfl::ast::WildcardPattern &) { write("_"); },
-                [&](const ahfl::ast::BindingPattern &p) {
-                    if (p.is_mut) {
-                        write("mut ");
-                    }
-                    write(p.name);
-                    if (p.nested) {
-                        write(" @ ");
-                        format_pattern(*p.nested);
-                    }
-                },
-                [&](const ahfl::ast::TuplePattern &p) {
-                    write("(");
-                    for (std::size_t i = 0; i < p.elements.size(); ++i) {
-                        if (i > 0) {
-                            out_ << ", ";
-                        }
-                        if (p.elements[i]) {
-                            format_pattern(*p.elements[i]);
-                        }
-                    }
-                    write(")");
-                },
-                [&](const ahfl::ast::OrPattern &p) {
-                    for (std::size_t i = 0; i < p.branches.size(); ++i) {
-                        if (i > 0) {
-                            out_ << " | ";
-                        }
-                        if (p.branches[i]) {
-                            format_pattern(*p.branches[i]);
-                        }
-                    }
-                },
-            },
-            pattern.node);
+        std::visit(Overloaded{
+                       [&](const ahfl::ast::LiteralPattern &p) { write(p.spelling); },
+                       [&](const ahfl::ast::VariantPattern &p) {
+                           if (p.path) {
+                               write(p.path->spelling());
+                           }
+                           if (!p.subpatterns.empty()) {
+                               write("(");
+                               for (std::size_t i = 0; i < p.subpatterns.size(); ++i) {
+                                   if (i > 0) {
+                                       out_ << ", ";
+                                   }
+                                   if (p.subpatterns[i]) {
+                                       format_pattern(*p.subpatterns[i]);
+                                   }
+                               }
+                               write(")");
+                           }
+                       },
+                       [&](const ahfl::ast::WildcardPattern &) { write("_"); },
+                       [&](const ahfl::ast::BindingPattern &p) {
+                           if (p.is_mut) {
+                               write("mut ");
+                           }
+                           write(p.name);
+                           if (p.nested) {
+                               write(" @ ");
+                               format_pattern(*p.nested);
+                           }
+                       },
+                       [&](const ahfl::ast::TuplePattern &p) {
+                           write("(");
+                           for (std::size_t i = 0; i < p.elements.size(); ++i) {
+                               if (i > 0) {
+                                   out_ << ", ";
+                               }
+                               if (p.elements[i]) {
+                                   format_pattern(*p.elements[i]);
+                               }
+                           }
+                           write(")");
+                       },
+                       [&](const ahfl::ast::OrPattern &p) {
+                           for (std::size_t i = 0; i < p.branches.size(); ++i) {
+                               if (i > 0) {
+                                   out_ << " | ";
+                               }
+                               if (p.branches[i]) {
+                                   format_pattern(*p.branches[i]);
+                               }
+                           }
+                       },
+                   },
+                   pattern.node);
     }
 
     void format_unary_op(ahfl::ast::ExprUnaryOp op) {

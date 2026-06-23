@@ -61,10 +61,6 @@ class TypeContext {
                                             std::optional<SymbolId> symbol,
                                             std::vector<TypePtr> type_args);
 
-    [[nodiscard]] TypePtr optional(TypePtr value_type);
-    [[nodiscard]] TypePtr list(TypePtr element_type);
-    [[nodiscard]] TypePtr set(TypePtr element_type);
-    [[nodiscard]] TypePtr map(TypePtr key_type, TypePtr value_type);
     [[nodiscard]] TypePtr fn(std::vector<TypePtr> param_types,
                              TypePtr return_type,
                              EffectJudgement effect);
@@ -85,8 +81,6 @@ class TypeContext {
         std::string variant_name;
         std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
         std::optional<std::int64_t> decimal_scale;
-        const Type *first{nullptr};
-        const Type *second{nullptr};
         std::optional<SymbolId> nominal_symbol;
         // P2: TypeVar's zero-based index within the enclosing generic
         // declaration's type-parameter list. Nullopt for all non-TypeVar kinds.

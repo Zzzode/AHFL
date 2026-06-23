@@ -279,14 +279,9 @@ struct WorkflowDecl {
 // generic type-parameter names so a downstream monomorphization consumer can
 // read the instantiation surface without re-entering the typed tree.
 //
-// The body is intentionally NOT lowered into the IR here: a `fn` body is a
-// statement block whose lowering machinery (typed-statement → IR statement
-// translation) is part of the typed-tree → IR body lowering that follows the
-// existing capability/agent handler shape. P2c wires the declaration surface
-// (signature + symbol + provenance + generics + effect); body lowering rides
-// on the same typed-block infrastructure once a typed fn body is indexed into
-// the typed program (currently the body is type-checked structurally but not
-// stored as a TypedBlock, matching the P2b scope).
+// When present, the body is lowered from the TypedBlock recorded on
+// FnTypeInfo. Prototypes and @builtin declarations keep has_body=false and a
+// null body.
 /// Effect clause kind on a fn, mirroring ast::EffectClauseKind (0=Pure,
 /// 1=Nondet, 2=Capability) without pulling the AST into the IR layer.
 enum class FnEffectKind : std::int32_t {
@@ -315,6 +310,7 @@ struct FnDecl {
     // non-generic fn.
     std::vector<std::string> type_param_names;
     bool has_body{false};
+    Owned<Block> body;
     SymbolRef symbol_ref;
 };
 

@@ -143,6 +143,26 @@ void print_type_ref(const TypeRef &type, std::ostream &out, int level) {
         out << "\"second\": ";
         print_type_ref(*type.second, out, level + 1);
     }
+    if (!type.params.empty()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"type_args\": [";
+        for (std::size_t index = 0; index < type.params.size(); ++index) {
+            if (index > 0) {
+                out << ',';
+            }
+            out << '\n';
+            if (type.params[index]) {
+                print_type_ref(*type.params[index], out, level + 2);
+            } else {
+                indent(out, level + 2);
+                out << "null";
+            }
+        }
+        out << '\n';
+        indent(out, level + 1);
+        out << ']';
+    }
     if (type.source_range.has_value()) {
         out << ",\n";
         indent(out, level + 1);

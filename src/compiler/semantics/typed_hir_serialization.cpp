@@ -163,6 +163,11 @@ using Json = json::JsonValue;
             object->set("kind", Json::make_string("Struct"));
             object->set("canonical_name", Json::make_string(value.canonical_name));
             object->set("symbol", j_optional_symbol_id(value.symbol));
+            auto type_args = Json::make_array();
+            for (const auto &type_arg : value.type_args) {
+                type_args->push(j_type(type_arg));
+            }
+            object->set("type_args", std::move(type_args));
             return object;
         },
         [](const types::EnumT &value) {
@@ -170,6 +175,11 @@ using Json = json::JsonValue;
             object->set("kind", Json::make_string("Enum"));
             object->set("canonical_name", Json::make_string(value.canonical_name));
             object->set("symbol", j_optional_symbol_id(value.symbol));
+            auto type_args = Json::make_array();
+            for (const auto &type_arg : value.type_args) {
+                type_args->push(j_type(type_arg));
+            }
+            object->set("type_args", std::move(type_args));
             return object;
         },
         [](const types::EnumVariantT &value) {
@@ -178,31 +188,11 @@ using Json = json::JsonValue;
             object->set("canonical_name", Json::make_string(value.canonical_name));
             object->set("symbol", j_optional_symbol_id(value.symbol));
             object->set("variant_name", Json::make_string(value.variant_name));
-            return object;
-        },
-        [](const types::OptionalT &value) {
-            auto object = Json::make_object();
-            object->set("kind", Json::make_string("Optional"));
-            object->set("inner", j_type(value.inner));
-            return object;
-        },
-        [](const types::ListT &value) {
-            auto object = Json::make_object();
-            object->set("kind", Json::make_string("List"));
-            object->set("element", j_type(value.element));
-            return object;
-        },
-        [](const types::SetT &value) {
-            auto object = Json::make_object();
-            object->set("kind", Json::make_string("Set"));
-            object->set("element", j_type(value.element));
-            return object;
-        },
-        [](const types::MapT &value) {
-            auto object = Json::make_object();
-            object->set("kind", Json::make_string("Map"));
-            object->set("key", j_type(value.key));
-            object->set("value", j_type(value.value));
+            auto type_args = Json::make_array();
+            for (const auto &type_arg : value.type_args) {
+                type_args->push(j_type(type_arg));
+            }
+            object->set("type_args", std::move(type_args));
             return object;
         },
         [](const types::FnT &value) {
@@ -313,6 +303,7 @@ using Json = json::JsonValue;
         value->set("symbol", j_symbol_id(info->symbol));
         value->set("canonical_name", Json::make_string(info->canonical_name));
         value->set("local_name", Json::make_string(info->local_name));
+        value->set("type_param_names", j_string_array(info->type_param_names));
         value->set("aliased_type", j_type(info->aliased_type));
         value->set("aliased_type_range", j_range(info->aliased_type_range));
         value->set("declaration_range", j_range(info->declaration_range));
@@ -325,6 +316,7 @@ using Json = json::JsonValue;
         auto value = Json::make_object();
         value->set("symbol", j_symbol_id(info->symbol));
         value->set("canonical_name", Json::make_string(info->canonical_name));
+        value->set("type_param_names", j_string_array(info->type_param_names));
         auto fields = Json::make_array();
         for (const auto &field : info->fields) {
             fields->push(j_struct_field(field));
@@ -340,6 +332,7 @@ using Json = json::JsonValue;
         auto value = Json::make_object();
         value->set("symbol", j_symbol_id(info->symbol));
         value->set("canonical_name", Json::make_string(info->canonical_name));
+        value->set("type_param_names", j_string_array(info->type_param_names));
         auto variants = Json::make_array();
         for (const auto &variant : info->variants) {
             auto variant_json = Json::make_object();
@@ -540,6 +533,12 @@ using Json = json::JsonValue;
         value->set("effect", std::move(effect));
         value->set("has_body", Json::make_bool(info->has_body));
         value->set("declaration_range", j_range(info->declaration_range));
+        if (info->builtin_name.has_value()) {
+            value->set("builtin_name", Json::make_string(*info->builtin_name));
+        } else {
+            value->set("builtin_name", Json::make_null());
+        }
+        value->set("body_block_index", j_int(info->body_block_index));
         object->set("kind", Json::make_string("Fn"));
         object->set("value", std::move(value));
         return object;
@@ -575,8 +574,7 @@ using Json = json::JsonValue;
 
 // P2c (RFC §3.5): serialize a recorded fn call site consumed by the
 // monomorphization pass.
-[[nodiscard]] std::unique_ptr<Json>
-j_fn_call_site(const TypedProgram::FnCallSiteRecord &site) {
+[[nodiscard]] std::unique_ptr<Json> j_fn_call_site(const TypedProgram::FnCallSiteRecord &site) {
     auto object = Json::make_object();
     object->set("fn_symbol", j_symbol_id(site.fn_symbol));
     object->set("call_range", j_range(site.call_range));
@@ -661,6 +659,7 @@ j_fn_call_site(const TypedProgram::FnCallSiteRecord &site) {
     object->set("binary_op", j_enum(expr.binary_op));
     object->set("literal_spelling", Json::make_string(expr.literal_spelling));
     object->set("member_name", Json::make_string(expr.member_name));
+    object->set("lambda_params", j_string_array(expr.lambda_params));
     object->set("const_value", j_optional_const_value(expr.const_value));
     return object;
 }
@@ -856,6 +855,41 @@ class Reader {
         return type_value(field(object, key));
     }
 
+    [[nodiscard]] EffectJudgement effect_judgement_field(const Json &object, std::string_view key) {
+        const auto effect = string_field(object, key);
+        if (effect == "Pure") {
+            return EffectJudgement::make_pure();
+        }
+        if (effect == "Nondet") {
+            return EffectJudgement::make_nondet();
+        }
+        if (effect == "CapabilitySet") {
+            return EffectJudgement::make_capability_set({});
+        }
+        if (effect == "Bottom") {
+            return EffectJudgement::make_bottom();
+        }
+        ok_ = false;
+        return EffectJudgement::make_bottom();
+    }
+
+    [[nodiscard]] std::vector<TypePtr> type_array_field(const Json &object, std::string_view key) {
+        std::vector<TypePtr> values;
+        const auto *array = field(object, key);
+        if (array == nullptr || array->is_null()) {
+            return values;
+        }
+        if (array->kind != json::Kind::Array) {
+            ok_ = false;
+            return values;
+        }
+        values.reserve(array->array_items.size());
+        for (const auto &item : array->array_items) {
+            values.push_back(type_value(item.get()));
+        }
+        return values;
+    }
+
     [[nodiscard]] TypePtr type_value(const Json *value) {
         if (value == nullptr) {
             ok_ = false;
@@ -900,28 +934,26 @@ class Reader {
             return types.decimal(int_field(*value, "scale"));
         if (kind == "Struct") {
             return types.struct_type(string_field(*value, "canonical_name"),
-                                     optional_symbol_id_field(*value, "symbol"));
+                                     optional_symbol_id_field(*value, "symbol"),
+                                     type_array_field(*value, "type_args"));
         }
         if (kind == "Enum") {
             return types.enum_type(string_field(*value, "canonical_name"),
-                                   optional_symbol_id_field(*value, "symbol"));
+                                   optional_symbol_id_field(*value, "symbol"),
+                                   type_array_field(*value, "type_args"));
         }
         if (kind == "EnumVariant") {
             return types.enum_variant_type(string_field(*value, "canonical_name"),
                                            string_field(*value, "variant_name"),
-                                           optional_symbol_id_field(*value, "symbol"));
+                                           optional_symbol_id_field(*value, "symbol"),
+                                           type_array_field(*value, "type_args"));
         }
-        if (kind == "Optional")
-            return types.optional(type_field(*value, "inner"));
-        if (kind == "List")
-            return types.list(type_field(*value, "element"));
-        if (kind == "Set")
-            return types.set(type_field(*value, "element"));
-        if (kind == "Map")
-            return types.map(type_field(*value, "key"), type_field(*value, "value"));
+        if (kind == "Fn")
+            return types.fn(type_array_field(*value, "params"),
+                            type_field(*value, "return"),
+                            effect_judgement_field(*value, "effect"));
         if (kind == "TypeVar")
-            return types.type_var(u32_field(*value, "index"),
-                                  string_field(*value, "name"));
+            return types.type_var(u32_field(*value, "index"), string_field(*value, "name"));
 
         ok_ = false;
         return nullptr;
@@ -945,6 +977,34 @@ class Reader {
             values.emplace_back(*text);
         }
         return values;
+    }
+
+    [[nodiscard]] std::optional<std::string> optional_string_field(const Json &object,
+                                                                   std::string_view key) {
+        const auto *value = object.get(key);
+        if (value == nullptr || value->is_null()) {
+            return std::nullopt;
+        }
+        const auto text = value->as_string();
+        if (!text.has_value()) {
+            ok_ = false;
+            return std::nullopt;
+        }
+        return std::string{*text};
+    }
+
+    [[nodiscard]] std::uint32_t
+    optional_u32_field(const Json &object, std::string_view key, std::uint32_t default_value) {
+        const auto *value = object.get(key);
+        if (value == nullptr || value->is_null()) {
+            return default_value;
+        }
+        const auto integer = uint_value(value);
+        if (integer > std::numeric_limits<std::uint32_t>::max()) {
+            ok_ = false;
+            return default_value;
+        }
+        return static_cast<std::uint32_t>(integer);
     }
 
     [[nodiscard]] std::vector<SymbolId> symbol_array_field(const Json &object,
@@ -1123,6 +1183,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .local_name = reader.string_field(*value, "local_name"),
+            .type_param_names = value->get("type_param_names") == nullptr
+                                    ? std::vector<std::string>{}
+                                    : reader.string_array_field(*value, "type_param_names"),
             .aliased_type = reader.type_field(*value, "aliased_type"),
             .aliased_type_range = reader.range_field(*value, "aliased_type_range"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
@@ -1133,6 +1196,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         StructTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
+            .type_param_names = value->get("type_param_names") == nullptr
+                                    ? std::vector<std::string>{}
+                                    : reader.string_array_field(*value, "type_param_names"),
             .fields = read_struct_fields(reader, *value, "fields"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .field_index_ = {},
@@ -1145,6 +1211,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         EnumTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
+            .type_param_names = value->get("type_param_names") == nullptr
+                                    ? std::vector<std::string>{}
+                                    : reader.string_array_field(*value, "type_param_names"),
             .variants = {},
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .variant_set_ = {},
@@ -1329,14 +1398,16 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .type_param_names = {},
             .effect =
                 FnEffectClauseInfo{
-                    .kind = static_cast<int>(reader.int_field(*reader.field(*value, "effect"),
-                                                               "kind")),
+                    .kind =
+                        static_cast<int>(reader.int_field(*reader.field(*value, "effect"), "kind")),
                     .capabilities = {},
-                    .source_range = reader.range_field(*reader.field(*value, "effect"),
-                                                       "source_range"),
+                    .source_range =
+                        reader.range_field(*reader.field(*value, "effect"), "source_range"),
                 },
             .has_body = reader.bool_field(*value, "has_body"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .builtin_name = reader.optional_string_field(*value, "builtin_name"),
+            .body_block_index = reader.optional_u32_field(*value, "body_block_index", UINT32_MAX),
         };
         if (const auto *params = reader.field(*value, "params");
             params != nullptr && params->kind == json::Kind::Array) {
@@ -1409,6 +1480,15 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
     };
 }
 
+[[nodiscard]] TypedProgram::FnCallSiteRecord read_fn_call_site(Reader &reader, const Json &object) {
+    return TypedProgram::FnCallSiteRecord{
+        .fn_symbol = reader.symbol_id_field(object, "fn_symbol"),
+        .call_range = reader.range_field(object, "call_range"),
+        .source_id = reader.optional_source_id_field(object, "source_id"),
+        .type_args = reader.type_array_field(object, "type_args"),
+    };
+}
+
 [[nodiscard]] TypedExprChild read_expr_child(Reader &reader, const Json &object) {
     return TypedExprChild{
         .role = static_cast<TypedExprChildRole>(reader.uint_field(object, "role")),
@@ -1471,6 +1551,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .binary_op = static_cast<ast::ExprBinaryOp>(reader.uint_field(object, "binary_op")),
         .literal_spelling = reader.string_field(object, "literal_spelling"),
         .member_name = reader.string_field(object, "member_name"),
+        .lambda_params = reader.string_array_field(object, "lambda_params"),
         .const_value = read_optional_const_value(reader, object),
     };
 
@@ -1656,6 +1737,10 @@ std::optional<TypedProgram> deserialize_typed_program_json(std::string_view json
     program.statements = read_array<TypedStatement>(reader, root, "statements", read_statement);
     program.temporal_exprs =
         read_array<TypedTemporalExpr>(reader, root, "temporal_exprs", read_temporal);
+    if (root.get("fn_call_sites") != nullptr) {
+        program.fn_call_sites = read_array<TypedProgram::FnCallSiteRecord>(
+            reader, root, "fn_call_sites", read_fn_call_site);
+    }
 
     if (!reader.ok()) {
         return std::nullopt;

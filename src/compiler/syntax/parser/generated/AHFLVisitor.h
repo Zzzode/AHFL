@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -26,6 +26,8 @@ public:
     virtual std::any visitModuleDecl(AHFLParser::ModuleDeclContext *context) = 0;
 
     virtual std::any visitImportDecl(AHFLParser::ImportDeclContext *context) = 0;
+
+    virtual std::any visitIdentifier(AHFLParser::IdentifierContext *context) = 0;
 
     virtual std::any visitQualifiedIdent(AHFLParser::QualifiedIdentContext *context) = 0;
 

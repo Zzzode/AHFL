@@ -9,12 +9,15 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/builtin_hooks.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -22,6 +25,14 @@
 namespace ahfl {
 
 using internal::ValueContext;
+
+namespace {
+
+[[nodiscard]] bool is_std_module(std::string_view module_name) noexcept {
+    return module_name == "std" || module_name.starts_with("std::");
+}
+
+} // namespace
 
 MaybeCRef<Symbol> DeclarationIndexBuilder::find_local(SymbolNamespace name_space,
                                                       std::string_view name) const {
@@ -253,12 +264,11 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             // impl by kind alone.
             const auto &decl = static_cast<const ast::ImplDecl &>(*declaration);
             const auto impl_index = index_->impl_decls.size();
-            index_->impl_decls.emplace(
-                impl_index,
-                DeclarationIndex::ImplDeclEntry{
-                    .decl = std::cref(decl),
-                    .source_id = state_->current_source_id,
-                });
+            index_->impl_decls.emplace(impl_index,
+                                       DeclarationIndex::ImplDeclEntry{
+                                           .decl = std::cref(decl),
+                                           .source_id = state_->current_source_id,
+                                       });
             hir_->append_declaration(TypedDecl{
                 .kind = declaration->kind,
                 .symbol = {},
@@ -665,10 +675,9 @@ void TypeCheckPass::build_predicate_types() {
             // the grammar is ever extended, this diagnostic fires instead
             // of silently accepting an effectful predicate.
             if (decl.get().effect_clause) {
-                typecheck_error_here(
-                    error_codes::typecheck::EffectOnPredicate,
-                    messages::typecheck::EffectOnPredicate.format_with(),
-                    decl.get().effect_clause->range);
+                typecheck_error_here(error_codes::typecheck::EffectOnPredicate,
+                                     messages::typecheck::EffectOnPredicate.format_with(),
+                                     decl.get().effect_clause->range);
             }
 
             environment().predicates_.emplace(id, std::move(info));
@@ -873,6 +882,25 @@ void TypeCheckPass::build_fn_types() {
                 .builtin_name = decl.get().builtin_name, // P5: propagate @builtin name
             };
 
+            if (decl.get().builtin_name.has_value()) {
+                if (!is_std_module(current_module_name_)) {
+                    typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
+                                         messages::typecheck::InvalidBuiltinAttribute.format_with(),
+                                         decl.get().range);
+                }
+                if (!decl.get().effect_clause) {
+                    typecheck_error_here(error_codes::typecheck::MissingBuiltinEffect,
+                                         messages::typecheck::MissingBuiltinEffect.format_with(),
+                                         decl.get().range);
+                }
+                if (!is_known_builtin_hook(*decl.get().builtin_name)) {
+                    typecheck_error_here(error_codes::typecheck::UnknownBuiltinHook,
+                                         messages::typecheck::UnknownBuiltinHook.format_with(
+                                             *decl.get().builtin_name),
+                                         decl.get().range);
+                }
+            }
+
             for (const auto &type_param : decl.get().type_params) {
                 info.type_param_names.push_back(type_param->name);
             }
@@ -909,8 +937,8 @@ void TypeCheckPass::build_fn_types() {
                 info.effect.has_decreases = static_cast<bool>(clause.decreases_expr);
                 if (clause.kind == ast::EffectClauseKind::Capability) {
                     for (const auto &capability_name : clause.capabilities) {
-                        const auto reference = find_reference_here(
-                            ReferenceKind::AgentCapability, capability_name->range);
+                        const auto reference = find_reference_here(ReferenceKind::AgentCapability,
+                                                                   capability_name->range);
                         if (reference.has_value()) {
                             info.effect.capabilities.push_back(reference->get().target);
                         }
@@ -927,8 +955,8 @@ void TypeCheckPass::build_fn_types() {
                 // body — i.e. it's a declaration only, like an extern or trait
                 // method signature — in which case the measure is supplied by
                 // the implementation).
-                if (clause.kind == ast::EffectClauseKind::Pure &&
-                    !info.effect.has_decreases && info.has_body) {
+                if (clause.kind == ast::EffectClauseKind::Pure && !info.effect.has_decreases &&
+                    info.has_body) {
                     typecheck_error_here(
                         error_codes::typecheck::NoDecreases,
                         messages::typecheck::NoDecreases.format_with(decl.get().name),
@@ -984,8 +1012,7 @@ TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &
 // pass through; Capability becomes a CapabilitySet over the resolved
 // capability symbols (missing references are dropped — the resolver already
 // diagnosed them).
-EffectJudgement
-TypeCheckPass::build_effect_judgement(const ast::EffectClauseSyntax &clause) {
+EffectJudgement TypeCheckPass::build_effect_judgement(const ast::EffectClauseSyntax &clause) {
     switch (clause.kind) {
     case ast::EffectClauseKind::Pure:
         return EffectJudgement::make_pure();
@@ -1034,13 +1061,12 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
     // The declared effect must be an upper bound: body ⊑ declared.
     // If not, the function under-declares its effect.
     if (!judgement_le(body_judgement, declared)) {
-        typecheck_error_here(
-            error_codes::typecheck::EffectUnderdeclared,
-            messages::typecheck::EffectUnderdeclared.format_with(
-                fn->get().canonical_name,
-                std::string(to_string(declared)),
-                std::string(to_string(body_judgement))),
-            body_range);
+        typecheck_error_here(error_codes::typecheck::EffectUnderdeclared,
+                             messages::typecheck::EffectUnderdeclared.format_with(
+                                 fn->get().canonical_name,
+                                 std::string(to_string(declared)),
+                                 std::string(to_string(body_judgement))),
+                             body_range);
     }
 }
 
@@ -1120,11 +1146,10 @@ void TypeCheckPass::build_trait_types() {
                     }
                 }
                 if (!super_id.has_value()) {
-                    typecheck_error_here(
-                        error_codes::typecheck::ImplTraitUnknown,
-                        messages::typecheck::ImplTraitUnknown.format_with(
-                            super_type->as<ast::NamedType>().name->spelling()),
-                        super_type->range);
+                    typecheck_error_here(error_codes::typecheck::ImplTraitUnknown,
+                                         messages::typecheck::ImplTraitUnknown.format_with(
+                                             super_type->as<ast::NamedType>().name->spelling()),
+                                         super_type->range);
                     continue;
                 }
                 const auto super_symbol = symbol_of(*super_id);
@@ -1132,8 +1157,9 @@ void TypeCheckPass::build_trait_types() {
                     typecheck_error_here(
                         error_codes::typecheck::InvalidTypeReference,
                         messages::typecheck::SymbolDoesNotNameType.format_with(
-                            super_symbol.has_value() ? super_symbol->get().canonical_name
-                                                     : super_type->as<ast::NamedType>().name->spelling()),
+                            super_symbol.has_value()
+                                ? super_symbol->get().canonical_name
+                                : super_type->as<ast::NamedType>().name->spelling()),
                         super_type->range);
                     continue;
                 }
@@ -1176,8 +1202,8 @@ void TypeCheckPass::build_impl_types() {
     //      coverage. Inherent impls (no trait_ref) skip signature matching.
     //   3. duplicate impl detection: two trait impls for the same
     //      (trait, target) pair are rejected (RFC §2.1 coherence).
-    // Impl method bodies are NOT type-checked here (mirrors the fn body
-    // deferral): the impl method signature is what the matcher needs.
+    // Impl method bodies are checked by ImplSema after the complete
+    // environment is available, mirroring the fn signature/body split.
     //
     // Impl index = source order, matching the indexing in
     // DeclarationIndexBuilder::index_program_declarations.
@@ -1228,9 +1254,9 @@ void TypeCheckPass::build_impl_types() {
                     if (trait_ref.has_value()) {
                         trait_id = trait_ref->get().target;
                     } else {
-                        const auto fallback = find_local_here(
-                            SymbolNamespace::Types,
-                            decl.trait_ref->as<ast::NamedType>().name->spelling());
+                        const auto fallback =
+                            find_local_here(SymbolNamespace::Types,
+                                            decl.trait_ref->as<ast::NamedType>().name->spelling());
                         if (fallback.has_value()) {
                             trait_id = fallback->get().id;
                         }
@@ -1243,7 +1269,8 @@ void TypeCheckPass::build_impl_types() {
                             decl.trait_ref->range);
                     } else {
                         const auto trait_symbol = symbol_of(*trait_id);
-                        if (!trait_symbol.has_value() || trait_symbol->get().kind != SymbolKind::Trait) {
+                        if (!trait_symbol.has_value() ||
+                            trait_symbol->get().kind != SymbolKind::Trait) {
                             typecheck_error_here(
                                 error_codes::typecheck::InvalidTypeReference,
                                 messages::typecheck::SymbolDoesNotNameType.format_with(
@@ -1283,6 +1310,13 @@ void TypeCheckPass::build_impl_types() {
                         .declaration_range = param->range,
                     });
                 }
+                if (method->effect_clause &&
+                    method->effect_clause->kind == ast::EffectClauseKind::Pure &&
+                    !method_info.effect.has_decreases && method_info.has_body) {
+                    typecheck_error_here(error_codes::typecheck::NoDecreases,
+                                         messages::typecheck::NoDecreases.format_with(method->name),
+                                         method->effect_clause->range);
+                }
                 info.methods.push_back(std::move(method_info));
             }
 
@@ -1302,7 +1336,8 @@ void TypeCheckPass::build_impl_types() {
             // Trait-impl signature matching (RFC §2.1) + duplicate detection.
             if (info.trait_symbol.has_value() && info.target_symbol.has_value()) {
                 check_trait_impl_signature_match(info);
-                const auto key = std::make_pair(info.trait_symbol->value, info.target_symbol->value);
+                const auto key =
+                    std::make_pair(info.trait_symbol->value, info.target_symbol->value);
                 if (!seen_impls.insert(key).second) {
                     const auto trait_name = info.trait_name;
                     const auto target_name = nominal_describe(*info.target_type);

@@ -37,6 +37,14 @@ struct RootTypeHints {
     if (type.second) {
         clone.second = make_owned<TypeRef>(clone_type_ref(*type.second));
     }
+    clone.params.reserve(type.params.size());
+    for (const auto &param : type.params) {
+        if (param) {
+            clone.params.push_back(make_owned<TypeRef>(clone_type_ref(*param)));
+        } else {
+            clone.params.push_back(nullptr);
+        }
+    }
     return clone;
 }
 
@@ -366,6 +374,20 @@ class LoweringContext {
         return make_local(dest);
     }
 
+    [[nodiscard]] Operand lower_expr_node(const ir::LambdaExpr &e, const ir::Expr &expr) {
+        // The SSA opt IR has no first-class callable rvalue yet. Preserve the
+        // typed Fn local as an opaque value so call sites keep their operand
+        // structure; runtime evaluation uses the semantic IR LambdaExpr path.
+        (void)e;
+        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.operands.push_back(make_constant("<lambda>"));
+        rv.result_type = clone_type_ref(expr.resolved_type);
+        emit_assign(dest, std::move(rv), expr.source_range);
+        return make_local(dest);
+    }
+
     [[nodiscard]] Operand lower_expr_node(const ir::StructLiteralExpr &e, const ir::Expr &expr) {
         std::vector<Operand> field_values;
         field_values.reserve(e.fields.size());
@@ -474,6 +496,16 @@ class LoweringContext {
         rv.result_type = clone_type_ref(expr.resolved_type);
         rv.operands.push_back(base);
         rv.operands.push_back(index);
+        emit_assign(dest, std::move(rv), expr.source_range);
+        return make_local(dest);
+    }
+
+    [[nodiscard]] Operand lower_expr_node(const ir::MatchExpr & /*e*/, const ir::Expr &expr) {
+        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.operands.push_back(make_constant("<match>"));
+        rv.result_type = clone_type_ref(expr.resolved_type);
         emit_assign(dest, std::move(rv), expr.source_range);
         return make_local(dest);
     }

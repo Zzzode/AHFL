@@ -83,14 +83,11 @@ class ExpressionSemaDelegate {
     // P2 (RFC §6): resolve a closure parameter's optional type annotation.
     // Returns the error type when the annotation is absent (the closure
     // typecheck pass then treats the parameter as unannotated).
-    [[nodiscard]] virtual TypePtr
-    resolve_type_syntax(const ast::TypeSyntax &type) = 0;
-    // P2c (RFC §3.5): record a resolved fn call site for the
-    // monomorphization pass. Explicit type arguments are empty today (the
-    // grammar's call surface does not yet carry `foo<T>(...)` syntax), so the
-    // recorded entry ties the call range to the resolved fn symbol with an
-    // empty type-args list; the monomorphization pass consumes it as the
-    // instantiation surface input.
+    [[nodiscard]] virtual TypePtr resolve_type_syntax(const ast::TypeSyntax &type) = 0;
+    // P2c/P2d (RFC §3.5): record a resolved fn call site for the
+    // monomorphization pass. Generic calls pass the concrete type arguments in
+    // declaration order after explicit arguments and inference have been
+    // reconciled; monomorphic calls pass an empty list.
     virtual void record_fn_call_site(SymbolId fn_symbol,
                                      SourceRange call_range,
                                      std::vector<TypePtr> type_args) = 0;
@@ -128,10 +125,6 @@ class ExpressionValueFactory final {
     [[nodiscard]] TypePtr string_type() const;
     [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const;
     [[nodiscard]] TypePtr make_error_type() const;
-    [[nodiscard]] TypePtr optional_type(TypePtr value_type) const;
-    [[nodiscard]] TypePtr list_type(TypePtr element_type) const;
-    [[nodiscard]] TypePtr set_type(TypePtr element_type) const;
-    [[nodiscard]] TypePtr map_type(TypePtr key_type, TypePtr value_type) const;
     [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const;
 
     [[nodiscard]] ExpressionValue typed(TypePtr type, bool is_pure = true) const;

@@ -42,8 +42,16 @@ namespace {
                       expr.node);
 }
 
-[[nodiscard]] bool is_none_literal(const ast::ExprSyntax &expr) noexcept {
-    return expr.is<ast::NoneLiteralExpr>();
+[[nodiscard]] bool is_none_like(const ast::ExprSyntax &expr) noexcept {
+    if (expr.is<ast::NoneLiteralExpr>()) {
+        return true;
+    }
+    if (!expr.is<ast::QualifiedValueExpr>()) {
+        return false;
+    }
+    const auto &qualified = expr.as<ast::QualifiedValueExpr>();
+    return qualified.name != nullptr && !qualified.name->segments.empty() &&
+           qualified.name->segments.back() == "None";
 }
 
 [[nodiscard]] bool is_qualified_value(const ast::ExprSyntax &expr) noexcept {
@@ -78,9 +86,9 @@ namespace {
                 }
 
                 std::optional<Place> place;
-                if (is_none_literal(*binary.lhs)) {
+                if (is_none_like(*binary.lhs)) {
                     place = extract_place(*binary.rhs);
-                } else if (is_none_literal(*binary.rhs)) {
+                } else if (is_none_like(*binary.rhs)) {
                     place = extract_place(*binary.lhs);
                 }
                 if (!place.has_value()) {

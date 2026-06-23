@@ -4,6 +4,7 @@
 #include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <utility>
 
@@ -42,11 +43,62 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
                 return types_.decimal(static_cast<std::int64_t>(t.scale));
             },
             [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
-            [&](const ast::OptionalType &t) { return types_.optional(resolve_type(*t.inner)); },
-            [&](const ast::ListType &t) { return types_.list(resolve_type(*t.element)); },
-            [&](const ast::SetType &t) { return types_.set(resolve_type(*t.element)); },
+            [&](const ast::OptionalType &t) {
+                TypePtr inner = resolve_type(*t.inner);
+                if (TypePtr nominal =
+                        resolve_std_container_type(stdlib_bridge::kOptionType, {inner}, type.range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(
+                        stdlib_bridge::kOptionType),
+                    type.range);
+                return make_error_type();
+            },
+            [&](const ast::ListType &t) {
+                TypePtr element = resolve_type(*t.element);
+                if (TypePtr nominal =
+                        resolve_std_container_type(stdlib_bridge::kListType, {element}, type.range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(
+                        stdlib_bridge::kListType),
+                    type.range);
+                return make_error_type();
+            },
+            [&](const ast::SetType &t) {
+                TypePtr element = resolve_type(*t.element);
+                if (TypePtr nominal =
+                        resolve_std_container_type(stdlib_bridge::kSetType, {element}, type.range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(
+                        stdlib_bridge::kSetType),
+                    type.range);
+                return make_error_type();
+            },
             [&](const ast::MapType &t) {
-                return types_.map(resolve_type(*t.key_type), resolve_type(*t.value_type));
+                TypePtr key = resolve_type(*t.key_type);
+                TypePtr value = resolve_type(*t.value_type);
+                if (TypePtr nominal = resolve_std_container_type(
+                        stdlib_bridge::kMapType, {key, value}, type.range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(
+                        stdlib_bridge::kMapType),
+                    type.range);
+                return make_error_type();
             },
             [&](const ast::FnType &t) {
                 std::vector<TypePtr> param_types;
@@ -170,9 +222,10 @@ TypePtr TypeResolver::resolve_app_type(const ast::AppType &app, SourceRange app_
     if (type_param_names_ != nullptr) {
         for (std::size_t i = 0; i < type_param_names_->size(); ++i) {
             if (app.name->spelling() == (*type_param_names_)[i]) {
-                diagnose_(error_codes::typecheck::InvalidTypeReference,
-                          messages::typecheck::SymbolDoesNotNameType.format_with(app.name->spelling()),
-                          app.name->range);
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::SymbolDoesNotNameType.format_with(app.name->spelling()),
+                    app.name->range);
                 return make_error_type();
             }
         }
@@ -213,9 +266,10 @@ TypePtr TypeResolver::resolve_app_type(const ast::AppType &app, SourceRange app_
 
     if (arg_types.size() != expected_arity) {
         diagnose_(error_codes::typecheck::WrongArity,
-                  messages::typecheck::WrongArity.format_with(
-                      "type", app.name->spelling(), std::to_string(expected_arity),
-                      std::to_string(arg_types.size())),
+                  messages::typecheck::WrongArity.format_with("type",
+                                                              app.name->spelling(),
+                                                              std::to_string(expected_arity),
+                                                              std::to_string(arg_types.size())),
                   app_range);
         return make_error_type();
     }
@@ -253,10 +307,53 @@ TypePtr TypeResolver::make_error_type() const {
     return types_.error_type();
 }
 
+TypePtr TypeResolver::resolve_std_container_type(std::string_view canonical_name,
+                                                 std::vector<TypePtr> arguments,
+                                                 SourceRange use_range) {
+    const auto symbol =
+        resolve_result_.symbol_table.find_canonical(SymbolNamespace::Types, canonical_name);
+    if (!symbol.has_value()) {
+        return nullptr;
+    }
+
+    std::size_t expected_arity = arguments.size();
+    if (type_param_info_) {
+        if (const auto params = type_param_info_(symbol->get().id); params.has_value()) {
+            expected_arity = params->size();
+        }
+    }
+    if (arguments.size() != expected_arity) {
+        return nullptr;
+    }
+
+    switch (symbol->get().kind) {
+    case SymbolKind::Struct:
+        return types_.struct_type(
+            symbol->get().canonical_name, symbol->get().id, std::move(arguments));
+    case SymbolKind::Enum:
+        return types_.enum_type(
+            symbol->get().canonical_name, symbol->get().id, std::move(arguments));
+    case SymbolKind::TypeAlias: {
+        TypeSubstitutionMap subst{arguments.begin(), arguments.end()};
+        TypePtr aliased = resolve_type_alias(symbol->get().id, use_range);
+        return substitute_type(aliased, subst, types_);
+    }
+    case SymbolKind::Const:
+    case SymbolKind::Capability:
+    case SymbolKind::Predicate:
+    case SymbolKind::Agent:
+    case SymbolKind::Workflow:
+    case SymbolKind::Function:
+    case SymbolKind::Trait:
+        return nullptr;
+    }
+
+    return nullptr;
+}
+
 EffectJudgement
-TypeResolver::resolve_effect_judgement(
-    ast::EffectClauseKind kind,
-    const std::vector<Owned<ast::QualifiedName>> &capabilities) {
+TypeResolver::resolve_effect_judgement(ast::EffectClauseKind kind,
+                                       const std::vector<Owned<ast::QualifiedName>> &capabilities) {
     switch (kind) {
     case ast::EffectClauseKind::Pure:
         return EffectJudgement::make_pure();
@@ -266,8 +363,7 @@ TypeResolver::resolve_effect_judgement(
         CapabilitySymbolSet caps;
         for (const auto &capability_name : capabilities) {
             const auto reference = resolve_result_.find_reference(
-                ReferenceKind::AgentCapability,
-                capability_name->range, current_source_id_());
+                ReferenceKind::AgentCapability, capability_name->range, current_source_id_());
             if (reference.has_value()) {
                 caps.insert(reference->get().target);
             }

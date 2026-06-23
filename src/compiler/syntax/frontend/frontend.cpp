@@ -1,5 +1,5 @@
-#include "ahfl/compiler/frontend/desugar.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/frontend/desugar.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -25,6 +25,10 @@ namespace {
 
 template <typename NodeT> [[nodiscard]] std::string text_of(NodeT &node) {
     return node.getText();
+}
+
+[[nodiscard]] std::string identifier_text(AHFLParser::IdentifierContext &context) {
+    return context.getText();
 }
 
 template <typename NodeT> [[nodiscard]] std::string text_or_empty(MaybeRef<NodeT> node) {
@@ -382,7 +386,8 @@ class ProgramBuilder {
             auto declaration = make_decl<ast::TypeAliasDecl>(
                 source_,
                 type_alias_decl->get(),
-                text_of(require(type_alias_decl->get().IDENT(), "type alias name is missing")));
+                identifier_text(
+                    require(type_alias_decl->get().identifier(), "type alias name is missing")));
             if (const auto params = borrow(type_alias_decl->get().typeParams())) {
                 declaration->type_params = build_type_params(params->get());
             }
@@ -392,10 +397,11 @@ class ProgramBuilder {
         }
 
         if (const auto struct_decl = borrow(context.structDecl())) {
-            auto declaration = make_decl<ast::StructDecl>(
-                source_,
-                struct_decl->get(),
-                text_of(require(struct_decl->get().IDENT(), "struct name is missing")));
+            auto declaration =
+                make_decl<ast::StructDecl>(source_,
+                                           struct_decl->get(),
+                                           identifier_text(require(struct_decl->get().identifier(),
+                                                                   "struct name is missing")));
             if (const auto params = borrow(struct_decl->get().typeParams())) {
                 declaration->type_params = build_type_params(params->get());
             }
@@ -410,7 +416,7 @@ class ProgramBuilder {
             auto declaration = make_decl<ast::EnumDecl>(
                 source_,
                 enum_decl->get(),
-                text_of(require(enum_decl->get().IDENT(), "enum name is missing")));
+                identifier_text(require(enum_decl->get().identifier(), "enum name is missing")));
             if (const auto params = borrow(enum_decl->get().typeParams())) {
                 declaration->type_params = build_type_params(params->get());
             }
@@ -584,9 +590,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::Decl> build_fn_decl(AHFLParser::FnDeclContext &context) const {
         auto declaration = make_decl<ast::FnDecl>(
-            source_,
-            context,
-            text_of(require(context.IDENT(), "fn name is missing")));
+            source_, context, identifier_text(require(context.identifier(), "fn name is missing")));
 
         // P5 (RFC §3.3): @builtin attribute. The builtin name is the string
         // literal content with surrounding quotes stripped.
@@ -623,8 +627,8 @@ class ProgramBuilder {
         }
 
         if (const auto body = borrow(context.fnBody())) {
-            declaration->body = build_block_syntax(
-                require(body->get().block(), "fn body block is missing"));
+            declaration->body =
+                build_block_syntax(require(body->get().block(), "fn body block is missing"));
         }
 
         return declaration;
@@ -636,9 +640,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::Decl> build_trait_decl(AHFLParser::TraitDeclContext &context) const {
         auto declaration = make_decl<ast::TraitDecl>(
-            source_,
-            context,
-            text_of(require(context.IDENT(), "trait name is missing")));
+            source_, context, text_of(require(context.IDENT(), "trait name is missing")));
 
         if (const auto type_params = borrow(context.typeParams())) {
             declaration->type_params = build_type_params(type_params->get());
@@ -685,7 +687,7 @@ class ProgramBuilder {
                                 AHFLParser::TraitFnItemContext &context) const {
         item.kind = ast::TraitItemKind::Fn;
         item.range = context_range(context, source_);
-        item.name = text_of(require(context.IDENT(), "trait fn name is missing"));
+        item.name = identifier_text(require(context.identifier(), "trait fn name is missing"));
 
         if (const auto type_params = borrow(context.typeParams())) {
             item.type_params = build_type_params(type_params->get());
@@ -708,7 +710,7 @@ class ProgramBuilder {
                                   AHFLParser::AssocTypeItemContext &context) const {
         item.kind = ast::TraitItemKind::AssocType;
         item.range = context_range(context, source_);
-        item.name = text_of(require(context.IDENT(), "assoc type name is missing"));
+        item.name = identifier_text(require(context.identifier(), "assoc type name is missing"));
 
         auto assoc = make_owned<ast::TraitItemSyntax::AssocTypeDecl>();
         assoc->range = context_range(context, source_);
@@ -751,7 +753,8 @@ class ProgramBuilder {
         }
 
         for (auto *fn_def_context : context.fnDef()) {
-            declaration->methods.push_back(build_fn_def(require(fn_def_context, "impl fn is missing")));
+            declaration->methods.push_back(
+                build_fn_def(require(fn_def_context, "impl fn is missing")));
         }
         for (auto *assoc_context : context.assocItemDef()) {
             declaration->assoc_items.push_back(
@@ -768,7 +771,7 @@ class ProgramBuilder {
         auto declaration = make_decl<ast::FnDecl>(
             source_,
             context,
-            text_of(require(context.IDENT(), "impl fn name is missing")));
+            identifier_text(require(context.identifier(), "impl fn name is missing")));
 
         if (const auto type_params = borrow(context.typeParams())) {
             declaration->type_params = build_type_params(type_params->get());
@@ -786,9 +789,9 @@ class ProgramBuilder {
             declaration->where_clause = build_where_clause(where_clause->get());
         }
 
-        declaration->body = build_block_syntax(
-            require(require(context.fnBody(), "impl fn body is missing").block(),
-                    "impl fn body block is missing"));
+        declaration->body =
+            build_block_syntax(require(require(context.fnBody(), "impl fn body is missing").block(),
+                                       "impl fn body block is missing"));
 
         return declaration;
     }
@@ -797,7 +800,7 @@ class ProgramBuilder {
     build_assoc_item_def(AHFLParser::AssocItemDefContext &context) const {
         auto assoc = make_owned<ast::AssocItemDefSyntax>();
         assoc->range = context_range(context, source_);
-        assoc->name = text_of(require(context.IDENT(), "assoc item name is missing"));
+        assoc->name = identifier_text(require(context.identifier(), "assoc item name is missing"));
         assoc->type = build_type_syntax(require(context.type_(), "assoc item type is missing"));
         return assoc;
     }
@@ -846,10 +849,9 @@ class ProgramBuilder {
         clause->kind = spec_kind;
         if (spec_kind == ast::EffectClauseKind::Capability) {
             for (auto *capability_context : spec.capabilityRef()) {
-                clause->capabilities.push_back(build_qualified_name(
-                    require(require(capability_context, "capability reference is missing")
-                                .qualifiedIdent(),
-                            "capability reference name is missing")));
+                clause->capabilities.push_back(build_qualified_name(require(
+                    require(capability_context, "capability reference is missing").qualifiedIdent(),
+                    "capability reference name is missing")));
             }
         }
         // P4a (RFC §3.1): optional `decreases` termination measure.
@@ -860,8 +862,7 @@ class ProgramBuilder {
         return clause;
     }
 
-    [[nodiscard]] ast::EffectClauseKind
-    effect_clause_kind_from(std::string_view spelling) const {
+    [[nodiscard]] ast::EffectClauseKind effect_clause_kind_from(std::string_view spelling) const {
         if (spelling == "Pure") {
             return ast::EffectClauseKind::Pure;
         }
@@ -888,10 +889,10 @@ class ProgramBuilder {
         constraint->range = context_range(context, source_);
 
         // whereConstraint has two alternatives:
-        //   type_ '::' IDENT ('(' typeList ')')?   — predicate
-        //   type_ ':' typeBoundList                 — bound list
+        //   type_ '::' identifier ('(' typeList ')')?   — predicate
+        //   type_ ':' typeBoundList                     — bound list
         // The bound list (`:` alt) carries a single typeBoundList child; the
-        // predicate (`::` alt) carries a terminal IDENT and an optional typeList.
+        // predicate (`::` alt) carries an identifier and an optional typeList.
         if (const auto bound_list = borrow(context.typeBoundList())) {
             constraint->is_predicate = false;
             constraint->subject = build_type_syntax(
@@ -904,12 +905,12 @@ class ProgramBuilder {
             constraint->is_predicate = true;
             constraint->subject = build_type_syntax(
                 require(context.type_(), "where-constraint subject type is missing"));
-            constraint->trait_name =
-                text_of(require(context.IDENT(), "where-predicate trait name is missing"));
+            constraint->trait_name = identifier_text(
+                require(context.identifier(), "where-predicate trait name is missing"));
             if (const auto type_list = borrow(context.typeList())) {
                 for (auto *argument_context : type_list->get().type_()) {
-                    constraint->arguments.push_back(
-                        build_type_syntax(require(argument_context, "where-predicate argument is missing")));
+                    constraint->arguments.push_back(build_type_syntax(
+                        require(argument_context, "where-predicate argument is missing")));
                 }
             }
         }
@@ -991,6 +992,9 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::Call:
             expr->node = ast::CallExpr{};
+            break;
+        case ast::ExprSyntaxKind::MethodCall:
+            expr->node = ast::MethodCallExpr{};
             break;
         case ast::ExprSyntaxKind::StructLiteral:
             expr->node = ast::StructLiteralExpr{};
@@ -1253,25 +1257,76 @@ class ProgramBuilder {
         std::size_t child_index = 1;
         std::size_t ident_index = 0;
         std::size_t expr_index = 0;
+        std::size_t type_list_index = 0;
+        std::size_t expr_list_index = 0;
 
         while (child_index < context.children.size()) {
             const auto token_text =
                 require(context.children[child_index], "postfix child is missing").getText();
 
             if (token_text == ".") {
-                auto member =
-                    make_expr_syntax(ast::ExprSyntaxKind::MemberAccess,
-                                     span_range(result->range,
-                                                terminal_range(require(context.IDENT(ident_index),
-                                                                       "member name is missing"),
-                                                               source_)));
+                const auto member_name = identifier_text(
+                    require(context.identifier(ident_index), "member name is missing"));
+                const auto member_range = context_range(
+                    require(context.identifier(ident_index), "member name is missing"), source_);
+                ++ident_index;
+
+                child_index += 2;
+                std::vector<Owned<ast::TypeSyntax>> type_args;
+                if (child_index < context.children.size() &&
+                    require(context.children[child_index], "postfix child is missing").getText() ==
+                        "<") {
+                    auto &type_list =
+                        require(context.typeList(type_list_index), "method type args are missing");
+                    for (auto *type_context : type_list.type_()) {
+                        type_args.push_back(build_type_syntax(
+                            require(type_context, "method type argument is missing")));
+                    }
+                    ++type_list_index;
+                    child_index += 3;
+                }
+
+                if (child_index < context.children.size() &&
+                    require(context.children[child_index], "postfix child is missing").getText() ==
+                        "(") {
+                    const auto open_index = child_index;
+                    const bool has_arguments =
+                        open_index + 1 < context.children.size() &&
+                        require(context.children[open_index + 1], "method call child is missing")
+                                .getText() != ")";
+                    std::vector<Owned<ast::ExprSyntax>> arguments;
+                    std::size_t close_index = open_index + 1;
+                    if (has_arguments) {
+                        arguments = build_expr_list(require(context.exprList(expr_list_index),
+                                                            "method arguments are missing"));
+                        ++expr_list_index;
+                        close_index = open_index + 2;
+                    }
+
+                    auto &close_child =
+                        require(context.children[close_index], "method call close is missing");
+                    auto *close_terminal = dynamic_cast<antlr4::tree::TerminalNode *>(&close_child);
+                    const auto close_range = close_terminal != nullptr
+                                                 ? terminal_range(*close_terminal, source_)
+                                                 : result->range;
+                    auto method_call = make_expr_syntax(ast::ExprSyntaxKind::MethodCall,
+                                                        span_range(result->range, close_range));
+                    auto &method_node = std::get<ast::MethodCallExpr>(method_call->node);
+                    method_node.receiver = std::move(result);
+                    method_node.method = member_name;
+                    method_node.type_args = std::move(type_args);
+                    method_node.arguments = std::move(arguments);
+                    result = std::move(method_call);
+                    child_index = close_index + 1;
+                    continue;
+                }
+
+                auto member = make_expr_syntax(ast::ExprSyntaxKind::MemberAccess,
+                                               span_range(result->range, member_range));
                 auto &member_node = std::get<ast::MemberAccessExpr>(member->node);
                 member_node.base = std::move(result);
-                member_node.member =
-                    text_of(require(context.IDENT(ident_index), "member name is missing"));
+                member_node.member = member_name;
                 result = std::move(member);
-                ++ident_index;
-                child_index += 2;
                 continue;
             }
 
@@ -1420,6 +1475,13 @@ class ProgramBuilder {
         call_node.callee =
             build_qualified_name(require(context.qualifiedIdent(), "call target is missing"));
 
+        if (const auto type_list = borrow(context.typeList())) {
+            for (auto *type_context : type_list->get().type_()) {
+                call_node.type_args.push_back(
+                    build_type_syntax(require(type_context, "call type argument is missing")));
+            }
+        }
+
         if (const auto arguments = borrow(context.exprList())) {
             call_node.arguments = build_expr_list(arguments->get());
         }
@@ -1495,14 +1557,13 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::ExprSyntax>
     build_match_expr(AHFLParser::MatchExprContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::Match, context_range(context, source_));
+        auto expr = make_expr_syntax(ast::ExprSyntaxKind::Match, context_range(context, source_));
         auto &match_node = std::get<ast::MatchExpr>(expr->node);
 
         // matchExpr: 'match' expr '{' matchArm* '}' — the single direct expr
         // child is the scrutinee (antlr generates a single expr() accessor).
-        match_node.scrutinee = build_expr_syntax(
-            require(context.expr(), "match scrutinee is missing"));
+        match_node.scrutinee =
+            build_expr_syntax(require(context.expr(), "match scrutinee is missing"));
 
         for (auto *arm_context : context.matchArm()) {
             match_node.arms.push_back(
@@ -1524,8 +1585,8 @@ class ProgramBuilder {
         // is the last.
         const auto exprs = context.expr();
         if (exprs.size() > 1) {
-            arm->guard = build_expr_syntax(
-                require(exprs.front(), "match arm guard expression is missing"));
+            arm->guard =
+                build_expr_syntax(require(exprs.front(), "match arm guard expression is missing"));
         }
 
         arm->body =
@@ -1539,8 +1600,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::ExprSyntax>
     build_lambda_expr(AHFLParser::LambdaExprContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::Lambda, context_range(context, source_));
+        auto expr = make_expr_syntax(ast::ExprSyntaxKind::Lambda, context_range(context, source_));
         auto &lambda_node = std::get<ast::LambdaExpr>(expr->node);
 
         // lambdaExpr: BACKSLASH lambdaParamList? '->' expr
@@ -1558,9 +1618,10 @@ class ProgramBuilder {
     build_lambda_param_list(AHFLParser::LambdaParamListContext &context) const {
         std::vector<Owned<ast::LambdaParamSyntax>> params;
 
-        // lambdaParamList: IDENT | '(' (lambdaParam (',' lambdaParam)*)? ')'
+        // lambdaParamList: lambdaParam | '(' (lambdaParam (',' lambdaParam)*)? ')'
         // The parenthesised alt carries zero or more lambdaParam children; the
-        // bare-IDENT alt carries a single parameter with no type annotation.
+        // bare lambdaParam alt carries a single parameter with an optional type
+        // annotation.
         const auto named_params = context.lambdaParam();
         if (!named_params.empty()) {
             params.reserve(named_params.size());
@@ -1571,13 +1632,6 @@ class ProgramBuilder {
             return params;
         }
 
-        // Bare-IDENT alt: a single unparenthesised, untyped parameter.
-        if (const auto ident = borrow(context.IDENT())) {
-            auto param = make_owned<ast::LambdaParamSyntax>();
-            param->range = terminal_range(ident->get(), source_);
-            param->name = text_of(ident->get());
-            params.push_back(std::move(param));
-        }
         return params;
     }
 
@@ -1677,9 +1731,9 @@ class ProgramBuilder {
         pattern->text = source_text(source_, pattern->range);
         pattern->node = ast::BindingPattern{};
         auto &binding_node = std::get<ast::BindingPattern>(pattern->node);
-        binding_node.is_mut = !context.children.empty() &&
-                              require(context.children.front(), "binding prefix is missing")
-                                      .getText() == "mut";
+        binding_node.is_mut =
+            !context.children.empty() &&
+            require(context.children.front(), "binding prefix is missing").getText() == "mut";
         binding_node.name = text_of(require(context.IDENT(), "binding name is missing"));
 
         // Optional `@`-bound nested pattern.
@@ -2213,8 +2267,8 @@ class ProgramBuilder {
         type->range = context_range(context, source_);
 
         ast::AppType app_type;
-        app_type.name = build_qualified_name(
-            require(context.qualifiedIdent(), "app type name is missing"));
+        app_type.name =
+            build_qualified_name(require(context.qualifiedIdent(), "app type name is missing"));
 
         if (const auto type_list = borrow(context.typeList())) {
             for (auto *arg_type_ctx : type_list->get().type_()) {
@@ -2228,12 +2282,26 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::QualifiedName>
     build_qualified_name(AHFLParser::QualifiedIdentContext &context) const {
-        return build_qualified_name(context.IDENT(), context_range(context, source_));
+        return build_qualified_name(context.identifier(), context_range(context, source_));
     }
 
     [[nodiscard]] Owned<ast::QualifiedName>
     build_qualified_name(AHFLParser::QualifiedValueExprContext &context) const {
-        return build_qualified_name(context.IDENT(), context_range(context, source_));
+        return build_qualified_name(context.identifier(), context_range(context, source_));
+    }
+
+    [[nodiscard]] Owned<ast::QualifiedName>
+    build_qualified_name(const std::vector<AHFLParser::IdentifierContext *> &segments,
+                         SourceRange range) const {
+        auto name = make_owned<ast::QualifiedName>();
+        name->range = range;
+
+        for (auto *segment_context : segments) {
+            name->segments.push_back(
+                identifier_text(require(segment_context, "qualified name segment is missing")));
+        }
+
+        return name;
     }
 
     [[nodiscard]] Owned<ast::QualifiedName>
@@ -2442,8 +2510,8 @@ class ProgramBuilder {
         // backward compatible (empty vector).
         if (const auto type_list = borrow(context.typeList())) {
             for (auto *type_context : type_list->get().type_()) {
-                variant->payload.push_back(
-                    build_type_syntax(require(type_context, "enum variant payload type is missing")));
+                variant->payload.push_back(build_type_syntax(
+                    require(type_context, "enum variant payload type is missing")));
             }
         }
 

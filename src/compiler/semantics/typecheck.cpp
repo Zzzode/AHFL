@@ -147,6 +147,17 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                                                       : std::string{});
                 }
             },
+            [&](const ast::MethodCallExpr &e) {
+                append_typed_child(
+                    children, program, e.receiver.get(), source_id, TypedExprChildRole::Base);
+                for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                    append_typed_child(children,
+                                       program,
+                                       e.arguments[index].get(),
+                                       source_id,
+                                       TypedExprChildRole::Argument);
+                }
+            },
             [&](const ast::StructLiteralExpr &e) {
                 for (const auto &field : e.fields) {
                     append_typed_child(children,
@@ -246,11 +257,8 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                 // annotations are tracked by the fn typecheck pass, P2b), so
                 // only the body participates in the typed-tree graph here.
                 if (e.body) {
-                    append_typed_child(children,
-                                       program,
-                                       e.body.get(),
-                                       source_id,
-                                       TypedExprChildRole::Operand);
+                    append_typed_child(
+                        children, program, e.body.get(), source_id, TypedExprChildRole::Operand);
                 }
             },
         },
@@ -384,6 +392,22 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
                     return expr_spelling(*e.base) + "." + e.member;
                 return e.member;
             },
+            [](const ast::MethodCallExpr &e) -> std::string {
+                std::string spelling = e.receiver ? expr_spelling(*e.receiver) : std::string{};
+                spelling.push_back('.');
+                spelling.append(e.method);
+                spelling.push_back('(');
+                for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                    if (index != 0) {
+                        spelling.append(", ");
+                    }
+                    if (e.arguments[index] != nullptr) {
+                        spelling.append(expr_spelling(*e.arguments[index]));
+                    }
+                }
+                spelling.push_back(')');
+                return spelling;
+            },
             [](const ast::GroupExpr &e) -> std::string {
                 return e.inner ? expr_spelling(*e.inner) : "<group>";
             },
@@ -413,6 +437,11 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
                             ReferenceKind::FnCallTarget, e.callee->range, source_id);
                         fn_reference.has_value()) {
                         return fn_reference->get().target;
+                    }
+                    if (const auto variant_reference = resolve_result.find_reference(
+                            ReferenceKind::EnumVariantConstructor, e.callee->range, source_id);
+                        variant_reference.has_value()) {
+                        return variant_reference->get().target;
                     }
                     if (const auto reference = resolve_result.find_reference(
                             ReferenceKind::CallTarget, e.callee->range, source_id);
@@ -465,8 +494,8 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 
     // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference whose
     // symbol is a Function, so it is recognised as a Function call target.
-    if (const auto fn_reference =
-            resolve_result.find_reference(ReferenceKind::FnCallTarget, call.callee->range, source_id);
+    if (const auto fn_reference = resolve_result.find_reference(
+            ReferenceKind::FnCallTarget, call.callee->range, source_id);
         fn_reference.has_value()) {
         if (const auto symbol = resolve_result.symbol_table.get(fn_reference->get().target);
             symbol.has_value() && symbol->get().kind == SymbolKind::Function) {
@@ -516,6 +545,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
             [](const ast::CallExpr &e) -> std::string {
                 return e.callee ? e.callee->spelling() : std::string{};
             },
+            [&](const ast::MethodCallExpr &) -> std::string { return expr_spelling(expr); },
             [](const ast::StructLiteralExpr &e) -> std::string {
                 return e.type_name ? e.type_name->spelling() : std::string{};
             },
@@ -617,7 +647,24 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     if (const auto *m = std::get_if<ast::MemberAccessExpr>(&expr.node)) {
         return m->member;
     }
+    if (const auto *m = std::get_if<ast::MethodCallExpr>(&expr.node)) {
+        return m->method;
+    }
     return {};
+}
+
+[[nodiscard]] std::vector<std::string> lambda_param_names_for(const ast::ExprSyntax &expr) {
+    const auto *lambda = std::get_if<ast::LambdaExpr>(&expr.node);
+    if (lambda == nullptr) {
+        return {};
+    }
+
+    std::vector<std::string> names;
+    names.reserve(lambda->params.size());
+    for (const auto &param : lambda->params) {
+        names.push_back(param->name);
+    }
+    return names;
 }
 
 [[nodiscard]] std::string_view narrowed_fact_description(TypeFactKind kind) noexcept {
@@ -821,6 +868,7 @@ TypeCheckResult TypeCheckPass::run() {
     FlowSema(*this).run();
     WorkflowSema(*this).run();
     FnSema(*this).run();
+    ImplSema(*this).run();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
 }
@@ -894,22 +942,33 @@ MaybeCRef<ast::TypeAliasDecl> TypeCheckPass::alias_decl_of(SymbolId id) const {
 }
 
 TypeResolver TypeCheckPass::make_type_resolver() {
-    auto type_param_info = [this](SymbolId id) -> std::optional<std::vector<std::string>> {
+    const auto collect_type_param_names = [](const auto &type_params) {
+        std::vector<std::string> names;
+        names.reserve(type_params.size());
+        for (const auto &type_param : type_params) {
+            names.push_back(type_param->name);
+        }
+        return names;
+    };
+
+    auto type_param_info =
+        [this, collect_type_param_names](SymbolId id) -> std::optional<std::vector<std::string>> {
         if (const auto s = environment().get_struct(id); s.has_value()) {
             return s->get().type_param_names;
         }
         if (const auto e = environment().get_enum(id); e.has_value()) {
             return e->get().type_param_names;
         }
+        if (const auto s = find_decl_ref(struct_decls_, id); s.has_value()) {
+            return collect_type_param_names(s->get().type_params);
+        }
+        if (const auto e = find_decl_ref(enum_decls_, id); e.has_value()) {
+            return collect_type_param_names(e->get().type_params);
+        }
         // Type aliases are resolved lazily via alias body resolution; their
         // type params are stored on the declaration.
         if (const auto alias = alias_decl_of(id); alias.has_value()) {
-            std::vector<std::string> names;
-            names.reserve(alias->get().type_params.size());
-            for (const auto &tp : alias->get().type_params) {
-                names.push_back(tp->name);
-            }
-            return names;
+            return collect_type_param_names(alias->get().type_params);
         }
         return std::nullopt;
     };
@@ -924,7 +983,21 @@ TypeResolver TypeCheckPass::make_type_resolver() {
                SourceRange range) { typecheck_error_here(code, std::move(message), range); },
         [this](SymbolId id) { return alias_decl_of(id); },
         [this](SymbolId id, const ast::TypeSyntax &aliased_type) {
-            return with_symbol_context(id, [&]() { return resolve_type(aliased_type); });
+            const auto alias_decl = alias_decl_of(id);
+            std::vector<std::string> type_param_names;
+            if (alias_decl.has_value()) {
+                type_param_names.reserve(alias_decl->get().type_params.size());
+                for (const auto &type_param : alias_decl->get().type_params) {
+                    type_param_names.push_back(type_param->name);
+                }
+            }
+
+            const auto *previous_type_params = current_type_param_names_;
+            current_type_param_names_ =
+                type_param_names.empty() ? previous_type_params : &type_param_names;
+            TypePtr result = with_symbol_context(id, [&]() { return resolve_type(aliased_type); });
+            current_type_param_names_ = previous_type_params;
+            return result;
         },
         std::move(type_param_info)};
     resolver.set_type_param_names(current_type_param_names_);
@@ -953,12 +1026,11 @@ TypePtr TypeCheckPass::resolve_type_syntax(const ast::TypeSyntax &type) {
     return resolve_type(type);
 }
 
-// P2c (RFC §3.5): ExpressionSemaDelegate hook that records a resolved fn call
-// site into the typed program so the monomorphization pass has stable input
-// without re-walking the typed tree. The recorded entry ties the resolved fn
-// symbol to the call range and the (currently empty) explicit type-args list;
-// inference of type args from argument types lands with the generic-body
-// typecheck work.
+// P2c/P2d (RFC §3.5): ExpressionSemaDelegate hook that records a resolved fn
+// call site into the typed program so the monomorphization pass has stable
+// input without re-walking the typed tree. The recorded entry ties the resolved
+// fn symbol to the call range and the concrete type arguments selected by
+// explicit syntax plus inference; monomorphic calls use an empty list.
 void TypeCheckPass::record_fn_call_site(SymbolId fn_symbol,
                                         SourceRange call_range,
                                         std::vector<TypePtr> type_args) {
@@ -1070,32 +1142,29 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
     for (const auto &trait_method : trait.methods) {
         const auto impl_method = find_impl_method(impl, trait_method.name);
         if (!impl_method.has_value()) {
-            typecheck_error_here(
-                error_codes::typecheck::TraitMethodNotFound,
-                messages::typecheck::TraitMethodNotFound.format_with(trait.canonical_name,
-                                                                     trait_method.name),
-                impl.declaration_range);
+            typecheck_error_here(error_codes::typecheck::TraitMethodNotFound,
+                                 messages::typecheck::TraitMethodNotFound.format_with(
+                                     trait.canonical_name, trait_method.name),
+                                 impl.declaration_range);
             continue;
         }
         if (!signatures_match(trait_method, impl_method->get())) {
-            typecheck_error_here(
-                error_codes::typecheck::TraitMethodSignatureMismatch,
-                messages::typecheck::TraitMethodSignatureMismatch.format_with(
-                    trait_method.name,
-                    render_param_types(trait_method.params),
-                    render_param_types(impl_method->get().params)),
-                impl_method->get().declaration_range);
+            typecheck_error_here(error_codes::typecheck::TraitMethodSignatureMismatch,
+                                 messages::typecheck::TraitMethodSignatureMismatch.format_with(
+                                     trait_method.name,
+                                     render_param_types(trait_method.params),
+                                     render_param_types(impl_method->get().params)),
+                                 impl_method->get().declaration_range);
         }
     }
 
     // Impl method -> trait method (reject stray methods).
     for (const auto &impl_method : impl.methods) {
         if (!trait.find_method(impl_method.name).has_value()) {
-            typecheck_error_here(
-                error_codes::typecheck::TraitMethodNotFound,
-                messages::typecheck::TraitMethodNotInTrait.format_with(impl_method.name,
-                                                                       trait.canonical_name),
-                impl_method.declaration_range);
+            typecheck_error_here(error_codes::typecheck::TraitMethodNotFound,
+                                 messages::typecheck::TraitMethodNotInTrait.format_with(
+                                     impl_method.name, trait.canonical_name),
+                                 impl_method.declaration_range);
         }
     }
 
@@ -1109,11 +1178,10 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
             }
         }
         if (!found) {
-            typecheck_error_here(
-                error_codes::typecheck::TraitAssocTypeNotFound,
-                messages::typecheck::TraitAssocTypeNotFound.format_with(trait.canonical_name,
-                                                                        assoc.name),
-                impl.declaration_range);
+            typecheck_error_here(error_codes::typecheck::TraitAssocTypeNotFound,
+                                 messages::typecheck::TraitAssocTypeNotFound.format_with(
+                                     trait.canonical_name, assoc.name),
+                                 impl.declaration_range);
         }
     }
 
@@ -1123,8 +1191,8 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
     for (const auto super_id : trait.super_traits) {
         if (!impl_target_implements(*impl.target_symbol, super_id)) {
             const auto super_info = environment().get_trait(super_id);
-            const auto super_name =
-                super_info.has_value() ? super_info->get().canonical_name : std::string{"<unknown>"};
+            const auto super_name = super_info.has_value() ? super_info->get().canonical_name
+                                                           : std::string{"<unknown>"};
             typecheck_error_here(
                 error_codes::typecheck::MissingSuperTrait,
                 messages::typecheck::MissingSuperTrait.format_with(
@@ -1225,6 +1293,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->binary_op = expr_binary_op(expr);
         typed_expr->literal_spelling = literal_spelling_for(expr);
         typed_expr->member_name = expr_member_name(expr);
+        typed_expr->lambda_params = lambda_param_names_for(expr);
         return;
     }
 
@@ -1242,6 +1311,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->binary_op = expr_binary_op(expr);
             typed_expr->literal_spelling = literal_spelling_for(expr);
             typed_expr->member_name = expr_member_name(expr);
+            typed_expr->lambda_params = lambda_param_names_for(expr);
             typed_expr->path_root_kind =
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             return;
@@ -1270,6 +1340,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .binary_op = expr_binary_op(expr),
         .literal_spelling = literal_spelling_for(expr),
         .member_name = expr_member_name(expr),
+        .lambda_params = lambda_param_names_for(expr),
         .const_value = std::nullopt,
     });
     if (expr.node_id != 0) {
@@ -1641,8 +1712,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 // subset. Invariant clauses get the stricter
                 // InvariantSafetyLiveness context (Nondet is disallowed).
                 if (clause->kind == ast::ContractClauseKind::Invariant) {
-                    context.verification_context =
-                        VerificationContext::InvariantSafetyLiveness;
+                    context.verification_context = VerificationContext::InvariantSafetyLiveness;
                 } else {
                     context.verification_context = VerificationContext::Contract;
                 }
@@ -1661,8 +1731,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
             // P4a: all contract clauses live in the verified subset.
             // Invariant clauses additionally disallow Nondet (RFC §4.2).
             if (clause->kind == ast::ContractClauseKind::Invariant) {
-                context.verification_context =
-                    VerificationContext::InvariantSafetyLiveness;
+                context.verification_context = VerificationContext::InvariantSafetyLiveness;
             } else {
                 context.verification_context = VerificationContext::Contract;
             }
@@ -1971,15 +2040,13 @@ void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
 
         for (const auto &formula : decl.safety) {
             ValueContext formula_context = return_context;
-            formula_context.verification_context =
-                VerificationContext::InvariantSafetyLiveness;
+            formula_context.verification_context = VerificationContext::InvariantSafetyLiveness;
             driver_->check_temporal_embedded_exprs(*formula, formula_context);
         }
 
         for (const auto &formula : decl.liveness) {
             ValueContext formula_context = return_context;
-            formula_context.verification_context =
-                VerificationContext::InvariantSafetyLiveness;
+            formula_context.verification_context = VerificationContext::InvariantSafetyLiveness;
             driver_->check_temporal_embedded_exprs(*formula, formula_context);
         }
 
@@ -2030,13 +2097,11 @@ ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &progra
             result = join_effects(result, program.expressions[expr_idx].effect);
         }
         // Recurse into nested blocks (if statements have then/else blocks).
-        if (stmt.then_block_index != UINT32_MAX &&
-            stmt.then_block_index < program.blocks.size()) {
+        if (stmt.then_block_index != UINT32_MAX && stmt.then_block_index < program.blocks.size()) {
             result = join_effects(
                 result, block_body_effect(program.blocks[stmt.then_block_index], program));
         }
-        if (stmt.else_block_index != UINT32_MAX &&
-            stmt.else_block_index < program.blocks.size()) {
+        if (stmt.else_block_index != UINT32_MAX && stmt.else_block_index < program.blocks.size()) {
             result = join_effects(
                 result, block_body_effect(program.blocks[stmt.else_block_index], program));
         }
@@ -2077,15 +2142,13 @@ void FnSema::check_fns_in_program(const ast::Program &program) {
             continue;
         }
 
-        const auto fn_symbol =
-            driver_->find_local_here(SymbolNamespace::Functions, decl.name);
+        const auto fn_symbol = driver_->find_local_here(SymbolNamespace::Functions, decl.name);
         if (!fn_symbol.has_value()) {
             continue;
         }
 
-        driver_->with_symbol_context(fn_symbol->get().id, [&] {
-            check_fn_body(fn_symbol->get().id, decl);
-        });
+        driver_->with_symbol_context(fn_symbol->get().id,
+                                     [&] { check_fn_body(fn_symbol->get().id, decl); });
     }
 }
 
@@ -2112,8 +2175,7 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
 
     for (const auto &param : info.params) {
         context.bindings.emplace(
-            param.name,
-            param.type != nullptr ? param.type->clone() : driver_->make_error_type());
+            param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
     }
 
     // Type-check the body block.
@@ -2161,6 +2223,135 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
                 std::holds_alternative<FnTypeInfo>(typed_decl.payload)) {
                 std::get<FnTypeInfo>(typed_decl.payload).body_block_index = body_block_idx;
                 break;
+            }
+        }
+    }
+}
+
+void ImplSema::run() {
+    check_impls();
+}
+
+void ImplSema::check_impls() {
+    for (const auto &[impl_index, entry] : driver_->impl_decls_) {
+        driver_->with_symbol_context_for_impl(entry.source_id, [&]() {
+            const auto &impls = driver_->environment().impls();
+            const auto iter = impls.find(impl_index);
+            if (iter == impls.end()) {
+                return;
+            }
+            check_impl_body(impl_index, entry.decl.get(), iter->second);
+        });
+    }
+}
+
+void ImplSema::check_impl_body(std::size_t impl_index,
+                               const ast::ImplDecl &decl,
+                               const ImplTypeInfo &impl_info) {
+    for (const auto &method : decl.methods) {
+        if (method == nullptr || !method->body) {
+            continue;
+        }
+        const auto method_info = driver_->find_impl_method(impl_info, method->name);
+        if (!method_info.has_value()) {
+            continue;
+        }
+        check_impl_method_body(impl_index, *method, impl_info, method_info->get());
+    }
+}
+
+void ImplSema::check_impl_method_body(std::size_t impl_index,
+                                      const ast::FnDecl &method_decl,
+                                      const ImplTypeInfo &impl_info,
+                                      const ImplMethodInfo &method_info) {
+    if (!method_decl.body) {
+        return;
+    }
+
+    std::vector<std::string> type_param_names;
+    type_param_names.reserve(impl_info.type_param_names.size() +
+                             method_info.type_param_names.size());
+    type_param_names.insert(type_param_names.end(),
+                            impl_info.type_param_names.begin(),
+                            impl_info.type_param_names.end());
+    type_param_names.insert(type_param_names.end(),
+                            method_info.type_param_names.begin(),
+                            method_info.type_param_names.end());
+
+    const auto *prev_type_params = driver_->current_type_param_names_;
+    if (!type_param_names.empty()) {
+        driver_->current_type_param_names_ = &type_param_names;
+    }
+
+    ValueContext context;
+    context.call_context = CallContext::Flow;
+    context.verification_context = VerificationContext::None;
+    for (const auto &param : method_info.params) {
+        context.bindings.emplace(
+            param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
+    }
+
+    if (method_info.return_type != nullptr) {
+        driver_->check_block(*method_decl.body,
+                             context,
+                             std::cref(*method_info.return_type),
+                             /*state_name=*/"",
+                             /*expected_return_origin=*/std::nullopt);
+    } else {
+        driver_->check_block(*method_decl.body, context, std::nullopt);
+    }
+
+    driver_->current_type_param_names_ = prev_type_params;
+
+    const auto body_block_idx = driver_->find_block_index_by_range(*method_decl.body);
+    const auto &typed_program = driver_->result_.typed_program;
+    ExprEffect body_effect = ExprEffect::Pure;
+    if (body_block_idx < typed_program.blocks.size()) {
+        body_effect = block_body_effect(typed_program.blocks[body_block_idx], typed_program);
+    }
+
+    const auto body_judgement = project(body_effect);
+    if (!judgement_le(body_judgement, method_info.effect.judgement)) {
+        driver_->typecheck_error_here(error_codes::typecheck::EffectUnderdeclared,
+                                      messages::typecheck::EffectUnderdeclared.format_with(
+                                          method_info.name,
+                                          std::string(to_string(method_info.effect.judgement)),
+                                          std::string(to_string(body_judgement))),
+                                      method_decl.body->range);
+    }
+
+    if (body_block_idx < typed_program.blocks.size()) {
+        record_impl_method_body_index(impl_index, method_info.name, body_block_idx);
+    }
+}
+
+void ImplSema::record_impl_method_body_index(std::size_t impl_index,
+                                             std::string_view method_name,
+                                             std::uint32_t body_block_index) {
+    auto &impls =
+        const_cast<std::unordered_map<std::size_t, ImplTypeInfo> &>(driver_->environment().impls());
+    if (const auto impl_iter = impls.find(impl_index); impl_iter != impls.end()) {
+        for (auto &method : impl_iter->second.methods) {
+            if (method.name == method_name) {
+                method.body_block_index = body_block_index;
+                break;
+            }
+        }
+    }
+
+    for (auto &typed_decl : driver_->result_.typed_program.declarations) {
+        if (typed_decl.kind != ast::NodeKind::ImplDecl ||
+            !std::holds_alternative<ImplTypeInfo>(typed_decl.payload)) {
+            continue;
+        }
+        auto &payload = std::get<ImplTypeInfo>(typed_decl.payload);
+        if (payload.index != impl_index) {
+            continue;
+        }
+        for (auto &method : payload.methods) {
+            if (method.name == method_name) {
+                method.body_block_index = body_block_index;
+                return;
             }
         }
     }
@@ -2371,7 +2562,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     case ast::StatementSyntaxKind::If: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
-            .flow_facts = {},
+            .flow_facts = context.flow_facts,
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
@@ -2551,7 +2742,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     case ast::StatementSyntaxKind::Assert: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
-            .flow_facts = {},
+            .flow_facts = context.flow_facts,
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };

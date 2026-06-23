@@ -108,6 +108,11 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
                            collect_called_targets_from_expr(*argument, called_targets);
                        }
                    },
+                   [&](const LambdaExpr &value) {
+                       if (value.body) {
+                           collect_called_targets_from_expr(*value.body, called_targets);
+                       }
+                   },
                    [&](const StructLiteralExpr &value) {
                        for (const auto &field : value.fields) {
                            collect_called_targets_from_expr(*field.value, called_targets);
@@ -139,12 +144,25 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
                    [&](const MemberAccessExpr &value) {
                        collect_called_targets_from_expr(*value.base, called_targets);
                    },
-                   [&](const IndexAccessExpr &value) {
-                       collect_called_targets_from_expr(*value.base, called_targets);
-                       collect_called_targets_from_expr(*value.index, called_targets);
-                   },
-               },
-               expr.node);
+	                   [&](const IndexAccessExpr &value) {
+	                       collect_called_targets_from_expr(*value.base, called_targets);
+	                       collect_called_targets_from_expr(*value.index, called_targets);
+	                   },
+	                   [&](const MatchExpr &value) {
+	                       if (value.scrutinee) {
+	                           collect_called_targets_from_expr(*value.scrutinee, called_targets);
+	                       }
+	                       for (const auto &arm : value.arms) {
+	                           if (arm.guard) {
+	                               collect_called_targets_from_expr(*arm.guard, called_targets);
+	                           }
+	                           if (arm.body) {
+	                               collect_called_targets_from_expr(*arm.body, called_targets);
+	                           }
+	                       }
+	                   },
+	               },
+	               expr.node);
 }
 
 void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summary &other) {
@@ -288,6 +306,11 @@ void collect_workflow_value_reads(const Expr &expr,
                            collect_workflow_value_reads(*argument, workflow_node_names, reads);
                        }
                    },
+                   [&](const LambdaExpr &value) {
+                       if (value.body) {
+                           collect_workflow_value_reads(*value.body, workflow_node_names, reads);
+                       }
+                   },
                    [&](const StructLiteralExpr &value) {
                        for (const auto &field : value.fields) {
                            collect_workflow_value_reads(*field.value, workflow_node_names, reads);
@@ -319,12 +342,28 @@ void collect_workflow_value_reads(const Expr &expr,
                    [&](const MemberAccessExpr &value) {
                        collect_workflow_value_reads(*value.base, workflow_node_names, reads);
                    },
-                   [&](const IndexAccessExpr &value) {
-                       collect_workflow_value_reads(*value.base, workflow_node_names, reads);
-                       collect_workflow_value_reads(*value.index, workflow_node_names, reads);
-                   },
-               },
-               expr.node);
+	                   [&](const IndexAccessExpr &value) {
+	                       collect_workflow_value_reads(*value.base, workflow_node_names, reads);
+	                       collect_workflow_value_reads(*value.index, workflow_node_names, reads);
+	                   },
+	                   [&](const MatchExpr &value) {
+	                       if (value.scrutinee) {
+	                           collect_workflow_value_reads(
+	                               *value.scrutinee, workflow_node_names, reads);
+	                       }
+	                       for (const auto &arm : value.arms) {
+	                           if (arm.guard) {
+	                               collect_workflow_value_reads(
+	                                   *arm.guard, workflow_node_names, reads);
+	                           }
+	                           if (arm.body) {
+	                               collect_workflow_value_reads(
+	                                   *arm.body, workflow_node_names, reads);
+	                           }
+	                       }
+	                   },
+	               },
+	               expr.node);
 }
 
 [[nodiscard]] WorkflowExprSummary

@@ -1,6 +1,7 @@
 #include "compiler/ir/opt/opt_verify.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <string>
@@ -43,6 +44,20 @@ namespace {
     }
     if (lhs.second && rhs.second && !type_refs_compatible(*lhs.second, *rhs.second)) {
         return false;
+    }
+    if (!lhs.params.empty() && !rhs.params.empty()) {
+        if (lhs.params.size() != rhs.params.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < lhs.params.size(); ++index) {
+            if (static_cast<bool>(lhs.params[index]) != static_cast<bool>(rhs.params[index])) {
+                return false;
+            }
+            if (lhs.params[index] && rhs.params[index] &&
+                !type_refs_compatible(*lhs.params[index], *rhs.params[index])) {
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -127,6 +142,7 @@ class FunctionVerifier {
         if (function_.source_range.has_value()) {
             verify_source_range(*function_.source_range, "function source range", std::nullopt);
         }
+        verify_type_ref(function_.return_type, "function return type", std::nullopt);
         definitions_.assign(function_.locals.size(), false);
         uses_.assign(function_.locals.size(), false);
         for (std::uint32_t index = 0;
@@ -150,6 +166,7 @@ class FunctionVerifier {
             if (local.source_range.has_value()) {
                 verify_source_range(*local.source_range, "local source range", std::nullopt);
             }
+            verify_type_ref(local.type, "local %" + std::to_string(index) + " type", std::nullopt);
         }
     }
 
@@ -212,6 +229,8 @@ class FunctionVerifier {
     }
 
     void verify_rvalue(const Rvalue &rvalue, std::uint32_t block_id) {
+        verify_type_ref(rvalue.result_type, "rvalue result type", block_id);
+
         switch (rvalue.kind) {
         case Rvalue::Kind::Use:
             expect_operand_count(rvalue, 1, "use rvalue", block_id);
@@ -327,6 +346,25 @@ class FunctionVerifier {
             break;
         case Terminator::Kind::Unreachable:
             break;
+        }
+    }
+
+    void verify_type_ref(const TypeRef &type,
+                         const std::string &label,
+                         std::optional<std::uint32_t> block_id) {
+        if (type.first) {
+            verify_type_ref(*type.first, label + ".first", block_id);
+        }
+        if (type.second) {
+            verify_type_ref(*type.second, label + ".second", block_id);
+        }
+        for (std::size_t index = 0; index < type.params.size(); ++index) {
+            const auto child_label = label + ".params[" + std::to_string(index) + "]";
+            if (!type.params[index]) {
+                add_error(child_label + " is null", block_id);
+                continue;
+            }
+            verify_type_ref(*type.params[index], child_label, block_id);
         }
     }
 

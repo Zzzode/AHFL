@@ -14,25 +14,25 @@ namespace {
 // Desugaring target paths (fully-qualified stdlib names)
 // ---------------------------------------------------------------------------
 
-const std::vector<std::string> kOptionTypePath    = {"std", "option", "Option"};
+const std::vector<std::string> kOptionTypePath = {"std", "option", "Option"};
 const std::vector<std::string> kOptionVariantSome = {"std", "option", "Option", "Some"};
 const std::vector<std::string> kOptionVariantNone = {"std", "option", "Option", "None"};
 
-const std::vector<std::string> kListTypePath      = {"std", "collections", "List"};
+const std::vector<std::string> kListTypePath = {"std", "collections", "List"};
 const std::vector<std::string> kListFromArrayPath = {"std", "collections", "list_from_array"};
 
-const std::vector<std::string> kSetTypePath       = {"std", "collections", "Set"};
-const std::vector<std::string> kSetFromArrayPath  = {"std", "collections", "set_from_array"};
+const std::vector<std::string> kSetTypePath = {"std", "collections", "Set"};
+const std::vector<std::string> kSetFromArrayPath = {"std", "collections", "set_from_array"};
 
-const std::vector<std::string> kMapTypePath         = {"std", "collections", "Map"};
-const std::vector<std::string> kMapFromEntriesPath  = {"std", "collections", "map_from_entries"};
+const std::vector<std::string> kMapTypePath = {"std", "collections", "Map"};
+const std::vector<std::string> kMapFromEntriesPath = {"std", "collections", "map_from_entries"};
 
 // ---------------------------------------------------------------------------
 // Synthetic AST node builders (file-local helpers)
 // ---------------------------------------------------------------------------
 
 Owned<ast::QualifiedName> make_qualified_name(std::vector<std::string> segments,
-                                               SourceRange range) {
+                                              SourceRange range) {
     auto name = make_owned<ast::QualifiedName>();
     name->range = range;
     name->segments = std::move(segments);
@@ -53,8 +53,7 @@ Owned<ast::TypeSyntax> make_app_type(std::vector<std::string> path,
     return type;
 }
 
-Owned<ast::ExprSyntax> make_qualified_value(std::vector<std::string> path,
-                                             SourceRange range) {
+Owned<ast::ExprSyntax> make_qualified_value(std::vector<std::string> path, SourceRange range) {
     auto expr = make_owned<ast::ExprSyntax>();
     expr->range = range;
     expr->node_id = 0; // synthetic node, no stable id
@@ -67,8 +66,8 @@ Owned<ast::ExprSyntax> make_qualified_value(std::vector<std::string> path,
 }
 
 Owned<ast::ExprSyntax> make_call_expr(std::vector<std::string> callee,
-                                       std::vector<Owned<ast::ExprSyntax>> args,
-                                       SourceRange range) {
+                                      std::vector<Owned<ast::ExprSyntax>> args,
+                                      SourceRange range) {
     auto expr = make_owned<ast::ExprSyntax>();
     expr->range = range;
     expr->node_id = 0;
@@ -99,34 +98,29 @@ Owned<ast::TypeSyntax> desugar_type_node(Owned<ast::TypeSyntax> type) {
 
     // Step 1: recursively desugar children (bottom-up)
     std::visit(Overloaded{
-        [&](ast::OptionalType &t) {
-            t.inner = desugar_type_node(std::move(t.inner));
-        },
-        [&](ast::ListType &t) {
-            t.element = desugar_type_node(std::move(t.element));
-        },
-        [&](ast::SetType &t) {
-            t.element = desugar_type_node(std::move(t.element));
-        },
-        [&](ast::MapType &t) {
-            t.key_type = desugar_type_node(std::move(t.key_type));
-            t.value_type = desugar_type_node(std::move(t.value_type));
-        },
-        [&](ast::AppType &t) {
-            for (auto &arg : t.arguments) {
-                arg = desugar_type_node(std::move(arg));
-            }
-        },
-        [&](ast::FnType &t) {
-            for (auto &p : t.params) {
-                p = desugar_type_node(std::move(p));
-            }
-            if (t.return_type) {
-                t.return_type = desugar_type_node(std::move(t.return_type));
-            }
-        },
-        [](auto &) { /* leaf: no child types */ },
-    }, type->node);
+                   [&](ast::OptionalType &t) { t.inner = desugar_type_node(std::move(t.inner)); },
+                   [&](ast::ListType &t) { t.element = desugar_type_node(std::move(t.element)); },
+                   [&](ast::SetType &t) { t.element = desugar_type_node(std::move(t.element)); },
+                   [&](ast::MapType &t) {
+                       t.key_type = desugar_type_node(std::move(t.key_type));
+                       t.value_type = desugar_type_node(std::move(t.value_type));
+                   },
+                   [&](ast::AppType &t) {
+                       for (auto &arg : t.arguments) {
+                           arg = desugar_type_node(std::move(arg));
+                       }
+                   },
+                   [&](ast::FnType &t) {
+                       for (auto &p : t.params) {
+                           p = desugar_type_node(std::move(p));
+                       }
+                       if (t.return_type) {
+                           t.return_type = desugar_type_node(std::move(t.return_type));
+                       }
+                   },
+                   [](auto &) { /* leaf: no child types */ },
+               },
+               type->node);
 
     // Step 2: desugar this node if it's a sugar form
 
@@ -175,65 +169,64 @@ Owned<ast::ExprSyntax> desugar_expr_node(Owned<ast::ExprSyntax> expr) {
 
     // Step 1: recursively desugar children
     std::visit(Overloaded{
-        [&](ast::SomeExpr &e) {
-            e.value = desugar_expr_node(std::move(e.value));
-        },
-        [&](ast::CallExpr &e) {
-            desugar_expr_list(e.arguments);
-        },
-        [&](ast::StructLiteralExpr &e) {
-            for (auto &f : e.fields) {
-                f->value = desugar_expr_node(std::move(f->value));
-            }
-        },
-        [&](ast::ListLiteralExpr &e) {
-            desugar_expr_list(e.items);
-        },
-        [&](ast::SetLiteralExpr &e) {
-            desugar_expr_list(e.items);
-        },
-        [&](ast::MapLiteralExpr &e) {
-            for (auto &entry : e.entries) {
-                entry->key = desugar_expr_node(std::move(entry->key));
-                entry->value = desugar_expr_node(std::move(entry->value));
-            }
-        },
-        [&](ast::UnaryExpr &e) {
-            e.operand = desugar_expr_node(std::move(e.operand));
-        },
-        [&](ast::BinaryExpr &e) {
-            e.lhs = desugar_expr_node(std::move(e.lhs));
-            e.rhs = desugar_expr_node(std::move(e.rhs));
-        },
-        [&](ast::MemberAccessExpr &e) {
-            e.base = desugar_expr_node(std::move(e.base));
-        },
-        [&](ast::IndexAccessExpr &e) {
-            e.base = desugar_expr_node(std::move(e.base));
-            e.index = desugar_expr_node(std::move(e.index));
-        },
-        [&](ast::GroupExpr &e) {
-            e.inner = desugar_expr_node(std::move(e.inner));
-        },
-        [&](ast::MatchExpr &e) {
-            e.scrutinee = desugar_expr_node(std::move(e.scrutinee));
-            for (auto &arm : e.arms) {
-                if (arm->guard) {
-                    arm->guard = desugar_expr_node(std::move(arm->guard));
-                }
-                arm->body = desugar_expr_node(std::move(arm->body));
-            }
-        },
-        [&](ast::LambdaExpr &e) {
-            e.body = desugar_expr_node(std::move(e.body));
-            for (auto &param : e.params) {
-                if (param->type) {
-                    param->type = desugar_type_node(std::move(param->type));
-                }
-            }
-        },
-        [](auto &) { /* leaf: no child exprs */ },
-    }, expr->node);
+                   [&](ast::SomeExpr &e) { e.value = desugar_expr_node(std::move(e.value)); },
+                   [&](ast::CallExpr &e) {
+                       for (auto &type_arg : e.type_args) {
+                           type_arg = desugar_type_node(std::move(type_arg));
+                       }
+                       desugar_expr_list(e.arguments);
+                   },
+                   [&](ast::MethodCallExpr &e) {
+                       e.receiver = desugar_expr_node(std::move(e.receiver));
+                       for (auto &type_arg : e.type_args) {
+                           type_arg = desugar_type_node(std::move(type_arg));
+                       }
+                       desugar_expr_list(e.arguments);
+                   },
+                   [&](ast::StructLiteralExpr &e) {
+                       for (auto &f : e.fields) {
+                           f->value = desugar_expr_node(std::move(f->value));
+                       }
+                   },
+                   [&](ast::ListLiteralExpr &e) { desugar_expr_list(e.items); },
+                   [&](ast::SetLiteralExpr &e) { desugar_expr_list(e.items); },
+                   [&](ast::MapLiteralExpr &e) {
+                       for (auto &entry : e.entries) {
+                           entry->key = desugar_expr_node(std::move(entry->key));
+                           entry->value = desugar_expr_node(std::move(entry->value));
+                       }
+                   },
+                   [&](ast::UnaryExpr &e) { e.operand = desugar_expr_node(std::move(e.operand)); },
+                   [&](ast::BinaryExpr &e) {
+                       e.lhs = desugar_expr_node(std::move(e.lhs));
+                       e.rhs = desugar_expr_node(std::move(e.rhs));
+                   },
+                   [&](ast::MemberAccessExpr &e) { e.base = desugar_expr_node(std::move(e.base)); },
+                   [&](ast::IndexAccessExpr &e) {
+                       e.base = desugar_expr_node(std::move(e.base));
+                       e.index = desugar_expr_node(std::move(e.index));
+                   },
+                   [&](ast::GroupExpr &e) { e.inner = desugar_expr_node(std::move(e.inner)); },
+                   [&](ast::MatchExpr &e) {
+                       e.scrutinee = desugar_expr_node(std::move(e.scrutinee));
+                       for (auto &arm : e.arms) {
+                           if (arm->guard) {
+                               arm->guard = desugar_expr_node(std::move(arm->guard));
+                           }
+                           arm->body = desugar_expr_node(std::move(arm->body));
+                       }
+                   },
+                   [&](ast::LambdaExpr &e) {
+                       e.body = desugar_expr_node(std::move(e.body));
+                       for (auto &param : e.params) {
+                           if (param->type) {
+                               param->type = desugar_type_node(std::move(param->type));
+                           }
+                       }
+                   },
+                   [](auto &) { /* leaf: no child exprs */ },
+               },
+               expr->node);
 
     // Step 2: desugar this node if it's a sugar form
 
@@ -296,17 +289,14 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
             stmt.let_stmt->type = desugar_type_node(std::move(stmt.let_stmt->type));
         }
         if (stmt.let_stmt->initializer) {
-            stmt.let_stmt->initializer =
-                desugar_expr_node(std::move(stmt.let_stmt->initializer));
+            stmt.let_stmt->initializer = desugar_expr_node(std::move(stmt.let_stmt->initializer));
         }
         break;
     case ast::StatementSyntaxKind::Assign:
-        stmt.assign_stmt->value =
-            desugar_expr_node(std::move(stmt.assign_stmt->value));
+        stmt.assign_stmt->value = desugar_expr_node(std::move(stmt.assign_stmt->value));
         break;
     case ast::StatementSyntaxKind::If:
-        stmt.if_stmt->condition =
-            desugar_expr_node(std::move(stmt.if_stmt->condition));
+        stmt.if_stmt->condition = desugar_expr_node(std::move(stmt.if_stmt->condition));
         desugar_block_node(*stmt.if_stmt->then_block);
         if (stmt.if_stmt->else_block) {
             desugar_block_node(*stmt.if_stmt->else_block);
@@ -314,17 +304,14 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
         break;
     case ast::StatementSyntaxKind::Return:
         if (stmt.return_stmt->value) {
-            stmt.return_stmt->value =
-                desugar_expr_node(std::move(stmt.return_stmt->value));
+            stmt.return_stmt->value = desugar_expr_node(std::move(stmt.return_stmt->value));
         }
         break;
     case ast::StatementSyntaxKind::Assert:
-        stmt.assert_stmt->condition =
-            desugar_expr_node(std::move(stmt.assert_stmt->condition));
+        stmt.assert_stmt->condition = desugar_expr_node(std::move(stmt.assert_stmt->condition));
         break;
     case ast::StatementSyntaxKind::Expr:
-        stmt.expr_stmt->expr =
-            desugar_expr_node(std::move(stmt.expr_stmt->expr));
+        stmt.expr_stmt->expr = desugar_expr_node(std::move(stmt.expr_stmt->expr));
         break;
     case ast::StatementSyntaxKind::Goto:
         break; // no expressions
@@ -343,10 +330,13 @@ void desugar_block_node(ast::BlockSyntax &block) {
 
 void desugar_fn_decl_body(ast::FnDecl &decl) {
     for (auto &param : decl.params) {
-        if (param->type) param->type = desugar_type_node(std::move(param->type));
+        if (param->type)
+            param->type = desugar_type_node(std::move(param->type));
     }
-    if (decl.return_type) decl.return_type = desugar_type_node(std::move(decl.return_type));
-    if (decl.body) desugar_block_node(*decl.body);
+    if (decl.return_type)
+        decl.return_type = desugar_type_node(std::move(decl.return_type));
+    if (decl.body)
+        desugar_block_node(*decl.body);
 }
 
 } // namespace
@@ -365,8 +355,10 @@ bool DesugarPass::run(ast::Program &program) const {
 void DesugarPass::desugar_decl(ast::Decl &decl) {
     // Decl uses a class hierarchy (not a variant). Dispatch via dynamic_cast.
     if (auto *d = dynamic_cast<ast::ConstDecl *>(&decl)) {
-        if (d->type) d->type = desugar_type_node(std::move(d->type));
-        if (d->value) d->value = desugar_expr_node(std::move(d->value));
+        if (d->type)
+            d->type = desugar_type_node(std::move(d->type));
+        if (d->value)
+            d->value = desugar_expr_node(std::move(d->value));
         return;
     }
     if (auto *d = dynamic_cast<ast::TypeAliasDecl *>(&decl)) {
@@ -377,7 +369,8 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
     }
     if (auto *d = dynamic_cast<ast::StructDecl *>(&decl)) {
         for (auto &field : d->fields) {
-            if (field->type) field->type = desugar_type_node(std::move(field->type));
+            if (field->type)
+                field->type = desugar_type_node(std::move(field->type));
         }
         return;
     }
@@ -409,8 +402,10 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
         return;
     }
     if (auto *d = dynamic_cast<ast::ImplDecl *>(&decl)) {
-        if (d->target_type) d->target_type = desugar_type_node(std::move(d->target_type));
-        if (d->trait_ref) d->trait_ref = desugar_type_node(std::move(d->trait_ref));
+        if (d->target_type)
+            d->target_type = desugar_type_node(std::move(d->target_type));
+        if (d->trait_ref)
+            d->trait_ref = desugar_type_node(std::move(d->trait_ref));
         for (auto &method : d->methods) {
             desugar_fn_decl_body(*method);
         }
@@ -418,27 +413,35 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
     }
     if (auto *d = dynamic_cast<ast::CapabilityDecl *>(&decl)) {
         for (auto &param : d->params) {
-            if (param->type) param->type = desugar_type_node(std::move(param->type));
+            if (param->type)
+                param->type = desugar_type_node(std::move(param->type));
         }
-        if (d->return_type) d->return_type = desugar_type_node(std::move(d->return_type));
+        if (d->return_type)
+            d->return_type = desugar_type_node(std::move(d->return_type));
         return;
     }
     if (auto *d = dynamic_cast<ast::PredicateDecl *>(&decl)) {
         for (auto &param : d->params) {
-            if (param->type) param->type = desugar_type_node(std::move(param->type));
+            if (param->type)
+                param->type = desugar_type_node(std::move(param->type));
         }
         return;
     }
     if (auto *d = dynamic_cast<ast::AgentDecl *>(&decl)) {
-        if (d->input_type) d->input_type = desugar_type_node(std::move(d->input_type));
-        if (d->context_type) d->context_type = desugar_type_node(std::move(d->context_type));
-        if (d->output_type) d->output_type = desugar_type_node(std::move(d->output_type));
+        if (d->input_type)
+            d->input_type = desugar_type_node(std::move(d->input_type));
+        if (d->context_type)
+            d->context_type = desugar_type_node(std::move(d->context_type));
+        if (d->output_type)
+            d->output_type = desugar_type_node(std::move(d->output_type));
         // TODO: desugar transition when/assert bodies
         return;
     }
     if (auto *d = dynamic_cast<ast::WorkflowDecl *>(&decl)) {
-        if (d->input_type) d->input_type = desugar_type_node(std::move(d->input_type));
-        if (d->output_type) d->output_type = desugar_type_node(std::move(d->output_type));
+        if (d->input_type)
+            d->input_type = desugar_type_node(std::move(d->input_type));
+        if (d->output_type)
+            d->output_type = desugar_type_node(std::move(d->output_type));
         // TODO: desugar node bodies and return_value
         return;
     }
@@ -452,7 +455,8 @@ void DesugarPass::desugar_fn_decl(ast::FnDecl &decl) {
 
 void DesugarPass::desugar_struct_decl(ast::StructDecl &decl) {
     for (auto &field : decl.fields) {
-        if (field->type) field->type = desugar_type_node(std::move(field->type));
+        if (field->type)
+            field->type = desugar_type_node(std::move(field->type));
     }
 }
 
@@ -474,7 +478,8 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
     for (auto &item : decl.items) {
         if (item->kind == ast::TraitItemKind::Fn) {
             for (auto &param : item->params) {
-                if (param->type) param->type = desugar_type_node(std::move(param->type));
+                if (param->type)
+                    param->type = desugar_type_node(std::move(param->type));
             }
             if (item->return_type) {
                 item->return_type = desugar_type_node(std::move(item->return_type));
@@ -484,8 +489,10 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
 }
 
 void DesugarPass::desugar_impl_decl(ast::ImplDecl &decl) {
-    if (decl.target_type) decl.target_type = desugar_type_node(std::move(decl.target_type));
-    if (decl.trait_ref) decl.trait_ref = desugar_type_node(std::move(decl.trait_ref));
+    if (decl.target_type)
+        decl.target_type = desugar_type_node(std::move(decl.target_type));
+    if (decl.trait_ref)
+        decl.trait_ref = desugar_type_node(std::move(decl.trait_ref));
     for (auto &method : decl.methods) {
         desugar_fn_decl_body(*method);
     }
@@ -513,9 +520,12 @@ void DesugarPass::desugar_pattern(ast::PatternSyntax &) {
 }
 
 void DesugarPass::desugar_match_arm(ast::MatchArmSyntax &arm) {
-    if (arm.pattern) desugar_pattern(*arm.pattern);
-    if (arm.guard) arm.guard = desugar_expr_node(std::move(arm.guard));
-    if (arm.body) arm.body = desugar_expr_node(std::move(arm.body));
+    if (arm.pattern)
+        desugar_pattern(*arm.pattern);
+    if (arm.guard)
+        arm.guard = desugar_expr_node(std::move(arm.guard));
+    if (arm.body)
+        arm.body = desugar_expr_node(std::move(arm.body));
 }
 
 } // namespace ahfl

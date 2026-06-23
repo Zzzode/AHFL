@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -28,6 +28,10 @@ public:
   }
 
   virtual std::any visitImportDecl(AHFLParser::ImportDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitIdentifier(AHFLParser::IdentifierContext *ctx) override {
     return visitChildren(ctx);
   }
 

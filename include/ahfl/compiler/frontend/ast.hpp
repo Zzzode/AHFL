@@ -66,7 +66,7 @@ enum class NodeKind {
     ContractDecl,
     FlowDecl,
     WorkflowDecl,
-    FnDecl, // P2 (RFC §3.2.2): top-level function declaration
+    FnDecl,    // P2 (RFC §3.2.2): top-level function declaration
     TraitDecl, // P3 (RFC §3.2.2 / type-system §1.3): trait declaration
     ImplDecl,  // P3 (RFC §3.2.2 / type-system §1.4): impl block
 };
@@ -150,7 +150,7 @@ enum class EffectClauseKind {
 
 [[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
 
-/// Expression syntax kinds (20 kinds)
+/// Expression syntax kinds
 enum class ExprSyntaxKind {
     BoolLiteral,     // true / false
     IntegerLiteral,  // 42, -1
@@ -163,6 +163,7 @@ enum class ExprSyntaxKind {
     Path,            // input.field, ctx.field, node_name.field
     QualifiedValue,  // Priority::High (fully qualified enum value)
     Call,            // capability_name(args...)
+    MethodCall,      // receiver.method(args...)
     StructLiteral,   // TypeName { field: value, ... }
     ListLiteral,     // [a, b, c]
     SetLiteral,      // {a, b, c}
@@ -324,10 +325,11 @@ struct MapType {
 /// Function type: Fn(A1, A2, ...) -> Ret [effect Spec]
 struct FnType {
     std::vector<Owned<TypeSyntax>> params;
-    Owned<TypeSyntax> return_type;        // null if omitted (defaults to Unit)
+    Owned<TypeSyntax> return_type; // null if omitted (defaults to Unit)
     bool has_effect_clause{false};
     EffectClauseKind effect_kind{EffectClauseKind::Pure};
-    std::vector<Owned<QualifiedName>> effect_capabilities; // populated when effect_kind == Capability
+    std::vector<Owned<QualifiedName>>
+        effect_capabilities; // populated when effect_kind == Capability
 };
 
 /// Nominal type application: Vec<Int>, std::collections::Map<String, Int>
@@ -468,6 +470,15 @@ struct QualifiedValueExpr {
 /// Function call expression: callee(args...)
 struct CallExpr {
     Owned<QualifiedName> callee;
+    std::vector<Owned<TypeSyntax>> type_args;
+    std::vector<Owned<ExprSyntax>> arguments;
+};
+
+/// Method call expression: receiver.method(args...)
+struct MethodCallExpr {
+    Owned<ExprSyntax> receiver;
+    std::string method;
+    std::vector<Owned<TypeSyntax>> type_args;
     std::vector<Owned<ExprSyntax>> arguments;
 };
 
@@ -626,9 +637,9 @@ enum class PatternSyntaxKind {
 /// A single `match` arm: `pattern [if guard] => expr` (RFC §1.6).
 struct MatchArmSyntax {
     ahfl::SourceRange range;
-    Owned<PatternSyntax> pattern;          // arm pattern
-    Owned<ExprSyntax> guard;               // optional `if` guard
-    Owned<ExprSyntax> body;                // arm body expression
+    Owned<PatternSyntax> pattern; // arm pattern
+    Owned<ExprSyntax> guard;      // optional `if` guard
+    Owned<ExprSyntax> body;       // arm body expression
 };
 
 /// `match` expression: `match scrutinee { arm* }` (RFC §1.6).
@@ -699,10 +710,10 @@ struct EffectClauseSyntax {
 struct WhereConstraintSyntax {
     ahfl::SourceRange range;
     bool is_predicate{false};
-    Owned<TypeSyntax> subject;                 // the constrained type
-    std::string trait_name;                    // predicate trait identifier
-    std::vector<Owned<TypeSyntax>> arguments;  // predicate type arguments
-    std::vector<Owned<TypeSyntax>> bounds;     // bound-list bound types
+    Owned<TypeSyntax> subject;                // the constrained type
+    std::string trait_name;                   // predicate trait identifier
+    std::vector<Owned<TypeSyntax>> arguments; // predicate type arguments
+    std::vector<Owned<TypeSyntax>> bounds;    // bound-list bound types
 };
 
 /// Where-clause: `where constraint [, constraint]*` (RFC §6).
@@ -745,6 +756,7 @@ using ExprSyntaxNode = std::variant<NoneLiteralExpr,
                                     PathExpr,
                                     QualifiedValueExpr,
                                     CallExpr,
+                                    MethodCallExpr,
                                     StructLiteralExpr,
                                     ListLiteralExpr,
                                     SetLiteralExpr,
@@ -1328,7 +1340,7 @@ struct FnDecl final : Decl {
     Owned<TypeSyntax> return_type;
     Owned<EffectClauseSyntax> effect_clause;
     Owned<WhereClauseSyntax> where_clause;
-    Owned<BlockSyntax> body; // empty for a prototype (`fn name(...);`)
+    Owned<BlockSyntax> body;                 // empty for a prototype (`fn name(...);`)
     std::optional<std::string> builtin_name; // P5: @builtin name, nullopt if not a builtin
 
     FnDecl(std::string name, ahfl::SourceRange range = {});
@@ -1419,7 +1431,7 @@ struct AssocItemDefSyntax {
 /// are the associated-type assignments.
 struct ImplDecl final : Decl {
     std::vector<Owned<TypeParamSyntax>> type_params;
-    Owned<TypeSyntax> trait_ref;  // optional (empty for inherent impl)
+    Owned<TypeSyntax> trait_ref; // optional (empty for inherent impl)
     Owned<TypeSyntax> target_type;
     Owned<WhereClauseSyntax> where_clause;
     std::vector<Owned<FnDecl>> methods;
@@ -1524,6 +1536,9 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
                 return std::forward<Visitor>(visitor).visit_qualified_value(expr);
             },
             [&](const CallExpr &) { return std::forward<Visitor>(visitor).visit_call(expr); },
+            [&](const MethodCallExpr &) {
+                return std::forward<Visitor>(visitor).visit_unknown(expr);
+            },
             [&](const StructLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_struct_literal(expr);
             },
@@ -1552,9 +1567,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             // cares about closures, so forcing a per-kind hook would require
             // touching every visitor; `visit_unknown` is the shared escape
             // hatch consumers already provide for unspecialised kinds.
-            [&](const LambdaExpr &) {
-                return std::forward<Visitor>(visitor).visit_unknown(expr);
-            },
+            [&](const LambdaExpr &) { return std::forward<Visitor>(visitor).visit_unknown(expr); },
         },
         expr.node);
 }
@@ -1575,6 +1588,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const PathExpr &) { return ExprSyntaxKind::Path; },
             [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
             [](const CallExpr &) { return ExprSyntaxKind::Call; },
+            [](const MethodCallExpr &) { return ExprSyntaxKind::MethodCall; },
             [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
             [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
             [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
@@ -1607,18 +1621,16 @@ temporal_expr_syntax_kind(const TemporalExprSyntax &expr) {
 }
 
 /// Derive PatternSyntaxKind from the variant (P1 ADT, parallels expr/temporal)
-[[nodiscard]] inline PatternSyntaxKind
-pattern_syntax_kind(const PatternSyntax &pattern) {
-    return std::visit(
-        Overloaded{
-            [](const LiteralPattern &) { return PatternSyntaxKind::Literal; },
-            [](const VariantPattern &) { return PatternSyntaxKind::Variant; },
-            [](const WildcardPattern &) { return PatternSyntaxKind::Wildcard; },
-            [](const BindingPattern &) { return PatternSyntaxKind::Binding; },
-            [](const TuplePattern &) { return PatternSyntaxKind::Tuple; },
-            [](const OrPattern &) { return PatternSyntaxKind::Or; },
-        },
-        pattern.node);
+[[nodiscard]] inline PatternSyntaxKind pattern_syntax_kind(const PatternSyntax &pattern) {
+    return std::visit(Overloaded{
+                          [](const LiteralPattern &) { return PatternSyntaxKind::Literal; },
+                          [](const VariantPattern &) { return PatternSyntaxKind::Variant; },
+                          [](const WildcardPattern &) { return PatternSyntaxKind::Wildcard; },
+                          [](const BindingPattern &) { return PatternSyntaxKind::Binding; },
+                          [](const TuplePattern &) { return PatternSyntaxKind::Tuple; },
+                          [](const OrPattern &) { return PatternSyntaxKind::Or; },
+                      },
+                      pattern.node);
 }
 
 } // namespace ahfl::ast

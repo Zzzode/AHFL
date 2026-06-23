@@ -6,6 +6,7 @@
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -42,6 +43,10 @@ namespace {
 [[nodiscard]] bool workflow_value_reads_equal(const ir::WorkflowValueRead &lhs,
                                               const ir::WorkflowValueRead &rhs) {
     return lhs.kind == rhs.kind && lhs.root_name == rhs.root_name && lhs.members == rhs.members;
+}
+
+[[nodiscard]] bool is_std_module_name(std::string_view module_name) noexcept {
+    return module_name == "std" || module_name.starts_with("std::");
 }
 
 [[nodiscard]] ir::TypeRef make_type_ref_value(ir::TypeRefKind kind, std::string display_name) {
@@ -226,8 +231,9 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
         return ir::SymbolRefKind::Function;
     case SymbolKind::Trait:
         // P3 (RFC §3.2.2 / type-system §1.3): a trait symbol lowers as a Type
-        // ref — it occupies type positions at bound/impl sites. No method-call
-        // lowering today (P3c).
+        // ref — it occupies type positions at bound/impl sites. Method-call
+        // dispatch lowers through impl metadata rather than through trait
+        // symbols directly.
         return ir::SymbolRefKind::Type;
     }
     return ir::SymbolRefKind::Unknown;
@@ -262,7 +268,10 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
 
 class TypedIrLowerer final {
   public:
-    explicit TypedIrLowerer(const TypedProgram &typed_program) : typed_program_(&typed_program) {}
+    explicit TypedIrLowerer(const TypedProgram &typed_program,
+                            const ast::Program *ast_program = nullptr,
+                            const SourceGraph *source_graph = nullptr)
+        : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
@@ -273,6 +282,17 @@ class TypedIrLowerer final {
                 continue;
             current_source_id_ = typed_decl->source_id;
             current_module_name_ = module_name_for(*typed_decl);
+            if (is_stdlib_declaration(*typed_decl))
+                continue;
+            if (const auto *impl = payload_as<ImplTypeInfo>(typed_decl);
+                impl != nullptr && typed_decl->kind == ast::NodeKind::ImplDecl) {
+                for (const auto &method : impl->methods) {
+                    program_ir.declarations.push_back(lower_impl_method(*impl, method));
+                }
+                continue;
+            }
+            if (is_metadata_only_declaration(*typed_decl))
+                continue;
             program_ir.declarations.push_back(lower_typed_declaration(*typed_decl));
         }
         current_source_id_.reset();
@@ -282,6 +302,8 @@ class TypedIrLowerer final {
 
   private:
     const TypedProgram *typed_program_{nullptr};
+    const ast::Program *ast_program_{nullptr};
+    const SourceGraph *source_graph_{nullptr};
     mutable std::optional<SourceId> current_source_id_;
     mutable std::string current_module_name_;
     mutable ir::ExprArena *arena_{nullptr};
@@ -331,6 +353,28 @@ class TypedIrLowerer final {
         return current_module_name_;
     }
 
+    [[nodiscard]] bool is_stdlib_declaration(const TypedDecl &decl) const {
+        if (source_graph_ == nullptr) {
+            return false;
+        }
+        if (!current_module_name_.empty()) {
+            return is_std_module_name(current_module_name_);
+        }
+        if (decl.source_id.has_value()) {
+            for (const auto &source : source_graph_->sources) {
+                if (source.id == *decl.source_id) {
+                    return is_std_module_name(source.module_name);
+                }
+            }
+        }
+        return decl.symbol.value != 0 &&
+               typed_program_->find_symbol(decl.symbol)
+                   .transform([](const Symbol &symbol) {
+                       return is_std_module_name(symbol.module_name);
+                   })
+                   .value_or(false);
+    }
+
     // =====================================================================
     // Small factory helpers
     // =====================================================================
@@ -369,6 +413,10 @@ class TypedIrLowerer final {
         return std::get_if<InfoT>(&decl->payload);
     }
 
+    [[nodiscard]] static bool is_metadata_only_declaration(const TypedDecl &decl) noexcept {
+        return decl.kind == ast::NodeKind::TraitDecl || decl.kind == ast::NodeKind::ImplDecl;
+    }
+
     // =====================================================================
     // Source / provenance helpers
     // =====================================================================
@@ -381,6 +429,413 @@ class TypedIrLowerer final {
     void leave_source() const {
         current_source_id_.reset();
         current_module_name_.clear();
+    }
+
+    [[nodiscard]] static bool ranges_equal(SourceRange lhs, SourceRange rhs) noexcept {
+        return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
+    }
+
+    [[nodiscard]] static bool expr_matches_typed(const ast::ExprSyntax &expr,
+                                                 const TypedExpr &typed) noexcept {
+        if (typed.node_id != 0 && expr.node_id == typed.node_id) {
+            return true;
+        }
+        return ranges_equal(expr.range, typed.range);
+    }
+
+    [[nodiscard]] static const ast::ExprSyntax *
+    find_match_expr_in_expr(const ast::ExprSyntax &expr, const TypedExpr &typed) {
+        if (expr.is<ast::MatchExpr>() && expr_matches_typed(expr, typed)) {
+            return &expr;
+        }
+
+        return std::visit(
+            Overloaded{
+                [](const ast::NoneLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::BoolLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::IntegerLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::FloatLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::DecimalLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::StringLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::DurationLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [&](const ast::SomeExpr &value) -> const ast::ExprSyntax * {
+                    return value.value ? find_match_expr_in_expr(*value.value, typed) : nullptr;
+                },
+                [](const ast::PathExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [](const ast::QualifiedValueExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                [&](const ast::CallExpr &value) -> const ast::ExprSyntax * {
+                    for (const auto &argument : value.arguments) {
+                        if (argument) {
+                            if (const auto *found = find_match_expr_in_expr(*argument, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::MethodCallExpr &value) -> const ast::ExprSyntax * {
+                    if (value.receiver) {
+                        if (const auto *found = find_match_expr_in_expr(*value.receiver, typed);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    for (const auto &argument : value.arguments) {
+                        if (argument) {
+                            if (const auto *found = find_match_expr_in_expr(*argument, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::StructLiteralExpr &value) -> const ast::ExprSyntax * {
+                    for (const auto &field : value.fields) {
+                        if (field && field->value) {
+                            if (const auto *found = find_match_expr_in_expr(*field->value, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::ListLiteralExpr &value) -> const ast::ExprSyntax * {
+                    for (const auto &item : value.items) {
+                        if (item) {
+                            if (const auto *found = find_match_expr_in_expr(*item, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::SetLiteralExpr &value) -> const ast::ExprSyntax * {
+                    for (const auto &item : value.items) {
+                        if (item) {
+                            if (const auto *found = find_match_expr_in_expr(*item, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::MapLiteralExpr &value) -> const ast::ExprSyntax * {
+                    for (const auto &entry : value.entries) {
+                        if (entry && entry->key) {
+                            if (const auto *found = find_match_expr_in_expr(*entry->key, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                        if (entry && entry->value) {
+                            if (const auto *found = find_match_expr_in_expr(*entry->value, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::UnaryExpr &value) -> const ast::ExprSyntax * {
+                    return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
+                },
+                [&](const ast::BinaryExpr &value) -> const ast::ExprSyntax * {
+                    if (value.lhs) {
+                        if (const auto *found = find_match_expr_in_expr(*value.lhs, typed);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    return value.rhs ? find_match_expr_in_expr(*value.rhs, typed) : nullptr;
+                },
+                [&](const ast::MemberAccessExpr &value) -> const ast::ExprSyntax * {
+                    return value.base ? find_match_expr_in_expr(*value.base, typed) : nullptr;
+                },
+                [&](const ast::IndexAccessExpr &value) -> const ast::ExprSyntax * {
+                    if (value.base) {
+                        if (const auto *found = find_match_expr_in_expr(*value.base, typed);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    return value.index ? find_match_expr_in_expr(*value.index, typed) : nullptr;
+                },
+                [&](const ast::GroupExpr &value) -> const ast::ExprSyntax * {
+                    return value.inner ? find_match_expr_in_expr(*value.inner, typed) : nullptr;
+                },
+                [&](const ast::MatchExpr &value) -> const ast::ExprSyntax * {
+                    if (value.scrutinee) {
+                        if (const auto *found = find_match_expr_in_expr(*value.scrutinee, typed);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    for (const auto &arm : value.arms) {
+                        if (arm && arm->guard) {
+                            if (const auto *found = find_match_expr_in_expr(*arm->guard, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                        if (arm && arm->body) {
+                            if (const auto *found = find_match_expr_in_expr(*arm->body, typed);
+                                found != nullptr) {
+                                return found;
+                            }
+                        }
+                    }
+                    return nullptr;
+                },
+                [&](const ast::LambdaExpr &value) -> const ast::ExprSyntax * {
+                    return value.body ? find_match_expr_in_expr(*value.body, typed) : nullptr;
+                },
+            },
+            expr.node);
+    }
+
+    [[nodiscard]] static const ast::ExprSyntax *
+    find_match_expr_in_statement(const ast::StatementSyntax &statement, const TypedExpr &typed) {
+        switch (statement.kind) {
+        case ast::StatementSyntaxKind::Let:
+            return statement.let_stmt && statement.let_stmt->initializer
+                       ? find_match_expr_in_expr(*statement.let_stmt->initializer, typed)
+                       : nullptr;
+        case ast::StatementSyntaxKind::Assign:
+            return statement.assign_stmt && statement.assign_stmt->value
+                       ? find_match_expr_in_expr(*statement.assign_stmt->value, typed)
+                       : nullptr;
+        case ast::StatementSyntaxKind::If:
+            if (statement.if_stmt) {
+                if (statement.if_stmt->condition) {
+                    if (const auto *found =
+                            find_match_expr_in_expr(*statement.if_stmt->condition, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+                if (statement.if_stmt->then_block) {
+                    if (const auto *found =
+                            find_match_expr_in_block(*statement.if_stmt->then_block, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+                if (statement.if_stmt->else_block) {
+                    return find_match_expr_in_block(*statement.if_stmt->else_block, typed);
+                }
+            }
+            return nullptr;
+        case ast::StatementSyntaxKind::Goto:
+            return nullptr;
+        case ast::StatementSyntaxKind::Return:
+            return statement.return_stmt && statement.return_stmt->value
+                       ? find_match_expr_in_expr(*statement.return_stmt->value, typed)
+                       : nullptr;
+        case ast::StatementSyntaxKind::Assert:
+            return statement.assert_stmt && statement.assert_stmt->condition
+                       ? find_match_expr_in_expr(*statement.assert_stmt->condition, typed)
+                       : nullptr;
+        case ast::StatementSyntaxKind::Expr:
+            return statement.expr_stmt && statement.expr_stmt->expr
+                       ? find_match_expr_in_expr(*statement.expr_stmt->expr, typed)
+                       : nullptr;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] static const ast::ExprSyntax *
+    find_match_expr_in_block(const ast::BlockSyntax &block, const TypedExpr &typed) {
+        for (const auto &statement : block.statements) {
+            if (statement) {
+                if (const auto *found = find_match_expr_in_statement(*statement, typed);
+                    found != nullptr) {
+                    return found;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] static const ast::ExprSyntax *
+    find_match_expr_in_decl(const ast::Decl &decl, const TypedExpr &typed) {
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl: {
+            const auto &value = static_cast<const ast::ConstDecl &>(decl);
+            return value.value ? find_match_expr_in_expr(*value.value, typed) : nullptr;
+        }
+        case ast::NodeKind::StructDecl: {
+            const auto &value = static_cast<const ast::StructDecl &>(decl);
+            for (const auto &field : value.fields) {
+                if (field && field->default_value) {
+                    if (const auto *found =
+                            find_match_expr_in_expr(*field->default_value, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::ContractDecl: {
+            const auto &value = static_cast<const ast::ContractDecl &>(decl);
+            for (const auto &clause : value.clauses) {
+                if (clause && clause->expr) {
+                    if (const auto *found = find_match_expr_in_expr(*clause->expr, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::FlowDecl: {
+            const auto &value = static_cast<const ast::FlowDecl &>(decl);
+            for (const auto &handler : value.state_handlers) {
+                if (handler && handler->body) {
+                    if (const auto *found = find_match_expr_in_block(*handler->body, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::WorkflowDecl: {
+            const auto &value = static_cast<const ast::WorkflowDecl &>(decl);
+            for (const auto &node : value.nodes) {
+                if (node && node->input) {
+                    if (const auto *found = find_match_expr_in_expr(*node->input, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return value.return_value ? find_match_expr_in_expr(*value.return_value, typed)
+                                      : nullptr;
+        }
+        case ast::NodeKind::FnDecl: {
+            const auto &value = static_cast<const ast::FnDecl &>(decl);
+            return value.body ? find_match_expr_in_block(*value.body, typed) : nullptr;
+        }
+        case ast::NodeKind::ImplDecl: {
+            const auto &value = static_cast<const ast::ImplDecl &>(decl);
+            for (const auto &method : value.methods) {
+                if (method && method->body) {
+                    if (const auto *found = find_match_expr_in_block(*method->body, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::Program:
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::TypeAliasDecl:
+        case ast::NodeKind::EnumDecl:
+        case ast::NodeKind::CapabilityDecl:
+        case ast::NodeKind::PredicateDecl:
+        case ast::NodeKind::AgentDecl:
+        case ast::NodeKind::TraitDecl:
+            return nullptr;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] const ast::ExprSyntax *find_ast_match_expr(const TypedExpr &typed) const {
+        const ast::Program *program = ast_program_;
+        if (typed.source_id.has_value() && source_graph_ != nullptr) {
+            program = nullptr;
+            for (const auto &source : source_graph_->sources) {
+                if (source.id == *typed.source_id) {
+                    program = source.program.get();
+                    break;
+                }
+            }
+        }
+        if (program == nullptr) {
+            return nullptr;
+        }
+        for (const auto &decl : program->declarations) {
+            if (decl) {
+                if (const auto *found = find_match_expr_in_decl(*decl, typed); found != nullptr) {
+                    return found;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] static ir::MatchPattern lower_pattern(const ast::PatternSyntax *pattern) {
+        if (pattern == nullptr) {
+            return ir::MatchPattern{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
+        }
+
+        ir::MatchPattern lowered{
+            .node = ir::WildcardPattern{},
+            .source_range = pattern->range,
+            .text = pattern->text,
+        };
+        lowered.node =
+            std::visit(Overloaded{
+                           [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {
+                               return ir::LiteralPattern{.spelling = value.spelling};
+                           },
+                           [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
+                               ir::VariantPattern variant{
+                                   .path = value.path ? value.path->spelling() : std::string{},
+                                   .subpatterns = {},
+                               };
+                               variant.subpatterns.reserve(value.subpatterns.size());
+                               for (const auto &subpattern : value.subpatterns) {
+                                   variant.subpatterns.push_back(
+                                       make_owned<ir::MatchPattern>(
+                                           lower_pattern(subpattern.get())));
+                               }
+                               return variant;
+                           },
+                           [](const ast::WildcardPattern &) -> ir::MatchPatternNode {
+                               return ir::WildcardPattern{};
+                           },
+                           [](const ast::BindingPattern &value) -> ir::MatchPatternNode {
+                               ir::BindingPattern binding{
+                                   .name = value.name,
+                                   .is_mut = value.is_mut,
+                                   .nested = nullptr,
+                               };
+                               if (value.nested) {
+                                   binding.nested =
+                                       make_owned<ir::MatchPattern>(lower_pattern(value.nested.get()));
+                               }
+                               return binding;
+                           },
+                           [](const ast::TuplePattern &value) -> ir::MatchPatternNode {
+                               ir::TuplePattern tuple;
+                               tuple.elements.reserve(value.elements.size());
+                               for (const auto &element : value.elements) {
+                                   tuple.elements.push_back(
+                                       make_owned<ir::MatchPattern>(lower_pattern(element.get())));
+                               }
+                               return tuple;
+                           },
+                           [](const ast::OrPattern &value) -> ir::MatchPatternNode {
+                               ir::OrPattern pattern_or;
+                               pattern_or.branches.reserve(value.branches.size());
+                               for (const auto &branch : value.branches) {
+                                   pattern_or.branches.push_back(
+                                       make_owned<ir::MatchPattern>(lower_pattern(branch.get())));
+                               }
+                               return pattern_or;
+                           },
+                       },
+                       pattern->node);
+        return lowered;
     }
 
     [[nodiscard]] ir::DeclarationProvenance
@@ -432,9 +887,49 @@ class TypedIrLowerer final {
         };
     }
 
+    [[nodiscard]] static std::size_t
+    synthetic_impl_method_symbol_id(const ImplTypeInfo &impl, std::string_view method_name) noexcept {
+        constexpr std::size_t kHighBit = std::size_t{1} << ((sizeof(std::size_t) * 8U) - 1U);
+        std::size_t hash = static_cast<std::size_t>(1469598103934665603ULL);
+        const auto mix_byte = [&hash](std::size_t byte) {
+            hash ^= byte & 0xffU;
+            hash *= static_cast<std::size_t>(1099511628211ULL);
+        };
+        std::size_t index = impl.index;
+        for (std::size_t count = 0; count < sizeof(std::size_t); ++count) {
+            mix_byte(index);
+            index >>= 8U;
+        }
+        for (const unsigned char byte : method_name) {
+            mix_byte(byte);
+        }
+        return kHighBit | (hash & ~kHighBit);
+    }
+
+    [[nodiscard]] ir::SymbolRef
+    synthetic_impl_method_symbol_ref(const ImplTypeInfo &impl, std::string name) const {
+        const auto id = synthetic_impl_method_symbol_id(impl, name);
+        return ir::SymbolRef{
+            .kind = ir::SymbolRefKind::Function,
+            .canonical_name = name,
+            .local_name = std::move(name),
+            .module_name = current_module_name_,
+            .id = id,
+        };
+    }
+
     // =====================================================================
     // Type-ref builders
     // =====================================================================
+
+    void append_type_args(ir::TypeRef &ref, const std::vector<TypePtr> &type_args) const {
+        ref.params.reserve(ref.params.size() + type_args.size());
+        for (const auto &arg : type_args) {
+            if (arg != nullptr) {
+                ref.params.push_back(make_type_ref(type_ref_from_type(*arg)));
+            }
+        }
+    }
 
     [[nodiscard]] ir::TypeRef type_ref_from_type(const Type &type) const {
         return type.visit(types::Overloads{
@@ -485,43 +980,20 @@ class TypedIrLowerer final {
             [&](const types::StructT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Struct, type.describe());
                 ref.canonical_name = value.canonical_name;
+                append_type_args(ref, value.type_args);
                 return ref;
             },
             [&](const types::EnumT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
                 ref.canonical_name = value.canonical_name;
+                append_type_args(ref, value.type_args);
                 return ref;
             },
             [&](const types::EnumVariantT &value) {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
                 ref.canonical_name = value.canonical_name;
                 ref.variant_name = value.variant_name;
-                return ref;
-            },
-            [&](const types::OptionalT &value) {
-                auto ref = make_type_ref_value(ir::TypeRefKind::Optional, type.describe());
-                if (value.inner != nullptr)
-                    ref.first = make_type_ref(type_ref_from_type(*value.inner));
-                return ref;
-            },
-            [&](const types::ListT &value) {
-                auto ref = make_type_ref_value(ir::TypeRefKind::List, type.describe());
-                if (value.element != nullptr)
-                    ref.first = make_type_ref(type_ref_from_type(*value.element));
-                return ref;
-            },
-            [&](const types::SetT &value) {
-                auto ref = make_type_ref_value(ir::TypeRefKind::Set, type.describe());
-                if (value.element != nullptr)
-                    ref.first = make_type_ref(type_ref_from_type(*value.element));
-                return ref;
-            },
-            [&](const types::MapT &value) {
-                auto ref = make_type_ref_value(ir::TypeRefKind::Map, type.describe());
-                if (value.key != nullptr)
-                    ref.first = make_type_ref(type_ref_from_type(*value.key));
-                if (value.value != nullptr)
-                    ref.second = make_type_ref(type_ref_from_type(*value.value));
+                append_type_args(ref, value.type_args);
                 return ref;
             },
             [&](const types::FnT &value) {
@@ -568,15 +1040,92 @@ class TypedIrLowerer final {
 
     [[nodiscard]] const TypedDecl *find_decl_by_symbol(SymbolId id) const noexcept {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol == id) return &decl;
+            if (decl.symbol == id)
+                return &decl;
         }
         return nullptr;
+    }
+
+    struct MethodTarget {
+        const ImplTypeInfo *impl{nullptr};
+        const ImplMethodInfo *method{nullptr};
+    };
+
+    [[nodiscard]] static const ImplMethodInfo *find_impl_method(const ImplTypeInfo &impl,
+                                                                std::string_view name) noexcept {
+        for (const auto &method : impl.methods) {
+            if (method.name == name) {
+                return &method;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] static std::optional<SymbolId> nominal_symbol_of_type(const Type &type) noexcept {
+        if (const auto *structure = type.get_if<types::StructT>(); structure != nullptr) {
+            return structure->symbol;
+        }
+        if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
+            return enumeration->symbol;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<MethodTarget>
+    resolve_method_target(const TypedExpr &expr) const noexcept {
+        const TypedExpr *receiver = child_by_role(expr, TypedExprChildRole::Base);
+        if (receiver == nullptr || receiver->type == nullptr) {
+            return std::nullopt;
+        }
+        const auto target_symbol = nominal_symbol_of_type(*receiver->type);
+        if (!target_symbol.has_value()) {
+            return std::nullopt;
+        }
+
+        std::optional<MethodTarget> inherent;
+        std::optional<MethodTarget> trait;
+        std::size_t inherent_count = 0;
+        std::size_t trait_count = 0;
+        for (const auto &decl : typed_program_->declarations) {
+            const auto *impl = payload_as<ImplTypeInfo>(&decl);
+            if (impl == nullptr || !impl->target_symbol.has_value() ||
+                *impl->target_symbol != *target_symbol) {
+                continue;
+            }
+            const auto *method = find_impl_method(*impl, expr.member_name);
+            if (method == nullptr) {
+                continue;
+            }
+            if (impl->is_inherent) {
+                inherent = MethodTarget{.impl = impl, .method = method};
+                ++inherent_count;
+            } else {
+                trait = MethodTarget{.impl = impl, .method = method};
+                ++trait_count;
+            }
+        }
+
+        if (inherent_count == 1) {
+            return inherent;
+        }
+        if (inherent_count == 0 && trait_count == 1) {
+            return trait;
+        }
+        return std::nullopt;
     }
 
     [[nodiscard]] std::string render_call_target(const TypedExpr &expr) const {
         if (expr.resolved_symbol.has_value()) {
             const auto symbol = typed_program_->find_symbol(*expr.resolved_symbol);
             if (symbol.has_value()) {
+                if (symbol->get().kind == SymbolKind::Enum) {
+                    const auto separator = expr.semantic_name.rfind("::");
+                    if (separator != std::string::npos &&
+                        separator + 2 < expr.semantic_name.size()) {
+                        return symbol->get().canonical_name + "::" +
+                               expr.semantic_name.substr(separator + 2);
+                    }
+                }
                 // If the callee is a builtin function, use its builtin name
                 // directly so the evaluator can dispatch to the C++ builtin
                 // table instead of trying to interpret it as a capability call.
@@ -591,6 +1140,14 @@ class TypedIrLowerer final {
             }
         }
         return expr.semantic_name;
+    }
+
+    [[nodiscard]] std::string render_method_target(const TypedExpr &expr) const {
+        if (const auto target = resolve_method_target(expr);
+            target.has_value() && target->impl != nullptr && target->method != nullptr) {
+            return "impl#" + std::to_string(target->impl->index) + "::" + target->method->name;
+        }
+        return expr.semantic_name.empty() ? expr.member_name : expr.semantic_name;
     }
 
     [[nodiscard]] std::string render_struct_target(const TypedExpr &expr) const {
@@ -685,12 +1242,35 @@ class TypedIrLowerer final {
                 },
                 range);
         }
-        ir::ExprRef visit_none_literal(const TypedExpr &) const {
+        ir::ExprRef visit_none_literal(const TypedExpr &e) const {
+            if (e.type != nullptr) {
+                if (const auto option = stdlib_bridge::std_container_type_view(*e.type);
+                    option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
+                    option->nominal) {
+                    return self.make_expr(
+                        ir::CallExpr{.callee = "std::option::Option::None", .arguments = {}},
+                        range);
+                }
+            }
             return self.make_expr(ir::NoneLiteralExpr{}, range);
         }
         ir::ExprRef visit_some(const TypedExpr &e) const {
             const TypedExpr *operand =
                 TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
+            if (e.type != nullptr) {
+                if (const auto option = stdlib_bridge::std_container_type_view(*e.type);
+                    option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
+                    option->nominal) {
+                    ir::CallExpr call{
+                        .callee = "std::option::Option::Some",
+                        .arguments = {},
+                    };
+                    if (operand != nullptr) {
+                        call.arguments.push_back(self.lower_typed_expr(*operand));
+                    }
+                    return self.make_expr(std::move(call), range);
+                }
+            }
             return self.make_expr(
                 ir::SomeExpr{.value = operand ? self.lower_typed_expr(*operand) : nullptr}, range);
         }
@@ -703,6 +1283,32 @@ class TypedIrLowerer final {
         }
         ir::ExprRef visit_call(const TypedExpr &e) const {
             ir::CallExpr call{.callee = self.render_call_target(e), .arguments = {}};
+            for (const auto &child : e.children) {
+                if (child.role != TypedExprChildRole::Argument)
+                    continue;
+                const TypedExpr *target = resolve_child(*self.typed_program_, child);
+                if (target != nullptr)
+                    call.arguments.push_back(self.lower_typed_expr(*target));
+            }
+            return self.make_expr(std::move(call), range);
+        }
+        ir::ExprRef visit_lambda(const TypedExpr &e) const {
+            const TypedExpr *body =
+                TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
+            return self.make_expr(
+                ir::LambdaExpr{
+                    .params = e.lambda_params,
+                    .body = body ? self.lower_typed_expr(*body) : nullptr,
+                },
+                range);
+        }
+        ir::ExprRef visit_method_call(const TypedExpr &e) const {
+            ir::CallExpr call{.callee = self.render_method_target(e), .arguments = {}};
+            if (const TypedExpr *receiver =
+                    TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Base);
+                receiver != nullptr) {
+                call.arguments.push_back(self.lower_typed_expr(*receiver));
+            }
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::Argument)
                     continue;
@@ -728,29 +1334,29 @@ class TypedIrLowerer final {
             return self.make_expr(std::move(literal), range);
         }
         ir::ExprRef visit_list_literal(const TypedExpr &e) const {
-            ir::ListLiteralExpr literal;
+            ir::CallExpr call{.callee = "list_from_array", .arguments = {}};
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::CollectionElement)
                     continue;
                 const TypedExpr *target = resolve_child(*self.typed_program_, child);
                 if (target != nullptr)
-                    literal.items.push_back(self.lower_typed_expr(*target));
+                    call.arguments.push_back(self.lower_typed_expr(*target));
             }
-            return self.make_expr(std::move(literal), range);
+            return self.make_expr(std::move(call), range);
         }
         ir::ExprRef visit_set_literal(const TypedExpr &e) const {
-            ir::SetLiteralExpr literal;
+            ir::CallExpr call{.callee = "set_from_array", .arguments = {}};
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::CollectionElement)
                     continue;
                 const TypedExpr *target = resolve_child(*self.typed_program_, child);
                 if (target != nullptr)
-                    literal.items.push_back(self.lower_typed_expr(*target));
+                    call.arguments.push_back(self.lower_typed_expr(*target));
             }
-            return self.make_expr(std::move(literal), range);
+            return self.make_expr(std::move(call), range);
         }
         ir::ExprRef visit_map_literal(const TypedExpr &e) const {
-            ir::MapLiteralExpr literal;
+            ir::CallExpr call{.callee = "map_from_entries", .arguments = {}};
             // Children are emitted MapKey,MapValue,MapKey,MapValue,... by
             // `typed_children_for`. Iterate pairwise so order is identical to
             // the AST visitor (T1.2 fingerprint-equivalence requirement).
@@ -761,16 +1367,14 @@ class TypedIrLowerer final {
                 const TypedExpr *v = resolve_child(*self.typed_program_, value_child);
                 if (key_child.role == TypedExprChildRole::MapKey && k != nullptr &&
                     value_child.role == TypedExprChildRole::MapValue && v != nullptr) {
-                    literal.entries.push_back(ir::MapEntryExpr{
-                        .key = self.lower_typed_expr(*k),
-                        .value = self.lower_typed_expr(*v),
-                    });
+                    call.arguments.push_back(self.lower_typed_expr(*k));
+                    call.arguments.push_back(self.lower_typed_expr(*v));
                     i += 2;
                 } else {
                     ++i;
                 }
             }
-            return self.make_expr(std::move(literal), range);
+            return self.make_expr(std::move(call), range);
         }
         ir::ExprRef visit_unary(const TypedExpr &e) const {
             const TypedExpr *operand =
@@ -810,10 +1414,37 @@ class TypedIrLowerer final {
                 TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Base);
             const TypedExpr *idx =
                 TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Index);
+            auto lowered_base = base ? self.lower_typed_expr(*base) : nullptr;
+            auto lowered_index = idx ? self.lower_typed_expr(*idx) : nullptr;
+            if (base != nullptr && base->type != nullptr) {
+                if (const auto collection_view =
+                        stdlib_bridge::std_container_type_view(*base->type);
+                    collection_view.has_value()) {
+                    switch (collection_view->kind) {
+                    case stdlib_bridge::StdContainerKind::List:
+                        return self.make_expr(
+                            ir::CallExpr{
+                                .callee = "list_raw_get",
+                                .arguments = {lowered_base, lowered_index},
+                            },
+                            range);
+                    case stdlib_bridge::StdContainerKind::Map:
+                        return self.make_expr(
+                            ir::CallExpr{
+                                .callee = "map_raw_get",
+                                .arguments = {lowered_base, lowered_index},
+                            },
+                            range);
+                    case stdlib_bridge::StdContainerKind::Option:
+                    case stdlib_bridge::StdContainerKind::Set:
+                        break;
+                    }
+                }
+            }
             return self.make_expr(
                 ir::IndexAccessExpr{
-                    .base = base ? self.lower_typed_expr(*base) : nullptr,
-                    .index = idx ? self.lower_typed_expr(*idx) : nullptr,
+                    .base = lowered_base,
+                    .index = lowered_index,
                 },
                 range);
         }
@@ -825,6 +1456,51 @@ class TypedIrLowerer final {
                 return self.lower_typed_expr(*inner);
             }
             return self.make_expr(ir::NoneLiteralExpr{}, range);
+        }
+        ir::ExprRef visit_match(const TypedExpr &e) const {
+            const auto *ast_expr = self.find_ast_match_expr(e);
+            const auto *ast_match =
+                ast_expr != nullptr && ast_expr->is<ast::MatchExpr>() ? &ast_expr->as<ast::MatchExpr>()
+                                                                      : nullptr;
+
+            ir::MatchExpr match;
+            if (const TypedExpr *scrutinee =
+                    TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
+                scrutinee != nullptr) {
+                match.scrutinee = self.lower_typed_expr(*scrutinee);
+            }
+
+            ir::ExprRef pending_guard = nullptr;
+            std::size_t arm_index = 0;
+            for (const auto &child : e.children) {
+                if (child.role != TypedExprChildRole::MatchArmGuard &&
+                    child.role != TypedExprChildRole::MatchArmBody) {
+                    continue;
+                }
+                const TypedExpr *target = resolve_child(*self.typed_program_, child);
+                if (target == nullptr) {
+                    continue;
+                }
+                if (child.role == TypedExprChildRole::MatchArmGuard) {
+                    pending_guard = self.lower_typed_expr(*target);
+                    continue;
+                }
+
+                const ast::PatternSyntax *pattern = nullptr;
+                if (ast_match != nullptr && arm_index < ast_match->arms.size() &&
+                    ast_match->arms[arm_index]) {
+                    pattern = ast_match->arms[arm_index]->pattern.get();
+                }
+                match.arms.push_back(ir::MatchArmExpr{
+                    .pattern = TypedIrLowerer::lower_pattern(pattern),
+                    .guard = pending_guard,
+                    .body = self.lower_typed_expr(*target),
+                });
+                pending_guard = nullptr;
+                ++arm_index;
+            }
+
+            return self.make_expr(std::move(match), range);
         }
         ir::ExprRef visit_unknown(const TypedExpr &e) const {
             (void)e;
@@ -1233,6 +1909,11 @@ class TypedIrLowerer final {
                            for (const auto &a : value.arguments)
                                collect_called_targets_from_expr(*a, called_targets);
                        },
+                       [this, &called_targets](const ir::LambdaExpr &value) {
+                           if (value.body) {
+                               collect_called_targets_from_expr(*value.body, called_targets);
+                           }
+                       },
                        [this, &called_targets](const ir::StructLiteralExpr &value) {
                            for (const auto &f : value.fields)
                                collect_called_targets_from_expr(*f.value, called_targets);
@@ -1261,13 +1942,26 @@ class TypedIrLowerer final {
                        [this, &called_targets](const ir::MemberAccessExpr &value) {
                            collect_called_targets_from_expr(*value.base, called_targets);
                        },
-                       [this, &called_targets](const ir::IndexAccessExpr &value) {
-                           collect_called_targets_from_expr(*value.base, called_targets);
-                           collect_called_targets_from_expr(*value.index, called_targets);
-                       },
-                   },
-                   expr.node);
-    }
+	                       [this, &called_targets](const ir::IndexAccessExpr &value) {
+	                           collect_called_targets_from_expr(*value.base, called_targets);
+	                           collect_called_targets_from_expr(*value.index, called_targets);
+	                       },
+	                       [this, &called_targets](const ir::MatchExpr &value) {
+	                           if (value.scrutinee) {
+	                               collect_called_targets_from_expr(*value.scrutinee, called_targets);
+	                           }
+	                           for (const auto &arm : value.arms) {
+	                               if (arm.guard) {
+	                                   collect_called_targets_from_expr(*arm.guard, called_targets);
+	                               }
+	                               if (arm.body) {
+	                                   collect_called_targets_from_expr(*arm.body, called_targets);
+	                               }
+	                           }
+	                       },
+	                   },
+	                   expr.node);
+	    }
 
     void merge_flow_summary(ir::StateHandler::Summary &target,
                             const ir::StateHandler::Summary &other) const {
@@ -1328,6 +2022,11 @@ class TypedIrLowerer final {
                            for (const auto &a : value.arguments)
                                collect_workflow_value_reads(*a, node_names, reads);
                        },
+                       [this, &node_names, &reads](const ir::LambdaExpr &value) {
+                           if (value.body) {
+                               collect_workflow_value_reads(*value.body, node_names, reads);
+                           }
+                       },
                        [this, &node_names, &reads](const ir::StructLiteralExpr &value) {
                            for (const auto &f : value.fields)
                                collect_workflow_value_reads(*f.value, node_names, reads);
@@ -1356,13 +2055,26 @@ class TypedIrLowerer final {
                        [this, &node_names, &reads](const ir::MemberAccessExpr &value) {
                            collect_workflow_value_reads(*value.base, node_names, reads);
                        },
-                       [this, &node_names, &reads](const ir::IndexAccessExpr &value) {
-                           collect_workflow_value_reads(*value.base, node_names, reads);
-                           collect_workflow_value_reads(*value.index, node_names, reads);
-                       },
-                   },
-                   expr.node);
-    }
+	                       [this, &node_names, &reads](const ir::IndexAccessExpr &value) {
+	                           collect_workflow_value_reads(*value.base, node_names, reads);
+	                           collect_workflow_value_reads(*value.index, node_names, reads);
+	                       },
+	                       [this, &node_names, &reads](const ir::MatchExpr &value) {
+	                           if (value.scrutinee) {
+	                               collect_workflow_value_reads(*value.scrutinee, node_names, reads);
+	                           }
+	                           for (const auto &arm : value.arms) {
+	                               if (arm.guard) {
+	                                   collect_workflow_value_reads(*arm.guard, node_names, reads);
+	                               }
+	                               if (arm.body) {
+	                                   collect_workflow_value_reads(*arm.body, node_names, reads);
+	                               }
+	                           }
+	                       },
+	                   },
+	                   expr.node);
+	    }
 
     [[nodiscard]] ir::WorkflowExprSummary
     summarize_workflow_expr(const ir::Expr &expr,
@@ -1482,10 +2194,9 @@ class TypedIrLowerer final {
             return lower_typed_fn(declaration);
         case ast::NodeKind::TraitDecl:
         case ast::NodeKind::ImplDecl:
-            // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait/impl lowering
-            // lands in P3b. P3a does not index trait/impl declarations into
-            // the typed program, so this branch is unreachable today; it
-            // exists only to keep the NodeKind switch exhaustive.
+            // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): traits and impls are
+            // typed metadata. The IR has no declaration variants for them, so
+            // ordered_typed_declarations filters them out before this switch.
             break;
         case ast::NodeKind::Program:
             break;
@@ -1601,6 +2312,28 @@ class TypedIrLowerer final {
             });
         }
         return result;
+    }
+
+    [[nodiscard]] ir::FnEffectClause lower_fn_effect(const FnEffectClauseInfo &info) const {
+        ir::FnEffectClause effect;
+        switch (static_cast<ast::EffectClauseKind>(info.kind)) {
+        case ast::EffectClauseKind::Pure:
+            effect.kind = ir::FnEffectKind::Pure;
+            break;
+        case ast::EffectClauseKind::Nondet:
+            effect.kind = ir::FnEffectKind::Nondet;
+            break;
+        case ast::EffectClauseKind::Capability:
+            effect.kind = ir::FnEffectKind::Capability;
+            break;
+        }
+        effect.source_range = info.source_range;
+        effect.capabilities.reserve(info.capabilities.size());
+        for (const auto capability_symbol : info.capabilities) {
+            effect.capabilities.push_back(symbol_ref_from_symbol(
+                typed_program_->find_symbol(capability_symbol), "fn effect capability"));
+        }
+        return effect;
     }
 
     [[nodiscard]] ir::CapabilityDecl lower_typed_capability(const TypedDecl &decl) const {
@@ -1785,36 +2518,13 @@ class TypedIrLowerer final {
         return lowered;
     }
 
-    // P2c (RFC §3.2.2 / §1.2 / §2): lower a top-level `fn` declaration from
-    // its FnTypeInfo payload. The IR keeps the resolved signature surface
-    // (params, optional return type, generic type-parameter names, effect
-    // clause). The fn body is not lowered here — the existing typed-block →
-    // IR body machinery consumes a TypedBlock, and P2b type-checks the fn
-    // body structurally without indexing it as a TypedBlock, so there is no
-    // block to lower yet. `has_body` is preserved so downstream tooling can
-    // distinguish a prototype (`fn name(...);`) from a definition.
+    // P2c/P2d: lower a top-level `fn` declaration from its FnTypeInfo payload.
+    // The IR keeps the resolved signature surface and, when FnSema recorded a
+    // body block, lowers that block through the same typed-statement machinery
+    // used by flow handlers. Prototypes and @builtin declarations keep
+    // has_body=false and a null body.
     [[nodiscard]] ir::FnDecl lower_typed_fn(const TypedDecl &decl) const {
         const auto &info = require_payload<FnTypeInfo>(decl, "fn");
-
-        ir::FnEffectClause effect;
-        switch (static_cast<ast::EffectClauseKind>(info.effect.kind)) {
-        case ast::EffectClauseKind::Pure:
-            effect.kind = ir::FnEffectKind::Pure;
-            break;
-        case ast::EffectClauseKind::Nondet:
-            effect.kind = ir::FnEffectKind::Nondet;
-            break;
-        case ast::EffectClauseKind::Capability:
-            effect.kind = ir::FnEffectKind::Capability;
-            break;
-        }
-        effect.source_range = info.effect.source_range;
-        effect.capabilities.reserve(info.effect.capabilities.size());
-        for (const auto capability_symbol : info.effect.capabilities) {
-            effect.capabilities.push_back(
-                symbol_ref_from_symbol(typed_program_->find_symbol(capability_symbol),
-                                       "fn effect capability"));
-        }
 
         ir::FnDecl lowered = with_provenance(
             ir::FnDecl{
@@ -1823,9 +2533,10 @@ class TypedIrLowerer final {
                 .params = lower_params(info.params),
                 .return_type_ref = {},
                 .has_return_type = info.return_type != nullptr,
-                .effect = std::move(effect),
+                .effect = lower_fn_effect(info.effect),
                 .type_param_names = info.type_param_names,
                 .has_body = info.has_body,
+                .body = nullptr,
                 .symbol_ref = symbol_ref_from_decl(decl, "fn declaration"),
             },
             info.declaration_range);
@@ -1833,6 +2544,53 @@ class TypedIrLowerer final {
         if (info.return_type != nullptr) {
             lowered.return_type_ref = type_ref_from_required_type(
                 info.return_type, info.return_type_range, "fn return type");
+        }
+        if (info.body_block_index != UINT32_MAX &&
+            info.body_block_index < typed_program_->blocks.size()) {
+            lowered.body = make_owned<ir::Block>(
+                lower_typed_block(typed_program_->blocks[info.body_block_index]));
+            lowered.has_body = true;
+        }
+        return lowered;
+    }
+
+    [[nodiscard]] ir::FnDecl lower_impl_method(const ImplTypeInfo &impl,
+                                               const ImplMethodInfo &method) const {
+        const auto synthetic_name =
+            "impl#" + std::to_string(impl.index) + "::" + method.name;
+
+        std::vector<std::string> type_param_names;
+        type_param_names.reserve(impl.type_param_names.size() + method.type_param_names.size());
+        type_param_names.insert(
+            type_param_names.end(), impl.type_param_names.begin(), impl.type_param_names.end());
+        type_param_names.insert(type_param_names.end(),
+                                method.type_param_names.begin(),
+                                method.type_param_names.end());
+
+        ir::FnDecl lowered = with_provenance(
+            ir::FnDecl{
+                .provenance = {},
+                .name = synthetic_name,
+                .params = lower_params(method.params),
+                .return_type_ref = {},
+                .has_return_type = method.return_type != nullptr,
+                .effect = lower_fn_effect(method.effect),
+                .type_param_names = std::move(type_param_names),
+                .has_body = method.has_body,
+                .body = nullptr,
+                .symbol_ref = synthetic_impl_method_symbol_ref(impl, synthetic_name),
+            },
+            method.declaration_range);
+
+        if (method.return_type != nullptr) {
+            lowered.return_type_ref = type_ref_from_required_type(
+                method.return_type, method.return_type_range, "impl method return type");
+        }
+        if (method.body_block_index != UINT32_MAX &&
+            method.body_block_index < typed_program_->blocks.size()) {
+            lowered.body = make_owned<ir::Block>(
+                lower_typed_block(typed_program_->blocks[method.body_block_index]));
+            lowered.has_body = true;
         }
         return lowered;
     }
@@ -1890,8 +2648,10 @@ inline ir::StateHandler::Summary TypedIrLowerer::summarize_block(const ir::Block
 
 namespace {
 
-ir::Program lower_typed_program_impl(const TypedProgram &program) {
-    auto program_ir = TypedIrLowerer(program).lower();
+ir::Program lower_typed_program_impl(const TypedProgram &program,
+                                     const ast::Program *ast_program = nullptr,
+                                     const SourceGraph *source_graph = nullptr) {
+    auto program_ir = TypedIrLowerer(program, ast_program, source_graph).lower();
     ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }
@@ -1899,13 +2659,11 @@ ir::Program lower_typed_program_impl(const TypedProgram &program) {
 } // anonymous namespace
 
 ir::Program lower_typed_program(const TypedProgram &program, const ast::Program &ast_program) {
-    (void)ast_program;
-    return lower_typed_program_impl(program);
+    return lower_typed_program_impl(program, &ast_program);
 }
 
 ir::Program lower_typed_program(const TypedProgram &program, const SourceGraph &source_graph) {
-    (void)source_graph;
-    return lower_typed_program_impl(program);
+    return lower_typed_program_impl(program, nullptr, &source_graph);
 }
 
 ir::Program lower_typed_program(const TypedProgram &program) {

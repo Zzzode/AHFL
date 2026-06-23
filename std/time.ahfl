@@ -1,0 +1,13 @@
+module std::time;
+
+@builtin("time_now")
+fn now() -> Timestamp effect Nondet;
+
+@builtin("time_add")
+fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure;
+
+@builtin("time_sub")
+fn sub(self: Timestamp, delta: Duration) -> Timestamp effect Pure;
+
+@builtin("time_duration_between")
+fn duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure;

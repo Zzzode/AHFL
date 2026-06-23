@@ -1,8 +1,10 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 
 #include "ahfl/compiler/semantics/effect_judgement.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include <functional>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -244,6 +246,48 @@ bool equivalent_pairwise(const Type &lhs_a,
     return lhs_name == rhs_name;
 }
 
+std::optional<bool> equivalent_std_container_bridge(const Type &lhs,
+                                                    const Type &rhs,
+                                                    TypeRelationContext *ctx,
+                                                    const std::string &path,
+                                                    MemoizedRelationSolver &solver) {
+    const auto lhs_view = stdlib_bridge::std_container_type_view(lhs);
+    const auto rhs_view = stdlib_bridge::std_container_type_view(rhs);
+    if (!lhs_view.has_value() || !rhs_view.has_value() || lhs_view->kind != rhs_view->kind) {
+        return std::nullopt;
+    }
+
+    FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+    switch (lhs_view->kind) {
+    case stdlib_bridge::StdContainerKind::Option:
+        return solver.solve(TypeRelationKind::Equivalent,
+                            *lhs_view->first,
+                            *rhs_view->first,
+                            join_path(path, "optional.inner"));
+    case stdlib_bridge::StdContainerKind::List:
+        return solver.solve(TypeRelationKind::Equivalent,
+                            *lhs_view->first,
+                            *rhs_view->first,
+                            join_path(path, "list.element"));
+    case stdlib_bridge::StdContainerKind::Set:
+        return solver.solve(TypeRelationKind::Equivalent,
+                            *lhs_view->first,
+                            *rhs_view->first,
+                            join_path(path, "set.element"));
+    case stdlib_bridge::StdContainerKind::Map:
+        return equivalent_pairwise(*lhs_view->first,
+                                   *rhs_view->first,
+                                   *lhs_view->second,
+                                   *rhs_view->second,
+                                   path,
+                                   "map.key",
+                                   "map.value",
+                                   solver);
+    }
+
+    return std::nullopt;
+}
+
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
@@ -252,6 +296,11 @@ bool equivalent_impl(const Type &lhs,
     // Pointer identity short-circuit.
     if (&lhs == &rhs) {
         return equivalent_leaf(lhs, rhs, ctx, path, true);
+    }
+
+    if (const auto bridged = equivalent_std_container_bridge(lhs, rhs, ctx, path, solver);
+        bridged.has_value()) {
+        return *bridged;
     }
 
     if (lhs.payload.index() != rhs.payload.index()) {
@@ -303,7 +352,8 @@ bool equivalent_impl(const Type &lhs,
                 ctx->push_node(std::move(n));
                 ctx->pop_node();
             }
-            if (!name_ok) return false;
+            if (!name_ok)
+                return false;
 
             // Type arguments must match arity and be pairwise equivalent.
             if (l.type_args.size() != r->type_args.size()) {
@@ -316,8 +366,7 @@ bool equivalent_impl(const Type &lhs,
                 if (!solver.solve(TypeRelationKind::Equivalent,
                                   *l.type_args[i],
                                   *r->type_args[i],
-                                  join_path(path,
-                                            "struct.type_args[" + std::to_string(i) + "]"))) {
+                                  join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
             }
@@ -345,8 +394,7 @@ bool equivalent_impl(const Type &lhs,
                 if (!solver.solve(TypeRelationKind::Equivalent,
                                   *l.type_args[i],
                                   *r->type_args[i],
-                                  join_path(path,
-                                            "enum.type_args[" + std::to_string(i) + "]"))) {
+                                  join_path(path, "enum.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
             }
@@ -372,58 +420,15 @@ bool equivalent_impl(const Type &lhs,
                 if (l.type_args[i] == nullptr || r->type_args[i] == nullptr) {
                     return false;
                 }
-                if (!solver.solve(TypeRelationKind::Equivalent,
-                                  *l.type_args[i],
-                                  *r->type_args[i],
-                                  join_path(path,
-                                            "variant.type_args[" + std::to_string(i) + "]"))) {
+                if (!solver.solve(
+                        TypeRelationKind::Equivalent,
+                        *l.type_args[i],
+                        *r->type_args[i],
+                        join_path(path, "variant.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
             }
             return true;
-        },
-        [&](const types::OptionalT &l) {
-            const auto *r = rhs.get_if<types::OptionalT>();
-            if (r == nullptr || l.inner == nullptr || r->inner == nullptr) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
-            }
-            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
-            return solver.solve(TypeRelationKind::Equivalent,
-                                *l.inner,
-                                *r->inner,
-                                join_path(path, "optional.inner"));
-        },
-        [&](const types::ListT &l) {
-            const auto *r = rhs.get_if<types::ListT>();
-            if (r == nullptr || l.element == nullptr || r->element == nullptr) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
-            }
-            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
-            return solver.solve(TypeRelationKind::Equivalent,
-                                *l.element,
-                                *r->element,
-                                join_path(path, "list.element"));
-        },
-        [&](const types::SetT &l) {
-            const auto *r = rhs.get_if<types::SetT>();
-            if (r == nullptr || l.element == nullptr || r->element == nullptr) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
-            }
-            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
-            return solver.solve(TypeRelationKind::Equivalent,
-                                *l.element,
-                                *r->element,
-                                join_path(path, "set.element"));
-        },
-        [&](const types::MapT &l) {
-            const auto *r = rhs.get_if<types::MapT>();
-            if (r == nullptr || l.key == nullptr || r->key == nullptr || l.value == nullptr ||
-                r->value == nullptr) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
-            }
-            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
-            return equivalent_pairwise(
-                *l.key, *r->key, *l.value, *r->value, path, "map.key", "map.value", solver);
         },
         [&](const types::FnT &l) {
             const auto *r = rhs.get_if<types::FnT>();
@@ -468,6 +473,7 @@ bool equivalent_impl(const Type &lhs,
             bool eq = r != nullptr && l.index == r->index && l.name == r->name;
             return equivalent_leaf(lhs, rhs, ctx, path, eq);
         },
+        [&](const auto &) { return equivalent_leaf(lhs, rhs, ctx, path, false); },
     });
 }
 
@@ -497,6 +503,50 @@ bool subtype_leaf(const Type &source,
         ctx->pop_node();
     }
     return value;
+}
+
+std::optional<bool> subtype_std_container_bridge(const Type &source,
+                                                 const Type &target,
+                                                 TypeRelationContext *ctx,
+                                                 const std::string &path,
+                                                 MemoizedRelationSolver &solver) {
+    const auto source_view = stdlib_bridge::std_container_type_view(source);
+    const auto target_view = stdlib_bridge::std_container_type_view(target);
+    if (!source_view.has_value() || !target_view.has_value() ||
+        source_view->kind != target_view->kind) {
+        return std::nullopt;
+    }
+
+    switch (source_view->kind) {
+    case stdlib_bridge::StdContainerKind::Option:
+        return solver.solve(TypeRelationKind::Subtype,
+                            *source_view->first,
+                            *target_view->first,
+                            join_path(path, "optional.inner"));
+    case stdlib_bridge::StdContainerKind::List:
+        return solver.solve(TypeRelationKind::Subtype,
+                            *source_view->first,
+                            *target_view->first,
+                            join_path(path, "list.element"));
+    case stdlib_bridge::StdContainerKind::Set:
+        return solver.solve(TypeRelationKind::Subtype,
+                            *source_view->first,
+                            *target_view->first,
+                            join_path(path, "set.element"));
+    case stdlib_bridge::StdContainerKind::Map:
+        if (!solver.solve(TypeRelationKind::Equivalent,
+                          *source_view->first,
+                          *target_view->first,
+                          join_path(path, "map.key"))) {
+            return subtype_leaf(source, target, ctx, join_path(path, "map.key-mismatch"), false);
+        }
+        return solver.solve(TypeRelationKind::Subtype,
+                            *source_view->second,
+                            *target_view->second,
+                            join_path(path, "map.value"));
+    }
+
+    return std::nullopt;
 }
 
 bool subtype_impl(const Type &source,
@@ -539,6 +589,11 @@ bool subtype_impl(const Type &source,
         return true;
     }
 
+    if (const auto bridged = subtype_std_container_bridge(source, target, ctx, path, solver);
+        bridged.has_value()) {
+        return *bridged;
+    }
+
     if (const auto *variant = source.get_if<types::EnumVariantT>();
         variant != nullptr && target.holds<types::EnumT>()) {
         const auto *target_enum = target.get_if<types::EnumT>();
@@ -559,61 +614,15 @@ bool subtype_impl(const Type &source,
             if (variant->type_args[i] == nullptr || target_enum->type_args[i] == nullptr) {
                 return false;
             }
-            if (!solver.solve(TypeRelationKind::Equivalent,
-                              *variant->type_args[i],
-                              *target_enum->type_args[i],
-                              join_path(path,
-                                        "enum.variant.type_args[" + std::to_string(i) + "]"))) {
+            if (!solver.solve(
+                    TypeRelationKind::Equivalent,
+                    *variant->type_args[i],
+                    *target_enum->type_args[i],
+                    join_path(path, "enum.variant.type_args[" + std::to_string(i) + "]"))) {
                 return false;
             }
         }
         return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), true);
-    }
-
-    // Container covariance: Optional<A> <: Optional<B> if A <: B
-    if (source.holds<types::OptionalT>() && target.holds<types::OptionalT>()) {
-        const auto *s = source.get_if<types::OptionalT>();
-        const auto *t = target.get_if<types::OptionalT>();
-        if (s != nullptr && t != nullptr && s->inner && t->inner) {
-            return solver.solve(
-                TypeRelationKind::Subtype, *s->inner, *t->inner, join_path(path, "optional.inner"));
-        }
-    }
-    // List<A> <: List<B> if A <: B
-    if (source.holds<types::ListT>() && target.holds<types::ListT>()) {
-        const auto *s = source.get_if<types::ListT>();
-        const auto *t = target.get_if<types::ListT>();
-        if (s != nullptr && t != nullptr && s->element && t->element) {
-            return solver.solve(TypeRelationKind::Subtype,
-                                *s->element,
-                                *t->element,
-                                join_path(path, "list.element"));
-        }
-    }
-    // Set<A> <: Set<B> if A <: B
-    if (source.holds<types::SetT>() && target.holds<types::SetT>()) {
-        const auto *s = source.get_if<types::SetT>();
-        const auto *t = target.get_if<types::SetT>();
-        if (s != nullptr && t != nullptr && s->element && t->element) {
-            return solver.solve(TypeRelationKind::Subtype,
-                                *s->element,
-                                *t->element,
-                                join_path(path, "set.element"));
-        }
-    }
-    // Map<K1,V1> <: Map<K2,V2> if K1 equiv K2 AND V1 <: V2
-    if (source.holds<types::MapT>() && target.holds<types::MapT>()) {
-        const auto *s = source.get_if<types::MapT>();
-        const auto *t = target.get_if<types::MapT>();
-        if (s != nullptr && t != nullptr && s->key && t->key && s->value && t->value) {
-            if (!solver.solve(
-                    TypeRelationKind::Equivalent, *s->key, *t->key, join_path(path, "map.key"))) {
-                return subtype_leaf(
-                    source, target, ctx, join_path(path, "map.key-mismatch"), false);
-            }
-            return solver.solve(
-                TypeRelationKind::Subtype, *s->value, *t->value, join_path(path, "map.value"));
-        }
     }
 
     // Fn type subtyping: contravariant params, covariant return, covariant effect
@@ -626,8 +635,11 @@ bool subtype_impl(const Type &source,
             // Parameters: contravariant — target.param <: source.param
             for (std::size_t i = 0; i < s->params.size(); ++i) {
                 if (s->params[i] == nullptr || t->params[i] == nullptr) {
-                    return subtype_leaf(
-                        source, target, ctx, join_path(path, "fn.param[" + std::to_string(i) + "]"), false);
+                    return subtype_leaf(source,
+                                        target,
+                                        ctx,
+                                        join_path(path, "fn.param[" + std::to_string(i) + "]"),
+                                        false);
                 }
                 if (!solver.solve(TypeRelationKind::Subtype,
                                   *t->params[i],
@@ -638,8 +650,7 @@ bool subtype_impl(const Type &source,
             }
             // Return type: covariant — source.return <: target.return
             if (s->return_type == nullptr || t->return_type == nullptr) {
-                return subtype_leaf(
-                    source, target, ctx, join_path(path, "fn.return-null"), false);
+                return subtype_leaf(source, target, ctx, join_path(path, "fn.return-null"), false);
             }
             if (!solver.solve(TypeRelationKind::Subtype,
                               *s->return_type,
@@ -650,8 +661,7 @@ bool subtype_impl(const Type &source,
             // Effect: covariant — source.effect ⊑ target.effect (source is no
             // stronger than target, so it's acceptable where target is expected).
             if (!judgement_le(s->effect, t->effect)) {
-                return subtype_leaf(
-                    source, target, ctx, join_path(path, "fn.effect"), false);
+                return subtype_leaf(source, target, ctx, join_path(path, "fn.effect"), false);
             }
             return true;
         }

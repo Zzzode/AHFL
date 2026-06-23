@@ -1,0 +1,28 @@
+module std::string;
+
+@builtin("string_raw_length")
+fn raw_length(self: String) -> Int effect Pure;
+
+@builtin("string_raw_concat")
+fn raw_concat(left: String, right: String) -> String effect Pure;
+
+fn is_empty(self: String) -> Bool effect Pure decreases 0 {
+    return raw_length(self) == 0;
+}
+
+fn length(self: String) -> Int effect Pure decreases 0 {
+    return raw_length(self);
+}
+
+@builtin("string_contains")
+fn contains(self: String, needle: String) -> Bool effect Pure;
+
+@builtin("string_starts_with")
+fn starts_with(self: String, prefix: String) -> Bool effect Pure;
+
+@builtin("string_ends_with")
+fn ends_with(self: String, suffix: String) -> Bool effect Pure;
+
+fn concat(left: String, right: String) -> String effect Pure decreases 0 {
+    return raw_concat(left, right);
+}
