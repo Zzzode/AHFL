@@ -1871,6 +1871,7 @@ ahfl_label_tests(
     LABELS ahfl-rfc-corelib rfc-corelib-p2-fn-generics-closures
     TESTS
         ahfl.semantics.fn_generics_closures_all
+        ahfl.evaluator.generics_all
 )
 
 ahfl_label_tests(

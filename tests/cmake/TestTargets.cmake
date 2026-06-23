@@ -331,6 +331,21 @@ target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOU
 target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_runtime_evaluator_p7_tests)
 
+# P2d.S5: evaluator end-to-end generics dispatch through mangled instance names.
+add_executable(ahfl_runtime_evaluator_generics_tests
+    unit/runtime/evaluator/evaluator_generics.cpp
+)
+target_link_libraries(ahfl_runtime_evaluator_generics_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+ahfl_apply_project_warnings(ahfl_runtime_evaluator_generics_tests)
+
 add_executable(ahfl_counterexample_parse_tests
     unit/verification/formal/counterexample_parse.cpp
 )

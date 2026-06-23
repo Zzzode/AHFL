@@ -3906,6 +3906,10 @@ add_test(NAME ahfl.evaluator.p7_runtime_all
     COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_p7_tests>
 )
 
+add_test(NAME ahfl.evaluator.generics_all
+    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_generics_tests>
+)
+
 add_test(NAME ahfl.executor.exec_all
     COMMAND $<TARGET_FILE:ahfl_executor_tests>
 )
