@@ -402,7 +402,7 @@ eval_some_expr(const ir::SomeExpr &expr, const EvalContext &ctx, const CallEvalF
     auto inner = eval_expr_impl(*expr.value, ctx, call_eval);
     if (inner.has_errors())
         return inner;
-    return EvalResult{make_optional_some(std::move(inner.value)), {}};
+    return EvalResult{make_option_some(std::move(inner.value)), {}};
 }
 
 // ============================================================================

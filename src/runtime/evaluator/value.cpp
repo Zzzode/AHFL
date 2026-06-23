@@ -270,6 +270,9 @@ ValueKind value_kind(const Value &v) {
             } else if constexpr (std::is_same_v<T, ListValue>) {
                 return ValueKind::List;
             } else if constexpr (std::is_same_v<T, EnumValue>) {
+                if (inner.enum_name == "std::option::Option") {
+                    return ValueKind::Optional;
+                }
                 return ValueKind::Enum;
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 return ValueKind::Optional;
@@ -346,19 +349,33 @@ void print_value(const Value &v, std::ostream &out) {
                 }
                 out << "]";
             } else if constexpr (std::is_same_v<T, EnumValue>) {
-                out << inner.enum_name << "::" << inner.variant;
-                if (!inner.payload.empty()) {
-                    out << "(";
-                    for (size_t i = 0; i < inner.payload.size(); ++i) {
-                        if (i > 0)
-                            out << ", ";
-                        if (inner.payload[i]) {
-                            print_value(*inner.payload[i], out);
-                        } else {
-                            out << "<null>";
-                        }
+                if (inner.enum_name == "std::option::Option") {
+                    if (inner.variant == "Some" && inner.associated) {
+                        out << "some(";
+                        print_value(*inner.associated, out);
+                        out << ")";
+                    } else {
+                        out << "none";
                     }
-                    out << ")";
+                } else {
+                    out << inner.enum_name << "::" << inner.variant;
+                    if (!inner.payload.empty()) {
+                        out << "(";
+                        for (size_t i = 0; i < inner.payload.size(); ++i) {
+                            if (i > 0)
+                                out << ", ";
+                            if (inner.payload[i]) {
+                                print_value(*inner.payload[i], out);
+                            } else {
+                                out << "<null>";
+                            }
+                        }
+                        out << ")";
+                    } else if (inner.associated) {
+                        out << "(";
+                        print_value(*inner.associated, out);
+                        out << ")";
+                    }
                 }
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 if (inner.inner) {
@@ -595,6 +612,9 @@ Value clone_value(const Value &v) {
                     } else {
                         ev.payload.push_back(nullptr);
                     }
+                }
+                if (inner.associated) {
+                    ev.associated = std::make_unique<Value>(clone_value(*inner.associated));
                 }
                 return Value{std::move(ev)};
             } else if constexpr (std::is_same_v<T, OptionalValue>) {

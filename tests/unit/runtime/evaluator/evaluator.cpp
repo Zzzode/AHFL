@@ -479,10 +479,12 @@ void test_some_expr() {
     auto expr = make_expr(SomeExpr{make_expr_ptr(IntegerLiteralExpr{"42"})});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "some_expr.no_error");
-    auto *ov = std::get_if<OptionalValue>(&result.value.node);
-    check(ov != nullptr && ov->inner != nullptr, "some_expr.has_inner");
-    if (ov && ov->inner) {
-        auto *iv = std::get_if<IntValue>(&ov->inner->node);
+    auto *ev = std::get_if<EnumValue>(&result.value.node);
+    check(ev != nullptr && ev->enum_name == "std::option::Option" && ev->variant == "Some",
+          "some_expr.is_option_some");
+    check(ev != nullptr && ev->associated != nullptr, "some_expr.has_inner");
+    if (ev && ev->associated) {
+        auto *iv = std::get_if<IntValue>(&ev->associated->node);
         check(iv != nullptr && iv->value == 42, "some_expr.inner_value");
     }
 }

@@ -63,9 +63,15 @@ struct ListValue {
 struct EnumValue {
     std::string enum_name;
     std::string variant;
+    // Vector payload: Result-style multi-field variants (base HEAD convention).
     std::vector<std::unique_ptr<Value>> payload;
+    // Associated single payload: nominal Option::Some & similar single-data
+    // variants (P5.11a evaluator-internal construction).
+    std::unique_ptr<Value> associated; // nullable
 };
 
+// Kept for external API compatibility (JSON, response validator, prompt builder).
+// Evaluator-internal construction uses the nominal EnumValue option below.
 struct OptionalValue {
     std::unique_ptr<Value> inner; // nullptr means none
 };
@@ -198,12 +204,31 @@ void print_value(const Value &v, std::ostream &out);
 }
 
 [[nodiscard]] inline Value make_enum(std::string enum_name, std::string variant) {
-    return Value{EnumValue{std::move(enum_name), std::move(variant), {}}};
+    return Value{EnumValue{std::move(enum_name), std::move(variant), {}, nullptr}};
 }
 
 [[nodiscard]] Value
 make_enum(std::string enum_name, std::string variant, std::vector<Value> payload);
 
+[[nodiscard]] inline Value make_enum(std::string enum_name,
+                                     std::string variant,
+                                     std::unique_ptr<Value> associated) {
+    return Value{EnumValue{std::move(enum_name), std::move(variant), {}, std::move(associated)}};
+}
+
+// Nominal option constructors (evaluator-internal representation)
+[[nodiscard]] inline Value make_option_some(Value inner) {
+    return Value{EnumValue{"std::option::Option",
+                           "Some",
+                           {},
+                           std::make_unique<Value>(std::move(inner))}};
+}
+
+[[nodiscard]] inline Value make_option_none() {
+    return Value{EnumValue{"std::option::Option", "None", {}, nullptr}};
+}
+
+// Legacy constructors — kept for external JSON/compatibility consumers (P5.11b)
 [[nodiscard]] Value make_optional_some(Value inner);
 
 [[nodiscard]] Value make_optional_none();
