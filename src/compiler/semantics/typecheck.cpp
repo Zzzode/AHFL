@@ -831,6 +831,62 @@ TypeCheckResult TypeCheckPass::run() {
     result_.environment = std::move(environment_result.environment);
     hir_builder_.apply_declaration_payload_updates(
         std::move(environment_result.declaration_updates));
+    // P3c.S5a: snapshot the declaration-layer impl_index from TypeEnvironment
+    // into TypedProgram, alongside a flat list of impl-declaration indexes so
+    // typed-tree consumers can dereference entries without re-entering
+    // TypeEnvironment. We build the flat list from the environment's impls_
+    // map (already indexed by impl_index) so ordering matches declaration
+    // order.
+    {
+        auto &tp = result_.typed_program;
+        auto &env = result_.environment;
+        tp.impl_declaration_indexes.clear();
+        tp.impl_index.clear();
+        // First, map each environment impl_index → its TypedDecl position so
+        // TypedProgram entries dereference correctly. We walk the typed
+        // declarations once; ImplTypeInfo payloads carry their own .index.
+        std::unordered_map<std::size_t, std::uint32_t> env_index_to_decl_index;
+        for (std::uint32_t i = 0; i < tp.declarations.size(); ++i) {
+            if (const auto *impl_info =
+                    std::get_if<ImplTypeInfo>(&tp.declarations[i].payload)) {
+                env_index_to_decl_index.emplace(impl_info->index, i);
+            }
+        }
+        // Copy impl buckets; each bucket element is the environment impl
+        // index → remap to TypedProgram declaration index.
+        for (const auto &[env_key, env_indices] : env.impl_index()) {
+            TypedProgram::ImplIndexKey key{
+                .trait_symbol_value = env_key.trait_symbol_value,
+                .normalized_type_key = env_key.normalized_type_key,
+            };
+            std::vector<std::uint32_t> decl_indices;
+            decl_indices.reserve(env_indices.size());
+            for (const auto env_idx : env_indices) {
+                const auto iter = env_index_to_decl_index.find(env_idx);
+                if (iter == env_index_to_decl_index.end()) {
+                    continue;
+                }
+                decl_indices.push_back(iter->second);
+                // Also insert into the flat impl_declaration_indexes list if
+                // not already present (deduplicate in case an impl appears in
+                // multiple trait-bucket views).
+                tp.impl_declaration_indexes.push_back(iter->second);
+            }
+            if (!decl_indices.empty()) {
+                tp.impl_index.emplace(std::move(key), std::move(decl_indices));
+            }
+        }
+        // Deduplicate flat impl_declaration_indexes (stable order).
+        std::unordered_set<std::uint32_t> seen_impl;
+        std::vector<std::uint32_t> unique_impls;
+        unique_impls.reserve(tp.impl_declaration_indexes.size());
+        for (const auto idx : tp.impl_declaration_indexes) {
+            if (seen_impl.insert(idx).second) {
+                unique_impls.push_back(idx);
+            }
+        }
+        tp.impl_declaration_indexes = std::move(unique_impls);
+    }
     ConstSema(*this).run();
     ContractSema(*this).run();
     FlowSema(*this).run();

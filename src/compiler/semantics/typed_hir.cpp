@@ -1,5 +1,7 @@
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 
+#include "ahfl/compiler/semantics/typecheck.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <utility>
@@ -699,6 +701,38 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
     program.rebuild_indices();
 
     return {MonomorphizeStatus::Created, instance_index};
+}
+
+// P3c.S5a: TypedProgram::lookup_impl_index dispatchers.
+// These wrap the raw unordered_map lookup in a stable, nullopt-tolerant
+// surface that mirrors TypeEnvironment's, so typed-tree consumers never
+// reach directly into impl_index internals.
+
+std::vector<std::uint32_t> TypedProgram::lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                                                           const Type &concrete_type) const {
+    return lookup_impl_index_by_key(trait_symbol, TypeEnvironment::normalize_type_key(concrete_type));
+}
+
+std::vector<std::uint32_t> TypedProgram::lookup_impl_index_by_key(
+    std::optional<SymbolId> trait_symbol, std::string_view normalized_type_key) const {
+    if (!trait_symbol.has_value()) {
+        std::vector<std::uint32_t> out;
+        for (const auto &[key, indices] : impl_index) {
+            if (key.normalized_type_key == normalized_type_key) {
+                out.insert(out.end(), indices.begin(), indices.end());
+            }
+        }
+        return out;
+    }
+    const ImplIndexKey probe{
+        .trait_symbol_value = trait_symbol->value,
+        .normalized_type_key = std::string(normalized_type_key),
+    };
+    const auto iter = impl_index.find(probe);
+    if (iter == impl_index.end()) {
+        return {};
+    }
+    return iter->second;
 }
 
 } // namespace ahfl
