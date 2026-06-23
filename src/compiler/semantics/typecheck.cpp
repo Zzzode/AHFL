@@ -1238,7 +1238,7 @@ bool trait_chain_implements(SymbolId target_id,
                             SymbolId trait_id,
                             const TypeEnvironment &env,
                             std::unordered_set<std::size_t> &visited) {
-    const auto [_, inserted] = visited.insert(static_cast<std::size_t>(trait_id));
+    const auto [_, inserted] = visited.insert(trait_id.value);
     if (!inserted) {
         return false; // break cycles in the super-trait DAG
     }

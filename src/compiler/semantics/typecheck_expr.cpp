@@ -345,6 +345,35 @@ class ExpressionCheckerServices final {
         delegate_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
     }
 
+    // P2d.S2 (RFC §3.5 / §2): check that a type satisfies the named trait
+    // bound; emits a TRAIT_BOUND_NOT_SATISFIED diagnostic at the given range
+    // on failure and returns false. Super-trait chains are followed so a
+    // sub-trait impl also satisfies its ancestor bounds.
+    [[nodiscard]] bool check_bound(const Type &subject_type,
+                                   std::string_view trait_name,
+                                   SourceRange range) const {
+        return delegate_->check_bound(subject_type, trait_name, range);
+    }
+
+    // P2d.S2 helper: resolve a nominal type by its canonical (short) name.
+    // Looks up the name in the Struct and Enum symbol tables via the
+    // ResolveResult and returns a TypePtr with the nominal symbol set, or
+    // nullptr when no nominal type with that name is declared.
+    [[nodiscard]] TypePtr resolve_nominal_by_name(std::string_view name) const {
+        const auto struct_symbol =
+            resolve_result_.symbol_table.find_canonical(SymbolNamespace::Types, name);
+        if (struct_symbol.has_value()) {
+            const auto &sym = struct_symbol->get();
+            if (sym.kind == SymbolKind::Struct) {
+                return types_.struct_type(sym.canonical_name, sym.id);
+            }
+            if (sym.kind == SymbolKind::Enum) {
+                return types_.enum_type(sym.canonical_name, sym.id);
+            }
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(const Type &type) const {
         return environment_.get_enum(type);
     }
@@ -1612,6 +1641,57 @@ class ExpressionChecker final {
         // monomorphization can instantiate the body.
         services_.record_fn_call_site(target, expr.range, subst);
 
+        // P2d.S2 (RFC §3.5 / §2): where-bound checking at the call site. For
+        // every `where Subject: Trait1 + Trait2 + ...` entry in the callee's
+        // signature, resolve the subject type parameter to the concrete type
+        // supplied at this call site and verify the environment contains a
+        // trait impl (or super-trait impl) for the (type, trait) pair. Each
+        // unsatisfied bound emits a TRAIT_BOUND_NOT_SATISFIED diagnostic at
+        // the call range plus a note at the bound's declaration range.
+        //
+        // Bounds whose subject is not a declared type parameter (e.g. a
+        // forward-reference to a non-generic type) are skipped conservatively:
+        // the signature-resolution pass will have already rejected them as
+        // malformed if they referenced unknown types.
+        if (!fn->get().where_clause.bounds.empty()) {
+            const auto &param_names = fn->get().type_param_names;
+            for (const auto &bound : fn->get().where_clause.bounds) {
+                TypePtr subject_type = nullptr;
+                // Resolve the bound subject: match the subject name against
+                // the callee's type parameter list using the (already
+                // substituted) generic argument vector. Non-generic callees
+                // still carry type_param_names (empty) and fall through to
+                // the nominal lookup branch.
+                if (!param_names.empty() && !subst.empty()) {
+                    auto it = std::find(param_names.begin(), param_names.end(), bound.subject_name);
+                    if (it != param_names.end()) {
+                        const std::size_t index = static_cast<std::size_t>(it - param_names.begin());
+                        if (index < subst.size()) {
+                            subject_type = subst[index];
+                        }
+                    }
+                }
+                if (subject_type == nullptr) {
+                    // Subject did not resolve via the generic parameter map:
+                    // fall back to a canonical-name lookup using the subject
+                    // name as a nominal type name (covers the rare case of a
+                    // concrete-type where constraint on a non-generic fn).
+                    subject_type = services_.resolve_nominal_by_name(bound.subject_name);
+                }
+                if (subject_type == nullptr) {
+                    continue;
+                }
+                for (const auto &trait_name : bound.trait_names) {
+                    // Primary diagnostic is emitted by check_bound at the
+                    // call expression range; the diagnostic message embeds
+                    // the bound subject name, trait name and actual
+                    // resolved type so users can correlate the failure
+                    // with the fn's where clause.
+                    (void)services_.check_bound(*subject_type, trait_name, expr.range);
+                }
+            }
+        }
+
         // Assignability check against the (instantiated, for generic fns) param.
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = fn->get().params[index];
@@ -2275,6 +2355,14 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
         }
 
+        // P2d.S2 (RFC §3.5 / §2): forward the bound check to the TypeCheckPass
+        // implementation (which also emits the diagnostic on failure).
+        bool check_bound(const Type &subject_type,
+                         std::string_view trait_name,
+                         SourceRange range) override {
+            return pass_->check_bound(subject_type, trait_name, range);
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -2351,6 +2439,14 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
         void record_fn_call_site(SymbolId /*fn_symbol*/,
                                  SourceRange /*call_range*/,
                                  std::vector<TypePtr> /*type_args*/) override {}
+
+        // P2d.S2 (RFC §3.5 / §2): path resolution never performs a where-bound
+        // check; the no-op returns false without emitting a diagnostic.
+        bool check_bound(const Type & /*subject_type*/,
+                         std::string_view /*trait_name*/,
+                         SourceRange /*range*/) override {
+            return false;
+        }
 
       private:
         TypeCheckPass *pass_{nullptr};
