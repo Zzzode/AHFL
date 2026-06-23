@@ -2218,6 +2218,17 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     // Type-check the body block.
     // Note: no expected_return_origin so the return statement uses
     // assignability check (not schema boundary check — that's for agent output).
+    //
+    // TODO(hook_for_p3c): P3c return-site where-bound validation. After the
+    // body block is type-checked, walk every ReturnStmtSyntax in the typed
+    // block, collect the inferred return value type, and validate it against
+    // any `where T:Trait` constraints that apply to the fn's return type
+    // (i.e. bounds whose subject type is the declared return type or a
+    // type parameter referenced by it). Emit TRAIT_BOUND_NOT_SATISFIED at
+    // the return expression range for each unsatisfied bound. The hook is
+    // intentionally a placeholder here (no logic) so P3c can slot in the
+    // full bound-expansion + type-parameter-walk without touching call-site
+    // code. See RFC §3.5 return-bound semantics.
     if (info.return_type != nullptr) {
         driver_->check_block(*decl.body,
                              context,
@@ -2744,6 +2755,17 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                       expectation);
                 } else {
                     // Ordinary function return: check assignability.
+                    //
+                    // TODO(hook_for_p3c): P3c return-bound hook. After the
+                    // assignability check passes, inspect the fn's
+                    // where_clause for any bounds whose subject type (or a
+                    // type parameter referenced by it) matches the declared
+                    // return type. For each such bound, call
+                    // `check_bound(value.type, trait_name, range)`. The
+                    // check logic lives in P3c (it needs generic bound
+                    // expansion: `where T: Eq` where `-> T` for example) so
+                    // this site deliberately performs no work beyond the
+                    // assignability check today.
                     const auto value =
                         check_expr(*statement.return_stmt->value, context, expected_return_type);
                     (void)check_assignable(*value.type,
