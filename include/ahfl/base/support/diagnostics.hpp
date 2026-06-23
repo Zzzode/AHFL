@@ -290,6 +290,18 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{"EFF
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NONDET_IN_INVARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MonomorphizationBudgetExceeded{
     "MONOMORPHIZATION_BUDGET_EXCEEDED"};
+// --- DECREASES / termination clause diagnostics (P4 contract hardening) ---
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesExpectsNumeric{
+    "DECREASES_EXPECTS_NUMERIC"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesExpectsPure{
+    "DECREASES_EXPECTS_PURE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesIllegalOwner{
+    "DECREASES_ILLEGAL_OWNER"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesDuplicate{
+    "DECREASES_DUPLICATE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InNonPure{"IN_NON_PURE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{
+    "SHADOWED_RECEIVER"};
 } // namespace typecheck
 
 namespace resolve {
@@ -547,6 +559,19 @@ inline constexpr MessageTemplate NondetInInvariant{
     "non-deterministic expression in invariant/safety/liveness formula: {}"};
 inline constexpr MessageTemplate MonomorphizationBudgetExceeded{
     "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: {})"};
+// --- DECREASES / termination clause messages (P4 contract hardening) ---
+inline constexpr MessageTemplate DecreasesExpectsNumeric{
+    "DECREASES measure must have numeric type (Int, Decimal, or Duration), got {}"};
+inline constexpr MessageTemplate DecreasesExpectsPure{
+    "DECREASES measure must be a pure expression, but contains {}"};
+inline constexpr MessageTemplate DecreasesIllegalOwner{
+    "DECREASES clause is only allowed on predicates and recursive functions, not on {} '{}'"};
+inline constexpr MessageTemplate DecreasesDuplicate{
+    "multiple DECREASES clauses in contract of '{}' (only one termination measure is supported)"};
+inline constexpr MessageTemplate InNonPure{
+    "invariant body must be a pure expression, but contains {}"};
+inline constexpr MessageTemplate ShadowedReceiver{
+    "let binding '{}' shadows receiver '{}' used for termination; termination check may be imprecise"};
 } // namespace typecheck
 
 namespace validation {
