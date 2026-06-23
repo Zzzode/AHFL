@@ -300,6 +300,17 @@ inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMe
     "FAILURE_SUMMARY_EMPTY_MESSAGE"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
     "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNotProven{
+    "DECREASES_NOT_PROVEN"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNonLex{
+    "DECREASES_NON_LEX"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesWildcardInvalid{
+    "DECREASES_WILDCARD_INVALID"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesEmpty{"DECREASES_EMPTY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesShadowedReceiver{
+    "DECREASES_SHADOWED_RECEIVER"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesInNonPure{
+    "DECREASES_IN_NON_PURE"};
 } // namespace validation
 
 namespace runtime {
@@ -557,6 +568,18 @@ inline constexpr MessageTemplate FailureSummaryEmptyMessage{
     "{} contains failure summary with empty message"};
 inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
     "{} contains failure summary with empty node_name"};
+inline constexpr MessageTemplate DecreasesNotProven{
+    "cannot prove termination: measure '{}' is not strictly decreasing along all paths"};
+inline constexpr MessageTemplate DecreasesNonLex{
+    "termination measure '{}' is not a well-founded lexicographic tuple: component {}"};
+inline constexpr MessageTemplate DecreasesWildcardInvalid{
+    "wildcard '_' is not allowed as a termination measure component (position {})"};
+inline constexpr MessageTemplate DecreasesEmpty{
+    "decreases clause is empty: expected at least one measure expression"};
+inline constexpr MessageTemplate DecreasesShadowedReceiver{
+    "termination receiver '{}' shadows an outer binding of type '{}' (receiver is still safe)"};
+inline constexpr MessageTemplate DecreasesInNonPure{
+    "decreases clause is only allowed in pure predicates; '{}' is marked impure"};
 } // namespace validation
 } // namespace messages
 
