@@ -1840,6 +1840,26 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 continue;
             }
 
+            // Wildcard decreases carries no expression to type-check.
+            if (clause->kind == ast::ContractClauseKind::Decreases && clause->is_wildcard) {
+                continue;
+            }
+
+            // Decreases with a concrete metric accepts any pure ordered value. Skip
+            // the bool-only gate that applies to the precondition/postcondition
+            // clause kinds.
+            if (clause->kind == ast::ContractClauseKind::Decreases) {
+                ValueContext context;
+                context.bindings.emplace(
+                    "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                const auto value = driver_->check_expr(*clause->expr, context, std::nullopt);
+                if (!value.is_pure) {
+                    driver_->non_pure_error_here(
+                        "decreases metric", value.effect, clause->expr->range);
+                }
+                continue;
+            }
+
             const auto bool_type = driver_->make_type(TypeKind::Bool);
             ValueContext context;
             context.bindings.emplace(

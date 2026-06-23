@@ -107,6 +107,7 @@ enum class ContractClauseKind {
     Ensures,   // Postcondition
     Invariant, // Invariant
     Forbid,    // Forbidden condition
+    Decreases, // Termination metric
 };
 
 /// Source kinds of value references inside a workflow

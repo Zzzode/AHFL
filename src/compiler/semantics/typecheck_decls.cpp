@@ -1589,6 +1589,7 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
             ContractClauseInfo clause_info{
                 .clause_kind = static_cast<int>(clause->kind),
                 .is_temporal = is_temporal,
+                .is_wildcard = clause->is_wildcard,
                 .expr_range = expr_range,
                 .source_range = clause->range,
                 .has_decreases = static_cast<bool>(clause->decreases),

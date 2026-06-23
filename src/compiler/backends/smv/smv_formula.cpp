@@ -110,6 +110,14 @@ std::optional<std::string> SmvPrinter::render_contract_expr_clause(const ir::Con
             return "G (" + *bounded_expr + ")";
         case ir::ContractClauseKind::Forbid:
             return "G (!(" + *bounded_expr + "))";
+        case ir::ContractClauseKind::Decreases:
+            // Decreases is a termination metric; SMV encoding is left to a
+            // dedicated follow-up pass. Treat it as an informative comment for
+            // bounded model checking.
+            specs_.push_back("-- contract " + target + " decreases[" +
+                             std::to_string(clause_index) +
+                             "] termination_metric: " + *bounded_expr);
+            return std::nullopt;
         }
     }
 
@@ -127,6 +135,7 @@ std::optional<std::string> SmvPrinter::render_contract_expr_clause(const ir::Con
         return std::nullopt;
     case ir::ContractClauseKind::Invariant:
     case ir::ContractClauseKind::Forbid:
+    case ir::ContractClauseKind::Decreases:
         specs_.push_back("-- contract " + target + " " + contract_clause_kind_name(kind) + "[" +
                          std::to_string(clause_index) + "] observation_assumption: " + observation);
         return std::nullopt;

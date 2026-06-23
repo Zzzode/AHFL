@@ -32,56 +32,42 @@ public:
     T__104 = 105, T__105 = 106, T__106 = 107, T__107 = 108, T__108 = 109,
     T__109 = 110, T__110 = 111, T__111 = 112, T__112 = 113, T__113 = 114,
     T__114 = 115, T__115 = 116, T__116 = 117, T__117 = 118, T__118 = 119,
-    T__119 = 120, T__120 = 121, T__121 = 122, T__122 = 123, T__123 = 124,
-    T__124 = 125, T__125 = 126, T__126 = 127, T__127 = 128, T__128 = 129,
-    T__129 = 130, T__130 = 131, T__131 = 132, T__132 = 133, T__133 = 134,
-    DURATION_LITERAL = 135, DECIMAL_LITERAL = 136, FLOAT_LITERAL = 137,
-    INT_LITERAL = 138, BACKSLASH = 139, STRING_LITERAL = 140, IDENT = 141,
-    DOC_COMMENT = 142, LINE_COMMENT = 143, BLOCK_COMMENT = 144, WS = 145
+    DURATION_LITERAL = 120, DECIMAL_LITERAL = 121, FLOAT_LITERAL = 122,
+    INT_LITERAL = 123, STRING_LITERAL = 124, IDENT = 125, DOC_COMMENT = 126,
+    LINE_COMMENT = 127, BLOCK_COMMENT = 128, WS = 129
   };
 
   enum {
     RuleProgram = 0, RuleTopLevelDecl = 1, RuleModuleDecl = 2, RuleImportDecl = 3,
-    RuleIdentifier = 4, RuleQualifiedIdent = 5, RuleQualifiedIdentList = 6,
-    RuleIdentList = 7, RuleIdentListOpt = 8, RuleQualifiedIdentListOpt = 9,
-    RuleType_ = 10, RulePrimitiveType = 11, RuleConstDecl = 12, RuleTypeAliasDecl = 13,
-    RuleStructDecl = 14, RuleStructFieldDecl = 15, RuleEnumDecl = 16, RuleEnumVariant = 17,
-    RuleTypeList = 18, RuleFnType = 19, RuleCapabilityDecl = 20, RuleCapabilityEffectBlock = 21,
-    RuleCapabilityEffectItem = 22, RuleCapabilityEffectKind = 23, RuleCapabilityReceiptMode = 24,
-    RuleCapabilityRetryMode = 25, RulePredicateDecl = 26, RuleParamList = 27,
-    RuleParam = 28, RuleAgentDecl = 29, RuleInputDecl = 30, RuleContextDecl = 31,
-    RuleOutputDecl = 32, RuleStatesDecl = 33, RuleInitialDecl = 34, RuleFinalDecl = 35,
-    RuleCapabilitiesDecl = 36, RuleQuotaDecl = 37, RuleQuotaItem = 38, RuleTransitionDecl = 39,
-    RuleContractDecl = 40, RuleContractItem = 41, RuleRequiresDecl = 42,
-    RuleEnsuresDecl = 43, RuleInvariantDecl = 44, RuleForbidDecl = 45, RuleFlowDecl = 46,
-    RuleStateHandler = 47, RuleStatePolicy = 48, RuleStatePolicyItem = 49,
-    RuleWorkflowDecl = 50, RuleWorkflowInputDecl = 51, RuleWorkflowOutputDecl = 52,
-    RuleWorkflowItem = 53, RuleWorkflowNodeDecl = 54, RuleWorkflowSafetyDecl = 55,
-    RuleWorkflowLivenessDecl = 56, RuleWorkflowReturnDecl = 57, RuleBuiltinAttr = 58,
-    RuleFnDecl = 59, RuleTypeParams = 60, RuleTypeParam = 61, RuleTypeBoundList = 62,
-    RuleFnBody = 63, RuleEffectClause = 64, RuleEffectSpec = 65, RuleCapabilityRef = 66,
-    RuleDecreasesClause = 67, RuleWhereClause = 68, RuleWhereConstraint = 69,
-    RuleLambdaExpr = 70, RuleLambdaParamList = 71, RuleLambdaParam = 72,
-    RuleTraitDecl = 73, RuleTraitItem = 74, RuleTraitFnItem = 75, RuleAssocTypeItem = 76,
-    RuleAssocConstItem = 77, RuleImplDecl = 78, RuleTraitRef = 79, RuleImplItem = 80,
-    RuleImplFnItem = 81, RuleAssocTypeDef = 82, RuleAssocConstDef = 83,
-    RuleBlock = 84, RuleStatement = 85, RuleLetStmt = 86, RuleAssignStmt = 87,
-    RuleIfStmt = 88, RuleGotoStmt = 89, RuleReturnStmt = 90, RuleAssertStmt = 91,
-    RuleExprStmt = 92, RuleLValue = 93, RuleExpr = 94, RuleImpliesExpr = 95,
-    RuleOrExpr = 96, RuleAndExpr = 97, RuleEqualityExpr = 98, RuleCompareExpr = 99,
-    RuleAddExpr = 100, RuleMulExpr = 101, RuleUnaryExpr = 102, RulePostfixExpr = 103,
-    RulePrimaryExpr = 104, RuleMatchExpr = 105, RuleMatchArm = 106, RulePattern = 107,
-    RuleOrPattern = 108, RuleConcatPattern = 109, RuleLiteralPattern = 110,
-    RuleVariantPattern = 111, RuleWildcardPattern = 112, RuleBindingPattern = 113,
-    RuleTuplePattern = 114, RulePatternList = 115, RulePathExpr = 116, RulePathRoot = 117,
-    RuleQualifiedValueExpr = 118, RuleCallExpr = 119, RuleExprList = 120,
-    RuleLiteral = 121, RuleIntegerLiteral = 122, RuleFloatLiteral = 123,
-    RuleDecimalLiteral = 124, RuleStringLiteral = 125, RuleDurationLiteral = 126,
-    RuleStructLiteral = 127, RuleListLiteral = 128, RuleSetLiteral = 129,
-    RuleMapLiteral = 130, RuleMapEntryList = 131, RuleMapEntry = 132, RuleStructInitList = 133,
-    RuleStructInit = 134, RuleConstExpr = 135, RuleTemporalExpr = 136, RuleWorkflowTemporalExpr = 137,
-    RuleTemporalImpliesExpr = 138, RuleTemporalOrExpr = 139, RuleTemporalAndExpr = 140,
-    RuleTemporalUntilExpr = 141, RuleTemporalUnaryExpr = 142, RuleTemporalAtom = 143
+    RuleQualifiedIdent = 4, RuleQualifiedIdentList = 5, RuleIdentList = 6,
+    RuleIdentListOpt = 7, RuleQualifiedIdentListOpt = 8, RuleType_ = 9,
+    RulePrimitiveType = 10, RuleConstDecl = 11, RuleTypeAliasDecl = 12,
+    RuleStructDecl = 13, RuleStructFieldDecl = 14, RuleEnumDecl = 15, RuleEnumVariant = 16,
+    RuleCapabilityDecl = 17, RuleCapabilityEffectBlock = 18, RuleCapabilityEffectItem = 19,
+    RuleCapabilityEffectKind = 20, RuleCapabilityReceiptMode = 21, RuleCapabilityRetryMode = 22,
+    RulePredicateDecl = 23, RuleParamList = 24, RuleParam = 25, RuleAgentDecl = 26,
+    RuleInputDecl = 27, RuleContextDecl = 28, RuleOutputDecl = 29, RuleStatesDecl = 30,
+    RuleInitialDecl = 31, RuleFinalDecl = 32, RuleCapabilitiesDecl = 33,
+    RuleQuotaDecl = 34, RuleQuotaItem = 35, RuleTransitionDecl = 36, RuleContractDecl = 37,
+    RuleContractItem = 38, RuleRequiresDecl = 39, RuleEnsuresDecl = 40,
+    RuleInvariantDecl = 41, RuleForbidDecl = 42, RuleDecreasesDecl = 43,
+    RuleFlowDecl = 44, RuleStateHandler = 45, RuleStatePolicy = 46, RuleStatePolicyItem = 47,
+    RuleWorkflowDecl = 48, RuleWorkflowInputDecl = 49, RuleWorkflowOutputDecl = 50,
+    RuleWorkflowItem = 51, RuleWorkflowNodeDecl = 52, RuleWorkflowSafetyDecl = 53,
+    RuleWorkflowLivenessDecl = 54, RuleWorkflowReturnDecl = 55, RuleBlock = 56,
+    RuleStatement = 57, RuleLetStmt = 58, RuleAssignStmt = 59, RuleIfStmt = 60,
+    RuleGotoStmt = 61, RuleReturnStmt = 62, RuleAssertStmt = 63, RuleExprStmt = 64,
+    RuleLValue = 65, RuleExpr = 66, RuleImpliesExpr = 67, RuleOrExpr = 68,
+    RuleAndExpr = 69, RuleEqualityExpr = 70, RuleCompareExpr = 71, RuleAddExpr = 72,
+    RuleMulExpr = 73, RuleUnaryExpr = 74, RulePostfixExpr = 75, RulePrimaryExpr = 76,
+    RulePathExpr = 77, RulePathRoot = 78, RuleQualifiedValueExpr = 79, RuleCallExpr = 80,
+    RuleExprList = 81, RuleLiteral = 82, RuleIntegerLiteral = 83, RuleFloatLiteral = 84,
+    RuleDecimalLiteral = 85, RuleStringLiteral = 86, RuleDurationLiteral = 87,
+    RuleListLiteral = 88, RuleSetLiteral = 89, RuleMapLiteral = 90, RuleMapEntryList = 91,
+    RuleMapEntry = 92, RuleStructLiteral = 93, RuleStructInitList = 94,
+    RuleStructInit = 95, RuleConstExpr = 96, RuleTemporalExpr = 97, RuleWorkflowTemporalExpr = 98,
+    RuleTemporalImpliesExpr = 99, RuleTemporalOrExpr = 100, RuleTemporalAndExpr = 101,
+    RuleTemporalUntilExpr = 102, RuleTemporalUnaryExpr = 103, RuleTemporalAtom = 104
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -105,7 +91,6 @@ public:
   class TopLevelDeclContext;
   class ModuleDeclContext;
   class ImportDeclContext;
-  class IdentifierContext;
   class QualifiedIdentContext;
   class QualifiedIdentListContext;
   class IdentListContext;
@@ -119,8 +104,6 @@ public:
   class StructFieldDeclContext;
   class EnumDeclContext;
   class EnumVariantContext;
-  class TypeListContext;
-  class FnTypeContext;
   class CapabilityDeclContext;
   class CapabilityEffectBlockContext;
   class CapabilityEffectItemContext;
@@ -147,6 +130,7 @@ public:
   class EnsuresDeclContext;
   class InvariantDeclContext;
   class ForbidDeclContext;
+  class DecreasesDeclContext;
   class FlowDeclContext;
   class StateHandlerContext;
   class StatePolicyContext;
@@ -159,32 +143,6 @@ public:
   class WorkflowSafetyDeclContext;
   class WorkflowLivenessDeclContext;
   class WorkflowReturnDeclContext;
-  class BuiltinAttrContext;
-  class FnDeclContext;
-  class TypeParamsContext;
-  class TypeParamContext;
-  class TypeBoundListContext;
-  class FnBodyContext;
-  class EffectClauseContext;
-  class EffectSpecContext;
-  class CapabilityRefContext;
-  class DecreasesClauseContext;
-  class WhereClauseContext;
-  class WhereConstraintContext;
-  class LambdaExprContext;
-  class LambdaParamListContext;
-  class LambdaParamContext;
-  class TraitDeclContext;
-  class TraitItemContext;
-  class TraitFnItemContext;
-  class AssocTypeItemContext;
-  class AssocConstItemContext;
-  class ImplDeclContext;
-  class TraitRefContext;
-  class ImplItemContext;
-  class ImplFnItemContext;
-  class AssocTypeDefContext;
-  class AssocConstDefContext;
   class BlockContext;
   class StatementContext;
   class LetStmtContext;
@@ -206,17 +164,6 @@ public:
   class UnaryExprContext;
   class PostfixExprContext;
   class PrimaryExprContext;
-  class MatchExprContext;
-  class MatchArmContext;
-  class PatternContext;
-  class OrPatternContext;
-  class ConcatPatternContext;
-  class LiteralPatternContext;
-  class VariantPatternContext;
-  class WildcardPatternContext;
-  class BindingPatternContext;
-  class TuplePatternContext;
-  class PatternListContext;
   class PathExprContext;
   class PathRootContext;
   class QualifiedValueExprContext;
@@ -228,12 +175,12 @@ public:
   class DecimalLiteralContext;
   class StringLiteralContext;
   class DurationLiteralContext;
-  class StructLiteralContext;
   class ListLiteralContext;
   class SetLiteralContext;
   class MapLiteralContext;
   class MapEntryListContext;
   class MapEntryContext;
+  class StructLiteralContext;
   class StructInitListContext;
   class StructInitContext;
   class ConstExprContext;
@@ -279,9 +226,6 @@ public:
     ContractDeclContext *contractDecl();
     FlowDeclContext *flowDecl();
     WorkflowDeclContext *workflowDecl();
-    FnDeclContext *fnDecl();
-    TraitDeclContext *traitDecl();
-    ImplDeclContext *implDecl();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -308,7 +252,7 @@ public:
     ImportDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     QualifiedIdentContext *qualifiedIdent();
-    IdentifierContext *identifier();
+    antlr4::tree::TerminalNode *IDENT();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -317,25 +261,12 @@ public:
 
   ImportDeclContext* importDecl();
 
-  class  IdentifierContext : public antlr4::ParserRuleContext {
-  public:
-    IdentifierContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  IdentifierContext* identifier();
-
   class  QualifiedIdentContext : public antlr4::ParserRuleContext {
   public:
     QualifiedIdentContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<IdentifierContext *> identifier();
-    IdentifierContext* identifier(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> IDENT();
+    antlr4::tree::TerminalNode* IDENT(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -403,7 +334,6 @@ public:
     Type_Context(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     PrimitiveTypeContext *primitiveType();
-    FnTypeContext *fnType();
     QualifiedIdentContext *qualifiedIdent();
     std::vector<Type_Context *> type_();
     Type_Context* type_(size_t i);
@@ -448,9 +378,8 @@ public:
   public:
     TypeAliasDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
+    antlr4::tree::TerminalNode *IDENT();
     Type_Context *type_();
-    TypeParamsContext *typeParams();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -463,8 +392,7 @@ public:
   public:
     StructDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    TypeParamsContext *typeParams();
+    antlr4::tree::TerminalNode *IDENT();
     std::vector<StructFieldDeclContext *> structFieldDecl();
     StructFieldDeclContext* structFieldDecl(size_t i);
 
@@ -494,10 +422,9 @@ public:
   public:
     EnumDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
+    antlr4::tree::TerminalNode *IDENT();
     std::vector<EnumVariantContext *> enumVariant();
     EnumVariantContext* enumVariant(size_t i);
-    TypeParamsContext *typeParams();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -511,7 +438,6 @@ public:
     EnumVariantContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *IDENT();
-    TypeListContext *typeList();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -519,35 +445,6 @@ public:
   };
 
   EnumVariantContext* enumVariant();
-
-  class  TypeListContext : public antlr4::ParserRuleContext {
-  public:
-    TypeListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<Type_Context *> type_();
-    Type_Context* type_(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TypeListContext* typeList();
-
-  class  FnTypeContext : public antlr4::ParserRuleContext {
-  public:
-    FnTypeContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    TypeListContext *typeList();
-    Type_Context *type_();
-    EffectSpecContext *effectSpec();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  FnTypeContext* fnType();
 
   class  CapabilityDeclContext : public antlr4::ParserRuleContext {
   public:
@@ -855,6 +752,7 @@ public:
     EnsuresDeclContext *ensuresDecl();
     InvariantDeclContext *invariantDecl();
     ForbidDeclContext *forbidDecl();
+    DecreasesDeclContext *decreasesDecl();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -914,6 +812,19 @@ public:
   };
 
   ForbidDeclContext* forbidDecl();
+
+  class  DecreasesDeclContext : public antlr4::ParserRuleContext {
+  public:
+    DecreasesDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    ExprContext *expr();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  DecreasesDeclContext* decreasesDecl();
 
   class  FlowDeclContext : public antlr4::ParserRuleContext {
   public:
@@ -1087,399 +998,6 @@ public:
   };
 
   WorkflowReturnDeclContext* workflowReturnDecl();
-
-  class  BuiltinAttrContext : public antlr4::ParserRuleContext {
-  public:
-    BuiltinAttrContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *STRING_LITERAL();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  BuiltinAttrContext* builtinAttr();
-
-  class  FnDeclContext : public antlr4::ParserRuleContext {
-  public:
-    FnDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    FnBodyContext *fnBody();
-    antlr4::tree::TerminalNode *DOC_COMMENT();
-    BuiltinAttrContext *builtinAttr();
-    TypeParamsContext *typeParams();
-    ParamListContext *paramList();
-    Type_Context *type_();
-    EffectClauseContext *effectClause();
-    WhereClauseContext *whereClause();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  FnDeclContext* fnDecl();
-
-  class  TypeParamsContext : public antlr4::ParserRuleContext {
-  public:
-    TypeParamsContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<TypeParamContext *> typeParam();
-    TypeParamContext* typeParam(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TypeParamsContext* typeParams();
-
-  class  TypeParamContext : public antlr4::ParserRuleContext {
-  public:
-    TypeParamContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-    TypeBoundListContext *typeBoundList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TypeParamContext* typeParam();
-
-  class  TypeBoundListContext : public antlr4::ParserRuleContext {
-  public:
-    TypeBoundListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<Type_Context *> type_();
-    Type_Context* type_(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TypeBoundListContext* typeBoundList();
-
-  class  FnBodyContext : public antlr4::ParserRuleContext {
-  public:
-    FnBodyContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    BlockContext *block();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  FnBodyContext* fnBody();
-
-  class  EffectClauseContext : public antlr4::ParserRuleContext {
-  public:
-    EffectClauseContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    EffectSpecContext *effectSpec();
-    DecreasesClauseContext *decreasesClause();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  EffectClauseContext* effectClause();
-
-  class  EffectSpecContext : public antlr4::ParserRuleContext {
-  public:
-    EffectSpecContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<CapabilityRefContext *> capabilityRef();
-    CapabilityRefContext* capabilityRef(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  EffectSpecContext* effectSpec();
-
-  class  CapabilityRefContext : public antlr4::ParserRuleContext {
-  public:
-    CapabilityRefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    QualifiedIdentContext *qualifiedIdent();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  CapabilityRefContext* capabilityRef();
-
-  class  DecreasesClauseContext : public antlr4::ParserRuleContext {
-  public:
-    DecreasesClauseContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    ExprContext *expr();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  DecreasesClauseContext* decreasesClause();
-
-  class  WhereClauseContext : public antlr4::ParserRuleContext {
-  public:
-    WhereClauseContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<WhereConstraintContext *> whereConstraint();
-    WhereConstraintContext* whereConstraint(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  WhereClauseContext* whereClause();
-
-  class  WhereConstraintContext : public antlr4::ParserRuleContext {
-  public:
-    WhereConstraintContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    Type_Context *type_();
-    IdentifierContext *identifier();
-    TypeListContext *typeList();
-    TypeBoundListContext *typeBoundList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  WhereConstraintContext* whereConstraint();
-
-  class  LambdaExprContext : public antlr4::ParserRuleContext {
-  public:
-    LambdaExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *BACKSLASH();
-    ExprContext *expr();
-    LambdaParamListContext *lambdaParamList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  LambdaExprContext* lambdaExpr();
-
-  class  LambdaParamListContext : public antlr4::ParserRuleContext {
-  public:
-    LambdaParamListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<LambdaParamContext *> lambdaParam();
-    LambdaParamContext* lambdaParam(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  LambdaParamListContext* lambdaParamList();
-
-  class  LambdaParamContext : public antlr4::ParserRuleContext {
-  public:
-    LambdaParamContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-    Type_Context *type_();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  LambdaParamContext* lambdaParam();
-
-  class  TraitDeclContext : public antlr4::ParserRuleContext {
-  public:
-    TraitDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-    antlr4::tree::TerminalNode *DOC_COMMENT();
-    TypeParamsContext *typeParams();
-    TypeBoundListContext *typeBoundList();
-    std::vector<TraitItemContext *> traitItem();
-    TraitItemContext* traitItem(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TraitDeclContext* traitDecl();
-
-  class  TraitItemContext : public antlr4::ParserRuleContext {
-  public:
-    TraitItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    TraitFnItemContext *traitFnItem();
-    AssocTypeItemContext *assocTypeItem();
-    AssocConstItemContext *assocConstItem();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TraitItemContext* traitItem();
-
-  class  TraitFnItemContext : public antlr4::ParserRuleContext {
-  public:
-    TraitFnItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    TypeParamsContext *typeParams();
-    ParamListContext *paramList();
-    Type_Context *type_();
-    EffectClauseContext *effectClause();
-    WhereClauseContext *whereClause();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TraitFnItemContext* traitFnItem();
-
-  class  AssocTypeItemContext : public antlr4::ParserRuleContext {
-  public:
-    AssocTypeItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    TypeParamsContext *typeParams();
-    TypeBoundListContext *typeBoundList();
-    Type_Context *type_();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  AssocTypeItemContext* assocTypeItem();
-
-  class  AssocConstItemContext : public antlr4::ParserRuleContext {
-  public:
-    AssocConstItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    Type_Context *type_();
-    ConstExprContext *constExpr();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  AssocConstItemContext* assocConstItem();
-
-  class  ImplDeclContext : public antlr4::ParserRuleContext {
-  public:
-    ImplDeclContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    Type_Context *type_();
-    antlr4::tree::TerminalNode *DOC_COMMENT();
-    TypeParamsContext *typeParams();
-    TraitRefContext *traitRef();
-    WhereClauseContext *whereClause();
-    std::vector<ImplItemContext *> implItem();
-    ImplItemContext* implItem(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  ImplDeclContext* implDecl();
-
-  class  TraitRefContext : public antlr4::ParserRuleContext {
-  public:
-    TraitRefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    Type_Context *type_();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TraitRefContext* traitRef();
-
-  class  ImplItemContext : public antlr4::ParserRuleContext {
-  public:
-    ImplItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    ImplFnItemContext *implFnItem();
-    AssocTypeDefContext *assocTypeDef();
-    AssocConstDefContext *assocConstDef();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  ImplItemContext* implItem();
-
-  class  ImplFnItemContext : public antlr4::ParserRuleContext {
-  public:
-    ImplFnItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    FnBodyContext *fnBody();
-    TypeParamsContext *typeParams();
-    ParamListContext *paramList();
-    Type_Context *type_();
-    EffectClauseContext *effectClause();
-    WhereClauseContext *whereClause();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  ImplFnItemContext* implFnItem();
-
-  class  AssocTypeDefContext : public antlr4::ParserRuleContext {
-  public:
-    AssocTypeDefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    Type_Context *type_();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  AssocTypeDefContext* assocTypeDef();
-
-  class  AssocConstDefContext : public antlr4::ParserRuleContext {
-  public:
-    AssocConstDefContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IdentifierContext *identifier();
-    Type_Context *type_();
-    ConstExprContext *constExpr();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  AssocConstDefContext* assocConstDef();
 
   class  BlockContext : public antlr4::ParserRuleContext {
   public:
@@ -1753,14 +1271,10 @@ public:
     PostfixExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     PrimaryExprContext *primaryExpr();
-    std::vector<IdentifierContext *> identifier();
-    IdentifierContext* identifier(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> IDENT();
+    antlr4::tree::TerminalNode* IDENT(size_t i);
     std::vector<ExprContext *> expr();
     ExprContext* expr(size_t i);
-    std::vector<TypeListContext *> typeList();
-    TypeListContext* typeList(size_t i);
-    std::vector<ExprListContext *> exprList();
-    ExprListContext* exprList(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -1778,8 +1292,9 @@ public:
     StructLiteralContext *structLiteral();
     QualifiedValueExprContext *qualifiedValueExpr();
     PathExprContext *pathExpr();
-    MatchExprContext *matchExpr();
-    LambdaExprContext *lambdaExpr();
+    ListLiteralContext *listLiteral();
+    SetLiteralContext *setLiteral();
+    MapLiteralContext *mapLiteral();
     ExprContext *expr();
 
 
@@ -1788,163 +1303,6 @@ public:
   };
 
   PrimaryExprContext* primaryExpr();
-
-  class  MatchExprContext : public antlr4::ParserRuleContext {
-  public:
-    MatchExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    ExprContext *expr();
-    std::vector<MatchArmContext *> matchArm();
-    MatchArmContext* matchArm(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  MatchExprContext* matchExpr();
-
-  class  MatchArmContext : public antlr4::ParserRuleContext {
-  public:
-    MatchArmContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    PatternContext *pattern();
-    std::vector<ExprContext *> expr();
-    ExprContext* expr(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  MatchArmContext* matchArm();
-
-  class  PatternContext : public antlr4::ParserRuleContext {
-  public:
-    PatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    OrPatternContext *orPattern();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  PatternContext* pattern();
-
-  class  OrPatternContext : public antlr4::ParserRuleContext {
-  public:
-    OrPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<ConcatPatternContext *> concatPattern();
-    ConcatPatternContext* concatPattern(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  OrPatternContext* orPattern();
-
-  class  ConcatPatternContext : public antlr4::ParserRuleContext {
-  public:
-    ConcatPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    LiteralPatternContext *literalPattern();
-    VariantPatternContext *variantPattern();
-    WildcardPatternContext *wildcardPattern();
-    BindingPatternContext *bindingPattern();
-    TuplePatternContext *tuplePattern();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  ConcatPatternContext* concatPattern();
-
-  class  LiteralPatternContext : public antlr4::ParserRuleContext {
-  public:
-    LiteralPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    IntegerLiteralContext *integerLiteral();
-    FloatLiteralContext *floatLiteral();
-    StringLiteralContext *stringLiteral();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  LiteralPatternContext* literalPattern();
-
-  class  VariantPatternContext : public antlr4::ParserRuleContext {
-  public:
-    VariantPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<antlr4::tree::TerminalNode *> IDENT();
-    antlr4::tree::TerminalNode* IDENT(size_t i);
-    PatternListContext *patternList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  VariantPatternContext* variantPattern();
-
-  class  WildcardPatternContext : public antlr4::ParserRuleContext {
-  public:
-    WildcardPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  WildcardPatternContext* wildcardPattern();
-
-  class  BindingPatternContext : public antlr4::ParserRuleContext {
-  public:
-    BindingPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-    ConcatPatternContext *concatPattern();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  BindingPatternContext* bindingPattern();
-
-  class  TuplePatternContext : public antlr4::ParserRuleContext {
-  public:
-    TuplePatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    PatternListContext *patternList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  TuplePatternContext* tuplePattern();
-
-  class  PatternListContext : public antlr4::ParserRuleContext {
-  public:
-    PatternListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    std::vector<PatternContext *> pattern();
-    PatternContext* pattern(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  PatternListContext* patternList();
 
   class  PathExprContext : public antlr4::ParserRuleContext {
   public:
@@ -1978,8 +1336,8 @@ public:
   public:
     QualifiedValueExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<IdentifierContext *> identifier();
-    IdentifierContext* identifier(size_t i);
+    std::vector<antlr4::tree::TerminalNode *> IDENT();
+    antlr4::tree::TerminalNode* IDENT(size_t i);
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -1993,7 +1351,6 @@ public:
     CallExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     QualifiedIdentContext *qualifiedIdent();
-    TypeListContext *typeList();
     ExprListContext *exprList();
 
 
@@ -2099,20 +1456,6 @@ public:
 
   DurationLiteralContext* durationLiteral();
 
-  class  StructLiteralContext : public antlr4::ParserRuleContext {
-  public:
-    StructLiteralContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    QualifiedIdentContext *qualifiedIdent();
-    StructInitListContext *structInitList();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  StructLiteralContext* structLiteral();
-
   class  ListLiteralContext : public antlr4::ParserRuleContext {
   public:
     ListLiteralContext(antlr4::ParserRuleContext *parent, size_t invokingState);
@@ -2179,6 +1522,20 @@ public:
   };
 
   MapEntryContext* mapEntry();
+
+  class  StructLiteralContext : public antlr4::ParserRuleContext {
+  public:
+    StructLiteralContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    QualifiedIdentContext *qualifiedIdent();
+    StructInitListContext *structInitList();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  StructLiteralContext* structLiteral();
 
   class  StructInitListContext : public antlr4::ParserRuleContext {
   public:

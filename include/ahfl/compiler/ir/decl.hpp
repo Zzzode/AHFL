@@ -176,6 +176,7 @@ struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
     std::variant<ExprRef, TemporalExprPtr> value; // Plain expression or temporal-logic expression
     SourceRangeOpt source_range;
+    bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
 };
 
 /// Contract declaration: contract for AgentName { requires ...; ensures ...; }

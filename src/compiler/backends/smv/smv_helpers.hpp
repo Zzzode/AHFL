@@ -115,6 +115,8 @@ namespace ahfl::smv_detail {
         return "invariant";
     case ir::ContractClauseKind::Forbid:
         return "forbid";
+    case ir::ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "invalid";

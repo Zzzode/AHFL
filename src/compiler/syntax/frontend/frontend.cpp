@@ -2540,6 +2540,17 @@ class ProgramBuilder {
             return clause;
         }
 
+        if (const auto decreases_decl = borrow(context.decreasesDecl())) {
+            clause->kind = ast::ContractClauseKind::Decreases;
+            // `decreases: *;` uses the wildcard arm — expr() returns nullopt.
+            if (const auto expr_context = borrow(decreases_decl->get().expr())) {
+                clause->expr = build_expr_syntax(expr_context->get());
+            } else {
+                clause->is_wildcard = true;
+            }
+            return clause;
+        }
+
         throw std::logic_error("contract clause did not match any supported AHFL kind");
     }
 

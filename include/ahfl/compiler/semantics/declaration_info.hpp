@@ -270,6 +270,7 @@ struct DecreasesExprInfo {
 struct ContractClauseInfo {
     int clause_kind{0};
     bool is_temporal{false};
+    bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
     SourceRange expr_range;
     SourceRange source_range;
 

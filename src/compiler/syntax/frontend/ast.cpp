@@ -798,7 +798,11 @@ class AstInvariantValidator final {
                 }
                 const auto has_expr = clause->expr != nullptr;
                 const auto has_temporal = clause->temporal_expr != nullptr;
-                require(has_expr != has_temporal,
+                // Wildcard decreases carries no expression payload; that's a
+                // deliberate grammatical choice ("decreases: *;").
+                const bool allows_no_payload =
+                    (clause->kind == ContractClauseKind::Decreases && clause->is_wildcard);
+                require(allows_no_payload || has_expr != has_temporal,
                         clause->range,
                         "ContractClauseSyntax must have exactly one expression payload");
                 if (clause->expr) {

@@ -126,6 +126,8 @@ namespace {
         return "invariant";
     case ir::ContractClauseKind::Forbid:
         return "forbid";
+    case ir::ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "invalid";
@@ -1460,6 +1462,9 @@ class IrJsonPrinter final {
                                             entry("kind", [&]() {
                                                 write_string(contract_clause_name(clause.kind));
                                             });
+                                            if (clause.is_wildcard) {
+                                                entry("wildcard", [&]() { write_bool(true); });
+                                            }
                                             print_source_range_field(
                                                 entry, clause.source_range, indent_level + 3);
                                             std::visit(Overloaded{

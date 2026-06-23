@@ -209,6 +209,8 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
         return ir::ContractClauseKind::Invariant;
     case ast::ContractClauseKind::Forbid:
         return ir::ContractClauseKind::Forbid;
+    case ast::ContractClauseKind::Decreases:
+        return ir::ContractClauseKind::Decreases;
     }
     return ir::ContractClauseKind::Requires;
 }
@@ -2449,6 +2451,7 @@ class TypedIrLowerer final {
                              : std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_expr_range(
                                    clause.expr_range)},
                 .source_range = clause.source_range,
+                .is_wildcard = clause.is_wildcard,
             });
         }
         return lowered;

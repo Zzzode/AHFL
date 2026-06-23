@@ -641,8 +641,13 @@ class AstFormatter {
         case Kind::Forbid:
             write("forbid ");
             break;
+        case Kind::Decreases:
+            write("decreases ");
+            break;
         }
-        if (clause.temporal_expr) {
+        if (clause.is_wildcard && clause.kind == Kind::Decreases) {
+            write("*");
+        } else if (clause.temporal_expr) {
             format_temporal_expr(*clause.temporal_expr);
         } else if (clause.expr) {
             format_expr(*clause.expr);

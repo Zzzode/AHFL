@@ -169,7 +169,8 @@ contractItem:
 	requiresDecl
 	| ensuresDecl
 	| invariantDecl
-	| forbidDecl;
+	| forbidDecl
+	| decreasesDecl;
 
 requiresDecl: 'requires' ':' expr ';';
 
@@ -178,6 +179,8 @@ ensuresDecl: 'ensures' ':' expr ';';
 invariantDecl: 'invariant' ':' temporalExpr ';';
 
 forbidDecl: 'forbid' ':' temporalExpr ';';
+
+decreasesDecl: 'decreases' ':' (expr | '*') ';';
 
 flowDecl: 'flow' 'for' qualifiedIdent '{' stateHandler* '}';
 

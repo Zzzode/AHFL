@@ -295,13 +295,20 @@ class ProgramVerifier {
     void verify_decl(const ContractDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.target_ref, path + ".target_ref", SymbolRefKind::Agent);
         for (std::uint32_t index = 0; index < decl.clauses.size(); ++index) {
+            const auto &clause = decl.clauses[index];
             const auto clause_path = path + ".clauses[" + std::to_string(index) + "]";
-            verify_source_range(decl.clauses[index].source_range, clause_path, "source range");
+            verify_source_range(clause.source_range, clause_path, "source range");
+            // Wildcard decreases intentionally carries no expression payload —
+            // skip the value verifier in that case (the clause_kind and
+            // is_wildcard fields are sufficient for downstream consumers).
+            if (clause.kind == ContractClauseKind::Decreases && clause.is_wildcard) {
+                continue;
+            }
             std::visit(
                 [this, &clause_path](const auto &value) {
                     verify_contract_clause_value(value, clause_path + ".value");
                 },
-                decl.clauses[index].value);
+                clause.value);
         }
     }
 

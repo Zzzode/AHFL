@@ -199,6 +199,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitDecreasesDecl(AHFLParser::DecreasesDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitFlowDecl(AHFLParser::FlowDeclContext *ctx) override {
     return visitChildren(ctx);
   }

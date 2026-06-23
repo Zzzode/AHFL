@@ -111,6 +111,8 @@ public:
 
     virtual std::any visitForbidDecl(AHFLParser::ForbidDeclContext *context) = 0;
 
+    virtual std::any visitDecreasesDecl(AHFLParser::DecreasesDeclContext *context) = 0;
+
     virtual std::any visitFlowDecl(AHFLParser::FlowDeclContext *context) = 0;
 
     virtual std::any visitStateHandler(AHFLParser::StateHandlerContext *context) = 0;

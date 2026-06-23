@@ -497,6 +497,7 @@ template <typename E>
             auto clause_json = Json::make_object();
             clause_json->set("clause_kind", Json::make_int(clause.clause_kind));
             clause_json->set("is_temporal", Json::make_bool(clause.is_temporal));
+            clause_json->set("is_wildcard", Json::make_bool(clause.is_wildcard));
             clause_json->set("expr_range", j_range(clause.expr_range));
             clause_json->set("source_range", j_range(clause.source_range));
             clause_json->set("has_decreases", Json::make_bool(clause.has_decreases));
@@ -1404,6 +1405,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ContractClauseInfo clause_info{
                     .clause_kind = static_cast<int>(reader.int_field(*item, "clause_kind")),
                     .is_temporal = reader.bool_field(*item, "is_temporal"),
+                    .is_wildcard = reader.bool_field(*item, "is_wildcard"),
                     .expr_range = reader.range_field(*item, "expr_range"),
                     .source_range = reader.range_field(*item, "source_range"),
                     // P4.S3: decreases metadata; defaults to the zero-value sentinel

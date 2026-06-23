@@ -1007,7 +1007,7 @@ struct ContractDecreasesSyntax {
     std::vector<Owned<ExprSyntax>> decreases_exprs;
 };
 
-/// Contract clause: requires/ensures/invariant/forbid expr
+/// Contract clause: requires/ensures/invariant/forbid/decreases expr
 struct ContractClauseSyntax {
     ahfl::SourceRange range;
     ContractClauseKind kind{ContractClauseKind::Requires};
@@ -1016,6 +1016,9 @@ struct ContractClauseSyntax {
     // P4.S3: optional decreases clause attached to the contract clause.
     // Owned<T> (nullptr) means no decreases was written.
     Owned<ContractDecreasesSyntax> decreases;
+    // P4.S5a: wildcard flag for the standalone ContractClauseKind::Decreases case
+    // (when kind == Decreases and the user wrote `decreases: *;` with no concrete terms).
+    bool is_wildcard{false};
 };
 
 /// Decreases / termination-measure clause.
@@ -1035,7 +1038,6 @@ struct DecreasesClauseSyntax {
     std::vector<Owned<ExprSyntax>> terms;
     /// True for the wildcard / "don't verify" form.
     bool is_wildcard{false};
-};
 
 /// State policy item (execution policy within a flow handler)
 struct StatePolicyItemSyntax {
