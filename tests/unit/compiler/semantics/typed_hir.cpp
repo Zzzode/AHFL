@@ -4192,8 +4192,8 @@ flow for A {
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "TypedCallTargetKind::TraitMethod is recorded for predicate calls") {
     const std::string source = R"AHFL(
-module typed::call_target::trait;
-import typed::call_target::trait as self;
+module typed::call_target::pred_kind;
+import typed::call_target::pred_kind as self;
 
 struct R { v: Int; }
 struct Ctx { x: Int = 0; }
