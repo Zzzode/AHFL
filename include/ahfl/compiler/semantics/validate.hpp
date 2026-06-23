@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -11,6 +13,12 @@ struct SourceGraph;
 
 struct ValidationResult {
     DiagnosticBag diagnostics;
+
+    /// Plumbing counters (P4.S5a): filled by ValidationPass by walking every
+    /// contract clause. Intentionally not gated on errors so downstream passes
+    /// can inspect them regardless of validation status.
+    std::size_t total_decreases_clauses{0};
+    std::size_t wildcard_decreases_clauses{0};
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();
