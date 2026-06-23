@@ -504,11 +504,18 @@ template <typename E>
             clause_json->set("decreases_is_wildcard",
                              Json::make_bool(clause.decreases_is_wildcard));
             clause_json->set("decreases_range", j_range(clause.decreases_range));
+            // P4.S3 legacy payload
             auto decrs = Json::make_array();
             for (const auto &d : clause.decreases_exprs) {
                 decrs->push(j_range(d.expr_range));
             }
             clause_json->set("decreases_exprs", std::move(decrs));
+            // P4.S6 canonical ranges (mirrors ir::ContractClause.decreases_terms)
+            auto decreases_ranges = Json::make_array();
+            for (const auto &r : clause.decreases_expr_ranges) {
+                decreases_ranges->push(j_range(r));
+            }
+            clause_json->set("decreases_expr_ranges", std::move(decreases_ranges));
             clauses->push(std::move(clause_json));
         }
         value->set("clauses", std::move(clauses));
@@ -785,6 +792,21 @@ class Reader {
         return *result;
     }
 
+    [[nodiscard]] bool optional_bool_field(const Json &object,
+                                           std::string_view key,
+                                           bool default_value) {
+        const auto *value = field(object, key);
+        if (value == nullptr) {
+            return default_value;
+        }
+        const auto result = value->as_bool();
+        if (!result.has_value()) {
+            ok_ = false;
+            return default_value;
+        }
+        return *result;
+    }
+
     [[nodiscard]] std::int64_t int_field(const Json &object, std::string_view key) {
         const auto *value = field(object, key);
         if (value == nullptr) {
@@ -826,6 +848,17 @@ class Reader {
 
     [[nodiscard]] SourceRange range_field(const Json &object, std::string_view key) {
         return range_value(field(object, key));
+    }
+
+    [[nodiscard]] SourceRange optional_range_field(const Json &object, std::string_view key) {
+        const auto *value = field(object, key);
+        if (value == nullptr || value->kind != json::Kind::Object) {
+            return {};
+        }
+        return SourceRange{
+            .begin_offset = static_cast<std::size_t>(uint_field(*value, "begin")),
+            .end_offset = static_cast<std::size_t>(uint_field(*value, "end")),
+        };
     }
 
     [[nodiscard]] SourceRange range_value(const Json *value) {
@@ -1408,14 +1441,16 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                     .is_wildcard = reader.bool_field(*item, "is_wildcard"),
                     .expr_range = reader.range_field(*item, "expr_range"),
                     .source_range = reader.range_field(*item, "source_range"),
-                    // P4.S3: decreases metadata; defaults to the zero-value sentinel
-                    // (false / empty / false) when restoring snapshots produced before
-                    // this plumbing was introduced.
-                    .has_decreases = reader.bool_field(*item, "has_decreases"),
+                    // P4.S3 + P4.S6: decreases metadata; optional_* helpers handle
+                    // snapshots produced before this plumbing was introduced.
+                    .has_decreases = reader.optional_bool_field(*item, "has_decreases", false),
                     .decreases_exprs = {},
-                    .decreases_is_wildcard = reader.bool_field(*item, "decreases_is_wildcard"),
-                    .decreases_range = reader.range_field(*item, "decreases_range"),
+                    .decreases_is_wildcard =
+                        reader.optional_bool_field(*item, "decreases_is_wildcard", false),
+                    .decreases_expr_ranges = {},
+                    .decreases_range = reader.optional_range_field(*item, "decreases_range"),
                 };
+                // P4.S3 legacy payload (DecreasesExprInfo array)
                 if (const auto *decr_arr = reader.field(*item, "decreases_exprs");
                     decr_arr != nullptr && decr_arr->kind == json::Kind::Array) {
                     clause_info.decreases_exprs.reserve(decr_arr->array_items.size());
@@ -1423,6 +1458,14 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                         clause_info.decreases_exprs.push_back(DecreasesExprInfo{
                             .expr_range = reader.range_value(decr_item.get()),
                         });
+                    }
+                }
+                // P4.S6 canonical payload (plain SourceRange array)
+                const auto *ranges = reader.field(*item, "decreases_expr_ranges");
+                if (ranges != nullptr && ranges->kind == json::Kind::Array) {
+                    clause_info.decreases_expr_ranges.reserve(ranges->array_items.size());
+                    for (const auto &r : ranges->array_items) {
+                        clause_info.decreases_expr_ranges.push_back(reader.range_value(r.get()));
                     }
                 }
                 info.clauses.push_back(std::move(clause_info));
@@ -1465,20 +1508,6 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 });
             }
         }
-        if (const auto *type_params = reader.field(*value, "type_param_names");
-            type_params != nullptr) {
-            info.type_param_names = reader.string_array_field(*value, "type_param_names");
-        }
-        if (const auto *effect = reader.field(*value, "effect"); effect != nullptr) {
-            if (const auto *capabilities = reader.field(*effect, "capabilities");
-                capabilities != nullptr && capabilities->kind == json::Kind::Array) {
-                info.effect.capabilities.reserve(capabilities->array_items.size());
-                for (const auto &item : capabilities->array_items) {
-                    info.effect.capabilities.push_back(reader.symbol_id_value(item.get()));
-                }
-            }
-        }
-        return info;
     }
 
     return std::monostate{};

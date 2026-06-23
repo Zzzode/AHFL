@@ -390,6 +390,10 @@ class IrJsonPrinter final {
         out_ << "null";
     }
 
+    void write_bool(bool value) {
+        out_ << (value ? "true" : "false");
+    }
+
     [[nodiscard]] bool has_source_range(const ir::SourceRangeOpt &range) const {
         return range.has_value();
     }
@@ -421,10 +425,6 @@ class IrJsonPrinter final {
             field("source_path", [&]() { write_string(provenance.source_path); });
             print_source_range_field(field, provenance.source_range, indent_level + 1);
         });
-    }
-
-    void write_bool(bool value) {
-        out_ << (value ? "true" : "false");
     }
 
     void write_index(std::size_t value) {
@@ -1482,6 +1482,44 @@ class IrJsonPrinter final {
                                                            },
                                                        },
                                                        clause.value);
+                                            // P4.S6: decreases clause fields.
+                                            // Omits the entire block when no
+                                            // decreases is declared so JSON
+                                            // size stays compact for legacy
+                                            // programs; a from-json consumer
+                                            // treats missing fields as `false`
+                                            // / empty.
+                                            if (clause.decreases_wildcard ||
+                                                !clause.decreases_terms.empty()) {
+                                                entry("decreases", [&]() {
+                                                    print_object(indent_level + 3,
+                                                                 [&](const auto &dec) {
+                                                                     dec("wildcard",
+                                                                         [&]() {
+                                                                             write_bool(
+                                                                                 clause
+                                                                                     .decreases_wildcard);
+                                                                         });
+                                                                     dec("terms", [&]() {
+                                                                         print_array(
+                                                                             indent_level + 4,
+                                                                             [&](const auto &term) {
+                                                                                 for (const auto
+                                                                                          &t :
+                                                                                      clause
+                                                                                          .decreases_terms) {
+                                                                                     term([&]() {
+                                                                                         print_expr(
+                                                                                             *t,
+                                                                                             indent_level +
+                                                                                                 5);
+                                                                                     });
+                                                                                 }
+                                                                             });
+                                                                     });
+                                                                 });
+                                                });
+                                            }
                                         });
                                     });
                                 }
