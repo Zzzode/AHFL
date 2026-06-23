@@ -1997,6 +1997,7 @@ ahfl_label_tests(
         ahfl.support.version_all
         ahfl.support.diagnostic_serialization_all
         ahfl.support.trait_impl_diagnostics_all
+        ahfl.support.diagnostics_code_smoke_all
 )
 
 ahfl_label_tests(
