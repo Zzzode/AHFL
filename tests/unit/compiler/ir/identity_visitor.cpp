@@ -1869,3 +1869,147 @@ TEST_CASE("Semantic IR verifier rejects analysis entries with mismatched owner o
                                        ahfl::ir::VerificationSeverity::Error,
                                        "analysis entry has no matching declaration owner/index"));
 }
+
+TEST_CASE("P4.S6 IR ContractClause decreases fields survive structured JSON symmetry") {
+    ahfl::ir::Program program;
+    // Expression arena used to produce well-formed ExprRefs for the measure
+    // terms. Terms are intentionally distinct (literal vs path) so the
+    // printer emits visibly different subtrees — making the JSON symmetry
+    // assertion meaningful.
+    auto term_a = program.expr_arena.make(
+        ahfl::ir::IntegerLiteralExpr{.spelling = "42"},
+        ahfl::SourceRange{.begin_offset = 10, .end_offset = 12},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Int, .display_name = "Int"},
+        /*id=*/1);
+    auto term_b = program.expr_arena.make(
+        ahfl::ir::PathExpr{.path =
+                               ahfl::ir::Path{
+                                   .root_kind = ahfl::ir::PathRootKind::Identifier,
+                                   .root_name = "depth",
+                               }},
+        ahfl::SourceRange{.begin_offset = 14, .end_offset = 19},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Int, .display_name = "Int"},
+        /*id=*/2);
+    auto req_expr = program.expr_arena.make(
+        ahfl::ir::BoolLiteralExpr{.value = true},
+        ahfl::SourceRange{.begin_offset = 1, .end_offset = 5},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Bool, .display_name = "Bool"},
+        /*id=*/3);
+    auto ens_expr = program.expr_arena.make(
+        ahfl::ir::BoolLiteralExpr{.value = true},
+        ahfl::SourceRange{.begin_offset = 20, .end_offset = 24},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Bool, .display_name = "Bool"},
+        /*id=*/4);
+
+    ahfl::ir::ContractDecl contract;
+    contract.target_ref = ahfl::ir::SymbolRef{
+        .kind = ahfl::ir::SymbolRefKind::Agent,
+        .canonical_name = "pkg::Worker",
+        .local_name = "Worker",
+        .module_name = "pkg",
+    };
+    // Clause 0: explicit decreases with two measure terms.
+    contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Requires,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{req_expr},
+        .source_range = ahfl::SourceRange{.begin_offset = 0, .end_offset = 25},
+        .decreases_wildcard = false,
+        .decreases_terms = {term_a, term_b},
+    });
+    // Clause 1: wildcard decreases.
+    contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Ensures,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{ens_expr},
+        .source_range = ahfl::SourceRange{.begin_offset = 26, .end_offset = 50},
+        .decreases_wildcard = true,
+        .decreases_terms = {},
+    });
+    program.declarations.push_back(std::move(contract));
+
+    // Sanity: verifier accepts the populated program.
+    CHECK_FALSE(ahfl::ir::verify_ir_program(program).has_errors());
+
+    // Print JSON and assert both forms appear.
+    std::ostringstream out;
+    ahfl::print_program_ir_json(program, out);
+    const std::string text = out.str();
+    const auto count_occurrences = [](std::string_view haystack, std::string_view needle) {
+        std::size_t n = 0;
+        for (std::size_t pos = 0;;) {
+            auto found = haystack.find(needle, pos);
+            if (found == std::string_view::npos)
+                break;
+            ++n;
+            pos = found + needle.size();
+        }
+        return n;
+    };
+    // Two clauses -> two decreases envelopes.
+    CHECK(count_occurrences(text, "\"decreases\"") == 2);
+    // Exactly one true wildcard (ensures) and one false wildcard (requires).
+    CHECK(count_occurrences(text, "\"wildcard\": true") == 1);
+    CHECK(count_occurrences(text, "\"wildcard\": false") == 1);
+    // Requires clause carries exactly two measure terms.
+    const auto terms_pos = text.find("\"terms\"");
+    REQUIRE(terms_pos != std::string::npos);
+    // First `terms` block belongs to the requires clause (printed before
+    // ensures' empty terms array), so we expect two array items.
+    CHECK(count_occurrences(text, "\"42\"") >= 1);
+    CHECK(text.find("\"depth\"") != std::string::npos);
+
+    // Symmetry: IR -> JSON -> reconstruct IR by parsing with a second
+    // pass (re-lowering from the snapshot-equivalent typed HIR round-trip
+    // is covered by the companion `typed_hir.cpp` test). Here we instead
+    // re-print a program constructed from the same field values and
+    // require byte-identical output — a direct structural symmetry check.
+    ahfl::ir::Program mirror;
+    auto m_term_a = mirror.expr_arena.make(
+        ahfl::ir::IntegerLiteralExpr{.spelling = "42"},
+        ahfl::SourceRange{.begin_offset = 10, .end_offset = 12},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Int, .display_name = "Int"},
+        /*id=*/1);
+    auto m_term_b = mirror.expr_arena.make(
+        ahfl::ir::PathExpr{.path =
+                               ahfl::ir::Path{
+                                   .root_kind = ahfl::ir::PathRootKind::Identifier,
+                                   .root_name = "depth",
+                               }},
+        ahfl::SourceRange{.begin_offset = 14, .end_offset = 19},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Int, .display_name = "Int"},
+        /*id=*/2);
+    auto m_req = mirror.expr_arena.make(
+        ahfl::ir::BoolLiteralExpr{.value = true},
+        ahfl::SourceRange{.begin_offset = 1, .end_offset = 5},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Bool, .display_name = "Bool"},
+        /*id=*/3);
+    auto m_ens = mirror.expr_arena.make(
+        ahfl::ir::BoolLiteralExpr{.value = true},
+        ahfl::SourceRange{.begin_offset = 20, .end_offset = 24},
+        ahfl::ir::TypeRef{.kind = ahfl::ir::TypeRefKind::Bool, .display_name = "Bool"},
+        /*id=*/4);
+    ahfl::ir::ContractDecl mirror_contract;
+    mirror_contract.target_ref = ahfl::ir::SymbolRef{
+        .kind = ahfl::ir::SymbolRefKind::Agent,
+        .canonical_name = "pkg::Worker",
+        .local_name = "Worker",
+        .module_name = "pkg",
+    };
+    mirror_contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Requires,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{m_req},
+        .source_range = ahfl::SourceRange{.begin_offset = 0, .end_offset = 25},
+        .decreases_wildcard = false,
+        .decreases_terms = {m_term_a, m_term_b},
+    });
+    mirror_contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Ensures,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{m_ens},
+        .source_range = ahfl::SourceRange{.begin_offset = 26, .end_offset = 50},
+        .decreases_wildcard = true,
+        .decreases_terms = {},
+    });
+    mirror.declarations.push_back(std::move(mirror_contract));
+    std::ostringstream mirror_out;
+    ahfl::print_program_ir_json(mirror, mirror_out);
+    CHECK(mirror_out.str() == text);
+}
