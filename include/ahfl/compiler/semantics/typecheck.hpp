@@ -27,6 +27,30 @@ struct SourceGraph;
 class TypeCheckPass;
 class TypeContext;
 
+// P3c.S4a: lightweight non-owning reference to a single resolved impl block.
+// Returned by TypeEnvironment::find_impls so callers (method dispatch, bound
+// checking, coherence diagnostics) can iterate candidate impls without deep
+// copying ImplTypeInfo. The pointer is valid for the TypeEnvironment's
+// lifetime.
+struct ImplRef {
+    std::size_t index{0};
+    const ImplTypeInfo *info{nullptr};
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return info != nullptr;
+    }
+    [[nodiscard]] const ImplTypeInfo &operator*() const noexcept {
+        return *info;
+    }
+    [[nodiscard]] const ImplTypeInfo *operator->() const noexcept {
+        return info;
+    }
+    [[nodiscard]] friend bool operator==(const ImplRef &lhs,
+                                         const ImplRef &rhs) noexcept {
+        return lhs.index == rhs.index && lhs.info == rhs.info;
+    }
+};
+
 class TypeEnvironment {
   public:
     [[nodiscard]] const std::unordered_map<std::size_t, TypePtr> &const_types() const noexcept {
@@ -119,6 +143,45 @@ class TypeEnvironment {
     // `e.method(args)` without re-walking the impl table.
     [[nodiscard]] MaybeCRef<ImplTypeInfo>
     resolve_trait_impl(SymbolId trait_symbol, SymbolId target_symbol) const;
+
+    // P3c.S4a (coherence MVP §1): trait-resolution query. Given a resolved
+    // trait symbol and a *concrete* (post-instantiation) type, return all
+    // non-inherent impl blocks in the environment that match the trait and
+    // whose normalized target type is equivalent to `concrete_type`. The
+    // normalized equivalence is the same relation the orphan-rule checker and
+    // the strict-coherence duplicate detector use (single-source-of-truth via
+    // impls_conflict_for_type), so callers never see a candidate set larger
+    // than one unless the coherence detector has already diagnosed a conflict.
+    //
+    // Returns an empty vector when no impl exists. The trait may be nullopt
+    // (useful when enumerating all impls for a concrete type regardless of
+    // trait), in which case every non-inherent impl whose normalized target
+    // type coincides with `concrete_type` is returned.
+    [[nodiscard]] std::vector<ImplRef>
+    find_impls(std::optional<SymbolId> trait_symbol, const Type &concrete_type) const;
+
+    // P3c.S4a (coherence MVP §2): single-source-of-truth trait/type
+    // equivalence used by (a) find_impls candidate filtering,
+    // (b) check_impl_coherence (orphan rule), and (c) the build_impl_types
+    // duplicate-impl (COHERENCE_CONFLICT) detector. Two impls conflict when
+    // they share the same resolved trait and their target types normalize to
+    // the same canonical key. Generic-parameter unification is intentionally
+    // out of scope for the MVP; the normalized key currently relies on the
+    // hash-consed Type identity produced by TypeContext (so structurally
+    // identical types built through the same TypeContext always compare
+    // equal).
+    [[nodiscard]] static bool impls_conflict_for_type(const ImplTypeInfo &lhs,
+                                                      const ImplTypeInfo &rhs);
+
+    // P3c.S4a: compute a stable string key for `type` that encodes its
+    // normalized form. Two types are considered coherence-equivalent iff
+    // their keys compare equal. For nominal types (struct/enum) the key is
+    // `$KIND:$SYMBOL_VALUE:$CANONICAL_NAME:$TYPE_ARGS`, so two instantiations
+    // that differ in type arguments are kept distinct. For all other types
+    // the key is `describe()` output, which is deterministic for the
+    // hash-consed type universe. Exposed publicly so tests can assert the
+    // shared relation directly.
+    [[nodiscard]] static std::string normalize_type_key(const Type &type);
 
     // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
     [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;

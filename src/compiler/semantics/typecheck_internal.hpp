@@ -825,21 +825,4 @@ decltype(auto) TypeCheckPass::with_symbol_context_for_impl(std::optional<SourceI
     }
 }
 
-// P3 (RFC §3.2.2 / type-system §2.1): hash for std::pair<std::size_t,
-// std::size_t> used by the duplicate-(trait,target)-impl detector. std::pair
-// and std::unordered_set have no std::hash specialisation for pairs, so the
-// coherence check carries its own.
-struct PairHash {
-    [[nodiscard]] std::size_t
-    operator()(const std::pair<std::size_t, std::size_t> &value) const noexcept {
-        return hash_mix(value.first, value.second);
-    }
-
-  private:
-    [[nodiscard]] static std::size_t hash_mix(std::size_t a, std::size_t b) noexcept {
-        a ^= b + 0x9e3779b97f4a7c15ULL + (a << 6U) + (a >> 2U);
-        return a;
-    }
-};
-
 } // namespace ahfl

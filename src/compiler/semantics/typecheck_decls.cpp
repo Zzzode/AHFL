@@ -1266,7 +1266,39 @@ void TypeCheckPass::build_impl_types() {
     //
     // Impl index = source order, matching the indexing in
     // DeclarationIndexBuilder::index_program_declarations.
-    std::unordered_set<std::pair<std::size_t, std::size_t>, PairHash> seen_impls;
+    // P3c.S4a: strict 100% coherence duplicate detection. Walks the impl table
+    // in source declaration order and for each new impl that targets a trait
+    // re-checks against every previously-inserted impl using the shared
+    // impls_conflict_for_type predicate — that predicate is the single
+    // source of truth also used by find_impls candidate filtering and by
+    // check_impl_coherence (orphan-rule comparisons). Conflicts are diagnosed
+    // with typecheck.COHERENCE_CONFLICT.
+    std::vector<std::reference_wrapper<const ImplTypeInfo>> seen_impls;
+    seen_impls.reserve(impl_decls_.size());
+    auto coherence_conflict = [&](const ImplTypeInfo &candidate) -> bool {
+        for (const auto &existing_ref : seen_impls) {
+            const auto &existing = existing_ref.get();
+            if (!TypeEnvironment::impls_conflict_for_type(existing, candidate)) {
+                continue;
+            }
+            const auto trait_name = candidate.trait_name;
+            const auto target_name = nominal_describe(*candidate.target_type);
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = messages::typecheck::CoherenceConflictPrevious.format_with(
+                    trait_name,
+                    existing.target_type ? nominal_describe(*existing.target_type) : target_name),
+                .range = existing.declaration_range,
+            });
+            typecheck_error_here(error_codes::typecheck::CoherenceConflict,
+                                 messages::typecheck::CoherenceConflict.format_with(
+                                     trait_name, target_name),
+                                 candidate.declaration_range,
+                                 std::move(notes));
+            return true;
+        }
+        return false;
+    };
 
     for (const auto &[impl_index, entry] : impl_decls_) {
         const auto &decl = entry.decl.get();
@@ -1400,22 +1432,24 @@ void TypeCheckPass::build_impl_types() {
             // produced diagnostics above.
             check_impl_coherence(info);
 
-            // Trait-impl signature matching (RFC §2.1) + duplicate detection.
-            if (info.trait_symbol.has_value() && info.target_symbol.has_value()) {
+            // Trait-impl signature matching (RFC §2.1) + 100% coherence
+            // duplicate detection via the shared impls_conflict_for_type
+            // predicate. If signature-matching or conflict detection fail the
+            // impl is still inserted into the environment so downstream
+            // diagnostics (find_impls, super-trait coverage) can iterate it —
+            // the TypeCheckResult::has_errors flag will already be true.
+            if (info.trait_symbol.has_value() && info.target_type != nullptr) {
                 check_trait_impl_signature_match(info);
-                const auto key =
-                    std::make_pair(info.trait_symbol->value, info.target_symbol->value);
-                if (!seen_impls.insert(key).second) {
-                    const auto trait_name = info.trait_name;
-                    const auto target_name = nominal_describe(*info.target_type);
-                    typecheck_error_here(error_codes::typecheck::DuplicateTraitImpl,
-                                         messages::typecheck::DuplicateTraitImpl.format_with(
-                                             trait_name, target_name),
-                                         decl.range);
-                }
+                (void)coherence_conflict(info);
             }
 
             environment().impls_.emplace(impl_index, std::move(info));
+            // Track the reference now-pointing into the environment's
+            // stable ImplTypeInfo.
+            if (!info.is_inherent && info.trait_symbol.has_value()) {
+                const auto &stored = environment().impls_.at(impl_index);
+                seen_impls.emplace_back(stored);
+            }
         });
     }
 }

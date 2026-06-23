@@ -263,6 +263,12 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MethodSignatureMismatc
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AssocTypeNotFound{"ASSOC_TYPE_NOT_FOUND"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InherentTraitConflict{
     "INHERENT_TRAIT_CONFLICT"};
+// P3c.S4a: coherence MVP — two trait impls reduce to the same
+// (trait, normalized_type) key. Surfaces in build_impl_types after the
+// shared impls_conflict_for_type() comparison (also used by orphan-rule
+// diagnostics so the equivalence relation is defined in one place).
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CoherenceConflict{
+    "COHERENCE_CONFLICT"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // diagnostics. Surfaced by the P4a effect-judgement + verified-subset checks.
 //   effect_not_pure          — pure-context call resolved to a non-Pure effect
@@ -499,6 +505,14 @@ inline constexpr MessageTemplate OrphanImplHint{
     "move this impl to the module that defines '{}' or '{}'"};
 inline constexpr MessageTemplate DuplicateTraitImpl{
     "impl '{}' for '{}' duplicates an earlier impl of the same trait and type"};
+// P3c.S4a coherence MVP. Same equivalence relation as the orphan-rule check
+// (shared normalize_type_key + impls_conflict_for_type helpers in
+// type_environment.cpp): two trait impls whose (trait, normalized_type) keys
+// coincide are mutually incoherent.
+inline constexpr MessageTemplate CoherenceConflict{
+    "coherence conflict: multiple impls of trait '{}' for normalized type '{}'"};
+inline constexpr MessageTemplate CoherenceConflictPrevious{
+    "previous impl of '{}' for '{}' declared here"};
 inline constexpr MessageTemplate ImplTraitUnknown{"impl references unknown trait '{}'"};
 inline constexpr MessageTemplate ImplTargetUnknown{"impl targets unknown type '{}'"};
 inline constexpr MessageTemplate ImplTargetMustBeNominal{

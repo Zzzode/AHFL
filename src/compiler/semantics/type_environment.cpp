@@ -281,6 +281,114 @@ TypeEnvironment::resolve_trait_impl(SymbolId trait_symbol, SymbolId target_symbo
     return std::nullopt;
 }
 
+// P3c.S4a: single-source-of-truth normalized type key for coherence and
+// orphan-rule comparison. Two types compare equivalent iff this function
+// produces identical strings. For nominal types (struct/enum) the key carries
+// the nominal symbol id, canonical name, and type-argument sub-keys so two
+// instantiations that differ in their generic arguments remain distinct. For
+// all other types we fall back to Type::describe(), which is deterministic
+// over hash-consed types.
+namespace {
+[[nodiscard]] std::string normalize_args_key(const std::vector<TypePtr> &args) {
+    std::string key;
+    key.reserve(args.size() * 16);
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i != 0) {
+            key.push_back(',');
+        }
+        if (args[i] != nullptr) {
+            key += TypeEnvironment::normalize_type_key(*args[i]);
+        } else {
+            key += "<null>";
+        }
+    }
+    return key;
+}
+} // namespace
+
+std::string TypeEnvironment::normalize_type_key(const Type &type) {
+    return type.visit(types::Overloads{
+        [](const types::StructT &s) {
+            return "struct:" + std::to_string(s.symbol.has_value() ? s.symbol->value : 0) +
+                   ":" + s.canonical_name + "<" + normalize_args_key(s.type_args) + ">";
+        },
+        [](const types::EnumT &e) {
+            return "enum:" + std::to_string(e.symbol.has_value() ? e.symbol->value : 0) +
+                   ":" + e.canonical_name + "<" + normalize_args_key(e.type_args) + ">";
+        },
+        [](const types::EnumVariantT &v) {
+            return "enum_variant:" + v.canonical_name + "::" + v.variant_name + "<" +
+                   normalize_args_key(v.type_args) + ">";
+        },
+        [](const types::OptionalT &o) {
+            return "Optional<" + std::string{o.inner ? normalize_type_key(*o.inner) : "Any"} + ">";
+        },
+        [](const types::ListT &l) {
+            return "List<" + std::string{l.element ? normalize_type_key(*l.element) : "Any"} + ">";
+        },
+        [](const types::SetT &s) {
+            return "Set<" + std::string{s.element ? normalize_type_key(*s.element) : "Any"} + ">";
+        },
+        [](const types::MapT &m) {
+            return "Map<" + std::string{m.key ? normalize_type_key(*m.key) : "Any"} + "," +
+                   std::string{m.value ? normalize_type_key(*m.value) : "Any"} + ">";
+        },
+        [](const auto &) { return type.describe(); },
+    });
+}
+
+// P3c.S4a: shared conflict predicate. An impl conflicts with another when
+// both are non-inherent, both target the same trait symbol, and their target
+// types normalize to the same key. The orphan-rule checker and the strict
+// coherence duplicate detector (build_impl_types) both route through this
+// function so the equivalence relation is defined exactly once.
+bool TypeEnvironment::impls_conflict_for_type(const ImplTypeInfo &lhs,
+                                              const ImplTypeInfo &rhs) {
+    if (lhs.is_inherent || rhs.is_inherent) {
+        return false;
+    }
+    if (!lhs.trait_symbol.has_value() || !rhs.trait_symbol.has_value()) {
+        return false;
+    }
+    if (*lhs.trait_symbol != *rhs.trait_symbol) {
+        return false;
+    }
+    if (lhs.target_type == nullptr || rhs.target_type == nullptr) {
+        return false;
+    }
+    return normalize_type_key(*lhs.target_type) == normalize_type_key(*rhs.target_type);
+}
+
+// P3c.S4a: walk the impl table and return all non-inherent impl refs whose
+// (trait, normalized target type) key equals the query (trait_symbol,
+// concrete_type). `trait_symbol` may be nullopt to enumerate every impl for
+// the concrete type; the same normalized-type equivalence as
+// impls_conflict_for_type is used so the returned set is consistent with
+// both the orphan rule and the duplicate-impl detector.
+std::vector<ImplRef>
+TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
+                            const Type &concrete_type) const {
+    std::vector<ImplRef> matches;
+    const auto query_key = normalize_type_key(concrete_type);
+    for (const auto &[index, impl] : impls_) {
+        if (impl.is_inherent) {
+            continue;
+        }
+        if (trait_symbol.has_value()) {
+            if (!impl.trait_symbol.has_value() || *impl.trait_symbol != *trait_symbol) {
+                continue;
+            }
+        }
+        if (impl.target_type == nullptr) {
+            continue;
+        }
+        if (normalize_type_key(*impl.target_type) == query_key) {
+            matches.push_back(ImplRef{index, &impl});
+        }
+    }
+    return matches;
+}
+
 bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
     return agent_context_struct_ids_.contains(id.value);
 }
