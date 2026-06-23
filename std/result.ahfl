@@ -36,9 +36,9 @@ fn unwrap_or<T, E>(self: Result<T, E>, default: T) -> T effect Pure decreases 0 
 }
 
 fn ok<T, E>(self: Result<T, E>) -> option::Option<T> effect Pure decreases 0 {
-    return match self { Ok(value) => some(value), Err(_) => none };
+    return match self { Ok(value) => option::Option::Some(value), Err(_) => option::Option::None };
 }
 
 fn err<T, E>(self: Result<T, E>) -> option::Option<E> effect Pure decreases 0 {
-    return match self { Ok(_) => none, Err(error) => some(error) };
+    return match self { Ok(_) => option::Option::None, Err(error) => option::Option::Some(error) };
 }

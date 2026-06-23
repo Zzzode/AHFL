@@ -68,27 +68,27 @@ fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
 
 fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
     if i < 0 {
-        return none;
+        return option::Option::None;
     }
     if i >= list_raw_length<T>(self) {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, i));
+    return option::Option::Some(list_raw_get<T>(self, i));
 }
 
 fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
     if list_raw_length<T>(self) == 0 {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, 0));
+    return option::Option::Some(list_raw_get<T>(self, 0));
 }
 
 fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
     let n: Int = list_raw_length<T>(self);
     if n == 0 {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, n - 1));
+    return option::Option::Some(list_raw_get<T>(self, n - 1));
 }
 
 fn list_copy_into<T>(
@@ -215,7 +215,7 @@ fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
 
 fn map_get<K, V>(self: Map<K, V>, key: K) -> option::Option<V> effect Pure decreases 0 {
     if map_raw_contains_key<K, V>(self, key) {
-        return some(map_raw_get<K, V>(self, key));
+        return option::Option::Some(map_raw_get<K, V>(self, key));
     }
-    return none;
+    return option::Option::None;
 }
