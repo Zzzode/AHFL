@@ -1594,15 +1594,27 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
                 .source_range = clause->range,
                 .has_decreases = static_cast<bool>(clause->decreases),
                 .decreases_exprs = {},
-                .decreases_is_wildcard =
-                    clause->decreases ? clause->decreases->decreases_is_wildcard : false,
+                // P4.S7b: standalone ContractClauseKind::Decreases carries
+                // the wildcard flag on `clause->is_wildcard`; the attached
+                // `clause->decreases` syntax is only used for per-clause
+                // decreases annotations on requires/ensures/invariant. Merge
+                // both flags so typed_hir_lower and the assurance counter
+                // derive the same "total decreases expressions" count.
+                .decreases_is_wildcard = [&]() {
+                    if (clause->kind == ast::ContractClauseKind::Decreases) {
+                        return clause->is_wildcard;
+                    }
+                    return clause->decreases ? clause->decreases->decreases_is_wildcard : false;
+                }(),
                 .decreases_range = clause->decreases ? clause->decreases->range : SourceRange{},
             };
             if (clause->decreases) {
                 clause_info.decreases_exprs.reserve(clause->decreases->decreases_exprs.size());
+                clause_info.decreases_expr_ranges.reserve(clause->decreases->decreases_exprs.size());
                 for (const auto &decr_expr : clause->decreases->decreases_exprs) {
-                    clause_info.decreases_exprs.push_back(
-                        DecreasesExprInfo{.expr_range = decr_expr ? decr_expr->range : SourceRange{}});
+                    const SourceRange range = decr_expr ? decr_expr->range : SourceRange{};
+                    clause_info.decreases_exprs.push_back(DecreasesExprInfo{.expr_range = range});
+                    clause_info.decreases_expr_ranges.push_back(range);
                 }
             }
             info.clauses.push_back(std::move(clause_info));

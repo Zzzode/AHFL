@@ -2460,6 +2460,20 @@ class TypedIrLowerer final {
                     lowered_clause.decreases_terms.push_back(lower_expr_range(range));
                 }
             }
+            // P4.S7b: standalone ContractClauseKind::Decreases stores the
+            // single measure expression on the clause.value, but downstream
+            // consumers (the assurance obligation counter, JSON schema) expect
+            // every decreases measure to be enumerable via decreases_terms.
+            // Bridge the two representations so the obligation count matches
+            // the total number of decreases expressions written by the user.
+            if (lowered_clause.kind == ir::ContractClauseKind::Decreases &&
+                lowered_clause.decreases_wildcard == false &&
+                lowered_clause.decreases_terms.empty()) {
+                if (const auto *expr_ptr = std::get_if<ir::ExprRef>(&lowered_clause.value);
+                    expr_ptr != nullptr && expr_ptr->has_value()) {
+                    lowered_clause.decreases_terms.push_back(*expr_ptr);
+                }
+            }
             lowered.clauses.push_back(std::move(lowered_clause));
         }
         return lowered;
