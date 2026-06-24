@@ -52,7 +52,7 @@ int test_build_validation_report() {
         return 1;
     }
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     // Verify identity fields
     assert(report.workflow_canonical_name == "app::main::ValueFlowWorkflow");
@@ -142,7 +142,7 @@ int test_summary_counts() {
     assert(!report.blocking_summary.empty());
 
     // Verify count consistency
-    const int total = report.valid_count + report.invalid_count + report.missing_count;
+    [[maybe_unused]] const int total = report.valid_count + report.invalid_count + report.missing_count;
     assert(total > 0);
 
     std::cout << "PASS: test_summary_counts\n";

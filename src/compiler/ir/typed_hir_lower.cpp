@@ -199,22 +199,6 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
     return ir::ExprBinaryOp::Implies;
 }
 
-[[nodiscard]] ir::ContractClauseKind lower_contract_clause_kind(ast::ContractClauseKind kind) {
-    switch (kind) {
-    case ast::ContractClauseKind::Requires:
-        return ir::ContractClauseKind::Requires;
-    case ast::ContractClauseKind::Ensures:
-        return ir::ContractClauseKind::Ensures;
-    case ast::ContractClauseKind::Invariant:
-        return ir::ContractClauseKind::Invariant;
-    case ast::ContractClauseKind::Forbid:
-        return ir::ContractClauseKind::Forbid;
-    case ast::ContractClauseKind::Decreases:
-        return ir::ContractClauseKind::Decreases;
-    }
-    return ir::ContractClauseKind::Requires;
-}
-
 [[nodiscard]] ir::SymbolRefKind lower_symbol_ref_kind(SymbolKind kind) {
     switch (kind) {
     case SymbolKind::Struct:

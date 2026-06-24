@@ -44,6 +44,8 @@ namespace {
         return "workflow_safety";
     case handoff::PolicyObligationKind::WorkflowLiveness:
         return "workflow_liveness";
+    case handoff::PolicyObligationKind::Decreases:
+        return "decreases";
     }
 
     return "invalid";

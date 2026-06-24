@@ -49,18 +49,6 @@ const ir::FnDecl *find_fn_decl_by_symbol_ref(const ir::Program &program,
     return nullptr;
 }
 
-const ir::FnDecl *find_fn_decl_by_canonical_name(const ir::Program &program,
-                                                 std::string_view name) {
-    for (const auto &decl : program.declarations) {
-        const auto *fn = std::get_if<ir::FnDecl>(&decl);
-        if (fn == nullptr) continue;
-        if (fn->name == name || fn->symbol_ref.canonical_name == name) {
-            return fn;
-        }
-    }
-    return nullptr;
-}
-
 } // namespace
 
 RuntimeFunctionTable::RuntimeFunctionTable(const ir::Program &program) {

@@ -63,6 +63,8 @@ workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionCondition
         return "workflow_safety";
     case handoff::PolicyObligationKind::WorkflowLiveness:
         return "workflow_liveness";
+    case handoff::PolicyObligationKind::Decreases:
+        return "decreases";
     }
 
     return "invalid";

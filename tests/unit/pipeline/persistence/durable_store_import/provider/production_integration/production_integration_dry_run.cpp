@@ -131,7 +131,7 @@ int test_build_all_evidence_pass() {
         return 1;
     }
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.readiness_state == ProductionReadinessState::ReadyForControlledRollout);
     assert(report.is_ready_for_controlled_rollout == true);
@@ -160,7 +160,7 @@ int test_build_blocked_conformance_fails() {
                                                              make_permitted_policy());
     assert(result.report.has_value());
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.readiness_state == ProductionReadinessState::Blocked);
     assert(report.is_ready_for_controlled_rollout == false);
@@ -186,7 +186,7 @@ int test_build_blocked_schema_incompatible() {
                                                              make_permitted_policy());
     assert(result.report.has_value());
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.readiness_state == ProductionReadinessState::Blocked);
     assert(report.is_ready_for_controlled_rollout == false);
@@ -211,7 +211,7 @@ int test_build_blocked_approval_rejected() {
                                                              make_permitted_policy());
     assert(result.report.has_value());
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.readiness_state == ProductionReadinessState::Blocked);
     assert(report.is_ready_for_controlled_rollout == false);
@@ -236,7 +236,7 @@ int test_build_blocked_runtime_policy_deny() {
                                                              policy);
     assert(result.report.has_value());
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.readiness_state == ProductionReadinessState::Blocked);
     assert(report.is_ready_for_controlled_rollout == false);

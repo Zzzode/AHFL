@@ -8,7 +8,7 @@ function(ahfl_enable_cxx23 target_name)
     endif()
 endfunction()
 
-option(AHFL_WARNINGS_AS_ERRORS "Treat AHFL project warnings as errors." OFF)
+option(AHFL_WARNINGS_AS_ERRORS "Treat AHFL project warnings as errors." ON)
 
 function(ahfl_apply_project_warnings target_name)
     if(MSVC)

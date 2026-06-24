@@ -84,7 +84,7 @@ int test_build_all_gates_pass() {
         return 1;
     }
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.decision == OptInDecision::Allow);
     assert(report.is_real_provider_traffic_allowed == true);
@@ -119,7 +119,7 @@ int test_build_deny_no_approval() {
     assert(!report.denial_reasons.empty());
 
     // Check that NoApproval denial reason is present
-    bool has_no_approval = false;
+    [[maybe_unused]] bool has_no_approval = false;
     for (const auto &reason : report.denial_reasons) {
         if (reason == OptInDenialReason::NoApproval) {
             has_no_approval = true;
@@ -146,7 +146,7 @@ int test_build_deny_config_invalid() {
     assert(report.decision == OptInDecision::Deny);
     assert(report.is_real_provider_traffic_allowed == false);
 
-    bool has_config_invalid = false;
+    [[maybe_unused]] bool has_config_invalid = false;
     for (const auto &reason : report.denial_reasons) {
         if (reason == OptInDenialReason::ConfigInvalid) {
             has_config_invalid = true;
@@ -173,7 +173,7 @@ int test_build_deny_registry_mismatch() {
     assert(report.decision == OptInDecision::Deny);
     assert(report.is_real_provider_traffic_allowed == false);
 
-    bool has_registry_mismatch = false;
+    [[maybe_unused]] bool has_registry_mismatch = false;
     for (const auto &reason : report.denial_reasons) {
         if (reason == OptInDenialReason::RegistryMismatch) {
             has_registry_mismatch = true;
@@ -200,7 +200,7 @@ int test_build_deny_security_constraints() {
     assert(report.decision == OptInDecision::Deny);
     assert(report.is_real_provider_traffic_allowed == false);
 
-    bool has_readiness_not_met = false;
+    [[maybe_unused]] bool has_readiness_not_met = false;
     for (const auto &reason : report.denial_reasons) {
         if (reason == OptInDenialReason::ReadinessNotMet) {
             has_readiness_not_met = true;

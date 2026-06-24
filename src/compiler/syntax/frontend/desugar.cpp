@@ -31,55 +31,6 @@ const std::vector<std::string> kMapFromEntriesPath = {"std", "collections", "map
 // Synthetic AST node builders (file-local helpers)
 // ---------------------------------------------------------------------------
 
-Owned<ast::QualifiedName> make_qualified_name(std::vector<std::string> segments,
-                                              SourceRange range) {
-    auto name = make_owned<ast::QualifiedName>();
-    name->range = range;
-    name->segments = std::move(segments);
-    return name;
-}
-
-Owned<ast::TypeSyntax> make_app_type(std::vector<std::string> path,
-                                     std::vector<Owned<ast::TypeSyntax>> args,
-                                     SourceRange range) {
-    auto type = make_owned<ast::TypeSyntax>();
-    type->range = range;
-
-    ast::AppType app;
-    app.name = make_qualified_name(std::move(path), range);
-    app.arguments = std::move(args);
-    app.range = range;
-    type->node = std::move(app);
-    return type;
-}
-
-Owned<ast::ExprSyntax> make_qualified_value(std::vector<std::string> path, SourceRange range) {
-    auto expr = make_owned<ast::ExprSyntax>();
-    expr->range = range;
-    expr->node_id = 0; // synthetic node, no stable id
-    expr->text = {};
-
-    ast::QualifiedValueExpr qve;
-    qve.name = make_qualified_name(std::move(path), range);
-    expr->node = std::move(qve);
-    return expr;
-}
-
-Owned<ast::ExprSyntax> make_call_expr(std::vector<std::string> callee,
-                                      std::vector<Owned<ast::ExprSyntax>> args,
-                                      SourceRange range) {
-    auto expr = make_owned<ast::ExprSyntax>();
-    expr->range = range;
-    expr->node_id = 0;
-    expr->text = {};
-
-    ast::CallExpr call;
-    call.callee = make_qualified_name(std::move(callee), range);
-    call.arguments = std::move(args);
-    expr->node = std::move(call);
-    return expr;
-}
-
 // ---------------------------------------------------------------------------
 // Forward declarations (mutual recursion)
 // ---------------------------------------------------------------------------
@@ -94,8 +45,6 @@ void desugar_stmt_node(ast::StatementSyntax &stmt);
 // ---------------------------------------------------------------------------
 
 Owned<ast::TypeSyntax> desugar_type_node(Owned<ast::TypeSyntax> type) {
-    SourceRange range = type->range;
-
     // Step 1: recursively desugar children (bottom-up)
     std::visit(Overloaded{
                    [&](ast::NamedType &t) {
@@ -138,10 +87,6 @@ void desugar_expr_list(std::vector<Owned<ast::ExprSyntax>> &list) {
 }
 
 Owned<ast::ExprSyntax> desugar_expr_node(Owned<ast::ExprSyntax> expr) {
-    SourceRange range = expr->range;
-    std::uint64_t node_id = expr->node_id;
-    std::string text = std::move(expr->text);
-
     // Step 1: recursively desugar children
     std::visit(Overloaded{
                    [&](ast::CallExpr &e) {

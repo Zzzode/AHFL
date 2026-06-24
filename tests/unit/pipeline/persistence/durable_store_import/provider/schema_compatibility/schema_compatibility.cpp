@@ -17,11 +17,11 @@ void assert_artifact_printer_registry() {
     const auto printers = ahfl::durable_store_import_artifact_printers();
     assert(printers.size() == 74);
 
-    std::size_t json_count = 0;
-    std::size_t text_count = 0;
-    std::size_t provider_sdk_count = 0;
-    bool found_adapter_execution = false;
-    bool found_schema_compatibility = false;
+    [[maybe_unused]] std::size_t json_count = 0;
+    [[maybe_unused]] std::size_t text_count = 0;
+    [[maybe_unused]] std::size_t provider_sdk_count = 0;
+    [[maybe_unused]] bool found_adapter_execution = false;
+    [[maybe_unused]] bool found_schema_compatibility = false;
 
     for (const auto &printer : printers) {
         assert(!printer.public_name.empty());
@@ -74,6 +74,7 @@ void assert_provider_artifact_registry() {
     assert(artifacts.size() == 70);
 
     for (const auto &artifact : artifacts) {
+        (void)artifact;
         assert(!artifact.artifact_id.empty());
         assert(!artifact.type_name.empty());
         assert(!artifact.format_version.empty());
@@ -99,7 +100,7 @@ void assert_provider_artifact_registry() {
     assert(ahfl::durable_store_import::provider_artifact_count(
                ProviderArtifactDomain::Production) == 10);
 
-    const auto *runtime_preflight = ahfl::durable_store_import::find_provider_artifact_by_id(
+    [[maybe_unused]] const auto *runtime_preflight = ahfl::durable_store_import::find_provider_artifact_by_id(
         "durable-store-import-provider-runtime-preflight-plan");
     assert(runtime_preflight != nullptr);
     assert(runtime_preflight->type_name == "ProviderRuntimePreflightPlan");
@@ -107,7 +108,7 @@ void assert_provider_artifact_registry() {
     assert(runtime_preflight->role == ProviderArtifactRole::Plan);
     assert(runtime_preflight->source_header == "durable_store_import/provider/runtime/runtime.hpp");
 
-    const auto *sdk_adapter = ahfl::durable_store_import::find_provider_artifact_by_format_version(
+    [[maybe_unused]] const auto *sdk_adapter = ahfl::durable_store_import::find_provider_artifact_by_format_version(
         "ahfl.durable-store-import-provider-sdk-adapter-request-plan.v1");
     assert(sdk_adapter != nullptr);
     assert(sdk_adapter->artifact_id == "durable-store-import-provider-sdk-adapter-request-plan");

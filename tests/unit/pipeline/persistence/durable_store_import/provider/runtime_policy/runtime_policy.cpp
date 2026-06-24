@@ -133,7 +133,7 @@ int test_build_all_gates_pass() {
         return 1;
     }
 
-    const auto &report = *result.report;
+    [[maybe_unused]] const auto &report = *result.report;
 
     assert(report.decision == PolicyDecision::Permit);
     assert(report.is_execution_permitted == true);
@@ -165,11 +165,11 @@ int test_build_deny_opt_in_not_granted() {
     assert(report.blocking_violation_count > 0);
 
     // Confirm the opt_in gate failed
-    bool found_opt_in_failure = false;
+    [[maybe_unused]] bool found_opt_in_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "opt_in" && !gate.passed) {
             found_opt_in_failure = true;
-            bool has_violation = false;
+            [[maybe_unused]] bool has_violation = false;
             for (const auto &v : gate.violations) {
                 if (v == PolicyViolationType::OptInNotGranted) {
                     has_violation = true;
@@ -201,7 +201,7 @@ int test_build_deny_approval_missing() {
     assert(report.decision == PolicyDecision::Deny);
     assert(report.is_execution_permitted == false);
 
-    bool found_approval_failure = false;
+    [[maybe_unused]] bool found_approval_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "approval" && !gate.passed) {
             found_approval_failure = true;
@@ -231,7 +231,7 @@ int test_build_deny_config_invalid() {
     assert(report.decision == PolicyDecision::Deny);
     assert(report.is_execution_permitted == false);
 
-    bool found_config_failure = false;
+    [[maybe_unused]] bool found_config_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "config" && !gate.passed) {
             found_config_failure = true;
@@ -261,7 +261,7 @@ int test_build_deny_registry_mismatch() {
     assert(report.decision == PolicyDecision::Deny);
     assert(report.is_execution_permitted == false);
 
-    bool found_registry_failure = false;
+    [[maybe_unused]] bool found_registry_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "registry" && !gate.passed) {
             found_registry_failure = true;
@@ -291,7 +291,7 @@ int test_build_deny_readiness_not_met() {
     assert(report.decision == PolicyDecision::Deny);
     assert(report.is_execution_permitted == false);
 
-    bool found_readiness_failure = false;
+    [[maybe_unused]] bool found_readiness_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "readiness" && !gate.passed) {
             found_readiness_failure = true;

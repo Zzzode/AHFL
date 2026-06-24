@@ -78,7 +78,7 @@ int test_build_approval_request() {
         return 1;
     }
 
-    const auto &request = *result.request;
+    [[maybe_unused]] const auto &request = *result.request;
 
     assert(request.format_version == kProviderApprovalRequestFormatVersion);
     assert(request.workflow_canonical_name == "app::main::ValueFlowWorkflow");
@@ -116,7 +116,7 @@ int test_build_approval_receipt_rejected() {
         return 1;
     }
 
-    const auto &receipt = *result.receipt;
+    [[maybe_unused]] const auto &receipt = *result.receipt;
 
     // Verify safe default: no auto-approval
     assert(!receipt.is_approved);
@@ -150,7 +150,7 @@ int test_build_approval_receipt_approved() {
         return 1;
     }
 
-    const auto &receipt = *result.receipt;
+    [[maybe_unused]] const auto &receipt = *result.receipt;
 
     assert(receipt.is_approved);
     assert(receipt.final_decision == ApprovalDecision::Approved);
@@ -181,7 +181,7 @@ int test_build_approval_receipt_deferred() {
         return 1;
     }
 
-    const auto &receipt = *result.receipt;
+    [[maybe_unused]] const auto &receipt = *result.receipt;
 
     assert(!receipt.is_approved);
     assert(receipt.final_decision == ApprovalDecision::Deferred);

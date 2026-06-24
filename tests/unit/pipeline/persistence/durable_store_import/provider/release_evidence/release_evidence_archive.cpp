@@ -113,7 +113,7 @@ int test_build_release_evidence_archive_manifest() {
         return 1;
     }
 
-    const auto &manifest = *result.manifest;
+    [[maybe_unused]] const auto &manifest = *result.manifest;
 
     // Verify identity fields
     assert(manifest.workflow_canonical_name == "app::main::ValueFlowWorkflow");
@@ -224,7 +224,7 @@ int test_invalid_conformance_evidence() {
         return 1;
     }
 
-    const auto &manifest = *result.manifest;
+    [[maybe_unused]] const auto &manifest = *result.manifest;
 
     // Verify there is invalid evidence
     assert(manifest.invalid_evidence_count >= 1);
@@ -244,7 +244,7 @@ int test_count_consistency() {
     const auto result =
         build_release_evidence_archive_manifest(conformance, schema, config, readiness);
 
-    const auto &manifest = *result.manifest;
+    [[maybe_unused]] const auto &manifest = *result.manifest;
 
     // Verify count consistency
     assert(manifest.total_evidence_count ==
