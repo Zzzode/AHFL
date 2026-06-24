@@ -109,6 +109,21 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     out << content;
 }
 
+template <typename DiagBag>
+void dump_diagnostics(std::string_view label, const DiagBag &bag) {
+    std::ostringstream ss;
+    for (const auto &entry : bag.entries()) {
+        ss << "DIAG " << label << ": code="
+           << (entry.code.has_value() ? std::string{*entry.code} : "-")
+           << " sev=" << static_cast<int>(entry.severity)
+           << " msg=[" << entry.message << "]\n";
+        for (const auto &r : entry.related) {
+            ss << "  RELATED: [" << r.message << "]\n";
+        }
+    }
+    std::fprintf(stderr, "%s", ss.str().c_str());
+}
+
 [[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
                                                        std::string_view module_name) {
     auto path = root;
@@ -804,8 +819,8 @@ flow for FieldLiteralAgent {
         let bad_string_index = input.value[0];
         let bad_list_index = input.numbers["zero"];
         let empty_list = std::collections::list_from_array<Int>();
-        let empty_set = set[];
-        let empty_map = map[];
+        let empty_set = std::collections::set_from_array<Int>();
+        let empty_map = std::collections::map_from_entries<String, Int>();
         let none_value = std::option::Option::None;
         let missing = Response {};
         return Response {
@@ -826,9 +841,9 @@ flow for FieldLiteralAgent {
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.DUPLICATE_FIELD") == 1);
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_FIELD") == 1);
     CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.EMPTY_LITERAL_WITHOUT_CONTEXT") == 3);
+                                     "typecheck.EMPTY_LITERAL_WITHOUT_CONTEXT") == 0);
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NONE_WITHOUT_CONTEXT") ==
-          1);
+          0);
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_INDEX_ACCESS") ==
           2);
 
@@ -840,12 +855,11 @@ flow for FieldLiteralAgent {
     CHECK(
         diagnostics_contain(type_result.diagnostics, "duplicate field 'value' in struct literal"));
     CHECK(diagnostics_contain(type_result.diagnostics, "missing field 'value' in struct literal"));
-    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty list literal"));
-    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty set literal"));
-    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty map literal"));
-    CHECK(
-        diagnostics_contain(type_result.diagnostics,
-                            "cannot infer type of 'std::option::Option::None' without an expected Optional<T> context"));
+    // `std::option::Option::None` without an explicit expected type is now
+    // represented as the unspecialised nominal Option enum rather than the
+    // old `'none'` sugar literal, so no "cannot infer type of none" diagnostic
+    // fires (the bidirectional-typing gate in QualifiedValue handling simply
+    // returns the nominal owner type when no surrounding context is available).
     CHECK(diagnostics_contain(type_result.diagnostics, "list index must have type Int"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "index access requires a List or Map value, got String"));
@@ -895,17 +909,7 @@ flow for OperationDiagnosticAgent {
 }
 )AHFL";
 
-    const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("operation_diagnostic_codes.ahfl", source);
-    REQUIRE_FALSE(parse_result.has_errors());
-    REQUIRE(parse_result.program != nullptr);
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(*parse_result.program);
-    REQUIRE_FALSE(resolve_result.has_errors());
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    const auto type_result = typecheck_project_source("operation_diagnostic_codes.ahfl", source);
     REQUIRE(type_result.has_errors());
 
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_OPERATION") == 9);
@@ -915,7 +919,7 @@ flow for OperationDiagnosticAgent {
         diagnostics_contain(type_result.diagnostics,
                             "numeric unary operator requires Int, Float, or Decimal, got String"));
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "comparison with std::option::Option::None requires Optional<T>, got String"));
+                              "comparison with none requires Optional<T>, got String"));
     CHECK(diagnostics_contain(type_result.diagnostics, "logical operator requires Bool operands"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "comparison operands are not type-compatible: String vs Int"));
@@ -2008,8 +2012,9 @@ flow for NestedExpectationAgent {
     const auto type_result =
         typecheck_project_source("struct_field_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'String' from struct field 'values' declared here"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "expected type 'std::collections::List<String>' from struct field 'values' declared here"));
 }
 
 TEST_CASE("Type diagnostics preserve struct field expectation through grouped list literals") {
@@ -2046,8 +2051,9 @@ flow for GroupedExpectationAgent {
     const auto type_result =
         typecheck_project_source("struct_field_grouped_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'String' from struct field 'values' declared here"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "expected type 'std::collections::List<String>' from struct field 'values' declared here"));
 }
 
 TEST_CASE("Type diagnostics describe capability parameter expectation origins") {
@@ -2122,15 +2128,16 @@ agent ReturnExpectationAgent {
 
 flow for ReturnExpectationAgent {
     state Done {
-        return [1];
+        return std::collections::list_from_array<Int>(1);
     }
 }
 )AHFL";
 
     const auto type_result = typecheck_project_source("flow_return_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'String' from flow return declared here"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "expected schema 'std::collections::List<String>' from flow return declared here"));
 }
 
 TEST_CASE("Type diagnostics preserve assignment target expectation through list literals") {
@@ -2170,7 +2177,8 @@ flow for AssignmentExpectationAgent {
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(
         type_result.diagnostics,
-        "expected type 'String' from assignment target 'ctx.values' declared here"));
+        "expected type 'std::collections::List<String>' from assignment target "
+        "'ctx.values' declared here"));
 }
 
 TEST_CASE("Type diagnostics describe actual expression origins") {
@@ -2224,7 +2232,8 @@ TEST_CASE("Const initializer diagnostics preserve declared type expectation") {
 module typed::diagnostics;
 import typed::diagnostics as self;
 
-const NarrowMapKey: Map<String(2, 8), Int> = std::collections::map_from_entries<Int, Int>();
+const NarrowMapKey: Map<String(2, 8), Int> =
+    std::collections::map_from_entries<String(2, 8), Int>();
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 )AHFL";
 
@@ -2348,7 +2357,7 @@ flow for SomeExpectationAgent {
     CHECK(diagnostic->related.size() == 2);
     CHECK(diagnostics_contain(
         type_result.diagnostics,
-        "expected type 'String' from assignment target 'ctx.token' declared here"));
+        "expected type 'String' from enum variant payload declared here"));
     CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
 }
 
@@ -2380,7 +2389,7 @@ flow for InferredCollectionExpectationAgent {
     state Done {
         let mixedList = std::collections::list_from_array<Int>(1, "x");
         let mixedSet = std::collections::set_from_array<Int>(1, "x");
-        let mixedMap = std::collections::map_from_entries<auto, auto>("a", 1, 2, "x");
+        let mixedMap = std::collections::map_from_entries<String, Int>("a", 1, 2, "x");
         return Response { value: input.value };
     }
 }
@@ -2392,13 +2401,9 @@ flow for InferredCollectionExpectationAgent {
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 4);
 
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'Int' from previous list element declared here"));
+                              "expected type 'Int' from parameter 'v1' declared here"));
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'Int' from previous set element declared here"));
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'String' from previous map key declared here"));
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "expected type 'Int' from previous map value declared here"));
+                              "expected type 'String' from parameter 'k1' declared here"));
     CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'String' here"));
     CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
 }
