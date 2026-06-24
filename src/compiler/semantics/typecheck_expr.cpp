@@ -2016,9 +2016,30 @@ class ExpressionChecker final {
                     expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
                     *expected_enum->symbol == *owner_enum->symbol &&
                     expected_enum->type_args.size() == subst.size()) {
+                    // Drive generic enum variant instantiation from the
+                    // surrounding expected type when it carries concrete type
+                    // arguments. Two cases:
+                    //   (a) subst[i] is still nullptr  → argument inference
+                    //       never pinned this parameter, adopt from context
+                    //       (original behaviour).
+                    //   (b) expected_type_args[i] is concrete (not a TypeVar)
+                    //       → even if arguments inferred a different concrete
+                    //       type (e.g. `let v: Option<String> = Some(1)` where
+                    //       the payload pins T := Int), the declared target
+                    //       type wins so assignability diagnostics surface.
+                    // When the expected type's argument is itself a TypeVar
+                    // (generic enclosing scope) we never clobber a pre-pinned
+                    // inference: that would produce spurious "T vs T" errors
+                    // for unrelated generic variants used during stdlib
+                    // expansion.
                     for (std::size_t index = 0; index < subst.size(); ++index) {
-                        if (subst[index] == nullptr && expected_enum->type_args[index] != nullptr) {
-                            subst[index] = expected_enum->type_args[index];
+                        const auto *expected_arg = expected_enum->type_args[index];
+                        if (expected_arg == nullptr) {
+                            continue;
+                        }
+                        if (subst[index] == nullptr ||
+                            !expected_arg->holds<types::TypeVarT>()) {
+                            subst[index] = expected_arg;
                         }
                     }
                 }
