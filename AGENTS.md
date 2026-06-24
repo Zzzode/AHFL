@@ -77,6 +77,26 @@ If our design diverges from the mainstream, there must be a documented, AHFL-spe
 
 ## Build & Test
 
+### First-time setup (every contributor)
+
+Install the repository's versioned git hooks before making any commits. The
+hooks are kept under `scripts/githooks/` and symlinked into `.git/hooks/` so
+any later updates are picked up automatically:
+
+```bash
+# Default: per-hook symlinks. Preserves third-party hooks (e.g. VibeBuddy).
+scripts/install-githooks.sh
+
+# Alternative: set core.hooksPath = scripts/githooks (Windows / no symlinks).
+# scripts/install-githooks.sh --via-hooksPath
+```
+
+The installer preserves any pre-existing non-AHFL hook by renaming it to
+`.git/hooks/<name>.bak.<timestamp>`, so you never lose a hook another tool
+installed. See `scripts/install-githooks.sh` for details.
+
+### Configure, build, test
+
 ```bash
 # Configure (dev preset)
 cmake --preset dev
@@ -137,3 +157,29 @@ ctest --preset test-asan --output-on-failure
 Use conventional commits: `feat:`, `fix:`, `refactor:`, `build:`, `test:`, `docs:`
 
 Scope examples: `feat(parser):`, `fix(runtime):`, `refactor(backends):`
+
+**Language rule — non-negotiable.** Commit messages MUST be written in English
+ONLY. Chinese / Japanese / Korean (CJK) characters, including fullwidth ASCII
+forms, are forbidden anywhere in the subject or body, even inside parentheses
+or scopes. The local `commit-msg` git hook enforces this and will reject any
+offending commit before it is created.
+
+Examples (do / don't):
+
+```
+# ❌ forbidden: contains Chinese
+fix(sema): 泛型enum variant构造的双向类型override (Case 9)
+
+# ✅ allowed: equivalent English
+fix(sema): bidirectional type override for generic enum variant construction (Case 9)
+
+# ❌ forbidden: mixed CJK inside the scope description
+test(sema): effects needles P5容器级+参数级diagnostic origin
+
+# ✅ allowed
+test(sema): effects needles P5 container-level + parameter-level diagnostic origin
+```
+
+Scope labels themselves (the word in parentheses after the type) must also be
+English. If you need to reference a non-English concept, translate it or use a
+well-known English loanword / identifier.

@@ -1,0 +1,102 @@
+#!/bin/sh
+# scripts/githooks/commit-msg — local commit-msg hook for AHFL.
+#
+# This file is the canonical copy kept inside the repository so that every
+# contributor can install the same set of hooks. The real hook symlink / copy
+# lives in .git/hooks/ and is created by scripts/install-githooks.sh.
+#
+# Do NOT edit the copy in .git/hooks/ by hand; edit THIS file and re-run the
+# installer so your changes are version-controlled.
+
+set -eu
+
+MSG_FILE="$1"
+
+# Run the check with Perl so we can match Unicode codepoint ranges reliably.
+# Non-zero exit from perl == contains at least one disallowed codepoint.
+#
+# Perl is chosen because every platform we target ships a system Perl with
+# UTF-8-aware regex support, so the check works identically on macOS and
+# Linux without any setup.
+if ! PERL_BADLANG=0 perl -e '
+    use strict;
+    use warnings;
+    my $file = shift @ARGV or die "usage: $0 <file>\n";
+    my $fh;
+    open($fh, "<:encoding(UTF-8)", $file)
+        or open($fh, "<", $file)                         # fall back, bytes work too
+        or die "cannot open $file: $!\n";
+    local $/;
+    my $text = <$fh>;
+    close $fh;
+    # One character class covering every disallowed range. Ranges are joined
+    # with explicit concatenation so we can stay legible without embedding
+    # whitespace inside the class (the /x flag does NOT strip whitespace from
+    # inside [...], and stray newlines would otherwise be matched).
+    my $class = ""
+        . "\x{1100}-\x{11FF}"   # Hangul Jamo
+        . "\x{2E80}-\x{2EFF}"   # CJK Radicals Supplement
+        . "\x{2F00}-\x{2FDF}"   # Kangxi Radicals
+        . "\x{3000}-\x{30FF}"   # CJK Symbols + Hiragana + Katakana
+        . "\x{3100}-\x{33FF}"   # Bopomofo / Hangul Compat Jamo / Kanbun /
+                                #   CJK Strokes / Katakana Ext / Enclosed CJK
+                                #   Letters and Months / CJK Compatibility
+        . "\x{3400}-\x{4DBF}"   # CJK Unified Ideographs Extension A
+        . "\x{4DC0}-\x{4DFF}"   # Yijing Hexagram Symbols
+        . "\x{4E00}-\x{9FFF}"   # CJK Unified Ideographs
+        . "\x{A000}-\x{A4CF}"   # Yi Syllables + Radicals
+        . "\x{A960}-\x{A97F}"   # Hangul Jamo Extended-A
+        . "\x{AC00}-\x{D7AF}"   # Hangul Syllables
+        . "\x{D7B0}-\x{D7FF}"   # Hangul Jamo Extended-B
+        . "\x{F900}-\x{FAFF}"   # CJK Compatibility Ideographs
+        . "\x{FE30}-\x{FE4F}"   # CJK Compatibility Forms
+        . "\x{FF00}-\x{FFEF}"   # Halfwidth and Fullwidth Forms
+        . "\x{1F200}-\x{1F2FF}" # Enclosed Ideographic Supplement
+        . "\x{20000}-\x{2A6DF}" # CJK Unified Ideographs Extension B
+        . "\x{2A700}-\x{2B73F}" # CJK Unified Ideographs Extension C
+        . "\x{2B740}-\x{2B81F}" # CJK Unified Ideographs Extension D
+        . "\x{2B820}-\x{2CEAF}" # CJK Unified Ideographs Extension E
+        . "\x{2CEB0}-\x{2EBEF}" # CJK Unified Ideographs Extension F
+        . "\x{2F800}-\x{2FA1F}" # CJK Compatibility Ideographs Supplement
+        . "\x{30000}-\x{3134F}";# CJK Unified Ideographs Extension G
+    exit 1 if $text =~ /[$class]/;
+    exit 0;
+' "$MSG_FILE"; then
+    cat >&2 <<'EOF'
+
+*** AHFL commit policy violation **********************************************
+
+  Your commit message contains CJK (Chinese / Japanese / Korean) characters
+  or related script forms. This repository requires ALL commit messages to
+  be written in English.
+
+  Accepted conventional commit formats (type and scope are always English):
+
+      feat(parser): add support for trait bounds
+      fix(typed_hir): resolve bidirectional override in enum variants
+      test(sema): cover container-level and parameter-level diagnostics
+      docs: update commit style guide
+      refactor(backends): ...
+      build: ...
+      ci: ...
+      chore: ...
+
+  Forbidden <- allowed examples (rewrite rules, taken from real history):
+    BEFORE fix(sema): 泛型enum variant构造的双向类型override (Case 9)
+    AFTER  fix(sema): bidirectional type override for generic enum variant construction (Case 9)
+
+    BEFORE test(sema): effects needles P5容器级+参数级diagnostic origin
+    AFTER  test(sema): effects needles P5 container-level + parameter-level diagnostic origin
+
+    BEFORE docs(int): wave-15 integration final report (P5闭环)
+    AFTER  docs(int): wave-15 integration final report (P5 closed-loop)
+
+  If you are absolutely certain this bypass is justified (emergency only),
+  you may disable checks once with:  git commit --no-verify
+********************************************************************************
+
+EOF
+    exit 1
+fi
+
+exit 0
