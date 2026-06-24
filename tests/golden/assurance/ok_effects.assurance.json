@@ -160,5 +160,8 @@
       "unbounded_data_domain_model_checking",
       "distributed_fairness_proof"
     ]
+  },
+  "verification": {
+    "obligations": []
   }
 }

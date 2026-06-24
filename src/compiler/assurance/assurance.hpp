@@ -53,6 +53,37 @@ struct FormalModelProfile {
     std::vector<std::string> unsupported;
 };
 
+/// Status of a decreases termination-measure obligation.
+enum class VerificationObligationStatus {
+    Recognized,   // Pattern matches a supported MVP well-founded shape
+    Wildcard,     // The obligation comes from `decreases *` (no concrete measure)
+    Unrecognized, // The expression was not classified as a supported MVP pattern
+};
+
+/// Single verification obligation derived from a decreases clause.
+struct VerificationObligation {
+    /// Human-readable rendering of the decreases measure expression, or "*"
+    /// when the clause used the wildcard form.
+    std::string decreases_pattern;
+    /// True iff the classifier determined the measure has a compiler-known
+    /// well-founded semantics (bounded-rank container size, integer counter,
+    /// explicit wildcard accepted under non-recursive scope, …).
+    bool well_founded{false};
+    /// Stable string-encoded source location (file:line:col) when available;
+    /// empty string otherwise.
+    std::string location;
+    /// Classifier status for this obligation.
+    VerificationObligationStatus status{VerificationObligationStatus::Unrecognized};
+};
+
+/// Container-level verification profile surfaced by the assurance bundle.
+struct VerificationProfile {
+    /// One entry per decreases measure, in source order across all contracts.
+    /// Wildcard clauses contribute a single entry; a concrete lexical-order
+    /// clause with N terms contributes N entries.
+    std::vector<VerificationObligation> obligations;
+};
+
 struct AssuranceBundle {
     std::string format_version{std::string(kAssuranceBundleFormatVersion)};
     std::string status;
@@ -61,6 +92,7 @@ struct AssuranceBundle {
     std::vector<AssuranceObligation> policy_obligations;
     std::vector<AssuranceObligation> recovery_obligations;
     FormalModelProfile formal_model_profile;
+    VerificationProfile verification;
 };
 
 struct AssuranceViolation {
