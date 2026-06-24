@@ -576,6 +576,20 @@ target_link_libraries(ahfl_semantics_monomorphization_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_monomorphization_tests)
 
+# P4.S7b: assurance verification.obligations classifier + JSON schema tests.
+add_executable(ahfl_assurance_obligations_tests
+    unit/compiler/assurance/obligations.cpp
+)
+target_link_libraries(ahfl_assurance_obligations_tests
+    PRIVATE
+        ahfl_compiler_ir
+        ahfl_compiler_assurance
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_assurance_obligations_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_assurance_obligations_tests)
+
 add_executable(ahfl_streaming_tests
     unit/runtime/providers/llm/streaming.cpp
 )
@@ -963,6 +977,7 @@ foreach(_tgt
     ahfl_property_lowering_tests
     ahfl_property_smv_tests
     ahfl_compiler_ir_opt_tests
+    ahfl_assurance_obligations_tests
 )
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/tests)

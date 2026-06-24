@@ -4028,6 +4028,10 @@ add_test(NAME ahfl.semantics.monomorphization_all
     COMMAND $<TARGET_FILE:ahfl_semantics_monomorphization_tests>
 )
 
+add_test(NAME ahfl.assurance.obligations_all
+    COMMAND $<TARGET_FILE:ahfl_assurance_obligations_tests>
+)
+
 add_test(NAME ahfl.llm_provider.streaming_all
     COMMAND $<TARGET_FILE:ahfl_streaming_tests>
 )
