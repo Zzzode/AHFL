@@ -555,6 +555,19 @@ template <typename E>
         }
         effect->set("capabilities", std::move(capabilities));
         effect->set("source_range", j_range(info->effect.source_range));
+        // P3c (trait + effects): full EffectJudgement (4-kind) plus
+        // P4.S6 decreases flag — round-tripped through TypedProgram so that
+        // consumers of the serialized typed HIR see the same values that the
+        // in-memory TypedProgram carries.
+        effect->set(
+            "judgement_kind",
+            Json::make_int(static_cast<std::int64_t>(static_cast<int>(info->effect.judgement.kind))));
+        auto judgement_caps = Json::make_array();
+        for (const auto id_value : info->effect.judgement.capabilities.values) {
+            judgement_caps->push(j_symbol_id(SymbolId{id_value}));
+        }
+        effect->set("judgement_capabilities", std::move(judgement_caps));
+        effect->set("has_decreases", Json::make_bool(info->effect.has_decreases));
         value->set("effect", std::move(effect));
         value->set("has_body", Json::make_bool(info->has_body));
         value->set("declaration_range", j_range(info->declaration_range));
@@ -1486,17 +1499,21 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .type_param_names = {},
             .effect =
                 FnEffectClauseInfo{
-                    .kind =
-                        static_cast<int>(reader.int_field(*reader.field(*value, "effect"), "kind")),
+                    .kind = 0,
                     .capabilities = {},
-                    .source_range =
-                        reader.range_field(*reader.field(*value, "effect"), "source_range"),
+                    .source_range = {},
                 },
             .has_body = reader.bool_field(*value, "has_body"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .builtin_name = reader.optional_string_field(*value, "builtin_name"),
             .body_block_index = reader.optional_u32_field(*value, "body_block_index", UINT32_MAX),
         };
+        // type_param_names: tolerate legacy snapshots where the field was
+        // missing instead of an empty array.
+        if (const auto *tps = reader.field(*value, "type_param_names");
+            tps != nullptr && tps->kind == json::Kind::Array) {
+            info.type_param_names = reader.string_array_field(*value, "type_param_names");
+        }
         if (const auto *params = reader.field(*value, "params");
             params != nullptr && params->kind == json::Kind::Array) {
             info.params.reserve(params->array_items.size());
@@ -1508,6 +1525,48 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 });
             }
         }
+        if (const auto *effect_obj = reader.field(*value, "effect"); effect_obj != nullptr) {
+            info.effect.kind = static_cast<int>(reader.int_field(*effect_obj, "kind"));
+            info.effect.source_range = reader.range_field(*effect_obj, "source_range");
+            if (const auto *caps = reader.field(*effect_obj, "capabilities");
+                caps != nullptr && caps->kind == json::Kind::Array) {
+                info.effect.capabilities.reserve(caps->array_items.size());
+                for (const auto &item : caps->array_items) {
+                    info.effect.capabilities.push_back(reader.symbol_id_value(item.get()));
+                }
+            }
+            // P3c (effects judgement) + P4.S6 decreases: round-trip fields
+            // added after the baseline snapshot was produced. Missing fields
+            // default to Pure / false so legacy snapshots still parse.
+            const auto *jk_field = reader.field(*effect_obj, "judgement_kind");
+            const auto jk_int = jk_field != nullptr
+                                    ? static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"))
+                                    : static_cast<int>(EffectJudgement::Kind::Pure);
+            CapabilitySymbolSet j_caps;
+            if (const auto *jc = reader.field(*effect_obj, "judgement_capabilities");
+                jc != nullptr && jc->kind == json::Kind::Array) {
+                for (const auto &item : jc->array_items) {
+                    j_caps.values.insert(reader.symbol_id_value(item.get()).value);
+                }
+            }
+            switch (static_cast<EffectJudgement::Kind>(jk_int)) {
+            case EffectJudgement::Kind::Pure:
+                info.effect.judgement = EffectJudgement::make_pure();
+                break;
+            case EffectJudgement::Kind::Nondet:
+                info.effect.judgement = EffectJudgement::make_nondet();
+                break;
+            case EffectJudgement::Kind::Bottom:
+                info.effect.judgement = EffectJudgement::make_bottom();
+                break;
+            case EffectJudgement::Kind::CapabilitySet:
+                info.effect.judgement = EffectJudgement::make_capability_set(std::move(j_caps));
+                break;
+            }
+            info.effect.has_decreases =
+                reader.optional_bool_field(*effect_obj, "has_decreases", false);
+        }
+        return info;
     }
 
     return std::monostate{};
