@@ -1178,8 +1178,66 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                 }
                 return evaluate(*e.inner);
             },
+            [this](const ast::CallExpr &e) -> std::optional<ConstValue> {
+                // Desugar calls emitted by the P5 nominal collection/Option
+                // rewrite into const-value trees so typed-HIR still carries
+                // foldable structures for serialization and downstream passes.
+                if (e.callee == nullptr || e.callee->segments.empty()) {
+                    return std::nullopt;
+                }
+                const auto callee_spelling = e.callee->spelling();
+                if (callee_spelling == "std::option::Option::Some") {
+                    if (e.arguments.size() != 1 || e.arguments.front() == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto inner = evaluate(*e.arguments.front());
+                    if (!inner.has_value()) {
+                        return std::nullopt;
+                    }
+                    auto value =
+                        make_const_value(ConstValueKind::Some, "std::option::Option::Some");
+                    add_const_child(value, "value", std::move(*inner));
+                    return value;
+                }
+                if (callee_spelling == "std::option::Option::None") {
+                    return make_const_value(ConstValueKind::NoneLiteral,
+                                            "std::option::Option::None");
+                }
+                const bool is_list = callee_spelling == "std::collections::list_from_array";
+                const bool is_set = callee_spelling == "std::collections::set_from_array";
+                const bool is_map = callee_spelling == "std::collections::map_from_entries";
+                if (!is_list && !is_set && !is_map) {
+                    return std::nullopt;
+                }
+                if (is_list || is_set) {
+                    auto result = make_const_value(is_list ? ConstValueKind::List
+                                                           : ConstValueKind::Set,
+                                                   callee_spelling);
+                    for (const auto &arg : e.arguments) {
+                        if (arg == nullptr) return std::nullopt;
+                        auto child = evaluate(*arg);
+                        if (!child.has_value()) return std::nullopt;
+                        add_const_child(result, {}, std::move(*child));
+                    }
+                    if (is_set) normalize_set_const_value(result);
+                    return result;
+                }
+                // map_from_entries<Key, Value>(k1, v1, k2, v2, ...)
+                if ((e.arguments.size() % 2) != 0) {
+                    return std::nullopt;
+                }
+                auto result = make_const_value(ConstValueKind::Map, callee_spelling);
+                for (std::size_t i = 0; i < e.arguments.size(); i += 2) {
+                    auto key = evaluate(*e.arguments[i]);
+                    auto val = evaluate(*e.arguments[i + 1]);
+                    if (!key.has_value() || !val.has_value()) return std::nullopt;
+                    add_const_child(result, "key", std::move(*key));
+                    add_const_child(result, "value", std::move(*val));
+                }
+                normalize_map_const_value(result);
+                return result;
+            },
             [](const ast::PathExpr &) -> std::optional<ConstValue> { return std::nullopt; },
-            [](const ast::CallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             [](const ast::MethodCallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             // P1 (ADT): match expressions are not foldable compile-time constants.
             [](const ast::MatchExpr &) -> std::optional<ConstValue> { return std::nullopt; },
