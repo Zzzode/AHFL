@@ -116,6 +116,27 @@ std_container_type_view(const Type &type) noexcept {
         }
     }
 
+    // An EnumVariantT whose canonical name matches a nominal stdlib enum is
+    // also a valid "view" of that container, used by narrowing / subtyping /
+    // Option-none diagnostics where a scrutinee has been narrowed to a
+    // specific variant (e.g. Option::None) before being compared against the
+    // unspecialised enum sentinel.
+    if (const auto *variant = type.get_if<types::EnumVariantT>(); variant != nullptr) {
+        const std::string_view canonical_name{variant->canonical_name};
+        if (canonical_name == kOptionType) {
+            StdContainerTypeView view{
+                .kind = StdContainerKind::Option,
+                .first = nullptr,
+                .second = nullptr,
+                .nominal = true,
+            };
+            if (!read_args(variant->type_args, 1, view.first, view.second)) {
+                return std::nullopt;
+            }
+            return view;
+        }
+    }
+
     return std::nullopt;
 }
 
