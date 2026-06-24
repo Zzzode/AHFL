@@ -1,0 +1,66 @@
+module formal::decreases_length_self;
+
+struct Item {
+    id: Int;
+}
+
+// Context exposes a container collection (`items`). We reduce the measure
+// through the ctx.items.length pattern; the bounded-rank SMV encoding looks
+// for the PathExpr shape `self.length` (the PathExpr form the parser uses
+// for plain dotted identifiers). To keep the model tractable and still
+// exercise the bounded-rank branch, the Context itself exposes a `length`
+// Int field directly.
+struct Context {
+    items: List<Item> = std::collections::list_from_array<Item>();
+    length: Int = 0;
+}
+
+struct Request {
+    items: List<Item>;
+}
+
+struct Response {
+    remaining: Int;
+}
+
+agent WorkerAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Process, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Process;
+    transition Process -> Done;
+}
+
+contract for WorkerAgent {
+    decreases: self.length;
+}
+
+flow for WorkerAgent {
+    state Init {
+        goto Process;
+    }
+
+    state Process {
+        goto Done;
+    }
+
+    state Done {
+        return Response { remaining: ctx.length };
+    }
+}
+
+workflow WorkerWorkflow {
+    input: Request;
+    output: Response;
+
+    node run: WorkerAgent(input);
+
+    safety: always (not running(run) or (1 + 1 == 2));
+    liveness: eventually completed(run, Done);
+
+    return: run;
+}

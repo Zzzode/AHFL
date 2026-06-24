@@ -2743,3 +2743,93 @@ flow for RelationTraceAgent {
     CHECK(saw_assignable);
     CHECK(saw_exact_schema);
 }
+
+TEST_CASE("Decreases shadowed receiver emits stable warning and degrades rank encoding") {
+    // Downstream SMV treats a decreases contract on a shadowed receiver as an
+    // abstract observation rather than a bounded-rank formula. Wave-12 grammar
+    // does not permit `self` as a let-binding identifier (it is a reserved
+    // receiver keyword), so we exercise the DECREASES_SHADOWED_RECEIVER branch
+    // through the explicit test-only injector that marks the agent symbol as
+    // having a flow-local `let self` shadow.
+    const std::string source = R"AHFL(
+struct Request {
+    id: Int;
+}
+
+struct Context {
+    length: Int = 0;
+    count: Int = 0;
+}
+
+struct Response {
+    processed: Int;
+}
+
+agent DecreasesShadowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for DecreasesShadowAgent {
+    decreases: self.length;
+}
+
+flow for DecreasesShadowAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response { processed: 0 };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("decreases_shadowed_receiver.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    // Locate the agent symbol via the contract target reference (contract
+    // and flow share the same target SymbolId).
+    const auto contract_it = std::find_if(
+        parse_result.program->declarations.begin(),
+        parse_result.program->declarations.end(),
+        [](const ahfl::Owned<ahfl::ast::Decl> &d) {
+            return d != nullptr && d->kind == ahfl::ast::NodeKind::ContractDecl;
+        });
+    REQUIRE(contract_it != parse_result.program->declarations.end());
+    const auto &contract =
+        static_cast<const ahfl::ast::ContractDecl &>(**contract_it);
+    const auto agent_ref = resolve_result.find_reference(
+        ahfl::ReferenceKind::ContractTarget, contract.target->range);
+    REQUIRE(agent_ref.has_value());
+
+    ahfl::TypeCheckPass type_checker(*parse_result.program, resolve_result);
+    type_checker.inject_flow_self_shadowing_for_test(
+        agent_ref->get().target.value, std::string{"List<Int>"});
+    const auto type_result = type_checker.run();
+    CHECK_FALSE(type_result.has_errors());
+    CHECK(type_result.diagnostics.has_warning());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics,
+                                     "typecheck.DECREASES_SHADOWED_RECEIVER") == 1);
+
+    const auto *diagnostic =
+        diagnostic_with_code(type_result.diagnostics, "typecheck.DECREASES_SHADOWED_RECEIVER");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->severity == ahfl::DiagnosticSeverity::Warning);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "decreases clause receiver 'self' is shadowed by a local binding"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "termination measure is degraded to an abstract observation"));
+}

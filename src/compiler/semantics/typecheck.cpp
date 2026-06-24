@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
 
@@ -16,10 +17,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ahfl {
@@ -888,8 +891,10 @@ TypeCheckResult TypeCheckPass::run() {
         tp.impl_declaration_indexes = std::move(unique_impls);
     }
     ConstSema(*this).run();
-    ContractSema(*this).run();
+    // FlowSema must run before ContractSema so decreases clauses can observe
+    // let-shadowed `self` bindings introduced inside agent flow handlers.
     FlowSema(*this).run();
+    ContractSema(*this).run();
     WorkflowSema(*this).run();
     FnSema(*this).run();
     ImplSema(*this).run();
@@ -1875,22 +1880,155 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 continue;
             }
 
-            // Wildcard decreases carries no expression to type-check.
-            if (clause->kind == ast::ContractClauseKind::Decreases && clause->is_wildcard) {
-                continue;
+            // Determines whether the decreases body matches the
+            // container.length pattern used by the bounded-rank SMV
+            // encoding. Container membership is tested via SemanticType
+            // holds() against ListT / SetT / MapT (R-05: no string
+            // matching against type names).
+            TypePtr global_self = driver_->clone_or_any(
+                std::cref(*agent_info->get().context_type));
+            if (global_self == nullptr || is_error_type(*global_self)) {
+                global_self = driver_->make_type(TypeKind::Any);
             }
+            const auto classify_decreases =
+                [&]() -> std::tuple<bool, bool, TypePtr> {
+                // Two AST shapes match the `self.length` pattern because the
+                // frontend flattens dotted identifiers into PathExpr while
+                // dotted access on arbitrary expressions uses MemberAccessExpr.
+                // We canonicalize both into a single classification so the
+                // bounded-rank encoding is equally available for both.
+                TypePtr bound_self = nullptr;
+                bool is_self_length = false;
+                if (clause->expr != nullptr) {
+                    if (const auto *member_access =
+                            std::get_if<ast::MemberAccessExpr>(&clause->expr->node);
+                        member_access != nullptr) {
+                        if (member_access->member == "length" &&
+                            member_access->base != nullptr &&
+                            std::holds_alternative<ast::PathExpr>(
+                                member_access->base->node)) {
+                            const auto &base_path =
+                                std::get<ast::PathExpr>(member_access->base->node);
+                            is_self_length =
+                                base_path.path != nullptr &&
+                                base_path.path->root_name == "self" &&
+                                base_path.path->members.empty();
+                            if (is_self_length) {
+                                bound_self = driver_->clone_or_any(std::cref(
+                                    *agent_info->get().context_type));
+                            }
+                        }
+                    } else if (const auto *path_expr =
+                                   std::get_if<ast::PathExpr>(&clause->expr->node);
+                               path_expr != nullptr && path_expr->path != nullptr) {
+                        is_self_length =
+                            path_expr->path->root_name == "self" &&
+                            path_expr->path->members.size() == 1 &&
+                            path_expr->path->members.front() == "length";
+                        if (is_self_length) {
+                            bound_self = driver_->clone_or_any(std::cref(
+                                *agent_info->get().context_type));
+                        }
+                    }
+                }
+                const bool container_self = [&]() {
+                    if (bound_self == nullptr) {
+                        return false;
+                    }
+                    const auto container =
+                        stdlib_bridge::std_container_type_view(*bound_self);
+                    if (!container.has_value()) {
+                        return false;
+                    }
+                    switch (container->kind) {
+                    case stdlib_bridge::StdContainerKind::List:
+                    case stdlib_bridge::StdContainerKind::Set:
+                    case stdlib_bridge::StdContainerKind::Map:
+                        return true;
+                    case stdlib_bridge::StdContainerKind::Option:
+                        return false;
+                    }
+                    return false;
+                }();
+                return {is_self_length, container_self, bound_self};
+            };
+            const auto [is_self_length, self_is_container, pre_bound_self] =
+                classify_decreases();
 
-            // Decreases with a concrete metric accepts any pure ordered value. Skip
-            // the bool-only gate that applies to the precondition/postcondition
-            // clause kinds.
             if (clause->kind == ast::ContractClauseKind::Decreases) {
-                ValueContext context;
-                context.bindings.emplace(
+                if (clause->is_wildcard) {
+                    // Wildcard decreases carries no expression to type-check.
+                    continue;
+                }
+                // Decreases clauses represent a well-founded termination
+                // measure. The measure is always integer-valued. When the
+                // measure matches `self.length` on a container agent context
+                // the bounded-rank SMV encoding applies; any other integer
+                // expression falls back to an abstract observation. If the
+                // flow handler introduced a same-named `let self = ...` the
+                // type checker emits DECREASES_SHADOWED_RECEIVER so
+                // downstream emitters degrade to an abstract observation.
+                const auto int_type = driver_->make_type(TypeKind::Int);
+                ValueContext decreases_context;
+                decreases_context.bindings.emplace(
                     "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
-                const auto value = driver_->check_expr(*clause->expr, context, std::nullopt);
+                decreases_context.bindings.emplace(
+                    "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+                TypePtr self_type = pre_bound_self;
+                if (self_type == nullptr || is_error_type(*self_type)) {
+                    self_type = global_self;
+                }
+                decreases_context.bindings.emplace("self", std::move(self_type));
+
+                const auto value = driver_->check_expr(
+                    *clause->expr, decreases_context, std::cref(*int_type));
+                if (!value.type->holds<types::IntT>() && !is_error_type(*value.type)) {
+                    driver_->typecheck_error_here(
+                        error_codes::typecheck::TypeMismatch,
+                        messages::typecheck::IntExpressionRequired.format_with(
+                            "decreases clause"),
+                        clause->expr->range,
+                        std::vector<Diagnostic::Related>{Diagnostic::Related{
+                            .message = actual_type_note(*value.type),
+                            .range = clause->expr->range,
+                        }});
+                }
                 if (!value.is_pure) {
                     driver_->non_pure_error_here(
-                        "decreases metric", value.effect, clause->expr->range);
+                        "decreases clause", value.effect, clause->expr->range);
+                }
+
+                // Shadow warning: a flow-level `let self = ...` same-name
+                // binding makes the bounded-rank encoding unsound. Emitted
+                // whenever `decreases: self.length` is present on a struct or
+                // container context whose flow handler introduced a shadow.
+                const bool is_shadowed =
+                    driver_->flow_self_shadowing_.contains(
+                        target->get().target.value);
+                if (is_self_length && is_shadowed) {
+                    const auto describe_shadow =
+                        driver_->flow_self_shadowing_.at(
+                            target->get().target.value);
+                    if (driver_->current_source_ != nullptr) {
+                        driver_->result_.diagnostics.warning()
+                            .code(error_codes::typecheck::
+                                      DecreasesShadowedReceiver)
+                            .message(messages::typecheck::
+                                         DecreasesShadowedReceiver,
+                                     describe_shadow)
+                            .range(clause->expr->range)
+                            .source(driver_->current_source_->source)
+                            .emit();
+                    } else {
+                        driver_->result_.diagnostics.warning()
+                            .code(error_codes::typecheck::
+                                      DecreasesShadowedReceiver)
+                            .message(messages::typecheck::
+                                         DecreasesShadowedReceiver,
+                                     describe_shadow)
+                            .range(clause->expr->range)
+                            .emit();
+                    }
                 }
                 continue;
             }
@@ -2112,11 +2250,77 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                 "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
             context.bindings.emplace(
                 "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+            // When a flow handler introduces a `let self = ...` binding that
+            // shadows the conceptual agent receiver, remember the shadowing
+            // type so any associated `decreases: self.length` contract can
+            // emit DECREASES_SHADOWED_RECEIVER during ContractSema (visited
+            // later). Duplicate records are harmless - the description is
+            // identical across handlers for a same-typed let.
+            //
+            // Track shadowing by walking the handler body AST for let-statements
+            // named `self`. Binding-level tracking after check_block() is not
+            // reliable because the block-local ValueContext is not propagated
+            // upward once the body completes. AST-level matching gives exact
+            // visibility into whether a flow-local shadow will hide the
+            // conceptual agent receiver at expression-check time.
+            std::string shadow_desc;
+            std::function<void(const ast::BlockSyntax &)> collect_self_lets;
+            collect_self_lets = [&](const ast::BlockSyntax &block) {
+                for (const auto &stmt : block.statements) {
+                    if (stmt == nullptr) {
+                        continue;
+                    }
+                    if (stmt->kind == ast::StatementSyntaxKind::Let &&
+                        stmt->let_stmt != nullptr &&
+                        stmt->let_stmt->name == "self") {
+                        if (stmt->let_stmt->type != nullptr &&
+                            shadow_desc.empty()) {
+                            shadow_desc = stmt->let_stmt->type->spelling();
+                            if (shadow_desc.empty()) {
+                                shadow_desc = "Any";
+                            }
+                        } else if (shadow_desc.empty()) {
+                            shadow_desc = "Any";
+                        }
+                    }
+                    // Walk into nested blocks (if/else bodies, etc.) so nested
+                    // shadows are also detected.
+                    switch (stmt->kind) {
+                    case ast::StatementSyntaxKind::If: {
+                        const auto *if_s = stmt->if_stmt.get();
+                        if (if_s == nullptr) {
+                            break;
+                        }
+                        if (if_s->then_block != nullptr) {
+                            collect_self_lets(*if_s->then_block);
+                        }
+                        if (if_s->else_block != nullptr) {
+                            collect_self_lets(*if_s->else_block);
+                        }
+                        break;
+                    }
+                    case ast::StatementSyntaxKind::Let:
+                    case ast::StatementSyntaxKind::Assign:
+                    case ast::StatementSyntaxKind::Goto:
+                    case ast::StatementSyntaxKind::Return:
+                    case ast::StatementSyntaxKind::Assert:
+                    case ast::StatementSyntaxKind::Expr:
+                        break;
+                    }
+                }
+            };
+            if (handler->body != nullptr) {
+                collect_self_lets(*handler->body);
+            }
             driver_->check_block(*handler->body,
                                  context,
                                  std::cref(*agent_info->get().output_type),
                                  handler->state_name,
                                  agent_info->get().output_type_range);
+            if (!shadow_desc.empty()) {
+                driver_->flow_self_shadowing_.try_emplace(
+                    target->get().target.value, std::move(shadow_desc));
+            }
         }
     }
 }

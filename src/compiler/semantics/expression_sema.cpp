@@ -222,6 +222,23 @@ TypePtr resolve_expression_field_access(const Type &base_type,
         return types.error_type();
     }
 
+    // Container built-in properties are first-class field accesses on
+    // collection types even though they're not struct fields. Treating them
+    // here keeps downstream decreases-clause reasoning (which looks for the
+    // `self.length` MemberAccess pattern) type-correct without forcing
+    // callers to re-encode the same check on every site. R-05: use the
+    // nominal stdlib container view helper rather than string-matching type
+    // names.
+    if (field_name == "length") {
+        if (const auto container = stdlib_bridge::std_container_type_view(base_type);
+            container.has_value() &&
+            (container->kind == stdlib_bridge::StdContainerKind::List ||
+             container->kind == stdlib_bridge::StdContainerKind::Set ||
+             container->kind == stdlib_bridge::StdContainerKind::Map)) {
+            return types.make(TypeKind::Int);
+        }
+    }
+
     if (!base_type.holds<types::StructT>()) {
         delegate.typecheck_error(
             error_codes::typecheck::InvalidMemberAccess,

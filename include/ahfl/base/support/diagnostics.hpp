@@ -308,6 +308,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesDuplicate{
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InNonPure{"IN_NON_PURE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{
     "SHADOWED_RECEIVER"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesShadowedReceiver{
+    "DECREASES_SHADOWED_RECEIVER"};
 } // namespace typecheck
 
 namespace resolve {
@@ -392,6 +394,7 @@ inline constexpr MessageTemplate TraitOrphanImpl{
 namespace typecheck {
 inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};
 inline constexpr MessageTemplate BoolExpressionRequired{"{} must have type Bool"};
+inline constexpr MessageTemplate IntExpressionRequired{"{} must have type Int"};
 inline constexpr MessageTemplate ExactSchemaMismatch{
     "exact schema mismatch in {}: expected {}, got {}"};
 inline constexpr MessageTemplate InvalidMemberAccess{
@@ -482,6 +485,9 @@ inline constexpr MessageTemplate SchemaBoundaryTypeRequiresStruct{
     "{} type must resolve to a struct type"};
 inline constexpr MessageTemplate ShadowedBinding{
     "let binding '{}' shadows an existing binding of type '{}'"};
+inline constexpr MessageTemplate DecreasesShadowedReceiver{
+    "decreases clause receiver 'self' is shadowed by a local binding of type '{}'; "
+    "the termination measure is degraded to an abstract observation"};
 inline constexpr MessageTemplate UnknownCapabilityInAgent{
     "unknown capability '{}' in agent capability list"};
 inline constexpr MessageTemplate CapabilityNotAllowed{

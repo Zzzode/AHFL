@@ -406,6 +406,16 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypeCheckResult run();
 
+    // Test-only injection: pre-mark an agent as having a flow-level `let self`
+    // shadow binding with a describe() string describing the shadow type. This
+    // helper lets integration tests exercise the DECREASES_SHADOWED_RECEIVER
+    // warning branch without relying on a `let self: ...` binding, a form that
+    // the grammar reserves from appearing as a user-level let identifier.
+    void inject_flow_self_shadowing_for_test(std::size_t agent_symbol_value,
+                                             std::string describe) {
+        flow_self_shadowing_.emplace(agent_symbol_value, std::move(describe));
+    }
+
   private:
     friend class EnvironmentBuilder;
     friend class ConstSema;
@@ -484,6 +494,12 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TraitDecl>> &trait_decls_;
     std::unordered_map<std::size_t, DeclarationIndex::ImplDeclEntry> &impl_decls_;
     TypedHirBuilder hir_builder_;
+
+    // Flow-level `let self = ...` shadowing records: agent symbol id -> the
+    // describe() string of the shadowing binding. FlowSema runs before
+    // ContractSema so these records are populated by the time decreases
+    // clauses are validated.
+    std::unordered_map<std::size_t, std::string> flow_self_shadowing_;
 
     TypeAliasResolutionState alias_resolution_;
 

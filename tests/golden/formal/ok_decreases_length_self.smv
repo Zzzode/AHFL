@@ -1,0 +1,76 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Capability calls/effects are bound to flow handler events where available.
+-- AHFL_MAP contract_formal_decreases_length_self_WorkerAgent_0_atom_0 => observation contract formal::decreases_length_self::WorkerAgent[0] @ formal/decreases_length_self.ahfl:935-958
+-- AHFL_MAP agent__formal_decreases_length_self_WorkerAgent__state => agent formal::decreases_length_self::WorkerAgent state @ formal/decreases_length_self.ahfl:658-902
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state => workflow formal::decreases_length_self::WorkerWorkflow node run state @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase => workflow formal::decreases_length_self::WorkerWorkflow node run lifecycle phase @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested => workflow formal::decreases_length_self::WorkerWorkflow node run environment failure request @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__started => workflow formal::decreases_length_self::WorkerWorkflow node run has started @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running => workflow formal::decreases_length_self::WorkerWorkflow node run is running @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed => workflow formal::decreases_length_self::WorkerWorkflow node run completed @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failed => workflow formal::decreases_length_self::WorkerWorkflow node run failed @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovering => workflow formal::decreases_length_self::WorkerWorkflow node run recovering @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovered => workflow formal::decreases_length_self::WorkerWorkflow node run recovered @ formal/decreases_length_self.ahfl:1227-1256
+MODULE main
+VAR
+  agent__formal_decreases_length_self_WorkerAgent__state : {Init, Process, Done};
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state : {Init, Process, Done};
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
+IVAR
+  contract_formal_decreases_length_self_WorkerAgent_0_atom_0 : boolean;
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested : boolean;
+DEFINE
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__started := !(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_IDLE);
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed := (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPLETED | (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RUNNING & (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done)));
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running := (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RUNNING & !((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done)));
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failed := (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_FAILED | workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_TERMINAL_FAILED);
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovering := (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERING | workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPENSATING);
+  workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovered := (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERED | workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPENSATED);
+ASSIGN
+  init(agent__formal_decreases_length_self_WorkerAgent__state) := Init;
+  next(agent__formal_decreases_length_self_WorkerAgent__state) := case
+    agent__formal_decreases_length_self_WorkerAgent__state = Init : Process;
+    agent__formal_decreases_length_self_WorkerAgent__state = Process : Done;
+    agent__formal_decreases_length_self_WorkerAgent__state = Done : Done;
+    TRUE : agent__formal_decreases_length_self_WorkerAgent__state;
+  esac;
+  init(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state) := Init;
+  next(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state) := case
+    !(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RUNNING) : workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Init : Process;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Process : Done;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done : Done;
+    TRUE : workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state;
+  esac;
+  init(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase) := AHFL_NODE_RUNNING;
+  next(workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase) := case
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPLETED : AHFL_NODE_COMPLETED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_TERMINAL_FAILED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPENSATED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_COMPENSATING : AHFL_NODE_COMPENSATED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERED : AHFL_NODE_RUNNING;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERING : AHFL_NODE_RECOVERED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_FAILED : AHFL_NODE_RECOVERING;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_IDLE & (TRUE) : AHFL_NODE_RUNNING;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_IDLE : AHFL_NODE_IDLE;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RUNNING & (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done) : AHFL_NODE_COMPLETED;
+    workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RUNNING & workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested : AHFL_NODE_FAILED;
+    TRUE : workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase;
+  esac;
+-- contract formal::decreases_length_self::WorkerAgent decreases[0] bounded_decreases_rank: length(self) == rank(self) + 1
+-- contract formal::decreases_length_self::WorkerAgent decreases[0]
+LTLSPEC G ((array_size__formal::decreases_length_self::WorkerAgent__length = (rank__formal::decreases_length_self::WorkerAgent + 1)))
+-- workflow formal::decreases_length_self::WorkerWorkflow node run lifecycle[completed_final]
+LTLSPEC G (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed -> (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done))
+-- workflow formal::decreases_length_self::WorkerWorkflow node run recovery[failed_enters_recovering]
+LTLSPEC G ((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_FAILED) -> F (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERING))
+-- workflow formal::decreases_length_self::WorkerWorkflow node run recovery[recovering_enters_recovered]
+LTLSPEC G ((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERING) -> F (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERED))
+-- workflow formal::decreases_length_self::WorkerWorkflow node run recovery[recovered_resumes_running]
+LTLSPEC G ((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase = AHFL_NODE_RECOVERED) -> F (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running | workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed))
+-- workflow formal::decreases_length_self::WorkerWorkflow safety[0]
+LTLSPEC (G (!workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested) -> (G ((! (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running) | ((1 + 1) = 2)))))
+-- workflow formal::decreases_length_self::WorkerWorkflow liveness[0]
+LTLSPEC (G (!workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested) -> (F ((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed & (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done)))))

@@ -3582,6 +3582,15 @@ add_test(NAME ahflc.emit_smv.project.ok_cross_file
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DSUBCOMMAND=emit smv"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.smv"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
+)
+
 add_test(NAME ahflc.check.project.fail_node_input
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
