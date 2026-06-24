@@ -777,8 +777,9 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
     const auto source_id = source_id_for_module(program, "typed::const_normalize");
     REQUIRE(source_id.has_value());
 
-    const auto *source_list =
-        find_by_range(program.expressions, range_of(source, "[\"b\", \"a\"]"), source_id);
+    const auto *source_list = find_by_range(
+        program.expressions,
+        range_of(source, "std::collections::list_from_array<String>(\"b\", \"a\")"), source_id);
     REQUIRE(source_list != nullptr);
     REQUIRE(source_list->const_value.has_value());
     CHECK(source_list->const_value->kind == ahfl::ConstValueKind::List);
@@ -786,10 +787,12 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
     CHECK(source_list->const_value->children[0].scalar == "\"b\"");
     CHECK(source_list->const_value->children[1].scalar == "\"a\"");
 
-    const auto *source_set =
-        find_by_range(program.expressions, range_of(source, "set [\"b\", \"a\"]"), source_id);
-    const auto *canonical_set =
-        find_by_range(program.expressions, range_of(source, "set [\"a\", \"b\"]"), source_id);
+    const auto *source_set = find_by_range(
+        program.expressions,
+        range_of(source, "std::collections::set_from_array<String>(\"b\", \"a\")"), source_id);
+    const auto *canonical_set = find_by_range(
+        program.expressions,
+        range_of(source, "std::collections::set_from_array<String>(\"a\", \"b\")"), source_id);
     REQUIRE(source_set != nullptr);
     REQUIRE(canonical_set != nullptr);
     REQUIRE(source_set->const_value.has_value());
@@ -801,12 +804,16 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
     CHECK(const_value_signature(*source_set->const_value) ==
           const_value_signature(*canonical_set->const_value));
 
-    const auto *source_map =
-        find_by_range(
-            program.expressions, range_of(source, "map [\"b\": 2, \"a\": 1]"), source_id);
-    const auto *canonical_map =
-        find_by_range(
-            program.expressions, range_of(source, "map [\"a\": 1, \"b\": 2]"), source_id);
+    const auto *source_map = find_by_range(
+        program.expressions,
+        range_of(source,
+                 "std::collections::map_from_entries<String, Int>(\"b\", 2, \"a\", 1)"),
+        source_id);
+    const auto *canonical_map = find_by_range(
+        program.expressions,
+        range_of(source,
+                 "std::collections::map_from_entries<String, Int>(\"a\", 1, \"b\", 2)"),
+        source_id);
     REQUIRE(source_map != nullptr);
     REQUIRE(canonical_map != nullptr);
     REQUIRE(source_map->const_value.has_value());
@@ -1095,7 +1102,7 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
     };
 
     expect_wrapper("std::option::is_some");
-    expect_wrapper("std::option::is_std::option::Option::None");
+    expect_wrapper("std::option::is_none");
     expect_wrapper("std::option::map");
     expect_wrapper("std::option::and_then");
     expect_wrapper("std::option::or_else");
@@ -1142,7 +1149,7 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
             CHECK(site.type_args[0]->describe() == "Int");
-        } else if (symbol->get().canonical_name == "std::option::is_std::option::Option::None") {
+        } else if (symbol->get().canonical_name == "std::option::is_none") {
             saw_option_is_none = true;
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
@@ -1442,7 +1449,7 @@ fn inferred_first() -> Int {
 }
 
 fn inferred_some_is_none() -> Bool {
-    let value = std::option::Option::Some(42);
+    let value: Option<Int> = std::option::Option::Some(42);
     return value == std::option::Option::None;
 }
 
@@ -1480,10 +1487,12 @@ fn inferred_missing_value() -> Bool {
         CHECK(expr->type->describe() == type);
     };
 
-    expect_expr_type("[4, 5, 6]", "std::collections::List<Int>");
+    expect_expr_type("std::collections::list_from_array<Int>(4, 5, 6)",
+                     "std::collections::List<Int>");
     expect_expr_type("std::option::Option::Some(42)", "std::option::Option<Int>");
-    expect_expr_type("set [7, 8]", "std::collections::Set<Int>");
-    expect_expr_type("map [\"z\": 9]", "std::collections::Map<String, Int>");
+    expect_expr_type("std::collections::set_from_array<Int>(7, 8)", "std::collections::Set<Int>");
+    expect_expr_type("std::collections::map_from_entries<String, Int>(\"z\", 9)",
+                     "std::collections::Map<String, Int>");
 
     const auto literal_first_symbol = result.typed_program.find_local_symbol(
         ahfl::SymbolNamespace::Functions, "literal_first", "app::main");
@@ -2435,10 +2444,11 @@ const WideOptional: Optional<String> = self::NarrowOptional;
 const NarrowList: List<String(2, 8)> = std::collections::list_from_array<String(2, 8)>();
 const WideList: List<String> = self::NarrowList;
 
-const NarrowSet: Set<String(2, 8)> = std::collections::set_from_array<Int>();
+const NarrowSet: Set<String(2, 8)> = std::collections::set_from_array<String(2, 8)>();
 const WideSet: Set<String> = self::NarrowSet;
 
-const NarrowMapValue: Map<String, String(2, 8)> = std::collections::map_from_entries<Int, Int>();
+const NarrowMapValue: Map<String, String(2, 8)> =
+    std::collections::map_from_entries<String, String(2, 8)>();
 const WideMapValue: Map<String, String> = self::NarrowMapValue;
 )AHFL";
     write_file(source_path, source);
@@ -3671,7 +3681,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     const auto root = make_temp_project("p4_s6_decreases_project");
     const auto source_path = module_source_path(root, "p4::s6::decreases");
     const std::string source = R"AHFL(
-module p4::s6::decreases;
+module p4_s6;
 
 struct Req { v: Int = 0; }
 struct Ctx { v: String = ""; }
