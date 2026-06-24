@@ -37,6 +37,7 @@ enum class PolicyObligationKind {
     Ensures,
     Invariant,
     Forbid,
+    Decreases,
     WorkflowSafety,
     WorkflowLiveness,
 };

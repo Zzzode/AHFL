@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
+// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -56,10 +56,6 @@ public:
   }
 
   virtual std::any visitType_(AHFLParser::Type_Context *ctx) override {
-    return visitChildren(ctx);
-  }
-
-  virtual std::any visitAppType(AHFLParser::AppTypeContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -203,6 +199,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitDecreasesDecl(AHFLParser::DecreasesDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitFlowDecl(AHFLParser::FlowDeclContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -327,6 +327,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitAssocConstItem(AHFLParser::AssocConstItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitImplDecl(AHFLParser::ImplDeclContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -335,11 +339,19 @@ public:
     return visitChildren(ctx);
   }
 
-  virtual std::any visitFnDef(AHFLParser::FnDefContext *ctx) override {
+  virtual std::any visitImplItem(AHFLParser::ImplItemContext *ctx) override {
     return visitChildren(ctx);
   }
 
-  virtual std::any visitAssocItemDef(AHFLParser::AssocItemDefContext *ctx) override {
+  virtual std::any visitImplFnItem(AHFLParser::ImplFnItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitAssocTypeDef(AHFLParser::AssocTypeDefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitAssocConstDef(AHFLParser::AssocConstDefContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -515,6 +527,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitStructLiteral(AHFLParser::StructLiteralContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitListLiteral(AHFLParser::ListLiteralContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -532,10 +548,6 @@ public:
   }
 
   virtual std::any visitMapEntry(AHFLParser::MapEntryContext *ctx) override {
-    return visitChildren(ctx);
-  }
-
-  virtual std::any visitStructLiteral(AHFLParser::StructLiteralContext *ctx) override {
     return visitChildren(ctx);
   }
 

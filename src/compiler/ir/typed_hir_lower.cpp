@@ -5,6 +5,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
+#include "ahfl/compiler/ir/mangling.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
@@ -14,10 +15,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -206,6 +209,8 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
         return ir::ContractClauseKind::Invariant;
     case ast::ContractClauseKind::Forbid:
         return ir::ContractClauseKind::Forbid;
+    case ast::ContractClauseKind::Decreases:
+        return ir::ContractClauseKind::Decreases;
     }
     return ir::ContractClauseKind::Requires;
 }
@@ -297,6 +302,7 @@ class TypedIrLowerer final {
         }
         current_source_id_.reset();
         current_module_name_.clear();
+        emit_instantiated_declarations(program_ir);
         return program_ir;
     }
 
@@ -451,16 +457,12 @@ class TypedIrLowerer final {
 
         return std::visit(
             Overloaded{
-                [](const ast::NoneLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::BoolLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::IntegerLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::FloatLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::DecimalLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::StringLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::DurationLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
-                [&](const ast::SomeExpr &value) -> const ast::ExprSyntax * {
-                    return value.value ? find_match_expr_in_expr(*value.value, typed) : nullptr;
-                },
                 [](const ast::PathExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::QualifiedValueExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [&](const ast::CallExpr &value) -> const ast::ExprSyntax * {
@@ -495,45 +497,6 @@ class TypedIrLowerer final {
                     for (const auto &field : value.fields) {
                         if (field && field->value) {
                             if (const auto *found = find_match_expr_in_expr(*field->value, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::ListLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &item : value.items) {
-                        if (item) {
-                            if (const auto *found = find_match_expr_in_expr(*item, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::SetLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &item : value.items) {
-                        if (item) {
-                            if (const auto *found = find_match_expr_in_expr(*item, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::MapLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &entry : value.entries) {
-                        if (entry && entry->key) {
-                            if (const auto *found = find_match_expr_in_expr(*entry->key, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                        if (entry && entry->value) {
-                            if (const auto *found = find_match_expr_in_expr(*entry->value, typed);
                                 found != nullptr) {
                                 return found;
                             }
@@ -1034,6 +997,18 @@ class TypedIrLowerer final {
         return ref;
     }
 
+    [[nodiscard]] ir::TypeRef type_ref_from_optional_type(TypePtr type,
+                                                          SourceRange source_range,
+                                                          std::string_view label) const {
+        if (type == nullptr) {
+            (void)label;
+            return ir::TypeRef{};
+        }
+        auto ref = type_ref_from_type(*type);
+        ref.source_range = source_range;
+        return ref;
+    }
+
     // =====================================================================
     // Typed-tree-only helpers (zero AST dereference)
     // =====================================================================
@@ -1114,6 +1089,23 @@ class TypedIrLowerer final {
         return std::nullopt;
     }
 
+    [[nodiscard]] const TypedProgram::FnCallSiteRecord *
+    find_fn_call_site(const TypedExpr &call_expr) const noexcept {
+        if (!call_expr.resolved_symbol.has_value()) return nullptr;
+        if (call_expr.call_target_kind != TypedCallTargetKind::Builtin) return nullptr;
+        const SymbolId target = *call_expr.resolved_symbol;
+        const auto &want_source = call_expr.source_id;
+        const auto &want_range = call_expr.range;
+        for (const auto &site : typed_program_->fn_call_sites) {
+            if (site.fn_symbol != target) continue;
+            if (site.source_id != want_source) continue;
+            if (site.call_range.begin_offset != want_range.begin_offset) continue;
+            if (site.call_range.end_offset != want_range.end_offset) continue;
+            return &site;
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] std::string render_call_target(const TypedExpr &expr) const {
         if (expr.resolved_symbol.has_value()) {
             const auto symbol = typed_program_->find_symbol(*expr.resolved_symbol);
@@ -1134,6 +1126,35 @@ class TypedIrLowerer final {
                     const auto *fn_info = std::get_if<FnTypeInfo>(&decl->payload);
                     if (fn_info != nullptr && fn_info->builtin_name.has_value()) {
                         return *fn_info->builtin_name;
+                    }
+                }
+                // P2d.S5: dispatch a user-defined `fn` call through a mangled
+                // instance key whenever the call carries concrete type
+                // arguments. Non-generic / monomorphic calls keep the
+                // canonical name. The mangled form matches the key stored on
+                // InstanceDecl so the evaluator's find_function(mangled) can
+                // locate the body without re-entering type information.
+                //
+                // Stdlib fns (`std::*` canonical prefix) deliberately keep
+                // the canonical name: their bodies are either declared in
+                // stdlib facade modules (installed separately by the stdlib
+                // evaluator runtime) or mapped to C++ builtin hooks, neither
+                // of which participates in the user-side mangled fn-instance
+                // runtime table.
+                if (expr.call_target_kind == TypedCallTargetKind::Builtin) {
+                    if (!symbol->get().canonical_name.starts_with("std::")) {
+                        if (const auto *site = find_fn_call_site(expr);
+                            site != nullptr && !site->type_args.empty()) {
+                            const auto resolver =
+                                [this](SymbolId id) -> std::optional<std::string> {
+                                const auto sym = typed_program_->find_symbol(id);
+                                if (!sym.has_value()) return std::nullopt;
+                                return sym->get().canonical_name;
+                            };
+                            return mangle::mangle_instance(site->fn_symbol,
+                                                           std::span<const TypePtr>(site->type_args),
+                                                           resolver);
+                        }
                     }
                 }
                 return symbol->get().canonical_name;
@@ -2421,16 +2442,39 @@ class TypedIrLowerer final {
             info.declaration_range);
         lowered.clauses.reserve(info.clauses.size());
         for (const auto &clause : info.clauses) {
-            lowered.clauses.push_back(ir::ContractClause{
-                .kind = lower_contract_clause_kind(
-                    static_cast<ast::ContractClauseKind>(clause.clause_kind)),
+            auto lowered_clause = ir::ContractClause{
+                .kind = static_cast<ir::ContractClauseKind>(clause.clause_kind),
                 .value = clause.is_temporal
                              ? std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_temporal_range(
                                    clause.expr_range)}
                              : std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_expr_range(
                                    clause.expr_range)},
                 .source_range = clause.source_range,
-            });
+                .is_wildcard = clause.is_wildcard,
+                .decreases_wildcard = clause.decreases_is_wildcard,
+                .decreases_terms = {},
+            };
+            if (clause.has_decreases && !clause.decreases_is_wildcard) {
+                lowered_clause.decreases_terms.reserve(clause.decreases_expr_ranges.size());
+                for (const auto &range : clause.decreases_expr_ranges) {
+                    lowered_clause.decreases_terms.push_back(lower_expr_range(range));
+                }
+            }
+            // P4.S7b: standalone ContractClauseKind::Decreases stores the
+            // single measure expression on the clause.value, but downstream
+            // consumers (the assurance obligation counter, JSON schema) expect
+            // every decreases measure to be enumerable via decreases_terms.
+            // Bridge the two representations so the obligation count matches
+            // the total number of decreases expressions written by the user.
+            if (lowered_clause.kind == ir::ContractClauseKind::Decreases &&
+                lowered_clause.decreases_wildcard == false &&
+                lowered_clause.decreases_terms.empty()) {
+                if (const auto *expr_ptr = std::get_if<ir::ExprRef>(&lowered_clause.value);
+                    expr_ptr != nullptr && expr_ptr->has_value()) {
+                    lowered_clause.decreases_terms.push_back(*expr_ptr);
+                }
+            }
+            lowered.clauses.push_back(std::move(lowered_clause));
         }
         return lowered;
     }
@@ -2593,6 +2637,331 @@ class TypedIrLowerer final {
             lowered.has_body = true;
         }
         return lowered;
+    }
+
+    // =====================================================================
+    // Monomorphization: collect and emit InstanceDecls
+    // =====================================================================
+
+    struct InstanceKey {
+        std::size_t symbol_value{0};
+        std::vector<TypePtr> type_args;
+
+        [[nodiscard]] friend bool operator==(const InstanceKey &lhs,
+                                             const InstanceKey &rhs) noexcept {
+            if (lhs.symbol_value != rhs.symbol_value) return false;
+            if (lhs.type_args.size() != rhs.type_args.size()) return false;
+            for (std::size_t i = 0; i < lhs.type_args.size(); ++i) {
+                if (lhs.type_args[i] != rhs.type_args[i]) return false;
+            }
+            return true;
+        }
+    };
+
+    struct InstanceKeyHash {
+        [[nodiscard]] std::size_t operator()(const InstanceKey &k) const noexcept {
+            std::size_t h = k.symbol_value;
+            for (const TypePtr t : k.type_args) {
+                const auto ptr_bits = reinterpret_cast<std::uintptr_t>(t);
+                h ^= static_cast<std::size_t>(ptr_bits) * 0x9e3779b97f4a7c15ULL +
+                     0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+            return h;
+        }
+    };
+
+    enum class InstanceBuildKind { Capability, Predicate, Agent, Workflow, Fn };
+
+    struct InstanceBuildInfo {
+        InstanceBuildKind kind{InstanceBuildKind::Capability};
+        SymbolId symbol{0};
+        std::vector<TypePtr> type_args;
+        // Nominal payload for InstanceDecl construction.
+        const CapabilityTypeInfo *capability{nullptr};
+        const PredicateTypeInfo *predicate{nullptr};
+        const AgentTypeInfo *agent{nullptr};
+        const WorkflowTypeInfo *workflow{nullptr};
+        const FnTypeInfo *fn{nullptr};
+        // Range used for provenance.
+        SourceRange provenance_range{};
+    };
+
+    void emit_instantiated_declarations(ir::Program &program_ir) const {
+        std::unordered_map<InstanceKey, InstanceBuildInfo, InstanceKeyHash> instances;
+
+        // --- Source 1: Capability / Predicate calls in expressions ------
+        for (const auto &expr : typed_program_->expressions) {
+            if (expr.kind != ast::ExprSyntaxKind::Call) continue;
+            if (!expr.resolved_symbol.has_value()) continue;
+            // Only instantiate nominal call targets (Capability / Predicate).
+            // Function targets (top-level `fn` declarations) are emitted via
+            // the nominal FnDecl loop and do not produce a separate InstanceDecl.
+            if (expr.call_target_kind != TypedCallTargetKind::InherentMethod &&
+                expr.call_target_kind != TypedCallTargetKind::TraitMethod) {
+                continue;
+            }
+
+            std::vector<TypePtr> type_args;
+            type_args.reserve(expr.children.size());
+            for (const auto &child : expr.children) {
+                if (child.role != TypedExprChildRole::Argument) continue;
+                if (child.expr_index == UINT32_MAX ||
+                    child.expr_index >= typed_program_->expressions.size()) {
+                    type_args.push_back(nullptr);
+                    continue;
+                }
+                type_args.push_back(typed_program_->expressions[child.expr_index].type);
+            }
+
+            InstanceKey key{
+                .symbol_value = static_cast<std::size_t>(expr.resolved_symbol->value),
+                .type_args = std::move(type_args),
+            };
+            if (instances.contains(key)) continue;
+
+            InstanceBuildInfo info;
+            info.symbol = *expr.resolved_symbol;
+            info.type_args = key.type_args;
+            info.provenance_range = expr.range;
+
+            if (expr.call_target_kind == TypedCallTargetKind::InherentMethod) {
+                info.kind = InstanceBuildKind::Capability;
+                info.capability = find_capability_info(*expr.resolved_symbol);
+            } else {
+                info.kind = InstanceBuildKind::Predicate;
+                info.predicate = find_predicate_info(*expr.resolved_symbol);
+            }
+            instances.emplace(std::move(key), std::move(info));
+        }
+
+        // --- Source 2: Fn call sites (top-level `fn` generic instantiations) -
+        for (const auto &site : typed_program_->fn_call_sites) {
+            if (site.type_args.empty()) continue;
+            // NOTE: SymbolId 0 is valid (first registered fn); only treat a
+            // symbol as missing when its id fails to resolve in the program.
+            const auto sym = typed_program_->find_symbol(site.fn_symbol);
+            if (!sym.has_value()) continue;
+            // Stdlib fns (`std::*` canonical prefix) keep the nominal
+            // dispatch path and do not produce a user-facing InstanceDecl:
+            // their bodies are sourced from the facade stdlib runtime and
+            // indexed by canonical name in the RuntimeFunctionTable.
+            if (sym->get().canonical_name.starts_with("std::")) continue;
+
+            InstanceKey key{
+                .symbol_value = static_cast<std::size_t>(site.fn_symbol.value),
+                .type_args = site.type_args,
+            };
+            if (instances.contains(key)) continue;
+
+            InstanceBuildInfo info;
+            info.kind = InstanceBuildKind::Fn;
+            info.symbol = site.fn_symbol;
+            info.type_args = site.type_args;
+            info.fn = find_fn_info(site.fn_symbol);
+            info.provenance_range = site.call_range;
+            instances.emplace(std::move(key), std::move(info));
+        }
+
+        // --- Source 3: Workflow node agent targets ---------------------
+        for (const auto &decl : typed_program_->declarations) {
+            const auto *workflow = payload_as<WorkflowTypeInfo>(&decl);
+            if (workflow == nullptr) continue;
+            for (const auto &node : workflow->nodes) {
+                if (node.target_symbol.value == 0) continue;
+
+                const AgentTypeInfo *agent_info = find_agent_info(node.target_symbol);
+                std::vector<TypePtr> type_args;
+                type_args.reserve(3);
+                type_args.push_back(agent_info ? agent_info->input_type : nullptr);
+                type_args.push_back(agent_info ? agent_info->context_type : nullptr);
+                type_args.push_back(agent_info ? agent_info->output_type : nullptr);
+
+                InstanceKey key{
+                    .symbol_value = static_cast<std::size_t>(node.target_symbol.value),
+                    .type_args = std::move(type_args),
+                };
+                if (instances.contains(key)) continue;
+
+                InstanceBuildInfo info;
+                info.kind = InstanceBuildKind::Agent;
+                info.symbol = node.target_symbol;
+                info.type_args = key.type_args;
+                info.agent = agent_info;
+                info.provenance_range = node.source_range;
+                instances.emplace(std::move(key), std::move(info));
+            }
+        }
+
+        // --- Emit one InstanceDecl per unique key ----------------------
+        const auto symbol_resolver = [this](SymbolId id) -> std::optional<std::string> {
+            const auto sym = typed_program_->find_symbol(id);
+            if (!sym.has_value()) return std::nullopt;
+            return sym->get().canonical_name;
+        };
+
+        std::vector<std::pair<InstanceKey, InstanceBuildInfo>> sorted_instances;
+        sorted_instances.reserve(instances.size());
+        for (auto &[k, v] : instances) sorted_instances.emplace_back(k, v);
+        std::stable_sort(sorted_instances.begin(), sorted_instances.end(),
+                         [](const auto &lhs, const auto &rhs) {
+                             if (lhs.first.symbol_value != rhs.first.symbol_value) {
+                                 return lhs.first.symbol_value < rhs.first.symbol_value;
+                             }
+                             if (lhs.first.type_args.size() != rhs.first.type_args.size()) {
+                                 return lhs.first.type_args.size() < rhs.first.type_args.size();
+                             }
+                             for (std::size_t i = 0; i < lhs.first.type_args.size(); ++i) {
+                                 const auto a = reinterpret_cast<std::uintptr_t>(lhs.first.type_args[i]);
+                                 const auto b = reinterpret_cast<std::uintptr_t>(rhs.first.type_args[i]);
+                                 if (a != b) return a < b;
+                             }
+                             return false;
+                         });
+
+        for (const auto &[key, info] : sorted_instances) {
+            program_ir.declarations.push_back(build_instance_decl(info, symbol_resolver));
+        }
+    }
+
+    [[nodiscard]] const CapabilityTypeInfo *find_capability_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<CapabilityTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const PredicateTypeInfo *find_predicate_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<PredicateTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const AgentTypeInfo *find_agent_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<AgentTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const WorkflowTypeInfo *find_workflow_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<WorkflowTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const FnTypeInfo *find_fn_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<FnTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] ir::InstanceDecl
+    build_instance_decl(const InstanceBuildInfo &info,
+                        const mangle::SymbolCanonicalNameFn &resolver) const {
+        const std::span<const TypePtr> type_args(info.type_args);
+        const std::string mangled = mangle::mangle_instance(info.symbol, type_args, resolver);
+
+        ir::InstanceDecl decl{
+            .provenance = {},
+            .name = mangled,
+            .kind = ir::InstanceKind::Unknown,
+            .symbol_ref = {},
+            .type_args = {},
+            .params = {},
+            .return_type_ref = {},
+            .agent_input_type_ref = {},
+            .agent_context_type_ref = {},
+            .agent_output_type_ref = {},
+            .workflow_input_type_ref = {},
+            .workflow_output_type_ref = {},
+        };
+        {
+            const auto sym = typed_program_->find_symbol(info.symbol);
+            if (sym.has_value()) {
+                decl.symbol_ref = ir::SymbolRef{
+                    .kind = lower_symbol_ref_kind(sym->get().kind),
+                    .canonical_name = sym->get().canonical_name,
+                    .local_name = sym->get().local_name,
+                    .module_name = sym->get().module_name,
+                    .id = sym->get().id.value,
+                };
+            }
+        }
+        decl = with_provenance(std::move(decl), info.provenance_range);
+
+        // Convert type_args to ir::TypeRef for IR inspection.
+        decl.type_args.reserve(info.type_args.size());
+        for (const TypePtr t : info.type_args) {
+            decl.type_args.push_back(type_ref_from_optional_type(
+                t, info.provenance_range, "instance type_arg"));
+        }
+
+        switch (info.kind) {
+        case InstanceBuildKind::Capability:
+            decl.kind = ir::InstanceKind::Capability;
+            if (info.capability != nullptr) {
+                decl.params = lower_params(info.capability->params);
+                decl.return_type_ref = type_ref_from_optional_type(
+                    info.capability->return_type, info.capability->declaration_range,
+                    "capability instance return type");
+            }
+            break;
+        case InstanceBuildKind::Predicate:
+            decl.kind = ir::InstanceKind::Predicate;
+            if (info.predicate != nullptr) {
+                decl.params = lower_params(info.predicate->params);
+            }
+            break;
+        case InstanceBuildKind::Agent:
+            decl.kind = ir::InstanceKind::Agent;
+            if (info.agent != nullptr) {
+                decl.agent_input_type_ref = type_ref_from_optional_type(
+                    info.agent->input_type, info.agent->input_type_range,
+                    "agent instance input type");
+                decl.agent_context_type_ref = type_ref_from_optional_type(
+                    info.agent->context_type, info.agent->context_type_range,
+                    "agent instance context type");
+                decl.agent_output_type_ref = type_ref_from_optional_type(
+                    info.agent->output_type, info.agent->output_type_range,
+                    "agent instance output type");
+            }
+            break;
+        case InstanceBuildKind::Workflow:
+            decl.kind = ir::InstanceKind::Workflow;
+            if (info.workflow != nullptr) {
+                decl.workflow_input_type_ref = type_ref_from_optional_type(
+                    info.workflow->input_type, info.workflow->input_type_range,
+                    "workflow instance input type");
+                decl.workflow_output_type_ref = type_ref_from_optional_type(
+                    info.workflow->output_type, info.workflow->output_type_range,
+                    "workflow instance output type");
+            }
+            break;
+        case InstanceBuildKind::Fn:
+            decl.kind = ir::InstanceKind::Fn;
+            if (info.fn != nullptr) {
+                decl.params = lower_params(info.fn->params);
+                decl.return_type_ref = type_ref_from_optional_type(
+                    info.fn->return_type, info.fn->return_type_range,
+                    "fn instance return type");
+            }
+            break;
+        }
+        return decl;
     }
 };
 

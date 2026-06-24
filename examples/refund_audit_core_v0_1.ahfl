@@ -9,7 +9,7 @@ struct RefundRequest {
 struct RefundContext {
     result: AuditResult = AuditResult::Reject;
     reason: String = "pending";
-    ticket_id: Optional<String> = none;
+    ticket_id: Optional<String> = std::option::Option::None;
 }
 
 struct RefundDecision {
@@ -92,10 +92,10 @@ flow for RefundAudit {
         ctx.reason = decision.reason;
 
         if decision.result == AuditResult::Approve {
-            ctx.ticket_id = some(TicketCreate(input.order_id, decision.reason));
+            ctx.ticket_id = std::option::Option::Some(TicketCreate(input.order_id, decision.reason));
             goto Approved;
         } else {
-            ctx.ticket_id = none;
+            ctx.ticket_id = std::option::Option::None;
             goto Rejected;
         }
     }

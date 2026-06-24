@@ -194,30 +194,6 @@ void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMa
     // Leaf types (Bool/Int/String/...): no TypeVars to bind.
 }
 
-[[nodiscard]] std::optional<TypeExpectation> derive_expectation(const TypeExpectation *parent,
-                                                                TypePtr expected) {
-    if (parent == nullptr || expected == nullptr) {
-        return std::nullopt;
-    }
-    return TypeExpectation{
-        .expected = expected,
-        .origin_kind = parent->origin_kind,
-        .origin_range = parent->origin_range,
-        .description = parent->description,
-    };
-}
-
-[[nodiscard]] TypeExpectation inferred_collection_expectation(const Type &expected,
-                                                              SourceRange origin_range,
-                                                              std::string description) {
-    return TypeExpectation{
-        .expected = expected.clone(),
-        .origin_kind = TypeExpectationOriginKind::Annotation,
-        .origin_range = origin_range,
-        .description = std::move(description),
-    };
-}
-
 } // namespace
 
 class ExpressionCheckerServices final {
@@ -345,6 +321,43 @@ class ExpressionCheckerServices final {
         delegate_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
     }
 
+    // P2d.S2 (RFC §3.5 / §2): check that a type satisfies the named trait
+    // bound; emits a TRAIT_BOUND_NOT_SATISFIED diagnostic at the given range
+    // on failure and returns false. Super-trait chains are followed so a
+    // sub-trait impl also satisfies its ancestor bounds.
+    [[nodiscard]] bool check_bound(const Type &subject_type,
+                                   std::string_view trait_name,
+                                   SourceRange range) const {
+        return delegate_->check_bound(subject_type, trait_name, range);
+    }
+
+    // P3c.S5b: emit a non-error informational note at `range`. Used by the
+    // three-stage method-dispatch path to leave an auditable trace so
+    // consumers (tests, developer logs) can see which resolution stage
+    // produced the final candidate.
+    void note_here(std::string message, SourceRange range) const {
+        delegate_->note(std::move(message), range);
+    }
+
+    // P2d.S2 helper: resolve a nominal type by its canonical (short) name.
+    // Looks up the name in the Struct and Enum symbol tables via the
+    // ResolveResult and returns a TypePtr with the nominal symbol set, or
+    // nullptr when no nominal type with that name is declared.
+    [[nodiscard]] TypePtr resolve_nominal_by_name(std::string_view name) const {
+        const auto struct_symbol =
+            resolve_result_.symbol_table.find_canonical(SymbolNamespace::Types, name);
+        if (struct_symbol.has_value()) {
+            const auto &sym = struct_symbol->get();
+            if (sym.kind == SymbolKind::Struct) {
+                return types_.struct_type(sym.canonical_name, sym.id);
+            }
+            if (sym.kind == SymbolKind::Enum) {
+                return types_.enum_type(sym.canonical_name, sym.id);
+            }
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(const Type &type) const {
         return environment_.get_enum(type);
     }
@@ -371,23 +384,139 @@ class ExpressionCheckerServices final {
     }
 
     // P3c: collect impl methods that match a receiver nominal type and method
-    // name. The caller applies inherent-before-trait priority and ambiguity
-    // diagnostics.
+    // name. Impl selection uses normalize_type_key equality (the same
+    // equivalence relation the coherence/orphan-rule and impl_index use) so
+    // primitive targets like `impl Eq for Int` and compound nominal targets
+    // like `impl Show for Widget` both resolve uniformly.
+    //
+    // P3c.S5b: in addition to concrete impl-block methods, we also collect
+    // trait-declared method signatures as *synthetic* candidates. This lets
+    // a method call on a type `T` resolve to the unique trait method shape
+    // (stage2) even when no concrete `impl Trait for T` exists yet — the
+    // stage3 bound gate then emits TRAIT_BOUND_NOT_SATISFIED because no
+    // concrete impl was found, giving the user a precise "missing impl"
+    // diagnostic instead of the generic UNKNOWN_CALLABLE fallback.
+    //
+    // Synthetic entries live in `trait_method_candidate_storage_` (mutable
+    // because method_candidates is const-queried) and pointers remain valid
+    // for the duration of the surrounding check_method_call.
     [[nodiscard]] std::vector<MethodCandidate>
     method_candidates(const Type &receiver_type, std::string_view method_name) const {
         std::vector<MethodCandidate> candidates;
-        const auto target_symbol = nominal_symbol_of_type(receiver_type);
-        if (!target_symbol.has_value()) {
+        const std::string receiver_key = TypeEnvironment::normalize_type_key(receiver_type);
+        if (receiver_key.empty()) {
             return candidates;
         }
 
+        // (1) Concrete impls registered in the environment (P3 base surface).
         for (const auto &[impl_index, impl] : environment_.impls()) {
             (void)impl_index;
-            if (!impl.target_symbol.has_value() || *impl.target_symbol != *target_symbol) {
+            if (impl.target_type == nullptr) {
+                continue;
+            }
+            if (TypeEnvironment::normalize_type_key(*impl.target_type) != receiver_key) {
                 continue;
             }
             if (const auto *method = find_method_ptr(impl, method_name); method != nullptr) {
                 candidates.push_back(MethodCandidate{.impl = &impl, .method = method});
+            }
+        }
+
+        // (2) Trait-declared methods (P3c.S5b stage2 + stage3 gate).
+        //     Contribute a synthetic candidate ONLY when no concrete impl in
+        //     the environment already matches (trait, receiver_type). This
+        //     prevents a duplicate candidate for programs that have both a
+        //     trait declaration *and* a matching `impl Trait for Type` (the
+        //     far more common case). The bound gate still fires on the
+        //     concrete impl, so we lose no coverage there.
+        //
+        //     Synthetic entries live in `trait_method_candidate_storage_`
+        //     (mutable because method_candidates is const-queried) and
+        //     pointers remain valid for the duration of the surrounding
+        //     check_method_call.
+        trait_method_candidate_storage_.impls.clear();
+        trait_method_candidate_storage_.methods.clear();
+        for (const auto &[trait_id, trait] : environment_.traits()) {
+            (void)trait_id;
+            const auto maybe_method = trait.find_method(method_name);
+            if (!maybe_method.has_value()) {
+                continue;
+            }
+            const auto &trait_method = maybe_method->get();
+            if (trait_method.params.empty()) {
+                continue; // no self param → never a method call target
+            }
+            const auto &self_param = trait_method.params.front();
+            if (self_param.type == nullptr) {
+                continue;
+            }
+            if (TypeEnvironment::normalize_type_key(*self_param.type) != receiver_key) {
+                continue;
+            }
+            // Skip: a concrete impl of this trait for the receiver type
+            // already contributed a candidate via pass (1).
+            bool concrete_impl_exists = false;
+            for (const auto &[impl_index, impl] : environment_.impls()) {
+                (void)impl_index;
+                if (impl.is_inherent) {
+                    continue;
+                }
+                if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait.symbol) {
+                    continue;
+                }
+                if (impl.target_type == nullptr) {
+                    continue;
+                }
+                if (TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key) {
+                    concrete_impl_exists = true;
+                    break;
+                }
+            }
+            if (concrete_impl_exists) {
+                continue;
+            }
+            // Build an ImplMethodInfo mirror of the trait-declared signature
+            // so check_impl_method_call can use the existing arity/type/
+            // effect/return-type flow verbatim. Only the fields that
+            // check_impl_method_call actually reads are populated; fields
+            // like `body_block_index` retain their no-body default.
+            ImplMethodInfo method_info{
+                .name = trait_method.name,
+                .symbol = SymbolId{0},
+                .params = trait_method.params,
+                .return_type = trait_method.return_type,
+                .return_type_range = trait_method.return_type_range,
+                .type_param_names = trait_method.type_param_names,
+                .effect = trait_method.effect,
+                .has_body = false,
+                .declaration_range = trait_method.declaration_range,
+                .body_block_index = UINT32_MAX,
+            };
+            ImplTypeInfo impl_info{
+                .index = 0,
+                .is_inherent = false,
+                .trait_symbol = trait.symbol,
+                .trait_name = trait.canonical_name,
+                .target_type = self_param.type,
+                .target_symbol = nominal_symbol_of_type(*self_param.type),
+                .type_param_names = trait.type_param_names,
+                .methods = {},
+                .assoc_items = {},
+                .declaration_range = trait.declaration_range,
+                .trait_ref_range = trait.declaration_range,
+                .target_type_range = self_param.declaration_range,
+                .source_id = std::nullopt,
+                .module_name = {},
+            };
+            trait_method_candidate_storage_.methods.push_back(std::move(method_info));
+            impl_info.methods.push_back(trait_method_candidate_storage_.methods.back());
+            trait_method_candidate_storage_.impls.push_back(std::move(impl_info));
+
+            const auto &stored_impl = trait_method_candidate_storage_.impls.back();
+            const auto *stored_method = find_method_ptr(stored_impl, method_name);
+            if (stored_method != nullptr) {
+                candidates.push_back(MethodCandidate{.impl = &stored_impl,
+                                                     .method = stored_method});
             }
         }
         return candidates;
@@ -463,6 +592,19 @@ class ExpressionCheckerServices final {
     TypeRelationContext &relations_;
     ExpressionSemaDelegate *delegate_{nullptr};
     ExpressionValueFactory values_;
+
+    // P3c.S5b: persistent backing store for trait-declared method candidates
+    // synthesized by method_candidates(). Mutable because method_candidates()
+    // is logically const (it never mutates the environment / symbol table)
+    // even though it allocates temporary ImplTypeInfo / ImplMethodInfo
+    // copies. Callers consume the returned pointers before the next
+    // method_candidates() call; the storage is cleared at the top of each
+    // invocation to prevent stale-pointer reuse.
+    struct TraitCandidateStorage {
+        std::vector<ImplTypeInfo> impls;
+        std::vector<ImplMethodInfo> methods;
+    };
+    mutable TraitCandidateStorage trait_method_candidate_storage_{};
 };
 
 class ExpressionChecker final {
@@ -477,22 +619,17 @@ class ExpressionChecker final {
     [[nodiscard]] TypedValue check(const ast::ExprSyntax &expr) const {
         return std::visit(
             overloaded{
-                [&](const ast::NoneLiteralExpr &) { return visit_none_literal(expr); },
                 [&](const ast::BoolLiteralExpr &) { return visit_bool_literal(expr); },
                 [&](const ast::IntegerLiteralExpr &) { return visit_integer_literal(expr); },
                 [&](const ast::FloatLiteralExpr &) { return visit_float_literal(expr); },
                 [&](const ast::DecimalLiteralExpr &) { return visit_decimal_literal(expr); },
                 [&](const ast::StringLiteralExpr &) { return visit_string_literal(expr); },
                 [&](const ast::DurationLiteralExpr &) { return visit_duration_literal(expr); },
-                [&](const ast::SomeExpr &) { return visit_some(expr); },
                 [&](const ast::PathExpr &) { return visit_path(expr); },
                 [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
                 [&](const ast::CallExpr &) { return visit_call(expr); },
                 [&](const ast::MethodCallExpr &) { return visit_method_call(expr); },
                 [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
-                [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
-                [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
-                [&](const ast::MapLiteralExpr &) { return visit_map_literal(expr); },
                 [&](const ast::UnaryExpr &) { return visit_unary(expr); },
                 [&](const ast::BinaryExpr &) { return visit_binary(expr); },
                 [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
@@ -529,62 +666,6 @@ class ExpressionChecker final {
         return values_.typed(values_.make_type(TypeKind::Duration));
     }
 
-    [[nodiscard]] TypedValue visit_none_literal(const ast::ExprSyntax &expr) const {
-        if (expected_type_.has_value()) {
-            const auto expected_optional =
-                stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (expected_optional.has_value() &&
-                expected_optional->kind == stdlib_bridge::StdContainerKind::Option) {
-                return values_.typed(expected_type_->get().clone());
-            }
-        }
-        services_.typecheck_error_here(error_codes::typecheck::NoneWithoutContext,
-                                       messages::typecheck::NoneWithoutContext.format_with(),
-                                       expr.range);
-        return values_.error_typed();
-    }
-
-    [[nodiscard]] TypedValue visit_some(const ast::ExprSyntax &expr) const {
-        const auto &some = expr.as<ast::SomeExpr>();
-        MaybeCRef<Type> inner_expected = std::nullopt;
-        std::optional<TypeExpectation> inner_expectation;
-        if (expected_type_.has_value()) {
-            const auto optional = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (optional.has_value() && optional->kind == stdlib_bridge::StdContainerKind::Option) {
-                inner_expected = std::cref(*optional->first);
-                inner_expectation = derive_expectation(expectation_, optional->first);
-            }
-        }
-        const auto inner = inner_expectation.has_value()
-                               ? services_.check_expr(*some.value, context_, *inner_expectation)
-                               : services_.check_expr(*some.value, context_, inner_expected);
-        if (inner_expectation.has_value() && inner_expectation->expected != nullptr) {
-            (void)services_.check_assignable(*inner.type,
-                                             *inner_expectation->expected,
-                                             some.value->range,
-                                             "optional payload",
-                                             *inner_expectation);
-            return values_.typed_effect(expected_type_->get().clone(), inner.effect);
-        }
-        if (inner_expected.has_value()) {
-            (void)services_.check_assignable(
-                *inner.type, inner_expected->get(), some.value->range, "optional payload");
-            return values_.typed_effect(expected_type_->get().clone(), inner.effect);
-        }
-        TypePtr payload_type = inner.type ? inner.type->clone() : values_.make_error_type();
-        TypePtr option_type =
-            services_.std_container_type(stdlib_bridge::kOptionType, {payload_type});
-        if (option_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kOptionType),
-                expr.range);
-            return values_.error_typed_effect(inner.effect);
-        }
-        return values_.typed_effect(option_type, inner.effect);
-    }
-
     [[nodiscard]] TypedValue visit_path(const ast::ExprSyntax &expr) const {
         return check_path(*expr.as<ast::PathExpr>().path);
     }
@@ -603,18 +684,6 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue visit_struct_literal(const ast::ExprSyntax &expr) const {
         return check_struct_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_list_literal(const ast::ExprSyntax &expr) const {
-        return check_list_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_set_literal(const ast::ExprSyntax &expr) const {
-        return check_set_literal(expr);
-    }
-
-    [[nodiscard]] TypedValue visit_map_literal(const ast::ExprSyntax &expr) const {
-        return check_map_literal(expr);
     }
 
     [[nodiscard]] TypedValue visit_unary(const ast::ExprSyntax &expr) const {
@@ -1197,268 +1266,6 @@ class ExpressionChecker final {
         return values_.typed_effect(std::move(struct_type), effect);
     }
 
-    [[nodiscard]] TypedValue check_list_literal(const ast::ExprSyntax &expr) const {
-        const auto &list = expr.as<ast::ListLiteralExpr>();
-        MaybeCRef<Type> element_expected = std::nullopt;
-        std::optional<TypeExpectation> element_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_list;
-        if (expected_type_.has_value()) {
-            const auto list_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (list_type.has_value() && list_type->kind == stdlib_bridge::StdContainerKind::List) {
-                expected_list = *list_type;
-                element_expected = std::cref(*list_type->first);
-                element_expectation = derive_expectation(expectation_, list_type->first);
-            }
-        }
-
-        if (list.items.empty()) {
-            if (expected_type_.has_value() && expected_list.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptyListWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto element_type = values_.clone_or_any(element_expected);
-        bool have_element_type = element_expected.has_value();
-        std::optional<SourceRange> inferred_element_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &item : list.items) {
-            const auto value = element_expectation.has_value()
-                                   ? services_.check_expr(*item, context_, *element_expectation)
-                                   : services_.check_expr(*item, context_, element_expected);
-            effect = join_effects(effect, value.effect);
-
-            if (!have_element_type) {
-                element_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_element_type = true;
-                if (!element_expected.has_value()) {
-                    inferred_element_origin = item->range;
-                }
-                continue;
-            }
-
-            if (element_expectation.has_value()) {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element", *element_expectation);
-            } else if (inferred_element_origin.has_value()) {
-                const auto inferred_expectation = inferred_collection_expectation(
-                    *element_type, *inferred_element_origin, "previous list element");
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element", inferred_expectation);
-            } else {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "list element");
-            }
-        }
-
-        if (expected_list.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr list_type = services_.std_container_type(stdlib_bridge::kListType, {element_type});
-        if (list_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kListType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(list_type, effect);
-    }
-
-    [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr) const {
-        const auto &set = expr.as<ast::SetLiteralExpr>();
-        MaybeCRef<Type> element_expected = std::nullopt;
-        std::optional<TypeExpectation> element_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_set;
-        if (expected_type_.has_value()) {
-            const auto set_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (set_type.has_value() && set_type->kind == stdlib_bridge::StdContainerKind::Set) {
-                expected_set = *set_type;
-                element_expected = std::cref(*set_type->first);
-                element_expectation = derive_expectation(expectation_, set_type->first);
-            }
-        }
-
-        if (set.items.empty()) {
-            if (expected_type_.has_value() && expected_set.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptySetWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto element_type = values_.clone_or_any(element_expected);
-        bool have_element_type = element_expected.has_value();
-        std::optional<SourceRange> inferred_element_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &item : set.items) {
-            const auto value = element_expectation.has_value()
-                                   ? services_.check_expr(*item, context_, *element_expectation)
-                                   : services_.check_expr(*item, context_, element_expected);
-            effect = join_effects(effect, value.effect);
-
-            if (!have_element_type) {
-                element_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_element_type = true;
-                if (!element_expected.has_value()) {
-                    inferred_element_origin = item->range;
-                }
-                continue;
-            }
-
-            if (element_expectation.has_value()) {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element", *element_expectation);
-            } else if (inferred_element_origin.has_value()) {
-                const auto inferred_expectation = inferred_collection_expectation(
-                    *element_type, *inferred_element_origin, "previous set element");
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element", inferred_expectation);
-            } else {
-                (void)services_.check_assignable(
-                    *value.type, *element_type, item->range, "set element");
-            }
-        }
-
-        if (expected_set.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr set_type = services_.std_container_type(stdlib_bridge::kSetType, {element_type});
-        if (set_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kSetType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(set_type, effect);
-    }
-
-    [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr) const {
-        const auto &map = expr.as<ast::MapLiteralExpr>();
-        MaybeCRef<Type> key_expected = std::nullopt;
-        MaybeCRef<Type> value_expected = std::nullopt;
-        std::optional<TypeExpectation> key_expectation;
-        std::optional<TypeExpectation> value_expectation;
-        std::optional<stdlib_bridge::StdContainerTypeView> expected_map;
-        if (expected_type_.has_value()) {
-            const auto map_type = stdlib_bridge::std_container_type_view(expected_type_->get());
-            if (map_type.has_value() && map_type->kind == stdlib_bridge::StdContainerKind::Map) {
-                expected_map = *map_type;
-                key_expected = std::cref(*map_type->first);
-                value_expected = std::cref(*map_type->second);
-                key_expectation = derive_expectation(expectation_, map_type->first);
-                value_expectation = derive_expectation(expectation_, map_type->second);
-            }
-        }
-
-        if (map.entries.empty()) {
-            if (expected_type_.has_value() && expected_map.has_value()) {
-                return values_.typed(expected_type_->get().clone());
-            }
-
-            services_.typecheck_error_here(
-                error_codes::typecheck::EmptyLiteralWithoutContext,
-                messages::typecheck::EmptyMapWithoutContext.format_with(),
-                expr.range);
-            return values_.error_typed();
-        }
-
-        auto key_type = values_.clone_or_any(key_expected);
-        auto value_type = values_.clone_or_any(value_expected);
-        bool have_key_type = key_expected.has_value();
-        bool have_value_type = value_expected.has_value();
-        std::optional<SourceRange> inferred_key_origin;
-        std::optional<SourceRange> inferred_value_origin;
-        ExprEffect effect = ExprEffect::Pure;
-
-        for (const auto &entry : map.entries) {
-            const auto key = key_expectation.has_value()
-                                 ? services_.check_expr(*entry->key, context_, *key_expectation)
-                                 : services_.check_expr(*entry->key, context_, key_expected);
-            const auto value =
-                value_expectation.has_value()
-                    ? services_.check_expr(*entry->value, context_, *value_expectation)
-                    : services_.check_expr(*entry->value, context_, value_expected);
-            effect = join_effects(effect, join_effects(key.effect, value.effect));
-
-            if (!have_key_type) {
-                key_type = key.type ? key.type->clone() : values_.make_error_type();
-                have_key_type = true;
-                if (!key_expected.has_value()) {
-                    inferred_key_origin = entry->key->range;
-                }
-            } else {
-                if (key_expectation.has_value()) {
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key", *key_expectation);
-                } else if (inferred_key_origin.has_value()) {
-                    const auto inferred_expectation = inferred_collection_expectation(
-                        *key_type, *inferred_key_origin, "previous map key");
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key", inferred_expectation);
-                } else {
-                    (void)services_.check_assignable(
-                        *key.type, *key_type, entry->key->range, "map key");
-                }
-            }
-
-            if (!have_value_type) {
-                value_type = value.type ? value.type->clone() : values_.make_error_type();
-                have_value_type = true;
-                if (!value_expected.has_value()) {
-                    inferred_value_origin = entry->value->range;
-                }
-            } else {
-                if (value_expectation.has_value()) {
-                    (void)services_.check_assignable(*value.type,
-                                                     *value_type,
-                                                     entry->value->range,
-                                                     "map value",
-                                                     *value_expectation);
-                } else if (inferred_value_origin.has_value()) {
-                    const auto inferred_expectation = inferred_collection_expectation(
-                        *value_type, *inferred_value_origin, "previous map value");
-                    (void)services_.check_assignable(*value.type,
-                                                     *value_type,
-                                                     entry->value->range,
-                                                     "map value",
-                                                     inferred_expectation);
-                } else {
-                    (void)services_.check_assignable(
-                        *value.type, *value_type, entry->value->range, "map value");
-                }
-            }
-        }
-
-        if (expected_map.has_value()) {
-            return values_.typed_effect(expected_type_->get().clone(), effect);
-        }
-        TypePtr map_type =
-            services_.std_container_type(stdlib_bridge::kMapType, {key_type, value_type});
-        if (map_type == nullptr) {
-            services_.typecheck_error_here(
-                error_codes::typecheck::InvalidTypeReference,
-                messages::typecheck::StdContainerTypeUnavailable.format_with(
-                    stdlib_bridge::kMapType),
-                expr.range);
-            return values_.error_typed_effect(effect);
-        }
-        return values_.typed_effect(map_type, effect);
-    }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
         const auto &call = expr.as<ast::CallExpr>();
@@ -1533,6 +1340,20 @@ class ExpressionChecker final {
             return values_.error_typed_effect(receiver.effect);
         }
 
+        // P3c.S5b: three-stage method dispatch with explicit audit-trace notes
+        // emitted at every decision point. Ordering matches the RFC §3.2.2
+        // resolution priority: inherent impls shadow trait impls, a unique
+        // trait candidate resolves only when no inherent impl matches, and
+        // every final trait selection must also pass the bound-verification
+        // gate (so callers that explicitly name `T : Trait` through a where
+        // clause additionally prove the (receiver, trait) pair at the use
+        // site rather than trusting candidate-count alone).
+        //
+        //   Stage 1 — inherent unique: 1 candidate → select; >1 → ambiguous.
+        //   Stage 2 — trait unique:     1 candidate → proceed to bound check;
+        //                               >1 → ambiguous; 0 → unknown callable.
+        //   Stage 3 — bound check:      for the trait-selected candidate,
+        //                               verify `receiver.type : candidate.trait`.
         const auto candidates = services_.method_candidates(*receiver.type, call.method);
         std::vector<MethodCandidate> inherent_candidates;
         std::vector<MethodCandidate> trait_candidates;
@@ -1548,22 +1369,62 @@ class ExpressionChecker final {
         }
 
         const MethodCandidate *selected = nullptr;
+        bool selected_from_trait = false;
+
+        // ---- Stage 1: inherent unique ----------------------------------------
+        services_.note_here(
+            "[dispatch.stage1.inherent] " + method_call_name(*receiver.type, call.method) +
+                ": inherent candidates=" + std::to_string(inherent_candidates.size()),
+            expr.range);
         if (inherent_candidates.size() == 1) {
             selected = &inherent_candidates.front();
+            selected_from_trait = false;
+            services_.note_here(
+                "[dispatch.stage1.inherent] selected unique inherent method '" +
+                    inherent_candidates.front().method->name + "'",
+                expr.range);
         } else if (inherent_candidates.size() > 1) {
+            services_.note_here("[dispatch.stage1.inherent] multiple inherent candidates → "
+                                "AMBIGUOUS_TRAIT_IMPL",
+                                expr.range);
             services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
                                            messages::typecheck::AmbiguousTraitImpl.format_with(
                                                call.method, receiver.type->describe()),
                                            expr.range);
             return values_.error_typed_effect(receiver.effect);
-        } else if (trait_candidates.size() == 1) {
-            selected = &trait_candidates.front();
-        } else if (trait_candidates.size() > 1) {
-            services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
-                                           messages::typecheck::AmbiguousTraitImpl.format_with(
-                                               call.method, receiver.type->describe()),
-                                           expr.range);
-            return values_.error_typed_effect(receiver.effect);
+        } else {
+            services_.note_here("[dispatch.stage1.inherent] no inherent candidates → fall "
+                                "through to trait lookup",
+                                expr.range);
+        }
+
+        // ---- Stage 2: trait unique (only if stage 1 produced no match) -------
+        if (selected == nullptr) {
+            services_.note_here(
+                "[dispatch.stage2.trait] " + method_call_name(*receiver.type, call.method) +
+                    ": trait candidates=" + std::to_string(trait_candidates.size()),
+                expr.range);
+            if (trait_candidates.size() == 1) {
+                selected = &trait_candidates.front();
+                selected_from_trait = true;
+                services_.note_here("[dispatch.stage2.trait] selected unique trait method '" +
+                                        trait_candidates.front().method->name + "' from trait '" +
+                                        trait_candidates.front().impl->trait_name + "'",
+                                    expr.range);
+            } else if (trait_candidates.size() > 1) {
+                services_.note_here("[dispatch.stage2.trait] multiple trait candidates → "
+                                    "AMBIGUOUS_TRAIT_IMPL",
+                                    expr.range);
+                services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
+                                               messages::typecheck::AmbiguousTraitImpl.format_with(
+                                                   call.method, receiver.type->describe()),
+                                               expr.range);
+                return values_.error_typed_effect(receiver.effect);
+            } else {
+                services_.note_here("[dispatch.stage2.trait] no trait candidates → dispatch "
+                                    "fails with UNKNOWN_CALLABLE",
+                                    expr.range);
+            }
         }
 
         if (selected == nullptr || selected->method == nullptr) {
@@ -1572,6 +1433,34 @@ class ExpressionChecker final {
                                                method_call_name(*receiver.type, call.method)),
                                            expr.range);
             return values_.error_typed_effect(receiver.effect);
+        }
+
+        // ---- Stage 3: bound check (trait selections only) --------------------
+        if (selected_from_trait && selected->impl != nullptr) {
+            const std::string_view trait_name = selected->impl->trait_name;
+            services_.note_here("[dispatch.stage3.bound] verifying bound '" +
+                                    receiver.type->describe() + " : " + std::string(trait_name) +
+                                    "' for trait dispatch target",
+                                expr.range);
+            const bool bound_ok = services_.check_bound(*receiver.type, trait_name, expr.range);
+            if (bound_ok) {
+                services_.note_here(
+                    "[dispatch.stage3.bound] bound satisfied for trait '" + std::string(trait_name) +
+                        "'",
+                    expr.range);
+            } else {
+                services_.note_here("[dispatch.stage3.bound] bound NOT satisfied → "
+                                    "TRAIT_BOUND_NOT_SATISFIED already emitted",
+                                    expr.range);
+                // check_bound() already emitted the primary diagnostic with
+                // the exact (type, trait) pair. Return an error-typed value so
+                // downstream passes don't treat the call as well-typed even if
+                // error-recovery fills in a method body elsewhere.
+                return values_.error_typed_effect(receiver.effect);
+            }
+        } else {
+            services_.note_here("[dispatch.stage3.bound] inherent dispatch skips bound check",
+                                expr.range);
         }
 
         return check_impl_method_call(expr, receiver, *selected);
@@ -1846,7 +1735,17 @@ class ExpressionChecker final {
             }
         }
 
-        if (call.arguments.size() != fn->get().params.size()) {
+        // P5.6a: @builtin("list_from_array") / @builtin("set_from_array") /
+        // @builtin("map_from_entries") are variadic — the runtime evaluator
+        // accepts any arity (they are the compiler lowering targets for
+        // sugar-style collection literals). Skip arity checking for these.
+        const bool is_variadic_collection_builtin =
+            fn->get().builtin_name.has_value() &&
+            (*fn->get().builtin_name == "list_from_array" ||
+             *fn->get().builtin_name == "set_from_array" ||
+             *fn->get().builtin_name == "map_from_entries");
+        if (!is_variadic_collection_builtin &&
+            call.arguments.size() != fn->get().params.size()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::WrongArity,
                 messages::typecheck::WrongArity.format_with("function",
@@ -1936,6 +1835,57 @@ class ExpressionChecker final {
         // explicit syntax plus inference (empty for non-generic fns) so
         // monomorphization can instantiate the body.
         services_.record_fn_call_site(target, expr.range, subst);
+
+        // P2d.S2 (RFC §3.5 / §2): where-bound checking at the call site. For
+        // every `where Subject: Trait1 + Trait2 + ...` entry in the callee's
+        // signature, resolve the subject type parameter to the concrete type
+        // supplied at this call site and verify the environment contains a
+        // trait impl (or super-trait impl) for the (type, trait) pair. Each
+        // unsatisfied bound emits a TRAIT_BOUND_NOT_SATISFIED diagnostic at
+        // the call range plus a note at the bound's declaration range.
+        //
+        // Bounds whose subject is not a declared type parameter (e.g. a
+        // forward-reference to a non-generic type) are skipped conservatively:
+        // the signature-resolution pass will have already rejected them as
+        // malformed if they referenced unknown types.
+        if (!fn->get().where_clause.bounds.empty()) {
+            const auto &param_names = fn->get().type_param_names;
+            for (const auto &bound : fn->get().where_clause.bounds) {
+                TypePtr subject_type = nullptr;
+                // Resolve the bound subject: match the subject name against
+                // the callee's type parameter list using the (already
+                // substituted) generic argument vector. Non-generic callees
+                // still carry type_param_names (empty) and fall through to
+                // the nominal lookup branch.
+                if (!param_names.empty() && !subst.empty()) {
+                    auto it = std::find(param_names.begin(), param_names.end(), bound.subject_name);
+                    if (it != param_names.end()) {
+                        const std::size_t index = static_cast<std::size_t>(it - param_names.begin());
+                        if (index < subst.size()) {
+                            subject_type = subst[index];
+                        }
+                    }
+                }
+                if (subject_type == nullptr) {
+                    // Subject did not resolve via the generic parameter map:
+                    // fall back to a canonical-name lookup using the subject
+                    // name as a nominal type name (covers the rare case of a
+                    // concrete-type where constraint on a non-generic fn).
+                    subject_type = services_.resolve_nominal_by_name(bound.subject_name);
+                }
+                if (subject_type == nullptr) {
+                    continue;
+                }
+                for (const auto &trait_name : bound.trait_names) {
+                    // Primary diagnostic is emitted by check_bound at the
+                    // call expression range; the diagnostic message embeds
+                    // the bound subject name, trait name and actual
+                    // resolved type so users can correlate the failure
+                    // with the fn's where clause.
+                    (void)services_.check_bound(*subject_type, trait_name, expr.range);
+                }
+            }
+        }
 
         // Assignability check against the (instantiated, for generic fns) param.
         for (std::size_t index = 0; index < limit; ++index) {
@@ -2066,9 +2016,30 @@ class ExpressionChecker final {
                     expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
                     *expected_enum->symbol == *owner_enum->symbol &&
                     expected_enum->type_args.size() == subst.size()) {
+                    // Drive generic enum variant instantiation from the
+                    // surrounding expected type when it carries concrete type
+                    // arguments. Two cases:
+                    //   (a) subst[i] is still nullptr  → argument inference
+                    //       never pinned this parameter, adopt from context
+                    //       (original behaviour).
+                    //   (b) expected_type_args[i] is concrete (not a TypeVar)
+                    //       → even if arguments inferred a different concrete
+                    //       type (e.g. `let v: Option<String> = Some(1)` where
+                    //       the payload pins T := Int), the declared target
+                    //       type wins so assignability diagnostics surface.
+                    // When the expected type's argument is itself a TypeVar
+                    // (generic enclosing scope) we never clobber a pre-pinned
+                    // inference: that would produce spurious "T vs T" errors
+                    // for unrelated generic variants used during stdlib
+                    // expansion.
                     for (std::size_t index = 0; index < subst.size(); ++index) {
-                        if (subst[index] == nullptr && expected_enum->type_args[index] != nullptr) {
-                            subst[index] = expected_enum->type_args[index];
+                        const auto *expected_arg = expected_enum->type_args[index];
+                        if (expected_arg == nullptr) {
+                            continue;
+                        }
+                        if (subst[index] == nullptr ||
+                            !expected_arg->holds<types::TypeVarT>()) {
+                            subst[index] = expected_arg;
                         }
                     }
                 }
@@ -2279,18 +2250,20 @@ class ExpressionChecker final {
             }
             const auto owner_type =
                 services_.resolve_type_symbol(owner_reference->get().target, candidate.range);
-            const auto *owner_enum = owner_type != nullptr ? owner_type->get_if<types::EnumT>()
-                                                           : nullptr;
-            return owner_enum != nullptr &&
-                   std::string_view{owner_enum->canonical_name} == stdlib_bridge::kOptionType;
-        };
-        const auto is_none_like = [&](const ast::ExprSyntax &candidate) {
-            return candidate.is<ast::NoneLiteralExpr>() || is_option_none_value(candidate);
+            if (owner_type == nullptr) {
+                return false;
+            }
+            const auto view = stdlib_bridge::std_container_type_view(*owner_type);
+            return view.has_value() &&
+                   view->kind == stdlib_bridge::StdContainerKind::Option && view->nominal;
         };
         if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
-            binary.lhs && binary.rhs && (is_none_like(*binary.lhs) || is_none_like(*binary.rhs))) {
-            const auto &none_operand = is_none_like(*binary.lhs) ? *binary.lhs : *binary.rhs;
-            const auto &value_operand = is_none_like(*binary.lhs) ? *binary.rhs : *binary.lhs;
+            binary.lhs && binary.rhs &&
+            (is_option_none_value(*binary.lhs) || is_option_none_value(*binary.rhs))) {
+            const auto &none_operand =
+                is_option_none_value(*binary.lhs) ? *binary.lhs : *binary.rhs;
+            const auto &value_operand =
+                is_option_none_value(*binary.lhs) ? *binary.rhs : *binary.lhs;
             const auto value = services_.check_expr(value_operand, context_, std::nullopt);
             const auto none = services_.check_expr(none_operand, context_, std::cref(*value.type));
             const auto effect = join_effects(value.effect, none.effect);
@@ -2306,6 +2279,7 @@ class ExpressionChecker final {
             }
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
+
 
         const auto lhs = services_.check_expr(*binary.lhs, context_, std::nullopt);
         const auto rhs = services_.check_expr(*binary.rhs, context_, std::nullopt);
@@ -2599,6 +2573,21 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
         }
 
+        // P2d.S2 (RFC §3.5 / §2): forward the bound check to the TypeCheckPass
+        // implementation (which also emits the diagnostic on failure).
+        bool check_bound(const Type &subject_type,
+                         std::string_view trait_name,
+                         SourceRange range) override {
+            return pass_->check_bound(subject_type, trait_name, range);
+        }
+
+        // P3c.S5b: forward informational notes to the TypeCheckPass reporter
+        // so three-stage method-dispatch audit lines appear in the diagnostic
+        // bag alongside real errors.
+        void note(std::string message, SourceRange range) override {
+            pass_->note_here(std::move(message), range);
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -2675,6 +2664,18 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
         void record_fn_call_site(SymbolId /*fn_symbol*/,
                                  SourceRange /*call_range*/,
                                  std::vector<TypePtr> /*type_args*/) override {}
+
+        // P2d.S2 (RFC §3.5 / §2): path resolution never performs a where-bound
+        // check; the no-op returns false without emitting a diagnostic.
+        bool check_bound(const Type & /*subject_type*/,
+                         std::string_view /*trait_name*/,
+                         SourceRange /*range*/) override {
+            return false;
+        }
+
+        // P3c.S5b: path resolution never selects a method call, so the note
+        // sink is a no-op.
+        void note(std::string /*message*/, SourceRange /*range*/) override {}
 
       private:
         TypeCheckPass *pass_{nullptr};

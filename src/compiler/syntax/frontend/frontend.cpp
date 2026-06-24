@@ -365,7 +365,9 @@ class ProgramBuilder {
             source_,
             context,
             build_qualified_name(require(context.qualifiedIdent(), "import path is missing")),
-            text_or_empty(borrow(context.IDENT())));
+            context.identifier() != nullptr
+                ? text_of(*context.identifier())
+                : std::string{});
     }
 
     [[nodiscard]] Owned<ast::Decl>
@@ -669,18 +671,24 @@ class ProgramBuilder {
         auto item = make_owned<ast::TraitItemSyntax>();
         item->range = context_range(context, source_);
 
-        // traitItem: traitFnItem | assocTypeItem
+        // traitItem: traitFnItem | assocTypeItem | assocConstItem
         if (const auto fn_item = borrow(context.traitFnItem())) {
             populate_trait_fn_item(*item, fn_item->get());
             return item;
         }
 
-        if (const auto assoc_item = borrow(context.assocTypeItem())) {
-            populate_assoc_type_item(*item, assoc_item->get());
+        if (const auto assoc_type_item = borrow(context.assocTypeItem())) {
+            populate_assoc_type_item(*item, assoc_type_item->get());
             return item;
         }
 
-        throw std::logic_error("trait item did not match trait fn or assoc type");
+        if (const auto assoc_const_item = borrow(context.assocConstItem())) {
+            populate_assoc_const_item(*item, assoc_const_item->get());
+            return item;
+        }
+
+        throw std::logic_error(
+            "trait item did not match trait fn, assoc type, or assoc const");
     }
 
     void populate_trait_fn_item(ast::TraitItemSyntax &item,
@@ -727,7 +735,28 @@ class ProgramBuilder {
         if (const auto default_type = borrow(context.type_())) {
             assoc->default_type = build_type_syntax(default_type->get());
         }
-        item.assoc = std::move(assoc);
+        item.assoc_type = std::move(assoc);
+    }
+
+    // P3c.S1: associated constant trait item. Maps `const N: T [= expr];`
+    // to `TraitItemSyntax::AssocConstDecl`. `default_value` is optional (null
+    // when absent), forcing the implementing impl to provide a value.
+    void populate_assoc_const_item(ast::TraitItemSyntax &item,
+                                   AHFLParser::AssocConstItemContext &context) const {
+        item.kind = ast::TraitItemKind::AssocConst;
+        item.range = context_range(context, source_);
+        item.name = identifier_text(require(context.identifier(), "assoc const name is missing"));
+
+        auto assoc_const = make_owned<ast::TraitItemSyntax::AssocConstDecl>();
+        assoc_const->range = context_range(context, source_);
+        assoc_const->name = item.name;
+        assoc_const->type = build_type_syntax(require(context.type_(), "assoc const type is missing"));
+        if (const auto default_value = borrow(context.constExpr())) {
+            // constExpr reuses the expr parser; build as plain ExprSyntax (const
+            // validation is deferred to semantic analysis P3b).
+            assoc_const->default_value = build_expr_syntax(default_value->get());
+        }
+        item.assoc_const = std::move(assoc_const);
     }
 
     [[nodiscard]] Owned<ast::Decl> build_impl_decl(AHFLParser::ImplDeclContext &context) const {
@@ -737,7 +766,7 @@ class ProgramBuilder {
             declaration->type_params = build_type_params(type_params->get());
         }
 
-        // implDecl: 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{' ... '}'
+        // implDecl: 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{' implItem* '}'
         // `traitRef 'for'` is present iff the optional traitRef child exists; in
         // that case the trailing `type_` is the target type. When absent, the
         // single `type_` child is the inherent-impl target.
@@ -752,22 +781,60 @@ class ProgramBuilder {
             declaration->where_clause = build_where_clause(where_clause->get());
         }
 
-        for (auto *fn_def_context : context.fnDef()) {
-            declaration->methods.push_back(
-                build_fn_def(require(fn_def_context, "impl fn is missing")));
-        }
-        for (auto *assoc_context : context.assocItemDef()) {
-            declaration->assoc_items.push_back(
-                build_assoc_item_def(require(assoc_context, "impl assoc item is missing")));
+        // P3c.S1: impl body is a flat list of implItem alternations. The
+        // per-kind buckets (`methods` / `assoc_items` / `const_items`) are
+        // the unique owners of each child; the unified `items` dispatcher
+        // stores non-owning pointers into the same elements.
+        for (auto *impl_item_context_raw : context.implItem()) {
+            auto &impl_item_context = require(
+                impl_item_context_raw, "impl item is missing");
+            auto item = make_owned<ast::ImplItemSyntax>();
+            item->range = context_range(impl_item_context, source_);
+
+            if (const auto fn_ctx = borrow(impl_item_context.implFnItem())) {
+                auto fn_def = build_impl_fn_item(fn_ctx->get());
+                item->kind = ast::ImplItemKind::Fn;
+                item->fn_def = fn_def.get();
+                declaration->methods.push_back(std::move(fn_def));
+            } else if (const auto atd_ctx = borrow(impl_item_context.assocTypeDef())) {
+                auto assoc_type = make_owned<ast::ImplItemSyntax::AssocTypeDef>();
+                assoc_type->range = context_range(atd_ctx->get(), source_);
+                assoc_type->name = identifier_text(require(
+                    atd_ctx->get().identifier(), "impl assoc type name is missing"));
+                assoc_type->type = build_type_syntax(require(
+                    atd_ctx->get().type_(), "impl assoc type is missing"));
+                item->kind = ast::ImplItemKind::AssocType;
+                item->assoc_type = assoc_type.get();
+                declaration->assoc_items.push_back(std::move(assoc_type));
+            } else if (const auto acd_ctx = borrow(impl_item_context.assocConstDef())) {
+                auto assoc_const = make_owned<ast::ImplItemSyntax::AssocConstDef>();
+                assoc_const->range = context_range(acd_ctx->get(), source_);
+                assoc_const->name = identifier_text(require(
+                    acd_ctx->get().identifier(), "impl assoc const name is missing"));
+                assoc_const->type = build_type_syntax(require(
+                    acd_ctx->get().type_(), "impl assoc const type is missing"));
+                auto &def_value = require(
+                    acd_ctx->get().constExpr(), "impl assoc const value is missing");
+                assoc_const->value = build_expr_syntax(def_value);
+                item->kind = ast::ImplItemKind::AssocConst;
+                item->assoc_const = assoc_const.get();
+                declaration->const_items.push_back(std::move(assoc_const));
+            } else {
+                throw std::logic_error(
+                    "impl item did not match fn, assoc type, or assoc const");
+            }
+
+            declaration->items.push_back(std::move(item));
         }
 
         return declaration;
     }
 
-    // Method definition inside an impl block. Same surface as a top-level
-    // FnDecl but the body is mandatory (RFC §1.4). Reuses FnDecl so downstream
-    // passes treat impl methods uniformly with top-level functions.
-    [[nodiscard]] Owned<ast::FnDecl> build_fn_def(AHFLParser::FnDefContext &context) const {
+    // Impl method definition. Surface identical to FnDecl but body is mandatory
+    // (RFC §1.4). Reuses FnDecl so downstream passes treat impl methods
+    // uniformly with top-level functions.
+    [[nodiscard]] Owned<ast::FnDecl>
+    build_impl_fn_item(AHFLParser::ImplFnItemContext &context) const {
         auto declaration = make_decl<ast::FnDecl>(
             source_,
             context,
@@ -794,15 +861,6 @@ class ProgramBuilder {
                                        "impl fn body block is missing"));
 
         return declaration;
-    }
-
-    [[nodiscard]] Owned<ast::AssocItemDefSyntax>
-    build_assoc_item_def(AHFLParser::AssocItemDefContext &context) const {
-        auto assoc = make_owned<ast::AssocItemDefSyntax>();
-        assoc->range = context_range(context, source_);
-        assoc->name = identifier_text(require(context.identifier(), "assoc item name is missing"));
-        assoc->type = build_type_syntax(require(context.type_(), "assoc item type is missing"));
-        return assoc;
     }
 
     [[nodiscard]] std::vector<Owned<ast::TypeParamSyntax>>
@@ -960,9 +1018,6 @@ class ProgramBuilder {
 
         // Initialize node variant with the correct default-constructed alternative
         switch (kind) {
-        case ast::ExprSyntaxKind::NoneLiteral:
-            expr->node = ast::NoneLiteralExpr{};
-            break;
         case ast::ExprSyntaxKind::BoolLiteral:
             expr->node = ast::BoolLiteralExpr{};
             break;
@@ -981,9 +1036,6 @@ class ProgramBuilder {
         case ast::ExprSyntaxKind::DurationLiteral:
             expr->node = ast::DurationLiteralExpr{};
             break;
-        case ast::ExprSyntaxKind::Some:
-            expr->node = ast::SomeExpr{};
-            break;
         case ast::ExprSyntaxKind::Path:
             expr->node = ast::PathExpr{};
             break;
@@ -998,15 +1050,6 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::StructLiteral:
             expr->node = ast::StructLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::ListLiteral:
-            expr->node = ast::ListLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::SetLiteral:
-            expr->node = ast::SetLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::MapLiteral:
-            expr->node = ast::MapLiteralExpr{};
             break;
         case ast::ExprSyntaxKind::Unary:
             expr->node = ast::UnaryExpr{};
@@ -1375,18 +1418,6 @@ class ProgramBuilder {
             return expr;
         }
 
-        if (const auto list = borrow(context.listLiteral())) {
-            return build_list_literal_expr(list->get());
-        }
-
-        if (const auto set = borrow(context.setLiteral())) {
-            return build_set_literal_expr(set->get());
-        }
-
-        if (const auto map = borrow(context.mapLiteral())) {
-            return build_map_literal_expr(map->get());
-        }
-
         if (const auto match = borrow(context.matchExpr())) {
             return build_match_expr(match->get());
         }
@@ -1396,26 +1427,10 @@ class ProgramBuilder {
         }
 
         if (const auto inner_expr = borrow(context.expr())) {
-            if (!context.children.empty() &&
-                require(context.children[0], "primary expression child is missing").getText() ==
-                    "some") {
-                auto expr =
-                    make_expr_syntax(ast::ExprSyntaxKind::Some, context_range(context, source_));
-                std::get<ast::SomeExpr>(expr->node).value = build_expr_syntax(inner_expr->get());
-                return expr;
-            }
-
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Group, context_range(context, source_));
             std::get<ast::GroupExpr>(expr->node).inner = build_expr_syntax(inner_expr->get());
             return expr;
-        }
-
-        if (context.children.size() == 1 &&
-            require(context.children[0], "primary expression child is missing").getText() ==
-                "none") {
-            return make_expr_syntax(ast::ExprSyntaxKind::NoneLiteral,
-                                    context_range(context, source_));
         }
 
         throw std::logic_error("primary expression did not match any supported AHFL kind");
@@ -1509,45 +1524,6 @@ class ProgramBuilder {
         auto expr =
             make_expr_syntax(ast::ExprSyntaxKind::QualifiedValue, context_range(context, source_));
         std::get<ast::QualifiedValueExpr>(expr->node).name = build_qualified_name(context);
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_list_literal_expr(AHFLParser::ListLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::ListLiteral, context_range(context, source_));
-
-        if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::ListLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
-        }
-
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_set_literal_expr(AHFLParser::SetLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::SetLiteral, context_range(context, source_));
-
-        if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::SetLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
-        }
-
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_map_literal_expr(AHFLParser::MapLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::MapLiteral, context_range(context, source_));
-        auto &entries = std::get<ast::MapLiteralExpr>(expr->node).entries;
-
-        if (const auto entry_list = borrow(context.mapEntryList())) {
-            for (auto *entry_context : entry_list->get().mapEntry()) {
-                entries.push_back(build_map_entry(require(entry_context, "map entry is missing")));
-            }
-        }
-
         return expr;
     }
 
@@ -1759,7 +1735,6 @@ class ProgramBuilder {
         }
         return pattern;
     }
-
     [[nodiscard]] std::vector<Owned<ast::ExprSyntax>>
     build_expr_list(AHFLParser::ExprListContext &context) const {
         std::vector<Owned<ast::ExprSyntax>> expressions;
@@ -2099,55 +2074,24 @@ class ProgramBuilder {
             return build_fn_type_syntax(fn_type->get());
         }
 
-        if (const auto app_type = borrow(context.appType())) {
-            return build_app_type_syntax(app_type->get());
-        }
-
         auto type = make_owned<ast::TypeSyntax>();
         type->range = context_range(context, source_);
 
-        if (const auto qualified_name = borrow(context.qualifiedIdent())) {
-            type->node = ast::NamedType{.name = build_qualified_name(qualified_name->get())};
-            return type;
+        const auto qualified_name =
+            borrow(context.qualifiedIdent());
+        if (!qualified_name) {
+            throw std::logic_error("type did not match any supported AHFL type syntax kind");
         }
 
-        const auto type_keyword =
-            require(context.getStart(), "type start token is missing").getText();
-
-        if (type_keyword == "Optional") {
-            type->node = ast::OptionalType{
-                .inner = build_type_syntax(
-                    require(context.type_(0), "optional element type is missing")),
-            };
-            return type;
+        ast::NamedType named{.name = build_qualified_name(qualified_name->get())};
+        const auto &child_types = context.type_();
+        named.type_args.reserve(child_types.size());
+        for (auto *child : child_types) {
+            named.type_args.push_back(build_type_syntax(
+                require(child, "generic type argument is missing")));
         }
-
-        if (type_keyword == "List") {
-            type->node = ast::ListType{
-                .element =
-                    build_type_syntax(require(context.type_(0), "list element type is missing")),
-            };
-            return type;
-        }
-
-        if (type_keyword == "Set") {
-            type->node = ast::SetType{
-                .element =
-                    build_type_syntax(require(context.type_(0), "set element type is missing")),
-            };
-            return type;
-        }
-
-        if (type_keyword == "Map") {
-            type->node = ast::MapType{
-                .key_type = build_type_syntax(require(context.type_(0), "map key type is missing")),
-                .value_type =
-                    build_type_syntax(require(context.type_(1), "map value type is missing")),
-            };
-            return type;
-        }
-
-        throw std::logic_error("type did not match any supported AHFL type syntax kind");
+        type->node = std::move(named);
+        return type;
     }
 
     [[nodiscard]] Owned<ast::TypeSyntax>
@@ -2258,25 +2202,6 @@ class ProgramBuilder {
         }
 
         type->node = std::move(fn_type);
-        return type;
-    }
-
-    [[nodiscard]] Owned<ast::TypeSyntax>
-    build_app_type_syntax(AHFLParser::AppTypeContext &context) const {
-        auto type = make_owned<ast::TypeSyntax>();
-        type->range = context_range(context, source_);
-
-        ast::AppType app_type;
-        app_type.name =
-            build_qualified_name(require(context.qualifiedIdent(), "app type name is missing"));
-
-        if (const auto type_list = borrow(context.typeList())) {
-            for (auto *arg_type_ctx : type_list->get().type_()) {
-                app_type.arguments.push_back(build_type_syntax(*arg_type_ctx));
-            }
-        }
-
-        type->node = std::move(app_type);
         return type;
     }
 
@@ -2480,8 +2405,36 @@ class ProgramBuilder {
     build_param_decl(AHFLParser::ParamContext &context) const {
         auto param = make_owned<ast::ParamDeclSyntax>();
         param->range = context_range(context, source_);
-        param->name = text_of(require(context.IDENT(), "parameter name is missing"));
-        param->type = build_type_syntax(require(context.type_(), "parameter type is missing"));
+
+        // The grammar accepts five shapes:
+        //   1. IDENT ':' type_                 — normal named parameter
+        //   2. 'self'                          — bare self receiver
+        //   3. 'mut' 'self'                    — bare mutable self receiver
+        //   4. 'self' ':' type_                — typed self receiver
+        //   5. 'mut' 'self' ':' type_          — typed mutable self receiver
+        // Alts 2–5 are used inside trait/impl methods; semantic validation
+        // (self must not appear outside trait/impl) is deferred to P3b.
+        if (const auto ident = context.IDENT()) {
+            // Shape 1: named parameter IDENT : type_
+            param->name = text_of(require(ident, "parameter name is missing"));
+            param->type = build_type_syntax(require(context.type_(), "parameter type is missing"));
+            return param;
+        }
+
+        // Shapes 2–5: self receiver. Inspect the raw token sequence of the
+        // rule context: the first literal is either 'self' or 'mut'; 'self'
+        // is always the receiver keyword so we look for its presence via
+        // a case-insensitive text scan of the rule's token span.
+        const std::string raw = text_of(context);
+        const bool has_mut = (raw.size() >= 3 && raw.substr(0, 3) == "mut");
+        param->is_self = true;
+        param->is_self_mut = has_mut;
+        param->name = "self";
+        if (const auto type_ctx = context.type_()) {
+            // Shapes 4 & 5: explicit type annotation present
+            param->type = build_type_syntax(require(type_ctx, "self param type is missing"));
+        }
+        // Shapes 2 & 3: bare self / mut self (type remains null — inferred in P3b)
         return param;
     }
 
@@ -2584,6 +2537,17 @@ class ProgramBuilder {
             clause->kind = ast::ContractClauseKind::Forbid;
             clause->temporal_expr = build_temporal_expr_syntax(
                 require(forbid_decl->get().temporalExpr(), "forbid body is missing"));
+            return clause;
+        }
+
+        if (const auto decreases_decl = borrow(context.decreasesDecl())) {
+            clause->kind = ast::ContractClauseKind::Decreases;
+            // `decreases: *;` uses the wildcard arm — expr() returns nullopt.
+            if (const auto expr_context = borrow(decreases_decl->get().expr())) {
+                clause->expr = build_expr_syntax(expr_context->get());
+            } else {
+                clause->is_wildcard = true;
+            }
             return clause;
         }
 

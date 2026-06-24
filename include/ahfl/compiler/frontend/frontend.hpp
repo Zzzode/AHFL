@@ -180,4 +180,38 @@ void dump_program_outline(const ast::Program &program, std::ostream &out);
 void dump_project_outline(const SourceGraph &graph, std::ostream &out);
 void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out);
 
+// ----------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone, three-phase handlers (R-09: NOT dispatched
+// through DeclKind / NodeKind).  Every consumer is a dedicated free function.
+// ----------------------------------------------------------------------------
+
+/// Print a human-readable (but stable) debug outline for a single decreases
+/// clause.  Format mirrors `dump_program_outline` so printer → formatter can
+/// be compared bit-for-bit on canonical programs.
+void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
+                            std::ostream &out,
+                            int base_indent = 0);
+
+/// Canonicalise a decreases clause in place.
+///
+///   * Wildcard form:     leave untouched (terms is allowed to be empty).
+///   * Explicit-term form:
+///       - drop nullptr entries;
+///       - merge any top-level "comma-like" tuples (currently a no-op because
+///         ExprSyntax has no Tuple node, but the hook is reserved so a later
+///         grammar change does not require a signature bump);
+///       - deduplicate consecutive identical spellings to avoid obviously
+///         redundant measures.
+///
+/// Returns true if any structural change was made.
+bool desugar_decreases_clause(ast::DecreasesClauseSyntax &clause);
+
+/// Format a decreases clause back to surface source text (no trailing newline
+/// by default; the caller wraps in the surrounding contract body).
+///
+///   wildcard          →  "decreases *;"
+///   empty non-wild    →  "decreases ();"
+///   [e0, e1, e2]      →  "decreases (e0, e1, e2);"
+[[nodiscard]] std::string format_decreases_clause(const ast::DecreasesClauseSyntax &clause);
+
 } // namespace ahfl

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_backend_pipeline_common.a CMakeFiles/ahfl_compiler_backend_pipeline_common.dir/pipeline/json_helpers.cpp.o CMakeFiles/ahfl_compiler_backend_pipeline_common.dir/pipeline/review_helpers.cpp.o
+/usr/bin/ranlib libahfl_compiler_backend_pipeline_common.a

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_pipeline_observation.a CMakeFiles/ahfl_pipeline_observation.dir/audit_report/report.cpp.o CMakeFiles/ahfl_pipeline_observation.dir/scheduler_snapshot/snapshot.cpp.o CMakeFiles/ahfl_pipeline_observation.dir/scheduler_snapshot/review.cpp.o CMakeFiles/ahfl_pipeline_observation.dir/checkpoint_record/record.cpp.o CMakeFiles/ahfl_pipeline_observation.dir/checkpoint_record/review.cpp.o
+/usr/bin/ranlib libahfl_pipeline_observation.a

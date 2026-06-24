@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_passes.a CMakeFiles/ahfl_compiler_passes.dir/pass_manager.cpp.o CMakeFiles/ahfl_compiler_passes.dir/dead_state_elimination.cpp.o CMakeFiles/ahfl_compiler_passes.dir/capability_reachability.cpp.o CMakeFiles/ahfl_compiler_passes.dir/contract_redundancy.cpp.o CMakeFiles/ahfl_compiler_passes.dir/workflow_simplification.cpp.o CMakeFiles/ahfl_compiler_passes.dir/expr_canonicalization.cpp.o CMakeFiles/ahfl_compiler_passes.dir/temporal_simplification.cpp.o
+/usr/bin/ranlib libahfl_compiler_passes.a

@@ -17,7 +17,7 @@ void SmvPrinter::collect_specs() {
         for (std::size_t index = 0; index < contract.get().clauses.size(); ++index) {
             const auto &clause = contract.get().clauses[index];
             std::optional<std::string> formula;
-            if (const auto expr = std::get_if<ir::ExprRef>(&clause.value); expr != nullptr) {
+            if (const auto expr = std::get_if<ir::ExprRef>(&clause.value); expr != nullptr && expr->has_value()) {
                 formula = render_contract_expr_clause(
                     contract.get(), agent->get(), clause.kind, **expr, index);
             } else if (const auto temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);

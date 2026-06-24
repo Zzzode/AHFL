@@ -104,6 +104,27 @@ class AstPrinter final {
         visit(node);
     }
 
+    // Standalone hook for DecreasesClauseSyntax.  Public so the free-function
+    // wrapper and future consumers (debug printers, LSP hover) can reuse the
+    // same indent + expr formatting helpers without duplicating them.  This is
+    // a deliberately narrow entry point: DecreasesClauseSyntax is NOT a Node
+    // and MUST NOT be dispatched through visit_declaration / NodeKind (R-09).
+    void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
+                                int indent_level) {
+        line(indent_level, "decreases");
+        line(indent_level + 1,
+             clause.is_wildcard ? "wildcard: true" : "wildcard: false");
+        for (std::size_t i = 0; i < clause.terms.size(); ++i) {
+            const auto *term = clause.terms[i].get();
+            line(indent_level + 1, "term " + std::to_string(i));
+            if (term != nullptr) {
+                print_expr(*term, indent_level + 2);
+            } else {
+                line(indent_level + 2, "<null>");
+            }
+        }
+    }
+
     void visit(const ast::Program &node) {
         line(0, "program " + node.source_name);
 
@@ -458,8 +479,8 @@ class AstPrinter final {
                 if (item->where_clause) {
                     print_where_clause(*item->where_clause, 3);
                 }
-            } else {
-                const auto &assoc = *item->assoc;
+            } else if (item->kind == ast::TraitItemKind::AssocType) {
+                const auto &assoc = *item->assoc_type;
                 line(2, "type " + assoc.name);
                 if (!assoc.bounds.empty()) {
                     std::string entry;
@@ -474,6 +495,13 @@ class AstPrinter final {
                     line(3, "bounds: " + entry);
                 }
                 print_type_field("default", assoc.default_type.get(), 3);
+            } else if (item->kind == ast::TraitItemKind::AssocConst) {
+                const auto &assoc = *item->assoc_const;
+                line(2, "const " + assoc.name);
+                print_type_field("type", assoc.type.get(), 3);
+                if (assoc.default_value) {
+                    print_expr_field("default", assoc.default_value.get(), 3);
+                }
             }
         }
     }
@@ -529,6 +557,14 @@ class AstPrinter final {
         for (const auto &assoc : node.assoc_items) {
             line(2, "type " + assoc->name);
             print_type_field("value", assoc->type.get(), 3);
+        }
+
+        for (const auto &assoc_const : node.const_items) {
+            line(2, "const " + assoc_const->name);
+            print_type_field("type", assoc_const->type.get(), 3);
+            if (assoc_const->value) {
+                print_expr_field("value", assoc_const->value.get(), 3);
+            }
         }
     }
 
@@ -694,25 +730,14 @@ class AstPrinter final {
                 [&](const ast::DecimalType &t) {
                     line(indent_level, "decimal Decimal(" + std::to_string(t.scale) + ")");
                 },
-                [&](const ast::NamedType &t) { line(indent_level, "named " + t.name->spelling()); },
-                [&](const ast::OptionalType &t) {
-                    line(indent_level, "optional");
-                    print_type(*t.inner, indent_level + 1);
-                },
-                [&](const ast::ListType &t) {
-                    line(indent_level, "list");
-                    print_type(*t.element, indent_level + 1);
-                },
-                [&](const ast::SetType &t) {
-                    line(indent_level, "set");
-                    print_type(*t.element, indent_level + 1);
-                },
-                [&](const ast::MapType &t) {
-                    line(indent_level, "map");
-                    line(indent_level + 1, "key");
-                    print_type(*t.key_type, indent_level + 2);
-                    line(indent_level + 1, "value");
-                    print_type(*t.value_type, indent_level + 2);
+                [&](const ast::NamedType &t) {
+                    line(indent_level, "named " + t.name->spelling());
+                    if (!t.type_args.empty()) {
+                        line(indent_level, "type_arguments(" + std::to_string(t.type_args.size()) + ")");
+                        for (const auto &arg : t.type_args) {
+                            print_type(*arg, indent_level + 1);
+                        }
+                    }
                 },
                 [&](const ast::FnType &t) {
                     line(indent_level, "fn");
@@ -755,7 +780,6 @@ class AstPrinter final {
     void print_expr(const ast::ExprSyntax &expr, int indent_level) {
         std::visit(
             Overloaded{
-                [&](const ast::NoneLiteralExpr &) { line(indent_level, "none"); },
                 [&](const ast::BoolLiteralExpr &e) {
                     line(indent_level, std::string("bool ") + (e.value ? "true" : "false"));
                 },
@@ -771,10 +795,6 @@ class AstPrinter final {
                 },
                 [&](const ast::DurationLiteralExpr &e) {
                     line(indent_level, "duration " + e.literal->spelling);
-                },
-                [&](const ast::SomeExpr &e) {
-                    line(indent_level, "some");
-                    print_expr(*e.value, indent_level + 1);
                 },
                 [&](const ast::PathExpr &e) { line(indent_level, "path " + e.path->spelling()); },
                 [&](const ast::QualifiedValueExpr &e) {
@@ -809,30 +829,6 @@ class AstPrinter final {
                     for (const auto &field : e.fields) {
                         line(indent_level + 1, "field " + field->field_name);
                         print_expr(*field->value, indent_level + 2);
-                    }
-                },
-                [&](const ast::ListLiteralExpr &e) {
-                    line(indent_level, "list_literal");
-                    for (std::size_t index = 0; index < e.items.size(); ++index) {
-                        line(indent_level + 1, "item " + std::to_string(index));
-                        print_expr(*e.items[index], indent_level + 2);
-                    }
-                },
-                [&](const ast::SetLiteralExpr &e) {
-                    line(indent_level, "set_literal");
-                    for (std::size_t index = 0; index < e.items.size(); ++index) {
-                        line(indent_level + 1, "item " + std::to_string(index));
-                        print_expr(*e.items[index], indent_level + 2);
-                    }
-                },
-                [&](const ast::MapLiteralExpr &e) {
-                    line(indent_level, "map_literal");
-                    for (std::size_t index = 0; index < e.entries.size(); ++index) {
-                        line(indent_level + 1, "entry " + std::to_string(index));
-                        line(indent_level + 2, "key");
-                        print_expr(*e.entries[index]->key, indent_level + 3);
-                        line(indent_level + 2, "value");
-                        print_expr(*e.entries[index]->value, indent_level + 3);
                     }
                 },
                 [&](const ast::UnaryExpr &e) {
@@ -1079,6 +1075,21 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
         AstPrinter printer(out, 2);
         printer.print(*source.program);
     }
+}
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone printer (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
+                            std::ostream &out,
+                            int base_indent) {
+    // base_indent is consumed by AstPrinter's line() helper so callers get
+    // predictable column alignment when embedding clause output inside a
+    // larger debug dump.  indent_level=0 lets the header start at
+    // `base_indent * 2` spaces.
+    AstPrinter printer(out, base_indent);
+    printer.print_decreases_clause(clause, 0);
 }
 
 } // namespace ahfl

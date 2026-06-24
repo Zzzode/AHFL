@@ -187,7 +187,7 @@ void test_parse_array() {
     auto result = value_from_json("[1, 2, 3]");
     check(result.has_value(), "parse.array_has_value");
     if (result) {
-        auto *lv = std::get_if<ListValue>(&result->node);
+        auto *lv = get_list_if(*result);
         check(lv != nullptr && lv->items.size() == 3, "parse.array_size_3");
         if (lv && lv->items.size() == 3) {
             auto *first = std::get_if<IntValue>(&lv->items[0]->node);
@@ -198,7 +198,7 @@ void test_parse_array() {
     auto empty = value_from_json("[]");
     check(empty.has_value(), "parse.array_empty_has_value");
     if (empty) {
-        auto *lv = std::get_if<ListValue>(&empty->node);
+        auto *lv = get_list_if(*empty);
         check(lv != nullptr && lv->items.empty(), "parse.array_empty");
     }
 }
@@ -293,8 +293,113 @@ void test_roundtrip_nested_list() {
     auto parsed = value_from_json(json);
     check(parsed.has_value(), "roundtrip.nested_list_parsed");
     if (parsed) {
-        auto *lv = std::get_if<ListValue>(&parsed->node);
+        auto *lv = get_list_if(*parsed);
         check(lv != nullptr && lv->items.size() == 2, "roundtrip.nested_list_size");
+    }
+}
+
+// ============================================================================
+// Nominal JSON shape: only the canonical forms are accepted on input.
+// Legacy wrapper keys (list/_list/some/_some/none/_none/optional/_optional)
+// are no longer parsed as container wrappers.
+// ============================================================================
+
+void test_parse_canonical_list_shape() {
+    // The canonical shape for a list is a bare JSON array.
+    auto r1 = value_from_json(R"([1,2,3])");
+    check(r1.has_value(), "canonical.list_has_value");
+    if (r1) {
+        const auto *items = list_items(*r1);
+        check(items != nullptr && items->size() == 3, "canonical.list_size_3");
+    }
+
+    auto r2 = value_from_json(R"([])");
+    check(r2.has_value(), "canonical.list_empty_has_value");
+    if (r2) {
+        const auto *items = list_items(*r2);
+        check(items != nullptr && items->empty(), "canonical.list_empty_size_0");
+    }
+
+    // Roundtrip: list serializes to bare JSON array.
+    if (r1) {
+        auto s = value_to_json(*r1);
+        check(s == "[1,2,3]", "canonical.list_roundtrip");
+    }
+}
+
+void test_parse_canonical_optional_shape() {
+    // Canonical present optional: the bare inner value (e.g. the int 99).
+    // The caller reconstructs Option around it via the typed HIR context;
+    // at the raw value layer a bare int is just an int, and "null" is None.
+    auto none = value_from_json("null");
+    check(none.has_value(), "canonical.none_has_value");
+    if (none) {
+        check(std::holds_alternative<NoneValue>(none->node), "canonical.none_is_none_value");
+    }
+
+    // Roundtrip of explicit nominal Option values matches canonical shape.
+    auto some_val = make_optional_some(make_int(99));
+    check(value_to_json(some_val) == "99", "canonical.some_serialize");
+    auto none_val = make_optional_none();
+    check(value_to_json(none_val) == "null", "canonical.none_serialize");
+}
+
+void test_legacy_wrapper_keys_are_rejected() {
+    // Old wrapper key shapes must NOT parse as containers. Each input is an
+    // object with unknown fields only, which yields a StructValue at the
+    // raw-value layer (no semantic interpretation), or must be distinguishable
+    // from a list/optional container value.
+    auto r1 = value_from_json(R"({"list":[1,2,3]})");
+    check(r1.has_value(), "legacy.list_object_has_value");
+    if (r1) {
+        // Not a container list.
+        check(list_items(*r1) == nullptr, "legacy.list_object_not_a_list");
+        check(std::holds_alternative<StructValue>(r1->node), "legacy.list_object_is_struct");
+    }
+
+    auto r2 = value_from_json(R"({"_list":[7]})");
+    check(r2.has_value(), "legacy._list_object_has_value");
+    if (r2) {
+        check(list_items(*r2) == nullptr, "legacy._list_object_not_a_list");
+    }
+
+    auto r3 = value_from_json(R"({"some":99})");
+    check(r3.has_value(), "legacy.some_object_has_value");
+    if (r3) {
+        // A struct, not an optional.
+        check(!is_some(*r3), "legacy.some_object_not_some");
+        check(std::holds_alternative<StructValue>(r3->node), "legacy.some_object_is_struct");
+    }
+
+    auto r4 = value_from_json(R"({"_some":"x"})");
+    check(r4.has_value(), "legacy._some_object_has_value");
+    if (r4) {
+        check(!is_some(*r4), "legacy._some_object_not_some");
+    }
+
+    auto r5 = value_from_json(R"({"none":null})");
+    check(r5.has_value(), "legacy.none_object_has_value");
+    if (r5) {
+        check(!is_optional_none(*r5), "legacy.none_object_not_optional_none");
+        check(std::holds_alternative<StructValue>(r5->node), "legacy.none_object_is_struct");
+    }
+
+    auto r6 = value_from_json(R"({"_none":null})");
+    check(r6.has_value(), "legacy._none_object_has_value");
+    if (r6) {
+        check(!is_optional_none(*r6), "legacy._none_object_not_optional_none");
+    }
+
+    auto r7 = value_from_json(R"({"optional":null})");
+    check(r7.has_value(), "legacy.optional_null_object_has_value");
+    if (r7) {
+        check(!is_optional_none(*r7), "legacy.optional_null_object_not_optional_none");
+    }
+
+    auto r8 = value_from_json(R"({"optional":"hi"})");
+    check(r8.has_value(), "legacy.optional_value_object_has_value");
+    if (r8) {
+        check(!is_some(*r8), "legacy.optional_value_object_not_some");
     }
 }
 
@@ -338,6 +443,10 @@ int main() {
     test_roundtrip_int();
     test_roundtrip_struct();
     test_roundtrip_nested_list();
+
+    test_parse_canonical_list_shape();
+    test_parse_canonical_optional_shape();
+    test_legacy_wrapper_keys_are_rejected();
 
     test_parse_errors();
 

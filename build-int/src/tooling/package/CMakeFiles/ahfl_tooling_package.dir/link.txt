@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_tooling_package.a CMakeFiles/ahfl_tooling_package.dir/registry.cpp.o CMakeFiles/ahfl_tooling_package.dir/resolver.cpp.o
+/usr/bin/ranlib libahfl_tooling_package.a

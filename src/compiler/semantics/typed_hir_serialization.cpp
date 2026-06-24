@@ -45,6 +45,14 @@ using Json = json::JsonValue;
     return j_symbol_id(*id);
 }
 
+template <typename E>
+[[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::optional<E> value) {
+    if (!value.has_value()) {
+        return Json::make_null();
+    }
+    return j_enum(*value);
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_range(SourceRange range) {
     auto object = Json::make_object();
     object->set("begin", j_int(range.begin_offset));
@@ -489,8 +497,25 @@ using Json = json::JsonValue;
             auto clause_json = Json::make_object();
             clause_json->set("clause_kind", Json::make_int(clause.clause_kind));
             clause_json->set("is_temporal", Json::make_bool(clause.is_temporal));
+            clause_json->set("is_wildcard", Json::make_bool(clause.is_wildcard));
             clause_json->set("expr_range", j_range(clause.expr_range));
             clause_json->set("source_range", j_range(clause.source_range));
+            clause_json->set("has_decreases", Json::make_bool(clause.has_decreases));
+            clause_json->set("decreases_is_wildcard",
+                             Json::make_bool(clause.decreases_is_wildcard));
+            clause_json->set("decreases_range", j_range(clause.decreases_range));
+            // P4.S3 legacy payload
+            auto decrs = Json::make_array();
+            for (const auto &d : clause.decreases_exprs) {
+                decrs->push(j_range(d.expr_range));
+            }
+            clause_json->set("decreases_exprs", std::move(decrs));
+            // P4.S6 canonical ranges (mirrors ir::ContractClause.decreases_terms)
+            auto decreases_ranges = Json::make_array();
+            for (const auto &r : clause.decreases_expr_ranges) {
+                decreases_ranges->push(j_range(r));
+            }
+            clause_json->set("decreases_expr_ranges", std::move(decreases_ranges));
             clauses->push(std::move(clause_json));
         }
         value->set("clauses", std::move(clauses));
@@ -530,6 +555,19 @@ using Json = json::JsonValue;
         }
         effect->set("capabilities", std::move(capabilities));
         effect->set("source_range", j_range(info->effect.source_range));
+        // P3c (trait + effects): full EffectJudgement (4-kind) plus
+        // P4.S6 decreases flag — round-tripped through TypedProgram so that
+        // consumers of the serialized typed HIR see the same values that the
+        // in-memory TypedProgram carries.
+        effect->set(
+            "judgement_kind",
+            Json::make_int(static_cast<std::int64_t>(static_cast<int>(info->effect.judgement.kind))));
+        auto judgement_caps = Json::make_array();
+        for (const auto id_value : info->effect.judgement.capabilities.values) {
+            judgement_caps->push(j_symbol_id(SymbolId{id_value}));
+        }
+        effect->set("judgement_capabilities", std::move(judgement_caps));
+        effect->set("has_decreases", Json::make_bool(info->effect.has_decreases));
         value->set("effect", std::move(effect));
         value->set("has_body", Json::make_bool(info->has_body));
         value->set("declaration_range", j_range(info->declaration_range));
@@ -645,7 +683,7 @@ using Json = json::JsonValue;
     object->set("is_pure", Json::make_bool(expr.is_pure));
     object->set("resolved_symbol", j_optional_symbol_id(expr.resolved_symbol));
     object->set("semantic_name", Json::make_string(expr.semantic_name));
-    object->set("call_target_kind", j_enum(expr.call_target_kind));
+    object->set("call_target_kind", j_optional_enum(expr.call_target_kind));
     object->set("path_root", Json::make_string(expr.path_root));
     object->set("path_root_kind", j_enum(expr.path_root_kind));
     object->set("member_path", j_string_array(expr.member_path));
@@ -767,6 +805,21 @@ class Reader {
         return *result;
     }
 
+    [[nodiscard]] bool optional_bool_field(const Json &object,
+                                           std::string_view key,
+                                           bool default_value) {
+        const auto *value = field(object, key);
+        if (value == nullptr) {
+            return default_value;
+        }
+        const auto result = value->as_bool();
+        if (!result.has_value()) {
+            ok_ = false;
+            return default_value;
+        }
+        return *result;
+    }
+
     [[nodiscard]] std::int64_t int_field(const Json &object, std::string_view key) {
         const auto *value = field(object, key);
         if (value == nullptr) {
@@ -810,6 +863,17 @@ class Reader {
         return range_value(field(object, key));
     }
 
+    [[nodiscard]] SourceRange optional_range_field(const Json &object, std::string_view key) {
+        const auto *value = field(object, key);
+        if (value == nullptr || value->kind != json::Kind::Object) {
+            return {};
+        }
+        return SourceRange{
+            .begin_offset = static_cast<std::size_t>(uint_field(*value, "begin")),
+            .end_offset = static_cast<std::size_t>(uint_field(*value, "end")),
+        };
+    }
+
     [[nodiscard]] SourceRange range_value(const Json *value) {
         if (value == nullptr || value->kind != json::Kind::Object) {
             ok_ = false;
@@ -849,6 +913,15 @@ class Reader {
             return std::nullopt;
         }
         return symbol_id_value(value);
+    }
+
+    template <typename E>
+    [[nodiscard]] std::optional<E> optional_enum_field(const Json &object, std::string_view key) {
+        const auto *value = field(object, key);
+        if (value == nullptr || value->is_null()) {
+            return std::nullopt;
+        }
+        return static_cast<E>(uint_value(value));
     }
 
     [[nodiscard]] TypePtr type_field(const Json &object, std::string_view key) {
@@ -1375,12 +1448,40 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         if (clauses != nullptr && clauses->kind == json::Kind::Array) {
             info.clauses.reserve(clauses->array_items.size());
             for (const auto &item : clauses->array_items) {
-                info.clauses.push_back(ContractClauseInfo{
+                ContractClauseInfo clause_info{
                     .clause_kind = static_cast<int>(reader.int_field(*item, "clause_kind")),
                     .is_temporal = reader.bool_field(*item, "is_temporal"),
+                    .is_wildcard = reader.bool_field(*item, "is_wildcard"),
                     .expr_range = reader.range_field(*item, "expr_range"),
                     .source_range = reader.range_field(*item, "source_range"),
-                });
+                    // P4.S3 + P4.S6: decreases metadata; optional_* helpers handle
+                    // snapshots produced before this plumbing was introduced.
+                    .has_decreases = reader.optional_bool_field(*item, "has_decreases", false),
+                    .decreases_exprs = {},
+                    .decreases_is_wildcard =
+                        reader.optional_bool_field(*item, "decreases_is_wildcard", false),
+                    .decreases_expr_ranges = {},
+                    .decreases_range = reader.optional_range_field(*item, "decreases_range"),
+                };
+                // P4.S3 legacy payload (DecreasesExprInfo array)
+                if (const auto *decr_arr = reader.field(*item, "decreases_exprs");
+                    decr_arr != nullptr && decr_arr->kind == json::Kind::Array) {
+                    clause_info.decreases_exprs.reserve(decr_arr->array_items.size());
+                    for (const auto &decr_item : decr_arr->array_items) {
+                        clause_info.decreases_exprs.push_back(DecreasesExprInfo{
+                            .expr_range = reader.range_value(decr_item.get()),
+                        });
+                    }
+                }
+                // P4.S6 canonical payload (plain SourceRange array)
+                const auto *ranges = reader.field(*item, "decreases_expr_ranges");
+                if (ranges != nullptr && ranges->kind == json::Kind::Array) {
+                    clause_info.decreases_expr_ranges.reserve(ranges->array_items.size());
+                    for (const auto &r : ranges->array_items) {
+                        clause_info.decreases_expr_ranges.push_back(reader.range_value(r.get()));
+                    }
+                }
+                info.clauses.push_back(std::move(clause_info));
             }
         }
         return info;
@@ -1398,17 +1499,21 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .type_param_names = {},
             .effect =
                 FnEffectClauseInfo{
-                    .kind =
-                        static_cast<int>(reader.int_field(*reader.field(*value, "effect"), "kind")),
+                    .kind = 0,
                     .capabilities = {},
-                    .source_range =
-                        reader.range_field(*reader.field(*value, "effect"), "source_range"),
+                    .source_range = {},
                 },
             .has_body = reader.bool_field(*value, "has_body"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
             .builtin_name = reader.optional_string_field(*value, "builtin_name"),
             .body_block_index = reader.optional_u32_field(*value, "body_block_index", UINT32_MAX),
         };
+        // type_param_names: tolerate legacy snapshots where the field was
+        // missing instead of an empty array.
+        if (const auto *tps = reader.field(*value, "type_param_names");
+            tps != nullptr && tps->kind == json::Kind::Array) {
+            info.type_param_names = reader.string_array_field(*value, "type_param_names");
+        }
         if (const auto *params = reader.field(*value, "params");
             params != nullptr && params->kind == json::Kind::Array) {
             info.params.reserve(params->array_items.size());
@@ -1420,18 +1525,46 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 });
             }
         }
-        if (const auto *type_params = reader.field(*value, "type_param_names");
-            type_params != nullptr) {
-            info.type_param_names = reader.string_array_field(*value, "type_param_names");
-        }
-        if (const auto *effect = reader.field(*value, "effect"); effect != nullptr) {
-            if (const auto *capabilities = reader.field(*effect, "capabilities");
-                capabilities != nullptr && capabilities->kind == json::Kind::Array) {
-                info.effect.capabilities.reserve(capabilities->array_items.size());
-                for (const auto &item : capabilities->array_items) {
+        if (const auto *effect_obj = reader.field(*value, "effect"); effect_obj != nullptr) {
+            info.effect.kind = static_cast<int>(reader.int_field(*effect_obj, "kind"));
+            info.effect.source_range = reader.range_field(*effect_obj, "source_range");
+            if (const auto *caps = reader.field(*effect_obj, "capabilities");
+                caps != nullptr && caps->kind == json::Kind::Array) {
+                info.effect.capabilities.reserve(caps->array_items.size());
+                for (const auto &item : caps->array_items) {
                     info.effect.capabilities.push_back(reader.symbol_id_value(item.get()));
                 }
             }
+            // P3c (effects judgement) + P4.S6 decreases: round-trip fields
+            // added after the baseline snapshot was produced. Missing fields
+            // default to Pure / false so legacy snapshots still parse.
+            const auto *jk_field = reader.field(*effect_obj, "judgement_kind");
+            const auto jk_int = jk_field != nullptr
+                                    ? static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"))
+                                    : static_cast<int>(EffectJudgement::Kind::Pure);
+            CapabilitySymbolSet j_caps;
+            if (const auto *jc = reader.field(*effect_obj, "judgement_capabilities");
+                jc != nullptr && jc->kind == json::Kind::Array) {
+                for (const auto &item : jc->array_items) {
+                    j_caps.values.insert(reader.symbol_id_value(item.get()).value);
+                }
+            }
+            switch (static_cast<EffectJudgement::Kind>(jk_int)) {
+            case EffectJudgement::Kind::Pure:
+                info.effect.judgement = EffectJudgement::make_pure();
+                break;
+            case EffectJudgement::Kind::Nondet:
+                info.effect.judgement = EffectJudgement::make_nondet();
+                break;
+            case EffectJudgement::Kind::Bottom:
+                info.effect.judgement = EffectJudgement::make_bottom();
+                break;
+            case EffectJudgement::Kind::CapabilitySet:
+                info.effect.judgement = EffectJudgement::make_capability_set(std::move(j_caps));
+                break;
+            }
+            info.effect.has_decreases =
+                reader.optional_bool_field(*effect_obj, "has_decreases", false);
         }
         return info;
     }
@@ -1540,7 +1673,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .resolved_symbol = reader.optional_symbol_id_field(object, "resolved_symbol"),
         .semantic_name = reader.string_field(object, "semantic_name"),
         .call_target_kind =
-            static_cast<TypedCallTargetKind>(reader.uint_field(object, "call_target_kind")),
+            reader.template optional_enum_field<TypedCallTargetKind>(object, "call_target_kind"),
         .path_root = reader.string_field(object, "path_root"),
         .path_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "path_root_kind")),

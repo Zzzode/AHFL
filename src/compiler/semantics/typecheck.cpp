@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
 
@@ -16,10 +17,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ahfl {
@@ -88,17 +91,12 @@ void append_typed_child(std::vector<TypedExprChild> &children,
     std::vector<TypedExprChild> children;
     std::visit(
         Overloaded{
-            [&](const ast::NoneLiteralExpr &) {},
             [&](const ast::BoolLiteralExpr &) {},
             [&](const ast::IntegerLiteralExpr &) {},
             [&](const ast::FloatLiteralExpr &) {},
             [&](const ast::DecimalLiteralExpr &) {},
             [&](const ast::StringLiteralExpr &) {},
             [&](const ast::DurationLiteralExpr &) {},
-            [&](const ast::SomeExpr &e) {
-                append_typed_child(
-                    children, program, e.value.get(), source_id, TypedExprChildRole::Operand);
-            },
             [&](const ast::PathExpr &) {},
             [&](const ast::QualifiedValueExpr &) {},
             [&](const ast::CallExpr &e) {
@@ -166,35 +164,6 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                        source_id,
                                        TypedExprChildRole::StructFieldValue,
                                        field->field_name);
-                }
-            },
-            [&](const ast::ListLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    append_typed_child(children,
-                                       program,
-                                       item.get(),
-                                       source_id,
-                                       TypedExprChildRole::CollectionElement);
-                }
-            },
-            [&](const ast::SetLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    append_typed_child(children,
-                                       program,
-                                       item.get(),
-                                       source_id,
-                                       TypedExprChildRole::CollectionElement);
-                }
-            },
-            [&](const ast::MapLiteralExpr &e) {
-                for (const auto &entry : e.entries) {
-                    append_typed_child(
-                        children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
-                    append_typed_child(children,
-                                       program,
-                                       entry->value.get(),
-                                       source_id,
-                                       TypedExprChildRole::MapValue);
                 }
             },
             [&](const ast::UnaryExpr &e) {
@@ -369,7 +338,6 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 [[nodiscard]] std::string expr_spelling(const ast::ExprSyntax &expr) {
     return std::visit(
         Overloaded{
-            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
             [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
             [](const ast::IntegerLiteralExpr &e) -> std::string {
                 if (e.literal)
@@ -481,15 +449,16 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         expr.node);
 }
 
-[[nodiscard]] TypedCallTargetKind call_target_kind_for(const ast::ExprSyntax &expr,
-                                                       const ResolveResult &resolve_result,
-                                                       std::optional<SourceId> source_id) {
+[[nodiscard]] std::optional<TypedCallTargetKind> call_target_kind_for(
+    const ast::ExprSyntax &expr,
+    const ResolveResult &resolve_result,
+    std::optional<SourceId> source_id) {
     if (!std::holds_alternative<ast::CallExpr>(expr.node)) {
-        return TypedCallTargetKind::None;
+        return std::nullopt;
     }
     const auto &call = std::get<ast::CallExpr>(expr.node);
     if (call.callee == nullptr) {
-        return TypedCallTargetKind::None;
+        return std::nullopt;
     }
 
     // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference whose
@@ -499,31 +468,34 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         fn_reference.has_value()) {
         if (const auto symbol = resolve_result.symbol_table.get(fn_reference->get().target);
             symbol.has_value() && symbol->get().kind == SymbolKind::Function) {
-            return TypedCallTargetKind::Function;
+            return TypedCallTargetKind::Builtin;
         }
     }
 
     const auto reference =
         resolve_result.find_reference(ReferenceKind::CallTarget, call.callee->range, source_id);
     if (!reference.has_value()) {
-        return TypedCallTargetKind::None;
+        // Could not resolve the call target. Conservatively mark it as a
+        // builtin placeholder so downstream passes can still see a concrete
+        // classification without tripping over optional emptiness.
+        return TypedCallTargetKind::Builtin;
     }
 
     const auto symbol = resolve_result.symbol_table.get(reference->get().target);
     if (!symbol.has_value()) {
-        return TypedCallTargetKind::None;
+        return TypedCallTargetKind::Builtin;
     }
 
     switch (symbol->get().kind) {
     case SymbolKind::Capability:
-        return TypedCallTargetKind::Capability;
+        return TypedCallTargetKind::InherentMethod;
     case SymbolKind::Predicate:
-        return TypedCallTargetKind::Predicate;
+        return TypedCallTargetKind::TraitMethod;
     case SymbolKind::Function:
-        // A Function symbol reached via the legacy CallTarget reference (e.g.
-        // when both a fn and a capability share a name). Treat it as a
-        // Function call target for consistency.
-        return TypedCallTargetKind::Function;
+        // No explicit TypedCallTargetKind variant exists for top-level fns in
+        // the wave-10 MVP. Classify as Builtin as a conservative placeholder
+        // so lowering sites can fall through uniformly.
+        return TypedCallTargetKind::Builtin;
     case SymbolKind::Struct:
     case SymbolKind::Enum:
     case SymbolKind::TypeAlias:
@@ -533,7 +505,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     case SymbolKind::Trait:
         break;
     }
-    return TypedCallTargetKind::None;
+    return TypedCallTargetKind::Builtin;
 }
 
 [[nodiscard]] std::string semantic_name_for(const ast::ExprSyntax &expr) {
@@ -557,7 +529,6 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
                 return e.inner ? expr_spelling(*e.inner) : std::string{};
             },
             [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
-            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
             [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
             [](const ast::IntegerLiteralExpr &e) -> std::string {
                 return e.literal ? e.literal->spelling : std::string{};
@@ -863,9 +834,67 @@ TypeCheckResult TypeCheckPass::run() {
     result_.environment = std::move(environment_result.environment);
     hir_builder_.apply_declaration_payload_updates(
         std::move(environment_result.declaration_updates));
+    // P3c.S5a: snapshot the declaration-layer impl_index from TypeEnvironment
+    // into TypedProgram, alongside a flat list of impl-declaration indexes so
+    // typed-tree consumers can dereference entries without re-entering
+    // TypeEnvironment. We build the flat list from the environment's impls_
+    // map (already indexed by impl_index) so ordering matches declaration
+    // order.
+    {
+        auto &tp = result_.typed_program;
+        auto &env = result_.environment;
+        tp.impl_declaration_indexes.clear();
+        tp.impl_index.clear();
+        // First, map each environment impl_index → its TypedDecl position so
+        // TypedProgram entries dereference correctly. We walk the typed
+        // declarations once; ImplTypeInfo payloads carry their own .index.
+        std::unordered_map<std::size_t, std::uint32_t> env_index_to_decl_index;
+        for (std::uint32_t i = 0; i < tp.declarations.size(); ++i) {
+            if (const auto *impl_info =
+                    std::get_if<ImplTypeInfo>(&tp.declarations[i].payload)) {
+                env_index_to_decl_index.emplace(impl_info->index, i);
+            }
+        }
+        // Copy impl buckets; each bucket element is the environment impl
+        // index → remap to TypedProgram declaration index.
+        for (const auto &[env_key, env_indices] : env.impl_index()) {
+            TypedProgram::ImplIndexKey key{
+                .trait_symbol_value = env_key.trait_symbol_value,
+                .normalized_type_key = env_key.normalized_type_key,
+            };
+            std::vector<std::uint32_t> decl_indices;
+            decl_indices.reserve(env_indices.size());
+            for (const auto env_idx : env_indices) {
+                const auto iter = env_index_to_decl_index.find(env_idx);
+                if (iter == env_index_to_decl_index.end()) {
+                    continue;
+                }
+                decl_indices.push_back(iter->second);
+                // Also insert into the flat impl_declaration_indexes list if
+                // not already present (deduplicate in case an impl appears in
+                // multiple trait-bucket views).
+                tp.impl_declaration_indexes.push_back(iter->second);
+            }
+            if (!decl_indices.empty()) {
+                tp.impl_index.emplace(std::move(key), std::move(decl_indices));
+            }
+        }
+        // Deduplicate flat impl_declaration_indexes (stable order).
+        std::unordered_set<std::uint32_t> seen_impl;
+        std::vector<std::uint32_t> unique_impls;
+        unique_impls.reserve(tp.impl_declaration_indexes.size());
+        for (const auto idx : tp.impl_declaration_indexes) {
+            if (seen_impl.insert(idx).second) {
+                unique_impls.push_back(idx);
+            }
+        }
+        tp.impl_declaration_indexes = std::move(unique_impls);
+    }
     ConstSema(*this).run();
-    ContractSema(*this).run();
+    // FlowSema must run before ContractSema so decreases clauses can observe
+    // let-shadowed `self` bindings introduced inside agent flow handlers.
     FlowSema(*this).run();
+    ContractSema(*this).run();
     WorkflowSema(*this).run();
     FnSema(*this).run();
     ImplSema(*this).run();
@@ -1263,6 +1292,137 @@ bool TypeCheckPass::impl_target_implements(SymbolId target_id, SymbolId trait_id
             return true;
         }
     }
+    return false;
+}
+
+// P2d.S2 (RFC §3.5 / §2) + P3c.S5b: super-trait chain closure for bound
+// checking, extended to accept a normalized type key rather than a nominal
+// SymbolId. This lets the same predicate answer "does Int implement Eq?"
+// (where Int is a built-in with no struct/enum symbol) alongside nominal
+// targets like `struct Counter`. Primitive targets match by
+// `TypeEnvironment::normalize_type_key` on ImplTypeInfo::target_type;
+// nominal targets still compare SymbolIds for efficiency and backward
+// compatibility with the orphan-rule / coherence paths.
+namespace {
+bool impl_matches_target(const ImplTypeInfo &impl,
+                         SymbolId nominal_target,
+                         std::string_view normalized_target,
+                         bool use_nominal) {
+    if (impl.is_inherent) {
+        return false;
+    }
+    if (use_nominal) {
+        return impl.target_symbol.has_value() && *impl.target_symbol == nominal_target;
+    }
+    if (impl.target_type == nullptr) {
+        return false;
+    }
+    return TypeEnvironment::normalize_type_key(*impl.target_type) == normalized_target;
+}
+
+bool trait_chain_implements(SymbolId nominal_target,
+                            std::string_view normalized_target,
+                            bool use_nominal,
+                            SymbolId trait_id,
+                            const TypeEnvironment &env,
+                            std::unordered_set<std::size_t> &visited) {
+    const auto [_, inserted] = visited.insert(trait_id.value);
+    if (!inserted) {
+        return false; // break cycles in the super-trait DAG
+    }
+    // (1) Direct impl of trait_id for the target type.
+    for (const auto &[index, impl] : env.impls()) {
+        (void)index;
+        if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait_id) {
+            continue;
+        }
+        if (impl_matches_target(impl, nominal_target, normalized_target, use_nominal)) {
+            return true;
+        }
+    }
+    // (2) Walk sub-traits: every trait X that has `trait_id` listed in its
+    // super_traits is a sub-trait. If `target` implements any such X, the
+    // bound for `trait_id` is transitively satisfied.
+    for (const auto &[x_id, x_info] : env.traits()) {
+        (void)x_info;
+        for (const auto super_id : x_info.super_traits) {
+            if (super_id == trait_id) {
+                if (trait_chain_implements(nominal_target,
+                                           normalized_target,
+                                           use_nominal,
+                                           SymbolId{x_id},
+                                           env,
+                                           visited)) {
+                    return true;
+                }
+                break; // each child trait is recursed into at most once
+            }
+        }
+    }
+    return false;
+}
+} // namespace
+
+bool TypeCheckPass::check_bound(const Type &subject_type,
+                                std::string_view trait_name,
+                                SourceRange range) {
+    // Resolve the (possibly qualified) trait name via the symbol table. The
+    // where-clause bound parser stores raw spellings ("Show", "Ord") but the
+    // dispatch stage may pass a canonical form ("module::Trait") — strip a
+    // leading `::`-qualified module prefix so local lookup succeeds. The
+    // symbol table applies the current module prefix so same-module trait
+    // references resolve correctly without explicit qualification.
+    std::string_view local_name = trait_name;
+    if (const auto separator = trait_name.rfind("::"); separator != std::string_view::npos) {
+        local_name = trait_name.substr(separator + 2);
+    }
+    const auto trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
+    if (!trait_symbol.has_value()) {
+        // Unknown trait: the resolver would already have flagged an undeclared
+        // trait reference at the where-clause declaration site. To avoid
+        // double-reporting (once per call site), silently decline the check.
+        return false;
+    }
+    const auto trait_info = environment().get_trait(trait_symbol->get().id);
+    if (!trait_info.has_value()) {
+        return false;
+    }
+    // Split the subject into a nominal SymbolId branch (fast path used by
+    // struct/enum targets including all S5b stage-1 and most stage-2
+    // dispatch) and a normalized-type-key branch that covers primitive
+    // targets such as `impl Eq for Int` / `impl Hash for String` (P3c.S5b
+    // stage-3 bound gate for primitive-trait method dispatch).
+    const auto nominal_target = nominal_symbol_of(subject_type);
+    std::unordered_set<std::size_t> visited;
+    const bool implemented = [&]() -> bool {
+        if (nominal_target.has_value()) {
+            return trait_chain_implements(*nominal_target,
+                                          /*normalized_target=*/{},
+                                          /*use_nominal=*/true,
+                                          trait_info->get().symbol,
+                                          environment(),
+                                          visited);
+        }
+        const std::string key = TypeEnvironment::normalize_type_key(subject_type);
+        return trait_chain_implements(SymbolId{0},
+                                      key,
+                                      /*use_nominal=*/false,
+                                      trait_info->get().symbol,
+                                      environment(),
+                                      visited);
+    }();
+    if (implemented) {
+        return true;
+    }
+    const std::string nominal_name = nominal_target.has_value()
+                                         ? nominal_describe(subject_type)
+                                         : std::string{"<type>"};
+    typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
+                         messages::typecheck::TraitBoundNotSatisfied.format_with(
+                             nominal_name,
+                             std::string{trait_name},
+                             subject_type.describe()),
+                         range);
     return false;
 }
 
@@ -1720,6 +1880,159 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 continue;
             }
 
+            // Determines whether the decreases body matches the
+            // container.length pattern used by the bounded-rank SMV
+            // encoding. Container membership is tested via SemanticType
+            // holds() against ListT / SetT / MapT (R-05: no string
+            // matching against type names).
+            TypePtr global_self = driver_->clone_or_any(
+                std::cref(*agent_info->get().context_type));
+            if (global_self == nullptr || is_error_type(*global_self)) {
+                global_self = driver_->make_type(TypeKind::Any);
+            }
+            const auto classify_decreases =
+                [&]() -> std::tuple<bool, bool, TypePtr> {
+                // Two AST shapes match the `self.length` pattern because the
+                // frontend flattens dotted identifiers into PathExpr while
+                // dotted access on arbitrary expressions uses MemberAccessExpr.
+                // We canonicalize both into a single classification so the
+                // bounded-rank encoding is equally available for both.
+                TypePtr bound_self = nullptr;
+                bool is_self_length = false;
+                if (clause->expr != nullptr) {
+                    if (const auto *member_access =
+                            std::get_if<ast::MemberAccessExpr>(&clause->expr->node);
+                        member_access != nullptr) {
+                        if (member_access->member == "length" &&
+                            member_access->base != nullptr &&
+                            std::holds_alternative<ast::PathExpr>(
+                                member_access->base->node)) {
+                            const auto &base_path =
+                                std::get<ast::PathExpr>(member_access->base->node);
+                            is_self_length =
+                                base_path.path != nullptr &&
+                                base_path.path->root_name == "self" &&
+                                base_path.path->members.empty();
+                            if (is_self_length) {
+                                bound_self = driver_->clone_or_any(std::cref(
+                                    *agent_info->get().context_type));
+                            }
+                        }
+                    } else if (const auto *path_expr =
+                                   std::get_if<ast::PathExpr>(&clause->expr->node);
+                               path_expr != nullptr && path_expr->path != nullptr) {
+                        is_self_length =
+                            path_expr->path->root_name == "self" &&
+                            path_expr->path->members.size() == 1 &&
+                            path_expr->path->members.front() == "length";
+                        if (is_self_length) {
+                            bound_self = driver_->clone_or_any(std::cref(
+                                *agent_info->get().context_type));
+                        }
+                    }
+                }
+                const bool container_self = [&]() {
+                    if (bound_self == nullptr) {
+                        return false;
+                    }
+                    const auto container =
+                        stdlib_bridge::std_container_type_view(*bound_self);
+                    if (!container.has_value()) {
+                        return false;
+                    }
+                    switch (container->kind) {
+                    case stdlib_bridge::StdContainerKind::List:
+                    case stdlib_bridge::StdContainerKind::Set:
+                    case stdlib_bridge::StdContainerKind::Map:
+                        return true;
+                    case stdlib_bridge::StdContainerKind::Option:
+                        return false;
+                    }
+                    return false;
+                }();
+                return {is_self_length, container_self, bound_self};
+            };
+            const auto [is_self_length, self_is_container, pre_bound_self] =
+                classify_decreases();
+
+            if (clause->kind == ast::ContractClauseKind::Decreases) {
+                if (clause->is_wildcard) {
+                    // Wildcard decreases carries no expression to type-check.
+                    continue;
+                }
+                // Decreases clauses represent a well-founded termination
+                // measure. The measure is always integer-valued. When the
+                // measure matches `self.length` on a container agent context
+                // the bounded-rank SMV encoding applies; any other integer
+                // expression falls back to an abstract observation. If the
+                // flow handler introduced a same-named `let self = ...` the
+                // type checker emits DECREASES_SHADOWED_RECEIVER so
+                // downstream emitters degrade to an abstract observation.
+                const auto int_type = driver_->make_type(TypeKind::Int);
+                ValueContext decreases_context;
+                decreases_context.bindings.emplace(
+                    "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                decreases_context.bindings.emplace(
+                    "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+                TypePtr self_type = pre_bound_self;
+                if (self_type == nullptr || is_error_type(*self_type)) {
+                    self_type = global_self;
+                }
+                decreases_context.bindings.emplace("self", std::move(self_type));
+
+                const auto value = driver_->check_expr(
+                    *clause->expr, decreases_context, std::cref(*int_type));
+                if (!value.type->holds<types::IntT>() && !is_error_type(*value.type)) {
+                    driver_->typecheck_error_here(
+                        error_codes::typecheck::TypeMismatch,
+                        messages::typecheck::IntExpressionRequired.format_with(
+                            "decreases clause"),
+                        clause->expr->range,
+                        std::vector<Diagnostic::Related>{Diagnostic::Related{
+                            .message = actual_type_note(*value.type),
+                            .range = clause->expr->range,
+                        }});
+                }
+                if (!value.is_pure) {
+                    driver_->non_pure_error_here(
+                        "decreases clause", value.effect, clause->expr->range);
+                }
+
+                // Shadow warning: a flow-level `let self = ...` same-name
+                // binding makes the bounded-rank encoding unsound. Emitted
+                // whenever `decreases: self.length` is present on a struct or
+                // container context whose flow handler introduced a shadow.
+                const bool is_shadowed =
+                    driver_->flow_self_shadowing_.contains(
+                        target->get().target.value);
+                if (is_self_length && is_shadowed) {
+                    const auto describe_shadow =
+                        driver_->flow_self_shadowing_.at(
+                            target->get().target.value);
+                    if (driver_->current_source_ != nullptr) {
+                        driver_->result_.diagnostics.warning()
+                            .code(error_codes::typecheck::
+                                      DecreasesShadowedReceiver)
+                            .message(messages::typecheck::
+                                         DecreasesShadowedReceiver,
+                                     describe_shadow)
+                            .range(clause->expr->range)
+                            .source(driver_->current_source_->source)
+                            .emit();
+                    } else {
+                        driver_->result_.diagnostics.warning()
+                            .code(error_codes::typecheck::
+                                      DecreasesShadowedReceiver)
+                            .message(messages::typecheck::
+                                         DecreasesShadowedReceiver,
+                                     describe_shadow)
+                            .range(clause->expr->range)
+                            .emit();
+                    }
+                }
+                continue;
+            }
+
             const auto bool_type = driver_->make_type(TypeKind::Bool);
             ValueContext context;
             context.bindings.emplace(
@@ -1937,11 +2250,77 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                 "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
             context.bindings.emplace(
                 "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+            // When a flow handler introduces a `let self = ...` binding that
+            // shadows the conceptual agent receiver, remember the shadowing
+            // type so any associated `decreases: self.length` contract can
+            // emit DECREASES_SHADOWED_RECEIVER during ContractSema (visited
+            // later). Duplicate records are harmless - the description is
+            // identical across handlers for a same-typed let.
+            //
+            // Track shadowing by walking the handler body AST for let-statements
+            // named `self`. Binding-level tracking after check_block() is not
+            // reliable because the block-local ValueContext is not propagated
+            // upward once the body completes. AST-level matching gives exact
+            // visibility into whether a flow-local shadow will hide the
+            // conceptual agent receiver at expression-check time.
+            std::string shadow_desc;
+            std::function<void(const ast::BlockSyntax &)> collect_self_lets;
+            collect_self_lets = [&](const ast::BlockSyntax &block) {
+                for (const auto &stmt : block.statements) {
+                    if (stmt == nullptr) {
+                        continue;
+                    }
+                    if (stmt->kind == ast::StatementSyntaxKind::Let &&
+                        stmt->let_stmt != nullptr &&
+                        stmt->let_stmt->name == "self") {
+                        if (stmt->let_stmt->type != nullptr &&
+                            shadow_desc.empty()) {
+                            shadow_desc = stmt->let_stmt->type->spelling();
+                            if (shadow_desc.empty()) {
+                                shadow_desc = "Any";
+                            }
+                        } else if (shadow_desc.empty()) {
+                            shadow_desc = "Any";
+                        }
+                    }
+                    // Walk into nested blocks (if/else bodies, etc.) so nested
+                    // shadows are also detected.
+                    switch (stmt->kind) {
+                    case ast::StatementSyntaxKind::If: {
+                        const auto *if_s = stmt->if_stmt.get();
+                        if (if_s == nullptr) {
+                            break;
+                        }
+                        if (if_s->then_block != nullptr) {
+                            collect_self_lets(*if_s->then_block);
+                        }
+                        if (if_s->else_block != nullptr) {
+                            collect_self_lets(*if_s->else_block);
+                        }
+                        break;
+                    }
+                    case ast::StatementSyntaxKind::Let:
+                    case ast::StatementSyntaxKind::Assign:
+                    case ast::StatementSyntaxKind::Goto:
+                    case ast::StatementSyntaxKind::Return:
+                    case ast::StatementSyntaxKind::Assert:
+                    case ast::StatementSyntaxKind::Expr:
+                        break;
+                    }
+                }
+            };
+            if (handler->body != nullptr) {
+                collect_self_lets(*handler->body);
+            }
             driver_->check_block(*handler->body,
                                  context,
                                  std::cref(*agent_info->get().output_type),
                                  handler->state_name,
                                  agent_info->get().output_type_range);
+            if (!shadow_desc.empty()) {
+                driver_->flow_self_shadowing_.try_emplace(
+                    target->get().target.value, std::move(shadow_desc));
+            }
         }
     }
 }
@@ -2181,6 +2560,17 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     // Type-check the body block.
     // Note: no expected_return_origin so the return statement uses
     // assignability check (not schema boundary check — that's for agent output).
+    //
+    // TODO(hook_for_p3c): P3c return-site where-bound validation. After the
+    // body block is type-checked, walk every ReturnStmtSyntax in the typed
+    // block, collect the inferred return value type, and validate it against
+    // any `where T:Trait` constraints that apply to the fn's return type
+    // (i.e. bounds whose subject type is the declared return type or a
+    // type parameter referenced by it). Emit TRAIT_BOUND_NOT_SATISFIED at
+    // the return expression range for each unsatisfied bound. The hook is
+    // intentionally a placeholder here (no logic) so P3c can slot in the
+    // full bound-expansion + type-parameter-walk without touching call-site
+    // code. See RFC §3.5 return-bound semantics.
     if (info.return_type != nullptr) {
         driver_->check_block(*decl.body,
                              context,
@@ -2707,6 +3097,17 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                       expectation);
                 } else {
                     // Ordinary function return: check assignability.
+                    //
+                    // TODO(hook_for_p3c): P3c return-bound hook. After the
+                    // assignability check passes, inspect the fn's
+                    // where_clause for any bounds whose subject type (or a
+                    // type parameter referenced by it) matches the declared
+                    // return type. For each such bound, call
+                    // `check_bound(value.type, trait_name, range)`. The
+                    // check logic lives in P3c (it needs generic bound
+                    // expansion: `where T: Eq` where `-> T` for example) so
+                    // this site deliberately performs no work beyond the
+                    // assignability check today.
                     const auto value =
                         check_expr(*statement.return_stmt->value, context, expected_return_type);
                     (void)check_assignable(*value.type,

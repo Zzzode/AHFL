@@ -176,6 +176,16 @@ struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
     std::variant<ExprRef, TemporalExprPtr> value; // Plain expression or temporal-logic expression
     SourceRangeOpt source_range;
+    // P4.S5a: wildcard flag used when kind == ContractClauseKind::Decreases
+    // and the writer used `decreases: *;` (no concrete metric supplied).
+    bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
+    // P4.S6: optional termination measure attached to the clause.
+    // `decreases_wildcard` is true when the writer used the wildcard form
+    // `decreases *`; `decreases_terms` carries the ordered list of measure
+    // expressions for the explicit lexical-order form. The two fields are
+    // mutually exclusive: when wildcard is true, `decreases_terms` is empty.
+    bool decreases_wildcard{false};
+    std::vector<ExprRef> decreases_terms;
 };
 
 /// Contract declaration: contract for AgentName { requires ...; ensures ...; }
@@ -312,6 +322,56 @@ struct FnDecl {
     bool has_body{false};
     Owned<Block> body;
     SymbolRef symbol_ref;
+};
+
+// ----------------------------------------------------------------------------
+// Concrete instance declarations (monomorphization output)
+// ----------------------------------------------------------------------------
+
+/// Category of the nominal symbol that was instantiated.
+enum class InstanceKind {
+    Unknown,
+    Capability,
+    Predicate,
+    Agent,
+    Workflow,
+    /// P2d.S5: a top-level `fn` declaration instantiated at concrete type
+    /// arguments. Mangled dispatch key is identical to the Capability shape
+    /// so execution backends treat it uniformly.
+    Fn,
+};
+
+/// A concrete, monomorphized instance of a nominal declaration produced by
+/// typed-tree lowering. Each distinct (SymbolId, type_args) key produces
+/// exactly one InstanceDecl, with `name` equal to mangle_instance(...).
+///
+/// InstanceDecls are the canonical names used by execution backends for
+/// dispatch. The nominal symbol (Symbol/SymbolRef) retains the user-facing
+/// provenance while `name` is stable across identical compilations.
+struct InstanceDecl {
+    DeclarationProvenance provenance;
+    /// Stable, ASCII-safe mangled name.
+    std::string name;
+    /// Category of the originating nominal declaration.
+    InstanceKind kind{InstanceKind::Unknown};
+    /// Nominal symbol that was instantiated (reference entry).
+    SymbolRef symbol_ref;
+    /// Concrete type-arguments used for this instance, mirroring the
+    /// `type_args` passed to mangle_instance().
+    std::vector<TypeRef> type_args;
+    /// (Capability / Predicate) instantiated parameter types.
+    std::vector<ParamDecl> params;
+    /// (Capability) concrete return type. Predicates implicitly return Bool.
+    TypeRef return_type_ref;
+    /// (Agent) input/context/output types. For workflow-node instantiations
+    /// these fields reflect the concrete agent schema applied by the node.
+    TypeRef agent_input_type_ref;
+    TypeRef agent_context_type_ref;
+    TypeRef agent_output_type_ref;
+    /// (Workflow) input/output types (when a workflow itself is instantiated
+    /// as part of a larger cross-module composition).
+    TypeRef workflow_input_type_ref;
+    TypeRef workflow_output_type_ref;
 };
 
 // ----------------------------------------------------------------------------

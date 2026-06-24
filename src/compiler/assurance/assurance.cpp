@@ -6,11 +6,14 @@
 #include "base/support/json.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 namespace ahfl::assurance {
 namespace {
@@ -336,6 +339,273 @@ analyze_capability(const ir::CapabilityDecl &capability,
     return profile;
 }
 
+// ---------------------------------------------------------------------------
+// Decreases pattern classifier (IR-level)
+// ---------------------------------------------------------------------------
+// Replicates the four MVP shapes supported by the AST-level recognizer but
+// operates on the lowered IR so the assurance bundle can surface obligations
+// without a dependency back into the semantic AST layer.
+//
+// Supported shapes mirror DecreasePatternKind:
+//   1. LengthSelf  — self.length  (PathExpr or MemberAccessExpr)
+//   2. SelfField   — self.<field> (PathExpr or MemberAccessExpr)
+//   3. MinusOne    — <ident> - 1  (BinaryExpr Subtract)
+//   4. Wildcard    — *            (synthesized from clause.decreases_wildcard)
+//
+// Anything else reports Unrecognized. The "well_founded" flag marks measures
+// whose semantics the compiler knows how to discharge (either via the SMV
+// bounded-rank encoding or by lexical-order convention on integer counters).
+// ---------------------------------------------------------------------------
+
+/// Render an IR path to "root.member1.member2" so decreases_pattern entries
+/// read like the original source even when the measure only uses the lowered
+/// IR representation. Mirrors the convention used by ir_print's render_path.
+[[nodiscard]] std::string render_path(const ir::Path &path) {
+    std::ostringstream builder;
+    switch (path.root_kind) {
+    case ir::PathRootKind::Identifier: builder << path.root_name; break;
+    case ir::PathRootKind::Input:      builder << "input";         break;
+    case ir::PathRootKind::Context:    builder << path.root_name;  break;
+    case ir::PathRootKind::Output:     builder << "output";        break;
+    case ir::PathRootKind::State:
+    case ir::PathRootKind::Local:      builder << path.root_name;  break;
+    }
+    for (const auto &member : path.members) {
+        builder << '.' << member;
+    }
+    return builder.str();
+}
+
+/// Render an IR expression into a compact human-readable string. Mirrors the
+/// same pattern ir_print uses but scoped to pure decreases-subject shapes so
+/// the obligation entries stay small.
+[[nodiscard]] std::string render_decreases_subject(const ir::Expr &expr) {
+    return std::visit(
+        Overloaded{
+            [](const ir::NoneLiteralExpr &) { return std::string("none"); },
+            [](const ir::BoolLiteralExpr &v) { return std::string(v.value ? "true" : "false"); },
+            [](const ir::IntegerLiteralExpr &v) { return v.spelling; },
+            [](const ir::FloatLiteralExpr &v) { return v.spelling; },
+            [](const ir::DecimalLiteralExpr &v) { return v.spelling; },
+            [](const ir::StringLiteralExpr &v) { return v.spelling; },
+            [](const ir::DurationLiteralExpr &v) { return v.spelling; },
+            [&](const ir::SomeExpr &v) {
+                return std::string("some(") +
+                       (v.value ? render_decreases_subject(*v.value) : std::string("none")) + ")";
+            },
+            [](const ir::PathExpr &v) { return render_path(v.path); },
+            [](const ir::QualifiedValueExpr &v) { return v.value; },
+            [&](const ir::UnaryExpr &v) {
+                const char *op = v.op == ir::ExprUnaryOp::Negate     ? "-"
+                                 : v.op == ir::ExprUnaryOp::Positive ? "+"
+                                                                     : "!";
+                return std::string("(") + op +
+                       (v.operand ? render_decreases_subject(*v.operand) : std::string("none")) +
+                       ")";
+            },
+            [&](const ir::BinaryExpr &v) {
+                const char *op = [&]() {
+                    switch (v.op) {
+                    case ir::ExprBinaryOp::Implies:      return "=>";
+                    case ir::ExprBinaryOp::Or:           return "||";
+                    case ir::ExprBinaryOp::And:          return "&&";
+                    case ir::ExprBinaryOp::Equal:        return "==";
+                    case ir::ExprBinaryOp::NotEqual:     return "!=";
+                    case ir::ExprBinaryOp::Less:         return "<";
+                    case ir::ExprBinaryOp::LessEqual:    return "<=";
+                    case ir::ExprBinaryOp::Greater:      return ">";
+                    case ir::ExprBinaryOp::GreaterEqual: return ">=";
+                    case ir::ExprBinaryOp::Add:          return "+";
+                    case ir::ExprBinaryOp::Subtract:     return "-";
+                    case ir::ExprBinaryOp::Multiply:     return "*";
+                    case ir::ExprBinaryOp::Divide:       return "/";
+                    case ir::ExprBinaryOp::Modulo:       return "%";
+                    }
+                    return "?";
+                }();
+                return std::string("(") + (v.lhs ? render_decreases_subject(*v.lhs)
+                                                 : std::string("none")) +
+                       " " + op + " " +
+                       (v.rhs ? render_decreases_subject(*v.rhs) : std::string("none")) + ")";
+            },
+            [&](const ir::MemberAccessExpr &v) {
+                return (v.base ? render_decreases_subject(*v.base) : std::string("<none>")) +
+                       "." + v.member;
+            },
+            [&](const ir::CallExpr &v) {
+                std::ostringstream out;
+                out << v.callee << "(";
+                bool first = true;
+                for (const auto &arg : v.arguments) {
+                    if (!first) {
+                        out << ", ";
+                    }
+                    first = false;
+                    out << (arg ? render_decreases_subject(*arg) : std::string("none"));
+                }
+                out << ")";
+                return out.str();
+            },
+            [](const auto &) { return std::string("<expr>"); },
+        },
+        expr.node);
+}
+
+/// True iff expr is a PathExpr whose root is exactly "self" with no members.
+[[nodiscard]] bool is_self_path(const ir::Expr &expr) {
+    const auto *path = std::get_if<ir::PathExpr>(&expr.node);
+    if (path == nullptr) {
+        return false;
+    }
+    return path->path.root_name == "self" && path->path.members.empty();
+}
+
+/// Render a SourceRange to a compact "begin..end" string using the byte
+/// offsets that IR nodes carry natively (R-04). Missing ranges collapse to an
+/// empty string so the JSON field is always present but callers can tell the
+/// location was unavailable.
+[[nodiscard]] std::string encode_location(const ir::SourceRangeOpt &range) {
+    if (!range.has_value()) {
+        return {};
+    }
+    const SourceRange &r = *range;
+    std::ostringstream out;
+    out << r.begin_offset << ".." << r.end_offset;
+    return out.str();
+}
+
+[[nodiscard]] bool is_integer_literal_one(const ir::Expr &expr) {
+    const auto *lit = std::get_if<ir::IntegerLiteralExpr>(&expr.node);
+    if (lit == nullptr) {
+        return false;
+    }
+    return lit->spelling == "1" || lit->spelling == "+1" || lit->spelling == "0x1";
+}
+
+/// Result of the IR-level classifier: carries everything
+/// build_assurance_bundle needs to populate a VerificationObligation.
+struct ClassifiedDecreasesTerm {
+    std::string pattern_render;
+    VerificationObligationStatus status{VerificationObligationStatus::Unrecognized};
+    bool well_founded{false};
+};
+
+[[nodiscard]] ClassifiedDecreasesTerm classify_decreases_term(const ir::Expr &expr) {
+    ClassifiedDecreasesTerm result{.pattern_render = render_decreases_subject(expr)};
+
+    // ① LengthSelf — member access self.length OR flattened path self.length.
+    if (const auto *member = std::get_if<ir::MemberAccessExpr>(&expr.node); member != nullptr) {
+        if (member->member == "length" && member->base && is_self_path(*member->base)) {
+            result.status = VerificationObligationStatus::Recognized;
+            result.well_founded = true;
+            return result;
+        }
+        // ② SelfField on a member access receiver: self.<field>.
+        if (member->base && is_self_path(*member->base)) {
+            result.status = VerificationObligationStatus::Recognized;
+            result.well_founded = true;
+            return result;
+        }
+        result.status = VerificationObligationStatus::Unrecognized;
+        result.well_founded = false;
+        return result;
+    }
+
+    if (const auto *path = std::get_if<ir::PathExpr>(&expr.node); path != nullptr) {
+        // ① Flat PathExpr: root = self, first member = length.
+        if (path->path.root_name == "self" && path->path.members.size() == 1 &&
+            path->path.members.front() == "length") {
+            result.status = VerificationObligationStatus::Recognized;
+            result.well_founded = true;
+            return result;
+        }
+        // ② Flat PathExpr: root = self, any single member access.
+        if (path->path.root_name == "self" && path->path.members.size() == 1) {
+            result.status = VerificationObligationStatus::Recognized;
+            result.well_founded = true;
+            return result;
+        }
+    }
+
+    // ③ MinusOne: <ident> - 1 where <ident> is a bare PathExpr with no
+    //    member traversal.
+    if (const auto *bin = std::get_if<ir::BinaryExpr>(&expr.node);
+        bin != nullptr && bin->op == ir::ExprBinaryOp::Subtract && bin->lhs && bin->rhs &&
+        is_integer_literal_one(*bin->rhs)) {
+        const auto *lhs_path = std::get_if<ir::PathExpr>(&bin->lhs->node);
+        if (lhs_path != nullptr && lhs_path->path.members.empty() &&
+            !lhs_path->path.root_name.empty()) {
+            result.status = VerificationObligationStatus::Recognized;
+            result.well_founded = true;
+            return result;
+        }
+    }
+
+    result.status = VerificationObligationStatus::Unrecognized;
+    result.well_founded = false;
+    return result;
+}
+
+/// Walk every ContractDecl → Decreases clause and expand it into flat
+/// VerificationObligation entries that preserve source order.
+void build_verification_profile(const ir::Program &program, VerificationProfile &out_profile) {
+    for (const auto &declaration : program.declarations) {
+        const auto *contract = std::get_if<ir::ContractDecl>(&declaration);
+        if (contract == nullptr) {
+            continue;
+        }
+        for (const auto &clause : contract->clauses) {
+            if (clause.kind != ir::ContractClauseKind::Decreases) {
+                continue;
+            }
+            if (clause.decreases_wildcard) {
+                VerificationObligation obligation;
+                obligation.decreases_pattern = "*";
+                obligation.well_founded = true;
+                obligation.location = encode_location(clause.source_range);
+                obligation.status = VerificationObligationStatus::Wildcard;
+                out_profile.obligations.push_back(std::move(obligation));
+                continue;
+            }
+            for (const auto &term : clause.decreases_terms) {
+                if (!term.has_value()) {
+                    // Defensive: a dangling ExprRef would mean a lowering
+                    // bug; keep an unrecognized sentinel entry so the
+                    // obligation count still matches the total number of
+                    // decreases terms.
+                    VerificationObligation obligation;
+                    obligation.decreases_pattern = "<missing-term>";
+                    obligation.well_founded = false;
+                    obligation.location = encode_location(clause.source_range);
+                    obligation.status = VerificationObligationStatus::Unrecognized;
+                    out_profile.obligations.push_back(std::move(obligation));
+                    continue;
+                }
+                const auto classified = classify_decreases_term(*term);
+                VerificationObligation obligation;
+                obligation.decreases_pattern = classified.pattern_render;
+                obligation.well_founded = classified.well_founded;
+                obligation.location = encode_location(term->source_range);
+                if (obligation.location.empty()) {
+                    obligation.location = encode_location(clause.source_range);
+                }
+                obligation.status = classified.status;
+                out_profile.obligations.push_back(std::move(obligation));
+            }
+        }
+    }
+}
+
+[[nodiscard]] std::string_view
+verification_status_name(VerificationObligationStatus status) noexcept {
+    switch (status) {
+    case VerificationObligationStatus::Recognized:   return "recognized";
+    case VerificationObligationStatus::Wildcard:     return "wildcard";
+    case VerificationObligationStatus::Unrecognized: return "unrecognized";
+    }
+    return "unrecognized";
+}
+
 class AssuranceJsonPrinter final : private PrettyJsonWriter {
   public:
     explicit AssuranceJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
@@ -363,6 +633,8 @@ class AssuranceJsonPrinter final : private PrettyJsonWriter {
                   [&]() { print_obligations(bundle.recovery_obligations, 1); });
             field("formal_model_profile",
                   [&]() { print_formal_model_profile(bundle.formal_model_profile, 1); });
+            field("verification",
+                  [&]() { print_verification_profile(bundle.verification, 1); });
         });
         out_ << '\n';
     }
@@ -456,6 +728,28 @@ class AssuranceJsonPrinter final : private PrettyJsonWriter {
                   [&]() { write_string_array(profile.unsupported, indent_level + 1); });
         });
     }
+
+    void print_verification_obligation(const VerificationObligation &obligation,
+                                       int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("decreases_pattern", [&]() { write_string(obligation.decreases_pattern); });
+            field("well_founded", [&]() { write_bool(obligation.well_founded); });
+            field("location", [&]() { write_string(obligation.location); });
+            field("status", [&]() { write_string(std::string(verification_status_name(obligation.status))); });
+        });
+    }
+
+    void print_verification_profile(const VerificationProfile &profile, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("obligations", [&]() {
+                print_array(indent_level + 1, [&](const auto &item) {
+                    for (const auto &obligation : profile.obligations) {
+                        item([&]() { print_verification_obligation(obligation, indent_level + 2); });
+                    }
+                });
+            });
+        });
+    }
 };
 
 } // namespace
@@ -535,6 +829,7 @@ AssuranceBundle build_assurance_bundle(const ir::Program &program) {
         });
     bundle.status = has_blockers ? "blocked" : "ready";
     bundle.formal_model_profile = build_formal_model_profile(bundle);
+    build_verification_profile(program, bundle.verification);
     return bundle;
 }
 

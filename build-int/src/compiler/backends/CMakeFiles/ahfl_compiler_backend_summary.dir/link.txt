@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_backend_summary.a CMakeFiles/ahfl_compiler_backend_summary.dir/pipeline/summary.cpp.o
+/usr/bin/ranlib libahfl_compiler_backend_summary.a

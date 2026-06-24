@@ -7,6 +7,7 @@
 
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 
 #include <functional>
@@ -461,6 +462,112 @@ instantiate_fn_body(TypedProgram &program,
     result.expr_count = static_cast<std::uint32_t>(program.expressions.size() - expr_before);
     result.stmt_count = static_cast<std::uint32_t>(program.statements.size() - stmt_before);
     result.block_count = static_cast<std::uint32_t>(program.blocks.size() - block_before);
+
+    return result;
+}
+
+// P2d.S3 standalone overload: consumes a flat vector of caller-provided
+// FnCallSite records and emits diagnostics directly into the supplied
+// DiagnosticBag. Useful for unit tests and for pipelines that collect call
+// sites before a TypedProgram is assembled.
+[[nodiscard]] MonomorphizationResult
+run_monomorphization(const std::vector<FnCallSite> &call_sites,
+                     DiagnosticBag &diag_bag,
+                     MonomorphizationOptions options) {
+    using error_codes::typecheck::MonomorphizationBudgetExceeded;
+    namespace msg = messages::typecheck;
+
+    MonomorphizationResult result;
+
+    struct InstanceKey {
+        std::string decl_canonical_name;
+        std::string type_args_canonical;
+        [[nodiscard]] bool operator==(const InstanceKey &) const noexcept = default;
+    };
+    struct InstanceKeyHash {
+        [[nodiscard]] std::size_t operator()(const InstanceKey &k) const noexcept {
+            std::size_t h = std::hash<std::string>{}(k.decl_canonical_name);
+            h ^= std::hash<std::string>{}(k.type_args_canonical) + 0x9e3779b9 +
+                 (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<InstanceKey, std::uint32_t, InstanceKeyHash> cache;
+    bool user_over_budget_reported = false;
+    bool stdlib_over_budget_reported = false;
+
+    auto top_contributors = [](const MonomorphizationResult &r, bool stdlib) {
+        std::vector<std::pair<std::string, std::uint32_t>> sorted;
+        for (const auto &[name, count] : r.instances_per_decl) {
+            const bool is_std = is_stdlib_decl(name);
+            if (stdlib ? is_std : !is_std) {
+                sorted.emplace_back(name, count);
+            }
+        }
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto &a, const auto &b) { return a.second > b.second; });
+        constexpr std::size_t kTopN = 3;
+        std::string out;
+        for (std::size_t i = 0; i < std::min(kTopN, sorted.size()); ++i) {
+            if (i) out += ", ";
+            out += sorted[i].first + " (" + std::to_string(sorted[i].second) + ")";
+        }
+        if (sorted.empty()) out = "(none)";
+        return out;
+    };
+
+    for (const auto &site : call_sites) {
+        const auto stdlib = is_stdlib_decl(site.decl_canonical_name);
+        const InstanceKey key{site.decl_canonical_name, site.type_args_canonical};
+        if (cache.contains(key)) continue;
+
+        const auto budget =
+            stdlib ? kMonomorphizationStdlibBudget : kMonomorphizationUserBudget;
+        auto &counter = stdlib ? result.stdlib_instance_count : result.user_instance_count;
+        const bool over = counter >= budget;
+        if (options.enforce_budget && over) {
+            cache.emplace(key, static_cast<std::uint32_t>(result.instances.size()));
+            if (stdlib ? !stdlib_over_budget_reported : !user_over_budget_reported) {
+                const std::string origin = stdlib ? "stdlib code" : "user code";
+                const auto actual = std::to_string(counter);
+                const std::string limit = std::to_string(budget);
+                const std::string contributors = top_contributors(result, stdlib);
+                diag_bag.error()
+                    .code(MonomorphizationBudgetExceeded)
+                    .message(msg::MonomorphizationBudgetExceeded,
+                             origin, actual, limit, "top 3", contributors)
+                    .emit();
+                if (stdlib) {
+                    stdlib_over_budget_reported = true;
+                    result.stdlib_budget_exceeded = true;
+                } else {
+                    user_over_budget_reported = true;
+                    result.user_budget_exceeded = true;
+                }
+            }
+            continue;
+        }
+
+        MonomorphizationInstance instance{
+            .decl_canonical_name = site.decl_canonical_name,
+            .fn_symbol = site.fn_symbol,
+            .type_args_canonical = site.type_args_canonical,
+            .instance_name = render_instance_name(site.decl_canonical_name,
+                                                   site.type_args_canonical),
+            .from_stdlib = stdlib,
+        };
+        result.instances.push_back(std::move(instance));
+        ++counter;
+        ++result.instances_per_decl[site.decl_canonical_name];
+        cache.emplace(key, static_cast<std::uint32_t>(result.instances.size() - 1));
+
+        if (!options.enforce_budget && counter == budget + 1) {
+            // Counter has just crossed the ceiling on the first over-budget
+            // instance. The event is observable via budget_exceeded().
+            if (stdlib) result.stdlib_budget_exceeded = true;
+            else result.user_budget_exceeded = true;
+        }
+    }
 
     return result;
 }

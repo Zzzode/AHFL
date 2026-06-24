@@ -14,7 +14,35 @@
 #include <unordered_set>
 #include <vector>
 
+// Forward declarations for AST where-clause nodes. Full definitions live in
+// ahfl/compiler/frontend/ast.hpp. We only need a raw pointer here so the
+// dependency can stay one-way.
+namespace ahfl::ast {
+struct WhereClauseSyntax;
+} // namespace ahfl::ast
+
 namespace ahfl {
+
+/// Placeholder for a single resolved where-bound entry. Currently only mirrors
+/// the raw AST bound identity (subject + trait names). Real semantic resolution
+/// (symbol lookup for the type subject and trait references, subtype checking,
+/// trait inheritance, etc.) happens in a later task. This struct exists purely
+/// so downstream code can iterate over a where clause's bounds without poking
+/// back into the AST.
+struct WhereBoundInfo {
+    std::string subject_name;   // raw spelling of the subject type parameter
+    std::vector<std::string> trait_names; // raw trait / capability spellings
+    SourceRange source_range;
+};
+
+/// Bundled where-clause info attached to nominal declarations that may carry
+/// generic constraints. Holds both a back-pointer to the raw AST (for
+/// diagnostic ranges during checking) and a lightweight semantic-side bound
+/// list that downstream consumers can read without AST linkage.
+struct WhereClauseInfo {
+    const ast::WhereClauseSyntax* syntax{nullptr}; // raw AST pointer (non-owning)
+    std::vector<WhereBoundInfo> bounds;            // resolved bound placeholder
+};
 
 struct ModuleDeclInfo {
     std::string name;
@@ -67,6 +95,7 @@ struct StructTypeInfo {
     // variables inside field types and by monomorphization to align arguments.
     std::vector<std::string> type_param_names;
     std::vector<StructFieldInfo> fields;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
 
     [[nodiscard]] MaybeCRef<StructFieldInfo> find_field(std::string_view name) const;
@@ -94,6 +123,7 @@ struct EnumTypeInfo {
     // variable resolution inside variant payload types and by monomorphization.
     std::vector<std::string> type_param_names;
     std::vector<EnumVariantInfo> variants;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
 
     [[nodiscard]] bool has_variant(std::string_view name) const noexcept;
@@ -130,6 +160,7 @@ struct CapabilityTypeInfo {
     std::string canonical_name;
     std::vector<ParamTypeInfo> params;
     TypePtr return_type;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
     CapabilityEffectTypeInfo effect;
 };
@@ -223,11 +254,38 @@ struct FlowTypeInfo {
     SourceRange declaration_range;
 };
 
+// Decreases clause metadata attached to individual contract clauses
+// (requires / ensures / invariant). The originating AST node stores the
+// decreases syntax (optional expression list or wildcard). When present the
+// typechecker records `has_decreases` together with either a list of
+// expression source ranges (decreases_exprs) or the wildcard flag
+// (decreases_is_wildcard). Full typed-expression attachment and termination
+// semantics are deferred to P4.S5a; this struct captures the plumbing so
+// downstream passes (validation, IR lowering, backend translation) can
+// observe the clause surface without re-reading the AST.
+struct DecreasesExprInfo {
+    SourceRange expr_range;
+};
+
 struct ContractClauseInfo {
     int clause_kind{0};
     bool is_temporal{false};
+    bool is_wildcard{false}; // wildcard decreases (no concrete termination metric)
     SourceRange expr_range;
     SourceRange source_range;
+    // P4.S3: decreases clause plumbing. The three clause kinds (requires,
+    // ensures, invariant) all carry the same optional decreases metadata
+    // because termination / ranking proofs can be attached to any contract
+    // clause surface by the user.
+    bool has_decreases{false};
+    std::vector<DecreasesExprInfo> decreases_exprs;
+    bool decreases_is_wildcard{false};
+    // P4.S6: explicit ranges used by typed-hir serialization round-trip and
+    // the downstream IR pipeline (mirrors naming in ir::ContractClause).
+    // Either decreases_is_wildcard is true OR decreases_expr_ranges is
+    // populated; both are sourced from the same AST attach point.
+    std::vector<SourceRange> decreases_expr_ranges;
+    SourceRange decreases_range;
 };
 
 struct ContractTypeInfo {
@@ -282,6 +340,7 @@ struct FnTypeInfo {
     // substitute type_args into a known parameter-name list without
     // re-parsing the AST.
     std::vector<std::string> type_param_names;
+    WhereClauseInfo where_clause;
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;

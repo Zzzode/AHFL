@@ -42,63 +42,13 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
             [&](const ast::DecimalType &t) {
                 return types_.decimal(static_cast<std::int64_t>(t.scale));
             },
-            [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
-            [&](const ast::OptionalType &t) {
-                TypePtr inner = resolve_type(*t.inner);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kOptionType, {inner}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
+            [&](const ast::NamedType &t) {
+                std::vector<TypePtr> args;
+                args.reserve(t.type_args.size());
+                for (const auto &arg : t.type_args) {
+                    args.push_back(resolve_type(*arg));
                 }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kOptionType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::ListType &t) {
-                TypePtr element = resolve_type(*t.element);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kListType, {element}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kListType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::SetType &t) {
-                TypePtr element = resolve_type(*t.element);
-                if (TypePtr nominal =
-                        resolve_std_container_type(stdlib_bridge::kSetType, {element}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kSetType),
-                    type.range);
-                return make_error_type();
-            },
-            [&](const ast::MapType &t) {
-                TypePtr key = resolve_type(*t.key_type);
-                TypePtr value = resolve_type(*t.value_type);
-                if (TypePtr nominal = resolve_std_container_type(
-                        stdlib_bridge::kMapType, {key, value}, type.range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(
-                        stdlib_bridge::kMapType),
-                    type.range);
-                return make_error_type();
+                return resolve_named_type(*t.name, std::move(args), t.name->range);
             },
             [&](const ast::FnType &t) {
                 std::vector<TypePtr> param_types;
@@ -119,6 +69,138 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
         type.node);
 
     return make_error_type();
+}
+
+TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
+                                         std::vector<TypePtr> args,
+                                         SourceRange use_range) {
+    // Dispatch the built-in parameterised types that used to have dedicated
+    // syntax nodes (Option/List/Set/Map). Any other type with generic
+    // arguments is treated as an implicit AppType (the NamedType + type_args
+    // representation chosen by P5.5 unifies the syntactic forms).
+    if (name.segments.size() == 1 && !args.empty()) {
+        const auto &head = name.segments.front();
+        std::string_view canonical_name;
+        std::size_t expected_arity = 0;
+        if (head == "Option" || head == "Optional") {
+            canonical_name = stdlib_bridge::kOptionType;
+            expected_arity = 1;
+        } else if (head == "List") {
+            canonical_name = stdlib_bridge::kListType;
+            expected_arity = 1;
+        } else if (head == "Set") {
+            canonical_name = stdlib_bridge::kSetType;
+            expected_arity = 1;
+        } else if (head == "Map") {
+            canonical_name = stdlib_bridge::kMapType;
+            expected_arity = 2;
+        }
+        if (!canonical_name.empty()) {
+            if (args.size() == expected_arity) {
+                if (TypePtr nominal =
+                        resolve_std_container_type(canonical_name, args, use_range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(canonical_name),
+                    use_range);
+                return make_error_type();
+            }
+            // Arity mismatch falls through to the generic application path
+            // below, which will diagnose the mismatch against the declaration
+            // (consistent with how AppType reports it).
+        }
+    }
+
+    if (!args.empty()) {
+        // P5.5: `name<T1, T2, ...>` with a single-segment name is the new
+        // unified syntactic form for generic application. Any type that is
+        // not one of the four built-in containers above is resolved via the
+        // same mechanism as the explicit `AppType` node (user-defined
+        // generics: Result, user structs/enums with type params, aliases).
+        //
+        // If the name is a multi-segment qualified path, we still go through
+        // this path to support `collections::List<T>` style aliased
+        // references from import statements.
+
+        // First, reject bare type parameters used with application syntax —
+        // type variables are not generic constructors.
+        if (type_param_names_ != nullptr && name.segments.size() == 1) {
+            for (std::size_t i = 0; i < type_param_names_->size(); ++i) {
+                if (name.segments.front() == (*type_param_names_)[i]) {
+                    diagnose_(
+                        error_codes::typecheck::InvalidTypeReference,
+                        messages::typecheck::SymbolDoesNotNameType.format_with(name.spelling()),
+                        use_range);
+                    return make_error_type();
+                }
+            }
+        }
+
+        const auto reference = resolve_result_.find_reference(
+            ReferenceKind::TypeName, name.range, current_source_id_());
+        if (!reference.has_value()) {
+            diagnose_(error_codes::typecheck::UnknownType,
+                      messages::typecheck::UnknownType.format_with(name.spelling()),
+                      name.range);
+            return make_error_type();
+        }
+
+        const SymbolId base_id = reference->get().target;
+        const auto base_symbol = resolve_result_.symbol_table.get(base_id);
+        if (!base_symbol.has_value()) {
+            diagnose_(error_codes::typecheck::InvalidTypeReference,
+                      messages::typecheck::ResolvedTypeSymbolMissing.format_with(),
+                      name.range);
+            return make_error_type();
+        }
+
+        // Look up the declaration's type-parameter count for arity checking.
+        std::size_t expected_arity = 0;
+        if (type_param_info_) {
+            if (const auto params = type_param_info_(base_id); params.has_value()) {
+                expected_arity = params->size();
+            }
+        }
+
+        if (args.size() != expected_arity) {
+            diagnose_(error_codes::typecheck::WrongArity,
+                      messages::typecheck::WrongArity.format_with("type",
+                                                                  name.spelling(),
+                                                                  std::to_string(expected_arity),
+                                                                  std::to_string(args.size())),
+                      use_range);
+            return make_error_type();
+        }
+
+        const auto &canonical_name = base_symbol->get().canonical_name;
+        switch (base_symbol->get().kind) {
+        case SymbolKind::Struct:
+            return types_.struct_type(canonical_name, base_id, std::move(args));
+        case SymbolKind::Enum:
+            return types_.enum_type(canonical_name, base_id, std::move(args));
+        case SymbolKind::TypeAlias: {
+            TypeSubstitutionMap subst{args.begin(), args.end()};
+            TypePtr aliased = resolve_type_alias(base_id, name.range);
+            return substitute_type(aliased, subst, types_);
+        }
+        case SymbolKind::Const:
+        case SymbolKind::Capability:
+        case SymbolKind::Predicate:
+        case SymbolKind::Agent:
+        case SymbolKind::Workflow:
+        case SymbolKind::Function:
+        case SymbolKind::Trait:
+            diagnose_(error_codes::typecheck::InvalidTypeReference,
+                      messages::typecheck::SymbolDoesNotNameType.format_with(canonical_name),
+                      name.range);
+            return make_error_type();
+        }
+        return make_error_type();
+    }
+    return resolve_named_type(name);
 }
 
 TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name) {

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_tooling_telemetry.a CMakeFiles/ahfl_tooling_telemetry.dir/trace.cpp.o CMakeFiles/ahfl_tooling_telemetry.dir/metrics.cpp.o CMakeFiles/ahfl_tooling_telemetry.dir/logging.cpp.o CMakeFiles/ahfl_tooling_telemetry.dir/context.cpp.o
+/usr/bin/ranlib libahfl_tooling_telemetry.a

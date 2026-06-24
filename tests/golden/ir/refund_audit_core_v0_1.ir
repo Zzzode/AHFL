@@ -25,7 +25,7 @@ struct refund::audit::RefundRequest {
 struct refund::audit::RefundContext {
   field result: refund::audit::AuditResult = refund::audit::AuditResult::Reject
   field reason: String = "pending"
-  field ticket_id: std::option::Option<String> = std::option::Option::None()
+  field ticket_id: std::option::Option<String> = std::option::Option::None
 }
 
 @provenance(module=refund::audit, source=refund/audit.ahfl)
@@ -134,7 +134,7 @@ flow refund::audit::RefundAudit {
       may_return: false
       may_fallthrough: false
       assigned_paths: [ctx.result, ctx.reason, ctx.ticket_id]
-      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate, std::option::Option::None]
+      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate]
       assert_count: 0
     }
     let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
@@ -145,7 +145,7 @@ flow refund::audit::RefundAudit {
       ctx.ticket_id = std::option::Option::Some(refund::audit::TicketCreate(input.order_id, decision.reason))
       goto Approved
     } else {
-      ctx.ticket_id = std::option::Option::None()
+      ctx.ticket_id = std::option::Option::None
       goto Rejected
     }
   }
@@ -198,4 +198,99 @@ workflow refund::audit::RefundAuditWorkflow {
     reads: [workflow_node_output(audit)]
   }
   return: audit
+}
+
+instance capability _inst_0000000000000006_refund_audit_OrderQuery_String {
+  symbol: refund::audit::OrderQuery
+  type_args: [String]
+  params: (order_id: String)
+  return: refund::audit::OrderInfo
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance capability _inst_0000000000000007_refund_audit_AuditDecision_refund_audit_OrderInfo_refund_audit_RefundRequest {
+  symbol: refund::audit::AuditDecision
+  type_args: [refund::audit::OrderInfo, refund::audit::RefundRequest]
+  params: (order: refund::audit::OrderInfo, request: refund::audit::RefundRequest)
+  return: refund::audit::AuditReply
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance capability _inst_0000000000000008_refund_audit_TicketCreate_String_String {
+  symbol: refund::audit::TicketCreate
+  type_args: [String, String]
+  params: (order_id: String, reason: String)
+  return: String
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance predicate _inst_000000000000000b_refund_audit_order_X5fexists_String {
+  symbol: refund::audit::order_exists
+  type_args: [String]
+  params: (order_id: String)
+  return: Any
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance predicate _inst_000000000000000c_refund_audit_order_X5fbelongs_X5fto_X5fuser_String_String {
+  symbol: refund::audit::order_belongs_to_user
+  type_args: [String, String]
+  params: (order_id: String, user_id: String)
+  return: Any
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance predicate _inst_000000000000000d_refund_audit_refund_X5famount_X5fwithin_X5ftotal_String_Decimal_X282_X29 {
+  symbol: refund::audit::refund_amount_within_total
+  type_args: [String, Decimal(2)]
+  params: (order_id: String, amount: Decimal(2))
+  return: Any
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance predicate _inst_000000000000000e_refund_audit_non_X5fempty_String {
+  symbol: refund::audit::non_empty
+  type_args: [String]
+  params: (value: String)
+  return: Any
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance agent _inst_000000000000000f_refund_audit_RefundAudit_refund_audit_RefundRequest_refund_audit_RefundContext_refund_audit_RefundDecision {
+  symbol: refund::audit::RefundAudit
+  type_args: [refund::audit::RefundRequest, refund::audit::RefundContext, refund::audit::RefundDecision]
+  return: Any
+  agent_input: refund::audit::RefundRequest
+  agent_context: refund::audit::RefundContext
+  agent_output: refund::audit::RefundDecision
+  workflow_input: Any
+  workflow_output: Any
 }

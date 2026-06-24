@@ -32,6 +32,51 @@ namespace {
     return module_name == "std" || module_name.starts_with("std::");
 }
 
+// Build a WhereClauseInfo from an AST-owned WhereClauseSyntax. Per-task, this
+// is pure plumbing: we copy out the raw bound spellings so downstream code can
+// read them without an AST back-pointer, plus we retain the raw syntax pointer
+// for diagnostic ranges. No symbol lookup or bound validation is performed.
+WhereClauseInfo build_where_clause_info(const Owned<ast::WhereClauseSyntax> &syntax) {
+    WhereClauseInfo info;
+    info.syntax = syntax.get();
+    if (!syntax) {
+        return info;
+    }
+    info.bounds.reserve(syntax->constraints.size());
+    for (const auto &constraint : syntax->constraints) {
+        WhereBoundInfo bound_info;
+        bound_info.source_range = constraint->range;
+        if (constraint->subject && constraint->subject->is<ast::NamedType>()) {
+            const auto &named = constraint->subject->as<ast::NamedType>();
+            if (named.name) {
+                bound_info.subject_name = named.name->spelling();
+            }
+        }
+        if (constraint->is_predicate) {
+            // Predicate constraint (e.g. `T::Eq(Int)`) → treat the trait name as
+            // the single bound.
+            if (!constraint->trait_name.empty()) {
+                bound_info.trait_names.push_back(constraint->trait_name);
+            }
+        } else {
+            // Bound-list constraint (e.g. `T: Eq + Show`) → each bound is a
+            // NamedType whose qualified name spelling is the trait.
+            bound_info.trait_names.reserve(constraint->bounds.size());
+            for (const auto &bound : constraint->bounds) {
+                if (!bound) continue;
+                if (bound->is<ast::NamedType>()) {
+                    const auto &named = bound->as<ast::NamedType>();
+                    if (named.name) {
+                        bound_info.trait_names.push_back(named.name->spelling());
+                    }
+                }
+            }
+        }
+        info.bounds.push_back(std::move(bound_info));
+    }
+    return info;
+}
+
 } // namespace
 
 MaybeCRef<Symbol> DeclarationIndexBuilder::find_local(SymbolNamespace name_space,
@@ -501,6 +546,7 @@ void TypeCheckPass::build_struct_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
                 .fields = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .field_index_ = {},
             };
@@ -551,6 +597,7 @@ void TypeCheckPass::build_enum_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
                 .variants = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .variant_set_ = {},
             };
@@ -605,6 +652,7 @@ void TypeCheckPass::build_capability_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .params = {},
                 .return_type = nullptr,
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .effect = {},
             };
@@ -876,6 +924,7 @@ void TypeCheckPass::build_fn_types() {
                 .return_type_range =
                     decl.get().return_type ? decl.get().return_type->range : SourceRange{},
                 .type_param_names = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .effect = {},
                 .has_body = static_cast<bool>(decl.get().body),
                 .declaration_range = decl.get().range,
@@ -1171,19 +1220,29 @@ void TypeCheckPass::build_trait_types() {
                     info.methods.push_back(resolve_trait_method_info(*item));
                     continue;
                 }
-                if (item->kind == ast::TraitItemKind::AssocType && item->assoc) {
+                if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
                     TraitAssocTypeInfo assoc{
-                        .name = item->assoc->name,
+                        .name = item->assoc_type->name,
                         .type_param_names = {},
-                        .default_type = item->assoc->default_type
-                                            ? resolve_type(*item->assoc->default_type)
+                        .default_type = item->assoc_type->default_type
+                                            ? resolve_type(*item->assoc_type->default_type)
                                             : nullptr,
-                        .declaration_range = item->assoc->range,
+                        .declaration_range = item->assoc_type->range,
                     };
-                    for (const auto &type_param : item->assoc->type_params) {
+                    for (const auto &type_param : item->assoc_type->type_params) {
                         assoc.type_param_names.push_back(type_param->name);
                     }
                     info.assoc_types.push_back(std::move(assoc));
+                    continue;
+                }
+
+                // P3c.S1: associated constant trait items are accepted by the
+                // syntactic boundary; semantic handling (default-value typing +
+                // impl-side signature matching) is deferred to P3b (trait/impl
+                // signature matching pass). We record them here as syntactically
+                // present so downstream passes can iterate trait items uniformly.
+                if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+                    continue;
                 }
             }
 
@@ -1207,7 +1266,39 @@ void TypeCheckPass::build_impl_types() {
     //
     // Impl index = source order, matching the indexing in
     // DeclarationIndexBuilder::index_program_declarations.
-    std::unordered_set<std::pair<std::size_t, std::size_t>, PairHash> seen_impls;
+    // P3c.S4a: strict 100% coherence duplicate detection. Walks the impl table
+    // in source declaration order and for each new impl that targets a trait
+    // re-checks against every previously-inserted impl using the shared
+    // impls_conflict_for_type predicate — that predicate is the single
+    // source of truth also used by find_impls candidate filtering and by
+    // check_impl_coherence (orphan-rule comparisons). Conflicts are diagnosed
+    // with typecheck.COHERENCE_CONFLICT.
+    std::vector<std::reference_wrapper<const ImplTypeInfo>> seen_impls;
+    seen_impls.reserve(impl_decls_.size());
+    auto coherence_conflict = [&](const ImplTypeInfo &candidate) -> bool {
+        for (const auto &existing_ref : seen_impls) {
+            const auto &existing = existing_ref.get();
+            if (!TypeEnvironment::impls_conflict_for_type(existing, candidate)) {
+                continue;
+            }
+            const auto trait_name = candidate.trait_name;
+            const auto target_name = nominal_describe(*candidate.target_type);
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = messages::typecheck::CoherenceConflictPrevious.format_with(
+                    trait_name,
+                    existing.target_type ? nominal_describe(*existing.target_type) : target_name),
+                .range = existing.declaration_range,
+            });
+            typecheck_error_here(error_codes::typecheck::CoherenceConflict,
+                                 messages::typecheck::CoherenceConflict.format_with(
+                                     trait_name, target_name),
+                                 candidate.declaration_range,
+                                 std::move(notes));
+            return true;
+        }
+        return false;
+    };
 
     for (const auto &[impl_index, entry] : impl_decls_) {
         const auto &decl = entry.decl.get();
@@ -1328,27 +1419,48 @@ void TypeCheckPass::build_impl_types() {
                 });
             }
 
+            // P3c.S1: impl associated constants are accepted at the syntactic
+            // boundary; full semantics (typing the default value against the
+            // trait's assoc-const signature + value evaluation) are deferred to
+            // the P3b trait/impl unified pass.
+            for (const auto &ac : decl.const_items) {
+                (void)ac; // no-op placeholder: full typing comes in P3b
+            }
+
             // Coherence (orphan rule) — RFC §2.2. Only enforced when both the
             // trait and target resolve cleanly; resolution failures already
             // produced diagnostics above.
             check_impl_coherence(info);
 
-            // Trait-impl signature matching (RFC §2.1) + duplicate detection.
-            if (info.trait_symbol.has_value() && info.target_symbol.has_value()) {
+            // Trait-impl signature matching (RFC §2.1) + 100% coherence
+            // duplicate detection via the shared impls_conflict_for_type
+            // predicate. If signature-matching or conflict detection fail the
+            // impl is still inserted into the environment so downstream
+            // diagnostics (find_impls, super-trait coverage) can iterate it —
+            // the TypeCheckResult::has_errors flag will already be true.
+            if (info.trait_symbol.has_value() && info.target_type != nullptr) {
                 check_trait_impl_signature_match(info);
-                const auto key =
-                    std::make_pair(info.trait_symbol->value, info.target_symbol->value);
-                if (!seen_impls.insert(key).second) {
-                    const auto trait_name = info.trait_name;
-                    const auto target_name = nominal_describe(*info.target_type);
-                    typecheck_error_here(error_codes::typecheck::DuplicateTraitImpl,
-                                         messages::typecheck::DuplicateTraitImpl.format_with(
-                                             trait_name, target_name),
-                                         decl.range);
-                }
+                (void)coherence_conflict(info);
             }
 
+            // Record whether the impl is a non-inherent trait impl *before*
+            // moving `info` into the environment map, so the value is well
+            // defined when we push onto the coherence seen-impls list below.
+            const bool register_as_trait_impl =
+                !info.is_inherent && info.trait_symbol.has_value();
+
             environment().impls_.emplace(impl_index, std::move(info));
+            // P3c.S5a: register the impl into the declaration-layer impl_index
+            // right after it lands in the stable environment map. The index is
+            // keyed by (trait, normalized-type) so downstream O(1) lookups
+            // never need to rescan impls_.
+            const auto &stored = environment().impls_.at(impl_index);
+            environment().register_impl_index(impl_index, stored);
+            // Track the reference now-pointing into the environment's
+            // stable ImplTypeInfo.
+            if (register_as_trait_impl) {
+                seen_impls.emplace_back(stored);
+            }
         });
     }
 }
@@ -1477,9 +1589,34 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
             ContractClauseInfo clause_info{
                 .clause_kind = static_cast<int>(clause->kind),
                 .is_temporal = is_temporal,
+                .is_wildcard = clause->is_wildcard,
                 .expr_range = expr_range,
                 .source_range = clause->range,
+                .has_decreases = static_cast<bool>(clause->decreases),
+                .decreases_exprs = {},
+                // P4.S7b: standalone ContractClauseKind::Decreases carries
+                // the wildcard flag on `clause->is_wildcard`; the attached
+                // `clause->decreases` syntax is only used for per-clause
+                // decreases annotations on requires/ensures/invariant. Merge
+                // both flags so typed_hir_lower and the assurance counter
+                // derive the same "total decreases expressions" count.
+                .decreases_is_wildcard = [&]() {
+                    if (clause->kind == ast::ContractClauseKind::Decreases) {
+                        return clause->is_wildcard;
+                    }
+                    return clause->decreases ? clause->decreases->decreases_is_wildcard : false;
+                }(),
+                .decreases_range = clause->decreases ? clause->decreases->range : SourceRange{},
             };
+            if (clause->decreases) {
+                clause_info.decreases_exprs.reserve(clause->decreases->decreases_exprs.size());
+                clause_info.decreases_expr_ranges.reserve(clause->decreases->decreases_exprs.size());
+                for (const auto &decr_expr : clause->decreases->decreases_exprs) {
+                    const SourceRange range = decr_expr ? decr_expr->range : SourceRange{};
+                    clause_info.decreases_exprs.push_back(DecreasesExprInfo{.expr_range = range});
+                    clause_info.decreases_expr_ranges.push_back(range);
+                }
+            }
             info.clauses.push_back(std::move(clause_info));
         }
 

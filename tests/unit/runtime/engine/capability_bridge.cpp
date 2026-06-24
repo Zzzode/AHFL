@@ -1063,9 +1063,11 @@ void test_eval_with_capability_call() {
     auto optional_result =
         eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
     check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
-    auto *optional_value_result = std::get_if<OptionalValue>(&optional_result.value.node);
-    auto *optional_inner = optional_value_result != nullptr && optional_value_result->inner
-                               ? std::get_if<StringValue>(&optional_value_result->inner->node)
+    // P5.11a + P5.11b dual-aware: nominal accessor optional_inner() covers
+    // both legacy OptionalValue and nominal EnumValue Option.
+    const auto *optional_result_inner = ahfl::evaluator::optional_inner(optional_result.value);
+    auto *optional_inner = optional_result_inner != nullptr
+                               ? std::get_if<StringValue>(&optional_result_inner->node)
                                : nullptr;
     check(optional_inner != nullptr && optional_inner->value == "inner",
           "eval_cap.optional_call_value");

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_pipeline_persistence.a CMakeFiles/ahfl_pipeline_persistence.dir/descriptor/descriptor.cpp.o CMakeFiles/ahfl_pipeline_persistence.dir/descriptor/review.cpp.o CMakeFiles/ahfl_pipeline_persistence.dir/export/manifest.cpp.o CMakeFiles/ahfl_pipeline_persistence.dir/export/review.cpp.o CMakeFiles/ahfl_pipeline_persistence.dir/store_import/descriptor.cpp.o CMakeFiles/ahfl_pipeline_persistence.dir/store_import/review.cpp.o
+/usr/bin/ranlib libahfl_pipeline_persistence.a

@@ -171,6 +171,8 @@ namespace {
         return "invariant";
     case ir::ContractClauseKind::Forbid:
         return "forbid";
+    case ir::ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "<invalid-contract-clause>";
@@ -855,6 +857,48 @@ class IrProgramPrinter final {
             print_block(*declaration.body, 2);
             line(1, "}");
         }
+    }
+
+    void print_decl(const ir::InstanceDecl &declaration) {
+        std::string_view kind_name = "unknown";
+        switch (declaration.kind) {
+        case ir::InstanceKind::Capability: kind_name = "capability"; break;
+        case ir::InstanceKind::Predicate: kind_name = "predicate"; break;
+        case ir::InstanceKind::Agent: kind_name = "agent"; break;
+        case ir::InstanceKind::Workflow: kind_name = "workflow"; break;
+        case ir::InstanceKind::Fn: kind_name = "fn"; break;
+        case ir::InstanceKind::Unknown: kind_name = "unknown"; break;
+        }
+        line(0, std::string("instance ") + std::string(kind_name) + " " + declaration.name + " {");
+        line(1, "symbol: " + symbol_name(declaration.symbol_ref));
+        if (!declaration.type_args.empty()) {
+            std::vector<std::string> names;
+            names.reserve(declaration.type_args.size());
+            for (const auto &t : declaration.type_args) names.push_back(type_name(t));
+            line(1, "type_args: [" + join(names, ", ") + "]");
+        }
+        if (!declaration.params.empty()) {
+            line(1, "params: (" + print_params(declaration.params) + ")");
+        }
+        if (!type_name(declaration.return_type_ref).empty()) {
+            line(1, "return: " + type_name(declaration.return_type_ref));
+        }
+        if (!type_name(declaration.agent_input_type_ref).empty()) {
+            line(1, "agent_input: " + type_name(declaration.agent_input_type_ref));
+        }
+        if (!type_name(declaration.agent_context_type_ref).empty()) {
+            line(1, "agent_context: " + type_name(declaration.agent_context_type_ref));
+        }
+        if (!type_name(declaration.agent_output_type_ref).empty()) {
+            line(1, "agent_output: " + type_name(declaration.agent_output_type_ref));
+        }
+        if (!type_name(declaration.workflow_input_type_ref).empty()) {
+            line(1, "workflow_input: " + type_name(declaration.workflow_input_type_ref));
+        }
+        if (!type_name(declaration.workflow_output_type_ref).empty()) {
+            line(1, "workflow_output: " + type_name(declaration.workflow_output_type_ref));
+        }
+        line(0, "}");
     }
 };
 

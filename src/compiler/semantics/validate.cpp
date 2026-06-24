@@ -5,6 +5,7 @@
 #include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <functional>
 #include <optional>
 #include <string>
@@ -66,6 +67,21 @@ class ValidationPass final {
         check_contracts();
         check_flows();
         check_workflows();
+        // P4.S3: Walk every contract clause in the typed program even though
+        // the ValidationPass does not yet enforce decreases-related rules.
+        // This keeps the traversal gate explicit so S5b has an insertion point.
+        walk_typed_contract_clauses();
+        // P4.S5a / R-04: Fill decreases counters via a dedicated pass that only
+        // increments on the ContractClauseKind::Decreases arm.
+        count_contracts();
+        // R-04 invariants: a missed traversal leaves counters at zero (S5b
+        // negative-control safety net), and a wildcard clause is always a
+        // total clause — wildcards are a strict subset of decreases.
+        assert(result_.wildcard_decreases_clauses <= result_.total_decreases_clauses &&
+               "wildcard decreases cannot exceed total decreases");
+        assert((result_.total_decreases_clauses == 0 ||
+                result_.total_decreases_clauses >= result_.wildcard_decreases_clauses) &&
+               "decreases counters are zero or satisfy wildcard <= total");
         return std::move(result_);
     }
 
@@ -443,6 +459,46 @@ class ValidationPass final {
         check_contracts_in_program(require(program_, "validate program must exist"));
     }
 
+    // R-04: explicit typed-program walk over every contract clause.
+    // Today this is a no-op traversal whose sole purpose is to keep the
+    // iteration surface visible for S5a. Decreases-specific validation
+    // should be inserted here instead of being scattered into AST-level
+    // check_contracts() above, because the decreases metadata lives on
+    // TypedProgram/ContractClauseInfo after P4.S3 plumbing.
+    void walk_typed_contract_clauses_in_program(const ast::Program &program) {
+        (void)program;
+        const auto &typed_decls = type_check_result_.typed_program.declarations;
+        for (const auto &decl : typed_decls) {
+            if (decl.kind != ast::NodeKind::ContractDecl) {
+                continue;
+            }
+            const auto *contract_info = std::get_if<ContractTypeInfo>(&decl.payload);
+            if (contract_info == nullptr) {
+                continue;
+            }
+            for (const auto &clause : contract_info->clauses) {
+                // TODO(P4.S5a): validate clause.decreases_{exprs,is_wildcard,range}
+                // and cross-clause termination ranking rules here.
+                (void)clause;
+            }
+        }
+    }
+
+    void walk_typed_contract_clauses() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                walk_typed_contract_clauses_in_program(require(
+                    source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        walk_typed_contract_clauses_in_program(
+            require(program_, "validate program must exist"));
+    }
+
     [[nodiscard]] bool has_transition(const ast::AgentDecl &agent_decl,
                                       std::string_view from_state,
                                       std::string_view to_state) const {
@@ -807,6 +863,51 @@ class ValidationPass final {
         }
 
         check_workflows_in_program(require(program_, "validate program must exist"));
+    }
+
+    // R-04 plumbing counter: explicitly enter the decreases branch of every
+    // contract_clause and accumulate totals. Logic is intentionally separate
+    // from the semantic checks so a missed traversal leaves counters at 0.
+    void count_contracts_in_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
+            if (declaration->kind != ast::NodeKind::ContractDecl) {
+                continue;
+            }
+
+            const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+            for (const auto &clause : decl.clauses) {
+                // Explicit switch arms — the default case intentionally does
+                // NOT touch the counters, so any missed branch is visible as
+                // an undercount during reverse verification in S5b.
+                switch (clause->kind) {
+                case ast::ContractClauseKind::Requires:
+                case ast::ContractClauseKind::Ensures:
+                case ast::ContractClauseKind::Invariant:
+                case ast::ContractClauseKind::Forbid:
+                    break;
+                case ast::ContractClauseKind::Decreases:
+                    ++result_.total_decreases_clauses;
+                    if (clause->is_wildcard) {
+                        ++result_.wildcard_decreases_clauses;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    void count_contracts() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                count_contracts_in_program(require(
+                    source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        count_contracts_in_program(require(program_, "validate program must exist"));
     }
 };
 

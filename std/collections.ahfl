@@ -49,6 +49,20 @@ fn map_raw_empty<K, V>() -> Map<K, V> effect Pure;
 @builtin("map_raw_singleton")
 fn map_raw_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure;
 
+// P5.6a: stdlib declarations for AST sugar desugaring targets.
+// The compiler rewrites sugar list/set/map literals into these calls during
+// lowering; the runtime evaluator dispatches via the `@builtin(...)` hooks
+// which accept any arity. The surface signature provides the nominal type
+// contract.
+@builtin("list_from_array")
+fn list_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> List<T> effect Pure;
+
+@builtin("set_from_array")
+fn set_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> Set<T> effect Pure;
+
+@builtin("map_from_entries")
+fn map_from_entries<K, V>(k0: K, v0: V, k1: K, v1: V, k2: K, v2: V, k3: K, v3: V) -> Map<K, V> effect Pure;
+
 fn empty<T>() -> List<T> effect Pure decreases 0 {
     return list_raw_alloc<T>(0);
 }
@@ -68,27 +82,27 @@ fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
 
 fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
     if i < 0 {
-        return none;
+        return option::Option::None;
     }
     if i >= list_raw_length<T>(self) {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, i));
+    return option::Option::Some(list_raw_get<T>(self, i));
 }
 
 fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
     if list_raw_length<T>(self) == 0 {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, 0));
+    return option::Option::Some(list_raw_get<T>(self, 0));
 }
 
 fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
     let n: Int = list_raw_length<T>(self);
     if n == 0 {
-        return none;
+        return option::Option::None;
     }
-    return some(list_raw_get<T>(self, n - 1));
+    return option::Option::Some(list_raw_get<T>(self, n - 1));
 }
 
 fn list_copy_into<T>(
@@ -215,7 +229,7 @@ fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
 
 fn map_get<K, V>(self: Map<K, V>, key: K) -> option::Option<V> effect Pure decreases 0 {
     if map_raw_contains_key<K, V>(self, key) {
-        return some(map_raw_get<K, V>(self, key));
+        return option::Option::Some(map_raw_get<K, V>(self, key));
     }
-    return none;
+    return option::Option::None;
 }

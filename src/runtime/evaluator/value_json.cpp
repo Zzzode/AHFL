@@ -79,18 +79,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     }
                 }
                 out << '}';
-            } else if constexpr (std::is_same_v<T, ListValue>) {
-                out << '[';
-                for (std::size_t i = 0; i < inner.items.size(); ++i) {
-                    if (i > 0)
-                        out << ',';
-                    if (inner.items[i]) {
-                        write_json_impl(*inner.items[i], out);
-                    } else {
-                        out << "null";
-                    }
-                }
-                out << ']';
             } else if constexpr (std::is_same_v<T, EnumValue>) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_enum");
@@ -117,12 +105,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     out << ']';
                 }
                 out << '}';
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                if (inner.inner) {
-                    write_json_impl(*inner.inner, out);
-                } else {
-                    out << "null";
-                }
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_callable");
@@ -180,6 +162,34 @@ void write_json_impl(const Value &v, std::ostream &out) {
             }
         },
         v.node);
+
+    // Emit list / optional via nominal accessors so the serialization never
+    // spells the variant tag names directly. The canonical JSON shape is:
+    // lists serialize as JSON arrays, optional values as the inner value
+    // (or null when empty). Deserialization mirrors this one shape; the
+    // deprecated explicit wrapper keys ("list"/"some"/"none"/"optional"
+    // and their "_"-prefixed aliases) are no longer accepted on input.
+    if (const auto *items = list_items(v)) {
+        out << '[';
+        for (std::size_t i = 0; i < items->size(); ++i) {
+            if (i > 0)
+                out << ',';
+            if ((*items)[i]) {
+                write_json_impl(*(*items)[i], out);
+            } else {
+                out << "null";
+            }
+        }
+        out << ']';
+        return;
+    }
+    if (is_optional(v)) {
+        if (const auto *inner = optional_inner(v)) {
+            write_json_impl(*inner, out);
+        } else {
+            out << "null";
+        }
+    }
 }
 
 } // namespace
@@ -211,6 +221,10 @@ namespace {
     }
     return nullptr;
 }
+
+// ----------------------------------------------------------------------------
+// Deserialization helpers
+// ----------------------------------------------------------------------------
 
 [[nodiscard]] std::optional<Value>
 struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
@@ -288,7 +302,9 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     case ahfl::json::Kind::String:
         return Value{StringValue{json_value.string_val}};
     case ahfl::json::Kind::Array: {
-        ListValue list_value;
+        // Legacy shape: a bare JSON array is an AHFL list.
+        Value list = make_list(std::vector<Value>{});
+        auto *lv = get_list_if(list);
         for (const auto &json_item : json_value.array_items) {
             if (!json_item) {
                 return std::nullopt;
@@ -297,9 +313,9 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
             if (!item_value.has_value()) {
                 return std::nullopt;
             }
-            list_value.items.push_back(std::make_unique<Value>(std::move(*item_value)));
+            lv->items.push_back(std::make_unique<Value>(std::move(*item_value)));
         }
-        return Value{std::move(list_value)};
+        return std::move(list);
     }
     case ahfl::json::Kind::Object:
         return struct_or_enum_from_json_object(json_value);

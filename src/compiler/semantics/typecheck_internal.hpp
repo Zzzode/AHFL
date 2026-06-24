@@ -406,6 +406,16 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypeCheckResult run();
 
+    // Test-only injection: pre-mark an agent as having a flow-level `let self`
+    // shadow binding with a describe() string describing the shadow type. This
+    // helper lets integration tests exercise the DECREASES_SHADOWED_RECEIVER
+    // warning branch without relying on a `let self: ...` binding, a form that
+    // the grammar reserves from appearing as a user-level let identifier.
+    void inject_flow_self_shadowing_for_test(std::size_t agent_symbol_value,
+                                             std::string describe) {
+        flow_self_shadowing_.emplace(agent_symbol_value, std::move(describe));
+    }
+
   private:
     friend class EnvironmentBuilder;
     friend class ConstSema;
@@ -484,6 +494,12 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TraitDecl>> &trait_decls_;
     std::unordered_map<std::size_t, DeclarationIndex::ImplDeclEntry> &impl_decls_;
     TypedHirBuilder hir_builder_;
+
+    // Flow-level `let self = ...` shadowing records: agent symbol id -> the
+    // describe() string of the shadowing binding. FlowSema runs before
+    // ContractSema so these records are populated by the time decreases
+    // clauses are validated.
+    std::unordered_map<std::size_t, std::string> flow_self_shadowing_;
 
     TypeAliasResolutionState alias_resolution_;
 
@@ -639,6 +655,18 @@ class TypeCheckPass final {
     // True iff some impl in the environment implements `trait_id` for nominal
     // `target_id`. Used by the super-trait coverage check (RFC §2.4).
     [[nodiscard]] bool impl_target_implements(SymbolId target_id, SymbolId trait_id) const;
+    // P2d.S2 (RFC §3.5 / §2): check whether a resolved type satisfies a
+    // referenced trait (i.e. there exists a trait impl in the environment for
+    // this type). Returns true for nominal types with a matching impl; returns
+    // false for compound / primitive types. Emits a TRAIT_BOUND_NOT_SATISFIED
+    // diagnostic with the caller-supplied `range` on failure.
+    //
+    // Super-trait coverage is applied transitively per the trait's super_traits
+    // list so a bound on a super-trait is satisfied when the target type
+    // implements any sub-trait in the environment (§2.4).
+    [[nodiscard]] bool check_bound(const Type &subject_type,
+                                   std::string_view trait_name,
+                                   SourceRange range);
 
     [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
 
@@ -812,22 +840,5 @@ decltype(auto) TypeCheckPass::with_symbol_context_for_impl(std::optional<SourceI
         return result;
     }
 }
-
-// P3 (RFC §3.2.2 / type-system §2.1): hash for std::pair<std::size_t,
-// std::size_t> used by the duplicate-(trait,target)-impl detector. std::pair
-// and std::unordered_set have no std::hash specialisation for pairs, so the
-// coherence check carries its own.
-struct PairHash {
-    [[nodiscard]] std::size_t
-    operator()(const std::pair<std::size_t, std::size_t> &value) const noexcept {
-        return hash_mix(value.first, value.second);
-    }
-
-  private:
-    [[nodiscard]] static std::size_t hash_mix(std::size_t a, std::size_t b) noexcept {
-        a ^= b + 0x9e3779b97f4a7c15ULL + (a << 6U) + (a >> 2U);
-        return a;
-    }
-};
 
 } // namespace ahfl

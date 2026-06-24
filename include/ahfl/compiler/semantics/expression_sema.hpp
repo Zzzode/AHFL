@@ -91,6 +91,21 @@ class ExpressionSemaDelegate {
     virtual void record_fn_call_site(SymbolId fn_symbol,
                                      SourceRange call_range,
                                      std::vector<TypePtr> type_args) = 0;
+    // P2d.S2 (RFC §3.5 / §2): check whether a resolved type satisfies the
+    // named trait bound in the current environment. Implementations must
+    // emit a TRAIT_BOUND_NOT_SATISFIED diagnostic (with the provided range)
+    // on failure and return false; return true when an impl exists for the
+    // nominal subject type. Super-trait chains are walked so transitive
+    // bound satisfaction reports true.
+    [[nodiscard]] virtual bool check_bound(const Type &subject_type,
+                                           std::string_view trait_name,
+                                           SourceRange range) = 0;
+    // P3c.S5b (RFC §3.2.2): emit a non-error informational note. Used by
+    // method dispatch to leave a visible audit trail ("stage1/inherent
+    // selected", "stage2/trait unique selected", "stage3/bound satisfied")
+    // so tests and humans can trace which branch of the three-stage
+    // resolution produced the final call target.
+    virtual void note(std::string message, SourceRange range) = 0;
 };
 
 struct ExpressionSemaServices {

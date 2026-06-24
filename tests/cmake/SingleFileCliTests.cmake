@@ -890,3 +890,37 @@ ahfl_add_check_fail_test(
     "${AHFL_TESTS_DIR}/golden/typecheck/agent_output_schema_mismatch.ahfl"
     "exact schema mismatch in agent output"
 )
+
+# ---------------------------------------------------------------------------
+# P5: SMV golden-lock baseline
+# Aggregates all formal SMV golden outputs under a single CTest so any
+# compiler change that perturbs SMV emission is caught immediately. On
+# mismatch, the script prints a copy-pasteable `diff -u` command and the
+# unified diff inline, which reviewers must see attached to PRs.
+# ---------------------------------------------------------------------------
+
+add_test(NAME p5_smv_golden_lock
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/p5_smv_golden_lock.py"
+            "--ahflc=$<TARGET_FILE:ahflc>"
+            "--tests-dir=${AHFL_TESTS_DIR}"
+)
+set_tests_properties(p5_smv_golden_lock PROPERTIES
+    FAIL_REGULAR_EXPRESSION "golden mismatch|negative case did not trigger"
+    LABELS "p5;golden_lock;smv;formal"
+)
+
+# Negative-path counterpart: validates that the diff-lock itself does fail
+# (with the exact diagnostic strings) when expected vs. actual diverge.
+add_test(NAME p5_smv_golden_lock.negative_diag
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/p5_smv_golden_lock.py"
+            "--ahflc=$<TARGET_FILE:ahflc>"
+            "--tests-dir=${AHFL_TESTS_DIR}"
+            "--negative-only"
+)
+set_tests_properties(p5_smv_golden_lock.negative_diag PROPERTIES
+    PASS_REGULAR_EXPRESSION "negative self-test passed.*golden mismatch.*diff cmd :.*diff -u"
+    FAIL_REGULAR_EXPRESSION "negative case did not trigger|ERROR: negative"
+    LABELS "p5;golden_lock;smv;formal;negative"
+)

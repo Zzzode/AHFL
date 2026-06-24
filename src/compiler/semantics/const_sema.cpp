@@ -294,7 +294,6 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
 [[nodiscard]] bool is_const_expr_syntax(const ast::ExprSyntax &expr, std::string_view &reason) {
     return std::visit(
         Overloaded{
-            [](const ast::NoneLiteralExpr &) { return true; },
             [](const ast::BoolLiteralExpr &) { return true; },
             [](const ast::IntegerLiteralExpr &) { return true; },
             [](const ast::FloatLiteralExpr &) { return true; },
@@ -302,36 +301,10 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
             [](const ast::StringLiteralExpr &) { return true; },
             [](const ast::DurationLiteralExpr &) { return true; },
             [](const ast::QualifiedValueExpr &) { return true; },
-            [&reason](const ast::SomeExpr &e) { return is_const_expr_syntax(*e.value, reason); },
             [&reason](const ast::GroupExpr &e) { return is_const_expr_syntax(*e.inner, reason); },
             [&reason](const ast::StructLiteralExpr &e) {
                 for (const auto &field : e.fields) {
                     if (!is_const_expr_syntax(*field->value, reason)) {
-                        return false;
-                    }
-                }
-                return true;
-            },
-            [&reason](const ast::ListLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    if (!is_const_expr_syntax(*item, reason)) {
-                        return false;
-                    }
-                }
-                return true;
-            },
-            [&reason](const ast::SetLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    if (!is_const_expr_syntax(*item, reason)) {
-                        return false;
-                    }
-                }
-                return true;
-            },
-            [&reason](const ast::MapLiteralExpr &e) {
-                for (const auto &entry : e.entries) {
-                    if (!is_const_expr_syntax(*entry->key, reason) ||
-                        !is_const_expr_syntax(*entry->value, reason)) {
                         return false;
                     }
                 }
@@ -360,7 +333,39 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 reason = "runtime path references are not compile-time constants";
                 return false;
             },
-            [&reason](const ast::CallExpr &) {
+            [&reason](const ast::CallExpr &e) {
+                // P5.6a integration fix: calls to recognised stdlib collection
+                // sugar lowering targets (list_from_array / set_from_array /
+                // map_from_entries) and enum-variant ADT constructors are
+                // accepted as const expressions when every argument is itself
+                // a constant. This mirrors the legacy sugar-literal const-
+                // folding behaviour dropped with the grammar productions.
+                static constexpr std::string_view kVariadicBuiltins[] = {
+                    "list_from_array",
+                    "set_from_array",
+                    "map_from_entries",
+                    "Some",
+                    "None",
+                };
+                auto is_whitelisted_head = [](std::string_view head) -> bool {
+                    for (const auto name : kVariadicBuiltins) {
+                        if (head == name) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                if (e.callee && !e.callee->segments.empty()) {
+                    const auto &head = e.callee->segments.back();
+                    if (is_whitelisted_head(head)) {
+                        for (const auto &arg : e.arguments) {
+                            if (!arg || !is_const_expr_syntax(*arg, reason)) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                }
                 reason = "capability and predicate calls are not compile-time constants";
                 return false;
             },
@@ -1040,9 +1045,6 @@ ConstEvaluator::ConstEvaluator(const ResolveResult &resolve_result,
 std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) const {
     return std::visit(
         Overloaded{
-            [](const ast::NoneLiteralExpr &) -> std::optional<ConstValue> {
-                return make_const_value(ConstValueKind::NoneLiteral, "none");
-            },
             [](const ast::BoolLiteralExpr &e) -> std::optional<ConstValue> {
                 return make_bool_const(e.value);
             },
@@ -1085,18 +1087,6 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                 }
                 return std::nullopt;
             },
-            [this](const ast::SomeExpr &e) -> std::optional<ConstValue> {
-                if (!e.value) {
-                    return std::nullopt;
-                }
-                auto child = evaluate(*e.value);
-                if (!child.has_value()) {
-                    return std::nullopt;
-                }
-                auto value = make_const_value(ConstValueKind::Some, "some");
-                add_const_child(value, "value", std::move(*child));
-                return value;
-            },
             [this, &expr](const ast::StructLiteralExpr &e) -> std::optional<ConstValue> {
                 auto value =
                     make_const_value(ConstValueKind::Struct,
@@ -1112,52 +1102,6 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                     }
                     add_const_child(value, field->field_name, std::move(*child));
                 }
-                return value;
-            },
-            [this](const ast::ListLiteralExpr &e) -> std::optional<ConstValue> {
-                auto value = make_const_value(ConstValueKind::List);
-                for (const auto &item : e.items) {
-                    if (item == nullptr) {
-                        return std::nullopt;
-                    }
-                    auto child = evaluate(*item);
-                    if (!child.has_value()) {
-                        return std::nullopt;
-                    }
-                    add_const_child(value, "", std::move(*child));
-                }
-                return value;
-            },
-            [this](const ast::SetLiteralExpr &e) -> std::optional<ConstValue> {
-                auto value = make_const_value(ConstValueKind::Set);
-                for (const auto &item : e.items) {
-                    if (item == nullptr) {
-                        return std::nullopt;
-                    }
-                    auto child = evaluate(*item);
-                    if (!child.has_value()) {
-                        return std::nullopt;
-                    }
-                    add_const_child(value, "", std::move(*child));
-                }
-                normalize_set_const_value(value);
-                return value;
-            },
-            [this](const ast::MapLiteralExpr &e) -> std::optional<ConstValue> {
-                auto value = make_const_value(ConstValueKind::Map);
-                for (const auto &entry : e.entries) {
-                    if (entry == nullptr || entry->key == nullptr || entry->value == nullptr) {
-                        return std::nullopt;
-                    }
-                    auto key = evaluate(*entry->key);
-                    auto map_value = evaluate(*entry->value);
-                    if (!key.has_value() || !map_value.has_value()) {
-                        return std::nullopt;
-                    }
-                    add_const_child(value, "key", std::move(*key));
-                    add_const_child(value, "value", std::move(*map_value));
-                }
-                normalize_map_const_value(value);
                 return value;
             },
             [this](const ast::UnaryExpr &e) -> std::optional<ConstValue> {
@@ -1234,8 +1178,66 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                 }
                 return evaluate(*e.inner);
             },
+            [this](const ast::CallExpr &e) -> std::optional<ConstValue> {
+                // Desugar calls emitted by the P5 nominal collection/Option
+                // rewrite into const-value trees so typed-HIR still carries
+                // foldable structures for serialization and downstream passes.
+                if (e.callee == nullptr || e.callee->segments.empty()) {
+                    return std::nullopt;
+                }
+                const auto callee_spelling = e.callee->spelling();
+                if (callee_spelling == "std::option::Option::Some") {
+                    if (e.arguments.size() != 1 || e.arguments.front() == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto inner = evaluate(*e.arguments.front());
+                    if (!inner.has_value()) {
+                        return std::nullopt;
+                    }
+                    auto value =
+                        make_const_value(ConstValueKind::Some, "std::option::Option::Some");
+                    add_const_child(value, "value", std::move(*inner));
+                    return value;
+                }
+                if (callee_spelling == "std::option::Option::None") {
+                    return make_const_value(ConstValueKind::NoneLiteral,
+                                            "std::option::Option::None");
+                }
+                const bool is_list = callee_spelling == "std::collections::list_from_array";
+                const bool is_set = callee_spelling == "std::collections::set_from_array";
+                const bool is_map = callee_spelling == "std::collections::map_from_entries";
+                if (!is_list && !is_set && !is_map) {
+                    return std::nullopt;
+                }
+                if (is_list || is_set) {
+                    auto result = make_const_value(is_list ? ConstValueKind::List
+                                                           : ConstValueKind::Set,
+                                                   callee_spelling);
+                    for (const auto &arg : e.arguments) {
+                        if (arg == nullptr) return std::nullopt;
+                        auto child = evaluate(*arg);
+                        if (!child.has_value()) return std::nullopt;
+                        add_const_child(result, {}, std::move(*child));
+                    }
+                    if (is_set) normalize_set_const_value(result);
+                    return result;
+                }
+                // map_from_entries<Key, Value>(k1, v1, k2, v2, ...)
+                if ((e.arguments.size() % 2) != 0) {
+                    return std::nullopt;
+                }
+                auto result = make_const_value(ConstValueKind::Map, callee_spelling);
+                for (std::size_t i = 0; i < e.arguments.size(); i += 2) {
+                    auto key = evaluate(*e.arguments[i]);
+                    auto val = evaluate(*e.arguments[i + 1]);
+                    if (!key.has_value() || !val.has_value()) return std::nullopt;
+                    add_const_child(result, "key", std::move(*key));
+                    add_const_child(result, "value", std::move(*val));
+                }
+                normalize_map_const_value(result);
+                return result;
+            },
             [](const ast::PathExpr &) -> std::optional<ConstValue> { return std::nullopt; },
-            [](const ast::CallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             [](const ast::MethodCallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             // P1 (ADT): match expressions are not foldable compile-time constants.
             [](const ast::MatchExpr &) -> std::optional<ConstValue> { return std::nullopt; },
@@ -1269,11 +1271,6 @@ void ConstValueTreeRecorder::record(const ast::ExprSyntax &expr) const {
 
 void ConstValueTreeRecorder::record_children(const ast::ExprSyntax &expr) const {
     std::visit(Overloaded{
-                   [this](const ast::SomeExpr &e) {
-                       if (e.value != nullptr) {
-                           record(*e.value);
-                       }
-                   },
                    [this](const ast::UnaryExpr &e) {
                        if (e.operand != nullptr) {
                            record(*e.operand);
@@ -1309,30 +1306,6 @@ void ConstValueTreeRecorder::record_children(const ast::ExprSyntax &expr) const 
                        for (const auto &field : e.fields) {
                            if (field != nullptr && field->value != nullptr) {
                                record(*field->value);
-                           }
-                       }
-                   },
-                   [this](const ast::ListLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               record(*item);
-                           }
-                       }
-                   },
-                   [this](const ast::SetLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               record(*item);
-                           }
-                       }
-                   },
-                   [this](const ast::MapLiteralExpr &e) {
-                       for (const auto &entry : e.entries) {
-                           if (entry != nullptr && entry->key != nullptr) {
-                               record(*entry->key);
-                           }
-                           if (entry != nullptr && entry->value != nullptr) {
-                               record(*entry->value);
                            }
                        }
                    },
@@ -1439,11 +1412,6 @@ void ConstDependencyResolver::collect_into(
                            }
                        }
                    },
-                   [this, &references](const ast::SomeExpr &e) {
-                       if (e.value != nullptr) {
-                           collect_into(*e.value, references);
-                       }
-                   },
                    [this, &references](const ast::UnaryExpr &e) {
                        if (e.operand != nullptr) {
                            collect_into(*e.operand, references);
@@ -1479,30 +1447,6 @@ void ConstDependencyResolver::collect_into(
                        for (const auto &field : e.fields) {
                            if (field != nullptr && field->value != nullptr) {
                                collect_into(*field->value, references);
-                           }
-                       }
-                   },
-                   [this, &references](const ast::ListLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               collect_into(*item, references);
-                           }
-                       }
-                   },
-                   [this, &references](const ast::SetLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               collect_into(*item, references);
-                           }
-                       }
-                   },
-                   [this, &references](const ast::MapLiteralExpr &e) {
-                       for (const auto &entry : e.entries) {
-                           if (entry != nullptr && entry->key != nullptr) {
-                               collect_into(*entry->key, references);
-                           }
-                           if (entry != nullptr && entry->value != nullptr) {
-                               collect_into(*entry->value, references);
                            }
                        }
                    },

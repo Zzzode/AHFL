@@ -85,6 +85,35 @@ class AstFormatter {
   public:
     explicit AstFormatter(const FormatOptions &opts) : opts_(opts) {}
 
+    // ---- standalone clause helpers (R-09: NOT routed through Decl/Node) ----
+
+    /// Drain the internal buffer.  Used by standalone clause formatters that
+    /// build output without routing through format(Program).
+    [[nodiscard]] std::string take_output() {
+        return out_.str();
+    }
+
+    /// Public entry point for expression formatting (used by
+    /// format_decreases_clause_impl; kept as a thin wrap so expression
+    /// formatting stays co-located with the rest of AstFormatter).
+    void format_expr_public(const ahfl::ast::ExprSyntax &expr) {
+        format_expr(expr);
+    }
+
+    /// Raw write – mirrors write(), named separately so callers from outside
+    /// the normal statement/decl pipeline don't accidentally pick up trailing
+    /// whitespace semantics we may add in the future.
+    void write_raw(const std::string &text) {
+        out_ << text;
+    }
+
+    /// Public string writer.  Equivalent to write_raw() for now; exposed with
+    /// a distinct name so standalone clause formatters don't depend on the
+    /// private legacy helper used only by the AST-walking path.
+    void append(const std::string &text) {
+        out_ << text;
+    }
+
     std::string format(const ahfl::ast::Program &program) {
         // Separate imports from other declarations
         std::vector<const ahfl::ast::ImportDecl *> imports;
@@ -198,6 +227,29 @@ class AstFormatter {
         return out.str();
     }
 
+    // Render a single parameter. Handles both named parameters (`name: Type`)
+    // and the four `self` variants (`self`, `mut self`, `self: Type`,
+    // `mut self: Type`). Bare self receivers have a null type annotation; the
+    // formatter omits the `: Type` suffix in that case.
+    std::string format_param(const ahfl::ast::ParamDeclSyntax &param) {
+        std::ostringstream out;
+        if (param.is_self) {
+            if (param.is_self_mut) {
+                out << "mut ";
+            }
+            out << "self";
+            if (param.type) {
+                out << ": " << param.type->spelling();
+            }
+        } else {
+            out << param.name << ": ";
+            if (param.type) {
+                out << param.type->spelling();
+            }
+        }
+        return out.str();
+    }
+
     void format_trait(const ahfl::ast::TraitDecl &t) {
         write("trait " + t.name + format_type_params(t.type_params));
         if (!t.super_traits.empty()) {
@@ -223,7 +275,7 @@ class AstFormatter {
                     if (!first) {
                         out_ << ", ";
                     }
-                    out_ << param->name << ": " << param->type->spelling();
+                    out_ << format_param(*param);
                     first = false;
                 }
                 out_ << ")";
@@ -231,8 +283,8 @@ class AstFormatter {
                     out_ << " -> " << item->return_type->spelling();
                 }
                 out_ << ";";
-            } else {
-                const auto &assoc = *item->assoc;
+            } else if (item->kind == ahfl::ast::TraitItemKind::AssocType) {
+                const auto &assoc = *item->assoc_type;
                 out_ << "type " << assoc.name;
                 if (!assoc.bounds.empty()) {
                     out_ << ": ";
@@ -247,6 +299,13 @@ class AstFormatter {
                 }
                 if (assoc.default_type) {
                     out_ << " = " << assoc.default_type->spelling();
+                }
+                out_ << ";";
+            } else if (item->kind == ahfl::ast::TraitItemKind::AssocConst) {
+                const auto &ac = *item->assoc_const;
+                out_ << "const " << ac.name << ": " << ac.type->spelling();
+                if (ac.default_value) {
+                    out_ << " = " << ac.default_value->text;
                 }
                 out_ << ";";
             }
@@ -276,7 +335,7 @@ class AstFormatter {
                 if (!first) {
                     out_ << ", ";
                 }
-                out_ << param->name << ": " << param->type->spelling();
+                out_ << format_param(*param);
                 first = false;
             }
             out_ << ")";
@@ -298,6 +357,15 @@ class AstFormatter {
         for (const auto &assoc : i.assoc_items) {
             write(make_indent(indent_, opts_));
             out_ << "type " << assoc->name << " = " << assoc->type->spelling() << ";";
+            newline();
+        }
+        for (const auto &ac : i.const_items) {
+            write(make_indent(indent_, opts_));
+            out_ << "const " << ac->name << ": " << ac->type->spelling();
+            if (ac->value) {
+                out_ << " = " << ac->value->text;
+            }
+            out_ << ";";
             newline();
         }
         indent_--;
@@ -335,11 +403,7 @@ class AstFormatter {
             if (index != 0) {
                 write(", ");
             }
-            const auto &param = *f.params[index];
-            write(param.name + ": ");
-            if (param.type) {
-                write(param.type->spelling());
-            }
+            write(format_param(*f.params[index]));
         }
         write(")");
         if (f.return_type) {
@@ -577,8 +641,13 @@ class AstFormatter {
         case Kind::Forbid:
             write("forbid ");
             break;
+        case Kind::Decreases:
+            write("decreases ");
+            break;
         }
-        if (clause.temporal_expr) {
+        if (clause.is_wildcard && clause.kind == Kind::Decreases) {
+            write("*");
+        } else if (clause.temporal_expr) {
             format_temporal_expr(*clause.temporal_expr);
         } else if (clause.expr) {
             format_expr(*clause.expr);
@@ -739,7 +808,6 @@ class AstFormatter {
     void format_expr(const ahfl::ast::ExprSyntax &expr) {
         std::visit(
             Overloaded{
-                [&](const ahfl::ast::NoneLiteralExpr &) { write("none"); },
                 [&](const ahfl::ast::BoolLiteralExpr &e) { write(e.value ? "true" : "false"); },
                 [&](const ahfl::ast::IntegerLiteralExpr &e) {
                     if (e.literal) {
@@ -757,13 +825,6 @@ class AstFormatter {
                     } else {
                         write(expr.text);
                     }
-                },
-                [&](const ahfl::ast::SomeExpr &e) {
-                    write("some(");
-                    if (e.value) {
-                        format_expr(*e.value);
-                    }
-                    write(")");
                 },
                 [&](const ahfl::ast::PathExpr &e) {
                     if (e.path) {
@@ -841,44 +902,6 @@ class AstFormatter {
                         }
                     }
                     write(" }");
-                },
-                [&](const ahfl::ast::ListLiteralExpr &e) {
-                    write("[");
-                    for (std::size_t i = 0; i < e.items.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        if (e.items[i]) {
-                            format_expr(*e.items[i]);
-                        }
-                    }
-                    write("]");
-                },
-                [&](const ahfl::ast::SetLiteralExpr &e) {
-                    write("{");
-                    for (std::size_t i = 0; i < e.items.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        if (e.items[i]) {
-                            format_expr(*e.items[i]);
-                        }
-                    }
-                    write("}");
-                },
-                [&](const ahfl::ast::MapLiteralExpr &e) {
-                    write("{");
-                    for (std::size_t i = 0; i < e.entries.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        const auto &entry = e.entries[i];
-                        if (entry->key) {
-                            format_expr(*entry->key);
-                        }
-                        out_ << ": ";
-                        if (entry->value) {
-                            format_expr(*entry->value);
-                        }
-                    }
-                    write("}");
                 },
                 [&](const ahfl::ast::UnaryExpr &e) {
                     format_unary_op(e.op);
@@ -1248,6 +1271,48 @@ std::vector<FormatDiff> compute_diff(const std::string &original, const std::str
     }
 
     return diffs;
+}
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone formatter (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Reconstruct surface source text for a single decreases clause.  Exposed as
+/// `format_decreases_clause` below.  Keeping the worker inside an anonymous
+/// namespace lets us reuse the same AstFormatter helpers without leaking them
+/// as part of the public formatter API.
+std::string format_decreases_clause_impl(const ahfl::ast::DecreasesClauseSyntax &clause) {
+    FormatOptions opts;
+    AstFormatter formatter(opts);
+
+    if (clause.is_wildcard) {
+        formatter.append("decreases *;");
+        return formatter.take_output();
+    }
+
+    formatter.append("decreases (");
+    for (std::size_t i = 0; i < clause.terms.size(); ++i) {
+        if (i != 0) {
+            formatter.write_raw(", ");
+        }
+        if (clause.terms[i]) {
+            formatter.format_expr_public(*clause.terms[i]);
+        } else {
+            // Defensive: null entries shouldn't survive desugar, but produce
+            // stable output anyway so diagnostics never crash.
+            formatter.append("/* null */");
+        }
+    }
+    formatter.append(");");
+    return formatter.take_output();
+}
+
+} // namespace
+
+std::string format_decreases_clause(const ahfl::ast::DecreasesClauseSyntax &clause) {
+    return format_decreases_clause_impl(clause);
 }
 
 } // namespace ahfl::formatter

@@ -27,9 +27,9 @@ topLevelDecl:
 
 moduleDecl: 'module' qualifiedIdent ';';
 
-importDecl: 'import' qualifiedIdent ('as' IDENT)? ';';
+importDecl: 'import' qualifiedIdent ('as' identifier)? ';';
 
-identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set';
+identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self';
 
 qualifiedIdent: identifier ('::' identifier)*;
 
@@ -44,15 +44,7 @@ qualifiedIdentListOpt: qualifiedIdentList?;
 type_:
 	primitiveType
 	| fnType
-	| 'Optional' '<' type_ '>'
-	| 'List' '<' type_ '>'
-	| 'Set' '<' type_ '>'
-	| 'Map' '<' type_ ',' type_ '>'
-	| appType
-	| qualifiedIdent;
-
-// Generic type application: Vec<Int>, std::collections::Map<String, Int>
-appType: qualifiedIdent '<' typeList '>';
+	| qualifiedIdent ('<' type_ (',' type_)* '>')?;
 
 primitiveType:
 	'Unit'
@@ -132,7 +124,17 @@ predicateDecl:
 
 paramList: param (',' param)* ','?;
 
-param: IDENT ':' type_;
+// Parameter declaration. Four shapes share this rule (RFC §3.2.2 / §1.3 / §1.4):
+//   - named param:              IDENT ':' type_          (any fn / capability / predicate)
+//   - bare self receiver:       'self'                   (trait method / impl method)
+//   - bare mutable self:        'mut' 'self'             (trait method / impl method)
+//   - typed self receiver:      'self' ':' type_         (trait method / impl method)
+//   - typed mutable self:       'mut' 'self' ':' type_   (trait method / impl method)
+// Semantic validation (self only inside trait/impl items, not top-level) is
+// deferred to the typecheck pass (P3b).
+param:
+	  IDENT ':' type_
+	| 'mut'? 'self' (':' type_)?;
 
 agentDecl:
 	'agent' IDENT '{' inputDecl contextDecl outputDecl statesDecl initialDecl finalDecl
@@ -167,7 +169,8 @@ contractItem:
 	requiresDecl
 	| ensuresDecl
 	| invariantDecl
-	| forbidDecl;
+	| forbidDecl
+	| decreasesDecl;
 
 requiresDecl: 'requires' ':' expr ';';
 
@@ -176,6 +179,8 @@ ensuresDecl: 'ensures' ':' expr ';';
 invariantDecl: 'invariant' ':' temporalExpr ';';
 
 forbidDecl: 'forbid' ':' temporalExpr ';';
+
+decreasesDecl: 'decreases' ':' (expr | '*') ';';
 
 flowDecl: 'flow' 'for' qualifiedIdent '{' stateHandler* '}';
 
@@ -291,7 +296,7 @@ lambdaParam: IDENT (':' type_)?;
 traitDecl:
 	DOC_COMMENT? 'trait' IDENT typeParams? (':' typeBoundList)? '{' traitItem* '}';
 
-traitItem: traitFnItem | assocTypeItem;
+traitItem: traitFnItem | assocTypeItem | assocConstItem;
 
 traitFnItem:
 	'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
@@ -300,22 +305,41 @@ traitFnItem:
 assocTypeItem:
 	'type' identifier typeParams? (':' typeBoundList)? ('=' type_)? ';';
 
+// P3 (RFC type-system §1.3): associated constant in a trait declaration.
+//   const NAME: Type [= const_expr];
+// Both the default initializer and the declaration-only (semicolon) forms
+// are accepted; absence of a default forces the implementing impl to provide
+// the value.
+assocConstItem:
+	'const' identifier ':' type_ ('=' constExpr)? ';';
+
 implDecl:
 	DOC_COMMENT? 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{'
-		fnDef*
-		assocItemDef* '}';
+		implItem* '}';
 
 // A trait reference in an impl header (e.g. `Foldable<T>`). Reuses type_ so a
 // generic trait with arguments parses uniformly with named types.
 traitRef: type_;
 
+// Impl body items are defined as a single alternation (RFC §1.4). Consolidating
+// fn + assoc-type + assoc-const into one `implItem` rule lets future item
+// kinds be added in a single place, and mirrors the `traitItem` pattern used
+// above.
+implItem: implFnItem | assocTypeDef | assocConstDef;
+
 // Method definition inside an impl block: same surface as fnDecl but the body
 // is mandatory (RFC §1.4: `FnDef ::= ... FnBody`).
-fnDef:
+implFnItem:
 	'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 	whereClause? fnBody;
 
-assocItemDef: 'type' identifier '=' type_ ';';
+// Associated type definition inside an impl block.
+assocTypeDef: 'type' identifier '=' type_ ';';
+
+// P3 (RFC type-system §1.4): associated constant definition inside an impl
+// block. The initializer is mandatory (an impl must provide a value for every
+// trait assoc-const that lacks a default).
+assocConstDef: 'const' identifier ':' type_ '=' constExpr ';';
 
 block: '{' statement* '}';
 
@@ -371,18 +395,13 @@ postfixExpr:
 	)*;
 
 primaryExpr:
-	literal
+	  literal
 	| callExpr
 	| structLiteral
 	| qualifiedValueExpr
 	| pathExpr
-	| listLiteral
-	| setLiteral
-	| mapLiteral
 	| matchExpr
 	| lambdaExpr
-	| 'some' '(' expr ')'
-	| 'none'
 	| '(' expr ')';
 
 // P1 (ADT): `match` expression. `match scrutinee { arm1; arm2; ... }`.
@@ -443,7 +462,7 @@ patternList: pattern (',' pattern)* ','?;
 
 pathExpr: pathRoot ('.' IDENT)*;
 
-pathRoot: IDENT | 'input' | 'output';
+pathRoot: IDENT | 'input' | 'output' | 'self';
 
 qualifiedValueExpr: identifier '::' identifier ('::' identifier)*;
 
@@ -470,17 +489,17 @@ stringLiteral: STRING_LITERAL;
 
 durationLiteral: DURATION_LITERAL;
 
+structLiteral: qualifiedIdent '{' structInitList? '}';
+
 listLiteral: '[' exprList? ']';
 
-setLiteral: 'set' '[' exprList? ']';
+setLiteral: '#[' exprList? ']';
 
-mapLiteral: 'map' '[' mapEntryList? ']';
+mapLiteral: '#{' mapEntryList? '}';
 
 mapEntryList: mapEntry (',' mapEntry)* ','?;
 
 mapEntry: expr ':' expr;
-
-structLiteral: qualifiedIdent '{' structInitList? '}';
 
 structInitList: structInit (',' structInit)* ','?;
 

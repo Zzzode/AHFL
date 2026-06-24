@@ -126,6 +126,8 @@ namespace {
         return "invariant";
     case ir::ContractClauseKind::Forbid:
         return "forbid";
+    case ir::ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "invalid";
@@ -388,6 +390,10 @@ class IrJsonPrinter final {
         out_ << "null";
     }
 
+    void write_bool(bool value) {
+        out_ << (value ? "true" : "false");
+    }
+
     [[nodiscard]] bool has_source_range(const ir::SourceRangeOpt &range) const {
         return range.has_value();
     }
@@ -419,10 +425,6 @@ class IrJsonPrinter final {
             field("source_path", [&]() { write_string(provenance.source_path); });
             print_source_range_field(field, provenance.source_range, indent_level + 1);
         });
-    }
-
-    void write_bool(bool value) {
-        out_ << (value ? "true" : "false");
     }
 
     void write_index(std::size_t value) {
@@ -1460,6 +1462,9 @@ class IrJsonPrinter final {
                                             entry("kind", [&]() {
                                                 write_string(contract_clause_name(clause.kind));
                                             });
+                                            if (clause.is_wildcard) {
+                                                entry("wildcard", [&]() { write_bool(true); });
+                                            }
                                             print_source_range_field(
                                                 entry, clause.source_range, indent_level + 3);
                                             std::visit(Overloaded{
@@ -1477,6 +1482,44 @@ class IrJsonPrinter final {
                                                            },
                                                        },
                                                        clause.value);
+                                            // P4.S6: decreases clause fields.
+                                            // Omits the entire block when no
+                                            // decreases is declared so JSON
+                                            // size stays compact for legacy
+                                            // programs; a from-json consumer
+                                            // treats missing fields as `false`
+                                            // / empty.
+                                            if (clause.decreases_wildcard ||
+                                                !clause.decreases_terms.empty()) {
+                                                entry("decreases", [&]() {
+                                                    print_object(indent_level + 3,
+                                                                 [&](const auto &dec) {
+                                                                     dec("wildcard",
+                                                                         [&]() {
+                                                                             write_bool(
+                                                                                 clause
+                                                                                     .decreases_wildcard);
+                                                                         });
+                                                                     dec("terms", [&]() {
+                                                                         print_array(
+                                                                             indent_level + 4,
+                                                                             [&](const auto &term) {
+                                                                                 for (const auto
+                                                                                          &t :
+                                                                                      clause
+                                                                                          .decreases_terms) {
+                                                                                     term([&]() {
+                                                                                         print_expr(
+                                                                                             *t,
+                                                                                             indent_level +
+                                                                                                 5);
+                                                                                     });
+                                                                                 }
+                                                                             });
+                                                                     });
+                                                                 });
+                                                });
+                                            }
                                         });
                                     });
                                 }
@@ -1699,6 +1742,101 @@ class IrJsonPrinter final {
                         if (has_symbol_ref(value.symbol_ref)) {
                             field("symbol_ref",
                                   [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
+                    });
+                },
+                [&](const ir::InstanceDecl &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("instance"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
+                        }
+                        field("name", [&]() { write_string(value.name); });
+                        field("instance_kind", [&]() {
+                            switch (value.kind) {
+                            case ir::InstanceKind::Capability:
+                                write_string("capability");
+                                break;
+                            case ir::InstanceKind::Predicate:
+                                write_string("predicate");
+                                break;
+                            case ir::InstanceKind::Agent:
+                                write_string("agent");
+                                break;
+                            case ir::InstanceKind::Workflow:
+                                write_string("workflow");
+                                break;
+                            case ir::InstanceKind::Fn:
+                                write_string("fn");
+                                break;
+                            case ir::InstanceKind::Unknown:
+                                write_string("unknown");
+                                break;
+                            }
+                        });
+                        if (has_symbol_ref(value.symbol_ref)) {
+                            field("symbol_ref",
+                                  [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
+                        if (!value.type_args.empty()) {
+                            field("type_args", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &tref : value.type_args) {
+                                        item([&]() { print_type_ref(tref, indent_level + 2); });
+                                    }
+                                });
+                            });
+                        }
+                        if (!value.params.empty()) {
+                            field("params", [&]() { print_params(value.params, indent_level + 1); });
+                        }
+                        if (has_type_ref(value.return_type_ref)) {
+                            field("return_type",
+                                  [&]() { write_string(type_name(value.return_type_ref)); });
+                            field("return_type_ref", [&]() {
+                                print_type_ref(value.return_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_input_type_ref)) {
+                            field("agent_input_type", [&]() {
+                                write_string(type_name(value.agent_input_type_ref));
+                            });
+                            field("agent_input_type_ref", [&]() {
+                                print_type_ref(value.agent_input_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_context_type_ref)) {
+                            field("agent_context_type", [&]() {
+                                write_string(type_name(value.agent_context_type_ref));
+                            });
+                            field("agent_context_type_ref", [&]() {
+                                print_type_ref(value.agent_context_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_output_type_ref)) {
+                            field("agent_output_type", [&]() {
+                                write_string(type_name(value.agent_output_type_ref));
+                            });
+                            field("agent_output_type_ref", [&]() {
+                                print_type_ref(value.agent_output_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.workflow_input_type_ref)) {
+                            field("workflow_input_type", [&]() {
+                                write_string(type_name(value.workflow_input_type_ref));
+                            });
+                            field("workflow_input_type_ref", [&]() {
+                                print_type_ref(value.workflow_input_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.workflow_output_type_ref)) {
+                            field("workflow_output_type", [&]() {
+                                write_string(type_name(value.workflow_output_type_ref));
+                            });
+                            field("workflow_output_type_ref", [&]() {
+                                print_type_ref(value.workflow_output_type_ref, indent_level + 1);
+                            });
                         }
                     });
                 },

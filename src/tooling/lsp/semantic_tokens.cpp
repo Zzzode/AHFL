@@ -160,28 +160,20 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                 if (t.name != nullptr) {
                     collect_qualified_name_tokens(*t.name, source, tokens, SemanticTokenType::Type);
                 }
-            },
-            [&](const ast::OptionalType &t) {
-                if (t.inner != nullptr) {
-                    collect_type_syntax_tokens(*t.inner, source, tokens);
+                for (const auto &arg : t.type_args) {
+                    if (arg != nullptr) {
+                        collect_type_syntax_tokens(*arg, source, tokens);
+                    }
                 }
             },
-            [&](const ast::ListType &t) {
-                if (t.element != nullptr) {
-                    collect_type_syntax_tokens(*t.element, source, tokens);
+            [&](const ast::FnType &t) {
+                for (const auto &param : t.params) {
+                    if (param != nullptr) {
+                        collect_type_syntax_tokens(*param, source, tokens);
+                    }
                 }
-            },
-            [&](const ast::SetType &t) {
-                if (t.element != nullptr) {
-                    collect_type_syntax_tokens(*t.element, source, tokens);
-                }
-            },
-            [&](const ast::MapType &t) {
-                if (t.key_type != nullptr) {
-                    collect_type_syntax_tokens(*t.key_type, source, tokens);
-                }
-                if (t.value_type != nullptr) {
-                    collect_type_syntax_tokens(*t.value_type, source, tokens);
+                if (t.return_type != nullptr) {
+                    collect_type_syntax_tokens(*t.return_type, source, tokens);
                 }
             },
             [&](const ast::AppType &t) {
@@ -240,9 +232,6 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                          const SourceFile &source,
                          std::vector<TokenEntry> &tokens) {
     std::visit(Overloaded{
-                   [&](const ast::NoneLiteralExpr &) {
-                       // no tokens for literals (could add later)
-                   },
                    [&](const ast::BoolLiteralExpr &) {
                        // no tokens for literals (could add later)
                    },
@@ -260,11 +249,6 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                    },
                    [&](const ast::DurationLiteralExpr &) {
                        // no tokens for literals (could add later)
-                   },
-                   [&](const ast::SomeExpr &e) {
-                       if (e.value != nullptr) {
-                           collect_expr_tokens(*e.value, source, tokens);
-                       }
                    },
                    [&](const ast::PathExpr &e) {
                        // Path root identifier — treated as variable reference
@@ -332,32 +316,6 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                                                   SemanticTokenType::Property);
                                if (field->value != nullptr) {
                                    collect_expr_tokens(*field->value, source, tokens);
-                               }
-                           }
-                       }
-                   },
-                   [&](const ast::ListLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               collect_expr_tokens(*item, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::SetLiteralExpr &e) {
-                       for (const auto &item : e.items) {
-                           if (item != nullptr) {
-                               collect_expr_tokens(*item, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::MapLiteralExpr &e) {
-                       for (const auto &entry : e.entries) {
-                           if (entry != nullptr) {
-                               if (entry->key != nullptr) {
-                                   collect_expr_tokens(*entry->key, source, tokens);
-                               }
-                               if (entry->value != nullptr) {
-                                   collect_expr_tokens(*entry->value, source, tokens);
                                }
                            }
                        }

@@ -29,6 +29,8 @@ ahfl_apply_project_warnings(ahfl_project_check_tests)
 
 add_executable(ahfl_compiler_ir_tests
     unit/compiler/ir/identity_visitor.cpp
+    unit/compiler/ir/mangling.cpp
+    unit/compiler/ir/typed_hir_instance.cpp
 )
 target_link_libraries(ahfl_compiler_ir_tests
     PRIVATE
@@ -329,6 +331,21 @@ target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOU
 target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_runtime_evaluator_p7_tests)
 
+# P2d.S5: evaluator end-to-end generics dispatch through mangled instance names.
+add_executable(ahfl_runtime_evaluator_generics_tests
+    unit/runtime/evaluator/evaluator_generics.cpp
+)
+target_link_libraries(ahfl_runtime_evaluator_generics_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_runtime_evaluator_generics_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+ahfl_apply_project_warnings(ahfl_runtime_evaluator_generics_tests)
+
 add_executable(ahfl_counterexample_parse_tests
     unit/verification/formal/counterexample_parse.cpp
 )
@@ -374,6 +391,32 @@ target_link_libraries(ahfl_base_diagnostic_serialization_tests
         ahfl_base_json
 )
 ahfl_apply_project_warnings(ahfl_base_diagnostic_serialization_tests)
+
+add_executable(ahfl_base_decreases_diagnostics_tests
+    unit/base/support/decreases_diagnostics.cpp
+)
+target_link_libraries(ahfl_base_decreases_diagnostics_tests
+    PRIVATE
+        ahfl_base_support
+)
+ahfl_apply_project_warnings(ahfl_base_decreases_diagnostics_tests)
+
+add_executable(ahfl_base_trait_impl_diagnostics_tests
+    unit/base/support/trait_impl_diagnostics.cpp
+)
+target_link_libraries(ahfl_base_trait_impl_diagnostics_tests
+    PRIVATE
+        ahfl_base_support
+)
+ahfl_apply_project_warnings(ahfl_base_trait_impl_diagnostics_tests)
+add_executable(ahfl_base_diagnostics_code_smoke_tests
+    unit/base/support/diagnostics_code_smoke.cpp
+)
+target_link_libraries(ahfl_base_diagnostics_code_smoke_tests
+    PRIVATE
+        ahfl_base_support
+)
+ahfl_apply_project_warnings(ahfl_base_diagnostics_code_smoke_tests)
 
 add_executable(ahfl_runtime_provider_secret_provider_tests
     unit/runtime/providers/secret/secret_provider.cpp
@@ -453,6 +496,16 @@ target_link_libraries(ahfl_semantics_flow_condition_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_flow_condition_tests)
 
+add_executable(ahfl_semantics_validate_plumbing_tests
+    unit/compiler/semantics/validate_plumbing.cpp
+)
+target_link_libraries(ahfl_semantics_validate_plumbing_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_validate_plumbing_tests)
+
 add_executable(ahfl_semantics_adt_match_tests
     unit/compiler/semantics/adt_match.cpp
 )
@@ -483,6 +536,16 @@ target_link_libraries(ahfl_semantics_trait_impl_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_trait_impl_tests)
 
+add_executable(ahfl_semantics_decreases_recognizer_tests
+    unit/compiler/semantics/decreases_recognizer.cpp
+)
+target_link_libraries(ahfl_semantics_decreases_recognizer_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_decreases_recognizer_tests)
+
 add_executable(ahfl_semantics_concurrency_tests
     unit/compiler/semantics/concurrency.cpp
 )
@@ -492,6 +555,40 @@ target_link_libraries(ahfl_semantics_concurrency_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_concurrency_tests)
+
+add_executable(ahfl_semantics_where_clause_info_tests
+    unit/compiler/semantics/where_clause_info.cpp
+)
+target_link_libraries(ahfl_semantics_where_clause_info_tests
+    PRIVATE
+        ahfl_compiler_ir
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_where_clause_info_tests)
+
+add_executable(ahfl_semantics_monomorphization_tests
+    unit/compiler/semantics/monomorphization.cpp
+)
+target_link_libraries(ahfl_semantics_monomorphization_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_monomorphization_tests)
+
+# P4.S7b: assurance verification.obligations classifier + JSON schema tests.
+add_executable(ahfl_assurance_obligations_tests
+    unit/compiler/assurance/obligations.cpp
+)
+target_link_libraries(ahfl_assurance_obligations_tests
+    PRIVATE
+        ahfl_compiler_ir
+        ahfl_compiler_assurance
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_assurance_obligations_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_assurance_obligations_tests)
 
 add_executable(ahfl_streaming_tests
     unit/runtime/providers/llm/streaming.cpp
@@ -537,6 +634,55 @@ target_link_libraries(ahfl_error_recovery_tests
         ahfl_compiler_syntax_recovery
 )
 ahfl_apply_project_warnings(ahfl_error_recovery_tests)
+
+add_executable(ahfl_syntax_trait_impl_tests
+    unit/compiler/syntax/trait_impl.cpp
+)
+target_link_libraries(ahfl_syntax_trait_impl_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_syntax_trait_impl_tests)
+# DecreasesClauseSyntax – standalone fragment tests (R-09: not in DeclKind).
+# Split into small translation units so each acceptance dimension has an
+# independently-failing ctest target.
+add_executable(ahfl_decreases_structure_tests
+    unit/compiler/syntax/frontend/decreases_structure.cpp
+)
+target_link_libraries(ahfl_decreases_structure_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_structure_tests)
+
+add_executable(ahfl_decreases_printer_tests
+    unit/compiler/syntax/frontend/decreases_printer.cpp
+)
+target_link_libraries(ahfl_decreases_printer_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_printer_tests)
+
+add_executable(ahfl_decreases_desugar_tests
+    unit/compiler/syntax/frontend/decreases_desugar.cpp
+)
+target_link_libraries(ahfl_decreases_desugar_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_desugar_tests)
+
+add_executable(ahfl_decreases_symmetry_tests
+    unit/compiler/syntax/frontend/decreases_symmetry.cpp
+)
+target_link_libraries(ahfl_decreases_symmetry_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        ahfl_tooling_formatter
+)
+ahfl_apply_project_warnings(ahfl_decreases_symmetry_tests)
 
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
@@ -783,6 +929,9 @@ foreach(_tgt
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests
     ahfl_base_diagnostic_serialization_tests
+    ahfl_base_decreases_diagnostics_tests
+    ahfl_base_trait_impl_diagnostics_tests
+    ahfl_base_diagnostics_code_smoke_tests
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests
@@ -791,15 +940,19 @@ foreach(_tgt
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
     ahfl_semantics_flow_condition_tests
+    ahfl_semantics_validate_plumbing_tests
     ahfl_semantics_adt_match_tests
     ahfl_semantics_fn_generics_closures_tests
     ahfl_semantics_trait_impl_tests
     ahfl_semantics_concurrency_tests
+    ahfl_semantics_where_clause_info_tests
+    ahfl_semantics_monomorphization_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests
     ahfl_tooling_lsp_handler_tests
     ahfl_connection_pool_tests
     ahfl_error_recovery_tests
+    ahfl_syntax_trait_impl_tests
     ahfl_compiler_handoff_package_tests
     ahfl_thread_pool_tests
     ahfl_version_tests
@@ -810,6 +963,10 @@ foreach(_tgt
     ahfl_sandbox_tests
     ahfl_distributed_tests
     ahfl_tooling_formatter_tests
+    ahfl_decreases_structure_tests
+    ahfl_decreases_printer_tests
+    ahfl_decreases_desugar_tests
+    ahfl_decreases_symmetry_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests
@@ -820,6 +977,7 @@ foreach(_tgt
     ahfl_property_lowering_tests
     ahfl_property_smv_tests
     ahfl_compiler_ir_opt_tests
+    ahfl_assurance_obligations_tests
 )
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/tests)

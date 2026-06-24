@@ -3582,6 +3582,15 @@ add_test(NAME ahflc.emit_smv.project.ok_cross_file
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DSUBCOMMAND=emit smv"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.smv"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
+)
+
 add_test(NAME ahflc.check.project.fail_node_input
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -3906,6 +3915,10 @@ add_test(NAME ahfl.evaluator.p7_runtime_all
     COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_p7_tests>
 )
 
+add_test(NAME ahfl.evaluator.generics_all
+    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_generics_tests>
+)
+
 add_test(NAME ahfl.executor.exec_all
     COMMAND $<TARGET_FILE:ahfl_executor_tests>
 )
@@ -3983,6 +3996,10 @@ add_test(NAME ahfl.semantics.flow_condition_all
     COMMAND $<TARGET_FILE:ahfl_semantics_flow_condition_tests>
 )
 
+add_test(NAME ahfl.syntax.trait_impl_all
+    COMMAND $<TARGET_FILE:ahfl_syntax_trait_impl_tests>
+)
+
 add_test(NAME ahfl.semantics.adt_match_all
     COMMAND $<TARGET_FILE:ahfl_semantics_adt_match_tests>
 )
@@ -3997,6 +4014,22 @@ add_test(NAME ahfl.semantics.fn_generics_closures_all
 # and the strict orphan rule (RFC §2.2) via a multi-module SourceGraph.
 add_test(NAME ahfl.semantics.trait_impl_all
     COMMAND $<TARGET_FILE:ahfl_semantics_trait_impl_tests>
+)
+
+add_test(NAME ahfl.semantics.validate_plumbing_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_validate_plumbing_tests>
+)
+
+add_test(NAME ahfl.semantics.where_clause_info_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_where_clause_info_tests>
+)
+
+add_test(NAME ahfl.semantics.monomorphization_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_monomorphization_tests>
+)
+
+add_test(NAME ahfl.assurance.obligations_all
+    COMMAND $<TARGET_FILE:ahfl_assurance_obligations_tests>
 )
 
 add_test(NAME ahfl.llm_provider.streaming_all
@@ -4023,6 +4056,20 @@ add_test(NAME ahfl.frontend.error_recovery_all
     COMMAND $<TARGET_FILE:ahfl_error_recovery_tests>
 )
 
+# DecreasesClauseSyntax (R-09: not dispatched through DeclKind).
+add_test(NAME ahfl.frontend.decreases_structure_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_structure_tests>
+)
+add_test(NAME ahfl.frontend.decreases_printer_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_printer_tests>
+)
+add_test(NAME ahfl.frontend.decreases_desugar_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_desugar_tests>
+)
+add_test(NAME ahfl.frontend.decreases_symmetry_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_symmetry_tests>
+)
+
 add_test(NAME ahfl.support.thread_pool_all
     COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
 )
@@ -4033,6 +4080,16 @@ add_test(NAME ahfl.support.version_all
 
 add_test(NAME ahfl.support.diagnostic_serialization_all
     COMMAND $<TARGET_FILE:ahfl_base_diagnostic_serialization_tests>
+)
+
+add_test(NAME ahfl.support.decreases_diagnostics_all
+    COMMAND $<TARGET_FILE:ahfl_base_decreases_diagnostics_tests>
+)
+add_test(NAME ahfl.support.trait_impl_diagnostics_all
+    COMMAND $<TARGET_FILE:ahfl_base_trait_impl_diagnostics_tests>
+)
+add_test(NAME ahfl.support.diagnostics_code_smoke_all
+    COMMAND $<TARGET_FILE:ahfl_base_diagnostics_code_smoke_tests>
 )
 
 add_test(NAME ahfl.formal.bmc_all
@@ -4137,4 +4194,8 @@ add_test(NAME ahfl.property.smv_syntax
 
 add_test(NAME ahfl.ir.opt.lower_and_passes
     COMMAND $<TARGET_FILE:ahfl_compiler_ir_opt_tests>
+)
+
+add_test(NAME ahfl.semantics.decreases_recognizer_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_decreases_recognizer_tests>
 )

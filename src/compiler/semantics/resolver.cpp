@@ -498,18 +498,30 @@ class ResolverPass final {
             return;
         }
 
-        if (item.kind == ast::TraitItemKind::AssocType && item.assoc) {
-            for (const auto &type_param : item.assoc->type_params) {
+        if (item.kind == ast::TraitItemKind::AssocType && item.assoc_type) {
+            for (const auto &type_param : item.assoc_type->type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);
                 }
             }
-            for (const auto &bound : item.assoc->bounds) {
+            for (const auto &bound : item.assoc_type->bounds) {
                 resolve_type(*bound);
             }
-            if (item.assoc->default_type) {
-                resolve_type(*item.assoc->default_type);
+            if (item.assoc_type->default_type) {
+                resolve_type(*item.assoc_type->default_type);
             }
+            return;
+        }
+
+        // P3c.S1: resolve references inside associated-constant trait items
+        // (type annotation + optional default value expression).
+        if (item.kind == ast::TraitItemKind::AssocConst && item.assoc_const) {
+            if (item.assoc_const->type) {
+                resolve_type(*item.assoc_const->type);
+            }
+            // Expression-level resolution for assoc-const default values is
+            // deferred to semantic analysis phase P3b.
+            (void)item.assoc_const->default_value;
         }
     }
 
@@ -577,6 +589,21 @@ class ResolverPass final {
         }
 
         if (node.trait_ref) {
+            // R-10 (P3c pre-research TODO): trait-name lookup order today is
+            //   (1) resolver-recorded TypeName reference (cross-module paths
+            //       through `Module::Trait` + imports), then
+            //   (2) local SymbolNamespace::Types lookup in the canonical-name
+            //       index (TypeEnvironment trait_name_index_ is a downstream
+            //       mirror of the resolver's write).
+            // This matches how regular type references resolve, but the trait
+            // system RFC additionally requires: (a) trait aliases / blanket
+            // imports, (b) prelude trait shadowing rules, (c) when a trait
+            // name collides with a type/type-alias of the same spelling in
+            // Types namespace we prefer the Trait-symbol variant when the
+            // reference appears in a bound (`T: Name`) or impl-header
+            // (`impl Name for T`) position. All three items are deferred to
+            // S4b; the current path is sufficient for P3c coherence and
+            // diagnostic coverage.
             // trait_ref is a TypeSyntax (NamedType) — resolve the trait name.
             resolve_type(*node.trait_ref);
         }
@@ -611,6 +638,16 @@ class ResolverPass final {
             if (assoc->type) {
                 resolve_type(*assoc->type);
             }
+        }
+
+        // P3c.S1: resolve associated constants inside impl blocks.
+        for (const auto &assoc_const : node.const_items) {
+            if (assoc_const->type) {
+                resolve_type(*assoc_const->type);
+            }
+            // Expression-level resolution for impl assoc-const initializers
+            // is deferred to semantic analysis phase P3b.
+            (void)assoc_const->value;
         }
 
         generic_type_params_.clear();
@@ -1106,7 +1143,76 @@ class ResolverPass final {
                     // P2: if this name is a generic type param in scope,
                     // skip resolution — it's an opaque type variable.
                     if (generic_type_params_.count(t.name->spelling()) > 0) {
+                        // Still recurse into type args (they may reference
+                        // outer scope types like T or U used inside a Fn).
+                        for (const auto &arg : t.type_args) {
+                            if (arg) {
+                                resolve_type(*arg);
+                            }
+                        }
                         return;
+                    }
+                    // P5.5 (TypeSyntax desugaring): a bare single-segment
+                    // name with generic arguments used to be handled by a
+                    // dedicated AST node (OptionalType / ListType / etc.).
+                    // Those nodes have been removed; the bare name now
+                    // resolves like any other nominal type. When the stdlib
+                    // is loaded, Optional/List/Set/Map are real enum/struct
+                    // declarations in the symbol table and must produce a
+                    // TypeName reference. resolve_std_container_type in
+                    // type_resolver.cpp handles the fallback case where no
+                    // such declaration exists (stdlib-less pipelines).
+                    //
+                    // P5.6a integration fix: the four recognised container
+                    // names (Optional / List / Set / Map) are allowed to
+                    // remain unresolved at the Resolver phase. The actual
+                    // diagnostic (`stdlib container type unavailable`) is
+                    // emitted later by the TypeResolver so stdlib-less
+                    // pipelines surface a targeted message rather than a
+                    // generic "unknown type".
+                    if (t.name->segments.size() == 1 && !t.type_args.empty()) {
+                        const auto &head = t.name->segments.front();
+                        if (head == "Option" || head == "Optional" ||
+                            head == "List" || head == "Set" || head == "Map") {
+                            // Silent lookup first — only record a symbol
+                            // reference if the symbol actually exists. Do not
+                            // call resolve_reference() because it emits an
+                            // "unknown type" diagnostic on miss.
+                            const auto pre_existing =
+                                lookup(SymbolNamespace::Types, *t.name);
+                            if (!pre_existing.has_value()) {
+                                for (const auto &arg : t.type_args) {
+                                    if (arg) {
+                                        resolve_type(*arg);
+                                    }
+                                }
+                                return;
+                            }
+                            // Container symbol IS available: register the
+                            // reference and type-alias dependency tracking.
+                            result_.add_reference(ResolvedReference{
+                                .kind = ReferenceKind::TypeName,
+                                .text = t.name->spelling(),
+                                .source_id = current_source_id_,
+                                .range = t.name->range,
+                                .target = *pre_existing,
+                            });
+                            if (current_type_alias_.has_value()) {
+                                const auto symbol =
+                                    result_.symbol_table.get(*pre_existing);
+                                if (symbol.has_value() &&
+                                    symbol->get().kind == SymbolKind::TypeAlias) {
+                                    type_alias_dependencies_[current_type_alias_->value]
+                                        .push_back(*pre_existing);
+                                }
+                            }
+                            for (const auto &arg : t.type_args) {
+                                if (arg) {
+                                    resolve_type(*arg);
+                                }
+                            }
+                            return;
+                        }
                     }
                     const auto resolved = resolve_reference(
                         SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
@@ -1118,13 +1224,11 @@ class ResolverPass final {
                                 *resolved);
                         }
                     }
-                },
-                [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
-                [&](const ast::ListType &t) { resolve_type(*t.element); },
-                [&](const ast::SetType &t) { resolve_type(*t.element); },
-                [&](const ast::MapType &t) {
-                    resolve_type(*t.key_type);
-                    resolve_type(*t.value_type);
+                    for (const auto &arg : t.type_args) {
+                        if (arg) {
+                            resolve_type(*arg);
+                        }
+                    }
                 },
                 [&](const ast::FnType &t) {
                     // P2 (RFC §3.3): first-class Fn type. Recurse into
@@ -1164,7 +1268,6 @@ class ResolverPass final {
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
         std::visit(Overloaded{
-                       [&](const ast::SomeExpr &e) { resolve_declaration_expr(*e.value); },
                        [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
                        [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
                        [&](const ast::BinaryExpr &e) {
@@ -1200,22 +1303,6 @@ class ResolverPass final {
                                                    "type");
                            for (const auto &field : e.fields) {
                                resolve_declaration_expr(*field->value);
-                           }
-                       },
-                       [&](const ast::ListLiteralExpr &e) {
-                           for (const auto &item : e.items) {
-                               resolve_declaration_expr(*item);
-                           }
-                       },
-                       [&](const ast::SetLiteralExpr &e) {
-                           for (const auto &item : e.items) {
-                               resolve_declaration_expr(*item);
-                           }
-                       },
-                       [&](const ast::MapLiteralExpr &e) {
-                           for (const auto &entry : e.entries) {
-                               resolve_declaration_expr(*entry->key);
-                               resolve_declaration_expr(*entry->value);
                            }
                        },
                        [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },

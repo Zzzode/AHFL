@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_backend_infra_wasm.a CMakeFiles/ahfl_compiler_backend_infra_wasm.dir/infra/wasm_backend.cpp.o CMakeFiles/ahfl_compiler_backend_infra_wasm.dir/infra/wasm_runtime.cpp.o
+/usr/bin/ranlib libahfl_compiler_backend_infra_wasm.a

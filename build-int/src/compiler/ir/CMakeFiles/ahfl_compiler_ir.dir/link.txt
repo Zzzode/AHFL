@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_ir.a CMakeFiles/ahfl_compiler_ir.dir/analysis.cpp.o CMakeFiles/ahfl_compiler_ir.dir/identity.cpp.o CMakeFiles/ahfl_compiler_ir.dir/ir_lower.cpp.o CMakeFiles/ahfl_compiler_ir.dir/ir_print.cpp.o CMakeFiles/ahfl_compiler_ir.dir/ir_json.cpp.o CMakeFiles/ahfl_compiler_ir.dir/program_view.cpp.o CMakeFiles/ahfl_compiler_ir.dir/typed_hir_lower.cpp.o CMakeFiles/ahfl_compiler_ir.dir/verify.cpp.o CMakeFiles/ahfl_compiler_ir.dir/visitor.cpp.o
+/usr/bin/ranlib libahfl_compiler_ir.a

@@ -113,33 +113,11 @@ class AstInvariantValidator final {
                 },
                 [&](const NamedType &t) {
                     validate_qualified_name(t.name.get(), type.range, "NamedType.name");
-                },
-                [&](const OptionalType &t) {
-                    require(t.inner != nullptr, type.range, "OptionalType is missing inner");
-                    if (t.inner) {
-                        validate_type(*t.inner);
-                    }
-                },
-                [&](const ListType &t) {
-                    require(t.element != nullptr, type.range, "ListType is missing element");
-                    if (t.element) {
-                        validate_type(*t.element);
-                    }
-                },
-                [&](const SetType &t) {
-                    require(t.element != nullptr, type.range, "SetType is missing element");
-                    if (t.element) {
-                        validate_type(*t.element);
-                    }
-                },
-                [&](const MapType &t) {
-                    require(t.key_type != nullptr, type.range, "MapType is missing key type");
-                    require(t.value_type != nullptr, type.range, "MapType is missing value type");
-                    if (t.key_type) {
-                        validate_type(*t.key_type);
-                    }
-                    if (t.value_type) {
-                        validate_type(*t.value_type);
+                    for (const auto &arg : t.type_args) {
+                        require(arg != nullptr, type.range, "NamedType is missing a type argument");
+                        if (arg) {
+                            validate_type(*arg);
+                        }
                     }
                 },
                 [&](const FnType &t) {
@@ -180,9 +158,6 @@ class AstInvariantValidator final {
     void validate_expr(const ExprSyntax &expr) {
         std::visit(
             Overloaded{
-                [&](const NoneLiteralExpr &) {
-                    // No payload fields — presence guaranteed by variant
-                },
                 [&](const BoolLiteralExpr &) {
                     // Value type — presence guaranteed by variant
                 },
@@ -202,12 +177,6 @@ class AstInvariantValidator final {
                 [&](const DurationLiteralExpr &e) {
                     require(
                         e.literal != nullptr, expr.range, "DurationLiteralExpr is missing literal");
-                },
-                [&](const SomeExpr &e) {
-                    require(e.value != nullptr, expr.range, "SomeExpr is missing value");
-                    if (e.value) {
-                        validate_expr(*e.value);
-                    }
                 },
                 [&](const PathExpr &e) {
                     require(e.path != nullptr, expr.range, "PathExpr is missing path");
@@ -276,42 +245,6 @@ class AstInvariantValidator final {
                                 "StructInitSyntax is missing value");
                         if (field->value) {
                             validate_expr(*field->value);
-                        }
-                    }
-                },
-                [&](const ListLiteralExpr &e) {
-                    for (const auto &item : e.items) {
-                        require(item != nullptr, expr.range, "ListLiteralExpr.items contains null");
-                        if (item) {
-                            validate_expr(*item);
-                        }
-                    }
-                },
-                [&](const SetLiteralExpr &e) {
-                    for (const auto &item : e.items) {
-                        require(item != nullptr, expr.range, "SetLiteralExpr.items contains null");
-                        if (item) {
-                            validate_expr(*item);
-                        }
-                    }
-                },
-                [&](const MapLiteralExpr &e) {
-                    for (const auto &entry : e.entries) {
-                        require(
-                            entry != nullptr, expr.range, "MapLiteralExpr.entries contains null");
-                        if (!entry) {
-                            continue;
-                        }
-                        require(
-                            entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
-                        require(entry->value != nullptr,
-                                entry->range,
-                                "MapEntrySyntax is missing value");
-                        if (entry->key) {
-                            validate_expr(*entry->key);
-                        }
-                        if (entry->value) {
-                            validate_expr(*entry->value);
                         }
                     }
                 },
@@ -633,7 +566,15 @@ class AstInvariantValidator final {
                 continue;
             }
             require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
-            require(param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+            // Self param (`self` / `mut self`) omits the type annotation at the
+            // grammar level; the receiver type is inferred from the enclosing
+            // impl/trait target during semantic analysis (P3b). Other
+            // parameters must carry an explicit type.
+            if (!param->is_self) {
+                require(param->type != nullptr,
+                        param->range,
+                        "ParamDeclSyntax is missing type");
+            }
             if (param->type) {
                 validate_type(*param->type);
             }
@@ -857,7 +798,11 @@ class AstInvariantValidator final {
                 }
                 const auto has_expr = clause->expr != nullptr;
                 const auto has_temporal = clause->temporal_expr != nullptr;
-                require(has_expr != has_temporal,
+                // Wildcard decreases carries no expression payload; that's a
+                // deliberate grammatical choice ("decreases: *;").
+                const bool allows_no_payload =
+                    (clause->kind == ContractClauseKind::Decreases && clause->is_wildcard);
+                require(allows_no_payload || has_expr != has_temporal,
                         clause->range,
                         "ContractClauseSyntax must have exactly one expression payload");
                 if (clause->expr) {
@@ -956,8 +901,15 @@ class AstInvariantValidator final {
                 require(param != nullptr, node.range, "FnDecl.params contains null");
                 if (param) {
                     require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
-                    require(
-                        param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+                    // Bare `self` / `mut self` params carry no explicit type at the
+                    // grammar level; the receiver type is inferred from the enclosing
+                    // impl/trait target during semantic analysis (P3b). Other
+                    // parameters must carry an explicit type.
+                    if (!param->is_self) {
+                        require(param->type != nullptr,
+                                param->range,
+                                "ParamDeclSyntax is missing type");
+                    }
                     if (param->type) {
                         validate_type(*param->type);
                     }
@@ -1013,9 +965,13 @@ class AstInvariantValidator final {
                             require(!param->name.empty(),
                                     param->range,
                                     "ParamDeclSyntax is missing name");
-                            require(param->type != nullptr,
-                                    param->range,
-                                    "ParamDeclSyntax is missing type");
+                            // Bare `self` / `mut self` params carry no explicit type at the
+                            // grammar level; defer to P3b for receiver inference.
+                            if (!param->is_self) {
+                                require(param->type != nullptr,
+                                        param->range,
+                                        "ParamDeclSyntax is missing type");
+                            }
                             if (param->type) {
                                 validate_type(*param->type);
                             }
@@ -1031,20 +987,38 @@ class AstInvariantValidator final {
                         validate_where_clause(*item->where_clause);
                     }
                 } else if (item->kind == TraitItemKind::AssocType) {
-                    require(item->assoc != nullptr,
+                    require(item->assoc_type != nullptr,
                             item->range,
                             "TraitItemSyntax assoc type is missing");
-                    if (item->assoc) {
-                        require(!item->assoc->name.empty(),
-                                item->assoc->range,
+                    if (item->assoc_type) {
+                        require(!item->assoc_type->name.empty(),
+                                item->assoc_type->range,
                                 "assoc type is missing name");
-                        for (const auto &bound : item->assoc->bounds) {
+                        for (const auto &bound : item->assoc_type->bounds) {
                             if (bound) {
                                 validate_type(*bound);
                             }
                         }
-                        if (item->assoc->default_type) {
-                            validate_type(*item->assoc->default_type);
+                        if (item->assoc_type->default_type) {
+                            validate_type(*item->assoc_type->default_type);
+                        }
+                    }
+                } else if (item->kind == TraitItemKind::AssocConst) {
+                    require(item->assoc_const != nullptr,
+                            item->range,
+                            "TraitItemSyntax assoc const is missing");
+                    if (item->assoc_const) {
+                        require(!item->assoc_const->name.empty(),
+                                item->assoc_const->range,
+                                "assoc const is missing name");
+                        require(item->assoc_const->type != nullptr,
+                                item->assoc_const->range,
+                                "assoc const is missing type");
+                        if (item->assoc_const->type) {
+                            validate_type(*item->assoc_const->type);
+                        }
+                        if (item->assoc_const->default_value) {
+                            validate_expr(*item->assoc_const->default_value);
                         }
                     }
                 }
@@ -1098,6 +1072,28 @@ class AstInvariantValidator final {
                     require(assoc->type != nullptr, assoc->range, "assoc item is missing type");
                     if (assoc->type) {
                         validate_type(*assoc->type);
+                    }
+                }
+            }
+            for (const auto &assoc_const : node.const_items) {
+                require(assoc_const != nullptr,
+                        node.range,
+                        "ImplDecl.const_items contains null");
+                if (assoc_const) {
+                    require(!assoc_const->name.empty(),
+                            assoc_const->range,
+                            "impl assoc const is missing name");
+                    require(assoc_const->type != nullptr,
+                            assoc_const->range,
+                            "impl assoc const is missing type");
+                    if (assoc_const->type) {
+                        validate_type(*assoc_const->type);
+                    }
+                    require(assoc_const->value != nullptr,
+                            assoc_const->range,
+                            "impl assoc const is missing value");
+                    if (assoc_const->value) {
+                        validate_expr(*assoc_const->value);
                     }
                 }
             }
@@ -1192,6 +1188,19 @@ std::string_view to_string(NodeKind kind) noexcept {
     return "Unknown";
 }
 
+std::string_view to_string(ImplItemKind kind) noexcept {
+    switch (kind) {
+    case ImplItemKind::Fn:
+        return "Fn";
+    case ImplItemKind::AssocType:
+        return "AssocType";
+    case ImplItemKind::AssocConst:
+        return "AssocConst";
+    }
+
+    return "Unknown";
+}
+
 std::string_view to_string(ContractClauseKind kind) noexcept {
     switch (kind) {
     case ContractClauseKind::Requires:
@@ -1202,6 +1211,8 @@ std::string_view to_string(ContractClauseKind kind) noexcept {
         return "invariant";
     case ContractClauseKind::Forbid:
         return "forbid";
+    case ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "unknown";
@@ -1303,19 +1314,18 @@ struct TypeSyntaxSpellingVisitor {
         return builder.str();
     }
     std::string operator()(const NamedType &t) const {
-        return t.name->spelling();
-    }
-    std::string operator()(const OptionalType &t) const {
-        return "Optional<" + t.inner->spelling() + ">";
-    }
-    std::string operator()(const ListType &t) const {
-        return "List<" + t.element->spelling() + ">";
-    }
-    std::string operator()(const SetType &t) const {
-        return "Set<" + t.element->spelling() + ">";
-    }
-    std::string operator()(const MapType &t) const {
-        return "Map<" + t.key_type->spelling() + ", " + t.value_type->spelling() + ">";
+        std::string result = t.name->spelling();
+        if (!t.type_args.empty()) {
+            result.push_back('<');
+            for (std::size_t i = 0; i < t.type_args.size(); ++i) {
+                if (i != 0) {
+                    result.append(", ");
+                }
+                result.append(t.type_args[i]->spelling());
+            }
+            result.push_back('>');
+        }
+        return result;
     }
     std::string operator()(const FnType &t) const {
         std::ostringstream builder;
@@ -1630,6 +1640,10 @@ std::string ImplDecl::headline() const {
         builder << ", " << assoc_items.size() << " assoc type"
                 << (assoc_items.size() == 1 ? "" : "s");
     }
+    if (!const_items.empty()) {
+        builder << ", " << const_items.size() << " assoc const"
+                << (const_items.size() == 1 ? "" : "s");
+    }
     builder << ")";
     return builder.str();
 }
@@ -1680,3 +1694,80 @@ void RecursiveVisitor::visit(FlowDecl &) {}
 void RecursiveVisitor::visit(WorkflowDecl &) {}
 
 } // namespace ahfl::ast
+
+namespace ahfl {
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone canonicaliser (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string expr_spelling_for_dedup(const ast::ExprSyntax &expr) {
+    if (!expr.text.empty()) {
+        return expr.text;
+    }
+
+    // Fallback spelling: use the node kind index so two expressions built the
+    // same way produce the same key.  We don't pull in the full AST printer
+    // here to keep the desugar pass cheap.
+    return std::to_string(static_cast<std::uint32_t>(ast::expr_syntax_kind(expr)));
+}
+
+} // namespace
+
+bool desugar_decreases_clause(ast::DecreasesClauseSyntax &clause) {
+    bool changed = false;
+
+    if (clause.is_wildcard) {
+        // Wildcard form is canonical on its own.  We still drop any nullptr
+        // / stray entries in `terms` so downstream consumers don't have to
+        // defensive-check around an "unused" vector.
+        if (!clause.terms.empty()) {
+            clause.terms.clear();
+            changed = true;
+        }
+        return changed;
+    }
+
+    // Pass 1: drop nullptr entries (parser or programmatic builder corner
+    // case).  We walk in place; size can only shrink so an out-of-place
+    // rebuild is both simpler and cache-friendlier for the typical sizes
+    // (1..4 terms).
+    {
+        std::vector<ahfl::Owned<ast::ExprSyntax>> compact;
+        compact.reserve(clause.terms.size());
+        for (auto &term : clause.terms) {
+            if (term) {
+                compact.push_back(std::move(term));
+            } else {
+                changed = true;
+            }
+        }
+        clause.terms.swap(compact);
+    }
+
+    // Pass 2: drop *consecutive* duplicate spellings.  We only collapse
+    // consecutive duplicates because the tuple is lexicographically ordered
+    // by definition, and non-adjacent duplicates (e.g. x, y, x) are
+    // meaningful: they represent a genuine two-step measure.
+    {
+        std::vector<ahfl::Owned<ast::ExprSyntax>> dedup;
+        dedup.reserve(clause.terms.size());
+        std::string last_spelling;
+        for (auto &term : clause.terms) {
+            const auto spelling = expr_spelling_for_dedup(*term);
+            if (!dedup.empty() && spelling == last_spelling) {
+                changed = true;
+                continue;
+            }
+            last_spelling = spelling;
+            dedup.push_back(std::move(term));
+        }
+        clause.terms.swap(dedup);
+    }
+
+    return changed;
+}
+
+} // namespace ahfl

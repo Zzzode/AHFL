@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -59,15 +60,23 @@ enum class TypedExprChildRole {
     MatchArmBody,
 };
 
-enum class TypedCallTargetKind {
-    None,
-    Capability,
-    Predicate,
-    // P2 (RFC §3.2.2): a call resolving to a top-level `fn`. Mirrors the
-    // capability/predicate kinds so the existing switch sites (LSP hover,
-    // typed-tree lowering) treat a fn call uniformly.
-    Function,
+// Call-target classification for TypedExpr nodes whose kind == Call. Three
+// variants exactly: the trait/inherent split mirrors AHFL's semantic dispatch
+// model, while Builtin reserves a slot for compiler-intrinsics surfaced as
+// free functions. A compile-time count keeps future edits honest.
+enum class TypedCallTargetKind : std::uint8_t {
+    InherentMethod = 0,
+    TraitMethod,
+    Builtin,
+    // Internal sentinel for the N==3 static_assert below. Do NOT add values
+    // between Builtin and Sentinel without also updating the assertion count.
+    Sentinel_ForStaticAssert,
 };
+
+static_assert(
+    std::to_underlying(TypedCallTargetKind::Sentinel_ForStaticAssert) == 3,
+    "TypedCallTargetKind must expose exactly 3 public values: "
+    "InherentMethod, TraitMethod, Builtin");
 
 enum class ConstValueKind : std::uint8_t {
     NoneLiteral = 0,
@@ -201,6 +210,101 @@ struct TypedExprChild {
 
 struct TypedProgram;
 
+// ----------------------------------------------------------------------------
+// P2d.S3 monomorphization budget constants.
+//
+// Each constant represents an additive "cost" charged to
+// TypedProgram::mono_budget when a monomorphization creates a record in the
+// corresponding flat store. The sum of all charged costs across a single
+// monomorphize_decl() invocation equals the total budget increment for that
+// instance (P2d.S4a verifies the sum).
+// ----------------------------------------------------------------------------
+constexpr std::uint64_t kMonoBudgetOverhead = 8ULL;
+constexpr std::uint64_t kMonoBudgetPerDecl = 2ULL;
+constexpr std::uint64_t kMonoBudgetPerExpr = 1ULL;
+constexpr std::uint64_t kMonoBudgetPerBlock = 1ULL;
+constexpr std::uint64_t kMonoBudgetPerStmt = 2ULL;
+constexpr std::uint64_t kMonoBudgetPerTemporal = 1ULL;
+
+// Running budget counters for the monomorphization pass. Monomorphization is
+// pure additive: cloning a typed-hir record does not delete anything, so
+// monotonic counters are sufficient. The upper 32 bits are reserved for
+// resource budgeting; the lower 32 bits count monomorphized instances.
+struct MonomorphizationBudget {
+    // Sum of kMonoBudget* charges across all successful monomorphizations.
+    std::uint64_t total_cost{0};
+    // Number of distinct instances actually created (dedup cache hits do not
+    // increment this).
+    std::uint32_t instances_created{0};
+    // Number of monomorphize_decl() calls that hit a pre-existing instance in
+    // the dedup table.
+    std::uint32_t dedup_hits{0};
+};
+
+// Monomorphization request key. Two keys are equivalent iff they target the
+// same declaration and bind the identical ordered list of semantic type
+// arguments. `decl_symbol` identifies the originating FnDecl-shaped AST node
+// (CapabilityDecl / PredicateDecl / FlowDecl are the current AHFL constructs
+// that behave as function bodies); downstream passes see a uniform "callable
+// declaration" abstraction.
+struct InstanceKey {
+    SymbolId decl_symbol;
+    std::vector<TypePtr> type_args;
+
+    [[nodiscard]] friend bool operator==(const InstanceKey &lhs,
+                                         const InstanceKey &rhs) noexcept {
+        if (lhs.decl_symbol != rhs.decl_symbol)
+            return false;
+        if (lhs.type_args.size() != rhs.type_args.size())
+            return false;
+        for (std::size_t i = 0; i < lhs.type_args.size(); ++i) {
+            // TypePtr is hash-consed by TypeContext, so pointer equality is
+            // the canonical structural-equality relation.
+            if (lhs.type_args[i] != rhs.type_args[i])
+                return false;
+        }
+        return true;
+    }
+};
+
+struct InstanceKeyHash {
+    [[nodiscard]] std::size_t operator()(const InstanceKey &key) const noexcept;
+};
+
+// The result of instantiating a callable declaration against concrete type
+// arguments. All indexes point into the owning TypedProgram's flat stores;
+// ranges/source_ids are preserved verbatim so diagnostics keep pointing back
+// at the originating source location.
+struct MonomorphizedInstance {
+    InstanceKey key;
+    // Index of the per-instance TypedDecl clone in TypedProgram::declarations.
+    // UINT32_MAX means "no decl clone was created" (reserved for future use).
+    std::uint32_t decl_index{UINT32_MAX};
+    // Root indexes reachable from the instance's cloned typed-hir records.
+    // Any expression/statement/block/temporal index that is reachable only
+    // through this instance lives in [original_size, current_size) in the
+    // corresponding flat store; the root vectors record explicit entry points.
+    std::vector<std::uint32_t> root_expr_indexes;
+    std::vector<std::uint32_t> root_stmt_indexes;
+    std::vector<std::uint32_t> root_block_indexes;
+    std::vector<std::uint32_t> root_temporal_indexes;
+    // Post-substitution function-level type (e.g. substituted CapabilityType
+    // with params + return_type applied).
+    TypePtr instantiated_type{nullptr};
+    // Total budget cost charged for this instance (sum of kMonoBudget* terms).
+    std::uint64_t budget_cost{0};
+};
+
+// Result of a monomorphize_decl() call. Reports whether the call actually
+// produced new records (Created) or returned a cache hit (DedupHit), plus the
+// index into TypedProgram::monomorphized_instances.
+enum class MonomorphizeStatus : std::uint8_t { Created = 0, DedupHit };
+
+struct MonomorphizeResult {
+    MonomorphizeStatus status{MonomorphizeStatus::Created};
+    std::uint32_t instance_index{UINT32_MAX};
+};
+
 // Helper: resolve a TypedExprChild to a pointer. Returns nullptr if the
 // child's index is unset / out of range.
 [[nodiscard]] const TypedExpr *resolve_child(const TypedProgram &program,
@@ -209,7 +313,7 @@ struct TypedProgram;
                                            const TypedExprChild &child) noexcept;
 
 struct TypedExpr {
-    ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::NoneLiteral};
+    ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::Group};
     SourceRange range;
     std::optional<SourceId> source_id;
     std::uint64_t node_id{0};
@@ -218,7 +322,7 @@ struct TypedExpr {
     bool is_pure{true};
     std::optional<SymbolId> resolved_symbol;
     std::string semantic_name;
-    TypedCallTargetKind call_target_kind{TypedCallTargetKind::None};
+    std::optional<TypedCallTargetKind> call_target_kind;
     std::string path_root;
     AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;
@@ -472,6 +576,84 @@ struct TypedProgram {
     find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
     [[nodiscard]] TypedTemporalExpr *
     find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
+
+    // ------------------------------------------------------------------------
+    // Impl index (P3c.S5a): bidirectional trait↔impl snapshot
+    // ------------------------------------------------------------------------
+    //
+    // Mirrors TypeEnvironment::impl_index into TypedProgram so typed-tree
+    // consumers (IR lowering, LSP impl lookup, coherence re-check) can
+    // locate the matching impl set for a (Trait, normalized-type) pair
+    // without re-entering TypeEnvironment. The bucket type matches the
+    // TypeEnvironment definition; keys carry stable normalized strings so
+    // a snapshot remains consistent across move operations.
+    struct ImplIndexKey {
+        std::size_t trait_symbol_value{0};
+        std::string normalized_type_key;
+
+        [[nodiscard]] friend bool operator==(const ImplIndexKey &lhs,
+                                             const ImplIndexKey &rhs) noexcept = default;
+    };
+    struct ImplIndexKeyHash {
+        [[nodiscard]] std::size_t operator()(const ImplIndexKey &k) const noexcept {
+            std::size_t h = 0xcbf29ce484222325ULL;
+            h ^= k.trait_symbol_value;
+            h *= 0x100000001b3ULL;
+            const std::string &s = k.normalized_type_key;
+            for (unsigned char c : s) {
+                h ^= static_cast<std::size_t>(c);
+                h *= 0x100000001b3ULL;
+            }
+            return h;
+        }
+    };
+    using ImplIndex =
+        std::unordered_map<ImplIndexKey, std::vector<std::uint32_t>, ImplIndexKeyHash>;
+
+    // Impl-declaration flat store. Each entry is an index into the parallel
+    // `declarations` vector that holds the corresponding ImplTypeInfo.
+    // Append-only; populated by the typecheck pass alongside impl_index_.
+    std::vector<std::uint32_t> impl_declaration_indexes;
+    ImplIndex impl_index;
+
+    // O(1) lookup of impl-declaration indexes by (trait, concrete type).
+    // Returns a list of indexes into `impl_declaration_indexes`, each of
+    // which can be dereferenced into `declarations` via the returned
+    // uint32 values. Empty vector when no impl exists.
+    [[nodiscard]] std::vector<std::uint32_t>
+    lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                      const Type &concrete_type) const;
+
+    // Same lookup with a precomputed normalized-type key.
+    [[nodiscard]] std::vector<std::uint32_t>
+    lookup_impl_index_by_key(std::optional<SymbolId> trait_symbol,
+                             std::string_view normalized_type_key) const;
+
+    // ------------------------------------------------------------------------
+    // Monomorphization (P2d.S4a)
+    // ------------------------------------------------------------------------
+    //
+    // `monomorphize_decl` produces a 1:1 copy of a callable declaration's
+    // typed-hir records, cloned into this TypedProgram's flat stores, with
+    // type fields rewritten according to `key.type_args`. Calls with the same
+    // key always return the same instance index and produce a single entry in
+    // `monomorphized_instances` (dedup is enforced by the reverse index below).
+
+    // Instance records produced so far (append-only; dedup index below keys
+    // into this vector).
+    std::vector<MonomorphizedInstance> monomorphized_instances;
+    // Dedup reverse index: InstanceKey -> index into monomorphized_instances.
+    std::unordered_map<InstanceKey, std::uint32_t, InstanceKeyHash> instance_index_;
+    // Running monomorphization budget counters.
+    MonomorphizationBudget mono_budget;
+    // Monotonic counter used to synthesize unique node_ids for cloned
+    // TypedExpr / TypedStatement / TypedTemporalExpr records so downstream
+    // passes never confuse an instance copy with the originating record.
+    // Cloned ids start at (next_instance_node_id++) and are guaranteed to be
+    // distinct from any AST-originating node_id (AST assigns ids starting
+    // from 1 and never wraps into this counter's range in practice). For
+    // extra determinism the counter is per-TypedProgram.
+    std::uint64_t next_instance_node_id{0x8000'0000'0000'0000ULL};
 };
 
 // ----------------------------------------------------------------------------
@@ -516,10 +698,6 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_string_literal(expr);
     case ast::ExprSyntaxKind::DurationLiteral:
         return std::forward<Visitor>(visitor).visit_duration_literal(expr);
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return std::forward<Visitor>(visitor).visit_none_literal(expr);
-    case ast::ExprSyntaxKind::Some:
-        return std::forward<Visitor>(visitor).visit_some(expr);
     case ast::ExprSyntaxKind::Path:
         return std::forward<Visitor>(visitor).visit_path(expr);
     case ast::ExprSyntaxKind::QualifiedValue:
@@ -530,12 +708,6 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_method_call(expr);
     case ast::ExprSyntaxKind::StructLiteral:
         return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-    case ast::ExprSyntaxKind::ListLiteral:
-        return std::forward<Visitor>(visitor).visit_list_literal(expr);
-    case ast::ExprSyntaxKind::SetLiteral:
-        return std::forward<Visitor>(visitor).visit_set_literal(expr);
-    case ast::ExprSyntaxKind::MapLiteral:
-        return std::forward<Visitor>(visitor).visit_map_literal(expr);
     case ast::ExprSyntaxKind::Unary:
         return std::forward<Visitor>(visitor).visit_unary(expr);
     case ast::ExprSyntaxKind::Binary:
@@ -585,5 +757,43 @@ decltype(auto) typed_visit(const TypedStatement &stmt, Visitor &&visitor) {
 
     return std::forward<Visitor>(visitor).visit_unknown_stmt(stmt);
 }
+
+// ----------------------------------------------------------------------------
+// P2d.S4a: monomorphize a callable declaration 1:1
+// ----------------------------------------------------------------------------
+//
+// Given a callable declaration identified by `key.decl_symbol` (any
+// declaration with typed-hir children — currently CapabilityDecl /
+// PredicateDecl / FlowDecl payloads are supported), clone the originating
+// TypedDecl together with all expressions / blocks / statements / temporal
+// expressions it references into `program`'s flat stores. Type fields inside
+// the cloned records are rewritten per `key.type_args` (caller-provided;
+// AHFL's type system currently has no explicit generic syntax, so this API
+// accepts a concrete substitution vector and exposes dedup through
+// `instance_index_`).
+//
+// Guarantees:
+//   * Two calls with equal `key`s produce exactly one entry in
+//     `program.monomorphized_instances` (verified by the dedup unit test).
+//   * `program.mono_budget.total_cost` is incremented by the sum of
+//     `kMonoBudget*` constants for every new record.
+//   * Cloned records get fresh, AST-disjoint `node_id`s from
+//     `program.next_instance_node_id`, so passes that partition by id never
+//     confuse originals with clones.
+//
+// `source_decl_index` is the index into `program.declarations` of the
+// originating TypedDecl. The TypedDecl's `payload` describes which child
+// records belong to it (CapabilityTypeInfo.params etc. are authoritative for
+// root enumeration).
+//
+// Returns a `MonomorphizeResult` describing the cache status and instance
+// index. If `source_decl_index` is out of range, returns `instance_index` ==
+// UINT32_MAX (error path; callers should detect this as an invariant
+// violation). No exceptions.
+struct TypedDecl;
+
+[[nodiscard]] MonomorphizeResult monomorphize_decl(TypedProgram &program,
+                                                   std::uint32_t source_decl_index,
+                                                   InstanceKey key) noexcept;
 
 } // namespace ahfl

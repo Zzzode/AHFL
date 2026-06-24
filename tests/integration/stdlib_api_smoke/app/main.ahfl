@@ -18,10 +18,10 @@ fn smoke(
     delta: Duration,
     id: UUID
 ) -> Int {
-    let none_int: Option<Int> = none;
+    let none_int: Option<Int> = option::Option::None;
     let mapped = option::map<Int, Int>(maybe, \x: Int -> x + 1);
-    let chained = option::and_then<Int, Int>(mapped, \x: Int -> some(x + 2));
-    let recovered = option::or_else<Int>(none_int, \ -> some(7));
+    let chained = option::and_then<Int, Int>(mapped, \x: Int -> option::Option::Some(x + 2));
+    let recovered = option::or_else<Int>(none_int, \ -> option::Option::Some(7));
     let filtered_option = option::filter<Int>(chained, \x: Int -> x > 0);
     let lazy_default = option::unwrap_or_else<Int>(none_int, \ -> 5);
     let inserted = option::get_or_insert<Int>(none_int, 6);
@@ -85,7 +85,7 @@ fn runtime_bump(x: Int) -> Int effect Pure decreases 0 {
 }
 
 fn runtime_collections_score() -> Int effect Pure decreases 0 {
-    let xs: List<Int> = [1, 2, 3];
+    let xs: collections::List<Int> = collections::list_from_array<Int>(1, 2, 3);
     let mapped = collections::map<Int, Int>(xs, \x: Int -> runtime_bump(x));
     let filtered = collections::filter<Int>(mapped, \x: Int -> x > 5);
     let total = collections::fold<Int, Int>(
@@ -101,7 +101,7 @@ fn runtime_collections_score() -> Int effect Pure decreases 0 {
 }
 
 fn runtime_option_result_score() -> Int effect Pure decreases 0 {
-    let maybe: Option<Int> = some(3);
+    let maybe: Option<Int> = option::Option::Some(3);
     let mapped = option::map<Int, Int>(maybe, \x: Int -> runtime_bump(x));
     let filtered = option::filter<Int>(mapped, \x: Int -> x > 5);
     let option_score = option::unwrap_or_else<Int>(filtered, \ -> 0);

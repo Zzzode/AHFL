@@ -78,11 +78,13 @@ enum class NodeKind {
 /// - Ensures: postcondition (guaranteed after execution)
 /// - Invariant: invariant (always holds)
 /// - Forbid: forbidden condition (must never occur)
+/// - Decreases: termination measure (strictly decreases on every recursive/iterative step)
 enum class ContractClauseKind {
     Requires,
     Ensures,
     Invariant,
     Forbid,
+    Decreases,
 };
 
 [[nodiscard]] std::string_view to_string(ContractClauseKind kind) noexcept;
@@ -150,7 +152,7 @@ enum class EffectClauseKind {
 
 [[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
 
-/// Expression syntax kinds
+/// Expression syntax kinds (sugar variants removed — 18 kinds)
 enum class ExprSyntaxKind {
     BoolLiteral,     // true / false
     IntegerLiteral,  // 42, -1
@@ -158,16 +160,11 @@ enum class ExprSyntaxKind {
     DecimalLiteral,  // 3.14d
     StringLiteral,   // "hello"
     DurationLiteral, // 30s, 5m
-    NoneLiteral,     // none
-    Some,            // some(expr)
     Path,            // input.field, ctx.field, node_name.field
     QualifiedValue,  // Priority::High (fully qualified enum value)
     Call,            // capability_name(args...)
     MethodCall,      // receiver.method(args...)
     StructLiteral,   // TypeName { field: value, ... }
-    ListLiteral,     // [a, b, c]
-    SetLiteral,      // {a, b, c}
-    MapLiteral,      // {k1: v1, k2: v2}
     Unary,           // !expr, -expr
     Binary,          // a + b, a == b, a && b
     MemberAccess,    // expr.member
@@ -296,30 +293,12 @@ struct DecimalType {
     std::uint8_t scale;
 };
 
-/// Named type: references a struct/enum/type alias
+/// Named type: references a struct/enum/type alias or parameterised
+/// built-in such as Optional<T>, List<T>, Set<T>, Map<K, V>. When
+/// `type_args` is empty the type is a simple named reference.
 struct NamedType {
     Owned<QualifiedName> name;
-};
-
-/// Optional type: T?
-struct OptionalType {
-    Owned<TypeSyntax> inner;
-};
-
-/// List type: list<T>
-struct ListType {
-    Owned<TypeSyntax> element;
-};
-
-/// Set type: set<T>
-struct SetType {
-    Owned<TypeSyntax> element;
-};
-
-/// Map type: map<K, V>
-struct MapType {
-    Owned<TypeSyntax> key_type;
-    Owned<TypeSyntax> value_type;
+    std::vector<Owned<TypeSyntax>> type_args;
 };
 
 /// Function type: Fn(A1, A2, ...) -> Ret [effect Spec]
@@ -351,10 +330,6 @@ using TypeSyntaxNode = std::variant<UnitType,
                                     DurationType,
                                     DecimalType,
                                     NamedType,
-                                    OptionalType,
-                                    ListType,
-                                    SetType,
-                                    MapType,
                                     FnType,
                                     AppType>;
 
@@ -420,7 +395,6 @@ struct StructInitSyntax {
 // ExprSyntax (first/second/name/text, etc.).
 
 /// none literal
-struct NoneLiteralExpr {};
 
 /// bool literal: true / false
 struct BoolLiteralExpr {
@@ -453,9 +427,6 @@ struct DurationLiteralExpr {
 };
 
 /// some expression: some(expr)
-struct SomeExpr {
-    Owned<ExprSyntax> value;
-};
 
 /// Path expression: input.field, ctx.field
 struct PathExpr {
@@ -489,19 +460,10 @@ struct StructLiteralExpr {
 };
 
 /// List literal: [a, b, c]
-struct ListLiteralExpr {
-    std::vector<Owned<ExprSyntax>> items;
-};
 
 /// Set literal: {a, b, c}
-struct SetLiteralExpr {
-    std::vector<Owned<ExprSyntax>> items;
-};
 
 /// Map literal: {k1: v1, k2: v2}
-struct MapLiteralExpr {
-    std::vector<Owned<MapEntrySyntax>> entries;
-};
 
 /// Unary expression: !expr, -expr
 struct UnaryExpr {
@@ -745,22 +707,17 @@ struct LambdaExpr {
 };
 
 /// Variant alias for the expression syntax node
-using ExprSyntaxNode = std::variant<NoneLiteralExpr,
-                                    BoolLiteralExpr,
+using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     IntegerLiteralExpr,
                                     FloatLiteralExpr,
                                     DecimalLiteralExpr,
                                     StringLiteralExpr,
                                     DurationLiteralExpr,
-                                    SomeExpr,
                                     PathExpr,
                                     QualifiedValueExpr,
                                     CallExpr,
                                     MethodCallExpr,
                                     StructLiteralExpr,
-                                    ListLiteralExpr,
-                                    SetLiteralExpr,
-                                    MapLiteralExpr,
                                     UnaryExpr,
                                     BinaryExpr,
                                     MemberAccessExpr,
@@ -979,11 +936,22 @@ struct DurationSyntax {
     std::string spelling;
 };
 
-/// Parameter declaration (for capability parameters)
+/// Parameter declaration (for capability parameters / function parameters /
+/// trait method parameters / impl method parameters).
+///
+/// P3c.S1: when `is_self` is true the parameter is a `self` / `mut self` /
+/// `self: Type` / `mut self: Type` receiver used inside a trait or impl
+/// method. For a bare `self` / `mut self` (no explicit type), `type` is
+/// null and the type is inferred as the implementing type by the semantic
+/// layer (P3b). `is_self_mut` records whether the receiver was declared
+/// mutable. `name` is always "self" for self receivers (so downstream code
+/// that inspects param names still works uniformly).
 struct ParamDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
-    Owned<TypeSyntax> type;
+    Owned<TypeSyntax> type;       // null for bare `self` / `mut self`
+    bool is_self{false};          // true for any self receiver shape
+    bool is_self_mut{false};      // true only when `mut self` was written
 };
 
 /// Struct field declaration
@@ -1027,12 +995,49 @@ struct AgentQuotaSyntax {
     std::vector<Owned<AgentQuotaItemSyntax>> items;
 };
 
-/// Contract clause: requires/ensures/invariant/forbid expr
+/// Decreases clause attached to a contract clause:
+///   * `decreases *`        -> decreases_is_wildcard = true
+///   * `decreases (a, b, c)` -> decreases_exprs populated with owned exprs
+/// The default-constructed state (empty + !wildcard) means the user did not
+/// write a decreases clause; ContractClauseInfo::has_decreases reflects that
+/// after typecheck plumbing.
+struct ContractDecreasesSyntax {
+    ahfl::SourceRange range;
+    bool decreases_is_wildcard{false};
+    std::vector<Owned<ExprSyntax>> decreases_exprs;
+};
+
+/// Contract clause: requires/ensures/invariant/forbid/decreases expr
 struct ContractClauseSyntax {
     ahfl::SourceRange range;
     ContractClauseKind kind{ContractClauseKind::Requires};
     Owned<ExprSyntax> expr;                  // plain expression condition
     Owned<TemporalExprSyntax> temporal_expr; // temporal logic condition
+    // P4.S3: optional decreases clause attached to the contract clause.
+    // Owned<T> (nullptr) means no decreases was written.
+    Owned<ContractDecreasesSyntax> decreases;
+    // P4.S5a: wildcard flag for the standalone ContractClauseKind::Decreases case
+    // (when kind == Decreases and the user wrote `decreases: *;` with no concrete terms).
+    bool is_wildcard{false};
+};
+
+/// Decreases / termination-measure clause.
+///
+/// Plain syntax fragment (does NOT inherit from Decl / Node; not carried by
+/// DeclKind / NodeKind).  Consumers dispatch on the concrete type directly.
+///
+/// Either:
+///   * is_wildcard == true  → the clause is the wildcard form `decreases *;`
+///   * is_wildcard == false → `terms` is the lexicographic tuple of
+///     expressions that form the termination measure.
+struct DecreasesClauseSyntax {
+    ahfl::SourceRange range;
+    /// Lexicographic tuple of measure expressions.  When `is_wildcard` is true
+    /// this is typically empty, but both fields are independent so a consumer
+    /// can always iterate `terms` without checking the flag first.
+    std::vector<Owned<ExprSyntax>> terms;
+    /// True for the wildcard / "don't verify" form.
+    bool is_wildcard{false};
 };
 
 /// State policy item (execution policy within a flow handler)
@@ -1183,6 +1188,7 @@ struct StructDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     StructDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1197,6 +1203,7 @@ struct EnumDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     EnumDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1210,6 +1217,7 @@ struct CapabilityDecl final : Decl {
     std::vector<Owned<ParamDeclSyntax>> params;
     Owned<TypeSyntax> return_type;
     Owned<CapabilityEffectSyntax> effect;
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     CapabilityDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1360,18 +1368,24 @@ struct FnDecl final : Decl {
 // trait impls; the distinction is recorded via `ImplDeclSyntax::trait_ref`.
 
 /// Trait item kind discriminator (parallels StatementSyntaxKind).
+/// Three item kinds are modelled:
+///   - Fn         — trait method signature (`fn name(...) -> Ret;`)
+///   - AssocType  — associated type declaration (`type Name: Bound = Default;`)
+///   - AssocConst — associated constant declaration (`const N: T = value;`)
 enum class TraitItemKind {
-    Fn,        // trait method signature (`fn name(...) -> Ret;`)
-    AssocType, // associated type (`type Name;` / `type Name: Bound;` / `type Name = T;`)
+    Fn,         // trait method signature
+    AssocType,  // associated type
+    AssocConst, // associated constant (P3c.S1: RFC type-system §1.3)
 };
 
-/// A single trait item: either a method signature (carried as the same
-/// fragments as FnDecl — name, type params, params, return type, effect
-/// clause, where clause) or an associated type declaration.
+/// A single trait item: one of
+///   - a method signature (carried as the same fragments as FnDecl —
+///     name, type params, params, return type, effect clause, where clause)
+///   - an associated type declaration
+///   - an associated constant declaration (P3c.S1)
 ///
-/// `kind` discriminates the two shapes. For `Fn`, the signature fields are
-/// populated and `assoc` is empty. For `AssocType`, `assoc` carries the
-/// associated-type declaration and the signature fields are empty.
+/// `kind` discriminates the three shapes. Only the fields corresponding to
+/// the active `kind` are populated.
 struct TraitItemSyntax {
     ahfl::SourceRange range;
     TraitItemKind kind{TraitItemKind::Fn};
@@ -1392,7 +1406,18 @@ struct TraitItemSyntax {
         std::vector<Owned<TypeSyntax>> bounds; // optional super-bound list
         Owned<TypeSyntax> default_type;        // optional default (`= Type`)
     };
-    Owned<AssocTypeDecl> assoc;
+    Owned<AssocTypeDecl> assoc_type;
+
+    // Associated constant declaration (P3c.S1, RFC type-system §1.3 AssocConstItem).
+    // `default_value` is optional — when absent, the implementing impl must
+    // provide the constant.
+    struct AssocConstDecl {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+        Owned<ExprSyntax> default_value; // optional `= const_expr`
+    };
+    Owned<AssocConstDecl> assoc_const;
 };
 
 /// Trait declaration (RFC §3.2.2 / type-system §1.3):
@@ -1413,29 +1438,79 @@ struct TraitDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// A single associated type definition inside an impl block
-/// (`type Name = Type;`, RFC §1.4 AssocItemDef).
-struct AssocItemDefSyntax {
-    ahfl::SourceRange range;
-    std::string name;
-    Owned<TypeSyntax> type;
+/// Impl item kind discriminator. Parallels `TraitItemKind`; together the two
+/// enums cover the six syntactic item kinds that can appear inside a trait or
+/// impl body (3 trait + 3 impl = 6 kinds required by P3c.S1).
+enum class ImplItemKind {
+    Fn,         // method definition (body mandatory)
+    AssocType,  // associated type assignment (`type Name = Type;`)
+    AssocConst, // associated constant definition (`const N: T = value;`)
 };
+
+[[nodiscard]] std::string_view to_string(ImplItemKind kind) noexcept;
+
+/// A single item inside an impl block. Three shapes share the same tagged
+/// struct (mirrors TraitItemSyntax):
+///   - Fn         — a function definition, points into `methods` bucket
+///   - AssocType  — `type Name = Type;`, points into `assoc_items` bucket
+///   - AssocConst — `const N: T = value;`, points into `const_items` bucket
+///
+/// Pointer semantics: the per-kind buckets (`methods` / `assoc_items` /
+/// `const_items` on `ImplDecl`) are the unique owners. `ImplItemSyntax` stores
+/// non-owning pointers so that the same data can be traversed either via the
+/// flat per-kind lists (stable surface for legacy semantic passes) or via the
+/// unified `items` vector (visit-style dispatching). No manual deallocation is
+/// needed — the buckets outlive any reference through `items`.
+struct ImplItemSyntax {
+    ahfl::SourceRange range;
+    ImplItemKind kind{ImplItemKind::Fn};
+
+    FnDecl* fn_def{nullptr};
+
+    struct AssocTypeDef {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+    };
+    AssocTypeDef* assoc_type{nullptr};
+
+    struct AssocConstDef {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+        Owned<ExprSyntax> value;
+    };
+    AssocConstDef* assoc_const{nullptr};
+};
+
+// Compatibility alias: historical consumer sites use `AssocItemDefSyntax`
+// for associated-type definitions inside impl blocks. Name is preserved so
+// existing semantic passes continue to compile unchanged.
+using AssocItemDefSyntax = ImplItemSyntax::AssocTypeDef;
 
 /// Impl block (RFC §3.2.2 / type-system §1.4):
 ///
 ///   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type A = T; }
 ///   impl TargetType { ... }   // inherent impl (trait_ref empty)
 ///
-/// `trait_ref` is empty for an inherent impl (no `TraitRef "for"`). `methods`
-/// are the function definitions (each carries a mandatory body). `assoc_items`
-/// are the associated-type assignments.
+/// `trait_ref` is empty for an inherent impl (no `TraitRef "for"`). The three
+/// per-item fields mirror the three `ImplItemKind` variants so that existing
+/// semantic passes (P3b/P3c) that expect flat `methods`/`assoc_items` continue
+/// to work without churn; P3c.S1 only adds the previously-missing
+/// `const_items` bucket plus the `ImplItemSyntax` tagged struct for consumers
+/// that prefer a single dispatcher.
 struct ImplDecl final : Decl {
     std::vector<Owned<TypeParamSyntax>> type_params;
     Owned<TypeSyntax> trait_ref; // optional (empty for inherent impl)
     Owned<TypeSyntax> target_type;
     Owned<WhereClauseSyntax> where_clause;
-    std::vector<Owned<FnDecl>> methods;
-    std::vector<Owned<AssocItemDefSyntax>> assoc_items;
+    // Per-kind buckets (stable surface, semantic passes read these directly).
+    std::vector<Owned<FnDecl>> methods;            // ImplItemKind::Fn
+    std::vector<Owned<ImplItemSyntax::AssocTypeDef>> assoc_items; // ImplItemKind::AssocType
+    std::vector<Owned<ImplItemSyntax::AssocConstDef>> const_items; // ImplItemKind::AssocConst (P3c.S1)
+    // Unified dispatcher (parallel of items; populated alongside buckets so
+    // consumers can iterate a single list when they prefer visit-style dispatch)
+    std::vector<Owned<ImplItemSyntax>> items;
 
     ImplDecl(ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1509,9 +1584,6 @@ template <typename Visitor>
 decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
     return std::visit(
         Overloaded{
-            [&](const NoneLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_none_literal(expr);
-            },
             [&](const BoolLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_bool_literal(expr);
             },
@@ -1530,7 +1602,6 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [&](const DurationLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_duration_literal(expr);
             },
-            [&](const SomeExpr &) { return std::forward<Visitor>(visitor).visit_some(expr); },
             [&](const PathExpr &) { return std::forward<Visitor>(visitor).visit_path(expr); },
             [&](const QualifiedValueExpr &) {
                 return std::forward<Visitor>(visitor).visit_qualified_value(expr);
@@ -1541,15 +1612,6 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             },
             [&](const StructLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-            },
-            [&](const ListLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_list_literal(expr);
-            },
-            [&](const SetLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_set_literal(expr);
-            },
-            [&](const MapLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_map_literal(expr);
             },
             [&](const UnaryExpr &) { return std::forward<Visitor>(visitor).visit_unary(expr); },
             [&](const BinaryExpr &) { return std::forward<Visitor>(visitor).visit_binary(expr); },
@@ -1577,22 +1639,17 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
 [[nodiscard]] inline ExprSyntaxKind expr_syntax_kind(const ExprSyntax &expr) {
     return std::visit(
         Overloaded{
-            [](const NoneLiteralExpr &) { return ExprSyntaxKind::NoneLiteral; },
             [](const BoolLiteralExpr &) { return ExprSyntaxKind::BoolLiteral; },
             [](const IntegerLiteralExpr &) { return ExprSyntaxKind::IntegerLiteral; },
             [](const FloatLiteralExpr &) { return ExprSyntaxKind::FloatLiteral; },
             [](const DecimalLiteralExpr &) { return ExprSyntaxKind::DecimalLiteral; },
             [](const StringLiteralExpr &) { return ExprSyntaxKind::StringLiteral; },
             [](const DurationLiteralExpr &) { return ExprSyntaxKind::DurationLiteral; },
-            [](const SomeExpr &) { return ExprSyntaxKind::Some; },
             [](const PathExpr &) { return ExprSyntaxKind::Path; },
             [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
             [](const CallExpr &) { return ExprSyntaxKind::Call; },
             [](const MethodCallExpr &) { return ExprSyntaxKind::MethodCall; },
             [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
-            [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
-            [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
-            [](const MapLiteralExpr &) { return ExprSyntaxKind::MapLiteral; },
             [](const UnaryExpr &) { return ExprSyntaxKind::Unary; },
             [](const BinaryExpr &) { return ExprSyntaxKind::Binary; },
             [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },

@@ -98,12 +98,10 @@ Owned<ast::TypeSyntax> desugar_type_node(Owned<ast::TypeSyntax> type) {
 
     // Step 1: recursively desugar children (bottom-up)
     std::visit(Overloaded{
-                   [&](ast::OptionalType &t) { t.inner = desugar_type_node(std::move(t.inner)); },
-                   [&](ast::ListType &t) { t.element = desugar_type_node(std::move(t.element)); },
-                   [&](ast::SetType &t) { t.element = desugar_type_node(std::move(t.element)); },
-                   [&](ast::MapType &t) {
-                       t.key_type = desugar_type_node(std::move(t.key_type));
-                       t.value_type = desugar_type_node(std::move(t.value_type));
+                   [&](ast::NamedType &t) {
+                       for (auto &arg : t.type_args) {
+                           arg = desugar_type_node(std::move(arg));
+                       }
                    },
                    [&](ast::AppType &t) {
                        for (auto &arg : t.arguments) {
@@ -123,31 +121,8 @@ Owned<ast::TypeSyntax> desugar_type_node(Owned<ast::TypeSyntax> type) {
                type->node);
 
     // Step 2: desugar this node if it's a sugar form
-
-    if (auto *opt = std::get_if<ast::OptionalType>(&type->node)) {
-        std::vector<Owned<ast::TypeSyntax>> args;
-        args.push_back(std::move(opt->inner));
-        return make_app_type(kOptionTypePath, std::move(args), range);
-    }
-
-    if (auto *lst = std::get_if<ast::ListType>(&type->node)) {
-        std::vector<Owned<ast::TypeSyntax>> args;
-        args.push_back(std::move(lst->element));
-        return make_app_type(kListTypePath, std::move(args), range);
-    }
-
-    if (auto *st = std::get_if<ast::SetType>(&type->node)) {
-        std::vector<Owned<ast::TypeSyntax>> args;
-        args.push_back(std::move(st->element));
-        return make_app_type(kSetTypePath, std::move(args), range);
-    }
-
-    if (auto *mt = std::get_if<ast::MapType>(&type->node)) {
-        std::vector<Owned<ast::TypeSyntax>> args;
-        args.push_back(std::move(mt->key_type));
-        args.push_back(std::move(mt->value_type));
-        return make_app_type(kMapTypePath, std::move(args), range);
-    }
+    // (Syntax sugar types Optional/List/Set/Map are now parsed directly as NamedType
+    //  with type_args by P5.5, so no translation needed at this layer.)
 
     return type;
 }
@@ -169,7 +144,6 @@ Owned<ast::ExprSyntax> desugar_expr_node(Owned<ast::ExprSyntax> expr) {
 
     // Step 1: recursively desugar children
     std::visit(Overloaded{
-                   [&](ast::SomeExpr &e) { e.value = desugar_expr_node(std::move(e.value)); },
                    [&](ast::CallExpr &e) {
                        for (auto &type_arg : e.type_args) {
                            type_arg = desugar_type_node(std::move(type_arg));
@@ -186,14 +160,6 @@ Owned<ast::ExprSyntax> desugar_expr_node(Owned<ast::ExprSyntax> expr) {
                    [&](ast::StructLiteralExpr &e) {
                        for (auto &f : e.fields) {
                            f->value = desugar_expr_node(std::move(f->value));
-                       }
-                   },
-                   [&](ast::ListLiteralExpr &e) { desugar_expr_list(e.items); },
-                   [&](ast::SetLiteralExpr &e) { desugar_expr_list(e.items); },
-                   [&](ast::MapLiteralExpr &e) {
-                       for (auto &entry : e.entries) {
-                           entry->key = desugar_expr_node(std::move(entry->key));
-                           entry->value = desugar_expr_node(std::move(entry->value));
                        }
                    },
                    [&](ast::UnaryExpr &e) { e.operand = desugar_expr_node(std::move(e.operand)); },
@@ -229,51 +195,8 @@ Owned<ast::ExprSyntax> desugar_expr_node(Owned<ast::ExprSyntax> expr) {
                expr->node);
 
     // Step 2: desugar this node if it's a sugar form
-
-    // none  →  Option::None (qualified value)
-    if (std::holds_alternative<ast::NoneLiteralExpr>(expr->node)) {
-        return make_qualified_value(kOptionVariantNone, range);
-    }
-
-    // some expr  →  Option::Some(expr) (call)
-    if (auto *some = std::get_if<ast::SomeExpr>(&expr->node)) {
-        std::vector<Owned<ast::ExprSyntax>> args;
-        args.push_back(std::move(some->value));
-        auto result = make_call_expr(kOptionVariantSome, std::move(args), range);
-        result->node_id = node_id;
-        result->text = std::move(text);
-        return result;
-    }
-
-    // [a, b, c]  →  List::from_array(a, b, c)
-    if (auto *list = std::get_if<ast::ListLiteralExpr>(&expr->node)) {
-        auto result = make_call_expr(kListFromArrayPath, std::move(list->items), range);
-        result->node_id = node_id;
-        result->text = std::move(text);
-        return result;
-    }
-
-    // {a, b, c}  →  Set::from_array(a, b, c)
-    if (auto *set = std::get_if<ast::SetLiteralExpr>(&expr->node)) {
-        auto result = make_call_expr(kSetFromArrayPath, std::move(set->items), range);
-        result->node_id = node_id;
-        result->text = std::move(text);
-        return result;
-    }
-
-    // {k1: v1, k2: v2}  →  Map::from_entries(k1, v1, k2, v2, ...)
-    if (auto *map = std::get_if<ast::MapLiteralExpr>(&expr->node)) {
-        std::vector<Owned<ast::ExprSyntax>> flat_args;
-        flat_args.reserve(map->entries.size() * 2);
-        for (auto &entry : map->entries) {
-            flat_args.push_back(std::move(entry->key));
-            flat_args.push_back(std::move(entry->value));
-        }
-        auto result = make_call_expr(kMapFromEntriesPath, std::move(flat_args), range);
-        result->node_id = node_id;
-        result->text = std::move(text);
-        return result;
-    }
+    // (Expr sugar variants none/some/[a,b]/set{}/map{} are now parsed via ADT
+    //  constructors by P5.6a; dedicated desugar patterns deferred to P5.6b.)
 
     return expr;
 }
@@ -397,6 +320,25 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
                 if (item->return_type) {
                     item->return_type = desugar_type_node(std::move(item->return_type));
                 }
+            } else if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
+                for (auto &bound : item->assoc_type->bounds) {
+                    if (bound) {
+                        bound = desugar_type_node(std::move(bound));
+                    }
+                }
+                if (item->assoc_type->default_type) {
+                    item->assoc_type->default_type =
+                        desugar_type_node(std::move(item->assoc_type->default_type));
+                }
+            } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+                if (item->assoc_const->type) {
+                    item->assoc_const->type =
+                        desugar_type_node(std::move(item->assoc_const->type));
+                }
+                if (item->assoc_const->default_value) {
+                    item->assoc_const->default_value =
+                        desugar_expr_node(std::move(item->assoc_const->default_value));
+                }
             }
         }
         return;
@@ -408,6 +350,20 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
             d->trait_ref = desugar_type_node(std::move(d->trait_ref));
         for (auto &method : d->methods) {
             desugar_fn_decl_body(*method);
+        }
+        for (auto &assoc : d->assoc_items) {
+            if (assoc && assoc->type) {
+                assoc->type = desugar_type_node(std::move(assoc->type));
+            }
+        }
+        for (auto &assoc_const : d->const_items) {
+            if (!assoc_const) continue;
+            if (assoc_const->type) {
+                assoc_const->type = desugar_type_node(std::move(assoc_const->type));
+            }
+            if (assoc_const->value) {
+                assoc_const->value = desugar_expr_node(std::move(assoc_const->value));
+            }
         }
         return;
     }
@@ -484,6 +440,23 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
             if (item->return_type) {
                 item->return_type = desugar_type_node(std::move(item->return_type));
             }
+        } else if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
+            for (auto &bound : item->assoc_type->bounds) {
+                if (bound) bound = desugar_type_node(std::move(bound));
+            }
+            if (item->assoc_type->default_type) {
+                item->assoc_type->default_type =
+                    desugar_type_node(std::move(item->assoc_type->default_type));
+            }
+        } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+            if (item->assoc_const->type) {
+                item->assoc_const->type =
+                    desugar_type_node(std::move(item->assoc_const->type));
+            }
+            if (item->assoc_const->default_value) {
+                item->assoc_const->default_value =
+                    desugar_expr_node(std::move(item->assoc_const->default_value));
+            }
         }
     }
 }
@@ -495,6 +468,20 @@ void DesugarPass::desugar_impl_decl(ast::ImplDecl &decl) {
         decl.trait_ref = desugar_type_node(std::move(decl.trait_ref));
     for (auto &method : decl.methods) {
         desugar_fn_decl_body(*method);
+    }
+    for (auto &assoc : decl.assoc_items) {
+        if (assoc && assoc->type) {
+            assoc->type = desugar_type_node(std::move(assoc->type));
+        }
+    }
+    for (auto &assoc_const : decl.const_items) {
+        if (!assoc_const) continue;
+        if (assoc_const->type) {
+            assoc_const->type = desugar_type_node(std::move(assoc_const->type));
+        }
+        if (assoc_const->value) {
+            assoc_const->value = desugar_expr_node(std::move(assoc_const->value));
+        }
     }
 }
 

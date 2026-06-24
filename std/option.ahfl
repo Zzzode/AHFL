@@ -6,34 +6,34 @@ enum Option<T> {
 }
 
 fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return self != none;
+    return self != Option::None;
 }
 
 fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return self == none;
+    return self == Option::None;
 }
 
 fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
-    return match self { Some(value) => some(f(value)), None => none };
+    return match self { Some(value) => Option::Some(f(value)), None => Option::None };
 }
 
 fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
-    return match self { Some(value) => f(value), None => none };
+    return match self { Some(value) => f(value), None => Option::None };
 }
 
 fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
-    return match self { Some(value) => some(value), None => alt() };
+    return match self { Some(value) => Option::Some(value), None => alt() };
 }
 
 fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     if p(value) {
-        return some(value);
+        return Option::Some(value);
     }
-    return none;
+    return Option::None;
 }
 
 fn filter<T>(self: Option<T>, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
-    return match self { Some(value) => filter_value<T>(value, p), None => none };
+    return match self { Some(value) => filter_value<T>(value, p), None => Option::None };
 }
 
 fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {

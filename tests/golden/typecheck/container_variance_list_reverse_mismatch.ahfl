@@ -1,5 +1,6 @@
 module typecheck::variance;
 import typecheck::variance as self;
+import std::collections;
 
-const WideList: List<String> = [];
+const WideList: List<String> = list_raw_alloc<String>(0);
 const RejectedList: List<String(2, 8)> = self::WideList;

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_tooling_testing.a CMakeFiles/ahfl_tooling_testing.dir/ast_generator.cpp.o
+/usr/bin/ranlib libahfl_tooling_testing.a

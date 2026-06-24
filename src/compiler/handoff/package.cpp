@@ -409,6 +409,8 @@ WorkflowExecutionGraph lower_workflow_execution_graph(const ir::WorkflowDecl &de
         return PolicyObligationKind::Invariant;
     case ir::ContractClauseKind::Forbid:
         return PolicyObligationKind::Forbid;
+    case ir::ContractClauseKind::Decreases:
+        return PolicyObligationKind::Decreases;
     }
 
     return PolicyObligationKind::Requires;
