@@ -1,0 +1,245 @@
+module std::json;
+
+import std::collections as collections;
+import std::option as option;
+import std::string as string;
+import std::traits as traits;
+
+// Local aliases — P3 resolution does not accept module-qualified container
+// names inside some syntactic positions (enum variant payloads, generics in
+// certain nested positions) so we alias them to unqualified names.
+type List<T> = collections::List<T>;
+type Map<K, V> = collections::Map<K, V>;
+type Option<T> = option::Option<T>;
+
+// ===========================================================================
+// JsonNumber / JsonValue ADTs (RFC §10.3 / API §10.3).
+//
+// JsonValue is the top-level JSON value type. NOTE: the RFC uses variant
+// names `Null / Bool / Number / String / Array / Object`, but several of
+// those clash with AHFL built-in primitive type-names (`Bool`, `String`)
+// and the P3 enum-variant identifier namespace shares a single scope with
+// them. We adopt a uniform `J-` prefix, matching the forward declaration
+// already present in `std/traits.ahfl` (§2 JsonValue ADT). Ownership note:
+// std/traits.ahfl declares the SAME `enum JsonValue { JNull, JBool, ... }`
+// shape — trait dispatch relies on the nominal type symbol being identical,
+// so the resolver treats both occurrences as a single name. P6a moves the
+// canonical definition here and converts std/traits to a `use` import.
+//
+// JsonNumber is PHASE B (task #6 JSON API gap) — kept as an empty nominal
+// struct in the skeleton so `as_int/as_float` can return a plain Int/Float
+// today without triggering "not yet declared" errors.
+// ===========================================================================
+
+enum JsonNumber {
+    JInt(Int),
+    JFloat(Float),
+}
+
+// NOTE: only the 5 non-recursive variants are enumerated here. The RFC
+// variants `Array / Object` (recursive, containing `List<JsonValue>` /
+// `Map<String, JsonValue>`) are flattened to `JList` / `JEntries` with
+// element type Int for the skeleton — P3 enum variant resolution cannot
+// resolve recursive same-enum references. The RFC container element types
+// are restored in P6a after resolver upgrades support recursive ADTs.
+
+enum JsonValue {
+    JNull,
+    JBool(Bool),
+    JInt(Int),
+    JFloat(Float),
+    JText(String),
+    JList(List<Int>),
+    JEntries(Map<String, Int>),
+}
+
+// ===========================================================================
+// Parse / serialize (RFC §10.3).
+//
+// `parse` wraps the future `@builtin("json_parse_raw")` builtin. Returns
+// `none` on parse failure — for detailed error information users upgrade
+// to `parse_strict` (RFC §10.4, P6a follow-up) which returns
+// `Result<JsonValue, JsonError>`.
+//
+// `emit` wraps the future `@builtin("json_emit_raw")` builtin and produces
+// a compact (non-pretty) JSON text by default; pretty-printing is a P6a
+// follow-up (emit_pretty).
+// ===========================================================================
+
+fn parse(s: String) -> Option<JsonValue> effect Pure decreases 0 {
+    // TODO(P6a): @builtin("json_parse_raw")(s)
+    return option::Option::None;
+}
+
+fn emit(v: JsonValue) -> String effect Pure decreases 0 {
+    // TODO(P6a): @builtin("json_emit_raw")(v)
+    return "";
+}
+
+// ===========================================================================
+// Type predicates (RFC §10.3) — 6 kind tests.
+//
+// Pure predicates; never partial. All match on the 6 J- variants.
+// ===========================================================================
+
+fn is_null(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JNull => true, _ => false };
+}
+fn is_bool(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JBool(_) => true, _ => false };
+}
+fn is_number(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JInt(_) => true, JFloat(_) => true, _ => false };
+}
+fn is_string(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JText(_) => true, _ => false };
+}
+fn is_array(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JList(_) => true, _ => false };
+}
+fn is_object(v: JsonValue) -> Bool effect Pure decreases 0 {
+    return match v { JEntries(_) => true, _ => false };
+}
+
+// ===========================================================================
+// Accessor casts (RFC §10.3) — 6 typed casts, 2 positional/key lookups.
+//
+// Every accessor returns `Option<T>` — failure to match the requested type
+// is not an error, it produces `none`. This matches RFC §10.4 "loose mode".
+//
+// For `as_array` / `as_object` we return a raw `List<JsonValue>` /
+// `Map<String, JsonValue>` (per RFC signature) even though the JArray /
+// JObject wrapper structs are empty nominals today — the RFC contract is
+// that callers never observe the wrapper and P6a wires them to builtins.
+// ===========================================================================
+
+fn as_bool(v: JsonValue) -> Option<Bool> effect Pure decreases 0 {
+    return match v { JBool(b) => option::Option::Some(b), _ => option::Option::None };
+}
+fn as_int(v: JsonValue) -> Option<Int> effect Pure decreases 0 {
+    return match v {
+        JInt(n) => option::Option::Some(n),
+        // RFC §10.3: as_int also coerces lossless floats (whole numbers).
+        // TODO(P6a): JFloat(x) when is_whole(x) -> Option::Some(int_of_float(x))
+        _ => option::Option::None,
+    };
+}
+fn as_float(v: JsonValue) -> Option<Float> effect Pure decreases 0 {
+    return match v {
+        JInt(n) => option::Option::Some(0.0),    // TODO(P6a): promote int -> float
+        JFloat(x) => option::Option::Some(x),
+        _ => option::Option::None,
+    };
+}
+fn as_string(v: JsonValue) -> Option<String> effect Pure decreases 0 {
+    return match v { JText(s) => option::Option::Some(s), _ => option::Option::None };
+}
+fn as_array(v: JsonValue) -> Option<List<JsonValue>> effect Pure decreases 0 {
+    // TODO(P6a): unwrap JList payload as List<JsonValue> after recursive
+    // variant support lands in resolver.
+    return match v {
+        JList(_) => option::Option::Some(collections::empty<JsonValue>()),
+        _ => option::Option::None,
+    };
+}
+fn as_object(v: JsonValue) -> Option<Map<String, JsonValue>> effect Pure decreases 0 {
+    // TODO(P6a): unwrap JEntries payload after recursive variant support.
+    return match v {
+        JEntries(_) => option::Option::Some(collections::map_empty<String, JsonValue>()),
+        _ => option::Option::None,
+    };
+}
+
+// Keyed / indexed traversal.
+fn get(v: JsonValue, key: String) -> Option<JsonValue> effect Pure decreases 0 {
+    // TODO(P6a): as_object(v) >>= (m) -> Map.get(key, m)
+    return option::Option::None;
+}
+fn at(v: JsonValue, index: Int) -> Option<JsonValue> effect Pure decreases 0 {
+    // TODO(P6a): as_array(v) >>= (xs) -> List.get(index, xs)
+    return option::Option::None;
+}
+
+// ===========================================================================
+// Strict-mode error type (RFC §10.4 — declared here so `parse_strict` and
+// `from_json_strict` can reference it; the free functions themselves are
+// part of P6a gap-filling, task #6).
+// ===========================================================================
+
+enum JsonErrorKind {
+    MissingField,
+    TypeMismatch,
+    InvalidValue,
+}
+
+struct JsonError {}
+// NOTE: RFC shape is `struct JsonError { path: String, reason: JsonErrorKind }`
+// but P3 nominal structs only support empty field-lists (struct fields are
+// a PHASE B grammar upgrade). Path + reason are carried as side-channel
+// builtin metadata until struct fields land.
+
+// ===========================================================================
+// Trait impls — Eq / Display / ToJson (RFC §10.3).
+//
+// `impl JsonValue` — inherent impl block providing the bodies that trait
+// dispatch locates for the three traits. The method names + arities match
+// those declared in `std/traits.ahfl` §6.1 / §6.3.
+//
+// Display::to_json is the identity function — a JsonValue is already its
+// own canonical serialization target. Display::emit returns emit(v).
+// ===========================================================================
+
+impl JsonValue {
+    // ---- trait: Eq ---------------------------------------------------------
+    fn eq(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
+        // TODO(P6a): structural recursive equality via switch.
+        return true;
+    }
+    fn ne(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
+        return not self.eq(other);
+    }
+
+    // ---- trait: Display ----------------------------------------------------
+    fn fmt(self: JsonValue, dummy: Unit) -> String effect Pure decreases 0 {
+        // Display::fmt arity 1 is occupied by Int/String; arity 2 avoids
+        // collision until trait generics (PHASE B).
+        return emit(self);
+    }
+
+    // ---- trait: ToJson -----------------------------------------------------
+    fn to_json(self: JsonValue, dummy: Unit) -> JsonValue effect Pure decreases 0 {
+        // Identity — a JsonValue already IS its JSON representation.
+        return self;
+    }
+}
+
+// ===========================================================================
+// FromJson impls for primitive types (RFC §10.3, §6 trait matrix).
+//
+// FromJson::from_json(value: JsonValue) is declared in std/traits with
+// arity 1 on a placeholder Int receiver; because AHFL trait dispatch binds
+// by method name + nominal target, we put the primitive bodies directly on
+// each primitive type via inherent impl. P6a moves them to an explicit
+// `impl FromJson for Primitive` declaration.
+// ===========================================================================
+
+impl Bool {
+    fn from_json(v: JsonValue) -> Option<Bool> effect Pure decreases 0 {
+        return as_bool(v);
+    }
+}
+impl Int {
+    fn from_json(v: JsonValue) -> Option<Int> effect Pure decreases 0 {
+        return as_int(v);
+    }
+}
+impl Float {
+    fn from_json(v: JsonValue) -> Option<Float> effect Pure decreases 0 {
+        return as_float(v);
+    }
+}
+impl String {
+    fn from_json(v: JsonValue) -> Option<String> effect Pure decreases 0 {
+        return as_string(v);
+    }
+}

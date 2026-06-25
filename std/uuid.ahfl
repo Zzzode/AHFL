@@ -2,11 +2,39 @@ module std::uuid;
 
 import std::option as option;
 
+// Compiler-internal builtin hooks.
 @builtin("uuid_new_v4")
-fn new_v4() -> UUID effect Nondet;
+fn uuid_new_v4() -> UUID effect Nondet;
 
 @builtin("uuid_parse")
-fn parse(self: String) -> option::Option<UUID> effect Pure;
+fn uuid_parse(s: String) -> option::Option<UUID> effect Pure;
 
 @builtin("uuid_to_string")
-fn to_string(self: UUID) -> String effect Pure;
+fn uuid_to_string(u: UUID) -> String effect Pure;
+
+// ===========================================================================
+// P3 inherent impl on the UUID primitive type.
+// Blocker 5 note: `parse` originally took `self: String` in this module. Per
+// the orphan rule the impl version lives on the String primitive in
+// std::string::String::parse_uuid; this module keeps a module-level alias so
+// uuid::parse(s) keeps compiling for one release cycle.
+// ===========================================================================
+
+impl UUID {
+    fn to_string(self) -> String effect Pure decreases 0 {
+        return uuid_to_string(self);
+    }
+}
+
+// Module-level surface.
+fn new_v4() -> UUID effect Nondet {
+    return uuid_new_v4();
+}
+
+fn parse(s: String) -> option::Option<UUID> effect Pure decreases 0 {
+    return uuid_parse(s);
+}
+
+fn to_string(self: UUID) -> String effect Pure decreases 0 {
+    return self.to_string();
+}

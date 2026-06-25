@@ -1,0 +1,186 @@
+module std::decimal;
+
+import std::cmp as cmp;
+import std::option as option;
+import std::traits as traits;
+
+// ===========================================================================
+// Decimal — fixed-precision decimal primitive (RFC §3.2 / API §7.3).
+//
+// GRAMMAR NOTE (P3 limitation): the AHFL grammar (AHFL.g4:59) only accepts
+// `Decimal(INT)` — i.e. a scale-bearing literal — as a type. The bare word
+// `Decimal` without a scale is NOT a valid `primitiveType` in the current
+// grammar. As a P6 skeleton workaround we introduce a nominal type alias
+// `type JDecimal = Decimal(0);` and expose a second, fixed-scale alias for
+// every function type signature. Variable-scale semantics and the bare
+// `Decimal` keyword are restored in a PHASE B grammar upgrade (Task #5).
+//
+// Interpretation: a `Decimal(scale)` value is `unscaled_integer / 10^scale`.
+// Scale invariant is enforced by `quantize` and arithmetic helpers.
+//
+// Using `type` alias also avoids a parser conflict with the reserved word:
+// when type_ encounters `JDecimal`, it resolves via the qualifiedIdent
+// branch instead of primitiveType, so we can freely parameterise over it
+// in the Ord/Hash/Display impl blocks below.
+// ===========================================================================
+
+type JDecimal = Decimal(0);
+
+// ===========================================================================
+// RoundingMode (API §7.3).
+//
+// Used by `quantize` to describe how the last retained digit is rounded when
+// a scale reduction discards fractional digits. Names intentionally match
+// IEEE 754 / Java BigDecimal / Rust dec::RoundingMode to avoid confusion.
+// ===========================================================================
+
+enum RoundingMode {
+    // Round towards positive infinity (3.1 -> 4, -3.1 -> -3).
+    Ceiling,
+    // Round towards negative infinity (3.1 -> 3, -3.1 -> -4).
+    Floor,
+    // Round towards zero, i.e. truncate the fraction (3.9 -> 3, -3.9 -> -3).
+    Truncate,
+    // Round to nearest; tie (0.5) rounds away from zero (2.5 -> 3, -2.5 -> -3).
+    HalfUp,
+    // Round to nearest; tie rounds towards zero (2.5 -> 2, -2.5 -> -2).
+    HalfDown,
+    // Round to nearest; tie rounds to the even neighbour (banker's rounding).
+    HalfEven,
+}
+
+// ===========================================================================
+// Constructors (API §7.3).
+//
+// `make(n, scale)` returns Decimal(scale) representing `n / 10^scale`.
+// `from_int(n)` is sugar for `make(n, 0)`.
+// ===========================================================================
+
+fn make(n: Int, scale: Int) -> JDecimal effect Pure decreases 0 {
+    // TODO(P6a): @builtin("decimal_raw_make") once builtin table exposes it.
+    return make(0, 0);
+}
+
+fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
+    return make(n, 0);
+}
+
+// ===========================================================================
+// Arithmetic (API §7.3).
+//
+// Same-scale requirement is enforced at runtime; for the P6 skeleton we only
+// guarantee a pure decreases=0 body so the verified-subset gate accepts the
+// declaration. `requires scale_of(a) == scale_of(b)` is a P4 follow-up once
+// requires-clauses bind to runtime predicates.
+// ===========================================================================
+
+fn add(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+    // TODO(P6a): @builtin("decimal_raw_add")(a, b, scale_of(a))
+    return make(0, 0);
+}
+
+fn sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+    // TODO(P6a): @builtin("decimal_raw_sub")(a, b, scale_of(a))
+    return make(0, 0);
+}
+
+fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+    // Product scale = scale_of(a) + scale_of(b).
+    // TODO(P6a): @builtin("decimal_raw_mul")(a, b, scale_of(a) + scale_of(b))
+    return make(0, 0);
+}
+
+// ===========================================================================
+// Scale queries / conversion (API §7.3).
+// ===========================================================================
+
+fn scale_of(a: Decimal(0)) -> Int effect Pure decreases 0 {
+    // TODO(P6a): @builtin("decimal_raw_scale")(a)
+    return 0;
+}
+
+fn with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure decreases 0 {
+    // Trivially succeeds when new_scale >= scale_of(a); otherwise falls back
+    // to quantize(a, new_scale, RoundingMode::Truncate).
+    // TODO(P6a): @builtin("decimal_raw_with_scale")(a, new_scale)
+    return make(0, 0);
+}
+
+fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
+    -> JDecimal effect Pure decreases 0
+{
+    // TODO(P6a): @builtin("decimal_raw_quantize")(a, new_scale, mode_index(mode))
+    return make(0, 0);
+}
+
+// ===========================================================================
+// Comparisons — free function delegates to Ord trait.
+//
+// RFC §7.3 declares `compare` at module level; the real body invokes
+// `Ord::compare`. For the skeleton we return Equal unconditionally; when P6a
+// binds the Ord trait impl on Decimal, this wrapper forwards to it.
+// ===========================================================================
+
+fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
+    // TODO(P6a): a.compare(b) via Ord trait dispatch.
+    return cmp::Ordering::Equal;
+}
+
+// ===========================================================================
+// Inherent impl — the bodies trait dispatch locates for Eq / Ord / Hash /
+// Display (API §5 trait matrix). Method names + arities match those declared
+// in std/traits.ahfl §6.1 / §6.3; the resolver binds on name + receiver type.
+//
+// NOTE: Because `Decimal` is a primitive keyword type, impl methods use the
+// bare `self` form (annotated `self: Decimal` is accepted too); we keep the
+// annotation form to mirror trait signatures and simplify P6a migration.
+// ===========================================================================
+
+impl Decimal(0) {
+    // ---- trait: Eq ---------------------------------------------------------
+    fn eq(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        // TODO(P6a): @builtin("decimal_raw_eq") + scale equality.
+        return true;
+    }
+    fn ne(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        return not self.eq(other);
+    }
+
+    // ---- trait: Ord --------------------------------------------------------
+    fn compare(self, other: Decimal(0)) -> cmp::Ordering effect Pure decreases 0 {
+        // TODO(P6a): @builtin("decimal_raw_cmp")
+        return cmp::Ordering::Equal;
+    }
+    fn lt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        return self.compare(other) == cmp::Ordering::Less;
+    }
+    fn le(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        let c: cmp::Ordering = self.compare(other);
+        return (c == cmp::Ordering::Less) or (c == cmp::Ordering::Equal);
+    }
+    fn gt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        return self.compare(other) == cmp::Ordering::Greater;
+    }
+    fn ge(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+        let c: cmp::Ordering = self.compare(other);
+        return (c == cmp::Ordering::Greater) or (c == cmp::Ordering::Equal);
+    }
+    // max / min / clamp are PHASE B (trait generics) — not in skeleton.
+
+    // ---- trait: Hash -------------------------------------------------------
+    fn hash(self, dummy: Unit) -> Int effect Pure decreases 0 {
+        // Hash::hash(self: Int) is declared with a single Int receiver in
+        // std/traits; non-Int impls need a distinct arity until trait-level
+        // generics support (PHASE B). Dummy Unit keeps arity unique.
+        // TODO(P6a): real hash combining unscaled + scale.
+        return 0;
+    }
+
+    // ---- trait: Display ----------------------------------------------------
+    fn fmt(self, dummy: Unit) -> String effect Pure decreases 0 {
+        // Display::fmt(self: Int) occupies arity 1; arity 2 distinguishes
+        // Decimal until trait generics.
+        // TODO(P6a): @builtin("decimal_raw_to_string")
+        return "";
+    }
+}

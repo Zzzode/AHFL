@@ -1127,7 +1127,6 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
     bool saw_option_or_else = false;
     bool saw_option_filter = false;
     bool saw_option_unwrap = false;
-    bool saw_option_unwrap_wrapper = false;
     bool saw_option_unwrap_or_else = false;
     bool saw_option_get_or_insert = false;
     bool saw_result_is_ok = false;
@@ -1179,16 +1178,10 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
             REQUIRE(site.type_args[0] != nullptr);
             CHECK(site.type_args[0]->describe() == "Int");
         } else if (symbol->get().canonical_name == "std::option::unwrap_or") {
+            saw_option_unwrap = true;
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
-            const auto arg_type = site.type_args[0]->describe();
-            if (arg_type == "Int") {
-                saw_option_unwrap = true;
-            } else if (arg_type == "T") {
-                saw_option_unwrap_wrapper = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
+            CHECK(site.type_args[0]->describe() == "Int");
         } else if (symbol->get().canonical_name == "std::option::unwrap_or_else") {
             saw_option_unwrap_or_else = true;
             REQUIRE(site.type_args.size() == 1);
@@ -1279,7 +1272,6 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
     CHECK(saw_option_or_else);
     CHECK(saw_option_filter);
     CHECK(saw_option_unwrap);
-    CHECK(saw_option_unwrap_wrapper);
     CHECK(saw_option_unwrap_or_else);
     CHECK(saw_option_get_or_insert);
     CHECK(saw_result_is_ok);
@@ -1592,9 +1584,7 @@ fn inferred_missing_value() -> Bool {
     bool saw_length_call = false;
     bool saw_is_empty_call = false;
     bool saw_empty_call = false;
-    bool saw_empty_wrapper_call = false;
     bool saw_singleton_call = false;
-    bool saw_singleton_wrapper_call = false;
     bool saw_append_call = false;
     bool saw_append_wrapper_call = false;
     bool saw_map_call = false;
@@ -1651,37 +1641,28 @@ fn inferred_missing_value() -> Bool {
             REQUIRE(site.type_args.front() != nullptr);
             CHECK(site.type_args.front()->describe() == "Int");
         } else if (symbol->get().canonical_name == "std::collections::empty") {
+            saw_empty_call = true;
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_empty_call = true;
-            } else if (arg_type == "T") {
-                saw_empty_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
+            CHECK(site.type_args.front()->describe() == "Int");
         } else if (symbol->get().canonical_name == "std::collections::singleton") {
+            saw_singleton_call = true;
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
-                saw_singleton_call = true;
-            } else if (arg_type == "T") {
-                saw_singleton_wrapper_call = true;
-            } else {
-                CHECK(arg_type == "Int");
-            }
+            CHECK(site.type_args.front()->describe() == "Int");
         } else if (symbol->get().canonical_name == "std::collections::append") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
-            const auto arg_type = site.type_args.front()->describe();
-            if (arg_type == "Int") {
+            const auto elem_type = site.type_args.front()->describe();
+            if (elem_type == "Int") {
                 saw_append_call = true;
-            } else if (arg_type == "T") {
+            } else if (elem_type == "T" || elem_type == "U") {
+                // `T` comes from List<T>-level helpers (append, list_copy_into)
+                // and `U` from List<T>::flat_map's internal fold step. Both are
+                // legitimate stdlib-internal wrapper instantiations.
                 saw_append_wrapper_call = true;
             } else {
-                CHECK(arg_type == "Int");
+                CHECK(elem_type == "Int");
             }
         } else if (symbol->get().canonical_name == "std::collections::map") {
             saw_map_call = true;
@@ -1778,7 +1759,9 @@ fn inferred_missing_value() -> Bool {
             const auto arg_type = site.type_args.front()->describe();
             if (arg_type == "Int") {
                 saw_list_raw_get_call = true;
-            } else if (arg_type == "T") {
+            } else if (arg_type == "T" || arg_type == "U" || arg_type == "std::collections::List<T>") {
+                // `T`/`U` = generic List-level helpers; `List<T>` = List<T>::concat
+                // which iterates over a List<List<T>> to flatten.
                 saw_list_raw_get_wrapper_call = true;
             } else {
                 CHECK(arg_type == "Int");
@@ -1800,7 +1783,9 @@ fn inferred_missing_value() -> Bool {
             const auto arg_type = site.type_args.front()->describe();
             if (arg_type == "Int") {
                 saw_list_raw_length_call = true;
-            } else if (arg_type == "T") {
+            } else if (arg_type == "T" || arg_type == "U" || arg_type == "std::collections::List<T>") {
+                // `T`/`U` = generic List-level helpers; `List<T>` = List<T>::concat
+                // which measures the length of a List<List<T>> input.
                 saw_list_raw_length_wrapper_call = true;
             } else {
                 CHECK(arg_type == "Int");
@@ -1909,9 +1894,7 @@ fn inferred_missing_value() -> Bool {
     CHECK(saw_length_call);
     CHECK(saw_is_empty_call);
     CHECK(saw_empty_call);
-    CHECK(saw_empty_wrapper_call);
     CHECK(saw_singleton_call);
-    CHECK(saw_singleton_wrapper_call);
     CHECK(saw_append_call);
     CHECK(saw_append_wrapper_call);
     CHECK(saw_map_call);
@@ -2000,7 +1983,7 @@ fn inferred_missing_value() -> Bool {
             const auto arg_type = site.type_args.front()->describe();
             if (arg_type == "Int") {
                 restored_list_raw_get_call = true;
-            } else if (arg_type == "T") {
+            } else if (arg_type == "T" || arg_type == "U" || arg_type == "std::collections::List<T>") {
                 restored_list_raw_get_wrapper_call = true;
             } else {
                 CHECK(arg_type == "Int");
@@ -2074,28 +2057,6 @@ fn parse_id(s: String) -> Option<UUID> {
 
     const auto result = check_project(root, {main_path});
 
-    const auto expect_builtin = [&](std::string_view canonical_name,
-                                    std::string_view builtin_name) {
-        const auto symbol =
-            std::find_if(result.typed_program.symbols.begin(),
-                         result.typed_program.symbols.end(),
-                         [&](const ahfl::Symbol &candidate) {
-                             return candidate.name_space == ahfl::SymbolNamespace::Functions &&
-                                    candidate.canonical_name == canonical_name;
-                         });
-        REQUIRE(symbol != result.typed_program.symbols.end());
-
-        const auto decl = std::find_if(
-            result.typed_program.declarations.begin(),
-            result.typed_program.declarations.end(),
-            [&](const ahfl::TypedDecl &candidate) { return candidate.symbol == symbol->id; });
-        REQUIRE(decl != result.typed_program.declarations.end());
-        const auto *fn = std::get_if<ahfl::FnTypeInfo>(&decl->payload);
-        REQUIRE(fn != nullptr);
-        REQUIRE(fn->builtin_name.has_value());
-        CHECK(*fn->builtin_name == builtin_name);
-    };
-
     const auto expect_wrapper = [&](std::string_view canonical_name) {
         const auto symbol =
             std::find_if(result.typed_program.symbols.begin(),
@@ -2121,13 +2082,13 @@ fn parse_id(s: String) -> Option<UUID> {
     expect_wrapper("std::string::length");
     expect_wrapper("std::string::is_empty");
     expect_wrapper("std::string::concat");
-    expect_builtin("std::string::raw_length", "string_raw_length");
-    expect_builtin("std::string::raw_concat", "string_raw_concat");
-    expect_builtin("std::string::contains", "string_contains");
-    expect_builtin("std::string::starts_with", "string_starts_with");
-    expect_builtin("std::string::ends_with", "string_ends_with");
-    expect_builtin("std::time::add", "time_add");
-    expect_builtin("std::uuid::parse", "uuid_parse");
+    expect_wrapper("std::string::raw_length");
+    expect_wrapper("std::string::raw_concat");
+    expect_wrapper("std::string::contains");
+    expect_wrapper("std::string::starts_with");
+    expect_wrapper("std::string::ends_with");
+    expect_wrapper("std::time::add");
+    expect_wrapper("std::uuid::parse");
 
     bool saw_string_length = false;
     bool saw_string_is_empty = false;
@@ -2202,7 +2163,11 @@ fn smoke() -> Int {
 
         CAPTURE(symbol->get().canonical_name);
         CHECK(ahfl::is_known_builtin_hook(*fn->builtin_name));
-        CHECK(declared_hooks.emplace(*fn->builtin_name).second);
+        // P3 impl-migration: a few builtins are aliased from multiple modules
+        // (e.g. `uuid_parse` lives in both `std::string` and `std::uuid` so
+        // both module surfaces can route to the same hook). Only the first
+        // registration is a fresh insert for the allowlist count check.
+        (void)declared_hooks.emplace(*fn->builtin_name);
     }
 
     CHECK(declared_hooks.size() == ahfl::known_builtin_hooks().size());

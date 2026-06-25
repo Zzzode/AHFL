@@ -296,6 +296,13 @@ struct TypeCheckOptions {
     // TypeRelationContext. Disabled by default to avoid retaining trace data in
     // normal compilation.
     bool trace_type_relations{false};
+    // Emit three-stage method-dispatch audit-trace notes (stage1 inherent,
+    // stage2 trait, stage3 bound verification) into the diagnostic bag.
+    // Disabled by default: dispatch notes are informational-only and must not
+    // leak into user-facing diagnostics (effects / narrowing tests assert the
+    // diagnostic bag is clean on success). Enable only for the trait-impl
+    // dispatch-golden test suite.
+    bool trace_dispatch{false};
 };
 
 struct TypeCheckResult {

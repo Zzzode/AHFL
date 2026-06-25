@@ -1,0 +1,237 @@
+module std::traits;
+
+import std::cmp as cmp;
+import std::option as option;
+import std::collections as collections;
+import std::string as string;
+
+// ===========================================================================
+// JsonValue ADT — declared FIRST because P3 trait signatures do not support
+// forward references to same-module types. The fully-blown JsonValue with
+// predicates/accessors/parse/emit lives in std/json.ahfl; here we only
+// declare the data shape that FromJson/ToJson and container variant payloads
+// reference. If std/json.ahfl re-declares the same enum, the AHFL resolver
+// will treat it as a redefinition — P6a standardizes on std/json.ahfl owning
+// the definition and this file importing it.
+//
+// Variant payloads use J-prefixed names (not Bool/Int/String) to avoid
+// shadowing built-in primitive type names in the enum variant namespace.
+//
+// Local type aliases follow immediately. P3 enum-variant payloads do NOT
+// resolve module-qualified names like `collections::List<...>`, so we alias
+// them to unqualified names before the enum.
+// ===========================================================================
+
+type List<T> = collections::List<T>;
+type Map<K, V> = collections::Map<K, V>;
+type Option<T> = option::Option<T>;
+
+// NOTE: JsonValue recursive variant payloads cannot use List<JsonValue> /
+// Map<String, JsonValue> in the current P3 resolver — recursive enum types
+// are resolved post-pass so we flatten the recursive branches to opaque
+// alternatives. The full recursive ADT is restored in std/json.ahfl during
+// P6a (Task #17); this skeleton only binds the variant + method names.
+enum JsonValue {
+    JNull,
+    JBool(Bool),
+    JNumber(Int),
+    JText(String),
+    JItems(List<Int>),
+    JEntries(Map<String, Int>),
+}
+
+// ===========================================================================
+// 11 core traits — API §6 interface-freeze, PHASE A skeleton.
+//
+// AHFL's P3 trait grammar supports:
+//   `trait Name { fn method(self: ReceiverType, ...) -> ReturnType effect ... ; }`
+//   `trait Child: Parent { ... }` for trait inheritance (e.g. Ord: Eq).
+// Self-receiver and other parameter types must be spelled out explicitly
+// (`self: T`, not bare `self`); trait-level generics / the `Self` keyword are
+// PHASE B language features (post-P6a). For the skeleton we enumerate the
+// trait signatures on the concrete primitive and container types the rest of
+// the standard library actually uses:
+//
+//   Primitives: Bool, Int, Float, String, UUID, Timestamp, Duration
+//   Containers: Option<T>, Result<T, E>, List<T>, Set<T>, Map<K, V>
+//   Serialization: JsonValue (opaque here, fully defined in std/json.ahfl)
+//
+// The generic-element type parameters come from the surrounding impl
+// (`impl<T> Iterable<T> for List<T>`) so the trait signature does not need
+// its own `<T>` (matches the passing trait_impl.cpp TC3 / TC4 shapes).
+//
+// Container-element traits (Iterable/Foldable/Functor) use a convention where
+// the `T` placeholder is spelled with a concrete forward name; the real
+// element type is substituted by each impl (the trait signature itself is
+// only used for method-name + arity resolution during dispatch).
+// ===========================================================================
+
+// ---- §6.1 Eq / Ord / Hash -------------------------------------------------
+
+trait Eq {
+    fn eq(self: Bool, other: Bool) -> Bool effect Pure;
+    fn ne(self: Bool, other: Bool) -> Bool effect Pure;
+}
+
+// Ord inherits Eq; relational helpers + min/max/clamp are defaults delegated
+// to `compare` via the module-level wrappers at the bottom of this file.
+trait Ord: Eq {
+    fn compare(self: Int, other: Int) -> cmp::Ordering effect Pure;
+    fn lt(self: Int, other: Int) -> Bool effect Pure;
+    fn le(self: Int, other: Int) -> Bool effect Pure;
+    fn gt(self: Int, other: Int) -> Bool effect Pure;
+    fn ge(self: Int, other: Int) -> Bool effect Pure;
+    fn max(self: Int, other: Int) -> Int effect Pure;
+    fn min(self: Int, other: Int) -> Int effect Pure;
+    fn clamp(self: Int, lo: Int, hi: Int) -> Int effect Pure;
+}
+
+trait Hash {
+    fn hash(self: Int) -> Int effect Pure;
+}
+
+// ---- §6.2 Iterable / Foldable / Functor -----------------------------------
+//
+// Element type T is a placeholder. Each concrete impl of these traits
+// overrides the T placeholder with the container's element type.
+
+trait Iterable {
+    fn iter_next(self: collections::List<Int>)
+        -> Option<Unit> effect Pure;
+    fn iter_head(self: collections::List<Int>)
+        -> Option<Int> effect Pure;
+    fn iter_tail(self: collections::List<Int>)
+        -> collections::List<Int> effect Pure;
+}
+
+trait Foldable {
+    fn length(self: collections::List<Int>) -> Int effect Pure;
+    fn fold(self: collections::List<Int>, init: Int, f: Fn(Int, Int) -> Int)
+        -> Int effect Pure;
+    fn for_each(self: collections::List<Int>, f: Fn(Int) -> Unit)
+        -> Unit effect Pure;
+    fn to_list(self: collections::List<Int>)
+        -> collections::List<Int> effect Pure;
+}
+
+trait Functor {
+    fn map(self: collections::List<Int>, f: Fn(Int) -> Int)
+        -> collections::List<Int> effect Pure;
+}
+
+// ---- §6.3 Display / Debug / FromStr / FromJson / ToJson ------------------
+
+trait Display {
+    fn fmt(self: Int) -> String effect Pure;
+}
+
+trait Debug {
+    fn debug(self: Int) -> String effect Pure;
+}
+
+trait FromStr {
+    fn from_str(s: String) -> Option<Int> effect Pure;
+}
+
+trait FromJson {
+    // `value` is declared opaque here; the real JsonValue ADT is declared at
+    // the bottom of this file (same module) and resolved during the same
+    // type-check pass.
+    fn from_json(value: JsonValue) -> Option<Int> effect Pure;
+}
+
+trait ToJson {
+    // Return type is JsonValue (opaque forward, defined below in this module).
+    fn to_json(self: Int) -> JsonValue effect Pure;
+}
+
+// ===========================================================================
+// Phase A default-body wrappers.
+//
+// Concrete impls that only want to write the *required* method (e.g. `eq`
+// for Eq, `compare` for Ord) can forward the remaining methods to these
+// helpers. Usage:
+//
+//     impl Eq for MyType {
+//         fn eq(self: MyType, other: MyType) -> Bool effect Pure decreases 0 {
+//             /* user-provided */
+//         }
+//         fn ne(self: MyType, other: MyType) -> Bool effect Pure decreases 0 {
+//             return eq_default_ne_impl<MyType>(self, other, \a b -> a.eq(b));
+//         }
+//     }
+//
+// PHASE B (P6a): inline these bodies as trait-level default method bodies
+// once the grammar + resolver support them.
+// ===========================================================================
+
+fn eq_default_ne_impl<T>(self: T, other: T, eq_of: Fn(T, T) -> Bool)
+    -> Bool effect Pure decreases 0
+{
+    return not eq_of(self, other);
+}
+
+fn ord_default_lt_impl<T>(self: T, other: T, cmp_of: Fn(T, T) -> cmp::Ordering)
+    -> Bool effect Pure decreases 0
+{
+    return cmp_of(self, other) == cmp::Ordering::Less;
+}
+
+fn ord_default_le_impl<T>(self: T, other: T, cmp_of: Fn(T, T) -> cmp::Ordering)
+    -> Bool effect Pure decreases 0
+{
+    let c: cmp::Ordering = cmp_of(self, other);
+    return (c == cmp::Ordering::Less) or (c == cmp::Ordering::Equal);
+}
+
+fn ord_default_gt_impl<T>(self: T, other: T, cmp_of: Fn(T, T) -> cmp::Ordering)
+    -> Bool effect Pure decreases 0
+{
+    return cmp_of(self, other) == cmp::Ordering::Greater;
+}
+
+fn ord_default_ge_impl<T>(self: T, other: T, cmp_of: Fn(T, T) -> cmp::Ordering)
+    -> Bool effect Pure decreases 0
+{
+    let c: cmp::Ordering = cmp_of(self, other);
+    return (c == cmp::Ordering::Greater) or (c == cmp::Ordering::Equal);
+}
+
+fn ord_default_max_impl<T>(self: T, other: T, gt_of: Fn(T, T) -> Bool)
+    -> T effect Pure decreases 0
+{
+    if gt_of(self, other) {
+        return self;
+    }
+    return other;
+}
+
+fn ord_default_min_impl<T>(self: T, other: T, lt_of: Fn(T, T) -> Bool)
+    -> T effect Pure decreases 0
+{
+    if lt_of(self, other) {
+        return self;
+    }
+    return other;
+}
+
+fn ord_default_clamp_impl<T>(
+    self: T,
+    lo: T,
+    hi: T,
+    lt_of: Fn(T, T) -> Bool,
+    gt_of: Fn(T, T) -> Bool
+) -> T effect Pure decreases 0 {
+    if lt_of(self, lo) {
+        return lo;
+    }
+    if gt_of(self, hi) {
+        return hi;
+    }
+    return self;
+}
+
+// NOTE: JsonValue is now declared at the TOP of this file (immediately after
+// imports) so FromJson/ToJson trait signatures in the middle of the file can
+// resolve it. The full ADT + APIs live in std/json.ahfl and take over the
+// ownership of this type in P6a.

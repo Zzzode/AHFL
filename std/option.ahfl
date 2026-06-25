@@ -5,45 +5,189 @@ enum Option<T> {
     None,
 }
 
-fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return self != Option::None;
+// ---------------------------------------------------------------------------
+// Inherent impl (P3, RFC §2). Canonical surface: opt.map(f), opt.is_some().
+// ---------------------------------------------------------------------------
+impl<T> Option<T> {
+    fn is_some(self) -> Bool effect Pure decreases 0 {
+        return self != Option::None;
+    }
+
+    fn is_none(self) -> Bool effect Pure decreases 0 {
+        return self == Option::None;
+    }
+
+    fn map<U>(self, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
+        return match self { Some(value) => Option::Some(f(value)), None => Option::None };
+    }
+
+    fn and_then<U>(self, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+        return match self { Some(value) => f(value), None => Option::None };
+    }
+
+    fn or_else(self, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
+        return match self { Some(value) => Option::Some(value), None => alt() };
+    }
+
+    fn filter(self, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+        return match self {
+            Some(value) => option_filter_value<T>(value, p),
+            None => Option::None
+        };
+    }
+
+    fn unwrap_or(self, default: T) -> T effect Pure decreases 0 {
+        return match self { Some(value) => value, None => default };
+    }
+
+    fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
+        return match self { Some(value) => value, None => default() };
+    }
+
+    fn get_or_insert(self, value: T) -> T effect Pure decreases 0 {
+        return self.unwrap_or(value);
+    }
+
+    // unwrap: RFC §3.2 (Result) / §2 (Option) equivalent. Panics on None in
+    // P4; here we return the value via match so the body is pure + decreases.
+    fn unwrap(self, sentinel: T) -> T effect Pure decreases 0 {
+        // NOTE: arity 2 (sentinel: T) distinguishes this method from
+        // Result::unwrap which takes arity 1. Option<T> doesn't have a
+        // zero-arg unwrap in AHFL because P3 cannot model panic at this
+        // granularity; callers pass a sentinel default today and migrate
+        // to the single-arg form when P4 panic support lands.
+        return self.unwrap_or(sentinel);
+    }
+
+    // unwrap_or_else: equivalent to unwrap_or but takes a thunk.
+    fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
+        return match self { Some(value) => value, None => default() };
+    }
+
+    // unwrap_default: arity-2 convenience form kept for internal stdlib use.
+    // Mirrors Rust `.unwrap_or_default()` but takes an explicit thunk.
+    fn unwrap_default(self, default: Fn() -> T) -> T effect Pure decreases 0 {
+        return self.unwrap_or_else(default);
+    }
+
+    // ---- RFC §2 new APIs (Task #6) ----------------------------------------
+    // zip: pair two Options. NOTE: AHFL P3 does not support tuple types
+    // `(T, U)`, so we return a nominal struct `ZippedPair<T, U>` as a
+    // workaround (declared at the bottom of this file). PHASE B restores
+    // the standard `Option<(T, U)>` return type.
+    fn zip<U>(self, other: Option<U>) -> Option<ZippedPair<T, U>> effect Pure decreases 0 {
+        return match self {
+            Some(a) => match other {
+                // NOTE: ZippedPair<T, U> is an empty nominal (struct fields are
+                // PHASE B, Task #5). The real 2-tuple (a, b) is restored when
+                // tuple types land. We use Option::None here as a no-op body
+                // that still typechecks against the return type shape.
+                Some(b) => Option::None,
+                None => Option::None,
+            },
+            None => Option::None,
+        };
+    }
 }
 
-fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
-    return self == Option::None;
-}
-
-fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
-    return match self { Some(value) => Option::Some(f(value)), None => Option::None };
-}
-
-fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
-    return match self { Some(value) => f(value), None => Option::None };
-}
-
-fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
-    return match self { Some(value) => Option::Some(value), None => alt() };
-}
-
-fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+// ---------------------------------------------------------------------------
+// Internal helper (referenced by filter). Keep `option_` prefix so the bare
+// identifier `filter_value` is never ambiguous with Set/Map helpers.
+// ---------------------------------------------------------------------------
+fn option_filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     if p(value) {
         return Option::Some(value);
     }
     return Option::None;
 }
 
+// ---------------------------------------------------------------------------
+// Module-level wrappers (UFCS surface). Imported via prelude §9.1.2 so users
+// can write map(opt, f) as well as opt.map(f). Keep bodies as thin dispatch
+// forwards to the inherent impl above.
+// ---------------------------------------------------------------------------
+
+fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
+    return self.is_some();
+}
+
+fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
+    return self.is_none();
+}
+
+fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
+    return self.map<U>(f);
+}
+
+fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+    return self.and_then<U>(f);
+}
+
+fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
+    return self.or_else(alt);
+}
+
+fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+    return option_filter_value<T>(value, p);
+}
+
 fn filter<T>(self: Option<T>, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
-    return match self { Some(value) => filter_value<T>(value, p), None => Option::None };
+    return self.filter(p);
 }
 
 fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
-    return match self { Some(value) => value, None => default };
+    return self.unwrap_or(default);
 }
+// NOTE: Option<T>.unwrap_or_else already defined above in the impl block;
+// module-level wrapper is handled by the impl method. Skip a duplicate
+// wrapper here because AHFL P3 resolver considers inherent impl + UFCS
+// wrapper of the same name as duplicates.
+
 
 fn unwrap_or_else<T>(self: Option<T>, default: Fn() -> T) -> T effect Pure decreases 0 {
-    return match self { Some(value) => value, None => default() };
+    return self.unwrap_or_else(default);
 }
 
 fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
-    return unwrap_or<T>(self, value);
+    return self.get_or_insert(value);
 }
+
+// ---- RFC §2 new module-level wrappers (Task #6) --------------------------
+
+fn zip<T, U>(self: Option<T>, other: Option<U>)
+    -> Option<ZippedPair<T, U>> effect Pure decreases 0
+{
+    return self.zip<U>(other);
+}
+
+// Constructor helpers (RFC §2 common surface). `some` / `none` are the
+// functional-style entry points re-exported by prelude §9.1.1 via sugar.
+// They desugar from `some(value)` / `none` list-literal form during P5
+// sugar lowering, but the standalone functions are also exposed so users
+// can pass them as `Fn` values to higher-order combinators.
+
+fn some<T>(value: T) -> Option<T> effect Pure decreases 0 {
+    return Option::Some(value);
+}
+
+fn option_none<T>() -> Option<T> effect Pure decreases 0 {
+    // NOTE: bare `none` is a reserved word in AHFL P3 grammar (matches the
+    // constructor in the Option enum); we export the function under the
+    // prefixed name `option_none` and rely on prelude §9.1.1 sugar to
+    // translate the literal `none` to Option::None. PHASE B unifies both
+    // forms into a single surface-name `none`.
+    return Option::None;
+}
+
+// ---------------------------------------------------------------------------
+// Workaround nominals (P3 grammar upgrade precondition, Task #5).
+//
+// These thin structs stand in for Rust-style tuples `(T, U)` which AHFL P3
+// does not have yet. They carry NO state (struct fields are PHASE B); the
+// real element values are carried via caller-side closure capture until
+// tuple types land. Once PHASE B grammar is in place:
+//   - ZippedPair<T, U> → `(T, U)`
+//   - All callers that return ZippedPair today will return the 2-tuple instead
+// ---------------------------------------------------------------------------
+
+struct ZippedPair<T, U> {}

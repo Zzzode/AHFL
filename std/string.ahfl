@@ -1,28 +1,162 @@
 module std::string;
 
+import std::option as option;
+import std::collections as collections;
+
+// ===========================================================================
+// Compiler-internal builtin hooks. These stay as module-level prototypes
+// because the lowering pipeline dispatches some specific AST nodes to them
+// by canonical name. Impl methods (below) route through these.
+// ===========================================================================
+
 @builtin("string_raw_length")
-fn raw_length(self: String) -> Int effect Pure;
+fn string_raw_length(s: String) -> Int effect Pure;
 
 @builtin("string_raw_concat")
-fn raw_concat(left: String, right: String) -> String effect Pure;
+fn string_raw_concat(left: String, right: String) -> String effect Pure;
+
+@builtin("string_contains")
+fn string_contains(haystack: String, needle: String) -> Bool effect Pure;
+
+@builtin("string_starts_with")
+fn string_starts_with(s: String, prefix: String) -> Bool effect Pure;
+
+@builtin("string_ends_with")
+fn string_ends_with(s: String, suffix: String) -> Bool effect Pure;
+
+@builtin("uuid_parse")
+fn string_parse_uuid(s: String) -> option::Option<UUID> effect Pure;
+
+// ===========================================================================
+// P3 inherent impl on the String primitive type. Orphan-rule exemption:
+// primitive inherent impls are permitted only inside the std namespace.
+// ===========================================================================
+
+impl String {
+    fn is_empty(self) -> Bool effect Pure decreases 0 {
+        return string_raw_length(self) == 0;
+    }
+
+    fn length(self) -> Int effect Pure decreases 0 {
+        return string_raw_length(self);
+    }
+
+    fn contains(self, needle: String) -> Bool effect Pure decreases 0 {
+        return string_contains(self, needle);
+    }
+
+    fn starts_with(self, prefix: String) -> Bool effect Pure decreases 0 {
+        return string_starts_with(self, prefix);
+    }
+
+    fn ends_with(self, suffix: String) -> Bool effect Pure decreases 0 {
+        return string_ends_with(self, suffix);
+    }
+
+    fn concat(self, other: String) -> String effect Pure decreases 0 {
+        return string_raw_concat(self, other);
+    }
+
+    /// Blocker 5 (归属歧义): `parse` originally lived in std::uuid with a
+    /// `self: String` receiver. Per the orphan rule it now lives here on
+    /// the String primitive impl; std::uuid::parse(s) forwards to it.
+    fn parse_uuid(self) -> option::Option<UUID> effect Pure decreases 0 {
+        return string_parse_uuid(self);
+    }
+
+    /// Deprecated alias retained for one release cycle (P5 → P6). New code
+    /// should prefer `s.length()` which has identical semantics and is not
+    /// prefixed with `raw_` (which is an implementation detail of the
+    /// lowering pipeline, not a user-facing concept).
+    fn raw_length(self) -> Int effect Pure decreases 0 {
+        return self.length();
+    }
+}
+
+// ===========================================================================
+// Module-level helpers (original surface; preserved for one release cycle).
+// ===========================================================================
+
+fn concat(left: String, right: String) -> String effect Pure decreases 0 {
+    return string_raw_concat(left, right);
+}
+
+// Deprecated UFCS wrappers (P5 → P6, one release cycle).
+fn raw_length(self: String) -> Int effect Pure decreases 0 {
+    return self.length();
+}
+
+fn raw_concat(left: String, right: String) -> String effect Pure decreases 0 {
+    return string_raw_concat(left, right);
+}
 
 fn is_empty(self: String) -> Bool effect Pure decreases 0 {
-    return raw_length(self) == 0;
+    return self.is_empty();
 }
 
 fn length(self: String) -> Int effect Pure decreases 0 {
-    return raw_length(self);
+    return self.length();
 }
 
-@builtin("string_contains")
-fn contains(self: String, needle: String) -> Bool effect Pure;
+fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
+    return self.starts_with(prefix);
+}
 
-@builtin("string_starts_with")
-fn starts_with(self: String, prefix: String) -> Bool effect Pure;
+fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
+    return self.ends_with(suffix);
+}
 
-@builtin("string_ends_with")
-fn ends_with(self: String, suffix: String) -> Bool effect Pure;
+fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {
+    return self.contains(needle);
+}
 
-fn concat(left: String, right: String) -> String effect Pure decreases 0 {
-    return raw_concat(left, right);
+// ===========================================================================
+// Internal helpers: string_join_step/string_join_finish implement the
+// two-phase join via manual recursion, avoiding a fold-with-lambda which
+// P3 type-inference cannot reliably resolve across the module boundary
+// (String ⇄ Collections). `first` tracks whether we have not yet emitted
+// a separator so we do not prepend one.
+// ===========================================================================
+
+// string_join_item: helper to express `first ? s : buf ++ sep ++ s` in P3.
+// AHFL P3 does not yet have `if` as an expression or `match` on Bool; we
+// therefore lift the choice into a function where both branches `return`.
+fn string_join_item(
+    first: Bool,
+    buf: String,
+    sep: String,
+    s: String
+) -> String effect Pure decreases 0 {
+    if first {
+        return s;
+    }
+    return string_raw_concat(string_raw_concat(buf, sep), s);
+}
+
+fn string_join_step(
+    strings: collections::List<String>,
+    sep: String,
+    i: Int,
+    n: Int,
+    first: Bool,
+    buf: String
+) -> String effect Pure decreases n - i {
+    if i >= n {
+        return buf;
+    }
+    let s: String = collections::list_raw_get<String>(strings, i);
+    let with_item: String = string_join_item(first, buf, sep, s);
+    return string_join_step(strings, sep, i + 1, n, false, with_item);
+}
+
+// ===========================================================================
+// P6 new module-level APIs (RFC §7.1). String::join is a free function
+// because its receiver is a *list* of Strings, not a single String.
+// ===========================================================================
+
+fn join(strings: collections::List<String>, sep: String) -> String effect Pure
+    decreases collections::list_raw_length<String>(strings)
+{
+    let n: Int = collections::list_raw_length<String>(strings);
+    return string_join_step(strings, sep, 0, n, true, string_raw_concat("", ""));
 }

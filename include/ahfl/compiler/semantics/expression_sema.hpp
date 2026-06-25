@@ -115,6 +115,11 @@ struct ExpressionSemaServices {
     TypeContext *types{nullptr};
     TypeRelationContext *relations{nullptr};
     ExpressionSemaDelegate *delegate{nullptr};
+    // When true, the dispatch path emits audit-trace notes for every
+    // decision point. Mirrors TypeCheckOptions::trace_dispatch; kept here so
+    // ExpressionSema stays self-contained and does not depend on the
+    // surrounding TypeCheckPass directly.
+    bool trace_dispatch{false};
 };
 
 class ExpressionSema final {

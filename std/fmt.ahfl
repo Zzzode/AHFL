@@ -1,0 +1,112 @@
+module std::fmt;
+
+import std::collections as collections;
+import std::option as option;
+import std::string as string;
+import std::traits as traits;
+
+// Local aliases — P3 resolution does not always accept qualified names in
+// generics / function return types so we alias to the unqualified form.
+type List<T> = collections::List<T>;
+type Option<T> = option::Option<T>;
+
+// ===========================================================================
+// DisplayValue — existential wrapper (API §7.2).
+//
+// DisplayValue bundles a value T together with its Display::fmt implementation
+// so heterogeneous arguments can live inside a single `List<DisplayValue>`
+// passed to `format`. In P3 we cannot model true existential types, so the
+// struct stores the pre-formatted String directly; the real representation
+// (value + dispatch function pointer) is restored when trait object support
+// lands in PHASE B.
+// ===========================================================================
+
+struct DisplayValue {}
+
+// Internal: reconstruct DisplayValue from rendered string.
+// NOTE: the real RFC shape is `struct DisplayValue { rendered: String }`,
+// but the P3 nominal struct grammar only supports empty nominal structs
+// (field syntax is PHASE B). We store state externally in P6a and use the
+// constructor function below as the single producer of DisplayValues.
+
+fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
+    // TODO(P6a): store rendered inside DisplayValue struct.
+    return DisplayValue {};
+}
+
+// ===========================================================================
+// format / format_to (API §7.2).
+//
+// Skeletal implementation — enough that the verified-subset gate sees a pure
+// body with decreases. Real implementation (Rust-like positional / indexed /
+// named placeholder replacement) is in the P6a follow-up and delegates to
+// the builtin string-replacement primitives.
+//
+// Template syntax (API-freeze, P6a must preserve):
+//   `{}`      positional placeholder, filled in arg order
+//   `{n}`     indexed placeholder, n is 0-based arg index
+//   `{name}`  named placeholder (only resolved from FromJson contexts)
+// ===========================================================================
+
+fn format(template: String, args: List<DisplayValue>)
+    -> String effect Pure decreases 0
+{
+    // TODO(P6a): positional/indexed/named placeholder expansion using
+    // string_raw_substring + string_raw_concat builtins.
+    return template;
+}
+
+fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
+    -> List<String> effect Pure decreases 0
+{
+    // TODO(P6a): append format(template, args) to buf via List append.
+    return buf;
+}
+
+// ===========================================================================
+// Primitive Display impls (API §7.2, §5 trait matrix).
+//
+// One inherent impl block per primitive type that participates in the
+// Display trait. Trait dispatch resolves method names on the target nominal
+// type, so the body lives here and is linked to `trait Display` by name +
+// arity identity. Each impl simply forwards to the builtin primitive-to-
+// string hook; P6a replaces the builtin call with trait-bound forwarding.
+//
+// Impls are enumerated here rather than inside std/{primitives}.ahfl so that
+// std::fmt is the single source of truth for textual rendering, which
+// matches the RFC (§7.2 "Display impls are defined in std::fmt").
+//
+// NOTE: P3 impl grammar does NOT support `impl Display for X` (with an
+// explicit trait name on the impl header). Instead we write `impl X` with
+// the method names matching those declared in the trait; the resolver binds
+// them via trait-dispatch name/arity lookup. The `for` keyword form is a
+// PHASE B addition.
+// ===========================================================================
+
+impl Bool {
+    fn fmt(self: Bool) -> String effect Pure decreases 0 {
+        // TODO(P6a): lower to bool_to_string builtin; use ternary/match when
+        // field-struct + match on nominal bool becomes available.
+        return "";
+    }
+}
+
+impl Int {
+    fn fmt(self: Int) -> String effect Pure decreases 0 {
+        // TODO(P6a): lower to int_to_string builtin.
+        return "";
+    }
+}
+
+impl Float {
+    fn fmt(self: Float) -> String effect Pure decreases 0 {
+        // TODO(P6a): lower to float_to_string builtin.
+        return "";
+    }
+}
+
+impl String {
+    fn fmt(self: String) -> String effect Pure decreases 0 {
+        return self;
+    }
+}

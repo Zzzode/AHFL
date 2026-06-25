@@ -412,8 +412,7 @@ struct ImplAssocItemInfo {
 
 /// One method defined inside an `impl` block (RFC §1.4 FnDef). Impl methods do
 /// not have standalone public Function symbols yet; call-site dispatch resolves
-/// through the owning ImplTypeInfo plus method name. The resolved signature
-/// mirrors TraitMethodInfo so signature-matching is structural compare.
+/// Mirrors TraitMethodInfo so signature-matching is structural compare.
 struct ImplMethodInfo {
     std::string name;
     SymbolId symbol{0};
@@ -424,6 +423,10 @@ struct ImplMethodInfo {
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;
+    // P5 (RFC §3.3): when non-null, this method was declared with
+    // `@builtin("name")` in the source; the name maps to a compiler / runtime
+    // builtin hook. Only stdlib modules are allowed to declare these.
+    std::optional<std::string> builtin_name;
     // P3c: index of the method body's TypedBlock in TypedProgram::blocks.
     // UINT32_MAX when the method has no body or body checking failed before a
     // block was recorded. Populated by ImplSema after the environment is built.

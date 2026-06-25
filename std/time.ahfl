@@ -1,13 +1,52 @@
 module std::time;
 
+// Compiler-internal builtin hooks.
 @builtin("time_now")
-fn now() -> Timestamp effect Nondet;
+fn time_now() -> Timestamp effect Nondet;
 
 @builtin("time_add")
-fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure;
+fn time_add(t: Timestamp, delta: Duration) -> Timestamp effect Pure;
 
 @builtin("time_sub")
-fn sub(self: Timestamp, delta: Duration) -> Timestamp effect Pure;
+fn time_sub(t: Timestamp, delta: Duration) -> Timestamp effect Pure;
 
 @builtin("time_duration_between")
-fn duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure;
+fn time_duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure;
+
+// ===========================================================================
+// P3 inherent impl on primitive Timestamp / Duration types.
+// ===========================================================================
+
+impl Timestamp {
+    fn add(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
+        return time_add(self, delta);
+    }
+
+    fn sub(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
+        return time_sub(self, delta);
+    }
+
+    fn duration_until(self, other: Timestamp) -> Duration effect Pure decreases 0 {
+        return time_duration_between(self, other);
+    }
+}
+
+// ===========================================================================
+// Module-level surface.
+// ===========================================================================
+
+fn now() -> Timestamp effect Nondet {
+    return time_now();
+}
+
+fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
+    return self.add(delta);
+}
+
+fn sub(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
+    return self.sub(delta);
+}
+
+fn duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure decreases 0 {
+    return time_duration_between(start, end);
+}

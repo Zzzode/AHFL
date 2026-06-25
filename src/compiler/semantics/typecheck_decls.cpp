@@ -1321,6 +1321,26 @@ void TypeCheckPass::build_impl_types() {
                 info.type_param_names.push_back(type_param->name);
             }
 
+            // --- Scope: impl-level type params -------------------------------
+            // P3c: impl headers can carry generics (impl<T> Foo<T>, impl<T> Bar for
+            // List<T>, …). These type param names must be in scope when we
+            // resolve the impl target type, the trait ref type, every method
+            // signature (return type, param types), and every associated-type
+            // RHS. Previously this scope was missing, which made impl bodies
+            // type-annotated with `T` fail with unknown-type errors.
+            const auto *prev_type_params = current_type_param_names_;
+            // Reserve room for impl-level names + per-method extra params so
+            // that appending method type params in the loop below never
+            // reallocates the backing store (current_type_param_names_ points
+            // directly into this vector).
+            std::vector<std::string> impl_and_method_tparams;
+            impl_and_method_tparams.reserve(info.type_param_names.size() + 16);
+            impl_and_method_tparams.insert(
+                impl_and_method_tparams.end(),
+                info.type_param_names.begin(),
+                info.type_param_names.end());
+            current_type_param_names_ = &impl_and_method_tparams;
+
             // Resolve target type. RFC §1.4 TypeRef must resolve to a nominal
             // struct/enum (P3 does not impl compound types — RFC leaves it open
             // but the type system has no path-type today).
@@ -1379,6 +1399,43 @@ void TypeCheckPass::build_impl_types() {
 
             // Resolve impl method signatures.
             for (const auto &method : decl.methods) {
+                // --- Scope: append this method's type params to the impl-
+                // level names already in impl_and_method_tparams. Pop them
+                // at the end of the loop body so the next iteration starts
+                // from the impl-level baseline.
+                //
+                // NOTE: we construct method_info.type_param_names by REFERENCE
+                // (copied below) but resolution happens WITH the appended
+                // names active. This mirrors build_fn_types: scope is set
+                // before param/return-type resolution. Previously we built
+                // ImplMethodInfo with `declaration->type_params` (impl-head
+                // names only) and THEN appended method tparams — meaning
+                // method-level names like <U> weren't active when we resolved
+                // `Fn(T) -> U` / `Option<U>`, producing spurious "unknown type
+                // U" errors.
+                const auto method_tparam_base = impl_and_method_tparams.size();
+                for (const auto &tp : method->type_params) {
+                    impl_and_method_tparams.push_back(tp->name);
+                }
+                // --- Scope: impl-level + method-level type param names combined.
+                // The TypeResolver builds TypeVarT using index = position in the
+                // combined vector. When check_impl_method_call later builds
+                // `subst.assign(method.type_param_names.size())`, the
+                // substitution map indices must align with the TypeVarT indices
+                // embedded in `method.params` / `method.return_type`. That
+                // alignment requires method_info.type_param_names to carry
+                // IMPL-LEVEL + METHOD-LEVEL names IN ORDER, matching
+                // `impl_and_method_tparams` used during resolve_type() below.
+                // Previously method_info.type_param_names carried ONLY the
+                // method-level names, so index 0 of subst meant 'U' (method
+                // level), but TypeVarT{index=0} inside the type graph meant 'T'
+                // (impl level), producing bogus unification like "expected
+                // Fn(U)->U, got Fn(T)->U".
+                std::vector<std::string> method_type_param_names;
+                method_type_param_names.reserve(impl_and_method_tparams.size());
+                method_type_param_names.insert(method_type_param_names.end(),
+                                               impl_and_method_tparams.begin(),
+                                               impl_and_method_tparams.end());
                 ImplMethodInfo method_info{
                     .name = method->name,
                     .params = {},
@@ -1386,18 +1443,63 @@ void TypeCheckPass::build_impl_types() {
                                                        : make_error_type(),
                     .return_type_range =
                         method->return_type ? method->return_type->range : SourceRange{},
-                    .type_param_names = {},
+                    .type_param_names = std::move(method_type_param_names),
                     .effect = resolve_effect_clause_info(method->effect_clause),
                     .has_body = static_cast<bool>(method->body),
                     .declaration_range = method->range,
+                    .builtin_name = method->builtin_name,
                 };
-                for (const auto &type_param : method->type_params) {
-                    method_info.type_param_names.push_back(type_param->name);
+                // P5 (RFC §3.3): @builtin hook gating — mirror the top-level fn
+                // rules (see build_fn_types above). Only stdlib modules may
+                // declare @builtin methods, every @builtin method must carry
+                // an effect clause (the compiler expects a hook descriptor for
+                // effect derivation), and the hook name must be a known builtin.
+                if (method->builtin_name.has_value()) {
+                    if (!is_std_module(current_module_name_)) {
+                        typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
+                                             messages::typecheck::InvalidBuiltinAttribute.format_with(),
+                                             method->range);
+                    }
+                    if (!method->effect_clause) {
+                        typecheck_error_here(error_codes::typecheck::MissingBuiltinEffect,
+                                             messages::typecheck::MissingBuiltinEffect.format_with(),
+                                             method->range);
+                    }
+                    if (!is_known_builtin_hook(*method->builtin_name)) {
+                        typecheck_error_here(error_codes::typecheck::UnknownBuiltinHook,
+                                             messages::typecheck::UnknownBuiltinHook.format_with(
+                                                 *method->builtin_name),
+                                             method->range);
+                    }
                 }
                 for (const auto &param : method->params) {
+                    // P3 (RFC §1.4 inherent impl method semantics): the first
+                    // parameter of an inherent impl method is `self`, and the
+                    // grammar allows `self` to appear without an explicit type
+                    // annotation (equivalent to Swift/Rust shorthand). In that
+                    // case the self type is the impl's target type, built from
+                    // impl.type_param_names instantiated with TypeVar for each
+                    // name — matching how `target_type` is constructed above.
+                    // Without this synthesis, `self` has an error type in the
+                    // method signature, which makes every subsequent `self.X`
+                    // dispatch fail (INVALID_MEMBER_ACCESS), and destroys the
+                    // scrutinee context for `match self` (so `Some(value)`
+                    // arms never bind the payload name).
+                    TypePtr param_type;
+                    if (param->type != nullptr) {
+                        param_type = resolve_type(*param->type);
+                    } else if (!param->name.empty() && param->name[0] == 's' &&
+                               param->name == "self" && info.target_type != nullptr) {
+                        // target_type is already built from impl type params
+                        // under the same current_type_param_names_ scope, so
+                        // the TypeVar indices are compatible.
+                        param_type = info.target_type;
+                    } else {
+                        param_type = make_error_type();
+                    }
                     method_info.params.push_back(ParamTypeInfo{
                         .name = param->name,
-                        .type = param->type ? resolve_type(*param->type) : make_error_type(),
+                        .type = std::move(param_type),
                         .declaration_range = param->range,
                     });
                 }
@@ -1409,6 +1511,8 @@ void TypeCheckPass::build_impl_types() {
                                          method->effect_clause->range);
                 }
                 info.methods.push_back(std::move(method_info));
+                // Pop method-level type params (see scope note at loop top).
+                impl_and_method_tparams.resize(method_tparam_base);
             }
 
             for (const auto &assoc : decl.assoc_items) {
@@ -1461,6 +1565,9 @@ void TypeCheckPass::build_impl_types() {
             if (register_as_trait_impl) {
                 seen_impls.emplace_back(stored);
             }
+
+            // Restore outer type-parameter scope (see impl-level scope note).
+            current_type_param_names_ = prev_type_params;
         });
     }
 }

@@ -203,10 +203,11 @@ class ExpressionCheckerServices final {
                               const TypeEnvironment &environment,
                               TypeContext &types,
                               TypeRelationContext &relations,
-                              ExpressionSemaDelegate &delegate)
+                              ExpressionSemaDelegate &delegate,
+                              bool enable_trace_dispatch)
         : resolve_result_(resolve_result), current_source_id_(current_source_id),
           environment_(environment), types_(types), relations_(relations), delegate_(&delegate),
-          values_(types_) {}
+          values_(types_), trace_dispatch(enable_trace_dispatch) {}
 
     [[nodiscard]] const ExpressionValueFactory &values() const noexcept {
         return values_;
@@ -382,6 +383,10 @@ class ExpressionCheckerServices final {
     [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const {
         return environment_.get_fn(id);
     }
+
+    // P3c.S5b: opt-in flag for dispatch audit-trace notes. Mirrors
+    // TypeCheckOptions::trace_dispatch. Read-only after construction.
+    bool trace_dispatch{false};
 
     // P3c: collect impl methods that match a receiver nominal type and method
     // name. Impl selection uses normalize_type_key equality (the same
@@ -1371,59 +1376,62 @@ class ExpressionChecker final {
         const MethodCandidate *selected = nullptr;
         bool selected_from_trait = false;
 
+        // Tiny helper so the conditional-gating noise doesn't drown out the
+        // actual dispatch logic. Notes are opt-in (TypeCheckOptions::
+        // trace_dispatch) to keep success-path diagnostics empty for the
+        // narrowing / effect-purity tests.
+        const auto dispatch_note = [&](std::string message) {
+            if (services_.trace_dispatch) {
+                services_.note_here(std::move(message), expr.range);
+            }
+        };
+
         // ---- Stage 1: inherent unique ----------------------------------------
-        services_.note_here(
-            "[dispatch.stage1.inherent] " + method_call_name(*receiver.type, call.method) +
-                ": inherent candidates=" + std::to_string(inherent_candidates.size()),
-            expr.range);
+        dispatch_note("[dispatch.stage1.inherent] " +
+                      method_call_name(*receiver.type, call.method) +
+                      ": inherent candidates=" +
+                      std::to_string(inherent_candidates.size()));
         if (inherent_candidates.size() == 1) {
             selected = &inherent_candidates.front();
             selected_from_trait = false;
-            services_.note_here(
-                "[dispatch.stage1.inherent] selected unique inherent method '" +
-                    inherent_candidates.front().method->name + "'",
-                expr.range);
+            dispatch_note("[dispatch.stage1.inherent] selected unique inherent method '" +
+                          inherent_candidates.front().method->name + "'");
         } else if (inherent_candidates.size() > 1) {
-            services_.note_here("[dispatch.stage1.inherent] multiple inherent candidates → "
-                                "AMBIGUOUS_TRAIT_IMPL",
-                                expr.range);
+            dispatch_note("[dispatch.stage1.inherent] multiple inherent candidates → "
+                          "AMBIGUOUS_TRAIT_IMPL");
             services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
                                            messages::typecheck::AmbiguousTraitImpl.format_with(
                                                call.method, receiver.type->describe()),
                                            expr.range);
             return values_.error_typed_effect(receiver.effect);
         } else {
-            services_.note_here("[dispatch.stage1.inherent] no inherent candidates → fall "
-                                "through to trait lookup",
-                                expr.range);
+            dispatch_note("[dispatch.stage1.inherent] no inherent candidates → fall "
+                          "through to trait lookup");
         }
 
         // ---- Stage 2: trait unique (only if stage 1 produced no match) -------
         if (selected == nullptr) {
-            services_.note_here(
-                "[dispatch.stage2.trait] " + method_call_name(*receiver.type, call.method) +
-                    ": trait candidates=" + std::to_string(trait_candidates.size()),
-                expr.range);
+            dispatch_note("[dispatch.stage2.trait] " +
+                          method_call_name(*receiver.type, call.method) +
+                          ": trait candidates=" +
+                          std::to_string(trait_candidates.size()));
             if (trait_candidates.size() == 1) {
                 selected = &trait_candidates.front();
                 selected_from_trait = true;
-                services_.note_here("[dispatch.stage2.trait] selected unique trait method '" +
-                                        trait_candidates.front().method->name + "' from trait '" +
-                                        trait_candidates.front().impl->trait_name + "'",
-                                    expr.range);
+                dispatch_note("[dispatch.stage2.trait] selected unique trait method '" +
+                                  trait_candidates.front().method->name + "' from trait '" +
+                                  trait_candidates.front().impl->trait_name + "'");
             } else if (trait_candidates.size() > 1) {
-                services_.note_here("[dispatch.stage2.trait] multiple trait candidates → "
-                                    "AMBIGUOUS_TRAIT_IMPL",
-                                    expr.range);
+                dispatch_note("[dispatch.stage2.trait] multiple trait candidates → "
+                              "AMBIGUOUS_TRAIT_IMPL");
                 services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
                                                messages::typecheck::AmbiguousTraitImpl.format_with(
                                                    call.method, receiver.type->describe()),
                                                expr.range);
                 return values_.error_typed_effect(receiver.effect);
             } else {
-                services_.note_here("[dispatch.stage2.trait] no trait candidates → dispatch "
-                                    "fails with UNKNOWN_CALLABLE",
-                                    expr.range);
+                dispatch_note("[dispatch.stage2.trait] no trait candidates → dispatch "
+                              "fails with UNKNOWN_CALLABLE");
             }
         }
 
@@ -1438,20 +1446,16 @@ class ExpressionChecker final {
         // ---- Stage 3: bound check (trait selections only) --------------------
         if (selected_from_trait && selected->impl != nullptr) {
             const std::string_view trait_name = selected->impl->trait_name;
-            services_.note_here("[dispatch.stage3.bound] verifying bound '" +
-                                    receiver.type->describe() + " : " + std::string(trait_name) +
-                                    "' for trait dispatch target",
-                                expr.range);
+            dispatch_note("[dispatch.stage3.bound] verifying bound '" +
+                          receiver.type->describe() + " : " + std::string(trait_name) +
+                          "' for trait dispatch target");
             const bool bound_ok = services_.check_bound(*receiver.type, trait_name, expr.range);
             if (bound_ok) {
-                services_.note_here(
-                    "[dispatch.stage3.bound] bound satisfied for trait '" + std::string(trait_name) +
-                        "'",
-                    expr.range);
+                dispatch_note("[dispatch.stage3.bound] bound satisfied for trait '" +
+                              std::string(trait_name) + "'");
             } else {
-                services_.note_here("[dispatch.stage3.bound] bound NOT satisfied → "
-                                    "TRAIT_BOUND_NOT_SATISFIED already emitted",
-                                    expr.range);
+                dispatch_note("[dispatch.stage3.bound] bound NOT satisfied → "
+                              "TRAIT_BOUND_NOT_SATISFIED already emitted");
                 // check_bound() already emitted the primary diagnostic with
                 // the exact (type, trait) pair. Return an error-typed value so
                 // downstream passes don't treat the call as well-typed even if
@@ -1459,8 +1463,7 @@ class ExpressionChecker final {
                 return values_.error_typed_effect(receiver.effect);
             }
         } else {
-            services_.note_here("[dispatch.stage3.bound] inherent dispatch skips bound check",
-                                expr.range);
+            dispatch_note("[dispatch.stage3.bound] inherent dispatch skips bound check");
         }
 
         return check_impl_method_call(expr, receiver, *selected);
@@ -1510,22 +1513,57 @@ class ExpressionChecker final {
 
         ExprEffect effect = join_effects(expr_effect_from_judgement(judgement), receiver.effect);
         const bool is_generic = !method.type_param_names.empty();
+
+        // P3 surface semantics: explicit call-site type arguments <A, B, ...>
+        // bind ONLY to METHOD-level type parameters, never to impl-level ones.
+        // Users cannot spell impl-level type params at a method call site; they
+        // are always inferred from the receiver type. The candidate's
+        // method.type_param_names contains IMPL-LEVEL + METHOD-LEVEL names in
+        // order (needed because TypeVarT indices embedded in param/return types
+        // are built against the full scope), so we offset by impl_count when
+        // routing explicit args. Without this offset, `self.map<U>(f)` inside
+        // impl<T> List<T> { fn map<U>(...) } would assign <U> to the FIRST
+        // position in the scope (impl-level 'T') instead of method-level 'U',
+        // giving "expected List<U>, got List<T>" receiver mismatches.
+        const std::size_t impl_tparam_count =
+            candidate.impl != nullptr ? candidate.impl->type_param_names.size() : 0u;
+        const std::size_t method_only_tparam_count =
+            method.type_param_names.size() >= impl_tparam_count
+                ? method.type_param_names.size() - impl_tparam_count
+                : 0u;
+        // Sanity guard: candidate.impl->type_param_names should always be a
+        // prefix of method.type_param_names (guaranteed by build_impl_types).
+        // If the invariant breaks, fall back to zero offset (conservative:
+        // explicit args bind to the start of the combined scope).
+        const bool prefix_ok = [&] {
+            if (method.type_param_names.size() < impl_tparam_count) return false;
+            for (std::size_t i = 0; i < impl_tparam_count; ++i) {
+                if (method.type_param_names[i] != candidate.impl->type_param_names[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }();
+        const std::size_t explicit_tparam_offset =
+            (candidate.impl != nullptr && prefix_ok) ? impl_tparam_count : 0u;
+
         TypeSubstitutionMap subst;
         if (is_generic) {
             subst.assign(method.type_param_names.size(), nullptr);
-            if (call.type_args.size() > method.type_param_names.size()) {
+            if (call.type_args.size() > method_only_tparam_count) {
                 services_.typecheck_error_here(error_codes::typecheck::WrongArity,
                                                messages::typecheck::WrongArity.format_with(
                                                    "method type arguments",
                                                    method_name,
-                                                   std::to_string(method.type_param_names.size()),
+                                                   std::to_string(method_only_tparam_count),
                                                    std::to_string(call.type_args.size())),
                                                expr.range);
             }
             const auto explicit_limit =
-                std::min(call.type_args.size(), method.type_param_names.size());
+                std::min(call.type_args.size(), method_only_tparam_count);
             for (std::size_t index = 0; index < explicit_limit; ++index) {
-                subst[index] = services_.resolve_type_syntax(*call.type_args[index]);
+                subst[explicit_tparam_offset + index] =
+                    services_.resolve_type_syntax(*call.type_args[index]);
             }
         } else if (!call.type_args.empty()) {
             services_.typecheck_error_here(
@@ -2476,6 +2514,7 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
         *services_.types,
         *services_.relations,
         *services_.delegate,
+        services_.trace_dispatch,
     };
     return ExpressionChecker{services, context, expected_type, nullptr}.check(expr);
 }
@@ -2494,6 +2533,7 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
         *services_.types,
         *services_.relations,
         *services_.delegate,
+        services_.trace_dispatch,
     };
     return ExpressionChecker{services, context, expected_type, &expectation}.check(expr);
 }
@@ -2601,6 +2641,7 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
         .types = types_,
         .relations = &relations_,
         .delegate = &delegate,
+        .trace_dispatch = options_.trace_dispatch,
     }};
     if (expectation != nullptr) {
         return sema.check(expr, context, *expectation);

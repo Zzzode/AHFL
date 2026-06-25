@@ -1,0 +1,94 @@
+module std::cmp;
+
+// ===========================================================================
+// Ordering enum (RFC §6.1, API §6.1).
+// Ord::compare returns this enum; it also doubles as the canonical three-way
+// comparison result used by sort/sort_by/min/max/clamp helpers below.
+// Ordering is re-exported from std::prelude (§9.1.1) so user code does not
+// have to import std::cmp explicitly.
+// ===========================================================================
+
+enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+// ===========================================================================
+// P3 inherent impl on Ordering.
+// ===========================================================================
+
+impl Ordering {
+    fn is_less(self) -> Bool effect Pure decreases 0 {
+        return self == Ordering::Less;
+    }
+
+    fn is_equal(self) -> Bool effect Pure decreases 0 {
+        return self == Ordering::Equal;
+    }
+
+    fn is_greater(self) -> Bool effect Pure decreases 0 {
+        return self == Ordering::Greater;
+    }
+
+    // Reverse a three-way comparison result: Less<->Greater, Equal unchanged.
+    fn reverse(self) -> Ordering effect Pure decreases 0 {
+        return match self {
+            Less => Ordering::Greater,
+            Equal => Ordering::Equal,
+            Greater => Ordering::Less,
+        };
+    }
+}
+
+// ===========================================================================
+// Module-level helpers (API §6.1 + prelude §9.1.2).
+//
+// Ordering predicate helpers are exported here so sort_by-style closures can
+// inspect the result of a user-provided comparer. Bodies are thin UFCS
+// forwards to the inherent impl above.
+//
+// Generic helpers (compare / min / max / clamp) are placeholders: they forward
+// to identity for now, and are replaced with Ord trait delegation once the
+// trait-resolver binds the default methods (P6a).
+// ===========================================================================
+
+fn is_less(self: Ordering) -> Bool effect Pure decreases 0 {
+    return self.is_less();
+}
+
+fn is_equal(self: Ordering) -> Bool effect Pure decreases 0 {
+    return self.is_equal();
+}
+
+fn is_greater(self: Ordering) -> Bool effect Pure decreases 0 {
+    return self.is_greater();
+}
+
+fn reverse(self: Ordering) -> Ordering effect Pure decreases 0 {
+    return self.reverse();
+}
+
+// Generic helpers. Placeholder bodies forward to identity semantics for now;
+// they are replaced with Ord trait delegation in the P6a phase once the
+// trait-resolver binds the default methods.
+
+fn compare<T>(left: T, right: T) -> Ordering effect Pure decreases 0 {
+    // TODO(P6a): left.compare(right) after Ord trait impl on primitives.
+    return Ordering::Equal;
+}
+
+fn min<T>(left: T, right: T) -> T effect Pure decreases 0 {
+    // TODO(P6a): compare(left, right) == Greater ? right : left.
+    return left;
+}
+
+fn max<T>(left: T, right: T) -> T effect Pure decreases 0 {
+    // TODO(P6a): compare(left, right) == Less ? right : left.
+    return right;
+}
+
+fn clamp<T>(value: T, lo: T, hi: T) -> T effect Pure decreases 0 {
+    // TODO(P6a): value.max(lo).min(hi).
+    return value;
+}

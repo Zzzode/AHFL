@@ -46,16 +46,46 @@ clamp_range(std::size_t begin_offset, std::size_t end_offset, const SourceFile &
     };
 }
 
+// ANTLR4 C++ runtime returns Unicode CODE POINT indices (not byte offsets) when
+// the input contains UTF-8 multi-byte sequences (ANTLRInputStream advances a
+// char32 cursor, not a byte cursor). Our SourceFile / SourceRange works in raw
+// byte offsets, so every token position must be translated before it is stored
+// into the AST. Otherwise source ranges silently drift by the number of UTF-8
+// extension bytes that precede them, producing diagnostics that point at the
+// wrong character and (worse) AST literal nodes whose `source_text(range)`
+// returns garbled bytes.
+[[nodiscard]] std::size_t codepoint_to_byte_offset(const SourceFile &source,
+                                                   std::size_t codepoint_index) {
+    const std::string_view content = source.content;
+    if (codepoint_index == INVALID_INDEX) {
+        return content.size();
+    }
+
+    std::size_t byte_index = 0;
+    std::size_t codepoints_seen = 0;
+    while (byte_index < content.size() && codepoints_seen < codepoint_index) {
+        const unsigned char c = static_cast<unsigned char>(content[byte_index]);
+        // A UTF-8 code point starts with anything except a 10xxxxxx continuation
+        // byte; every start byte advances the codepoint counter by exactly one.
+        if ((c & 0xC0u) != 0x80u) {
+            ++codepoints_seen;
+        }
+        ++byte_index;
+    }
+    return byte_index;
+}
+
 [[nodiscard]] SourceRange
 token_range(const antlr4::Token &start, MaybeCRef<antlr4::Token> stop, const SourceFile &source) {
-    const auto begin_offset =
-        start.getStartIndex() == INVALID_INDEX ? source.content.size() : start.getStartIndex();
+    const auto begin_offset = codepoint_to_byte_offset(source, start.getStartIndex());
 
     std::size_t end_offset = begin_offset;
     if (stop.has_value() && stop->get().getStopIndex() != INVALID_INDEX) {
-        end_offset = stop->get().getStopIndex() + 1;
+        // +1 because stopIndex points at the LAST CODE POINT of the token, so
+        // a single-codepoint token produces the half-open range [begin, begin+1).
+        end_offset = codepoint_to_byte_offset(source, stop->get().getStopIndex() + 1);
     } else if (start.getStopIndex() != INVALID_INDEX) {
-        end_offset = start.getStopIndex() + 1;
+        end_offset = codepoint_to_byte_offset(source, start.getStopIndex() + 1);
     }
 
     return clamp_range(begin_offset, end_offset, source);
@@ -980,8 +1010,168 @@ class ProgramBuilder {
         return build_expr_syntax(require(context.expr(), "const expression is missing"));
     }
 
+    // P3 impl-migration: Disambiguate the `<`/`>` diamond at parse time.
+    //
+    // The grammar `postfixExpr: primaryExpr ('.' identifier ('<' typeList '>')? '(' exprList? ')')*`
+    // and `compareExpr: addExpr (('<' | '>' | ...) addExpr)*` create a true 2-parse ambiguity
+    // when the method has EXACTLY 1 generic type arg AND EXACTLY 1 value argument:
+    //     receiver.method<SingleTypeArg>(singleValueArg)
+    // parses as the comparison chain:
+    //     (receiver.method < SingleTypeArg) > (singleValueArg)
+    // because `(singleValueArg)` is itself a valid `(' expr ')'` parenthesised primary.
+    //
+    // Multi-type-arg and multi-arg calls never suffer this: `<T, U>` contains a comma that
+    // breaks the comparison chain, and `(a, b)` is not a valid `(expr)` grouping. Nested
+    // generics such as `<Wrap<U>>` are also not reachable as comparison chains because the
+    // inner `<`/`>` consume the lookahead before the outer `>` can pair with the outer `<`.
+    //
+    // We repair this purely at AST-reconstruction time: a recursive post-order pass over
+    // the just-built expression rewrites every `LT(_, GT(_, Group(_)))` shape into a
+    // MethodCall with one type arg and one value arg whenever the left-operand chain is a
+    // member-access (`.method`) on something.
+    [[nodiscard]] Owned<ast::ExprSyntax>
+    rewrite_diamond_ambiguity(Owned<ast::ExprSyntax> expr) const {
+        if (expr == nullptr) return expr;
+
+        // Recurse first so children are repaired before we inspect them.
+
+        // Recurse first so children are repaired before we inspect them.
+        std::visit(Overloaded{
+                       [](auto &) { /* no-op for leaf nodes */ },
+                       [this](ast::UnaryExpr &u) {
+                           u.operand = rewrite_diamond_ambiguity(std::move(u.operand));
+                       },
+                       [this](ast::BinaryExpr &b) {
+                           b.lhs = rewrite_diamond_ambiguity(std::move(b.lhs));
+                           b.rhs = rewrite_diamond_ambiguity(std::move(b.rhs));
+                       },
+                       [this](ast::CallExpr &c) {
+                           for (auto &a : c.arguments)
+                               a = rewrite_diamond_ambiguity(std::move(a));
+                       },
+                       [this](ast::MethodCallExpr &m) {
+                           m.receiver = rewrite_diamond_ambiguity(std::move(m.receiver));
+                           for (auto &a : m.arguments)
+                               a = rewrite_diamond_ambiguity(std::move(a));
+                       },
+                       [this](ast::MemberAccessExpr &ma) {
+                           ma.base = rewrite_diamond_ambiguity(std::move(ma.base));
+                       },
+                       [this](ast::IndexAccessExpr &ia) {
+                           ia.base = rewrite_diamond_ambiguity(std::move(ia.base));
+                           ia.index = rewrite_diamond_ambiguity(std::move(ia.index));
+                       },
+                       [this](ast::GroupExpr &g) {
+                           g.inner = rewrite_diamond_ambiguity(std::move(g.inner));
+                       },
+                   },
+                   expr->node);
+
+        // The `<` / `>` comparison chain is left-associative: for tokens
+        //     operand_0 `<` operand_1 `>` operand_2
+        // build_expr_chain produces:
+        //     Binary(GT, Binary(LT, operand_0, operand_1), operand_2)
+        //
+        // So the diamond `receiver.method < TypeIdent > (value_arg)` is the shape
+        //     outer = Binary(Greater, inner, Group(value))
+        //     inner = Binary(Less,    lhs_member_or_path, type_expr)
+        // which we rewrite into MethodCall(receiver, method, [Type], [value]).
+        if (!expr->is<ast::BinaryExpr>()) return expr;
+        auto &outer = expr->as<ast::BinaryExpr>();
+        if (outer.op != ast::ExprBinaryOp::Greater) return expr;
+
+        if (outer.lhs == nullptr || !outer.lhs->is<ast::BinaryExpr>()) return expr;
+        auto &inner = outer.lhs->as<ast::BinaryExpr>();
+        if (inner.op != ast::ExprBinaryOp::Less) return expr;
+
+        if (outer.rhs == nullptr || !outer.rhs->is<ast::GroupExpr>()) return expr;
+        auto &group = outer.rhs->as<ast::GroupExpr>();
+        if (group.inner == nullptr) return expr;
+
+        // The LHS of the inner `<` (the type argument expression) must be a PathExpr
+        // (a simple identifier path, possibly qualified, that we can reinterpret as a
+        // NamedType in the type-argument slot).
+        if (inner.rhs == nullptr || !inner.rhs->is<ast::PathExpr>()) return expr;
+        auto &type_path = inner.rhs->as<ast::PathExpr>();
+        if (type_path.path == nullptr) return expr;
+
+        // Convert the PathSyntax into a NamedType.
+        auto type_syntax = make_owned<ast::TypeSyntax>();
+        type_syntax->range = inner.rhs->range;
+        ast::NamedType named;
+        named.name = make_owned<ast::QualifiedName>();
+        named.name->range = inner.rhs->range;
+        named.name->segments.push_back(type_path.path->root_name);
+        for (const auto &seg : type_path.path->members) {
+            named.name->segments.push_back(seg);
+        }
+        type_syntax->node = std::move(named);
+
+        // Case 1: LHS of the inner `<` is a MemberAccessExpr (postfix '.'
+        // consumed the method name on the expression side).
+        if (inner.lhs != nullptr && inner.lhs->is<ast::MemberAccessExpr>()) {
+            auto &member = inner.lhs->as<ast::MemberAccessExpr>();
+            if (member.base == nullptr) return expr;
+            auto method_call = make_expr_syntax(ast::ExprSyntaxKind::MethodCall,
+                                                span_range(inner.lhs->range, outer.rhs->range));
+            auto &call = method_call->as<ast::MethodCallExpr>();
+            call.receiver = std::move(member.base);
+            call.method = member.member;
+            call.type_args.push_back(std::move(type_syntax));
+            call.arguments.push_back(std::move(group.inner));
+            return method_call;
+        }
+
+        // Case 2: LHS of the inner `<` is a PathExpr whose `('.', IDENT)*`
+        // loop greedily consumed `.method` (or `.field.method` etc.) before
+        // the comparison layer ever got to see the `<` token. Peel the LAST
+        // segment off the path as the method name and keep the prefix as the
+        // receiver PathExpr.
+        if (inner.lhs != nullptr && inner.lhs->is<ast::PathExpr>()) {
+            auto &lhs_path = inner.lhs->as<ast::PathExpr>();
+            if (lhs_path.path == nullptr) return expr;
+            const std::size_t member_count = lhs_path.path->members.size();
+            if (member_count == 0) return expr; // bare identifier: no `.` → not a method call
+
+            Owned<ast::ExprSyntax> receiver;
+            if (member_count == 1) {
+                auto root_path = make_expr_syntax(ast::ExprSyntaxKind::Path, lhs_path.path->range);
+                auto &root = root_path->as<ast::PathExpr>();
+                root.path = make_owned<ast::PathSyntax>();
+                root.path->range = lhs_path.path->range;
+                root.path->root_kind = lhs_path.path->root_kind;
+                root.path->root_name = lhs_path.path->root_name;
+                receiver = std::move(root_path);
+            } else {
+                auto base_path = make_expr_syntax(ast::ExprSyntaxKind::Path, lhs_path.path->range);
+                auto &base = base_path->as<ast::PathExpr>();
+                base.path = make_owned<ast::PathSyntax>();
+                base.path->range = lhs_path.path->range;
+                base.path->root_kind = lhs_path.path->root_kind;
+                base.path->root_name = lhs_path.path->root_name;
+                base.path->members.insert(base.path->members.end(),
+                                          lhs_path.path->members.begin(),
+                                          lhs_path.path->members.end() - 1);
+                receiver = std::move(base_path);
+            }
+
+            const std::string method = lhs_path.path->members.back();
+            auto method_call = make_expr_syntax(ast::ExprSyntaxKind::MethodCall,
+                                                span_range(inner.lhs->range, outer.rhs->range));
+            auto &call = method_call->as<ast::MethodCallExpr>();
+            call.receiver = std::move(receiver);
+            call.method = method;
+            call.type_args.push_back(std::move(type_syntax));
+            call.arguments.push_back(std::move(group.inner));
+            return method_call;
+        }
+
+        return expr;
+    }
+
     [[nodiscard]] Owned<ast::ExprSyntax> build_expr_syntax(AHFLParser::ExprContext &context) const {
-        return build_implies_expr(require(context.impliesExpr(), "expression body is missing"));
+        return rewrite_diamond_ambiguity(
+            build_implies_expr(require(context.impliesExpr(), "expression body is missing")));
     }
 
     [[nodiscard]] Owned<ast::TemporalExprSyntax>

@@ -308,6 +308,27 @@ namespace {
 
 std::string TypeEnvironment::normalize_type_key(const Type &type) {
     return type.visit(types::Overloads{
+        // —— Primitive types (each with explicit branch so keys stay stable
+        //    even if a nominal type named "Int"/"String" is later declared)
+        [](const types::AnyT &) { return std::string{"primitive:Any"}; },
+        [](const types::NeverT &) { return std::string{"primitive:Never"}; },
+        [](const types::ErrorT &) { return std::string{"primitive:Error"}; },
+        [](const types::UnitT &) { return std::string{"primitive:Unit"}; },
+        [](const types::BoolT &) { return std::string{"primitive:Bool"}; },
+        [](const types::IntT &) { return std::string{"primitive:Int"}; },
+        [](const types::FloatT &) { return std::string{"primitive:Float"}; },
+        [](const types::StringT &) { return std::string{"primitive:String"}; },
+        [](const types::BoundedStringT &v) {
+            return std::string{"primitive:BoundedString:"} +
+                   std::to_string(v.minimum) + ":" + std::to_string(v.maximum);
+        },
+        [](const types::UUIDT &) { return std::string{"primitive:UUID"}; },
+        [](const types::TimestampT &) { return std::string{"primitive:Timestamp"}; },
+        [](const types::DurationT &) { return std::string{"primitive:Duration"}; },
+        [](const types::DecimalT &v) {
+            return std::string{"primitive:Decimal:"} + std::to_string(v.scale);
+        },
+        // —— Nominal / compound types
         [](const types::StructT &s) {
             return "struct:" + std::to_string(s.symbol.has_value() ? s.symbol->value : 0) +
                    ":" + s.canonical_name + "<" + normalize_args_key(s.type_args) + ">";
@@ -325,8 +346,11 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
                    std::string{f.return_type ? normalize_type_key(*f.return_type) : std::string{"void"}} +
                    ">";
         },
-        [](const types::TypeVarT &v) { return "type_var:" + v.name; },
-        [&type](const auto &) { return type.describe(); },
+        [](const types::TypeVarT &v) {
+            return std::string{"type_var:"} + v.name;
+        },
+        // Any, Never, Error already explicit above; this is a safety net.
+        [&type](const auto &) { return std::string{"unknown:"} + type.describe(); },
     });
 }
 

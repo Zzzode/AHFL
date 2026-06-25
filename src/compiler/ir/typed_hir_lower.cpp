@@ -1150,6 +1150,14 @@ class TypedIrLowerer final {
     [[nodiscard]] std::string render_method_target(const TypedExpr &expr) const {
         if (const auto target = resolve_method_target(expr);
             target.has_value() && target->impl != nullptr && target->method != nullptr) {
+            // P5 (RFC §3.3): when the resolved impl method is a facade for a
+            // C++ builtin hook (declared via `@builtin("hook_name")` in the
+            // source), dispatch directly to the hook name so the evaluator
+            // picks up BuiltinTable::find() without a synthetic "impl#..."
+            // callee string that the table would never match.
+            if (target->method->builtin_name.has_value()) {
+                return *target->method->builtin_name;
+            }
             return "impl#" + std::to_string(target->impl->index) + "::" + target->method->name;
         }
         return expr.semantic_name.empty() ? expr.member_name : expr.semantic_name;
@@ -2673,16 +2681,28 @@ class TypedIrLowerer final {
     void emit_instantiated_declarations(ir::Program &program_ir) const {
         std::unordered_map<InstanceKey, InstanceBuildInfo, InstanceKeyHash> instances;
 
-        // --- Source 1: Capability / Predicate calls in expressions ------
+        // --- Source 1: Method call sites (inherent / trait / stdlib) —
+        // NOTE: Previously this loop only treated inherent methods as Capability
+        // targets and trait methods as Predicate targets — that was wrong for
+        // stdlib generic methods (Option::and_then, List::map, etc.) because
+        // they carry real fn bodies registered in TypedProgram.fns. Now: prefer the
+        // FnKind path (with find_fn_info) when the symbol resolves to a fn body,
+        // and only fall back to Capability / Predicate for user capability /
+        // formal-predicate methods backed by the old paths.
         for (const auto &expr : typed_program_->expressions) {
             if (expr.kind != ast::ExprSyntaxKind::Call) continue;
             if (!expr.resolved_symbol.has_value()) continue;
-            // Only instantiate nominal call targets (Capability / Predicate).
-            // Function targets (top-level `fn` declarations) are emitted via
-            // the nominal FnDecl loop and do not produce a separate InstanceDecl.
-            if (expr.call_target_kind != TypedCallTargetKind::InherentMethod &&
-                expr.call_target_kind != TypedCallTargetKind::TraitMethod) {
-                continue;
+            // Only instantiate nominal call targets (Capability / Predicate /
+            // stdlib method). Pure Builtin call_target_kind uses the runtime
+            // builtin table and never produces an InstanceDecl.
+            if (expr.call_target_kind == TypedCallTargetKind::Builtin) continue;
+            // Stdlib methods (std::* canonical prefix) do not produce a user
+            // InstanceDecl; bodies come from RuntimeFunctionTable.
+            {
+                const auto sym = typed_program_->find_symbol(*expr.resolved_symbol);
+                if (sym.has_value() && sym->get().canonical_name.starts_with("std::")) {
+                    continue;
+                }
             }
 
             std::vector<TypePtr> type_args;
@@ -2708,7 +2728,13 @@ class TypedIrLowerer final {
             info.type_args = key.type_args;
             info.provenance_range = expr.range;
 
-            if (expr.call_target_kind == TypedCallTargetKind::InherentMethod) {
+            // Try fn-body path first (covers generic inherent/trait impl
+            // methods with concrete bodies).
+            const FnTypeInfo *fn_info = find_fn_info(*expr.resolved_symbol);
+            if (fn_info != nullptr) {
+                info.kind = InstanceBuildKind::Fn;
+                info.fn = fn_info;
+            } else if (expr.call_target_kind == TypedCallTargetKind::InherentMethod) {
                 info.kind = InstanceBuildKind::Capability;
                 info.capability = find_capability_info(*expr.resolved_symbol);
             } else {

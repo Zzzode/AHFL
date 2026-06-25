@@ -6,9 +6,11 @@ struct List<T> {}
 struct Set<T> {}
 struct Map<K, V> {}
 
-// Bare List/Set/Map resolve to these nominal stdlib types when stdlib is
-// loaded. Literal and indexing syntax typecheck through the nominal API and
-// lower to the runtime builtin hooks declared below.
+// ===========================================================================
+// Compiler-internal builtin hooks (not user-facing). These remain at module
+// level because the lowering pipeline routes sugar-rewriting nodes to them by
+// canonical name; the evaluator never invokes them via method dispatch.
+// ===========================================================================
 
 @builtin("list_raw_get")
 fn list_raw_get<T>(xs: List<T>, i: Int) -> T effect Pure;
@@ -49,11 +51,7 @@ fn map_raw_empty<K, V>() -> Map<K, V> effect Pure;
 @builtin("map_raw_singleton")
 fn map_raw_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure;
 
-// P5.6a: stdlib declarations for AST sugar desugaring targets.
-// The compiler rewrites sugar list/set/map literals into these calls during
-// lowering; the runtime evaluator dispatches via the `@builtin(...)` hooks
-// which accept any arity. The surface signature provides the nominal type
-// contract.
+// P5.6a: desugaring targets for list / set / map literal AST nodes.
 @builtin("list_from_array")
 fn list_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> List<T> effect Pure;
 
@@ -63,47 +61,42 @@ fn set_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> 
 @builtin("map_from_entries")
 fn map_from_entries<K, V>(k0: K, v0: V, k1: K, v1: V, k2: K, v2: V, k3: K, v3: V) -> Map<K, V> effect Pure;
 
-fn empty<T>() -> List<T> effect Pure decreases 0 {
+// ===========================================================================
+// Module-level constructors. These remain at module level because AHFL's
+// current dispatch path is receiver-first: impl methods must have a self
+// expression. Users call these as `collections::empty<T>()` or through
+// prelude aliases (`List::empty<T>()` once prelude P6 is populated).
+// ===========================================================================
+
+fn list_empty<T>() -> List<T> effect Pure decreases 0 {
     return list_raw_alloc<T>(0);
 }
 
-fn singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
+fn list_singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
     let xs: List<T> = list_raw_alloc<T>(1);
     return list_raw_set<T>(xs, 0, x);
 }
 
-fn is_empty<T>(self: List<T>) -> Bool effect Pure decreases 0 {
-    return list_raw_length<T>(self) == 0;
+fn set_empty_ctor<T>() -> Set<T> effect Pure decreases 0 {
+    return set_raw_empty<T>();
 }
 
-fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
-    return list_raw_length<T>(self);
+fn set_singleton_ctor<T>(x: T) -> Set<T> effect Pure decreases 0 {
+    return set_raw_singleton<T>(x);
 }
 
-fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
-    if i < 0 {
-        return option::Option::None;
-    }
-    if i >= list_raw_length<T>(self) {
-        return option::Option::None;
-    }
-    return option::Option::Some(list_raw_get<T>(self, i));
+fn map_empty_ctor<K, V>() -> Map<K, V> effect Pure decreases 0 {
+    return map_raw_empty<K, V>();
 }
 
-fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
-    if list_raw_length<T>(self) == 0 {
-        return option::Option::None;
-    }
-    return option::Option::Some(list_raw_get<T>(self, 0));
+fn map_singleton_ctor<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0 {
+    return map_raw_singleton<K, V>(key, value);
 }
 
-fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
-    let n: Int = list_raw_length<T>(self);
-    if n == 0 {
-        return option::Option::None;
-    }
-    return option::Option::Some(list_raw_get<T>(self, n - 1));
-}
+// ===========================================================================
+// Internal recursion helpers used by impl methods (not user-facing). Use
+// descriptive names so bare lookups never collide with user code.
+// ===========================================================================
 
 fn list_copy_into<T>(
     source: List<T>,
@@ -118,118 +111,470 @@ fn list_copy_into<T>(
     return list_copy_into<T>(source, source_i + 1, updated, out_i + 1);
 }
 
-fn append<T>(
-    self: List<T>,
-    other: List<T>
-) -> List<T> effect Pure decreases list_raw_length<T>(self) + list_raw_length<T>(other) {
-    let left_n: Int = list_raw_length<T>(self);
-    let right_n: Int = list_raw_length<T>(other);
-    let out: List<T> = list_raw_alloc<T>(left_n + right_n);
-    let with_left: List<T> = list_copy_into<T>(self, 0, out, 0);
-    return list_copy_into<T>(other, 0, with_left, left_n);
-}
-
 fn list_map_into<T, U>(
-    self: List<T>,
+    source: List<T>,
     f: Fn(T) -> U,
     i: Int,
     out: List<U>
-) -> List<U> effect Pure decreases list_raw_length<T>(self) - i {
-    if i >= list_raw_length<T>(self) {
+) -> List<U> effect Pure decreases list_raw_length<T>(source) - i {
+    if i >= list_raw_length<T>(source) {
         return out;
     }
-    let mapped: U = f(list_raw_get<T>(self, i));
+    let mapped: U = f(list_raw_get<T>(source, i));
     let updated: List<U> = list_raw_set<U>(out, i, mapped);
-    return list_map_into<T, U>(self, f, i + 1, updated);
-}
-
-fn map<T, U>(
-    self: List<T>,
-    f: Fn(T) -> U
-) -> List<U> effect Pure decreases list_raw_length<T>(self) {
-    let out: List<U> = list_raw_alloc<U>(list_raw_length<T>(self));
-    return list_map_into<T, U>(self, f, 0, out);
+    return list_map_into<T, U>(source, f, i + 1, updated);
 }
 
 fn list_filter_from<T>(
-    self: List<T>,
+    source: List<T>,
     p: Fn(T) -> Bool,
     i: Int
-) -> List<T> effect Pure decreases list_raw_length<T>(self) - i {
-    if i >= list_raw_length<T>(self) {
-        return empty<T>();
+) -> List<T> effect Pure decreases list_raw_length<T>(source) - i {
+    if i >= list_raw_length<T>(source) {
+        return list_empty<T>();
     }
-    let item: T = list_raw_get<T>(self, i);
-    let rest: List<T> = list_filter_from<T>(self, p, i + 1);
+    let item: T = list_raw_get<T>(source, i);
+    let rest: List<T> = list_filter_from<T>(source, p, i + 1);
     if p(item) {
-        return append<T>(singleton<T>(item), rest);
+        return list_singleton<T>(item).append(rest);
     }
     return rest;
 }
 
-fn filter<T>(
-    self: List<T>,
-    p: Fn(T) -> Bool
-) -> List<T> effect Pure decreases list_raw_length<T>(self) {
-    return list_filter_from<T>(self, p, 0);
-}
-
 fn list_fold_from<T, U>(
-    self: List<T>,
+    source: List<T>,
     acc: U,
     f: Fn(U, T) -> U,
     i: Int
-) -> U effect Pure decreases list_raw_length<T>(self) - i {
-    if i >= list_raw_length<T>(self) {
+) -> U effect Pure decreases list_raw_length<T>(source) - i {
+    if i >= list_raw_length<T>(source) {
         return acc;
     }
-    let updated: U = f(acc, list_raw_get<T>(self, i));
-    return list_fold_from<T, U>(self, updated, f, i + 1);
+    let updated: U = f(acc, list_raw_get<T>(source, i));
+    return list_fold_from<T, U>(source, updated, f, i + 1);
 }
 
-fn fold<T, U>(
-    self: List<T>,
-    init: U,
-    f: Fn(U, T) -> U
-) -> U effect Pure decreases list_raw_length<T>(self) {
-    return list_fold_from<T, U>(self, init, f, 0);
+// ---- A-P6 impl-method helpers (introduced with P6 API expansion) -----------
+//
+// These helpers exist because AHFL P3 does not yet have trait bounds, so the
+// impl methods cannot express `T: Eq` or `T: Hash`.  We therefore implement
+// predicates like equality / hashing in a deliberately small surface: the
+// methods that *must* perform structural comparison (e.g. contains, remove)
+// accept a user-supplied predicate / equality function, and the shorthand
+// variants (e.g. `contains(x)`) simply forward to the predicate form with
+// the builtin `==` operator — which the typechecker accepts for *any* T at
+// P3 because equality is defined as a structural fallback on nominal types.
+
+fn list_fold_right_from<T, U>(
+    source: List<T>,
+    acc: U,
+    f: Fn(T, U) -> U,
+    i: Int
+) -> U effect Pure decreases i + 1 {
+    if i < 0 {
+        return acc;
+    }
+    return f(list_raw_get<T>(source, i),
+             list_fold_right_from<T, U>(source, acc, f, i - 1));
+}
+
+fn list_copy_range_into<T>(
+    source: List<T>,
+    src_start: Int,
+    src_end: Int,
+    out: List<T>,
+    out_start: Int
+) -> List<T> effect Pure decreases src_end - src_start {
+    if src_start >= src_end {
+        return out;
+    }
+    let updated: List<T> = list_raw_set<T>(out, out_start,
+                                           list_raw_get<T>(source, src_start));
+    return list_copy_range_into<T>(source, src_start + 1, src_end,
+                                   updated, out_start + 1);
+}
+
+fn list_concat_flatten<T>(
+    acc: List<T>,
+    others: List<List<T>>,
+    i: Int,
+    n: Int
+) -> List<T> effect Pure decreases n - i {
+    if i >= n {
+        return acc;
+    }
+    let part: List<T> = list_raw_get<List<T>>(others, i);
+    return list_concat_flatten<T>(acc.append(part), others, i + 1, n);
+}
+
+// list_cons<T>(x, xs): prepend x to xs. Pure expression form useful as a
+// fold step when writing single-expression lambdas (AHFL P6 closures are
+// expression-bodied per RFC §6, so multi-statement blocks are not allowed
+// inside a `\ (...) -> e` literal).
+fn list_cons<T>(x: T, xs: List<T>) -> List<T> effect Pure decreases 0 {
+    let xs_n: Int = list_raw_length<T>(xs);
+    let out: List<T> = list_raw_alloc<T>(xs_n + 1);
+    let with_x: List<T> = list_raw_set<T>(out, 0, x);
+    return list_copy_range_into<T>(xs, 0, xs_n, with_x, 1);
+}
+
+// ===========================================================================
+// P3 inherent impl blocks. Only self-receiver methods live here; static-style
+// constructors and raw builtin hooks remain at module level (above).
+// ===========================================================================
+
+impl<T> List<T> {
+    fn is_empty(self) -> Bool effect Pure decreases 0 {
+        return list_raw_length<T>(self) == 0;
+    }
+
+    fn length(self) -> Int effect Pure decreases 0 {
+        return list_raw_length<T>(self);
+    }
+
+    fn get(self, i: Int) -> option::Option<T> effect Pure decreases 0 {
+        if i < 0 {
+            return option::Option::None;
+        }
+        if i >= list_raw_length<T>(self) {
+            return option::Option::None;
+        }
+        return option::Option::Some(list_raw_get<T>(self, i));
+    }
+
+    fn first(self) -> option::Option<T> effect Pure decreases 0 {
+        if list_raw_length<T>(self) == 0 {
+            return option::Option::None;
+        }
+        return option::Option::Some(list_raw_get<T>(self, 0));
+    }
+
+    fn last(self) -> option::Option<T> effect Pure decreases 0 {
+        let n: Int = list_raw_length<T>(self);
+        if n == 0 {
+            return option::Option::None;
+        }
+        return option::Option::Some(list_raw_get<T>(self, n - 1));
+    }
+
+    fn append(self, other: List<T>) -> List<T> effect Pure
+        decreases list_raw_length<T>(self) + list_raw_length<T>(other) {
+        let left_n: Int = list_raw_length<T>(self);
+        let right_n: Int = list_raw_length<T>(other);
+        let out: List<T> = list_raw_alloc<T>(left_n + right_n);
+        let with_left: List<T> = list_copy_into<T>(self, 0, out, 0);
+        return list_copy_into<T>(other, 0, with_left, left_n);
+    }
+
+    fn map<U>(self, f: Fn(T) -> U) -> List<U> effect Pure decreases list_raw_length<T>(self) {
+        let out: List<U> = list_raw_alloc<U>(list_raw_length<T>(self));
+        return list_map_into<T, U>(self, f, 0, out);
+    }
+
+    fn filter(self, p: Fn(T) -> Bool) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+        return list_filter_from<T>(self, p, 0);
+    }
+
+    fn fold<U>(self, init: U, f: Fn(U, T) -> U) -> U effect Pure decreases list_raw_length<T>(self) {
+        return list_fold_from<T, U>(self, init, f, 0);
+    }
+
+    // ---- RFC §4.2 new APIs (P6, Task #6) -----------------------------------
+
+    fn contains(self, x: T) -> Bool effect Pure decreases list_raw_length<T>(self) {
+        // NOTE: `==` is defined for any nominal T in P3 as a structural
+        // fallback. When `T: Eq` lands in P6a the equality path is promoted
+        // to the trait impl; semantics are identical for well-formed Eq
+        // instances so the behavioural contract is stable.
+        //
+        // Lambda body is expression-only per RFC §6 closure grammar.
+        return self.fold<Bool>(false, \ (found, item) -> found or (item == x));
+    }
+
+    fn tail(self) -> option::Option<List<T>> effect Pure decreases 0 {
+        let n: Int = list_raw_length<T>(self);
+        if n == 0 {
+            return option::Option::None;
+        }
+        let out: List<T> = list_raw_alloc<T>(n - 1);
+        return option::Option::Some(list_copy_range_into<T>(self, 1, n, out, 0));
+    }
+
+    fn concat(self, others: List<List<T>>) -> List<T> effect Pure
+        decreases list_raw_length<List<T>>(others) {
+        // NOTE: full semantics flatten a List<List<T>>. At P3 the generic
+        // resolver occasionally struggles with List<List<T>> dispatch; we
+        // therefore implement the fold as a manual recursion to keep the
+        // type instantiation count linear in the input length.
+        let n: Int = list_raw_length<List<T>>(others);
+        return list_concat_flatten<T>(self, others, 0, n);
+    }
+
+    fn slice(self, start: Int, end: Int) -> option::Option<List<T>> effect Pure decreases 0 {
+        let n: Int = list_raw_length<T>(self);
+        if start < 0 or end < start or end > n {
+            return option::Option::None;
+        }
+        let len: Int = end - start;
+        let out: List<T> = list_raw_alloc<T>(len);
+        return option::Option::Some(list_copy_range_into<T>(self, start, end, out, 0));
+    }
+
+    fn insert(self, idx: Int, x: T) -> option::Option<List<T>> effect Pure decreases 0 {
+        let n: Int = list_raw_length<T>(self);
+        if idx < 0 or idx > n {
+            return option::Option::None;
+        }
+        let out: List<T> = list_raw_alloc<T>(n + 1);
+        let with_prefix: List<T> = list_copy_range_into<T>(self, 0, idx, out, 0);
+        let with_x: List<T> = list_raw_set<T>(with_prefix, idx, x);
+        return option::Option::Some(
+            list_copy_range_into<T>(self, idx, n, with_x, idx + 1));
+    }
+
+    // NOTE: full semantics require `T: Eq` (P6a). The body is well-typed at
+    // P3 because `==` has a structural fallback for any nominal T.
+    // Lambda body is expression-only per RFC §6 closure grammar.
+    fn remove(self, x: T) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+        return self.filter(\ (item) -> item != x);
+    }
+
+    fn remove_at(self, idx: Int) -> option::Option<List<T>> effect Pure decreases 0 {
+        let n: Int = list_raw_length<T>(self);
+        if idx < 0 or idx >= n {
+            return option::Option::None;
+        }
+        let out: List<T> = list_raw_alloc<T>(n - 1);
+        let with_prefix: List<T> = list_copy_range_into<T>(self, 0, idx, out, 0);
+        return option::Option::Some(
+            list_copy_range_into<T>(self, idx + 1, n, with_prefix, idx));
+    }
+
+    fn fold_right<U>(self, init: U, f: Fn(T, U) -> U) -> U effect Pure
+        decreases list_raw_length<T>(self) {
+        let n: Int = list_raw_length<T>(self);
+        return list_fold_right_from<T, U>(self, init, f, n - 1);
+    }
+
+    fn flat_map<U>(self, f: Fn(T) -> List<U>) -> List<U> effect Pure
+        decreases list_raw_length<T>(self) {
+        // Lambda body is expression-only per RFC §6 closure grammar.
+        // We invoke the List::append UFCS wrapper in positional style because
+        // P3 impl-method dispatch does not reliably resolve impl methods on
+        // lambda-captured generic receivers from within nested closure bodies.
+        return self.fold<List<U>>(list_empty<U>(),
+            \ (acc, item) -> append<U>(acc, f(item)));
+    }
+
+    fn reverse(self) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+        // Lambda body is expression-only per RFC §6 closure grammar.
+        // list_cons is a module-level helper (not an impl method) so its
+        // resolution is unambiguous even inside nested closure bodies.
+        return self.fold<List<T>>(list_empty<T>(),
+            \ (acc, item) -> list_cons<T>(item, acc));
+    }
+}
+
+impl<T> Set<T> {
+    fn is_empty(self) -> Bool effect Pure decreases 0 {
+        return set_raw_size<T>(self) == 0;
+    }
+
+    fn length(self) -> Int effect Pure decreases 0 {
+        return set_raw_size<T>(self);
+    }
+
+    fn contains(self, x: T) -> Bool effect Pure decreases 0 {
+        return set_raw_contains<T>(self, x);
+    }
+}
+
+impl<K, V> Map<K, V> {
+    fn is_empty(self) -> Bool effect Pure decreases 0 {
+        return map_raw_size<K, V>(self) == 0;
+    }
+
+    fn length(self) -> Int effect Pure decreases 0 {
+        return map_raw_size<K, V>(self);
+    }
+
+    fn contains_key(self, key: K) -> Bool effect Pure decreases 0 {
+        return map_raw_contains_key<K, V>(self, key);
+    }
+
+    fn get(self, key: K) -> option::Option<V> effect Pure decreases 0 {
+        if map_raw_contains_key<K, V>(self, key) {
+            return option::Option::Some(map_raw_get<K, V>(self, key));
+        }
+        return option::Option::None;
+    }
+
+    fn get_or(self, key: K, default: V) -> V effect Pure decreases 0 {
+        // NOTE: P3 cross-module Option enum variant constructor inference is
+        // unreliable inside Map's inherent impl block (generic parameter <K,V>
+        // gets confused with outer impls' generic parameters). We therefore
+        // implement get_or via the raw builtins directly, which also avoids
+        // the Option round-trip and makes the contract clearer: we return
+        // the stored value if present, otherwise the caller-supplied default.
+        if map_raw_contains_key<K, V>(self, key) {
+            return map_raw_get<K, V>(self, key);
+        }
+        return default;
+    }
+}
+
+// ===========================================================================
+// Deprecated UFCS wrappers (P5 → P6, one release cycle). Keep these so
+// `collections::map(xs, f)` / `set_is_empty(...)` still compile.
+// ===========================================================================
+
+fn empty<T>() -> List<T> effect Pure decreases 0 {
+    return list_empty<T>();
+}
+
+fn singleton<T>(x: T) -> List<T> effect Pure decreases 0 {
+    return list_singleton<T>(x);
+}
+
+fn is_empty<T>(self: List<T>) -> Bool effect Pure decreases 0 {
+    return self.is_empty();
+}
+
+fn length<T>(self: List<T>) -> Int effect Pure decreases 0 {
+    return self.length();
+}
+
+fn list_get<T>(self: List<T>, i: Int) -> option::Option<T> effect Pure decreases 0 {
+    return self.get(i);
+}
+
+fn first<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
+    return self.first();
+}
+
+fn last<T>(self: List<T>) -> option::Option<T> effect Pure decreases 0 {
+    return self.last();
+}
+
+fn append<T>(self: List<T>, other: List<T>) -> List<T> effect Pure
+    decreases list_raw_length<T>(self) + list_raw_length<T>(other) {
+    return self.append(other);
+}
+
+fn map<T, U>(self: List<T>, f: Fn(T) -> U) -> List<U> effect Pure
+    decreases list_raw_length<T>(self) {
+    return self.map<U>(f);
+}
+
+fn filter<T>(self: List<T>, p: Fn(T) -> Bool) -> List<T> effect Pure
+    decreases list_raw_length<T>(self) {
+    return self.filter(p);
+}
+
+fn fold<T, U>(self: List<T>, init: U, f: Fn(U, T) -> U) -> U effect Pure
+    decreases list_raw_length<T>(self) {
+    return self.fold<U>(init, f);
 }
 
 fn set_empty<T>() -> Set<T> effect Pure decreases 0 {
-    return set_raw_empty<T>();
+    return set_empty_ctor<T>();
 }
 
 fn set_singleton<T>(x: T) -> Set<T> effect Pure decreases 0 {
-    return set_raw_singleton<T>(x);
+    return set_singleton_ctor<T>(x);
 }
 
 fn set_is_empty<T>(self: Set<T>) -> Bool effect Pure decreases 0 {
-    return set_raw_size<T>(self) == 0;
+    return self.is_empty();
 }
 
 fn contains<T>(self: Set<T>, x: T) -> Bool effect Pure decreases 0 {
-    return set_raw_contains<T>(self, x);
+    return self.contains(x);
 }
 
 fn map_empty<K, V>() -> Map<K, V> effect Pure decreases 0 {
-    return map_raw_empty<K, V>();
+    return map_empty_ctor<K, V>();
 }
 
 fn map_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0 {
-    return map_raw_singleton<K, V>(key, value);
+    return map_singleton_ctor<K, V>(key, value);
 }
 
 fn map_is_empty<K, V>(self: Map<K, V>) -> Bool effect Pure decreases 0 {
-    return map_raw_size<K, V>(self) == 0;
+    return self.is_empty();
 }
 
 fn contains_key<K, V>(self: Map<K, V>, key: K) -> Bool effect Pure decreases 0 {
-    return map_raw_contains_key<K, V>(self, key);
+    return self.contains_key(key);
 }
 
 fn map_get<K, V>(self: Map<K, V>, key: K) -> option::Option<V> effect Pure decreases 0 {
-    if map_raw_contains_key<K, V>(self, key) {
-        return option::Option::Some(map_raw_get<K, V>(self, key));
-    }
-    return option::Option::None;
+    return self.get(key);
+}
+
+// ===========================================================================
+// P6 new UFCS wrappers (RFC §4.2–4.4). Thin forwards to the inherent impl
+// methods above; retained for one release cycle so existing callers are not
+// forced to migrate to the dot-call surface immediately.
+// ===========================================================================
+
+// ---- List<T> (RFC §4.2) ---------------------------------------------------
+
+fn list_contains<T>(self: List<T>, x: T) -> Bool effect Pure decreases list_raw_length<T>(self) {
+    return self.contains(x);
+}
+
+fn list_tail<T>(self: List<T>) -> option::Option<List<T>> effect Pure decreases 0 {
+    return self.tail();
+}
+
+fn list_concat<T>(self: List<T>, others: List<List<T>>) -> List<T> effect Pure
+    decreases list_raw_length<List<T>>(others) {
+    return self.concat(others);
+}
+
+fn list_slice<T>(self: List<T>, start: Int, end: Int) -> option::Option<List<T>> effect Pure decreases 0 {
+    return self.slice(start, end);
+}
+
+fn list_insert<T>(self: List<T>, idx: Int, x: T) -> option::Option<List<T>> effect Pure decreases 0 {
+    return self.insert(idx, x);
+}
+
+fn list_remove<T>(self: List<T>, x: T) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+    return self.remove(x);
+}
+
+fn list_remove_at<T>(self: List<T>, idx: Int) -> option::Option<List<T>> effect Pure decreases 0 {
+    return self.remove_at(idx);
+}
+
+fn list_fold_right<T, U>(self: List<T>, init: U, f: Fn(T, U) -> U) -> U effect Pure
+    decreases list_raw_length<T>(self) {
+    return self.fold_right<U>(init, f);
+}
+
+fn list_flat_map<T, U>(self: List<T>, f: Fn(T) -> List<U>) -> List<U> effect Pure
+    decreases list_raw_length<T>(self) {
+    return self.flat_map<U>(f);
+}
+
+fn list_reverse<T>(self: List<T>) -> List<T> effect Pure decreases list_raw_length<T>(self) {
+    return self.reverse();
+}
+
+// ---- Set<T> (RFC §4.3) ----------------------------------------------------
+
+fn set_length<T>(self: Set<T>) -> Int effect Pure decreases 0 {
+    return self.length();
+}
+
+// ---- Map<K, V> (RFC §4.4) -------------------------------------------------
+
+fn map_length<K, V>(self: Map<K, V>) -> Int effect Pure decreases 0 {
+    return self.length();
+}
+
+fn map_get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V effect Pure decreases 0 {
+    return self.get_or(key, default);
 }

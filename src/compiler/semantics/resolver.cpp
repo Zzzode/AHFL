@@ -424,6 +424,24 @@ class ResolverPass final {
     // caller has already pushed the fn's generic type params into
     // generic_type_params_ if it wants them treated as opaque.
     void resolve_fn_signature(const ast::FnDecl &node) {
+        // --- Scope: add method-level generic type params to the resolver's
+        // opaque-set so nested type references (like `U` in `Fn(T) -> U` or
+        // `Option<U>`) are treated as type variables rather than looked up as
+        // type-name references. Without this, the resolver emits "unknown
+        // type U" diagnostics for every method-level type param because the
+        // symbol isn't registered in the Types namespace (only impl-level
+        // params are set by the ImplDecl handler upstream).
+        //
+        // This mirrors the FnDecl top-level handler at line 406-423:
+        //   1. capture previous scope
+        //   2. insert node.type_params
+        //   3. walk signature / body
+        //   4. restore
+        const auto previous_method_type_params = generic_type_params_;
+        for (const auto &type_param : node.type_params) {
+            generic_type_params_.insert(type_param->name);
+        }
+
         for (const auto &type_param : node.type_params) {
             for (const auto &bound : type_param->bounds) {
                 resolve_type(*bound);
@@ -460,6 +478,9 @@ class ResolverPass final {
             resolve_block_types(*node.body);
             resolve_block_exprs(*node.body);
         }
+
+        // Restore previous scope (pop method-level type params).
+        generic_type_params_ = previous_method_type_params;
     }
 
     // P3 (RFC §3.2.2 / type-system §1.3): walk one trait item, recording
@@ -628,10 +649,6 @@ class ResolverPass final {
 
         for (const auto &method : node.methods) {
             resolve_fn_signature(*method);
-            if (method->body) {
-                resolve_block_types(*method->body);
-                resolve_block_exprs(*method->body);
-            }
         }
 
         for (const auto &assoc : node.assoc_items) {

@@ -2658,15 +2658,32 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
         return;
     }
 
+    // Body-level type param scope. The scope for signature construction
+    // (build_impl_types' method_info.type_param_names) carries the FULL
+    // impl-level + method-level concatenation so that TypeVarT indices in
+    // method.params / method.return_type align with method_info.type_param_names
+    // positions (used by the call-site substitution map in
+    // check_impl_method_call). But for *body* typechecking, the driver's
+    // current_type_param_names_ is read by TypeResolver::resolve_named_type_*
+    // via make_type_resolver() — which does prefix-free name lookup (any name
+    // in the vector counts, position doesn't matter). Including the same name
+    // twice (e.g. 'T' from both impl-level and method_info's duplicate) is
+    // harmless for name lookup but confuses anyone reading the scope; trim to
+    // just a deduplicated, name-only view.
     std::vector<std::string> type_param_names;
     type_param_names.reserve(impl_info.type_param_names.size() +
                              method_info.type_param_names.size());
-    type_param_names.insert(type_param_names.end(),
-                            impl_info.type_param_names.begin(),
-                            impl_info.type_param_names.end());
-    type_param_names.insert(type_param_names.end(),
-                            method_info.type_param_names.begin(),
-                            method_info.type_param_names.end());
+    auto dedup_push = [&](const std::vector<std::string> &names) {
+        for (const auto &name : names) {
+            bool seen = false;
+            for (const auto &existing : type_param_names) {
+                if (existing == name) { seen = true; break; }
+            }
+            if (!seen) type_param_names.push_back(name);
+        }
+    };
+    dedup_push(impl_info.type_param_names);
+    dedup_push(method_info.type_param_names);
 
     const auto *prev_type_params = driver_->current_type_param_names_;
     if (!type_param_names.empty()) {

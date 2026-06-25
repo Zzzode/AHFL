@@ -329,8 +329,11 @@ implItem: implFnItem | assocTypeDef | assocConstDef;
 
 // Method definition inside an impl block: same surface as fnDecl but the body
 // is mandatory (RFC §1.4: `FnDef ::= ... FnBody`).
+// The @builtin attribute is accepted here (P5, RFC §3.3) so stdlib facade methods
+// that wrap compiler intrinsics can be declared inside inherent impl blocks
+// (e.g. `impl String { @builtin("string_raw_length") fn length(self) -> Int; }`).
 implFnItem:
-	'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	builtinAttr? 'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 	whereClause? fnBody;
 
 // Associated type definition inside an impl block.

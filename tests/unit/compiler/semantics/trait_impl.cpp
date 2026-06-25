@@ -54,11 +54,29 @@ module trait_impl;
 )AHFL"};
 }
 
+// Default TypeCheckOptions used by the non-dispatch tests: quiet diagnostics
+// (no narrowing explanations, no dispatch trace) so the S1–S5a negatives and
+// general structural tests do not pick up informational notes by accident.
+[[nodiscard]] ahfl::TypeCheckOptions default_options() {
+    return {};
+}
+
+// Options used by the S5b dispatch-trace golden tests. Enables the three-stage
+// method-dispatch audit notes so the `has_dispatch_note` / `count_dispatch_
+// notes` helpers can assert the exact stage path taken.
+[[nodiscard]] ahfl::TypeCheckOptions dispatch_trace_options() {
+    ahfl::TypeCheckOptions options;
+    options.trace_dispatch = true;
+    return options;
+}
+
 // Run the full single-program pipeline and return the typecheck result. On
 // unexpected parse or resolve failures the diagnostic is surfaced via MESSAGE
 // so a failing test reports an actionable cause rather than a silent boolean.
-[[nodiscard]] ahfl::TypeCheckResult typecheck_source(std::string_view filename,
-                                                     const std::string &source) {
+[[nodiscard]] ahfl::TypeCheckResult typecheck_source(
+    std::string_view filename,
+    const std::string &source,
+    ahfl::TypeCheckOptions options = default_options()) {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_text(std::string(filename), source);
     if (parse_result.has_errors()) {
@@ -80,7 +98,7 @@ module trait_impl;
     REQUIRE_FALSE(resolve_result.has_errors());
 
     const ahfl::TypeChecker type_checker;
-    auto result = type_checker.check(*parse_result.program, resolve_result);
+    auto result = type_checker.check(*parse_result.program, resolve_result, options);
     if (result.has_errors() && !result.diagnostics.entries().empty()) {
         const auto &d = result.diagnostics.entries().front();
         MESSAGE("typecheck diagnostic: " << d.message);
@@ -1595,7 +1613,7 @@ fn run() -> Bool effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_eq_int_end_to_end.ahfl", source);
+    const auto result = typecheck_source("s5b_eq_int_end_to_end.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
 
     // Stage 1: inherent lookup runs and reports 0 candidates (fallthrough).
@@ -1638,7 +1656,7 @@ fn use_it(w: Widget) -> Bool effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage1_pos1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage1_pos1.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     CHECK(has_dispatch_note(result, "inherent candidates=1"));
     CHECK(has_dispatch_note(result, "selected unique inherent method 'heavy'"));
@@ -1667,7 +1685,7 @@ fn sum(p: Pair) -> Int effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage1_pos2.ahfl", source);
+    const auto result = typecheck_source("s5b_stage1_pos2.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     // Two method-call expressions → two inherent "candidates=1" notes.
     CHECK(count_dispatch_notes(result, "inherent candidates=1") == 2);
@@ -1697,7 +1715,7 @@ fn use_it(c: Counter) -> Int effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage1_neg1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage1_neg1.ahfl", source, dispatch_trace_options());
     CHECK(result.has_errors());
     CHECK(has_dispatch_note(result, "inherent candidates=2"));
     CHECK(has_dispatch_note(result, "multiple inherent candidates → AMBIGUOUS_TRAIT_IMPL"));
@@ -1734,7 +1752,7 @@ fn use_it(c: Count) -> Count effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage2_pos1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage2_pos1.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     CHECK(has_dispatch_note(result, "no inherent candidates → fall through to trait lookup"));
     CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
@@ -1775,7 +1793,7 @@ fn use_it(i: Item) -> Int effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage2_pos2.ahfl", source);
+    const auto result = typecheck_source("s5b_stage2_pos2.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     // cost() and tag() each see trait_candidates=1.
     CHECK(count_dispatch_notes(result, "trait candidates=1") == 2);
@@ -1814,7 +1832,7 @@ fn use_it(w: Widget) -> Int effect Pure decreases 0 {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage2_neg1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage2_neg1.ahfl", source, dispatch_trace_options());
     CHECK(result.has_errors());
     CHECK(has_dispatch_note(result, "trait candidates=2"));
     CHECK(has_dispatch_note(result, "multiple trait candidates → AMBIGUOUS_TRAIT_IMPL"));
@@ -1856,7 +1874,7 @@ fn run(t: Label) -> Int effect Pure decreases 0 where Label: Printable {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage3_pos1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage3_pos1.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     // Stage2 selected the unique Printable method.
     CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
@@ -1889,7 +1907,7 @@ fn show(t: Token) -> Int effect Pure decreases 0 where Token: Display {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage3_pos2.ahfl", source);
+    const auto result = typecheck_source("s5b_stage3_pos2.ahfl", source, dispatch_trace_options());
     REQUIRE_FALSE(result.has_errors());
     CHECK(has_dispatch_note(result, "[dispatch.stage3.bound] verifying bound '"));
     CHECK(count_dispatch_notes(result, "bound satisfied for trait 'trait_impl::Display'") >= 1);
@@ -1919,7 +1937,7 @@ fn save(l: Label) -> Int effect Pure decreases 0 where Label: Json {
 }
 )AHFL";
 
-    const auto result = typecheck_source("s5b_stage3_neg1.ahfl", source);
+    const auto result = typecheck_source("s5b_stage3_neg1.ahfl", source, dispatch_trace_options());
     CHECK(result.has_errors());
     // Stage2 selected the unique trait method from trait Json's declared
     // method shape (there is 1 trait-level method, no impl-level method).
