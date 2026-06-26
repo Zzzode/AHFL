@@ -26,18 +26,22 @@ type List<T> = collections::List<T>;
 type Map<K, V> = collections::Map<K, V>;
 type Option<T> = option::Option<T>;
 
-// NOTE: JsonValue recursive variant payloads cannot use List<JsonValue> /
-// Map<String, JsonValue> in the current P3 resolver — recursive enum types
-// are resolved post-pass so we flatten the recursive branches to opaque
-// alternatives. The full recursive ADT is restored in std/json.ahfl during
-// P6a (Task #17); this skeleton only binds the variant + method names.
+// NOTE: JsonValue enum shape MUST match the canonical definition in
+// std/json.ahfl exactly (variant names + payload types). The resolver treats
+// duplicate nominal enum declarations with identical shapes as a single
+// unified symbol. P6a delegates the full set of helpers (predicates,
+// accessors, parse, emit) to std/json.ahfl; traits.ahfl only owns the
+// variant names used by FromJson / ToJson trait dispatch. Recursive payloads
+// (JList → List<JsonValue>, JEntries → Map<String, JsonValue>) are supported
+// via the resolver's recursive-ADT two-pass extension.
 enum JsonValue {
     JNull,
     JBool(Bool),
-    JNumber(Int),
+    JInt(Int),
+    JFloat(Float),
     JText(String),
-    JItems(List<Int>),
-    JEntries(Map<String, Int>),
+    JList(List<JsonValue>),
+    JEntries(Map<String, JsonValue>),
 }
 
 // ===========================================================================

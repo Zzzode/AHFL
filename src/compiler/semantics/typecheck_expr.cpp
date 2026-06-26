@@ -842,8 +842,41 @@ class ExpressionChecker final {
 
         // If the scrutinee failed to resolve to an enum, still walk the arms so
         // cascaded diagnostics stay localized; the match result is error.
-        const auto enum_info =
+        auto enum_info_owned =
             enum_payload != nullptr ? services_.get_enum(*scrutinee.type) : std::nullopt;
+        // For a generic enum (Option<T>, List<T>, ...), the EnumTypeInfo in the
+        // environment stores variant payload types with TypeVarT placeholders
+        // keyed by the declaration's type_param_names order. When the scrutinee
+        // is an *instantiated* enum (e.g. Option<List<Int>>) we must substitute
+        // each TypeVarT with the actual type_args from the scrutinee, otherwise
+        // pattern bindings inside variant arms leak unsubstituted TypeVarT
+        // (e.g. `xs : T` instead of `xs : List<Int>`).
+        //
+        // Build a locally-substituted copy so the global EnumTypeInfo (shared
+        // across all instantiations) is never mutated.
+        std::optional<EnumTypeInfo> substituted_enum_info_storage;
+        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info = std::nullopt;
+        if (enum_info_owned.has_value() && enum_payload != nullptr &&
+            !enum_info_owned->get().type_param_names.empty() &&
+            enum_payload->type_args.size() == enum_info_owned->get().type_param_names.size()) {
+            TypeSubstitutionMap subst;
+            subst.reserve(enum_payload->type_args.size());
+            for (const auto *type_arg : enum_payload->type_args) {
+                subst.push_back(type_arg);
+            }
+            EnumTypeInfo substituted = enum_info_owned->get();
+            for (auto &variant : substituted.variants) {
+                for (auto &slot : variant.payload) {
+                    if (slot != nullptr) {
+                        slot = substitute_type(slot, subst, services_.types());
+                    }
+                }
+            }
+            substituted_enum_info_storage.emplace(std::move(substituted));
+            enum_info = std::cref(*substituted_enum_info_storage);
+        } else {
+            enum_info = enum_info_owned;
+        }
 
         bool has_catch_all = false;
         std::unordered_set<std::string> covered_variants;

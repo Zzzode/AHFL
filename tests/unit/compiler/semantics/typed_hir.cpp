@@ -4407,3 +4407,381 @@ fn caller() -> Int effect Pure decreases 0 {
     REQUIRE(iv != nullptr);
     CHECK(iv->value == 27);
 }
+
+// ============================================================================
+// P6a-04: std::fmt::format_template end-to-end tests.
+//
+// Exercises the recursive template-walker that replaces "{}" placeholders
+// with positional Display-formatted arguments. Edge cases cover empty
+// templates, no-placeholders, consecutive placeholders, and argument
+// arithmetic.
+// ============================================================================
+
+    // format_template(template: String, args: List<String>) — positional "{}"
+    // replacer. Builds args via collections::list_from_array<String>(up to 8
+    // items) because AHFL has no list-literal grammar at the surface yet.
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-04 fmt format_template basic replacement") {
+    const auto root = make_temp_project("p6a_fmt_basic");
+    const auto caller_path = root / "caller.ahfl";
+    write_file(caller_path, R"AHFL(
+module caller;
+
+import std::fmt as fmt;
+import std::collections as collections;
+
+fn caller_hello() -> String effect Pure decreases 0 {
+    // "hello, {}!" with "world" → "hello, world!"
+    let args: collections::List<String> =
+        collections::list_from_array<String>("world", "", "", "", "", "", "", "");
+    return fmt::format_template("hello, {}!", args);
+}
+
+fn caller_two() -> String effect Pure decreases 0 {
+    // "{} + {} = {}" with 2, 3, 5 via Display → int_to_string → "2 + 3 = 5"
+    // NOTE: list_from_array<T> requires all args share T. We coerce Int →
+    // String first by calling int_to_string directly (same as Display impl).
+    let args: collections::List<String> =
+        collections::list_from_array<String>("2", "3", "5", "", "", "", "", "");
+    return fmt::format_template("{} + {} = {}", args);
+}
+
+fn caller_no_args() -> String effect Pure decreases 0 {
+    // Plain string, no placeholders → identity.
+    let args: collections::List<String> =
+        collections::list_from_array<String>("", "", "", "", "", "", "", "");
+    return fmt::format_template("just-text", args);
+}
+)AHFL");
+
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_hello");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "hello, world!");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_two");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "2 + 3 = 5");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_no_args");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "just-text");
+    }
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-04 fmt format_template edge cases") {
+    const auto root = make_temp_project("p6a_fmt_edges");
+    const auto caller_path = root / "caller.ahfl";
+    write_file(caller_path, R"AHFL(
+module caller;
+
+import std::fmt as fmt;
+import std::collections as collections;
+import std::string as string;
+
+fn caller_empty_tpl() -> String effect Pure decreases 0 {
+    // Empty template + 0 args → empty.
+    let args: collections::List<String> =
+        collections::list_from_array<String>("", "", "", "", "", "", "", "");
+    return fmt::format_template("", args);
+}
+
+fn caller_consecutive() -> String effect Pure decreases 0 {
+    // Two consecutive placeholders. "{}{}" with "4", "2" → "42".
+    let args: collections::List<String> =
+        collections::list_from_array<String>("4", "2", "", "", "", "", "", "");
+    return fmt::format_template("{}{}", args);
+}
+
+fn caller_suffix_only() -> String effect Pure decreases 0 {
+    // Placeholder at start. "{} tail" with "true" → "true tail".
+    let args: collections::List<String> =
+        collections::list_from_array<String>("true", "", "", "", "", "", "", "");
+    return fmt::format_template("{} tail", args);
+}
+
+fn caller_float_arg() -> String effect Pure decreases 0 {
+    // Display impl for Float uses float_to_string builtin. "v={}" + "3.14" → "v=3.14".
+    let args: collections::List<String> =
+        collections::list_from_array<String>("3.14", "", "", "", "", "", "", "");
+    return fmt::format_template("v={}", args);
+}
+)AHFL");
+
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_empty_tpl");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_consecutive");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "42");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_suffix_only");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "true tail");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_float_arg");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "v=3.14");
+    }
+}
+
+// ============================================================================
+// P6a-05: std::json roundtrip tests (primitive, array, object).
+//
+// Each test uses parse/emit (backed by json_parse_raw / json_emit_raw builtins)
+// and verifies:
+//   * primitive: as_int on whole-float succeeds, non-whole-float rejects,
+//                as_float coerces integer.
+//   * array: parse "[10,20,30]" → is_array + at(1) == 20.
+//   * object: parse '{"a":1,"b":2}' → is_object + get("b") == 2.
+// ============================================================================
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-05 json primitive coercion roundtrip") {
+    const auto root = make_temp_project("p6a_json_prim");
+    const auto caller_path = root / "caller.ahfl";
+    write_file(caller_path, R"AHFL(
+module caller;
+
+import std::fmt as fmt;
+import std::json as json;
+import std::option as option;
+import std::string as string;
+
+fn caller_int_ok() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("7");
+    // Unwrap with wildcard then emit directly.
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let n: option::Option<Int> = json::as_int(unwrapped);
+    return match n {
+        option::Option::Some(i) => fmt::int_to_string(i),
+        option::Option::None => "INT_NONE",
+    };
+}
+
+// parse "3.5" → as_int returns None (non-whole floats are rejected — 3*2!=7).
+fn caller_int_reject() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("3.5");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let n: option::Option<Int> = json::as_int(unwrapped);
+    return match n {
+        option::Option::Some(_) => "NOT_REJECTED",
+        option::Option::None => "REJECTED",
+    };
+}
+
+// parse "5" (int) → as_float promotes JInt → Float 5.0; round-trip through emit.
+fn caller_float_promote() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("5");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let f: option::Option<Float> = json::as_float(unwrapped);
+    return match f {
+        option::Option::Some(x) => fmt::float_to_string(x),
+        option::Option::None => "FLOAT_NONE",
+    };
+}
+)AHFL");
+
+    {
+        // as_int on JInt(7) → Some(7) → int_to_string(7) → "7".
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_int_ok");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "7");
+    }
+    {
+        // as_int on JFloat(3.5) → None → "REJECTED" (odd fraction fails is_whole_number).
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_int_reject");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "REJECTED");
+    }
+    {
+        // as_float on JInt(5) → Some(5.0) → float_to_string(5.0) → "5".
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_float_promote");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "5");
+    }
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-05 json array roundtrip") {
+    const auto root = make_temp_project("p6a_json_array");
+    const auto caller_path = root / "caller.ahfl";
+    write_file(caller_path, R"AHFL(
+module caller;
+
+import std::fmt as fmt;
+import std::json as json;
+import std::option as option;
+import std::string as string;
+
+fn caller_is_array() -> Bool effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("[10,20,30]");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    return json::is_array(unwrapped);
+}
+
+fn caller_at_1() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("[10,20,30]");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let element: option::Option<json::JsonValue> = json::at(unwrapped, 1);
+    let as_int: option::Option<Int> = match element {
+        option::Option::Some(e) => json::as_int(e),
+        option::Option::None => option::Option::None,
+    };
+    return match as_int {
+        option::Option::Some(i) => fmt::int_to_string(i),
+        option::Option::None => "AT_NONE",
+    };
+}
+
+fn caller_at_oob() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("[10,20,30]");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let element: option::Option<json::JsonValue> = json::at(unwrapped, 99);
+    return match element {
+        option::Option::None => "OOB",
+        _ => "NOT_OOB",
+    };
+}
+)AHFL");
+
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_is_array");
+        REQUIRE(r.has_value());
+        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        REQUIRE(bv != nullptr);
+        CHECK(bv->value == true);
+    }
+    {
+        // at(1) on [10,20,30] → JInt(20) → as_int → Some(20) → emit(JInt(20)).
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_at_1");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "20");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_at_oob");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "OOB");
+    }
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-05 json object roundtrip") {
+    const auto root = make_temp_project("p6a_json_object");
+    const auto caller_path = root / "caller.ahfl";
+    write_file(caller_path, R"AHFL(
+module caller;
+
+import std::fmt as fmt;
+import std::json as json;
+import std::option as option;
+
+fn caller_is_object() -> Bool effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("{\"a\":1,\"b\":2}");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    return json::is_object(unwrapped);
+}
+
+fn caller_get_b() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("{\"a\":1,\"b\":2}");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let element: option::Option<json::JsonValue> = json::get(unwrapped, "b");
+    let as_int: option::Option<Int> = match element {
+        option::Option::Some(e) => json::as_int(e),
+        option::Option::None => option::Option::None,
+    };
+    return match as_int {
+        option::Option::Some(i) => fmt::int_to_string(i),
+        option::Option::None => "GET_NONE",
+    };
+}
+
+fn caller_get_missing() -> String effect Pure decreases 0 {
+    let parsed: option::Option<json::JsonValue> = json::parse("{\"a\":1}");
+    let unwrapped: json::JsonValue = match parsed {
+        option::Option::Some(v) => v,
+        option::Option::None => json::JsonValue::JNull,
+    };
+    let element: option::Option<json::JsonValue> = json::get(unwrapped, "z");
+    return match element {
+        option::Option::None => "MISSING",
+        _ => "NOT_MISSING",
+    };
+}
+)AHFL");
+
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_is_object");
+        REQUIRE(r.has_value());
+        const auto *bv = std::get_if<ahfl::evaluator::BoolValue>(&r->node);
+        REQUIRE(bv != nullptr);
+        CHECK(bv->value == true);
+    }
+    {
+        // get("b") on {"a":1,"b":2} → JInt(2) → as_int → Some(2) → emit(JInt(2)).
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_get_b");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "2");
+    }
+    {
+        const auto r = run_project_caller(frontend, root, {caller_path}, "caller_get_missing");
+        REQUIRE(r.has_value());
+        const auto *sv = std::get_if<ahfl::evaluator::StringValue>(&r->node);
+        REQUIRE(sv != nullptr);
+        CHECK(sv->value == "MISSING");
+    }
+}

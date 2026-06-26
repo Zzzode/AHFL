@@ -273,6 +273,45 @@ class ResolverPass final {
     void visit(const ast::EnumDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(SymbolNamespace::Types, SymbolKind::Enum, node.name, node.range);
+            return;
+        }
+
+        if (current_pass_ == Pass::ResolveReferences) {
+            // Register type parameters so that variant payload types (e.g.
+            // `List<T>` on a generic enum variant) can resolve their tparam
+            // references during the same resolve-type walk.
+            const auto previous_type_params = generic_type_params_;
+            for (const auto &type_param : node.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
+            for (const auto &type_param : node.type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
+            }
+            // Resolve each variant's positional payload types. This handles
+            // recursive ADT references (e.g. `JList(List<JsonValue>)`) as
+            // long as the enum name itself was registered in the earlier
+            // RegisterSymbols pass.
+            for (const auto &variant : node.variants) {
+                for (const auto &payload_type : variant->payload) {
+                    resolve_type(*payload_type);
+                }
+            }
+            if (node.where_clause) {
+                for (const auto &constraint : node.where_clause->constraints) {
+                    if (constraint->subject) {
+                        resolve_type(*constraint->subject);
+                    }
+                    for (const auto &argument : constraint->arguments) {
+                        resolve_type(*argument);
+                    }
+                    for (const auto &bound : constraint->bounds) {
+                        resolve_type(*bound);
+                    }
+                }
+            }
+            generic_type_params_ = previous_type_params;
         }
     }
 

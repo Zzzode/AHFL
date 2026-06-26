@@ -330,6 +330,28 @@ EvalResult builtin_string_raw_concat(const std::vector<Value> &args, const EvalC
     return EvalResult{make_string(a->value + b->value), {}};
 }
 
+/// string_raw_substring(s: String, start: Int, end: Int) -> String
+/// Clamps start/end to [0, len], and returns "" on reversed range.
+EvalResult builtin_string_raw_substring(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 3)
+        return arg_count_error(3, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    const auto *start_i = std::get_if<IntValue>(&args[1].node);
+    const auto *end_i = std::get_if<IntValue>(&args[2].node);
+    if (!sv || !start_i || !end_i)
+        return make_error("string_raw_substring: (String, Int, Int) required");
+    const auto len = static_cast<int64_t>(sv->value.size());
+    auto s = start_i->value;
+    auto e = end_i->value;
+    if (s < 0) s = 0;
+    if (e < 0) e = 0;
+    if (s > len) s = len;
+    if (e > len) e = len;
+    if (e <= s) return EvalResult{make_string(""), {}};
+    const auto count = static_cast<size_t>(e - s);
+    return EvalResult{make_string(sv->value.substr(static_cast<size_t>(s), count)), {}};
+}
+
 EvalResult builtin_string_is_empty(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 1)
         return arg_count_error(1, args.size());
@@ -406,6 +428,35 @@ EvalResult builtin_float_to_string(const std::vector<Value> &args, const EvalCon
         return EvalResult{make_string(oss.str()), {}};
     }
     return make_error("float_to_string: argument must be a Float");
+}
+
+/// float_trunc_to_int(x: Float) -> Int
+/// Truncates toward zero; saturates on out-of-range.
+EvalResult builtin_float_trunc_to_int(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    if (auto *fv = std::get_if<FloatValue>(&args[0].node)) {
+        const double v = fv->value;
+        if (v >= static_cast<double>(std::numeric_limits<int64_t>::max()))
+            return EvalResult{make_int(std::numeric_limits<int64_t>::max()), {}};
+        if (v <= static_cast<double>(std::numeric_limits<int64_t>::min()))
+            return EvalResult{make_int(std::numeric_limits<int64_t>::min()), {}};
+        if (std::isnan(v) || std::isinf(v))
+            return EvalResult{make_int(0), {}};
+        return EvalResult{make_int(static_cast<int64_t>(v)), {}};
+    }
+    return make_error("float_trunc_to_int: argument must be a Float");
+}
+
+/// int_to_float(n: Int) -> Float
+/// Widening conversion; exact for values up to 2^53.
+EvalResult builtin_int_to_float(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    if (auto *iv = std::get_if<IntValue>(&args[0].node)) {
+        return EvalResult{make_float(static_cast<double>(iv->value)), {}};
+    }
+    return make_error("int_to_float: argument must be an Int");
 }
 
 /// string_raw_compare(a: String, b: String) -> Int (-1/0/1)
@@ -1372,6 +1423,7 @@ void BuiltinTable::populate() {
     // —— String ——
     insert("string_raw_length", builtin_string_raw_length);
     insert("string_raw_concat", builtin_string_raw_concat);
+    insert("string_raw_substring", builtin_string_raw_substring);
     insert("string_is_empty", builtin_string_is_empty);
     insert("string_length", builtin_string_raw_length);
     insert("string_contains", builtin_string_contains);
@@ -1385,6 +1437,8 @@ void BuiltinTable::populate() {
     insert("int_to_string", builtin_int_to_string);
     insert("bool_to_string", builtin_bool_to_string);
     insert("float_to_string", builtin_float_to_string);
+    insert("float_trunc_to_int", builtin_float_trunc_to_int);
+    insert("int_to_float", builtin_int_to_float);
 
     // —— Time ——
     insert("wall_clock_now", builtin_wall_clock_now);

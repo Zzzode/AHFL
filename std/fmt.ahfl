@@ -78,6 +78,66 @@ fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
 }
 
 // ===========================================================================
+// format_template — lightweight positional placeholder replacer (RFC §7.2).
+//
+// Replaces every occurrence of "{}" in `template` with the corresponding
+// element of `args`, walking left-to-right. Extra args beyond the placeholder
+// count are silently dropped. Missing args (fewer args than "{}" occurrences)
+// leave the literal "{}" in place at that position — no error is raised.
+//
+// Implemented via manual index recursion over (tpl_pos, arg_pos) using
+// string_raw_substring + string_raw_concat. Fold+lambda is deliberately
+// avoided because P3 cross-module lambda inference is unreliable.
+// ===========================================================================
+
+// Internal helper: walks template from tpl_pos, consumes args from arg_idx,
+// and builds the result string piecewise via concatenation.
+fn format_template_step(
+    tpl: String,
+    tpl_pos: Int,
+    args: List<String>,
+    arg_idx: Int,
+) -> String effect Pure decreases string::string_raw_length(tpl) - tpl_pos {
+    let tpl_len = string::string_raw_length(tpl);
+    let args_len = collections::list_raw_length<String>(args);
+
+    if tpl_pos >= tpl_len {
+        return "";
+    }
+
+    // Detect a two-byte "{}" placeholder starting at tpl_pos.
+    if tpl_pos + 1 < tpl_len {
+        let cur = string::string_raw_substring(tpl, tpl_pos, tpl_pos + 1);
+        if cur == "{" {
+            let nxt = string::string_raw_substring(tpl, tpl_pos + 1, tpl_pos + 2);
+            if nxt == "}" {
+                if arg_idx < args_len {
+                    // Consume one arg and paste it in.
+                    let arg = collections::list_raw_get<String>(args, arg_idx);
+                    let rest = format_template_step(tpl, tpl_pos + 2, args, arg_idx + 1);
+                    return string::string_raw_concat(arg, rest);
+                } else {
+                    // No arg available — leave literal "{}" in place.
+                    let rest = format_template_step(tpl, tpl_pos + 2, args, arg_idx);
+                    return string::string_raw_concat("{}", rest);
+                }
+            }
+        }
+    }
+
+    // Not a placeholder: emit one template character, continue.
+    let ch = string::string_raw_substring(tpl, tpl_pos, tpl_pos + 1);
+    let rest = format_template_step(tpl, tpl_pos + 1, args, arg_idx);
+    return string::string_raw_concat(ch, rest);
+}
+
+fn format_template(template: String, args: List<String>)
+    -> String effect Pure decreases 0
+{
+    return format_template_step(template, 0, args, 0);
+}
+
+// ===========================================================================
 // Primitive Display impls (API §7.2, §5 trait matrix).
 //
 // One inherent impl block per primitive type that participates in the

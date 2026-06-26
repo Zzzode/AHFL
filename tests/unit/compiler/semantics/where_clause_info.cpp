@@ -93,6 +93,11 @@ struct ProgramFixture {
         resolve = resolver.resolve(*program);
         // Resolver errors (e.g. duplicate names) fail the test — these inputs
         // are always well-formed by construction.
+        if (resolve.has_errors()) {
+            for (const auto &entry : resolve.diagnostics.entries()) {
+                MESSAGE("resolve diagnostic: " << entry.message);
+            }
+        }
         REQUIRE_FALSE(resolve.has_errors());
 
         TypeChecker checker;
@@ -189,7 +194,19 @@ TEST_CASE("StructDecl where_clause propagates to StructTypeInfo") {
 TEST_CASE("EnumDecl where_clause propagates to EnumTypeInfo") {
     std::vector<Owned<Decl>> decls;
 
+    // The Show trait: declared so where_clause type resolution succeeds.
+    // The resolver now validates EnumDecl where_clause bounds (added for
+    // recursive ADT support) so trait names must be registered symbols.
+    auto show_trait = make_owned<TraitDecl>("Show");
+    decls.push_back(std::move(show_trait));
+
     auto e = make_owned<EnumDecl>("Result");
+    // Declare 'E' as a type parameter on the enum — the resolver inserts
+    // type_param names into generic_type_params_ so they do not trigger
+    // "unknown type" diagnostics during where_clause resolution.
+    auto e_param = std::make_unique<TypeParamSyntax>();
+    e_param->name = "E";
+    e->type_params.push_back(std::move(e_param));
     e->where_clause = make_single_bound_where("E", "Show");
     decls.push_back(std::move(e));
 

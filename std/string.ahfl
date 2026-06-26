@@ -15,6 +15,9 @@ fn string_raw_length(s: String) -> Int effect Pure;
 @builtin("string_raw_concat")
 fn string_raw_concat(left: String, right: String) -> String effect Pure;
 
+@builtin("string_raw_substring")
+fn string_raw_substring(s: String, start: Int, end: Int) -> String effect Pure;
+
 @builtin("string_contains")
 fn string_contains(haystack: String, needle: String) -> Bool effect Pure;
 
@@ -62,6 +65,10 @@ impl String {
         return string_raw_concat(self, other);
     }
 
+    fn substring(self, start: Int, end: Int) -> String effect Pure decreases 0 {
+        return string_raw_substring(self, start, end);
+    }
+
     /// Blocker 5 (归属歧义): `parse` originally lived in std::uuid with a
     /// `self: String` receiver. Per the orphan rule it now lives here on
     /// the String primitive impl; std::uuid::parse(s) forwards to it.
@@ -93,6 +100,10 @@ fn raw_length(self: String) -> Int effect Pure decreases 0 {
 
 fn raw_concat(left: String, right: String) -> String effect Pure decreases 0 {
     return string_raw_concat(left, right);
+}
+
+fn raw_substring(s: String, start: Int, end: Int) -> String effect Pure decreases 0 {
+    return string_raw_substring(s, start, end);
 }
 
 fn is_empty(self: String) -> Bool effect Pure decreases 0 {

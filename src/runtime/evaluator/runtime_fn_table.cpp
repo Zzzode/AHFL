@@ -250,6 +250,60 @@ EvalResult call_mangled(const RuntimeFunctionTable &table,
         return result;
     }
 
+    // Intrinsic enum constructors (std::option::Option::{Some,None},
+    // std::result::Result::{Ok,Err}, std::cmp::Ordering::{Less,Equal,Greater},
+    // etc.) are synthesized by lowering as bare qualified calls. They never
+    // appear in RuntimeFunctionTable (no FnDecl body exists), so dispatch
+    // them inline using the nominal constructors from value.hpp.
+    //
+    // NOTE: keep this list in sync with eval_intrinsic_call() in evaluator.cpp.
+    auto eval_intrinsic_ctor =
+        [&](const std::string &name, const std::vector<ir::ExprRef> &args,
+            const EvalContext &ctx_arg, const CallEvalFn *call_eval_arg) -> EvalResult {
+        if (name == "std::option::Option::None") {
+            if (!args.empty()) return make_call_error("Option::None expects no arguments");
+            return EvalResult{make_enum("std::option::Option", "None"), {}};
+        }
+        if (name == "std::option::Option::Some") {
+            if (args.size() != 1 || !args.front())
+                return make_call_error("Option::Some expects one argument");
+            auto inner = eval_expr(*args.front(), ctx_arg, *call_eval_arg);
+            if (inner.has_errors()) return inner;
+            return EvalResult{
+                make_enum("std::option::Option", "Some",
+                          std::make_unique<Value>(std::move(inner.value))),
+                std::move(inner.diagnostics)};
+        }
+        if (name == "std::result::Result::Ok" || name == "std::result::Result::Err") {
+            if (args.size() != 1 || !args.front())
+                return make_call_error(name + " expects one argument");
+            auto payload = eval_expr(*args.front(), ctx_arg, *call_eval_arg);
+            if (payload.has_errors()) return payload;
+            std::vector<Value> values;
+            values.push_back(std::move(payload.value));
+            const auto variant = name == "std::result::Result::Ok" ? std::string{"Ok"}
+                                                                   : std::string{"Err"};
+            return EvalResult{
+                make_enum("std::result::Result", std::move(variant), std::move(values)), {}};
+        }
+        if (name == "std::cmp::Ordering::Less" || name == "std::cmp::Ordering::Equal" ||
+            name == "std::cmp::Ordering::Greater") {
+            if (!args.empty()) return make_call_error("Ordering variants take no arguments");
+            const auto variant = name.substr(name.rfind("::") + 2);
+            return EvalResult{make_enum("std::cmp::Ordering", std::string{variant}), {}};
+        }
+        return make_call_error("not an intrinsic ctor: " + name);
+    };
+    if (mangled_name == "std::option::Option::Some" ||
+        mangled_name == "std::option::Option::None" ||
+        mangled_name == "std::result::Result::Ok" ||
+        mangled_name == "std::result::Result::Err" ||
+        mangled_name == "std::cmp::Ordering::Less" ||
+        mangled_name == "std::cmp::Ordering::Equal" ||
+        mangled_name == "std::cmp::Ordering::Greater") {
+        return eval_intrinsic_ctor(std::string{mangled_name}, arguments, ctx, call_eval_ptr);
+    }
+
     return make_call_error("find_function('" + std::string(mangled_name) +
                            "'): no runtime entry registered");
 }

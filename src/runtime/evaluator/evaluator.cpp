@@ -253,18 +253,42 @@ using PatternBindings = std::unordered_map<std::string, Value>;
     if (pattern.subpatterns.empty()) {
         return true;
     }
-    if (pattern.subpatterns.size() != enum_value->payload.size()) {
+    // P3 match payloads are stored two ways in evaluator EnumValues:
+    //   * Nominal single-field variants (e.g. Option::Some, JsonValue::JInt)
+    //     use the `associated` unique_ptr (set by make_enum(..., associated)).
+    //   * Positional multi-field variants use the `payload` vector
+    //     (set by make_enum(..., vector<Value>)).
+    //
+    // The runtime can encounter either depending on the construction path
+    // (builtins for nominal, general enum lowering for positional), so a
+    // pattern match must try both.
+    const bool has_associated = enum_value->associated != nullptr;
+    const bool has_payload_vec = !enum_value->payload.empty();
+    if (!has_associated && !has_payload_vec) {
         return false;
     }
-    for (std::size_t index = 0; index < pattern.subpatterns.size(); ++index) {
-        if (!pattern.subpatterns[index] || !enum_value->payload[index]) {
-            return false;
+    if (has_payload_vec && pattern.subpatterns.size() == enum_value->payload.size()) {
+        for (std::size_t index = 0; index < pattern.subpatterns.size(); ++index) {
+            if (!pattern.subpatterns[index] || !enum_value->payload[index]) {
+                return false;
+            }
+            if (!match_pattern(*pattern.subpatterns[index],
+                               *enum_value->payload[index],
+                               bindings)) {
+                return false;
+            }
         }
-        if (!match_pattern(*pattern.subpatterns[index], *enum_value->payload[index], bindings)) {
-            return false;
-        }
+        return true;
     }
-    return true;
+    if (has_associated && pattern.subpatterns.size() == 1) {
+        if (!pattern.subpatterns.front()) {
+            return false;
+        }
+        return match_pattern(*pattern.subpatterns.front(),
+                             *enum_value->associated,
+                             bindings);
+    }
+    return false;
 }
 
 [[nodiscard]] bool match_pattern(const ir::MatchPattern &pattern,
