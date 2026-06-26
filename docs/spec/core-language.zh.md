@@ -72,9 +72,10 @@ called in_state running completed
 true false none some
 and or not
 Unit Bool Int Float String UUID Timestamp Duration Decimal
-Optional List Set Map
 set map
 ```
+
+说明：`Optional`、`List`、`Set`、`Map` 不再是保留关键字；它们在源码中作为普通标识符，由 prelude/import 解析到 `std::option::Option` 与 `std::collections::{List, Set, Map}` 这几个名义类型。语法层面仍保留 `Optional<A>` / `List<A>` / `Set<A>` / `Map<K, V>` 的参数化写法（§3.2），其在 Typed HIR 中降格为对应名义 struct/enum 的泛型实例化。
 
 ### 2.3 标识符
 
@@ -526,6 +527,12 @@ EnumName
 2. `StructName` 与 `EnumName` 指代用户声明的具名类型
 3. `type alias` 在类型检查阶段按别名透明处理，但它本身不是新的底层值类型
 4. AHFL Core 没有 `readonly` 修饰符或 readonly 容器语法；容器 variance 是类型关系规则，不是源码类型构造子
+5. `Optional<T>`、`List<T>`、`Set<T>`、`Map<K, V>` 在源码语法层可直接书写（§3.2），但在语义上**不再是语言级 TypeKind 原语**——它们在 Typed HIR 与类型构造器中分别对应以下名义（std-nominal）类型，并由 prelude 自动导出：
+   - `Optional<T>`  → `std::option::Option<T>`（`enum`，variants `Some(T)` / `None`）
+   - `List<T>`      → `std::collections::List<T>`（`struct`）
+   - `Set<T>`       → `std::collections::Set<T>`（`struct`）
+   - `Map<K, V>`    → `std::collections::Map<K, V>`（`struct`）
+   因此它们的等价、子类型、variance 等规则均由名义 struct/enum 的泛型规则承载（§4.3.2），而不是独立的 ad-hoc 分支。
 
 编译器实现还可以维护少量**内部辅助类型**，例如：
 
@@ -607,12 +614,18 @@ type A = B
 1. `String(m1, n1) <: String(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
 2. `String(m, n) <: String`
 
-除此之外，还允许下列容器子类型关系：
+除此之外，所有**名义泛型类型**（`struct<T...>` / `enum<T...>`）的子类型关系按其类型参数上声明的 **variance** 决定。variance 的完整设计（通过 trait 约束对每个泛型参数声明 `covariant` / `contravariant` / `invariant`）在 **PHASE B** 中落地。在当前阶段，以下 variance 对 stdlib 容器按名称硬编码生效，其余用户定义的名义泛型一律视为 invariant：
 
-1. `Optional<A> <: Optional<B>`，当且仅当 `A <: B`
-2. `List<A> <: List<B>`，当且仅当 `A <: B`
-3. `Set<A> <: Set<B>`，当且仅当 `A <: B`
-4. `Map<K1, V1> <: Map<K2, V2>`，当且仅当 `K1` 与 `K2` 等价，且 `V1 <: V2`
+| 名义类型 | 参数 0 | 参数 1 |
+| --- | --- | --- |
+| `std::option::Option<T>` | covariant | — |
+| `std::result::Result<T, E>` | （注：当前保持 invariant，待 PHASE B 与 `Option` 对齐） | — |
+| `std::collections::List<T>` | covariant | — |
+| `std::collections::Set<T>` | covariant | — |
+| `std::collections::Map<K, V>` | invariant（K） | covariant（V） |
+| 其它用户 `struct` / `enum<T...>` | invariant | invariant |
+
+对当前实现的说明（parenthetical）：截至本版本，`Result` 的 variance 尚未与 `Option` 对齐；容器级别的 covariance 实现位于 `src/compiler/semantics/type_relations.cpp` 中名义 struct/enum 的专用子类型分支，在 trait-based variance 系统交付前暂时以 canonical-name 分派。
 
 其他隐式子类型关系不存在。
 
@@ -645,6 +658,19 @@ type A = B
 
 1. 若缺少期望类型，编译器必须报错
 2. 期望类型可来自变量标注、字段类型、参数类型、返回类型
+
+#### 4.5.1 Typed HIR 脱糖（desugaring）
+
+上述空字面量在 Typed HIR 中均不再保留独立 AST 节点，而是被**脱糖**为对应名义容器的标准构造形式（以保持 typed tree 统一为 std-nominal）：
+
+| 源码形式 | 期望类型 | 脱糖后的 typed HIR |
+| --- | --- | --- |
+| `none` | `Optional<T>` | `std::option::Option::None`（带泛型实参 `T` 的枚举变体值） |
+| `[]` | `List<T>` | `std::collections::list_from_array<T>()` 或等价的名义空 List 构造子 |
+| `set[]` | `Set<T>` | `std::collections::set_from_array<T>()` 或等价的名义空 Set 构造子 |
+| `map[]` | `Map<K, V>` | `std::collections::map_from_entries<K, V>()` 或等价的名义空 Map 构造子 |
+
+因此类型检查阶段不再为"空容器字面量"维护专用代码路径；所有空形态最终都进入名义 struct/enum 的构造与类型关系通用路径。
 
 ### 4.6 表达式类型规则
 
@@ -700,15 +726,30 @@ fields(S) = { f1:T1, ..., fn:Tn }
 1. 字段必须恰好覆盖 `S` 的全部字段
 2. 字段顺序无关
 
-#### 4.6.4 `some` 与 `none`
+#### 4.6.4 `some()` 与 `none()`
+
+源码语法保留 `some(e)` / `none` 作为表达式一级的语法糖（§3.10 PrimaryExpr）。**在 Typed HIR 中二者均被脱糖为名义 enum `std::option::Option` 的构造函数**：
+
+| 源码形式 | Typed HIR 脱糖结果 |
+| --- | --- |
+| `some(e)` | `std::option::Option::Some(E)`，其中 `E` 是 `e` 的脱糖后 typed 表达式；推导类型为 `std::option::Option<T>`，`T = type_of(E)` |
+| `none` | 参见 §4.5.1：脱糖为 `std::option::Option::None`，要求上下文提供 `Optional<T>` 期望类型以补全泛型实参 `T` |
+
+等价的推导规则可写作：
 
 ```text
 Σ ; Γ ⊢ e : T
--------------------------
-Σ ; Γ ⊢ some(e) : Optional<T>
+-----------------------------------------------------------
+Σ ; Γ ⊢ some(e) : std::option::Option<T>
+        (脱糖后值为 std::option::Option::Some(e))
+
+expected_type(Γ) = std::option::Option<T>
+-----------------------------------------------------------
+Σ ; Γ ⊢ none : std::option::Option<T>
+        (脱糖后值为 std::option::Option::None)
 ```
 
-`none` 没有独立可推导类型；它只能在期望类型为 `Optional<T>` 的上下文中成立。
+因此 `Optional<T>` 的子类型与 variance 行为完全由名义 enum 泛型规则（§4.3.2）驱动，`some(e)` 和 `none` 没有专用的子类型路径。
 
 #### 4.6.5 capability 调用
 

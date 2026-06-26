@@ -246,48 +246,6 @@ bool equivalent_pairwise(const Type &lhs_a,
     return lhs_name == rhs_name;
 }
 
-std::optional<bool> equivalent_std_container_bridge(const Type &lhs,
-                                                    const Type &rhs,
-                                                    TypeRelationContext *ctx,
-                                                    const std::string &path,
-                                                    MemoizedRelationSolver &solver) {
-    const auto lhs_view = stdlib_bridge::std_container_type_view(lhs);
-    const auto rhs_view = stdlib_bridge::std_container_type_view(rhs);
-    if (!lhs_view.has_value() || !rhs_view.has_value() || lhs_view->kind != rhs_view->kind) {
-        return std::nullopt;
-    }
-
-    FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
-    switch (lhs_view->kind) {
-    case stdlib_bridge::StdContainerKind::Option:
-        return solver.solve(TypeRelationKind::Equivalent,
-                            *lhs_view->first,
-                            *rhs_view->first,
-                            join_path(path, "optional.inner"));
-    case stdlib_bridge::StdContainerKind::List:
-        return solver.solve(TypeRelationKind::Equivalent,
-                            *lhs_view->first,
-                            *rhs_view->first,
-                            join_path(path, "list.element"));
-    case stdlib_bridge::StdContainerKind::Set:
-        return solver.solve(TypeRelationKind::Equivalent,
-                            *lhs_view->first,
-                            *rhs_view->first,
-                            join_path(path, "set.element"));
-    case stdlib_bridge::StdContainerKind::Map:
-        return equivalent_pairwise(*lhs_view->first,
-                                   *rhs_view->first,
-                                   *lhs_view->second,
-                                   *rhs_view->second,
-                                   path,
-                                   "map.key",
-                                   "map.value",
-                                   solver);
-    }
-
-    return std::nullopt;
-}
-
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
@@ -298,13 +256,52 @@ bool equivalent_impl(const Type &lhs,
         return equivalent_leaf(lhs, rhs, ctx, path, true);
     }
 
-    if (const auto bridged = equivalent_std_container_bridge(lhs, rhs, ctx, path, solver);
-        bridged.has_value()) {
-        return *bridged;
-    }
-
     if (lhs.payload.index() != rhs.payload.index()) {
         return equivalent_leaf(lhs, rhs, ctx, path, false);
+    }
+
+    // Nominal stdlib containers: short-circuit with dedicated path labels
+    // before falling through to the generic StructT/EnumT handler. This keeps
+    // the constraint-skeleton tree shape aligned with the legacy bridge: only
+    // the container's shape/element sub-constraints appear under the outer
+    // And (no struct.name / enum.name leaf emitted when the canonical names
+    // already agree via the nominal guard).
+    const auto lhs_view = stdlib_bridge::std_container_type_view(lhs);
+    if (lhs_view.has_value() && lhs_view->nominal && lhs_view->first != nullptr) {
+        const auto rhs_view = stdlib_bridge::std_container_type_view(rhs);
+        if (rhs_view.has_value() && rhs_view->nominal &&
+            rhs_view->kind == lhs_view->kind && rhs_view->first != nullptr) {
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            switch (lhs_view->kind) {
+            case stdlib_bridge::StdContainerKind::Option:
+                return solver.solve(TypeRelationKind::Equivalent,
+                                    *lhs_view->first,
+                                    *rhs_view->first,
+                                    join_path(path, "optional.inner"));
+            case stdlib_bridge::StdContainerKind::List:
+                return solver.solve(TypeRelationKind::Equivalent,
+                                    *lhs_view->first,
+                                    *rhs_view->first,
+                                    join_path(path, "list.element"));
+            case stdlib_bridge::StdContainerKind::Set:
+                return solver.solve(TypeRelationKind::Equivalent,
+                                    *lhs_view->first,
+                                    *rhs_view->first,
+                                    join_path(path, "set.element"));
+            case stdlib_bridge::StdContainerKind::Map:
+                if (lhs_view->second == nullptr || rhs_view->second == nullptr) {
+                    return false;
+                }
+                return equivalent_pairwise(*lhs_view->first,
+                                           *rhs_view->first,
+                                           *lhs_view->second,
+                                           *rhs_view->second,
+                                           path,
+                                           "map.key",
+                                           "map.value",
+                                           solver);
+            }
+        }
     }
 
     return lhs.visit(types::Overloads{
@@ -377,16 +374,27 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
             const bool name_ok =
                 nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
+            if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
+                TypeConstraintNode n;
+                n.kind = TypeConstraintNode::Kind::Relation;
+                n.relation = "equivalent";
+                n.path = join_path(path, "enum.name");
+                n.left_describe = lhs.describe();
+                n.right_describe = rhs.describe();
+                n.satisfied = name_ok;
+                ctx->push_node(std::move(n));
+                ctx->pop_node();
+            }
             if (!name_ok) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
+                return false;
             }
             // Type arguments must match arity and be pairwise equivalent.
             if (l.type_args.size() != r->type_args.size()) {
-                return equivalent_leaf(lhs, rhs, ctx, path, false);
+                return false;
             }
-            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
             for (std::size_t i = 0; i < l.type_args.size(); ++i) {
                 if (l.type_args[i] == nullptr || r->type_args[i] == nullptr) {
                     return false;
@@ -505,50 +513,6 @@ bool subtype_leaf(const Type &source,
     return value;
 }
 
-std::optional<bool> subtype_std_container_bridge(const Type &source,
-                                                 const Type &target,
-                                                 TypeRelationContext *ctx,
-                                                 const std::string &path,
-                                                 MemoizedRelationSolver &solver) {
-    const auto source_view = stdlib_bridge::std_container_type_view(source);
-    const auto target_view = stdlib_bridge::std_container_type_view(target);
-    if (!source_view.has_value() || !target_view.has_value() ||
-        source_view->kind != target_view->kind) {
-        return std::nullopt;
-    }
-
-    switch (source_view->kind) {
-    case stdlib_bridge::StdContainerKind::Option:
-        return solver.solve(TypeRelationKind::Subtype,
-                            *source_view->first,
-                            *target_view->first,
-                            join_path(path, "optional.inner"));
-    case stdlib_bridge::StdContainerKind::List:
-        return solver.solve(TypeRelationKind::Subtype,
-                            *source_view->first,
-                            *target_view->first,
-                            join_path(path, "list.element"));
-    case stdlib_bridge::StdContainerKind::Set:
-        return solver.solve(TypeRelationKind::Subtype,
-                            *source_view->first,
-                            *target_view->first,
-                            join_path(path, "set.element"));
-    case stdlib_bridge::StdContainerKind::Map:
-        if (!solver.solve(TypeRelationKind::Equivalent,
-                          *source_view->first,
-                          *target_view->first,
-                          join_path(path, "map.key"))) {
-            return subtype_leaf(source, target, ctx, join_path(path, "map.key-mismatch"), false);
-        }
-        return solver.solve(TypeRelationKind::Subtype,
-                            *source_view->second,
-                            *target_view->second,
-                            join_path(path, "map.value"));
-    }
-
-    return std::nullopt;
-}
-
 bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
@@ -589,9 +553,122 @@ bool subtype_impl(const Type &source,
         return true;
     }
 
-    if (const auto bridged = subtype_std_container_bridge(source, target, ctx, path, solver);
-        bridged.has_value()) {
-        return *bridged;
+    // Nominal generic subtyping for struct / enum.
+    //
+    // For stdlib containers the variance + path-segment contract is hardcoded
+    // to match the legacy bridge (covariant element for Option/List/Set; Map
+    // keys invariant, Map values covariant). All other user-defined nominals
+    // are invariant (type arguments compared via equivalent) until the trait-
+    // based variance system ships in PHASE B.
+    //
+    // See docs/design/corelib-container-migration.zh.md §9.
+    // TODO(P5-02): replace hardcoded per-name variance with trait declarations.
+    if (source.holds<types::StructT>() && target.holds<types::StructT>()) {
+        const auto *s = source.get_if<types::StructT>();
+        const auto *t = target.get_if<types::StructT>();
+        if (s != nullptr && t != nullptr) {
+            if (!nominal_name_matches(s->symbol, s->canonical_name, t->symbol, t->canonical_name)) {
+                return subtype_leaf(source, target, ctx, join_path(path, "struct.name"), false);
+            }
+            if (s->type_args.size() != t->type_args.size()) {
+                return subtype_leaf(source, target, ctx, join_path(path, "struct.arity"), false);
+            }
+            const auto src_container = stdlib_bridge::std_container_type_view(source);
+            if (src_container.has_value() && src_container->nominal &&
+                src_container->first != nullptr) {
+                const auto tgt_container = stdlib_bridge::std_container_type_view(target);
+                if (tgt_container.has_value() && tgt_container->nominal &&
+                    tgt_container->kind == src_container->kind &&
+                    tgt_container->first != nullptr) {
+                    switch (src_container->kind) {
+                    case stdlib_bridge::StdContainerKind::Option:
+                    case stdlib_bridge::StdContainerKind::List:
+                    case stdlib_bridge::StdContainerKind::Set: {
+                        const auto seg =
+                            src_container->kind == stdlib_bridge::StdContainerKind::Option
+                                ? "optional.inner"
+                                : (src_container->kind == stdlib_bridge::StdContainerKind::List
+                                       ? "list.element"
+                                       : "set.element");
+                        return solver.solve(TypeRelationKind::Subtype,
+                                            *src_container->first,
+                                            *tgt_container->first,
+                                            join_path(path, seg));
+                    }
+                    case stdlib_bridge::StdContainerKind::Map:
+                        if (src_container->second == nullptr || tgt_container->second == nullptr) {
+                            return false;
+                        }
+                        if (!solver.solve(TypeRelationKind::Equivalent,
+                                          *src_container->first,
+                                          *tgt_container->first,
+                                          join_path(path, "map.key"))) {
+                            return subtype_leaf(
+                                source, target, ctx, join_path(path, "map.key-mismatch"), false);
+                        }
+                        return solver.solve(TypeRelationKind::Subtype,
+                                            *src_container->second,
+                                            *tgt_container->second,
+                                            join_path(path, "map.value"));
+                    }
+                }
+            }
+            // Invariant fallback for all other struct nominals.
+            for (std::size_t i = 0; i < s->type_args.size(); ++i) {
+                if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(
+                        TypeRelationKind::Equivalent,
+                        *s->type_args[i],
+                        *t->type_args[i],
+                        join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    if (source.holds<types::EnumT>() && target.holds<types::EnumT>()) {
+        const auto *s = source.get_if<types::EnumT>();
+        const auto *t = target.get_if<types::EnumT>();
+        if (s != nullptr && t != nullptr) {
+            if (!nominal_name_matches(s->symbol, s->canonical_name, t->symbol, t->canonical_name)) {
+                return subtype_leaf(source, target, ctx, join_path(path, "enum.name"), false);
+            }
+            if (s->type_args.size() != t->type_args.size()) {
+                return subtype_leaf(source, target, ctx, join_path(path, "enum.arity"), false);
+            }
+            const auto src_container = stdlib_bridge::std_container_type_view(source);
+            if (src_container.has_value() && src_container->nominal &&
+                src_container->kind == stdlib_bridge::StdContainerKind::Option &&
+                src_container->first != nullptr) {
+                const auto tgt_container = stdlib_bridge::std_container_type_view(target);
+                if (tgt_container.has_value() && tgt_container->nominal &&
+                    tgt_container->kind == stdlib_bridge::StdContainerKind::Option &&
+                    tgt_container->first != nullptr) {
+                    return solver.solve(TypeRelationKind::Subtype,
+                                        *src_container->first,
+                                        *tgt_container->first,
+                                        join_path(path, "optional.inner"));
+                }
+            }
+            // Invariant fallback for all other enum nominals (incl. Result).
+            for (std::size_t i = 0; i < s->type_args.size(); ++i) {
+                if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(
+                        TypeRelationKind::Equivalent,
+                        *s->type_args[i],
+                        *t->type_args[i],
+                        join_path(path, "enum.type_args[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     if (const auto *variant = source.get_if<types::EnumVariantT>();
