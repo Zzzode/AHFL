@@ -107,22 +107,32 @@ fn option_filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure d
 // forwards to the inherent impl above.
 // ---------------------------------------------------------------------------
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.is_some()` via the inherent impl on `Option<T>`.
 fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
     return self.is_some();
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.is_none()` via the inherent impl on `Option<T>`.
 fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
     return self.is_none();
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.map(f)` via the inherent impl on `Option<T>`.
 fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
     return self.map<U>(f);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.and_then(f)` via the inherent impl on `Option<T>`.
 fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
     return self.and_then<U>(f);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.or_else(alt)` via the inherent impl on `Option<T>`.
 fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
     return self.or_else(alt);
 }
@@ -131,10 +141,14 @@ fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decrease
     return option_filter_value<T>(value, p);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.filter(p)` via the inherent impl on `Option<T>`.
 fn filter<T>(self: Option<T>, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     return self.filter(p);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.unwrap_or(default)` via the inherent impl on `Option<T>`.
 fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
     return self.unwrap_or(default);
 }
@@ -144,16 +158,22 @@ fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
 // wrapper of the same name as duplicates.
 
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.unwrap_or_else(default)` via the inherent impl on `Option<T>`.
 fn unwrap_or_else<T>(self: Option<T>, default: Fn() -> T) -> T effect Pure decreases 0 {
     return self.unwrap_or_else(default);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.get_or_insert(value)` via the inherent impl on `Option<T>`.
 fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
     return self.get_or_insert(value);
 }
 
 // ---- RFC §2 new module-level wrappers (Task #6) --------------------------
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `opt.zip(other)` via the inherent impl on `Option<T>`.
 fn zip<T, U>(self: Option<T>, other: Option<U>)
     -> Option<ZippedPair<T, U>> effect Pure decreases 0
 {

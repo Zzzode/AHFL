@@ -1454,6 +1454,16 @@ void TypeCheckPass::build_impl_types() {
                 // declare @builtin methods, every @builtin method must carry
                 // an effect clause (the compiler expects a hook descriptor for
                 // effect derivation), and the hook name must be a known builtin.
+                //
+                // BLK-01: impl methods without a body are the prototype-shape
+                // @builtin facades; they must carry a valid @builtin attribute
+                // (otherwise the method has no implementation and would fail
+                // lowering). User methods always retain a body block.
+                if (!method_info.has_body && !method_info.builtin_name.has_value()) {
+                    typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
+                                         messages::typecheck::InvalidBuiltinAttribute.format_with(),
+                                         method->range);
+                }
                 if (method->builtin_name.has_value()) {
                     if (!is_std_module(current_module_name_)) {
                         typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,

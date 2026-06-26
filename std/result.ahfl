@@ -115,45 +115,67 @@ fn from_option<T, E>(opt: option::Option<T>, mk_err: Fn() -> E)
 
 // unwrap: arity-2 consistent with Option::unwrap(sentinel).
 // TODO(P4): add arity-1 wrapper when the inherent impl gains it.
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.unwrap(sentinel)` via the inherent impl on `Result<T, E>`.
 fn unwrap<T, E>(self: Result<T, E>, sentinel: T) -> T effect Pure decreases 0 {
     return self.unwrap(sentinel);
 }
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.unwrap_or_else(default)` via the inherent impl on `Result<T, E>`.
 fn unwrap_or_else<T, E>(self: Result<T, E>, default: Fn(E) -> T) -> T effect Pure decreases 0 {
     return self.unwrap_or_else(default);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.is_ok()` via the inherent impl on `Result<T, E>`.
 fn is_ok<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
     return self.is_ok();
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.is_err()` via the inherent impl on `Result<T, E>`.
 fn is_err<T, E>(self: Result<T, E>) -> Bool effect Pure decreases 0 {
     return self.is_err();
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.map(f)` via the inherent impl on `Result<T, E>`.
 fn map<T, U, E>(self: Result<T, E>, f: Fn(T) -> U) -> Result<U, E> effect Pure decreases 0 {
     return self.map<U>(f);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.map_err(f)` via the inherent impl on `Result<T, E>`.
 fn map_err<T, E, F>(self: Result<T, E>, f: Fn(E) -> F) -> Result<T, F> effect Pure decreases 0 {
     return self.map_err<F>(f);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.and_then(f)` via the inherent impl on `Result<T, E>`.
 fn and_then<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E> effect Pure decreases 0 {
     return self.and_then<U>(f);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.or_else(alt)` via the inherent impl on `Result<T, E>`.
 fn or_else<T, E, F>(self: Result<T, E>, alt: Fn(E) -> Result<T, F>) -> Result<T, F> effect Pure decreases 0 {
     return self.or_else<F>(alt);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.unwrap_or(default)` via the inherent impl on `Result<T, E>`.
 fn unwrap_or<T, E>(self: Result<T, E>, default: T) -> T effect Pure decreases 0 {
     return self.unwrap_or(default);
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.ok()` via the inherent impl on `Result<T, E>`.
 fn ok<T, E>(self: Result<T, E>) -> option::Option<T> effect Pure decreases 0 {
     return self.ok();
 }
 
+/// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
+/// should prefer `r.err()` via the inherent impl on `Result<T, E>`.
 fn err<T, E>(self: Result<T, E>) -> option::Option<E> effect Pure decreases 0 {
     return self.err();
 }

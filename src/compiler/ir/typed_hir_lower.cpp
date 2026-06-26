@@ -1037,9 +1037,16 @@ class TypedIrLowerer final {
             return std::nullopt;
         }
         const auto target_symbol = nominal_symbol_of_type(*receiver->type);
-        if (!target_symbol.has_value()) {
-            return std::nullopt;
-        }
+        // For primitive receivers (String, Int, …) there is no nominal SymbolId
+        // (primitives are not struct/enum declarations). Fall back to a
+        // normalize_type_key equality walk so inherent impls declared directly
+        // on primitive types still route through their method metadata — this
+        // is how @builtin facade impl methods (e.g. `impl String { @builtin fn
+        // length(...) -> Int; }`) emit the correct builtin-hook callee name.
+        const bool primitive_target = !target_symbol.has_value();
+        const std::string receiver_key =
+            primitive_target ? TypeEnvironment::normalize_type_key(*receiver->type)
+                              : std::string{};
 
         std::optional<MethodTarget> inherent;
         std::optional<MethodTarget> trait;
@@ -1047,8 +1054,21 @@ class TypedIrLowerer final {
         std::size_t trait_count = 0;
         for (const auto &decl : typed_program_->declarations) {
             const auto *impl = payload_as<ImplTypeInfo>(&decl);
-            if (impl == nullptr || !impl->target_symbol.has_value() ||
-                *impl->target_symbol != *target_symbol) {
+            if (impl == nullptr) {
+                continue;
+            }
+            bool match = false;
+            if (primitive_target) {
+                if (impl->target_type != nullptr &&
+                    TypeEnvironment::normalize_type_key(*impl->target_type) == receiver_key) {
+                    match = true;
+                }
+            } else {
+                if (impl->target_symbol.has_value() && *impl->target_symbol == *target_symbol) {
+                    match = true;
+                }
+            }
+            if (!match) {
                 continue;
             }
             const auto *method = find_impl_method(*impl, expr.member_name);
@@ -2728,18 +2748,35 @@ class TypedIrLowerer final {
             info.type_args = key.type_args;
             info.provenance_range = expr.range;
 
-            // Try fn-body path first (covers generic inherent/trait impl
-            // methods with concrete bodies).
+            // Per the typed-HIR design doc: InherentMethod → Fn and
+            // TraitMethod → Fn. Capability is reserved for *workflow
+            // capability-object* references (SymbolKind::Capability /
+            // SymbolKind::Predicate), not for regular impl methods that
+            // happen to use the same call-target kind on an unrelated
+            // symbol kind. We therefore discriminate by the underlying
+            // SymbolKind first, and fall back to the design-doc mapping
+            // for regular impl methods.
             const FnTypeInfo *fn_info = find_fn_info(*expr.resolved_symbol);
+            const auto sym = typed_program_->find_symbol(*expr.resolved_symbol);
+            const bool symbol_is_capability =
+                sym.has_value() && (sym->get().kind == SymbolKind::Capability);
+            const bool symbol_is_predicate =
+                sym.has_value() && (sym->get().kind == SymbolKind::Predicate);
             if (fn_info != nullptr) {
                 info.kind = InstanceBuildKind::Fn;
                 info.fn = fn_info;
-            } else if (expr.call_target_kind == TypedCallTargetKind::InherentMethod) {
+            } else if (symbol_is_capability) {
                 info.kind = InstanceBuildKind::Capability;
                 info.capability = find_capability_info(*expr.resolved_symbol);
-            } else {
+            } else if (symbol_is_predicate) {
                 info.kind = InstanceBuildKind::Predicate;
                 info.predicate = find_predicate_info(*expr.resolved_symbol);
+            } else {
+                // Non-capability, non-predicate, no fn body → regular impl
+                // method. Per the design doc both InherentMethod and
+                // TraitMethod lower to InstanceBuildKind::Fn.
+                info.kind = InstanceBuildKind::Fn;
+                info.fn = fn_info;
             }
             instances.emplace(std::move(key), std::move(info));
         }

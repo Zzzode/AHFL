@@ -327,15 +327,16 @@ traitRef: type_;
 // above.
 implItem: implFnItem | assocTypeDef | assocConstDef;
 
-// Method definition inside an impl block: same surface as fnDecl but the body
-// is mandatory (RFC §1.4: `FnDef ::= ... FnBody`).
-// The @builtin attribute is accepted here (P5, RFC §3.3) so stdlib facade methods
-// that wrap compiler intrinsics can be declared inside inherent impl blocks
-// (e.g. `impl String { @builtin("string_raw_length") fn length(self) -> Int; }`).
+// Method definition inside an impl block: same surface as fnDecl. Body is
+// mandatory for normal methods; @builtin facade methods may use the ";"
+// prototype shorthand (matching module-level `fn name(...);`) in which case
+// the body is synthesised from the named builtin hook.
+// The @builtin attribute is accepted here (P5, RFC §3.3) so stdlib facade
+// methods that wrap compiler intrinsics can be declared inside inherent impl
+// blocks (`impl String { @builtin("string_raw_length") fn length(self) -> Int effect Pure decreases 0; }`).
 implFnItem:
 	builtinAttr? 'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
-	whereClause? fnBody;
-
+		whereClause? (fnBody | ';');
 // Associated type definition inside an impl block.
 assocTypeDef: 'type' identifier '=' type_ ';';
 

@@ -37,9 +37,14 @@ impl String {
         return string_raw_length(self) == 0;
     }
 
-    fn length(self) -> Int effect Pure decreases 0 {
-        return string_raw_length(self);
-    }
+    // BLK-01 demo: impl methods can now declare @builtin inline. When the
+    // @builtin attribute is present the body is optional (the `;` prototype
+    // shape matches module-level `@builtin fn name(...);`). Lowering dispatches
+    // directly to the C++ builtin hook without routing through the
+    // module-level string_raw_length wrapper. The module-level prototype is
+    // kept for one release cycle (deprecated-call-site compatibility).
+    @builtin("string_raw_length")
+    fn length(self) -> Int effect Pure decreases 0;
 
     fn contains(self, needle: String) -> Bool effect Pure decreases 0 {
         return string_contains(self, needle);

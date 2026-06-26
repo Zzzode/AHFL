@@ -31,8 +31,12 @@ fn new_v4() -> UUID effect Nondet {
     return uuid_new_v4();
 }
 
+/// Deprecated free-function bridge retained for one release cycle (P5 → P6).
+/// The authoritative implementation is `String::parse_uuid` on the String
+/// primitive impl (per the orphan rule — the receiver is String, not UUID).
+/// New code should write `s.parse_uuid()` directly.
 fn parse(s: String) -> option::Option<UUID> effect Pure decreases 0 {
-    return uuid_parse(s);
+    return s.parse_uuid();
 }
 
 fn to_string(self: UUID) -> String effect Pure decreases 0 {

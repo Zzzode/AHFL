@@ -1053,9 +1053,12 @@ class AstInvariantValidator final {
             for (const auto &method : node.methods) {
                 require(method != nullptr, node.range, "ImplDecl.methods contains null");
                 if (method) {
-                    require(method->body != nullptr,
+                    // Body is optional for @builtin facade impl methods: the
+                    // compiler lowers them directly to the named builtin hook
+                    // (matching module-level `@builtin fn name(...);`).
+                    require(method->body != nullptr || method->builtin_name.has_value(),
                             method->range,
-                            "impl method definition must carry a body");
+                            "impl method definition must carry a body (unless @builtin prototype)");
                     require(!method->name.empty(), method->range, "FnDecl is missing name");
                     if (method->return_type) {
                         validate_type(*method->return_type);

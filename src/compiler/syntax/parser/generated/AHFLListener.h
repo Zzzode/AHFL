@@ -1,5 +1,5 @@
 
-// Generated from AHFL.g4 by ANTLR 4.13.2
+// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -25,6 +25,9 @@ public:
 
   virtual void enterImportDecl(AHFLParser::ImportDeclContext *ctx) = 0;
   virtual void exitImportDecl(AHFLParser::ImportDeclContext *ctx) = 0;
+
+  virtual void enterIdentifier(AHFLParser::IdentifierContext *ctx) = 0;
+  virtual void exitIdentifier(AHFLParser::IdentifierContext *ctx) = 0;
 
   virtual void enterQualifiedIdent(AHFLParser::QualifiedIdentContext *ctx) = 0;
   virtual void exitQualifiedIdent(AHFLParser::QualifiedIdentContext *ctx) = 0;
@@ -64,6 +67,12 @@ public:
 
   virtual void enterEnumVariant(AHFLParser::EnumVariantContext *ctx) = 0;
   virtual void exitEnumVariant(AHFLParser::EnumVariantContext *ctx) = 0;
+
+  virtual void enterTypeList(AHFLParser::TypeListContext *ctx) = 0;
+  virtual void exitTypeList(AHFLParser::TypeListContext *ctx) = 0;
+
+  virtual void enterFnType(AHFLParser::FnTypeContext *ctx) = 0;
+  virtual void exitFnType(AHFLParser::FnTypeContext *ctx) = 0;
 
   virtual void enterCapabilityDecl(AHFLParser::CapabilityDeclContext *ctx) = 0;
   virtual void exitCapabilityDecl(AHFLParser::CapabilityDeclContext *ctx) = 0;
@@ -143,6 +152,9 @@ public:
   virtual void enterForbidDecl(AHFLParser::ForbidDeclContext *ctx) = 0;
   virtual void exitForbidDecl(AHFLParser::ForbidDeclContext *ctx) = 0;
 
+  virtual void enterDecreasesDecl(AHFLParser::DecreasesDeclContext *ctx) = 0;
+  virtual void exitDecreasesDecl(AHFLParser::DecreasesDeclContext *ctx) = 0;
+
   virtual void enterFlowDecl(AHFLParser::FlowDeclContext *ctx) = 0;
   virtual void exitFlowDecl(AHFLParser::FlowDeclContext *ctx) = 0;
 
@@ -178,6 +190,84 @@ public:
 
   virtual void enterWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext *ctx) = 0;
   virtual void exitWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext *ctx) = 0;
+
+  virtual void enterBuiltinAttr(AHFLParser::BuiltinAttrContext *ctx) = 0;
+  virtual void exitBuiltinAttr(AHFLParser::BuiltinAttrContext *ctx) = 0;
+
+  virtual void enterFnDecl(AHFLParser::FnDeclContext *ctx) = 0;
+  virtual void exitFnDecl(AHFLParser::FnDeclContext *ctx) = 0;
+
+  virtual void enterTypeParams(AHFLParser::TypeParamsContext *ctx) = 0;
+  virtual void exitTypeParams(AHFLParser::TypeParamsContext *ctx) = 0;
+
+  virtual void enterTypeParam(AHFLParser::TypeParamContext *ctx) = 0;
+  virtual void exitTypeParam(AHFLParser::TypeParamContext *ctx) = 0;
+
+  virtual void enterTypeBoundList(AHFLParser::TypeBoundListContext *ctx) = 0;
+  virtual void exitTypeBoundList(AHFLParser::TypeBoundListContext *ctx) = 0;
+
+  virtual void enterFnBody(AHFLParser::FnBodyContext *ctx) = 0;
+  virtual void exitFnBody(AHFLParser::FnBodyContext *ctx) = 0;
+
+  virtual void enterEffectClause(AHFLParser::EffectClauseContext *ctx) = 0;
+  virtual void exitEffectClause(AHFLParser::EffectClauseContext *ctx) = 0;
+
+  virtual void enterEffectSpec(AHFLParser::EffectSpecContext *ctx) = 0;
+  virtual void exitEffectSpec(AHFLParser::EffectSpecContext *ctx) = 0;
+
+  virtual void enterCapabilityRef(AHFLParser::CapabilityRefContext *ctx) = 0;
+  virtual void exitCapabilityRef(AHFLParser::CapabilityRefContext *ctx) = 0;
+
+  virtual void enterDecreasesClause(AHFLParser::DecreasesClauseContext *ctx) = 0;
+  virtual void exitDecreasesClause(AHFLParser::DecreasesClauseContext *ctx) = 0;
+
+  virtual void enterWhereClause(AHFLParser::WhereClauseContext *ctx) = 0;
+  virtual void exitWhereClause(AHFLParser::WhereClauseContext *ctx) = 0;
+
+  virtual void enterWhereConstraint(AHFLParser::WhereConstraintContext *ctx) = 0;
+  virtual void exitWhereConstraint(AHFLParser::WhereConstraintContext *ctx) = 0;
+
+  virtual void enterLambdaExpr(AHFLParser::LambdaExprContext *ctx) = 0;
+  virtual void exitLambdaExpr(AHFLParser::LambdaExprContext *ctx) = 0;
+
+  virtual void enterLambdaParamList(AHFLParser::LambdaParamListContext *ctx) = 0;
+  virtual void exitLambdaParamList(AHFLParser::LambdaParamListContext *ctx) = 0;
+
+  virtual void enterLambdaParam(AHFLParser::LambdaParamContext *ctx) = 0;
+  virtual void exitLambdaParam(AHFLParser::LambdaParamContext *ctx) = 0;
+
+  virtual void enterTraitDecl(AHFLParser::TraitDeclContext *ctx) = 0;
+  virtual void exitTraitDecl(AHFLParser::TraitDeclContext *ctx) = 0;
+
+  virtual void enterTraitItem(AHFLParser::TraitItemContext *ctx) = 0;
+  virtual void exitTraitItem(AHFLParser::TraitItemContext *ctx) = 0;
+
+  virtual void enterTraitFnItem(AHFLParser::TraitFnItemContext *ctx) = 0;
+  virtual void exitTraitFnItem(AHFLParser::TraitFnItemContext *ctx) = 0;
+
+  virtual void enterAssocTypeItem(AHFLParser::AssocTypeItemContext *ctx) = 0;
+  virtual void exitAssocTypeItem(AHFLParser::AssocTypeItemContext *ctx) = 0;
+
+  virtual void enterAssocConstItem(AHFLParser::AssocConstItemContext *ctx) = 0;
+  virtual void exitAssocConstItem(AHFLParser::AssocConstItemContext *ctx) = 0;
+
+  virtual void enterImplDecl(AHFLParser::ImplDeclContext *ctx) = 0;
+  virtual void exitImplDecl(AHFLParser::ImplDeclContext *ctx) = 0;
+
+  virtual void enterTraitRef(AHFLParser::TraitRefContext *ctx) = 0;
+  virtual void exitTraitRef(AHFLParser::TraitRefContext *ctx) = 0;
+
+  virtual void enterImplItem(AHFLParser::ImplItemContext *ctx) = 0;
+  virtual void exitImplItem(AHFLParser::ImplItemContext *ctx) = 0;
+
+  virtual void enterImplFnItem(AHFLParser::ImplFnItemContext *ctx) = 0;
+  virtual void exitImplFnItem(AHFLParser::ImplFnItemContext *ctx) = 0;
+
+  virtual void enterAssocTypeDef(AHFLParser::AssocTypeDefContext *ctx) = 0;
+  virtual void exitAssocTypeDef(AHFLParser::AssocTypeDefContext *ctx) = 0;
+
+  virtual void enterAssocConstDef(AHFLParser::AssocConstDefContext *ctx) = 0;
+  virtual void exitAssocConstDef(AHFLParser::AssocConstDefContext *ctx) = 0;
 
   virtual void enterBlock(AHFLParser::BlockContext *ctx) = 0;
   virtual void exitBlock(AHFLParser::BlockContext *ctx) = 0;
@@ -242,6 +332,39 @@ public:
   virtual void enterPrimaryExpr(AHFLParser::PrimaryExprContext *ctx) = 0;
   virtual void exitPrimaryExpr(AHFLParser::PrimaryExprContext *ctx) = 0;
 
+  virtual void enterMatchExpr(AHFLParser::MatchExprContext *ctx) = 0;
+  virtual void exitMatchExpr(AHFLParser::MatchExprContext *ctx) = 0;
+
+  virtual void enterMatchArm(AHFLParser::MatchArmContext *ctx) = 0;
+  virtual void exitMatchArm(AHFLParser::MatchArmContext *ctx) = 0;
+
+  virtual void enterPattern(AHFLParser::PatternContext *ctx) = 0;
+  virtual void exitPattern(AHFLParser::PatternContext *ctx) = 0;
+
+  virtual void enterOrPattern(AHFLParser::OrPatternContext *ctx) = 0;
+  virtual void exitOrPattern(AHFLParser::OrPatternContext *ctx) = 0;
+
+  virtual void enterConcatPattern(AHFLParser::ConcatPatternContext *ctx) = 0;
+  virtual void exitConcatPattern(AHFLParser::ConcatPatternContext *ctx) = 0;
+
+  virtual void enterLiteralPattern(AHFLParser::LiteralPatternContext *ctx) = 0;
+  virtual void exitLiteralPattern(AHFLParser::LiteralPatternContext *ctx) = 0;
+
+  virtual void enterVariantPattern(AHFLParser::VariantPatternContext *ctx) = 0;
+  virtual void exitVariantPattern(AHFLParser::VariantPatternContext *ctx) = 0;
+
+  virtual void enterWildcardPattern(AHFLParser::WildcardPatternContext *ctx) = 0;
+  virtual void exitWildcardPattern(AHFLParser::WildcardPatternContext *ctx) = 0;
+
+  virtual void enterBindingPattern(AHFLParser::BindingPatternContext *ctx) = 0;
+  virtual void exitBindingPattern(AHFLParser::BindingPatternContext *ctx) = 0;
+
+  virtual void enterTuplePattern(AHFLParser::TuplePatternContext *ctx) = 0;
+  virtual void exitTuplePattern(AHFLParser::TuplePatternContext *ctx) = 0;
+
+  virtual void enterPatternList(AHFLParser::PatternListContext *ctx) = 0;
+  virtual void exitPatternList(AHFLParser::PatternListContext *ctx) = 0;
+
   virtual void enterPathExpr(AHFLParser::PathExprContext *ctx) = 0;
   virtual void exitPathExpr(AHFLParser::PathExprContext *ctx) = 0;
 
@@ -275,6 +398,9 @@ public:
   virtual void enterDurationLiteral(AHFLParser::DurationLiteralContext *ctx) = 0;
   virtual void exitDurationLiteral(AHFLParser::DurationLiteralContext *ctx) = 0;
 
+  virtual void enterStructLiteral(AHFLParser::StructLiteralContext *ctx) = 0;
+  virtual void exitStructLiteral(AHFLParser::StructLiteralContext *ctx) = 0;
+
   virtual void enterListLiteral(AHFLParser::ListLiteralContext *ctx) = 0;
   virtual void exitListLiteral(AHFLParser::ListLiteralContext *ctx) = 0;
 
@@ -289,9 +415,6 @@ public:
 
   virtual void enterMapEntry(AHFLParser::MapEntryContext *ctx) = 0;
   virtual void exitMapEntry(AHFLParser::MapEntryContext *ctx) = 0;
-
-  virtual void enterStructLiteral(AHFLParser::StructLiteralContext *ctx) = 0;
-  virtual void exitStructLiteral(AHFLParser::StructLiteralContext *ctx) = 0;
 
   virtual void enterStructInitList(AHFLParser::StructInitListContext *ctx) = 0;
   virtual void exitStructInitList(AHFLParser::StructInitListContext *ctx) = 0;

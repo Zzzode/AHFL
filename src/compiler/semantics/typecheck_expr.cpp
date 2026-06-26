@@ -412,6 +412,15 @@ class ExpressionCheckerServices final {
         if (receiver_key.empty()) {
             return candidates;
         }
+        // The receiver's nominal symbol (if any) is used to match generic impl
+        // targets like `impl<T> Option<T> { ... }` against a concrete receiver
+        // like `Option<Int>`. An exact normalize_type_key equality would never
+        // match in that case because the impl target carries a type-variable
+        // sub-key while the receiver has a primitive/structural sub-key. The
+        // nominal-head match is safe because the coherence checker already
+        // guarantees at most one inherent impl per nominal-head per module,
+        // and the dispatch stage 1/2 gates on candidate uniqueness anyway.
+        const auto receiver_nominal = nominal_symbol_of_type(receiver_type);
 
         // (1) Concrete impls registered in the environment (P3 base surface).
         for (const auto &[impl_index, impl] : environment_.impls()) {
@@ -419,7 +428,19 @@ class ExpressionCheckerServices final {
             if (impl.target_type == nullptr) {
                 continue;
             }
-            if (TypeEnvironment::normalize_type_key(*impl.target_type) != receiver_key) {
+            bool key_match =
+                TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
+            bool nominal_match = false;
+            if (!key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
+                *receiver_nominal == *impl.target_symbol) {
+                // Generic impl (e.g. `impl<T> Option<T>`) vs concrete receiver
+                // (e.g. `Option<Int>`). Treat as equivalent for candidate
+                // collection; per-method unification in check_impl_method_call
+                // then specialises the generic signature to the concrete type
+                // arguments of the receiver.
+                nominal_match = true;
+            }
+            if (!key_match && !nominal_match) {
                 continue;
             }
             if (const auto *method = find_method_ptr(impl, method_name); method != nullptr) {

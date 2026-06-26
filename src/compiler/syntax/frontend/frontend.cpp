@@ -870,6 +870,21 @@ class ProgramBuilder {
             context,
             identifier_text(require(context.identifier(), "impl fn name is missing")));
 
+        // P5 / BLK-01: @builtin attribute on impl methods. Semantics are
+        // identical to the module-level @builtin attribute; the name maps to
+        // a compiler/runtime builtin hook. Stored on the same FnDecl field so
+        // downstream semantic passes can reuse a single inspection point.
+        if (const auto builtin_attr = borrow(context.builtinAttr())) {
+            if (const auto str_lit = borrow(builtin_attr->get().STRING_LITERAL())) {
+                std::string raw = text_of(str_lit->get());
+                if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
+                    declaration->builtin_name = raw.substr(1, raw.size() - 2);
+                } else {
+                    declaration->builtin_name = raw;
+                }
+            }
+        }
+
         if (const auto type_params = borrow(context.typeParams())) {
             declaration->type_params = build_type_params(type_params->get());
         }
@@ -886,9 +901,19 @@ class ProgramBuilder {
             declaration->where_clause = build_where_clause(where_clause->get());
         }
 
-        declaration->body =
-            build_block_syntax(require(require(context.fnBody(), "impl fn body is missing").block(),
-                                       "impl fn body block is missing"));
+        // Body is mandatory for normal impl methods; the `;` prototype
+        // shorthand is accepted only when the method carries a @builtin
+        // attribute so the compiler can synthesise lowering to the C++ hook
+        // directly (matching module-level `@builtin(...) fn name(...);`).
+        if (const auto body = borrow(context.fnBody())) {
+            declaration->body = build_block_syntax(
+                require(body->get().block(), "impl fn body block is missing"));
+        } else {
+            // Optional semicolon alternative: body is left nullptr so the
+            // semantic pass can unambiguously detect the prototype-shape
+            // @builtin impl method and skip body typecheck.
+            declaration->body = nullptr;
+        }
 
         return declaration;
     }

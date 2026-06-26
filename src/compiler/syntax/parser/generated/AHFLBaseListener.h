@@ -1,5 +1,5 @@
 
-// Generated from AHFL.g4 by ANTLR 4.13.2
+// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -27,6 +27,9 @@ public:
 
   virtual void enterImportDecl(AHFLParser::ImportDeclContext * /*ctx*/) override { }
   virtual void exitImportDecl(AHFLParser::ImportDeclContext * /*ctx*/) override { }
+
+  virtual void enterIdentifier(AHFLParser::IdentifierContext * /*ctx*/) override { }
+  virtual void exitIdentifier(AHFLParser::IdentifierContext * /*ctx*/) override { }
 
   virtual void enterQualifiedIdent(AHFLParser::QualifiedIdentContext * /*ctx*/) override { }
   virtual void exitQualifiedIdent(AHFLParser::QualifiedIdentContext * /*ctx*/) override { }
@@ -66,6 +69,12 @@ public:
 
   virtual void enterEnumVariant(AHFLParser::EnumVariantContext * /*ctx*/) override { }
   virtual void exitEnumVariant(AHFLParser::EnumVariantContext * /*ctx*/) override { }
+
+  virtual void enterTypeList(AHFLParser::TypeListContext * /*ctx*/) override { }
+  virtual void exitTypeList(AHFLParser::TypeListContext * /*ctx*/) override { }
+
+  virtual void enterFnType(AHFLParser::FnTypeContext * /*ctx*/) override { }
+  virtual void exitFnType(AHFLParser::FnTypeContext * /*ctx*/) override { }
 
   virtual void enterCapabilityDecl(AHFLParser::CapabilityDeclContext * /*ctx*/) override { }
   virtual void exitCapabilityDecl(AHFLParser::CapabilityDeclContext * /*ctx*/) override { }
@@ -145,6 +154,9 @@ public:
   virtual void enterForbidDecl(AHFLParser::ForbidDeclContext * /*ctx*/) override { }
   virtual void exitForbidDecl(AHFLParser::ForbidDeclContext * /*ctx*/) override { }
 
+  virtual void enterDecreasesDecl(AHFLParser::DecreasesDeclContext * /*ctx*/) override { }
+  virtual void exitDecreasesDecl(AHFLParser::DecreasesDeclContext * /*ctx*/) override { }
+
   virtual void enterFlowDecl(AHFLParser::FlowDeclContext * /*ctx*/) override { }
   virtual void exitFlowDecl(AHFLParser::FlowDeclContext * /*ctx*/) override { }
 
@@ -180,6 +192,84 @@ public:
 
   virtual void enterWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext * /*ctx*/) override { }
   virtual void exitWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext * /*ctx*/) override { }
+
+  virtual void enterBuiltinAttr(AHFLParser::BuiltinAttrContext * /*ctx*/) override { }
+  virtual void exitBuiltinAttr(AHFLParser::BuiltinAttrContext * /*ctx*/) override { }
+
+  virtual void enterFnDecl(AHFLParser::FnDeclContext * /*ctx*/) override { }
+  virtual void exitFnDecl(AHFLParser::FnDeclContext * /*ctx*/) override { }
+
+  virtual void enterTypeParams(AHFLParser::TypeParamsContext * /*ctx*/) override { }
+  virtual void exitTypeParams(AHFLParser::TypeParamsContext * /*ctx*/) override { }
+
+  virtual void enterTypeParam(AHFLParser::TypeParamContext * /*ctx*/) override { }
+  virtual void exitTypeParam(AHFLParser::TypeParamContext * /*ctx*/) override { }
+
+  virtual void enterTypeBoundList(AHFLParser::TypeBoundListContext * /*ctx*/) override { }
+  virtual void exitTypeBoundList(AHFLParser::TypeBoundListContext * /*ctx*/) override { }
+
+  virtual void enterFnBody(AHFLParser::FnBodyContext * /*ctx*/) override { }
+  virtual void exitFnBody(AHFLParser::FnBodyContext * /*ctx*/) override { }
+
+  virtual void enterEffectClause(AHFLParser::EffectClauseContext * /*ctx*/) override { }
+  virtual void exitEffectClause(AHFLParser::EffectClauseContext * /*ctx*/) override { }
+
+  virtual void enterEffectSpec(AHFLParser::EffectSpecContext * /*ctx*/) override { }
+  virtual void exitEffectSpec(AHFLParser::EffectSpecContext * /*ctx*/) override { }
+
+  virtual void enterCapabilityRef(AHFLParser::CapabilityRefContext * /*ctx*/) override { }
+  virtual void exitCapabilityRef(AHFLParser::CapabilityRefContext * /*ctx*/) override { }
+
+  virtual void enterDecreasesClause(AHFLParser::DecreasesClauseContext * /*ctx*/) override { }
+  virtual void exitDecreasesClause(AHFLParser::DecreasesClauseContext * /*ctx*/) override { }
+
+  virtual void enterWhereClause(AHFLParser::WhereClauseContext * /*ctx*/) override { }
+  virtual void exitWhereClause(AHFLParser::WhereClauseContext * /*ctx*/) override { }
+
+  virtual void enterWhereConstraint(AHFLParser::WhereConstraintContext * /*ctx*/) override { }
+  virtual void exitWhereConstraint(AHFLParser::WhereConstraintContext * /*ctx*/) override { }
+
+  virtual void enterLambdaExpr(AHFLParser::LambdaExprContext * /*ctx*/) override { }
+  virtual void exitLambdaExpr(AHFLParser::LambdaExprContext * /*ctx*/) override { }
+
+  virtual void enterLambdaParamList(AHFLParser::LambdaParamListContext * /*ctx*/) override { }
+  virtual void exitLambdaParamList(AHFLParser::LambdaParamListContext * /*ctx*/) override { }
+
+  virtual void enterLambdaParam(AHFLParser::LambdaParamContext * /*ctx*/) override { }
+  virtual void exitLambdaParam(AHFLParser::LambdaParamContext * /*ctx*/) override { }
+
+  virtual void enterTraitDecl(AHFLParser::TraitDeclContext * /*ctx*/) override { }
+  virtual void exitTraitDecl(AHFLParser::TraitDeclContext * /*ctx*/) override { }
+
+  virtual void enterTraitItem(AHFLParser::TraitItemContext * /*ctx*/) override { }
+  virtual void exitTraitItem(AHFLParser::TraitItemContext * /*ctx*/) override { }
+
+  virtual void enterTraitFnItem(AHFLParser::TraitFnItemContext * /*ctx*/) override { }
+  virtual void exitTraitFnItem(AHFLParser::TraitFnItemContext * /*ctx*/) override { }
+
+  virtual void enterAssocTypeItem(AHFLParser::AssocTypeItemContext * /*ctx*/) override { }
+  virtual void exitAssocTypeItem(AHFLParser::AssocTypeItemContext * /*ctx*/) override { }
+
+  virtual void enterAssocConstItem(AHFLParser::AssocConstItemContext * /*ctx*/) override { }
+  virtual void exitAssocConstItem(AHFLParser::AssocConstItemContext * /*ctx*/) override { }
+
+  virtual void enterImplDecl(AHFLParser::ImplDeclContext * /*ctx*/) override { }
+  virtual void exitImplDecl(AHFLParser::ImplDeclContext * /*ctx*/) override { }
+
+  virtual void enterTraitRef(AHFLParser::TraitRefContext * /*ctx*/) override { }
+  virtual void exitTraitRef(AHFLParser::TraitRefContext * /*ctx*/) override { }
+
+  virtual void enterImplItem(AHFLParser::ImplItemContext * /*ctx*/) override { }
+  virtual void exitImplItem(AHFLParser::ImplItemContext * /*ctx*/) override { }
+
+  virtual void enterImplFnItem(AHFLParser::ImplFnItemContext * /*ctx*/) override { }
+  virtual void exitImplFnItem(AHFLParser::ImplFnItemContext * /*ctx*/) override { }
+
+  virtual void enterAssocTypeDef(AHFLParser::AssocTypeDefContext * /*ctx*/) override { }
+  virtual void exitAssocTypeDef(AHFLParser::AssocTypeDefContext * /*ctx*/) override { }
+
+  virtual void enterAssocConstDef(AHFLParser::AssocConstDefContext * /*ctx*/) override { }
+  virtual void exitAssocConstDef(AHFLParser::AssocConstDefContext * /*ctx*/) override { }
 
   virtual void enterBlock(AHFLParser::BlockContext * /*ctx*/) override { }
   virtual void exitBlock(AHFLParser::BlockContext * /*ctx*/) override { }
@@ -244,6 +334,39 @@ public:
   virtual void enterPrimaryExpr(AHFLParser::PrimaryExprContext * /*ctx*/) override { }
   virtual void exitPrimaryExpr(AHFLParser::PrimaryExprContext * /*ctx*/) override { }
 
+  virtual void enterMatchExpr(AHFLParser::MatchExprContext * /*ctx*/) override { }
+  virtual void exitMatchExpr(AHFLParser::MatchExprContext * /*ctx*/) override { }
+
+  virtual void enterMatchArm(AHFLParser::MatchArmContext * /*ctx*/) override { }
+  virtual void exitMatchArm(AHFLParser::MatchArmContext * /*ctx*/) override { }
+
+  virtual void enterPattern(AHFLParser::PatternContext * /*ctx*/) override { }
+  virtual void exitPattern(AHFLParser::PatternContext * /*ctx*/) override { }
+
+  virtual void enterOrPattern(AHFLParser::OrPatternContext * /*ctx*/) override { }
+  virtual void exitOrPattern(AHFLParser::OrPatternContext * /*ctx*/) override { }
+
+  virtual void enterConcatPattern(AHFLParser::ConcatPatternContext * /*ctx*/) override { }
+  virtual void exitConcatPattern(AHFLParser::ConcatPatternContext * /*ctx*/) override { }
+
+  virtual void enterLiteralPattern(AHFLParser::LiteralPatternContext * /*ctx*/) override { }
+  virtual void exitLiteralPattern(AHFLParser::LiteralPatternContext * /*ctx*/) override { }
+
+  virtual void enterVariantPattern(AHFLParser::VariantPatternContext * /*ctx*/) override { }
+  virtual void exitVariantPattern(AHFLParser::VariantPatternContext * /*ctx*/) override { }
+
+  virtual void enterWildcardPattern(AHFLParser::WildcardPatternContext * /*ctx*/) override { }
+  virtual void exitWildcardPattern(AHFLParser::WildcardPatternContext * /*ctx*/) override { }
+
+  virtual void enterBindingPattern(AHFLParser::BindingPatternContext * /*ctx*/) override { }
+  virtual void exitBindingPattern(AHFLParser::BindingPatternContext * /*ctx*/) override { }
+
+  virtual void enterTuplePattern(AHFLParser::TuplePatternContext * /*ctx*/) override { }
+  virtual void exitTuplePattern(AHFLParser::TuplePatternContext * /*ctx*/) override { }
+
+  virtual void enterPatternList(AHFLParser::PatternListContext * /*ctx*/) override { }
+  virtual void exitPatternList(AHFLParser::PatternListContext * /*ctx*/) override { }
+
   virtual void enterPathExpr(AHFLParser::PathExprContext * /*ctx*/) override { }
   virtual void exitPathExpr(AHFLParser::PathExprContext * /*ctx*/) override { }
 
@@ -277,6 +400,9 @@ public:
   virtual void enterDurationLiteral(AHFLParser::DurationLiteralContext * /*ctx*/) override { }
   virtual void exitDurationLiteral(AHFLParser::DurationLiteralContext * /*ctx*/) override { }
 
+  virtual void enterStructLiteral(AHFLParser::StructLiteralContext * /*ctx*/) override { }
+  virtual void exitStructLiteral(AHFLParser::StructLiteralContext * /*ctx*/) override { }
+
   virtual void enterListLiteral(AHFLParser::ListLiteralContext * /*ctx*/) override { }
   virtual void exitListLiteral(AHFLParser::ListLiteralContext * /*ctx*/) override { }
 
@@ -291,9 +417,6 @@ public:
 
   virtual void enterMapEntry(AHFLParser::MapEntryContext * /*ctx*/) override { }
   virtual void exitMapEntry(AHFLParser::MapEntryContext * /*ctx*/) override { }
-
-  virtual void enterStructLiteral(AHFLParser::StructLiteralContext * /*ctx*/) override { }
-  virtual void exitStructLiteral(AHFLParser::StructLiteralContext * /*ctx*/) override { }
 
   virtual void enterStructInitList(AHFLParser::StructInitListContext * /*ctx*/) override { }
   virtual void exitStructInitList(AHFLParser::StructInitListContext * /*ctx*/) override { }
