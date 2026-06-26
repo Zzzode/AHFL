@@ -27,6 +27,41 @@ import std::traits as traits;
 type JDecimal = Decimal(0);
 
 // ===========================================================================
+// Compiler-internal builtin hooks (not user-facing). These back all of the
+// arithmetic / comparison / conversion wrappers below.
+// ===========================================================================
+
+@builtin("decimal_raw_make")
+fn decimal_raw_make(mantissa: Int, scale: Int) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_add")
+fn decimal_raw_add(a: JDecimal, b: JDecimal) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_sub")
+fn decimal_raw_sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_mul")
+fn decimal_raw_mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_scale")
+fn decimal_raw_scale(a: Decimal(0)) -> Int effect Pure;
+
+@builtin("decimal_raw_with_scale")
+fn decimal_raw_with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_quantize")
+fn decimal_raw_quantize(a: Decimal(0), new_scale: Int, mode: Int) -> JDecimal effect Pure;
+
+@builtin("decimal_raw_eq")
+fn decimal_raw_eq(a: JDecimal, b: JDecimal) -> Bool effect Pure;
+
+@builtin("decimal_raw_cmp")
+fn decimal_raw_cmp(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure;
+
+@builtin("decimal_raw_to_string")
+fn decimal_raw_to_string(a: Decimal(0)) -> String effect Pure;
+
+// ===========================================================================
 // RoundingMode (API §7.3).
 //
 // Used by `quantize` to describe how the last retained digit is rounded when
@@ -57,8 +92,7 @@ enum RoundingMode {
 // ===========================================================================
 
 fn make(n: Int, scale: Int) -> JDecimal effect Pure decreases 0 {
-    // TODO(P6a): @builtin("decimal_raw_make") once builtin table exposes it.
-    return make(0, 0);
+    return decimal_raw_make(n, scale);
 }
 
 fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
@@ -75,19 +109,16 @@ fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
 // ===========================================================================
 
 fn add(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
-    // TODO(P6a): @builtin("decimal_raw_add")(a, b, scale_of(a))
-    return make(0, 0);
+    return decimal_raw_add(a, b);
 }
 
 fn sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
-    // TODO(P6a): @builtin("decimal_raw_sub")(a, b, scale_of(a))
-    return make(0, 0);
+    return decimal_raw_sub(a, b);
 }
 
 fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     // Product scale = scale_of(a) + scale_of(b).
-    // TODO(P6a): @builtin("decimal_raw_mul")(a, b, scale_of(a) + scale_of(b))
-    return make(0, 0);
+    return decimal_raw_mul(a, b);
 }
 
 // ===========================================================================
@@ -95,22 +126,32 @@ fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
 // ===========================================================================
 
 fn scale_of(a: Decimal(0)) -> Int effect Pure decreases 0 {
-    // TODO(P6a): @builtin("decimal_raw_scale")(a)
-    return 0;
+    return decimal_raw_scale(a);
 }
 
 fn with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure decreases 0 {
     // Trivially succeeds when new_scale >= scale_of(a); otherwise falls back
     // to quantize(a, new_scale, RoundingMode::Truncate).
-    // TODO(P6a): @builtin("decimal_raw_with_scale")(a, new_scale)
-    return make(0, 0);
+    return decimal_raw_with_scale(a, new_scale);
+}
+
+// Ordinal helper for RoundingMode: Ceiling=0 Floor=1 Truncate=2
+// HalfUp=3 HalfDown=4 HalfEven=5.
+fn mode_index(m: RoundingMode) -> Int effect Pure decreases 0 {
+    return match m {
+        Ceiling => 0,
+        Floor => 1,
+        Truncate => 2,
+        HalfUp => 3,
+        HalfDown => 4,
+        HalfEven => 5,
+    };
 }
 
 fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
     -> JDecimal effect Pure decreases 0
 {
-    // TODO(P6a): @builtin("decimal_raw_quantize")(a, new_scale, mode_index(mode))
-    return make(0, 0);
+    return decimal_raw_quantize(a, new_scale, mode_index(mode));
 }
 
 // ===========================================================================
@@ -122,8 +163,9 @@ fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
 // ===========================================================================
 
 fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
-    // TODO(P6a): a.compare(b) via Ord trait dispatch.
-    return cmp::Ordering::Equal;
+    // TODO(P6a-Ord): forward to Ord trait dispatch once impl on primitive
+    // Decimal lands; for now delegate directly to the raw builtin.
+    return decimal_raw_cmp(a, b);
 }
 
 // ===========================================================================
@@ -139,8 +181,7 @@ fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
 impl Decimal(0) {
     // ---- trait: Eq ---------------------------------------------------------
     fn eq(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
-        // TODO(P6a): @builtin("decimal_raw_eq") + scale equality.
-        return true;
+        return decimal_raw_eq(self, other);
     }
     fn ne(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return not self.eq(other);
@@ -148,8 +189,9 @@ impl Decimal(0) {
 
     // ---- trait: Ord --------------------------------------------------------
     fn compare(self, other: Decimal(0)) -> cmp::Ordering effect Pure decreases 0 {
-        // TODO(P6a): @builtin("decimal_raw_cmp")
-        return cmp::Ordering::Equal;
+        // TODO(P6a-Ord): wire into trait-resolver default-method binding
+        // (P6a-01 / PHASE 4b) so `a.lt(b)` and friends resolve generically.
+        return decimal_raw_cmp(self, other);
     }
     fn lt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return self.compare(other) == cmp::Ordering::Less;
@@ -172,15 +214,35 @@ impl Decimal(0) {
         // Hash::hash(self: Int) is declared with a single Int receiver in
         // std/traits; non-Int impls need a distinct arity until trait-level
         // generics support (PHASE B). Dummy Unit keeps arity unique.
-        // TODO(P6a): real hash combining unscaled + scale.
-        return 0;
+        //
+        // Combines scale and mantissa sign via simple integer arithmetic (XOR is not
+        // available in the P3 expression grammar, so we multiply-shift instead). For
+        // unknown values (e.g. user Decimal literals whose internal spelling
+        // differs from the decimal_raw_* canonical encoding) we still produce a
+        // deterministic Int using the raw scale and a mantissa sign extracted
+        // via compare, so hash remains a total function even before trait
+        // dispatch binds uniformly.
+        // TODO(P6a-Ord): switch to FNV / cityhash + full mantissa bits
+        // once we can introspect mantissa directly in AHFL (PHASE B)
+        let scale_val: Int = scale_of(self);
+        let with_0: JDecimal = with_scale(self, 0);
+        let zero_cmp: cmp::Ordering = compare(with_0, make(0, 0));
+        let mant_sign: Int = match zero_cmp {
+            Less => -1,
+            Equal => 0,
+            Greater => 1,
+        };
+        // Non-XOR combine:
+        let prime: Int = 1099511628211;
+        let h1: Int = (scale_val + 1469598103934665603) * prime;
+        let h2: Int = (h1 + mant_sign * 131) * prime;
+        return h2 + 0;
     }
 
     // ---- trait: Display ----------------------------------------------------
     fn fmt(self, dummy: Unit) -> String effect Pure decreases 0 {
         // Display::fmt(self: Int) occupies arity 1; arity 2 distinguishes
         // Decimal until trait generics.
-        // TODO(P6a): @builtin("decimal_raw_to_string")
-        return "";
+        return decimal_raw_to_string(self);
     }
 }

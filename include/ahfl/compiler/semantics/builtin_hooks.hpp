@@ -35,6 +35,23 @@ inline constexpr std::array kKnownBuiltinHooks{
     std::string_view{"uuid_new_v4"},
     std::string_view{"uuid_parse"},
     std::string_view{"uuid_to_string"},
+    std::string_view{"int_to_string"},
+    std::string_view{"bool_to_string"},
+    std::string_view{"float_to_string"},
+    std::string_view{"json_parse_raw"},
+    std::string_view{"json_emit_raw"},
+    std::string_view{"decimal_raw_make"},
+    std::string_view{"decimal_raw_add"},
+    std::string_view{"decimal_raw_sub"},
+    std::string_view{"decimal_raw_mul"},
+    std::string_view{"decimal_raw_scale"},
+    std::string_view{"decimal_raw_with_scale"},
+    std::string_view{"decimal_raw_quantize"},
+    std::string_view{"decimal_raw_eq"},
+    std::string_view{"decimal_raw_cmp"},
+    std::string_view{"decimal_raw_to_string"},
+    std::string_view{"string_raw_compare"},
+    std::string_view{"cmp_raw_compare"},
 };
 
 [[nodiscard]] inline constexpr const auto &known_builtin_hooks() noexcept {

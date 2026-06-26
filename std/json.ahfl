@@ -54,6 +54,17 @@ enum JsonValue {
 }
 
 // ===========================================================================
+// Compiler-internal builtin hooks (not user-facing). The evaluator routes
+// parse/emit through these; user code uses the module-level parse/emit below.
+// ===========================================================================
+
+@builtin("json_parse_raw")
+fn json_parse_raw(s: String) -> Option<JsonValue> effect Pure;
+
+@builtin("json_emit_raw")
+fn json_emit_raw(v: JsonValue) -> String effect Pure;
+
+// ===========================================================================
 // Parse / serialize (RFC §10.3).
 //
 // `parse` wraps the future `@builtin("json_parse_raw")` builtin. Returns
@@ -67,13 +78,11 @@ enum JsonValue {
 // ===========================================================================
 
 fn parse(s: String) -> Option<JsonValue> effect Pure decreases 0 {
-    // TODO(P6a): @builtin("json_parse_raw")(s)
-    return option::Option::None;
+    return json_parse_raw(s);
 }
 
 fn emit(v: JsonValue) -> String effect Pure decreases 0 {
-    // TODO(P6a): @builtin("json_emit_raw")(v)
-    return "";
+    return json_emit_raw(v);
 }
 
 // ===========================================================================

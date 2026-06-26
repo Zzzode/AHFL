@@ -11,6 +11,20 @@ type List<T> = collections::List<T>;
 type Option<T> = option::Option<T>;
 
 // ===========================================================================
+// Compiler-internal builtin hooks for primitive-to-string conversion.
+// Not user-facing; user code goes through the Display impl blocks below.
+// ===========================================================================
+
+@builtin("int_to_string")
+fn int_to_string(n: Int) -> String effect Pure;
+
+@builtin("bool_to_string")
+fn bool_to_string(b: Bool) -> String effect Pure;
+
+@builtin("float_to_string")
+fn float_to_string(x: Float) -> String effect Pure;
+
+// ===========================================================================
 // DisplayValue — existential wrapper (API §7.2).
 //
 // DisplayValue bundles a value T together with its Display::fmt implementation
@@ -85,23 +99,19 @@ fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
 
 impl Bool {
     fn fmt(self: Bool) -> String effect Pure decreases 0 {
-        // TODO(P6a): lower to bool_to_string builtin; use ternary/match when
-        // field-struct + match on nominal bool becomes available.
-        return "";
+        return bool_to_string(self);
     }
 }
 
 impl Int {
     fn fmt(self: Int) -> String effect Pure decreases 0 {
-        // TODO(P6a): lower to int_to_string builtin.
-        return "";
+        return int_to_string(self);
     }
 }
 
 impl Float {
     fn fmt(self: Float) -> String effect Pure decreases 0 {
-        // TODO(P6a): lower to float_to_string builtin.
-        return "";
+        return float_to_string(self);
     }
 }
 

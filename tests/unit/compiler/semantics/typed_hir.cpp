@@ -2133,6 +2133,10 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     const std::string main_source = R"AHFL(
 module app::main;
 import std::collections as collections;
+import std::cmp as cmp;
+import std::decimal as decimal;
+import std::fmt as fmt;
+import std::json as json;
 import std::option as option;
 import std::result as results;
 import std::string as strings;

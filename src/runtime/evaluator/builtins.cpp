@@ -2,11 +2,16 @@
 #include "runtime/evaluator/evaluator.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -381,6 +386,88 @@ EvalResult builtin_int_to_string(const std::vector<Value> &args, const EvalConte
     return make_error("int_to_string: argument must be an Int");
 }
 
+/// bool_to_string(b: Bool) -> String
+EvalResult builtin_bool_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    if (auto *bv = std::get_if<BoolValue>(&args[0].node)) {
+        return EvalResult{make_string(bv->value ? "true" : "false"), {}};
+    }
+    return make_error("bool_to_string: argument must be a Bool");
+}
+
+/// float_to_string(x: Float) -> String
+EvalResult builtin_float_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    if (auto *fv = std::get_if<FloatValue>(&args[0].node)) {
+        std::ostringstream oss;
+        oss << fv->value;
+        return EvalResult{make_string(oss.str()), {}};
+    }
+    return make_error("float_to_string: argument must be a Float");
+}
+
+/// string_raw_compare(a: String, b: String) -> Int (-1/0/1)
+EvalResult builtin_string_raw_compare(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<StringValue>(&args[0].node);
+    auto *b = std::get_if<StringValue>(&args[1].node);
+    if (!a || !b)
+        return make_error("string_raw_compare: both arguments must be Strings");
+    int c = a->value.compare(b->value);
+    int64_t sign = (c < 0) ? -1 : (c > 0) ? 1 : 0;
+    return EvalResult{make_int(sign), {}};
+}
+
+/// cmp_raw_compare<T>(left: T, right: T) -> Ordering
+///
+/// P6a pragmatic generic comparison: runtime if-cascade over primitive types
+/// (Int / Float / Bool / String). For unknown types returns Equal identity so
+/// min / max / clamp still terminate deterministically until Ord trait dispatch
+/// lands (see std/cmp.ahfl TODO(P6a-Ord) marker).
+EvalResult builtin_cmp_raw_compare(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto &lhs = args[0];
+    const auto &rhs = args[1];
+
+    if (std::holds_alternative<IntValue>(lhs.node) &&
+        std::holds_alternative<IntValue>(rhs.node)) {
+        int64_t a = std::get<IntValue>(lhs.node).value;
+        int64_t b = std::get<IntValue>(rhs.node).value;
+        const char *v = (a < b) ? "Less" : (a > b) ? "Greater" : "Equal";
+        return EvalResult{make_enum("std::cmp::Ordering", v), {}};
+    }
+    if (std::holds_alternative<FloatValue>(lhs.node) &&
+        std::holds_alternative<FloatValue>(rhs.node)) {
+        double a = std::get<FloatValue>(lhs.node).value;
+        double b = std::get<FloatValue>(rhs.node).value;
+        const char *v = (a < b) ? "Less" : (a > b) ? "Greater" : "Equal";
+        return EvalResult{make_enum("std::cmp::Ordering", v), {}};
+    }
+    if (std::holds_alternative<BoolValue>(lhs.node) &&
+        std::holds_alternative<BoolValue>(rhs.node)) {
+        bool a = std::get<BoolValue>(lhs.node).value;
+        bool b = std::get<BoolValue>(rhs.node).value;
+        const char *v = (!a && b)   ? "Less"
+                         : (a && !b) ? "Greater"
+                                     : "Equal";
+        return EvalResult{make_enum("std::cmp::Ordering", v), {}};
+    }
+    if (std::holds_alternative<StringValue>(lhs.node) &&
+        std::holds_alternative<StringValue>(rhs.node)) {
+        const auto &a = std::get<StringValue>(lhs.node).value;
+        const auto &b = std::get<StringValue>(rhs.node).value;
+        int c = a.compare(b);
+        const char *v = (c < 0) ? "Less" : (c > 0) ? "Greater" : "Equal";
+        return EvalResult{make_enum("std::cmp::Ordering", v), {}};
+    }
+    // Identity fallback for unknown T: Equal.
+    return EvalResult{make_enum("std::cmp::Ordering", "Equal"), {}};
+}
+
 // ----------------------------------------------------------------------------
 // Time builtins
 // ----------------------------------------------------------------------------
@@ -488,23 +575,739 @@ EvalResult builtin_uuid_to_string(const std::vector<Value> &args, const EvalCont
 }
 
 // ----------------------------------------------------------------------------
-// JSON builtins (placeholder stubs — full implementation deferred)
+// JSON builtins — recursive-descent parser + emitter.
 // ----------------------------------------------------------------------------
+
+namespace json_impl {
+
+using JsonV = Value; // runtime EnumValue carrying std::json::JsonValue
+
+// ---- JSON text builder (escapes per RFC 8259) ----
+void json_escape(std::string &out, std::string_view in) {
+    out.push_back('"');
+    for (char c : in) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else {
+                out.push_back(c);
+            }
+        }
+    }
+    out.push_back('"');
+}
+
+[[nodiscard]] bool emit_value(const JsonV &v, std::string &out);
+
+[[nodiscard]] bool emit_enum_payload_list(const std::vector<std::unique_ptr<Value>> &items,
+                                          std::string &out) {
+    out.push_back('[');
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i != 0) out.push_back(',');
+        if (!emit_value(*items[i], out)) return false;
+    }
+    out.push_back(']');
+    return true;
+}
+
+[[nodiscard]] bool emit_value(const JsonV &v, std::string &out) {
+    if (auto *ev = std::get_if<EnumValue>(&v.node)) {
+        const auto &var = ev->variant;
+        if (var == "JNull") {
+            out += "null";
+            return true;
+        }
+        if (var == "JBool") {
+            const Value *p = ev->associated.get();
+            if (p == nullptr) return false;
+            const auto *bv = std::get_if<BoolValue>(&p->node);
+            if (bv == nullptr) return false;
+            out += (bv->value ? "true" : "false");
+            return true;
+        }
+        if (var == "JInt") {
+            const Value *p = ev->associated.get();
+            if (p == nullptr) return false;
+            const auto *iv = std::get_if<IntValue>(&p->node);
+            if (iv == nullptr) return false;
+            out += std::to_string(iv->value);
+            return true;
+        }
+        if (var == "JFloat") {
+            const Value *p = ev->associated.get();
+            if (p == nullptr) return false;
+            const auto *fv = std::get_if<FloatValue>(&p->node);
+            if (fv == nullptr) return false;
+            std::ostringstream oss;
+            oss << fv->value;
+            out += oss.str();
+            return true;
+        }
+        if (var == "JText") {
+            const Value *p = ev->associated.get();
+            if (p == nullptr) return false;
+            const auto *sv = std::get_if<StringValue>(&p->node);
+            if (sv == nullptr) return false;
+            json_escape(out, sv->value);
+            return true;
+        }
+        if (var == "JList") {
+            // Payload is a List<...> via associated->ListValue or a payload vector.
+            if (ev->associated) {
+                if (const auto *lv = std::get_if<ListValue>(&ev->associated->node)) {
+                    return emit_enum_payload_list(lv->items, out);
+                }
+            }
+            return emit_enum_payload_list(ev->payload, out);
+        }
+        if (var == "JEntries") {
+            // Emit as a JSON object: key-value pairs.
+            out.push_back('{');
+            if (ev->associated) {
+                if (const auto *mv = std::get_if<MapValue>(&ev->associated->node)) {
+                    for (size_t i = 0; i < mv->entries.size(); ++i) {
+                        if (i != 0) out.push_back(',');
+                        const Value *k = mv->entries[i].first.get();
+                        const auto *ksv = std::get_if<StringValue>(&k->node);
+                        if (ksv == nullptr) return false;
+                        json_escape(out, ksv->value);
+                        out.push_back(':');
+                        if (!emit_value(*mv->entries[i].second, out)) return false;
+                    }
+                }
+            }
+            out.push_back('}');
+            return true;
+        }
+        return false;
+    }
+    // Fallback: any primitive — treat as if user passed a non-JsonValue type.
+    if (std::holds_alternative<IntValue>(v.node)) {
+        out += std::to_string(std::get<IntValue>(v.node).value);
+        return true;
+    }
+    if (std::holds_alternative<FloatValue>(v.node)) {
+        std::ostringstream oss;
+        oss << std::get<FloatValue>(v.node).value;
+        out += oss.str();
+        return true;
+    }
+    if (std::holds_alternative<BoolValue>(v.node)) {
+        out += (std::get<BoolValue>(v.node).value ? "true" : "false");
+        return true;
+    }
+    if (std::holds_alternative<StringValue>(v.node)) {
+        json_escape(out, std::get<StringValue>(v.node).value);
+        return true;
+    }
+    if (std::holds_alternative<NoneValue>(v.node)) {
+        out += "null";
+        return true;
+    }
+    return false;
+}
+
+// ---- Recursive-descent JSON parser ----
+struct Parser {
+    std::string_view src;
+    size_t pos{0};
+    [[nodiscard]] bool eof() const { return pos >= src.size(); }
+    [[nodiscard]] char peek() const { return eof() ? '\0' : src[pos]; }
+    void skip_ws() {
+        while (!eof()) {
+            char c = src[pos];
+            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                ++pos;
+            } else {
+                break;
+            }
+        }
+    }
+    bool expect(char c) {
+        skip_ws();
+        if (!eof() && src[pos] == c) {
+            ++pos;
+            return true;
+        }
+        return false;
+    }
+    bool expect(std::string_view s) {
+        skip_ws();
+        if (pos + s.size() > src.size()) return false;
+        if (src.substr(pos, s.size()) != s) return false;
+        pos += s.size();
+        return true;
+    }
+
+    std::optional<JsonV> parse_value() {
+        skip_ws();
+        char c = peek();
+        if (c == '"') return parse_string();
+        if (c == '{') return parse_object();
+        if (c == '[') return parse_array();
+        if (c == 't' || c == 'f') return parse_bool();
+        if (c == 'n') return parse_null();
+        if (c == '-' || (c >= '0' && c <= '9')) return parse_number();
+        return std::nullopt;
+    }
+
+    std::optional<JsonV> parse_null() {
+        if (expect("null")) {
+            return make_enum("std::json::JsonValue", "JNull");
+        }
+        return std::nullopt;
+    }
+    std::optional<JsonV> parse_bool() {
+        if (expect("true")) {
+            return make_enum("std::json::JsonValue", "JBool",
+                             std::make_unique<Value>(make_bool(true)));
+        }
+        if (expect("false")) {
+            return make_enum("std::json::JsonValue", "JBool",
+                             std::make_unique<Value>(make_bool(false)));
+        }
+        return std::nullopt;
+    }
+    std::optional<JsonV> parse_number() {
+        skip_ws();
+        size_t start = pos;
+        if (!eof() && src[pos] == '-') ++pos;
+        bool is_float = false;
+        if (!eof() && src[pos] == '0') {
+            ++pos;
+        } else {
+            if (eof() || src[pos] < '1' || src[pos] > '9') return std::nullopt;
+            while (!eof() && src[pos] >= '0' && src[pos] <= '9') ++pos;
+        }
+        if (!eof() && src[pos] == '.') {
+            is_float = true;
+            ++pos;
+            if (eof() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
+            while (!eof() && src[pos] >= '0' && src[pos] <= '9') ++pos;
+        }
+        if (!eof() && (src[pos] == 'e' || src[pos] == 'E')) {
+            is_float = true;
+            ++pos;
+            if (!eof() && (src[pos] == '+' || src[pos] == '-')) ++pos;
+            if (eof() || src[pos] < '0' || src[pos] > '9') return std::nullopt;
+            while (!eof() && src[pos] >= '0' && src[pos] <= '9') ++pos;
+        }
+        auto lexeme = std::string(src.substr(start, pos - start));
+        if (is_float) {
+            try {
+                double d = std::stod(lexeme);
+                return make_enum("std::json::JsonValue", "JFloat",
+                                 std::make_unique<Value>(make_float(d)));
+            } catch (...) {
+                return std::nullopt;
+            }
+        } else {
+            try {
+                int64_t i = std::stoll(lexeme);
+                return make_enum("std::json::JsonValue", "JInt",
+                                 std::make_unique<Value>(make_int(i)));
+            } catch (...) {
+                // Overflow — try double.
+                try {
+                    double d = std::stod(lexeme);
+                    return make_enum("std::json::JsonValue", "JFloat",
+                                     std::make_unique<Value>(make_float(d)));
+                } catch (...) {
+                    return std::nullopt;
+                }
+            }
+        }
+    }
+    std::optional<std::string> parse_raw_string() {
+        if (!expect('"')) return std::nullopt;
+        std::string out;
+        while (!eof()) {
+            char c = src[pos++];
+            if (c == '"') return out;
+            if (c == '\\') {
+                if (eof()) return std::nullopt;
+                char e = src[pos++];
+                switch (e) {
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '/': out.push_back('/'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case 'u': {
+                    if (pos + 4 > src.size()) return std::nullopt;
+                    auto hex = src.substr(pos, 4);
+                    pos += 4;
+                    unsigned u = 0;
+                    for (char h : hex) {
+                        u <<= 4;
+                        if (h >= '0' && h <= '9') u |= (h - '0');
+                        else if (h >= 'a' && h <= 'f') u |= (h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') u |= (h - 'A' + 10);
+                        else return std::nullopt;
+                    }
+                    if (u < 0x80) {
+                        out.push_back(static_cast<char>(u));
+                    } else if (u < 0x800) {
+                        out.push_back(static_cast<char>(0xC0 | (u >> 6)));
+                        out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+                    } else {
+                        out.push_back(static_cast<char>(0xE0 | (u >> 12)));
+                        out.push_back(static_cast<char>(0x80 | ((u >> 6) & 0x3F)));
+                        out.push_back(static_cast<char>(0x80 | (u & 0x3F)));
+                    }
+                    break;
+                }
+                default: return std::nullopt;
+                }
+            } else {
+                if (static_cast<unsigned char>(c) < 0x20) return std::nullopt;
+                out.push_back(c);
+            }
+        }
+        return std::nullopt;
+    }
+    std::optional<JsonV> parse_string() {
+        auto s = parse_raw_string();
+        if (!s) return std::nullopt;
+        return make_enum("std::json::JsonValue", "JText",
+                         std::make_unique<Value>(make_string(std::move(*s))));
+    }
+    std::optional<JsonV> parse_array() {
+        if (!expect('[')) return std::nullopt;
+        ListValue list;
+        skip_ws();
+        if (peek() != ']') {
+            while (true) {
+                auto v = parse_value();
+                if (!v) return std::nullopt;
+                list.items.push_back(std::make_unique<Value>(std::move(*v)));
+                skip_ws();
+                if (peek() == ',') {
+                    ++pos;
+                    continue;
+                }
+                break;
+            }
+        }
+        if (!expect(']')) return std::nullopt;
+        auto list_val = std::make_unique<Value>();
+        list_val->node = std::move(list);
+        return make_enum("std::json::JsonValue", "JList", std::move(list_val));
+    }
+    std::optional<JsonV> parse_object() {
+        if (!expect('{')) return std::nullopt;
+        MapValue map;
+        skip_ws();
+        if (peek() != '}') {
+            while (true) {
+                auto key = parse_raw_string();
+                if (!key) return std::nullopt;
+                skip_ws();
+                if (peek() != ':') return std::nullopt;
+                ++pos;
+                auto v = parse_value();
+                if (!v) return std::nullopt;
+                // Last-write-wins dedupe.
+                auto k = std::make_unique<Value>(make_string(std::move(*key)));
+                auto vv = std::make_unique<Value>(std::move(*v));
+                bool found = false;
+                for (auto &e : map.entries) {
+                    if (structurally_equal(*e.first, *k)) {
+                        e.second = std::move(vv);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    map.entries.emplace_back(std::move(k), std::move(vv));
+                }
+                skip_ws();
+                if (peek() == ',') {
+                    ++pos;
+                    continue;
+                }
+                break;
+            }
+        }
+        if (!expect('}')) return std::nullopt;
+        auto map_val = std::make_unique<Value>();
+        map_val->node = std::move(map);
+        return make_enum("std::json::JsonValue", "JEntries", std::move(map_val));
+    }
+};
+
+} // namespace json_impl
 
 /// json_parse_raw(s: String) -> Option<JsonValue>
 EvalResult builtin_json_parse_raw(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 1)
         return arg_count_error(1, args.size());
-    // P5 placeholder: return None for now (full JSON parser deferred)
-    return EvalResult{make_optional_none(), {}};
+    auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (!sv)
+        return make_error("json_parse_raw: argument must be a String");
+    json_impl::Parser p{std::string_view(sv->value), 0};
+    auto result = p.parse_value();
+    if (!result) {
+        return EvalResult{make_optional_none(), {}};
+    }
+    p.skip_ws();
+    if (!p.eof()) {
+        return EvalResult{make_optional_none(), {}};
+    }
+    return EvalResult{make_optional_some(std::move(*result)), {}};
 }
 
 /// json_emit_raw(v: JsonValue) -> String
 EvalResult builtin_json_emit_raw(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 1)
         return arg_count_error(1, args.size());
-    // P5 placeholder: return empty string (full JSON emitter deferred)
-    return EvalResult{make_string(""), {}};
+    std::string out;
+    if (!json_impl::emit_value(args[0], out)) {
+        return make_error("json_emit_raw: value cannot be serialized to JSON");
+    }
+    return EvalResult{make_string(std::move(out)), {}};
+}
+
+// ----------------------------------------------------------------------------
+// Decimal builtins — naive Int64 mantissa / Int32 scale arithmetic.
+//
+// Runtime representation: DecimalValue.spelling carries a canonical encoding
+// "<mantissa>e<scale>" (signed mantissa, signed scale). This keeps precision
+// semantics stable without third-party decimal libraries. All helpers parse /
+// emit this canonical spelling.
+// ----------------------------------------------------------------------------
+
+namespace decimal_impl {
+
+struct Dec {
+    int64_t mant{0};
+    int32_t scale{0};
+
+    // Canonical encoding used by decimal builtins for DecimalValue.spelling.
+    // Format: "s<scale>:<mantissa>" — e.g. "s2:123" represents 1.23,
+    // "s0:-45" represents -45, "s-3:7" represents 7000.  The "s:" prefix is
+    // intentionally disjoint from user literal spellings ("1.23d") so the
+    // builtin encoding and source-level literals never collide in equality
+    // without normalization.
+
+    static std::string spell(int64_t m, int32_t s) {
+        std::string out = "s";
+        out += std::to_string(s);
+        out.push_back(':');
+        out += std::to_string(m);
+        return out;
+    }
+
+    static bool parse(std::string_view v, Dec &out) {
+        if (!v.starts_with('s')) return false;
+        v.remove_prefix(1);
+        auto colon = v.find(':');
+        if (colon == std::string_view::npos) return false;
+        auto scale_str = v.substr(0, colon);
+        auto mant_str = v.substr(colon + 1);
+        try {
+            size_t p1 = 0, p2 = 0;
+            long long s = std::stoll(std::string(scale_str), &p1);
+            long long m = std::stoll(std::string(mant_str), &p2);
+            if (p1 != scale_str.size() || p2 != mant_str.size()) return false;
+            if (s > std::numeric_limits<int32_t>::max() ||
+                s < std::numeric_limits<int32_t>::min())
+                return false;
+            out.mant = static_cast<int64_t>(m);
+            out.scale = static_cast<int32_t>(s);
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+};
+
+int64_t pow10_i64(int32_t exp) {
+    int64_t r = 1;
+    for (int32_t i = 0; i < exp; ++i) r *= 10;
+    return r;
+}
+
+// Rescale `d` to `target_scale` using truncation semantics.
+bool rescale(const Dec &d, int32_t target_scale, Dec &out) {
+    if (target_scale == d.scale) {
+        out = d;
+        return true;
+    }
+    if (target_scale > d.scale) {
+        int32_t diff = target_scale - d.scale;
+        int64_t mult = pow10_i64(diff);
+        int64_t new_mant;
+        if (__builtin_mul_overflow(d.mant, mult, &new_mant)) return false;
+        out.mant = new_mant;
+        out.scale = target_scale;
+        return true;
+    }
+    int32_t diff = d.scale - target_scale;
+    int64_t div = pow10_i64(diff);
+    out.mant = d.mant / div; // truncate toward zero
+    out.scale = target_scale;
+    return true;
+}
+
+bool align(const Dec &a, const Dec &b, Dec &aa, Dec &bb) {
+    int32_t s = std::max(a.scale, b.scale);
+    return rescale(a, s, aa) && rescale(b, s, bb);
+}
+
+} // namespace decimal_impl
+
+/// decimal_raw_make(mantissa: Int, scale: Int) -> Decimal
+EvalResult builtin_decimal_raw_make(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *m = std::get_if<IntValue>(&args[0].node);
+    auto *s = std::get_if<IntValue>(&args[1].node);
+    if (!m || !s)
+        return make_error("decimal_raw_make: both arguments must be Int");
+    int32_t scale = static_cast<int32_t>(s->value);
+    if (static_cast<int64_t>(scale) != s->value)
+        return make_error("decimal_raw_make: scale out of int32 range");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(m->value, scale)), {}};
+}
+
+EvalResult builtin_decimal_raw_add(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    if (!a || !b) return make_error("decimal_raw_add: both arguments must be Decimal");
+    decimal_impl::Dec da{}, db{}, aa{}, bb{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_add: malformed Decimal spelling");
+    if (!decimal_impl::align(da, db, aa, bb))
+        return make_error("decimal_raw_add: rescale overflow");
+    int64_t sum;
+    if (__builtin_add_overflow(aa.mant, bb.mant, &sum))
+        return make_error("decimal_raw_add: mantissa overflow");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(sum, aa.scale)), {}};
+}
+
+EvalResult builtin_decimal_raw_sub(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    if (!a || !b) return make_error("decimal_raw_sub: both arguments must be Decimal");
+    decimal_impl::Dec da{}, db{}, aa{}, bb{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_sub: malformed Decimal spelling");
+    if (!decimal_impl::align(da, db, aa, bb))
+        return make_error("decimal_raw_sub: rescale overflow");
+    int64_t diff;
+    if (__builtin_sub_overflow(aa.mant, bb.mant, &diff))
+        return make_error("decimal_raw_sub: mantissa overflow");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(diff, aa.scale)), {}};
+}
+
+EvalResult builtin_decimal_raw_mul(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    if (!a || !b) return make_error("decimal_raw_mul: both arguments must be Decimal");
+    decimal_impl::Dec da{}, db{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_mul: malformed Decimal spelling");
+    int64_t prod;
+    if (__builtin_mul_overflow(da.mant, db.mant, &prod))
+        return make_error("decimal_raw_mul: mantissa overflow");
+    int64_t s64 = static_cast<int64_t>(da.scale) + static_cast<int64_t>(db.scale);
+    if (s64 > std::numeric_limits<int32_t>::max() ||
+        s64 < std::numeric_limits<int32_t>::min())
+        return make_error("decimal_raw_mul: scale overflow");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(prod, static_cast<int32_t>(s64))), {}};
+}
+
+/// decimal_raw_scale(a: Decimal) -> Int
+EvalResult builtin_decimal_raw_scale(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    if (!a) return make_error("decimal_raw_scale: argument must be Decimal");
+    decimal_impl::Dec d{};
+    if (!decimal_impl::Dec::parse(a->spelling, d))
+        return make_error("decimal_raw_scale: malformed Decimal spelling");
+    return EvalResult{make_int(static_cast<int64_t>(d.scale)), {}};
+}
+
+/// decimal_raw_with_scale(a: Decimal, new_scale: Int) -> Decimal
+/// Safe cast: upsizing multiplies mantissa; downsizing truncates.
+EvalResult builtin_decimal_raw_with_scale(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *s = std::get_if<IntValue>(&args[1].node);
+    if (!a || !s) return make_error("decimal_raw_with_scale: bad argument types");
+    decimal_impl::Dec d{}, out{};
+    if (!decimal_impl::Dec::parse(a->spelling, d))
+        return make_error("decimal_raw_with_scale: malformed Decimal spelling");
+    int64_t ns64 = s->value;
+    if (ns64 > std::numeric_limits<int32_t>::max() ||
+        ns64 < std::numeric_limits<int32_t>::min())
+        return make_error("decimal_raw_with_scale: scale out of int32 range");
+    if (!decimal_impl::rescale(d, static_cast<int32_t>(ns64), out))
+        return make_error("decimal_raw_with_scale: rescale overflow");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(out.mant, out.scale)), {}};
+}
+
+/// decimal_raw_quantize(a: Decimal, new_scale: Int, mode_index: Int) -> Decimal
+/// mode_index: maps RoundingMode ordinal: Ceiling=0, Floor=1, Truncate=2,
+/// HalfUp=3, HalfDown=4, HalfEven=5.
+EvalResult builtin_decimal_raw_quantize(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 3)
+        return arg_count_error(3, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *s = std::get_if<IntValue>(&args[1].node);
+    auto *m = std::get_if<IntValue>(&args[2].node);
+    if (!a || !s || !m)
+        return make_error("decimal_raw_quantize: bad argument types");
+    decimal_impl::Dec d{};
+    if (!decimal_impl::Dec::parse(a->spelling, d))
+        return make_error("decimal_raw_quantize: malformed Decimal spelling");
+    int64_t ns64 = s->value;
+    if (ns64 > std::numeric_limits<int32_t>::max() ||
+        ns64 < std::numeric_limits<int32_t>::min())
+        return make_error("decimal_raw_quantize: scale out of int32 range");
+    int32_t target = static_cast<int32_t>(ns64);
+    int64_t mode = m->value;
+    if (target >= d.scale) {
+        // Upsizing never needs rounding.
+        decimal_impl::Dec out{};
+        if (!decimal_impl::rescale(d, target, out))
+            return make_error("decimal_raw_quantize: rescale overflow");
+        return EvalResult{make_decimal(decimal_impl::Dec::spell(out.mant, out.scale)), {}};
+    }
+    int32_t diff = d.scale - target;
+    int64_t div = decimal_impl::pow10_i64(diff);
+    int64_t trunc = d.mant / div;
+    int64_t rem = d.mant - trunc * div;
+    if (rem != 0) {
+        bool neg = d.mant < 0;
+        auto rem_abs = static_cast<uint64_t>(rem < 0 ? -rem : rem);
+        auto div_half = static_cast<uint64_t>(div / 2);
+        bool away = false;
+        switch (mode) {
+        case 0: // Ceiling
+            away = !neg;
+            break;
+        case 1: // Floor
+            away = neg;
+            break;
+        case 2: // Truncate
+            away = false;
+            break;
+        case 3: // HalfUp (tie away)
+            if (rem_abs > div_half)
+                away = true;
+            else if (rem_abs == div_half)
+                away = true;
+            break;
+        case 4: // HalfDown (tie to zero)
+            if (rem_abs > div_half)
+                away = true;
+            break;
+        case 5: // HalfEven (tie to even)
+            if (rem_abs > div_half) {
+                away = true;
+            } else if (rem_abs == div_half) {
+                away = (trunc & 1) != 0;
+            }
+            break;
+        default:
+            return make_error("decimal_raw_quantize: unknown rounding mode");
+        }
+        if (away) {
+            int64_t delta = neg ? -1 : 1;
+            trunc += delta;
+        }
+    }
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(trunc, target)), {}};
+}
+
+/// decimal_raw_eq(a, b) -> Bool — compares numeric value, not spelling.
+EvalResult builtin_decimal_raw_eq(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    if (!a || !b) return make_error("decimal_raw_eq: both arguments must be Decimal");
+    decimal_impl::Dec da{}, db{}, aa{}, bb{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_eq: malformed Decimal spelling");
+    if (!decimal_impl::align(da, db, aa, bb))
+        return make_error("decimal_raw_eq: rescale overflow");
+    return EvalResult{make_bool(aa.mant == bb.mant), {}};
+}
+
+/// decimal_raw_cmp(a, b) -> Ordering  (std::cmp::Ordering via enum)
+EvalResult builtin_decimal_raw_cmp(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    if (!a || !b) return make_error("decimal_raw_cmp: both arguments must be Decimal");
+    decimal_impl::Dec da{}, db{}, aa{}, bb{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_cmp: malformed Decimal spelling");
+    if (!decimal_impl::align(da, db, aa, bb))
+        return make_error("decimal_raw_cmp: rescale overflow");
+    const char *variant = "Equal";
+    if (aa.mant < bb.mant) variant = "Less";
+    else if (aa.mant > bb.mant) variant = "Greater";
+    return EvalResult{make_enum("std::cmp::Ordering", variant), {}};
+}
+
+/// decimal_raw_to_string(a) -> String
+EvalResult builtin_decimal_raw_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    if (!a) return make_error("decimal_raw_to_string: argument must be Decimal");
+    decimal_impl::Dec d{};
+    if (!decimal_impl::Dec::parse(a->spelling, d))
+        return make_error("decimal_raw_to_string: malformed Decimal spelling");
+    // Render a short human readable form: `mant * 10^(-scale)`.
+    std::string mant_str = std::to_string(d.mant);
+    bool neg = !mant_str.empty() && mant_str.front() == '-';
+    std::string digits = neg ? mant_str.substr(1) : mant_str;
+    std::string out;
+    if (neg) out.push_back('-');
+    int32_t s = d.scale;
+    if (s <= 0) {
+        // Integer with (-s) trailing zeros appended.
+        out += digits;
+        out.append(static_cast<size_t>(-s), '0');
+    } else if (static_cast<size_t>(s) >= digits.size()) {
+        size_t zeros = static_cast<size_t>(s) - digits.size();
+        out += "0.";
+        out.append(zeros, '0');
+        out += digits;
+    } else {
+        size_t dot = digits.size() - static_cast<size_t>(s);
+        out += digits.substr(0, dot);
+        out.push_back('.');
+        out += digits.substr(dot);
+    }
+    return EvalResult{make_string(std::move(out)), {}};
 }
 
 } // anonymous namespace
@@ -575,9 +1378,13 @@ void BuiltinTable::populate() {
     insert("string_starts_with", builtin_string_starts_with);
     insert("string_ends_with", builtin_string_ends_with);
     insert("string_concat", builtin_string_raw_concat);
+    insert("string_raw_compare", builtin_string_raw_compare);
+    insert("cmp_raw_compare", builtin_cmp_raw_compare);
 
     // —— Numeric ——
     insert("int_to_string", builtin_int_to_string);
+    insert("bool_to_string", builtin_bool_to_string);
+    insert("float_to_string", builtin_float_to_string);
 
     // —— Time ——
     insert("wall_clock_now", builtin_wall_clock_now);
@@ -594,9 +1401,21 @@ void BuiltinTable::populate() {
     insert("uuid_parse", builtin_uuid_from_string);
     insert("uuid_to_string", builtin_uuid_to_string);
 
-    // —— JSON (placeholders) ——
+    // —— JSON (real implementations: recursive-descent parser + emitter) ——
     insert("json_parse_raw", builtin_json_parse_raw);
     insert("json_emit_raw", builtin_json_emit_raw);
+
+    // —— Decimal ——
+    insert("decimal_raw_make", builtin_decimal_raw_make);
+    insert("decimal_raw_add", builtin_decimal_raw_add);
+    insert("decimal_raw_sub", builtin_decimal_raw_sub);
+    insert("decimal_raw_mul", builtin_decimal_raw_mul);
+    insert("decimal_raw_scale", builtin_decimal_raw_scale);
+    insert("decimal_raw_with_scale", builtin_decimal_raw_with_scale);
+    insert("decimal_raw_quantize", builtin_decimal_raw_quantize);
+    insert("decimal_raw_eq", builtin_decimal_raw_eq);
+    insert("decimal_raw_cmp", builtin_decimal_raw_cmp);
+    insert("decimal_raw_to_string", builtin_decimal_raw_to_string);
 }
 
 // ============================================================================

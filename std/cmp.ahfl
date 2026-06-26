@@ -1,6 +1,18 @@
 module std::cmp;
 
 // ===========================================================================
+// Compiler-internal builtin hooks (not user-facing). These back the generic
+// comparison helpers below while Ord trait impl on primitives is pending
+// (see TODO(P6a-Ord) tracking item).
+// ===========================================================================
+
+@builtin("string_raw_compare")
+fn string_raw_compare(a: String, b: String) -> Int effect Pure;
+
+@builtin("cmp_raw_compare")
+fn cmp_raw_compare<T>(left: T, right: T) -> Ordering effect Pure;
+
+// ===========================================================================
 // Ordering enum (RFC §6.1, API §6.1).
 // Ord::compare returns this enum; it also doubles as the canonical three-way
 // comparison result used by sort/sort_by/min/max/clamp helpers below.
@@ -48,9 +60,14 @@ impl Ordering {
 // inspect the result of a user-provided comparer. Bodies are thin UFCS
 // forwards to the inherent impl above.
 //
-// Generic helpers (compare / min / max / clamp) are placeholders: they forward
-// to identity for now, and are replaced with Ord trait delegation once the
-// trait-resolver binds the default methods (P6a).
+// Generic helpers (compare / min / max / clamp) are implemented pragmatically
+// for P6a: the runtime builtin cmp_raw_compare uses an if-cascade over
+// primitive kinds (Int / Float / Bool / String). Unknown T returns Equal so
+// that min/max/clamp still terminate with the pre-P6a identity-result
+// semantics.
+//
+// TODO(P6a-Ord): replace the cmp_raw_compare builtin call with Ord trait
+// dispatch once trait impl on primitives lands (P6a-01 / PHASE 4b).
 // ===========================================================================
 
 fn is_less(self: Ordering) -> Bool effect Pure decreases 0 {
@@ -69,26 +86,22 @@ fn reverse(self: Ordering) -> Ordering effect Pure decreases 0 {
     return self.reverse();
 }
 
-// Generic helpers. Placeholder bodies forward to identity semantics for now;
-// they are replaced with Ord trait delegation in the P6a phase once the
-// trait-resolver binds the default methods.
-
 fn compare<T>(left: T, right: T) -> Ordering effect Pure decreases 0 {
-    // TODO(P6a): left.compare(right) after Ord trait impl on primitives.
-    return Ordering::Equal;
+    return cmp_raw_compare<T>(left, right);
 }
 
 fn min<T>(left: T, right: T) -> T effect Pure decreases 0 {
-    // TODO(P6a): compare(left, right) == Greater ? right : left.
+    let ord: Ordering = compare<T>(left, right);
+    if (ord == Ordering::Greater) { return right; }
     return left;
 }
 
 fn max<T>(left: T, right: T) -> T effect Pure decreases 0 {
-    // TODO(P6a): compare(left, right) == Less ? right : left.
-    return right;
+    let ord: Ordering = compare<T>(left, right);
+    if (ord == Ordering::Less) { return right; }
+    return left;
 }
 
 fn clamp<T>(value: T, lo: T, hi: T) -> T effect Pure decreases 0 {
-    // TODO(P6a): value.max(lo).min(hi).
-    return value;
+    return min<T>(hi, max<T>(value, lo));
 }
