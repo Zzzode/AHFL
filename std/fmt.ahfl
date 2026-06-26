@@ -44,7 +44,7 @@ struct DisplayValue {}
 // constructor function below as the single producer of DisplayValues.
 
 fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
-    // TODO(P6a): store rendered inside DisplayValue struct.
+    // TODO(PHASE-B-fmt): store rendered inside DisplayValue struct.
     return DisplayValue {};
 }
 
@@ -65,7 +65,7 @@ fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
 fn format(template: String, args: List<DisplayValue>)
     -> String effect Pure decreases 0
 {
-    // TODO(P6a): positional/indexed/named placeholder expansion using
+    // TODO(PHASE-B-fmt): positional/indexed/named placeholder expansion using
     // string_raw_substring + string_raw_concat builtins.
     return template;
 }
@@ -73,7 +73,7 @@ fn format(template: String, args: List<DisplayValue>)
 fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
     -> List<String> effect Pure decreases 0
 {
-    // TODO(P6a): append format(template, args) to buf via List append.
+    // TODO(PHASE-B-fmt): append format(template, args) to buf via List append.
     return buf;
 }
 

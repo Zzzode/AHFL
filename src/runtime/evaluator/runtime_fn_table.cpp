@@ -1,6 +1,8 @@
 #include "runtime/evaluator/runtime_fn_table.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
+#include "runtime/evaluator/builtins.hpp"
+#include "runtime/evaluator/evaluator.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -100,10 +102,14 @@ namespace {
 
 /// Evaluate the function body with `params[i] = args[i]` bound in a child
 /// context and return the ExecReturn value (or the appropriate EvalResult
-/// error/diagnostic bridge).
+/// error/diagnostic bridge). The optional `call_eval` closure is installed on
+/// the nested ExecContext so nested fn-call / builtin-call expressions reuse
+/// the same RuntimeFunctionTable + BuiltinTable dispatch pipeline instead of
+/// falling back to the body-less main evaluator path.
 EvalResult invoke_body(const RuntimeFnEntry &entry,
                        std::vector<EvalResult> &&evaluated_args,
-                       const EvalContext &parent_ctx) {
+                       const EvalContext &parent_ctx,
+                       const CallEvalFn *call_eval = nullptr) {
     if (entry.decl == nullptr) return make_call_error("null function declaration");
     if (!entry.decl->has_body || entry.decl->body == nullptr) {
         return make_call_error("function '" + entry.mangled_name + "' has no body");
@@ -129,6 +135,12 @@ EvalResult invoke_body(const RuntimeFnEntry &entry,
 
     ExecContext exec_ctx;
     exec_ctx.eval_ctx = parent_ctx; // inherit input/ctx/node_output scopes
+    if (call_eval != nullptr) {
+        exec_ctx.expr_eval = [call_eval](const ir::Expr &expr,
+                                         const EvalContext &ec) -> EvalResult {
+            return eval_expr(expr, ec, *call_eval);
+        };
+    }
     for (std::size_t i = 0; i < entry.decl->params.size(); ++i) {
         exec_ctx.bind_local(entry.decl->params[i].name, std::move(evaluated_args[i].value));
     }
@@ -169,27 +181,77 @@ EvalResult call_mangled(const RuntimeFunctionTable &table,
                         const std::vector<ir::ExprRef> &arguments,
                         const EvalContext &ctx,
                         const RuntimeFnTrace &trace) {
+    auto self_call_eval = table.make_call_eval(trace);
+    const CallEvalFn *call_eval_ptr = &self_call_eval;
     const RuntimeFnEntry *entry = table.find_function(mangled_name);
-    if (entry == nullptr) {
-        return make_call_error("find_function('" + std::string(mangled_name) +
-                               "'): no runtime entry registered");
-    }
-    if (trace.out != nullptr) {
-        *trace.out << "[evaluator] dispatch fn instance: " << entry->mangled_name << '\n';
-    }
-
-    std::vector<EvalResult> arg_values;
-    arg_values.reserve(arguments.size());
-    for (const auto &arg_ref : arguments) {
-        if (!arg_ref) {
-            arg_values.push_back(make_call_error("null argument expression in call to '" +
-                                                 std::string(mangled_name) + "'"));
-            continue;
+    if (entry != nullptr) {
+        if (trace.out != nullptr) {
+            *trace.out << "[evaluator] dispatch fn instance: " << entry->mangled_name << '\n';
         }
-        arg_values.push_back(eval_expr(*arg_ref, ctx));
+
+        std::vector<EvalResult> arg_values;
+        arg_values.reserve(arguments.size());
+        for (const auto &arg_ref : arguments) {
+            if (!arg_ref) {
+                arg_values.push_back(make_call_error("null argument expression in call to '" +
+                                                     std::string(mangled_name) + "'"));
+                continue;
+            }
+            arg_values.push_back(eval_expr(*arg_ref, ctx, *call_eval_ptr));
+        }
+
+        return invoke_body(*entry, std::move(arg_values), ctx, call_eval_ptr);
     }
 
-    return invoke_body(*entry, std::move(arg_values), ctx);
+    // P6a fallback: when a @builtin function's callee name does not appear in
+    // the runtime fn-instance table (either because lowering forwarded the
+    // canonical qualified name instead of the builtin hook, or because the
+    // prototype has no body to register), dispatch directly through the C++
+    // builtin table. This mirrors the eval_intrinsic_call() path in the main
+    // evaluator so both call resolutions stay in sync.
+    //
+    // Two-tier lookup: try the exact callee first, then try stripping a
+    // std-prefixed module qualifier (e.g. "std::fmt_smoke::int_to_string" →
+    // "int_to_string") so ad-hoc test modules whose lowering emits qualified
+    // names still resolve to the correct C++ hook.
+    const BuiltinTable &builtins = BuiltinTable::instance();
+    auto try_builtin = [&](std::string_view name) -> const BuiltinFn * {
+        return builtins.find(name);
+    };
+    const BuiltinFn *builtin_fn = try_builtin(mangled_name);
+    if (builtin_fn == nullptr) {
+        const auto sep = mangled_name.rfind("::");
+        if (sep != std::string_view::npos && sep + 2 < mangled_name.size()) {
+            std::string_view unqualified = mangled_name.substr(sep + 2);
+            builtin_fn = try_builtin(unqualified);
+        }
+    }
+    if (builtin_fn != nullptr) {
+        if (trace.out != nullptr) {
+            *trace.out << "[evaluator] dispatch builtin hook: " << mangled_name << '\n';
+        }
+        std::vector<Value> args;
+        args.reserve(arguments.size());
+        DiagnosticBag diags;
+        for (const auto &arg_ref : arguments) {
+            if (!arg_ref) {
+                return make_call_error("builtin call: null argument expression");
+            }
+            EvalResult r = eval_expr(*arg_ref, ctx, *call_eval_ptr);
+            if (r.has_errors()) {
+                diags.append(std::move(r.diagnostics));
+                return EvalResult{make_none(), std::move(diags)};
+            }
+            diags.append(r.diagnostics);
+            args.push_back(std::move(r.value));
+        }
+        EvalResult result = (*builtin_fn)(args, ctx);
+        result.diagnostics.append(std::move(diags));
+        return result;
+    }
+
+    return make_call_error("find_function('" + std::string(mangled_name) +
+                           "'): no runtime entry registered");
 }
 
 CallEvalFn RuntimeFunctionTable::make_call_eval(const RuntimeFnTrace &trace) const {

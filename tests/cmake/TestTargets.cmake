@@ -472,6 +472,7 @@ add_executable(ahfl_semantics_typed_hir_tests
 target_link_libraries(ahfl_semantics_typed_hir_tests
     PRIVATE
         ahfl_compiler_ir
+        ahfl_runtime_evaluator
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_typed_hir_tests)

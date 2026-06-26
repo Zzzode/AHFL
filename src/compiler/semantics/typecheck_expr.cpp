@@ -205,9 +205,9 @@ class ExpressionCheckerServices final {
                               TypeRelationContext &relations,
                               ExpressionSemaDelegate &delegate,
                               bool enable_trace_dispatch)
-        : resolve_result_(resolve_result), current_source_id_(current_source_id),
-          environment_(environment), types_(types), relations_(relations), delegate_(&delegate),
-          values_(types_), trace_dispatch(enable_trace_dispatch) {}
+        : trace_dispatch(enable_trace_dispatch), resolve_result_(resolve_result),
+          current_source_id_(current_source_id), environment_(environment), types_(types),
+          relations_(relations), delegate_(&delegate), values_(types_) {}
 
     [[nodiscard]] const ExpressionValueFactory &values() const noexcept {
         return values_;

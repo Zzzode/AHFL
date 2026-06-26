@@ -20,7 +20,8 @@ struct SourceGraph;
 /// Generate IR from SourceGraph (multiple files)
 [[nodiscard]] ir::Program lower_program_ir(const SourceGraph &graph,
                                            const ResolveResult &resolve_result,
-                                           const TypeCheckResult &type_check_result);
+                                           const TypeCheckResult &type_check_result,
+                                           bool include_stdlib = false);
 
 /// Collect formal observations
 [[nodiscard]] std::vector<ir::FormalObservation>
