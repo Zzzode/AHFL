@@ -12,6 +12,9 @@ struct SourceGraph;
 [[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program,
                                               const ast::Program &ast_program);
 [[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program,
+                                              const SourceGraph &source_graph,
+                                              bool include_stdlib);
+[[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program,
                                               const SourceGraph &source_graph);
 [[nodiscard]] ir::Program lower_typed_program(const TypedProgram &program);
 

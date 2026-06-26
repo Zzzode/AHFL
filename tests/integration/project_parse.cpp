@@ -98,8 +98,17 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
         return 1;
     }
 
-    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() != 6 ||
-        result.graph.import_edges.size() != 8) {
+    // NOTE: source count and import count are intentionally lower-bounded, not
+    // hardcoded. The prelude (auto-injected for every non-std module) grows as
+    // new std sub-modules are re-exported (e.g. std::string / std::cmp /
+    // std::fmt with P6a-01/P6a-02/P6a-03), and each such addition pulls in
+    // its transitive stdlib imports. Pinning an exact number would force the
+    // test to be re-tweaked on every stdlib expansion; a lower bound plus a
+    // spot-check of required modules preserves the intent of the test (the
+    // graph is non-trivial and contains everything the app needs) without
+    // being fragile in that way.
+    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() < 6 ||
+        result.graph.import_edges.size() < 8) {
         std::cerr << "unexpected source graph shape: entries=" << result.graph.entry_sources.size()
                   << " sources=" << result.graph.sources.size()
                   << " imports=" << result.graph.import_edges.size() << '\n';
@@ -111,7 +120,11 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
         !result.graph.module_to_source.contains("std::prelude") ||
         !result.graph.module_to_source.contains("std::option") ||
         !result.graph.module_to_source.contains("std::result") ||
-        !result.graph.module_to_source.contains("std::collections")) {
+        !result.graph.module_to_source.contains("std::collections") ||
+        !result.graph.module_to_source.contains("std::string") ||
+        !result.graph.module_to_source.contains("std::cmp") ||
+        !result.graph.module_to_source.contains("std::fmt") ||
+        !result.graph.module_to_source.contains("std::traits")) {
         std::cerr << "missing expected module ownership entries\n";
         return 1;
     }

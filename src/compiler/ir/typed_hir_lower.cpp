@@ -258,9 +258,10 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
 class TypedIrLowerer final {
   public:
     explicit TypedIrLowerer(const TypedProgram &typed_program,
-                            const ast::Program *ast_program = nullptr,
-                            const SourceGraph *source_graph = nullptr)
-        : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph) {}
+                             const ast::Program *ast_program = nullptr,
+                             const SourceGraph *source_graph = nullptr,
+                             bool include_stdlib = false)
+        : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph), include_stdlib_(include_stdlib) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
@@ -271,8 +272,7 @@ class TypedIrLowerer final {
                 continue;
             current_source_id_ = typed_decl->source_id;
             current_module_name_ = module_name_for(*typed_decl);
-            if (is_stdlib_declaration(*typed_decl))
-                continue;
+            if (is_stdlib_declaration(*typed_decl) && !include_stdlib_) continue;
             if (const auto *impl = payload_as<ImplTypeInfo>(typed_decl);
                 impl != nullptr && typed_decl->kind == ast::NodeKind::ImplDecl) {
                 for (const auto &method : impl->methods) {
@@ -294,6 +294,7 @@ class TypedIrLowerer final {
     const TypedProgram *typed_program_{nullptr};
     const ast::Program *ast_program_{nullptr};
     const SourceGraph *source_graph_{nullptr};
+    bool include_stdlib_{false};
     mutable std::optional<SourceId> current_source_id_;
     mutable std::string current_module_name_;
     mutable ir::ExprArena *arena_{nullptr};
@@ -2666,11 +2667,11 @@ class TypedIrLowerer final {
             // stdlib method). Pure Builtin call_target_kind uses the runtime
             // builtin table and never produces an InstanceDecl.
             if (expr.call_target_kind == TypedCallTargetKind::Builtin) continue;
-            // Stdlib methods (std::* canonical prefix) do not produce a user
-            // InstanceDecl; bodies come from RuntimeFunctionTable.
+            // Stdlib methods only produce InstanceDecl when include_stdlib_ is set
+            // (end-to-end evaluator tests); normally they come from the facade runtime.
             {
                 const auto sym = typed_program_->find_symbol(*expr.resolved_symbol);
-                if (sym.has_value() && sym->get().canonical_name.starts_with("std::")) {
+                if (!include_stdlib_ && sym.has_value() && sym->get().canonical_name.starts_with("std::")) {
                     continue;
                 }
             }
@@ -2742,7 +2743,7 @@ class TypedIrLowerer final {
             // dispatch path and do not produce a user-facing InstanceDecl:
             // their bodies are sourced from the facade stdlib runtime and
             // indexed by canonical name in the RuntimeFunctionTable.
-            if (sym->get().canonical_name.starts_with("std::")) continue;
+            if (!include_stdlib_ && sym->get().canonical_name.starts_with("std::")) continue;
 
             InstanceKey key{
                 .symbol_value = static_cast<std::size_t>(site.fn_symbol.value),
@@ -3016,8 +3017,9 @@ namespace {
 
 ir::Program lower_typed_program_impl(const TypedProgram &program,
                                      const ast::Program *ast_program = nullptr,
-                                     const SourceGraph *source_graph = nullptr) {
-    auto program_ir = TypedIrLowerer(program, ast_program, source_graph).lower();
+                                     const SourceGraph *source_graph = nullptr,
+                                     bool include_stdlib = false) {
+    auto program_ir = TypedIrLowerer(program, ast_program, source_graph, include_stdlib).lower();
     ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }
@@ -3026,6 +3028,10 @@ ir::Program lower_typed_program_impl(const TypedProgram &program,
 
 ir::Program lower_typed_program(const TypedProgram &program, const ast::Program &ast_program) {
     return lower_typed_program_impl(program, &ast_program);
+}
+
+ir::Program lower_typed_program(const TypedProgram &program, const SourceGraph &source_graph, bool include_stdlib) {
+    return lower_typed_program_impl(program, nullptr, &source_graph, include_stdlib);
 }
 
 ir::Program lower_typed_program(const TypedProgram &program, const SourceGraph &source_graph) {

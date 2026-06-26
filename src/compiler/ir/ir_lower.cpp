@@ -219,8 +219,9 @@ ir::Program lower_program_ir(const ast::Program &program,
 
 ir::Program lower_program_ir(const SourceGraph &graph,
                              const ResolveResult &,
-                             const TypeCheckResult &type_check_result) {
-    return lower_typed_program(type_check_result.typed_program, graph);
+                             const TypeCheckResult &type_check_result,
+                             bool include_stdlib) {
+    return lower_typed_program(type_check_result.typed_program, graph, include_stdlib);
 }
 
 std::vector<ir::FormalObservation> collect_formal_observations(const ir::Program &program) {
