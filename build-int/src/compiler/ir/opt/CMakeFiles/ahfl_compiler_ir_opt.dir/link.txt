@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_ir_opt.a CMakeFiles/ahfl_compiler_ir_opt.dir/opt_ir.cpp.o CMakeFiles/ahfl_compiler_ir_opt.dir/opt_json.cpp.o CMakeFiles/ahfl_compiler_ir_opt.dir/opt_lower.cpp.o CMakeFiles/ahfl_compiler_ir_opt.dir/opt_passes.cpp.o CMakeFiles/ahfl_compiler_ir_opt.dir/opt_print.cpp.o CMakeFiles/ahfl_compiler_ir_opt.dir/opt_verify.cpp.o
-/usr/bin/ranlib libahfl_compiler_ir_opt.a

@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_tooling_profiling.a CMakeFiles/ahfl_tooling_profiling.dir/pass_timing.cpp.o CMakeFiles/ahfl_tooling_profiling.dir/memory_tracker.cpp.o CMakeFiles/ahfl_tooling_profiling.dir/hotspot.cpp.o
-/usr/bin/ranlib libahfl_tooling_profiling.a

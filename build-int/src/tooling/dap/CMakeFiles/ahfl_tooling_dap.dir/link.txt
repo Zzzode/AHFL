@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_tooling_dap.a CMakeFiles/ahfl_tooling_dap.dir/dap_server.cpp.o CMakeFiles/ahfl_tooling_dap.dir/breakpoints.cpp.o CMakeFiles/ahfl_tooling_dap.dir/state_inspector.cpp.o
-/usr/bin/ranlib libahfl_tooling_dap.a

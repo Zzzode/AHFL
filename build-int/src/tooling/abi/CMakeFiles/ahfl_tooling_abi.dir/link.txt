@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_tooling_abi.a CMakeFiles/ahfl_tooling_abi.dir/version_info.cpp.o CMakeFiles/ahfl_tooling_abi.dir/compat_check.cpp.o
-/usr/bin/ranlib libahfl_tooling_abi.a

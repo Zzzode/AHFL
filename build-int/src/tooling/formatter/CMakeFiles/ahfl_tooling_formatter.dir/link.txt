@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_tooling_formatter.a CMakeFiles/ahfl_tooling_formatter.dir/formatter.cpp.o CMakeFiles/ahfl_tooling_formatter.dir/format_config.cpp.o
-/usr/bin/ranlib libahfl_tooling_formatter.a

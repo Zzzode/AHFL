@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_syntax_parser.a CMakeFiles/ahfl_compiler_syntax_parser.dir/generated/AHFLLexer.cpp.o CMakeFiles/ahfl_compiler_syntax_parser.dir/generated/AHFLParser.cpp.o
-/usr/bin/ranlib libahfl_compiler_syntax_parser.a

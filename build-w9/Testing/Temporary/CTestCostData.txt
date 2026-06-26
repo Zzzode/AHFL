@@ -1,5 +1,0 @@
-ahfl.semantics.typed_hir_all 0 0
-ahfl.semantics.effects_all 0 0
----
-ahfl.semantics.typed_hir_all
-ahfl.semantics.effects_all

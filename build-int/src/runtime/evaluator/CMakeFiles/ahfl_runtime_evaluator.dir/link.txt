@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_runtime_evaluator.a CMakeFiles/ahfl_runtime_evaluator.dir/value.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/value_json.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/eval_context.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/evaluator.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/executor.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/builtins.cpp.o CMakeFiles/ahfl_runtime_evaluator.dir/runtime_fn_table.cpp.o
-/usr/bin/ranlib libahfl_runtime_evaluator.a

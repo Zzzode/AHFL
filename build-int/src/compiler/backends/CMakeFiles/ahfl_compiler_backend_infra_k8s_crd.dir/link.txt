@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_backend_infra_k8s_crd.a CMakeFiles/ahfl_compiler_backend_infra_k8s_crd.dir/infra/k8s_crd.cpp.o
-/usr/bin/ranlib libahfl_compiler_backend_infra_k8s_crd.a

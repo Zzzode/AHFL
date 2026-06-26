@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_backend_infra_openapi_spec.a CMakeFiles/ahfl_compiler_backend_infra_openapi_spec.dir/infra/openapi_spec.cpp.o
-/usr/bin/ranlib libahfl_compiler_backend_infra_openapi_spec.a

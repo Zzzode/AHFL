@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_pipeline_execution.a CMakeFiles/ahfl_pipeline_execution.dir/dry_run/mock.cpp.o CMakeFiles/ahfl_pipeline_execution.dir/dry_run/runner.cpp.o CMakeFiles/ahfl_pipeline_execution.dir/runtime_session/session.cpp.o CMakeFiles/ahfl_pipeline_execution.dir/execution_journal/journal.cpp.o CMakeFiles/ahfl_pipeline_execution.dir/replay_view/replay.cpp.o
-/usr/bin/ranlib libahfl_pipeline_execution.a

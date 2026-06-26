@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_backend_smv.a CMakeFiles/ahfl_compiler_backend_smv.dir/smv/smv.cpp.o CMakeFiles/ahfl_compiler_backend_smv.dir/smv/smv_indexing.cpp.o CMakeFiles/ahfl_compiler_backend_smv.dir/smv/smv_collection.cpp.o CMakeFiles/ahfl_compiler_backend_smv.dir/smv/smv_specs.cpp.o CMakeFiles/ahfl_compiler_backend_smv.dir/smv/smv_formula.cpp.o
-/usr/bin/ranlib libahfl_compiler_backend_smv.a

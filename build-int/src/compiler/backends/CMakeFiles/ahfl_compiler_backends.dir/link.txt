@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_backends.a CMakeFiles/ahfl_compiler_backends.dir/driver.cpp.o CMakeFiles/ahfl_compiler_backends.dir/registry.cpp.o CMakeFiles/ahfl_compiler_backends.dir/infra/lower.cpp.o
-/usr/bin/ranlib libahfl_compiler_backends.a

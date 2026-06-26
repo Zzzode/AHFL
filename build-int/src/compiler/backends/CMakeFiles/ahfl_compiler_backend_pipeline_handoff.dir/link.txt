@@ -1,2 +1,0 @@
-/usr/bin/ar qc libahfl_compiler_backend_pipeline_handoff.a CMakeFiles/ahfl_compiler_backend_pipeline_handoff.dir/pipeline/native_json.cpp.o CMakeFiles/ahfl_compiler_backend_pipeline_handoff.dir/pipeline/execution_plan.cpp.o CMakeFiles/ahfl_compiler_backend_pipeline_handoff.dir/pipeline/package_review.cpp.o
-/usr/bin/ranlib libahfl_compiler_backend_pipeline_handoff.a
