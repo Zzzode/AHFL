@@ -521,10 +521,6 @@ class ProgramVerifier {
     template <typename ExprT>
     void verify_expr_node(const ExprT & /*expr*/, const std::string & /*path*/) {}
 
-    void verify_expr_node(const SomeExpr &expr, const std::string &path) {
-        verify_required_expr_ref(expr.value, path + ".value");
-    }
-
     void verify_expr_node(const CallExpr &expr, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(expr.callee)) {
             add_error(path, "call expression contains sentinel callee");
@@ -560,22 +556,6 @@ class ProgramVerifier {
     void verify_expr_node(const QualifiedValueExpr &expr, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(expr.value)) {
             add_error(path, "qualified value expression contains sentinel payload");
-        }
-    }
-
-    void verify_expr_node(const ListLiteralExpr &expr, const std::string &path) {
-        verify_expr_ref_list(expr.items, path + ".items");
-    }
-
-    void verify_expr_node(const SetLiteralExpr &expr, const std::string &path) {
-        verify_expr_ref_list(expr.items, path + ".items");
-    }
-
-    void verify_expr_node(const MapLiteralExpr &expr, const std::string &path) {
-        for (std::uint32_t index = 0; index < expr.entries.size(); ++index) {
-            const auto entry_path = path + ".entries[" + std::to_string(index) + "]";
-            verify_required_expr_ref(expr.entries[index].key, entry_path + ".key");
-            verify_required_expr_ref(expr.entries[index].value, entry_path + ".value");
         }
     }
 
@@ -833,27 +813,6 @@ class ProgramVerifier {
             }
         }
         switch (type.kind) {
-        case TypeRefKind::Optional:
-        case TypeRefKind::List:
-        case TypeRefKind::Set:
-            if (!type.first) {
-                add_error(path, "type is missing its element type");
-            } else {
-                verify_type_ref(*type.first, path + ".first");
-            }
-            break;
-        case TypeRefKind::Map:
-            if (!type.first) {
-                add_error(path, "map type is missing its key type");
-            } else {
-                verify_type_ref(*type.first, path + ".key_type");
-            }
-            if (!type.second) {
-                add_error(path, "map type is missing its value type");
-            } else {
-                verify_type_ref(*type.second, path + ".value_type");
-            }
-            break;
         default:
             if (type.first) {
                 verify_type_ref(*type.first, path + ".first");

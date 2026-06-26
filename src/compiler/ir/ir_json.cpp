@@ -213,14 +213,6 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
         return "struct";
     case ir::TypeRefKind::Enum:
         return "enum";
-    case ir::TypeRefKind::Optional:
-        return "optional";
-    case ir::TypeRefKind::List:
-        return "list";
-    case ir::TypeRefKind::Set:
-        return "set";
-    case ir::TypeRefKind::Map:
-        return "map";
     case ir::TypeRefKind::Fn:
         return "fn";
     }
@@ -485,8 +477,7 @@ class IrJsonPrinter final {
                 field("decimal_scale", [&]() { write_i64(*ref.decimal_scale); });
             }
             if (ref.first) {
-                const auto first_name =
-                    ref.kind == ir::TypeRefKind::Map ? "key_type" : "element_type";
+                const auto first_name = "element_type";
                 field(first_name, [&]() { print_type_ref(*ref.first, indent_level + 1); });
             }
             if (ref.second) {
@@ -731,12 +722,6 @@ class IrJsonPrinter final {
 	    void print_expr(const ir::Expr &expr, int indent_level) {
 	        std::visit(
             Overloaded{
-                [&](const ir::NoneLiteralExpr &) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("none_literal"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                    });
-                },
                 [&](const ir::BoolLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("bool_literal"); });
@@ -777,13 +762,6 @@ class IrJsonPrinter final {
                         field("kind", [&]() { write_string("duration_literal"); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
-                    });
-                },
-                [&](const ir::SomeExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("some"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("value", [&]() { print_expr(*value.value, indent_level + 1); });
                     });
                 },
                 [&](const ir::PathExpr &value) {
@@ -845,55 +823,6 @@ class IrJsonPrinter final {
                                                 print_expr(*struct_field.value, indent_level + 3);
                                             });
                                         });
-                                    });
-                                }
-                            });
-                        });
-                    });
-                },
-                [&](const ir::ListLiteralExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("list_literal"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("items", [&]() {
-                            print_array(indent_level + 1, [&](const auto &item) {
-                                for (const auto &list_item : value.items) {
-                                    item([&]() { print_expr(*list_item, indent_level + 2); });
-                                }
-                            });
-                        });
-                    });
-                },
-                [&](const ir::SetLiteralExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("set_literal"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("items", [&]() {
-                            print_array(indent_level + 1, [&](const auto &item) {
-                                for (const auto &set_item : value.items) {
-                                    item([&]() { print_expr(*set_item, indent_level + 2); });
-                                }
-                            });
-                        });
-                    });
-                },
-                [&](const ir::MapLiteralExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("map_literal"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("entries", [&]() {
-                            print_array(indent_level + 1, [&](const auto &item) {
-                                for (const auto &entry : value.entries) {
-                                    item([&]() {
-                                        print_object(
-                                            indent_level + 2, [&](const auto &entry_field) {
-                                                entry_field("key", [&]() {
-                                                    print_expr(*entry.key, indent_level + 3);
-                                                });
-                                                entry_field("value", [&]() {
-                                                    print_expr(*entry.value, indent_level + 3);
-                                                });
-                                            });
                                     });
                                 }
                             });

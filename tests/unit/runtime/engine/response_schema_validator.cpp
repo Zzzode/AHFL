@@ -54,9 +54,10 @@ TypeRef make_canonical_type(TypeRefKind kind, const std::string &canonical_name)
 
 TypeRef make_optional_of(TypeRefKind inner_kind) {
     TypeRef t;
-    t.kind = TypeRefKind::Optional;
-    t.first = std::make_unique<TypeRef>();
-    t.first->kind = inner_kind;
+    t.kind = TypeRefKind::Enum;
+    t.canonical_name = "std::option::Option";
+    t.params.push_back(std::make_unique<TypeRef>());
+    t.params.back()->kind = inner_kind;
     return t;
 }
 
@@ -294,7 +295,8 @@ void test_optional_validation() {
 // ============================================================================
 
 void test_list_validation() {
-    auto schema = make_type(TypeRefKind::List);
+    auto schema = make_nominal_generic(
+        TypeRefKind::Struct, "std::collections::List", std::vector<TypeRef>{});
     auto good = make_list({});
     check(validate_value_against_schema(good, schema).valid, "list.valid");
     check(!validate_value_against_schema(make_int(1), schema).valid, "list.reject_int");

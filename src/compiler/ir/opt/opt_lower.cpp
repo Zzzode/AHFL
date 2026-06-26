@@ -258,11 +258,6 @@ class LoweringContext {
   private:
     // ---- Expression node visitors ----
 
-    [[nodiscard]] Operand lower_expr_node(const ir::NoneLiteralExpr & /*e*/,
-                                          const ir::Expr & /*expr*/) {
-        return make_constant(std::monostate{});
-    }
-
     [[nodiscard]] Operand lower_expr_node(const ir::BoolLiteralExpr &e, const ir::Expr & /*expr*/) {
         return make_constant(e.value);
     }
@@ -301,18 +296,6 @@ class LoweringContext {
     [[nodiscard]] Operand lower_expr_node(const ir::DurationLiteralExpr &e,
                                           const ir::Expr & /*expr*/) {
         return make_constant(e.spelling);
-    }
-
-    [[nodiscard]] Operand lower_expr_node(const ir::SomeExpr &e, const ir::Expr &expr) {
-        // Lower inner value and wrap in a temp.
-        auto inner = lower_expr(e.value.get());
-        auto tmp = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
-        Rvalue rv;
-        rv.kind = Rvalue::Kind::Use;
-        rv.result_type = clone_type_ref(expr.resolved_type);
-        rv.operands.push_back(inner);
-        emit_assign(tmp, std::move(rv), expr.source_range);
-        return make_local(tmp);
     }
 
     [[nodiscard]] Operand lower_expr_node(const ir::PathExpr &e, const ir::Expr &expr) {
@@ -398,52 +381,6 @@ class LoweringContext {
         Rvalue rv;
         rv.kind = Rvalue::Kind::Aggregate;
         rv.operands = std::move(field_values);
-        rv.result_type = clone_type_ref(expr.resolved_type);
-        emit_assign(dest, std::move(rv), expr.source_range);
-        return make_local(dest);
-    }
-
-    [[nodiscard]] Operand lower_expr_node(const ir::ListLiteralExpr &e, const ir::Expr &expr) {
-        std::vector<Operand> items;
-        items.reserve(e.items.size());
-        for (const auto &item : e.items) {
-            items.push_back(lower_expr(item.get()));
-        }
-        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
-        Rvalue rv;
-        rv.kind = Rvalue::Kind::Aggregate;
-        rv.operands = std::move(items);
-        rv.result_type = clone_type_ref(expr.resolved_type);
-        emit_assign(dest, std::move(rv), expr.source_range);
-        return make_local(dest);
-    }
-
-    [[nodiscard]] Operand lower_expr_node(const ir::SetLiteralExpr &e, const ir::Expr &expr) {
-        std::vector<Operand> items;
-        items.reserve(e.items.size());
-        for (const auto &item : e.items) {
-            items.push_back(lower_expr(item.get()));
-        }
-        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
-        Rvalue rv;
-        rv.kind = Rvalue::Kind::Aggregate;
-        rv.operands = std::move(items);
-        rv.result_type = clone_type_ref(expr.resolved_type);
-        emit_assign(dest, std::move(rv), expr.source_range);
-        return make_local(dest);
-    }
-
-    [[nodiscard]] Operand lower_expr_node(const ir::MapLiteralExpr &e, const ir::Expr &expr) {
-        std::vector<Operand> items;
-        items.reserve(e.entries.size() * 2);
-        for (const auto &entry : e.entries) {
-            items.push_back(lower_expr(entry.key.get()));
-            items.push_back(lower_expr(entry.value.get()));
-        }
-        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
-        Rvalue rv;
-        rv.kind = Rvalue::Kind::Aggregate;
-        rv.operands = std::move(items);
         rv.result_type = clone_type_ref(expr.resolved_type);
         emit_assign(dest, std::move(rv), expr.source_range);
         return make_local(dest);

@@ -1054,11 +1054,12 @@ void test_eval_with_capability_call() {
     check(binary_bool != nullptr && binary_bool->value, "eval_cap.binary_call_value");
 
     Expr optional_expr;
-    SomeExpr optional;
     CallExpr optional_call;
     optional_call.callee = "inner_cap";
-    optional.value = make_expr_ptr(std::move(optional_call));
-    optional_expr.node = std::move(optional);
+    CallExpr some_call;
+    some_call.callee = "std::option::Option::Some";
+    some_call.arguments.push_back(make_expr_ptr(std::move(optional_call)));
+    optional_expr.node = std::move(some_call);
 
     auto optional_result =
         eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());

@@ -1723,9 +1723,9 @@ TEST_CASE("Semantic IR verifier rejects expression refs outside the arena") {
 }
 
 TEST_CASE("Semantic IR verifier rejects malformed TypeRef children") {
-    ahfl::ir::TypeRef optional_without_element;
-    optional_without_element.kind = ahfl::ir::TypeRefKind::Optional;
-    optional_without_element.display_name = "Optional";
+    ahfl::ir::TypeRef enum_without_canonical_name;
+    enum_without_canonical_name.kind = ahfl::ir::TypeRefKind::Enum;
+    enum_without_canonical_name.display_name = "Color";
 
     ahfl::ir::Program program;
     program.declarations.push_back(ahfl::ir::AgentDecl{
@@ -1736,18 +1736,19 @@ TEST_CASE("Semantic IR verifier rejects malformed TypeRef children") {
         .final_states = {},
         .quota = {},
         .transitions = {},
-        .input_type_ref = std::move(optional_without_element),
+        .input_type_ref = std::move(enum_without_canonical_name),
         .context_type_ref = unit_type(),
         .output_type_ref = unit_type(),
         .capability_refs = {},
         .symbol_ref = {},
     });
 
-    const auto result = ahfl::ir::verify_ir_program(program);
+    const auto result = ahfl::ir::verify_ir_program(
+        program, ahfl::ir::IrVerificationMode::BackendReady);
 
     CHECK(result.has_errors());
     CHECK(has_ir_diagnostic_containing(
-        result, ahfl::ir::VerificationSeverity::Error, "type is missing its element type"));
+        result, ahfl::ir::VerificationSeverity::Error, "nominal type reference is missing canonical name"));
 }
 
 TEST_CASE("Semantic IR verifier rejects duplicate statement ids") {

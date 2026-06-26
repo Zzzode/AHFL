@@ -311,10 +311,6 @@ using PatternBindings = std::unordered_map<std::string, Value>;
 // Literal evaluation
 // ============================================================================
 
-EvalResult eval_none_literal(const ir::NoneLiteralExpr & /*expr*/, const EvalContext & /*ctx*/) {
-    return EvalResult{make_none(), {}};
-}
-
 EvalResult eval_bool_literal(const ir::BoolLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_bool(expr.value), {}};
 }
@@ -388,21 +384,6 @@ EvalResult eval_string_literal(const ir::StringLiteralExpr &expr, const EvalCont
 
 EvalResult eval_duration_literal(const ir::DurationLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_duration(expr.spelling), {}};
-}
-
-// ============================================================================
-// SomeExpr
-// ============================================================================
-
-EvalResult
-eval_some_expr(const ir::SomeExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
-    if (!expr.value) {
-        return make_error("SomeExpr has null inner expression");
-    }
-    auto inner = eval_expr_impl(*expr.value, ctx, call_eval);
-    if (inner.has_errors())
-        return inner;
-    return EvalResult{make_option_some(std::move(inner.value)), {}};
 }
 
 // ============================================================================
@@ -486,8 +467,44 @@ eval_call_arguments(const ir::CallExpr &expr,
     return result;
 }
 
+struct OptionReader {
+    bool is_optional;
+    bool is_none;            // meaningful only when is_optional
+    const Value *inner;      // inner when is_optional && !is_none, nullptr otherwise
+};
+
+[[nodiscard]] OptionReader read_option(const Value &value) noexcept {
+    if (const auto *ov = std::get_if<OptionalValue>(&value.node)) {
+        if (ov->inner == nullptr) return {true, true, nullptr};
+        return {true, false, ov->inner.get()};
+    }
+    if (const auto *ev = std::get_if<EnumValue>(&value.node)) {
+        if (ev->enum_name != "std::option::Option") return {false, false, nullptr};
+        if (ev->variant == "None") return {true, true, nullptr};
+        if (ev->variant == "Some") {
+            const Value *inner = ev->associated.get();
+            if (inner == nullptr && !ev->payload.empty()) inner = ev->payload.front().get();
+            return {true, false, inner};
+        }
+    }
+    return {false, false, nullptr};
+}
+
 [[nodiscard]] const OptionalValue *as_option(const Value &value) noexcept {
-    return std::get_if<OptionalValue>(&value.node);
+    // P5 Big Bang: Option is nominal EnumValue now. Retain legacy OptionalValue
+    // path only for construction sites that have not been migrated yet.
+    if (auto *legacy = std::get_if<OptionalValue>(&value.node)) return legacy;
+    // Fall back to a thread-local conversion for the const OptionalValue*
+    // return type (read_option is the preferred dual-path API).
+    thread_local OptionalValue cached;
+    auto reader = read_option(value);
+    if (!reader.is_optional) return nullptr;
+    if (reader.is_none) {
+        cached = OptionalValue{.inner = nullptr};
+    } else {
+        cached = OptionalValue{.inner = reader.inner ? std::make_unique<Value>(clone_value(*reader.inner)) : nullptr};
+    }
+    return &cached;
 }
 
 [[nodiscard]] const EnumValue *as_result(const Value &value) noexcept {
@@ -1241,94 +1258,6 @@ EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr,
 }
 
 // ============================================================================
-// ListLiteralExpr
-// ============================================================================
-
-EvalResult eval_list_literal(const ir::ListLiteralExpr &expr,
-                             const EvalContext &ctx,
-                             const CallEvalFn *call_eval) {
-    std::vector<Value> items;
-    DiagnosticBag diagnostics;
-
-    for (const auto &item_expr : expr.items) {
-        if (!item_expr) {
-            std::move(diagnostics.error()).message("list item has null expression").emit();
-            continue;
-        }
-        auto result = eval_expr_impl(*item_expr, ctx, call_eval);
-        diagnostics.append(result.diagnostics);
-        if (!result.has_errors()) {
-            items.push_back(std::move(result.value));
-        }
-    }
-
-    if (diagnostics.has_error()) {
-        return EvalResult{make_none(), std::move(diagnostics)};
-    }
-    return EvalResult{make_list(std::move(items)), std::move(diagnostics)};
-}
-
-// ============================================================================
-// SetLiteralExpr / MapLiteralExpr  (RFC P7 runtime)
-// ============================================================================
-
-EvalResult eval_set_literal(const ir::SetLiteralExpr &expr,
-                            const EvalContext &ctx,
-                            const CallEvalFn *call_eval) {
-    std::vector<Value> items;
-    DiagnosticBag diagnostics;
-
-    for (const auto &item_expr : expr.items) {
-        if (!item_expr) {
-            std::move(diagnostics.error()).message("set element has null expression").emit();
-            continue;
-        }
-        auto result = eval_expr_impl(*item_expr, ctx, call_eval);
-        diagnostics.append(result.diagnostics);
-        if (!result.has_errors()) {
-            items.push_back(std::move(result.value));
-        }
-    }
-
-    if (diagnostics.has_error()) {
-        return EvalResult{make_none(), std::move(diagnostics)};
-    }
-    // make_set canonicalizes (de-dup + order).
-    return EvalResult{make_set(std::move(items)), std::move(diagnostics)};
-}
-
-EvalResult eval_map_literal(const ir::MapLiteralExpr &expr,
-                            const EvalContext &ctx,
-                            const CallEvalFn *call_eval) {
-    std::vector<std::pair<Value, Value>> entries;
-    DiagnosticBag diagnostics;
-
-    for (const auto &entry : expr.entries) {
-        if (!entry.key || !entry.value) {
-            std::move(diagnostics.error()).message("map entry has null key/value").emit();
-            continue;
-        }
-        auto key_result = eval_expr_impl(*entry.key, ctx, call_eval);
-        diagnostics.append(key_result.diagnostics);
-        if (key_result.has_errors()) {
-            continue;
-        }
-        auto val_result = eval_expr_impl(*entry.value, ctx, call_eval);
-        diagnostics.append(val_result.diagnostics);
-        if (val_result.has_errors()) {
-            continue;
-        }
-        entries.emplace_back(std::move(key_result.value), std::move(val_result.value));
-    }
-
-    if (diagnostics.has_error()) {
-        return EvalResult{make_none(), std::move(diagnostics)};
-    }
-    // make_map canonicalizes (last-write-wins + key order).
-    return EvalResult{make_map(std::move(entries)), std::move(diagnostics)};
-}
-
-// ============================================================================
 // UnaryExpr
 // ============================================================================
 
@@ -1791,7 +1720,8 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
         if (!expr.arguments.empty()) {
             return make_error("Option::None expects no arguments");
         }
-        return EvalResult{make_optional_none(), {}};
+        // Nominal pattern: EnumValue{"std::option::Option", "None", {}, nullptr}
+        return EvalResult{make_enum("std::option::Option", "None"), {}};
     }
     if (expr.callee == "std::option::Option::Some") {
         if (expr.arguments.size() != 1) {
@@ -1804,7 +1734,10 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
         if (inner.has_errors()) {
             return inner;
         }
-        return EvalResult{make_optional_some(std::move(inner.value)), {}};
+        // Nominal pattern: EnumValue with `associated` field set to the payload
+        return EvalResult{make_enum("std::option::Option", "Some",
+                                    std::make_unique<Value>(std::move(inner.value))),
+                          std::move(inner.diagnostics)};
     }
     if (expr.callee == "std::result::Result::Ok" || expr.callee == "std::result::Result::Err") {
         if (expr.arguments.size() != 1) {
@@ -1823,6 +1756,134 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
             expr.callee == "std::result::Result::Ok" ? std::string{"Ok"} : std::string{"Err"};
         return EvalResult{make_enum("std::result::Result", std::move(variant), std::move(values)),
                           {}};
+    }
+    // ---- P5 Big Bang: nominal stdlib container constructors ----
+    // std::collections::list_from_array<T...>(args...) -> ListValue
+    if (expr.callee == "std::collections::list_from_array") {
+        ListValue list;
+        list.items.reserve(expr.arguments.size());
+        DiagnosticBag diags;
+        for (const auto &arg_ref : expr.arguments) {
+            if (!arg_ref) {
+                return make_error("list_from_array: null argument expression");
+            }
+            auto arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
+            if (arg_result.has_errors()) {
+                return arg_result;
+            }
+            diags.append(std::move(arg_result.diagnostics));
+            list.items.emplace_back(std::make_unique<Value>(std::move(arg_result.value)));
+        }
+        return EvalResult{Value{.node = std::move(list)}, std::move(diags)};
+    }
+    // std::collections::set_from_array<T...>(args...) -> SetValue
+    // (deduplicated + canonical-sorted so equality & set ordering tests pass)
+    if (expr.callee == "std::collections::set_from_array") {
+        std::vector<std::unique_ptr<Value>> items;
+        items.reserve(expr.arguments.size());
+        DiagnosticBag diags;
+        for (const auto &arg_ref : expr.arguments) {
+            if (!arg_ref) {
+                return make_error("set_from_array: null argument expression");
+            }
+            auto arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
+            if (arg_result.has_errors()) {
+                return arg_result;
+            }
+            diags.append(std::move(arg_result.diagnostics));
+            items.emplace_back(std::make_unique<Value>(std::move(arg_result.value)));
+        }
+        // Less-than helper using common printable representations (keeps
+        // canonical ordering stable across identical insertions).
+        auto value_less = [](const std::unique_ptr<Value> &a, const std::unique_ptr<Value> &b) -> bool {
+            if (!a || !b) return static_cast<bool>(!b);
+            if (auto *ai = std::get_if<IntValue>(&a->node)) {
+                if (auto *bi = std::get_if<IntValue>(&b->node)) return ai->value < bi->value;
+                return true;
+            }
+            if (auto *as = std::get_if<StringValue>(&a->node)) {
+                if (auto *bs = std::get_if<StringValue>(&b->node)) return as->value < bs->value;
+                return true;
+            }
+            if (auto *ab = std::get_if<BoolValue>(&a->node)) {
+                if (auto *bb = std::get_if<BoolValue>(&b->node)) return !ab->value && bb->value;
+                return true;
+            }
+            if (auto *ad = std::get_if<DecimalValue>(&a->node)) {
+                if (auto *bd = std::get_if<DecimalValue>(&b->node)) return ad->spelling < bd->spelling;
+                return true;
+            }
+            return false;
+        };
+        auto value_equal = [&value_less](const std::unique_ptr<Value> &a, const std::unique_ptr<Value> &b) -> bool {
+            return !value_less(a, b) && !value_less(b, a);
+        };
+        // Canonical sort
+        std::sort(items.begin(), items.end(), value_less);
+        // Deduplicate adjacent entries
+        auto last = std::unique(items.begin(), items.end(), value_equal);
+        items.erase(last, items.end());
+        SetValue set;
+        set.items = std::move(items);
+        return EvalResult{Value{.node = std::move(set)}, std::move(diags)};
+    }
+    // std::collections::map_entry_new<K, V>(k, v) -> StructValue(MapEntry{key,value})
+    if (expr.callee == "std::collections::map_entry_new") {
+        if (expr.arguments.size() != 2) {
+            return make_error("map_entry_new expects two arguments");
+        }
+        if (!expr.arguments[0] || !expr.arguments[1]) {
+            return make_error("map_entry_new has null argument expression");
+        }
+        auto key_result = eval_expr_impl(*expr.arguments[0], ctx, call_eval);
+        if (key_result.has_errors()) {
+            return key_result;
+        }
+        auto val_result = eval_expr_impl(*expr.arguments[1], ctx, call_eval);
+        if (val_result.has_errors()) {
+            return val_result;
+        }
+        DiagnosticBag diags;
+        diags.append(std::move(key_result.diagnostics));
+        diags.append(std::move(val_result.diagnostics));
+        std::unordered_map<std::string, std::unique_ptr<Value>> fields;
+        fields.emplace("key", std::make_unique<Value>(std::move(key_result.value)));
+        fields.emplace("value", std::make_unique<Value>(std::move(val_result.value)));
+        return EvalResult{Value{.node = StructValue{.type_name = "MapEntry", .fields = std::move(fields)}},
+                          std::move(diags)};
+    }
+    // std::collections::map_from_entries<K, V>(entry_0, entry_1, ...) -> MapValue
+    if (expr.callee == "std::collections::map_from_entries") {
+        MapValue map;
+        map.entries.reserve(expr.arguments.size());
+        DiagnosticBag diags;
+        for (const auto &arg_ref : expr.arguments) {
+            if (!arg_ref) {
+                return make_error("map_from_entries: null entry expression");
+            }
+            auto entry_result = eval_expr_impl(*arg_ref, ctx, call_eval);
+            if (entry_result.has_errors()) {
+                return entry_result;
+            }
+            diags.append(std::move(entry_result.diagnostics));
+            // Entry is a StructValue with "key"/"value" fields
+            auto *sv = std::get_if<StructValue>(&entry_result.value.node);
+            if (sv != nullptr) {
+                auto key_it = sv->fields.find("key");
+                auto val_it = sv->fields.find("value");
+                if (key_it == sv->fields.end() || val_it == sv->fields.end() ||
+                    !key_it->second || !val_it->second) {
+                    return make_error("map_from_entries: entry missing key/value fields");
+                }
+                // Move keys directly (entry struct is single-use); frontend
+                // guarantees unique keys per construction site.
+                map.entries.emplace_back(std::move(key_it->second),
+                                         std::move(val_it->second));
+            } else {
+                return make_error("map_from_entries: entry is not a MapEntry struct");
+            }
+        }
+        return EvalResult{Value{.node = std::move(map)}, std::move(diags)};
     }
     if (auto stdlib_result = eval_stdlib_wrapper_call(expr, ctx, call_eval);
         stdlib_result.has_value()) {
@@ -1895,9 +1956,7 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
     return std::visit(
         [&ctx, call_eval](const auto &node) -> EvalResult {
             using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, ir::NoneLiteralExpr>) {
-                return eval_none_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
+            if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
                 return eval_bool_literal(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::IntegerLiteralExpr>) {
                 return eval_integer_literal(node, ctx);
@@ -1909,8 +1968,6 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_string_literal(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::DurationLiteralExpr>) {
                 return eval_duration_literal(node, ctx);
-            } else if constexpr (std::is_same_v<T, ir::SomeExpr>) {
-                return eval_some_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::PathExpr>) {
                 return eval_path_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
@@ -1921,12 +1978,6 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_lambda_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
                 return eval_struct_literal(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::ListLiteralExpr>) {
-                return eval_list_literal(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::SetLiteralExpr>) {
-                return eval_set_literal(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::MapLiteralExpr>) {
-                return eval_map_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
                 return eval_unary_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {
@@ -2031,6 +2082,124 @@ EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx) {
 
 EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn &call_eval) {
     return eval_expr_impl(expr, ctx, &call_eval);
+}
+
+EvalResult eval_intrinsic_with_args(const std::string &callee,
+                                    std::vector<Value> args,
+                                    const EvalContext &ctx) {
+    // Direct intrinsic dispatch with PRE-EVALUATED arguments.  Used by the
+    // capability bridge / program dispatch layers so that argument sub-trees
+    // which may contain custom (capability / user-function) calls do not get
+    // re-evaluated through a different dispatch path.
+
+    if (callee == "std::option::Option::None") {
+        if (!args.empty()) {
+            return make_error("Option::None expects no arguments");
+        }
+        return EvalResult{make_enum("std::option::Option", "None"), {}};
+    }
+    if (callee == "std::option::Option::Some") {
+        if (args.size() != 1) {
+            return make_error("Option::Some expects one argument");
+        }
+        return EvalResult{make_enum("std::option::Option", "Some",
+                                    std::make_unique<Value>(std::move(args.front()))),
+                          {}};
+    }
+    if (callee == "std::result::Result::Ok" || callee == "std::result::Result::Err") {
+        if (args.size() != 1) {
+            return make_error(callee + " expects one argument");
+        }
+        const auto variant = callee == "std::result::Result::Ok" ? std::string{"Ok"} : std::string{"Err"};
+        return EvalResult{make_enum("std::result::Result", std::move(variant), std::move(args)), {}};
+    }
+    if (callee == "std::collections::list_from_array") {
+        ListValue list;
+        list.items.reserve(args.size());
+        for (auto &a : args) {
+            list.items.emplace_back(std::make_unique<Value>(std::move(a)));
+        }
+        return EvalResult{Value{.node = std::move(list)}, {}};
+    }
+    if (callee == "std::collections::set_from_array") {
+        std::vector<std::unique_ptr<Value>> items;
+        items.reserve(args.size());
+        for (auto &a : args) {
+            items.emplace_back(std::make_unique<Value>(std::move(a)));
+        }
+        auto value_less = [](const std::unique_ptr<Value> &a, const std::unique_ptr<Value> &b) -> bool {
+            if (!a || !b) return static_cast<bool>(!b);
+            if (auto *ai = std::get_if<IntValue>(&a->node)) {
+                if (auto *bi = std::get_if<IntValue>(&b->node)) return ai->value < bi->value;
+                return true;
+            }
+            if (auto *as = std::get_if<StringValue>(&a->node)) {
+                if (auto *bs = std::get_if<StringValue>(&b->node)) return as->value < bs->value;
+                return true;
+            }
+            if (auto *ab = std::get_if<BoolValue>(&a->node)) {
+                if (auto *bb = std::get_if<BoolValue>(&b->node)) return !ab->value && bb->value;
+                return true;
+            }
+            if (auto *ad = std::get_if<DecimalValue>(&a->node)) {
+                if (auto *bd = std::get_if<DecimalValue>(&b->node)) return ad->spelling < bd->spelling;
+                return true;
+            }
+            return false;
+        };
+        auto value_equal = [&value_less](const std::unique_ptr<Value> &a, const std::unique_ptr<Value> &b) -> bool {
+            return !value_less(a, b) && !value_less(b, a);
+        };
+        std::sort(items.begin(), items.end(), value_less);
+        auto last = std::unique(items.begin(), items.end(), value_equal);
+        items.erase(last, items.end());
+        SetValue set;
+        set.items = std::move(items);
+        return EvalResult{Value{.node = std::move(set)}, {}};
+    }
+    if (callee == "std::collections::map_entry_new") {
+        if (args.size() != 2) {
+            return make_error("map_entry_new expects two arguments");
+        }
+        std::unordered_map<std::string, std::unique_ptr<Value>> fields;
+        fields.emplace("key", std::make_unique<Value>(std::move(args[0])));
+        fields.emplace("value", std::make_unique<Value>(std::move(args[1])));
+        return EvalResult{Value{.node = StructValue{.type_name = "MapEntry", .fields = std::move(fields)}}, {}};
+    }
+    if (callee == "std::collections::map_from_entries") {
+        MapValue map;
+        map.entries.reserve(args.size());
+        for (auto &entry_arg : args) {
+            auto *sv = std::get_if<StructValue>(&entry_arg.node);
+            if (sv == nullptr) {
+                return make_error("map_from_entries: entry is not a MapEntry struct");
+            }
+            auto key_it = sv->fields.find("key");
+            auto val_it = sv->fields.find("value");
+            if (key_it == sv->fields.end() || val_it == sv->fields.end() ||
+                !key_it->second || !val_it->second) {
+                return make_error("map_from_entries: entry missing key/value fields");
+            }
+            map.entries.emplace_back(std::move(key_it->second), std::move(val_it->second));
+        }
+        return EvalResult{Value{.node = std::move(map)}, {}};
+    }
+    // Stdlib wrappers (std::option::is_some, std::collections::length, ...)
+    // currently always recurse through expression evaluation.  Call sites that
+    // combine wrapper dispatch with custom argument evaluation (capability
+    // bridging, program-call evaluation) should either be handled by a
+    // dedicated branch above or fall through to a dedicated re-entry that
+    // replaces the outer `call_eval` with a no-op for the wrapper itself
+    // while preserving the custom dispatcher for nested user-defined calls.
+    // For now we just let unknown stdlib names fall through to the builtin
+    // table below.
+    // Fallback: builtin table — accepts pre-evaluated args already.
+    const BuiltinTable &table = BuiltinTable::instance();
+    const BuiltinFn *fn = table.find(callee);
+    if (fn != nullptr) {
+        return (*fn)(args, ctx);
+    }
+    return make_error("CallExpr not supported: unknown callee '" + callee + "'");
 }
 
 CallEvalFn make_program_call_eval(const ir::Program &program) {

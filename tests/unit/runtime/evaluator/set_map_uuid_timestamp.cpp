@@ -309,7 +309,7 @@ void test_eval_set_literal() {
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"})); // duplicate
-    auto expr = make_expr(SetLiteralExpr{std::move(items)});
+    auto expr = make_expr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(items)});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "eval.set.no_error");
     auto *sv = std::get_if<SetValue>(&result.value.node);
@@ -322,10 +322,10 @@ void test_eval_set_literal() {
 
 void test_eval_map_literal() {
     EvalContext ctx;
-    std::vector<MapEntryExpr> entries;
-    entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"b"}), make_expr_ptr(IntegerLiteralExpr{"2"})});
-    entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"1"})});
-    auto expr = make_expr(MapLiteralExpr{std::move(entries)});
+    std::vector<ExprRef> entries;
+    entries.push_back(make_expr_ptr(CallExpr{.callee="std::collections::map_entry_new", .arguments={make_expr_ptr(StringLiteralExpr{"b"}), make_expr_ptr(IntegerLiteralExpr{"2"})}}));
+    entries.push_back(make_expr_ptr(CallExpr{.callee="std::collections::map_entry_new", .arguments={make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"1"})}}));
+    auto expr = make_expr(CallExpr{.callee="std::collections::map_from_entries", .arguments=std::move(entries)});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "eval.map.no_error");
     auto *mv = std::get_if<MapValue>(&result.value.node);
@@ -344,8 +344,8 @@ void test_eval_set_equality() {
     std::vector<ExprRef> b;
     b.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     b.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
-    auto eq = make_expr(BinaryExpr{ExprBinaryOp::Equal, make_expr_ptr(SetLiteralExpr{std::move(a)}),
-                                   make_expr_ptr(SetLiteralExpr{std::move(b)})});
+    auto eq = make_expr(BinaryExpr{ExprBinaryOp::Equal, make_expr_ptr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(a)}),
+                                   make_expr_ptr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(b)})});
     auto result = eval_expr(eq, ctx);
     check(!result.has_errors(), "eval.set_eq.no_error");
     auto *bv = std::get_if<BoolValue>(&result.value.node);
@@ -358,7 +358,7 @@ void test_eval_set_length() {
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"3"}));
-    auto base = make_expr_ptr(SetLiteralExpr{std::move(items)});
+    auto base = make_expr_ptr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(items)});
     auto expr = make_expr(MemberAccessExpr{std::move(base), "length"});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "eval.set_length.no_error");
@@ -372,7 +372,7 @@ void test_eval_set_contains_via_index() {
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"3"}));
-    auto base = make_expr_ptr(SetLiteralExpr{std::move(items)});
+    auto base = make_expr_ptr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(items)});
 
     // set[2] -> true
     auto present = make_expr(
@@ -387,7 +387,7 @@ void test_eval_set_contains_via_index() {
     items2.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items2.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items2.push_back(make_expr_ptr(IntegerLiteralExpr{"3"}));
-    auto base2 = make_expr_ptr(SetLiteralExpr{std::move(items2)});
+    auto base2 = make_expr_ptr(CallExpr{.callee="std::collections::set_from_array", .arguments=std::move(items2)});
     auto absent = make_expr(
         IndexAccessExpr{base2, make_expr_ptr(IntegerLiteralExpr{"5"})});
     auto absent_result = eval_expr(absent, ctx);
@@ -398,12 +398,14 @@ void test_eval_set_contains_via_index() {
 
 void test_eval_map_index() {
     EvalContext ctx;
-    std::vector<MapEntryExpr> entries;
-    entries.push_back(
-        MapEntryExpr{make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"10"})});
-    entries.push_back(
-        MapEntryExpr{make_expr_ptr(StringLiteralExpr{"b"}), make_expr_ptr(IntegerLiteralExpr{"20"})});
-    auto base = make_expr_ptr(MapLiteralExpr{std::move(entries)});
+    std::vector<ExprRef> entries;
+    entries.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"10"})}}));
+    entries.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"b"}), make_expr_ptr(IntegerLiteralExpr{"20"})}}));
+    auto base = make_expr_ptr(CallExpr{.callee="std::collections::map_from_entries", .arguments=std::move(entries)});
     auto expr = make_expr(IndexAccessExpr{std::move(base), make_expr_ptr(StringLiteralExpr{"b"})});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "eval.map_index.no_error");
@@ -413,10 +415,11 @@ void test_eval_map_index() {
 
 void test_eval_map_index_missing() {
     EvalContext ctx;
-    std::vector<MapEntryExpr> entries;
-    entries.push_back(
-        MapEntryExpr{make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"1"})});
-    auto base = make_expr_ptr(MapLiteralExpr{std::move(entries)});
+    std::vector<ExprRef> entries;
+    entries.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"a"}), make_expr_ptr(IntegerLiteralExpr{"1"})}}));
+    auto base = make_expr_ptr(CallExpr{.callee="std::collections::map_from_entries", .arguments=std::move(entries)});
     auto expr = make_expr(IndexAccessExpr{std::move(base), make_expr_ptr(StringLiteralExpr{"z"})});
     auto result = eval_expr(expr, ctx);
     check(result.has_errors(), "eval.map_index_missing.has_error");
@@ -474,14 +477,16 @@ void test_eval_timestamp_equality() {
 
 void test_eval_map_equality() {
     EvalContext ctx;
-    std::vector<MapEntryExpr> a;
-    a.push_back(
-        MapEntryExpr{make_expr_ptr(StringLiteralExpr{"k"}), make_expr_ptr(IntegerLiteralExpr{"1"})});
-    std::vector<MapEntryExpr> b;
-    b.push_back(
-        MapEntryExpr{make_expr_ptr(StringLiteralExpr{"k"}), make_expr_ptr(IntegerLiteralExpr{"1"})});
-    auto eq = make_expr(BinaryExpr{ExprBinaryOp::Equal, make_expr_ptr(MapLiteralExpr{std::move(a)}),
-                                   make_expr_ptr(MapLiteralExpr{std::move(b)})});
+    std::vector<ExprRef> a;
+    a.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"k"}), make_expr_ptr(IntegerLiteralExpr{"1"})}}));
+    std::vector<ExprRef> b;
+    b.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"k"}), make_expr_ptr(IntegerLiteralExpr{"1"})}}));
+    auto eq = make_expr(BinaryExpr{ExprBinaryOp::Equal, make_expr_ptr(CallExpr{.callee="std::collections::map_from_entries", .arguments=std::move(a)}),
+                                   make_expr_ptr(CallExpr{.callee="std::collections::map_from_entries", .arguments=std::move(b)})});
     auto result = eval_expr(eq, ctx);
     check(!result.has_errors(), "eval.map_eq.no_error");
     auto *bv = std::get_if<BoolValue>(&result.value.node);
@@ -512,7 +517,7 @@ void test_back_compat_existing_kinds() {
     std::vector<ExprRef> items;
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
-    auto base = make_expr_ptr(ListLiteralExpr{std::move(items)});
+    auto base = make_expr_ptr(CallExpr{.callee="std::collections::list_from_array", .arguments=std::move(items)});
     auto len = make_expr(MemberAccessExpr{std::move(base), "length"});
     auto len_result = eval_expr(len, ctx);
     auto *liv = std::get_if<IntValue>(&len_result.value.node);

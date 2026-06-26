@@ -178,18 +178,12 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
     }
 
     std::visit(Overloaded{
-                   [](const NoneLiteralExpr &) {},
                    [](const BoolLiteralExpr &) {},
                    [](const IntegerLiteralExpr &) {},
                    [](const FloatLiteralExpr &) {},
                    [](const DecimalLiteralExpr &) {},
                    [](const StringLiteralExpr &) {},
                    [](const DurationLiteralExpr &) {},
-                   [&](const SomeExpr &value) {
-                       if (value.value) {
-                           visit_expr(*value.value);
-                       }
-                   },
                    [](const PathExpr &) {},
                    [](const QualifiedValueExpr &) {},
                    [&](const CallExpr &value) {
@@ -214,39 +208,6 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
                            }
                            if (field.value) {
                                visit_expr(*field.value);
-                           }
-                       }
-                   },
-                   [&](const ListLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (item) {
-                               visit_expr(*item);
-                           }
-                       }
-                   },
-                   [&](const SetLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (item) {
-                               visit_expr(*item);
-                           }
-                       }
-                   },
-                   [&](const MapLiteralExpr &value) {
-                       for (const auto &entry : value.entries) {
-                           if (aborted_) {
-                               break;
-                           }
-                           if (entry.key) {
-                               visit_expr(*entry.key);
-                           }
-                           if (!aborted_ && entry.value) {
-                               visit_expr(*entry.value);
                            }
                        }
                    },
@@ -608,16 +569,12 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
     }
 
     modified = std::visit(Overloaded{
-                              [](NoneLiteralExpr &) { return false; },
                               [](BoolLiteralExpr &) { return false; },
                               [](IntegerLiteralExpr &) { return false; },
                               [](FloatLiteralExpr &) { return false; },
                               [](DecimalLiteralExpr &) { return false; },
                               [](StringLiteralExpr &) { return false; },
                               [](DurationLiteralExpr &) { return false; },
-                              [&](SomeExpr &value) {
-                                  return value.value != nullptr && rewrite_expr(*value.value);
-                              },
                               [](PathExpr &) { return false; },
                               [](QualifiedValueExpr &) { return false; },
                               [&](CallExpr &value) {
@@ -643,45 +600,6 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
                                       }
                                       if (field.value) {
                                           changed = rewrite_expr(*field.value) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](ListLiteralExpr &value) {
-                                  bool changed = false;
-                                  for (auto &item : value.items) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (item) {
-                                          changed = rewrite_expr(*item) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](SetLiteralExpr &value) {
-                                  bool changed = false;
-                                  for (auto &item : value.items) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (item) {
-                                          changed = rewrite_expr(*item) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](MapLiteralExpr &value) {
-                                  bool changed = false;
-                                  for (auto &entry : value.entries) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (entry.key) {
-                                          changed = rewrite_expr(*entry.key) || changed;
-                                      }
-                                      if (!aborted_ && entry.value) {
-                                          changed = rewrite_expr(*entry.value) || changed;
                                       }
                                   }
                                   return changed;

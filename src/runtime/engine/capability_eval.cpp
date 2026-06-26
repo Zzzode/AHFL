@@ -75,10 +75,13 @@ template <typename InvokeCall>
     call_eval = [&call_eval,
                  invoke_call](const ir::CallExpr &call,
                               const evaluator::EvalContext &current_ctx) -> evaluator::EvalResult {
+        // Step 1: evaluate arguments using the full call dispatcher so that
+        // nested capability calls inside stdlib constructor arguments still go
+        // through the runtime registry.
         std::vector<evaluator::Value> arg_values;
         for (const auto &arg_ptr : call.arguments) {
             if (!arg_ptr) {
-                return make_capability_error("capability '" + call.callee +
+                return make_capability_error("call '" + call.callee +
                                              "' has null argument expression");
             }
             auto arg_result = evaluator::eval_expr(*arg_ptr, current_ctx, call_eval);
@@ -88,6 +91,20 @@ template <typename InvokeCall>
             arg_values.push_back(std::move(arg_result.value));
         }
 
+        // Step 2: dispatch the call itself.
+        //
+        // Stdlib-namespaced callees (e.g. std::option::Option::Some,
+        // std::collections::list_from_array) are serviced by the evaluator's
+        // intrinsic path / builtin table, not by the runtime capability
+        // registry.  We invoke the intrinsic helper with the
+        // ALREADY-EVALUATED arg_values computed above so that nested
+        // capability calls inside constructor arguments are resolved exactly
+        // once via the full dispatcher and never re-evaluated through a
+        // different (empty) call_eval.
+        if (call.callee.starts_with("std::")) {
+            return evaluator::eval_intrinsic_with_args(call.callee, std::move(arg_values),
+                                                       current_ctx);
+        }
         return invoke_call(call.callee, arg_values);
     };
 

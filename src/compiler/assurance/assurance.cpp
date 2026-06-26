@@ -382,17 +382,12 @@ analyze_capability(const ir::CapabilityDecl &capability,
 [[nodiscard]] std::string render_decreases_subject(const ir::Expr &expr) {
     return std::visit(
         Overloaded{
-            [](const ir::NoneLiteralExpr &) { return std::string("none"); },
             [](const ir::BoolLiteralExpr &v) { return std::string(v.value ? "true" : "false"); },
             [](const ir::IntegerLiteralExpr &v) { return v.spelling; },
             [](const ir::FloatLiteralExpr &v) { return v.spelling; },
             [](const ir::DecimalLiteralExpr &v) { return v.spelling; },
             [](const ir::StringLiteralExpr &v) { return v.spelling; },
             [](const ir::DurationLiteralExpr &v) { return v.spelling; },
-            [&](const ir::SomeExpr &v) {
-                return std::string("some(") +
-                       (v.value ? render_decreases_subject(*v.value) : std::string("none")) + ")";
-            },
             [](const ir::PathExpr &v) { return render_path(v.path); },
             [](const ir::QualifiedValueExpr &v) { return v.value; },
             [&](const ir::UnaryExpr &v) {

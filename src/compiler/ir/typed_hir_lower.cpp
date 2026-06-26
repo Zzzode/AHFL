@@ -1276,36 +1276,21 @@ class TypedIrLowerer final {
                 range);
         }
         ir::ExprRef visit_none_literal(const TypedExpr &e) const {
-            if (e.type != nullptr) {
-                if (const auto option = stdlib_bridge::std_container_type_view(*e.type);
-                    option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
-                    option->nominal) {
-                    return self.make_expr(
-                        ir::CallExpr{.callee = "std::option::Option::None", .arguments = {}},
-                        range);
-                }
-            }
-            return self.make_expr(ir::NoneLiteralExpr{}, range);
+            (void)e;
+            return self.make_expr(
+                ir::CallExpr{.callee = "std::option::Option::None", .arguments = {}}, range);
         }
         ir::ExprRef visit_some(const TypedExpr &e) const {
             const TypedExpr *operand =
                 TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
-            if (e.type != nullptr) {
-                if (const auto option = stdlib_bridge::std_container_type_view(*e.type);
-                    option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
-                    option->nominal) {
-                    ir::CallExpr call{
-                        .callee = "std::option::Option::Some",
-                        .arguments = {},
-                    };
-                    if (operand != nullptr) {
-                        call.arguments.push_back(self.lower_typed_expr(*operand));
-                    }
-                    return self.make_expr(std::move(call), range);
-                }
+            ir::CallExpr call{
+                .callee = "std::option::Option::Some",
+                .arguments = {},
+            };
+            if (operand != nullptr) {
+                call.arguments.push_back(self.lower_typed_expr(*operand));
             }
-            return self.make_expr(
-                ir::SomeExpr{.value = operand ? self.lower_typed_expr(*operand) : nullptr}, range);
+            return self.make_expr(std::move(call), range);
         }
         ir::ExprRef visit_path(const TypedExpr &e) const {
             return self.make_expr(ir::PathExpr{.path = self.lower_path_from_typed(e)}, range);
@@ -1488,7 +1473,8 @@ class TypedIrLowerer final {
             if (inner != nullptr) {
                 return self.lower_typed_expr(*inner);
             }
-            return self.make_expr(ir::NoneLiteralExpr{}, range);
+            return self.make_expr(
+                ir::QualifiedValueExpr{.value = "<malformed-group>"}, range);
         }
         ir::ExprRef visit_match(const TypedExpr &e) const {
             const auto *ast_expr = self.find_ast_match_expr(e);
@@ -1925,16 +1911,12 @@ class TypedIrLowerer final {
     void collect_called_targets_from_expr(const ir::Expr &expr,
                                           std::vector<std::string> &called_targets) const {
         std::visit(Overloaded{
-                       [](const ir::NoneLiteralExpr &) {},
                        [](const ir::BoolLiteralExpr &) {},
                        [](const ir::IntegerLiteralExpr &) {},
                        [](const ir::FloatLiteralExpr &) {},
                        [](const ir::DecimalLiteralExpr &) {},
                        [](const ir::StringLiteralExpr &) {},
                        [](const ir::DurationLiteralExpr &) {},
-                       [this, &called_targets](const ir::SomeExpr &value) {
-                           collect_called_targets_from_expr(*value.value, called_targets);
-                       },
                        [](const ir::PathExpr &) {},
                        [](const ir::QualifiedValueExpr &) {},
                        [this, &called_targets](const ir::CallExpr &value) {
@@ -1950,20 +1932,6 @@ class TypedIrLowerer final {
                        [this, &called_targets](const ir::StructLiteralExpr &value) {
                            for (const auto &f : value.fields)
                                collect_called_targets_from_expr(*f.value, called_targets);
-                       },
-                       [this, &called_targets](const ir::ListLiteralExpr &value) {
-                           for (const auto &i : value.items)
-                               collect_called_targets_from_expr(*i, called_targets);
-                       },
-                       [this, &called_targets](const ir::SetLiteralExpr &value) {
-                           for (const auto &i : value.items)
-                               collect_called_targets_from_expr(*i, called_targets);
-                       },
-                       [this, &called_targets](const ir::MapLiteralExpr &value) {
-                           for (const auto &e : value.entries) {
-                               collect_called_targets_from_expr(*e.key, called_targets);
-                               collect_called_targets_from_expr(*e.value, called_targets);
-                           }
                        },
                        [this, &called_targets](const ir::UnaryExpr &value) {
                            collect_called_targets_from_expr(*value.operand, called_targets);
@@ -2015,16 +1983,12 @@ class TypedIrLowerer final {
                                       const std::vector<std::string> &node_names,
                                       std::vector<ir::WorkflowValueRead> &reads) const {
         std::visit(Overloaded{
-                       [](const ir::NoneLiteralExpr &) {},
                        [](const ir::BoolLiteralExpr &) {},
                        [](const ir::IntegerLiteralExpr &) {},
                        [](const ir::FloatLiteralExpr &) {},
                        [](const ir::DecimalLiteralExpr &) {},
                        [](const ir::StringLiteralExpr &) {},
                        [](const ir::DurationLiteralExpr &) {},
-                       [this, &node_names, &reads](const ir::SomeExpr &value) {
-                           collect_workflow_value_reads(*value.value, node_names, reads);
-                       },
                        [&](const ir::PathExpr &value) {
                            if (value.path.root_kind == ir::PathRootKind::Input) {
                                push_unique_workflow_value_read(
@@ -2063,20 +2027,6 @@ class TypedIrLowerer final {
                        [this, &node_names, &reads](const ir::StructLiteralExpr &value) {
                            for (const auto &f : value.fields)
                                collect_workflow_value_reads(*f.value, node_names, reads);
-                       },
-                       [this, &node_names, &reads](const ir::ListLiteralExpr &value) {
-                           for (const auto &i : value.items)
-                               collect_workflow_value_reads(*i, node_names, reads);
-                       },
-                       [this, &node_names, &reads](const ir::SetLiteralExpr &value) {
-                           for (const auto &i : value.items)
-                               collect_workflow_value_reads(*i, node_names, reads);
-                       },
-                       [this, &node_names, &reads](const ir::MapLiteralExpr &value) {
-                           for (const auto &e : value.entries) {
-                               collect_workflow_value_reads(*e.key, node_names, reads);
-                               collect_workflow_value_reads(*e.value, node_names, reads);
-                           }
                        },
                        [this, &node_names, &reads](const ir::UnaryExpr &value) {
                            collect_workflow_value_reads(*value.operand, node_names, reads);

@@ -191,7 +191,6 @@ namespace {
 
 [[nodiscard]] bool needs_grouping_for_suffix(const ir::Expr &expr) {
     return std::visit(Overloaded{
-                          [](const ir::NoneLiteralExpr &) { return false; },
                           [](const ir::BoolLiteralExpr &) { return false; },
                           [](const ir::IntegerLiteralExpr &) { return false; },
                           [](const ir::FloatLiteralExpr &) { return false; },
@@ -203,12 +202,8 @@ namespace {
                           [](const ir::CallExpr &) { return false; },
                           [](const ir::LambdaExpr &) { return false; },
                           [](const ir::StructLiteralExpr &) { return false; },
-                          [](const ir::ListLiteralExpr &) { return false; },
-                          [](const ir::SetLiteralExpr &) { return false; },
-                          [](const ir::MapLiteralExpr &) { return false; },
 	                          [](const ir::MemberAccessExpr &) { return false; },
 	                          [](const ir::IndexAccessExpr &) { return false; },
-	                          [](const ir::SomeExpr &) { return true; },
 	                          [](const ir::UnaryExpr &) { return true; },
 	                          [](const ir::BinaryExpr &) { return true; },
 	                          [](const ir::MatchExpr &) { return true; },
@@ -436,7 +431,6 @@ class IrProgramPrinter final {
     [[nodiscard]] std::string render_expr(const ir::Expr &expr) const {
         return std::visit(
             Overloaded{
-                [](const ir::NoneLiteralExpr &) { return std::string("none"); },
                 [](const ir::BoolLiteralExpr &value) {
                     return std::string(value.value ? "true" : "false");
                 },
@@ -445,9 +439,6 @@ class IrProgramPrinter final {
                 [](const ir::DecimalLiteralExpr &value) { return value.spelling; },
                 [](const ir::StringLiteralExpr &value) { return value.spelling; },
                 [](const ir::DurationLiteralExpr &value) { return value.spelling; },
-                [this](const ir::SomeExpr &value) {
-                    return "some(" + render_expr(*value.value) + ")";
-                },
                 [this](const ir::PathExpr &value) { return render_path(value.path); },
                 [](const ir::QualifiedValueExpr &value) { return value.value; },
                 [this](const ir::CallExpr &value) {
@@ -471,34 +462,6 @@ class IrProgramPrinter final {
                     }
 
                     return value.type_name + " { " + join(fields, ", ") + " }";
-                },
-                [this](const ir::ListLiteralExpr &value) {
-                    std::vector<std::string> items;
-                    items.reserve(value.items.size());
-                    for (const auto &item : value.items) {
-                        items.push_back(render_expr(*item));
-                    }
-
-                    return "[" + join(items, ", ") + "]";
-                },
-                [this](const ir::SetLiteralExpr &value) {
-                    std::vector<std::string> items;
-                    items.reserve(value.items.size());
-                    for (const auto &item : value.items) {
-                        items.push_back(render_expr(*item));
-                    }
-
-                    return "{" + join(items, ", ") + "}";
-                },
-                [this](const ir::MapLiteralExpr &value) {
-                    std::vector<std::string> entries;
-                    entries.reserve(value.entries.size());
-                    for (const auto &entry : value.entries) {
-                        entries.push_back(render_expr(*entry.key) + ": " +
-                                          render_expr(*entry.value));
-                    }
-
-                    return "{" + join(entries, ", ") + "}";
                 },
                 [this](const ir::UnaryExpr &value) {
                     return "(" + expr_unary_op_name(value.op) + render_expr(*value.operand) + ")";

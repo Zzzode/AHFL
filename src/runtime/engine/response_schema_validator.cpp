@@ -167,7 +167,7 @@ namespace {
         return SchemaValidationResult::fail(at_path(path, "expected Unit but got a value"));
     }
 
-    if (expected.kind == Kind::Optional || is_nominal_std_option(expected)) {
+    if (is_nominal_std_option(expected)) {
         if (is_none(value)) {
             return SchemaValidationResult::ok();
         }
@@ -252,7 +252,7 @@ namespace {
             at_path(path, "expected Duration but got " + std::string(kind_label(value))));
     }
 
-    if (expected.kind == Kind::List || is_nominal_std_list(expected)) {
+    if (is_nominal_std_list(expected)) {
         if (const auto *list = std::get_if<ListValue>(&value.node)) {
             if (const auto *element_type = first_type_arg(expected); element_type != nullptr) {
                 for (std::size_t index_value = 0; index_value < list->items.size(); ++index_value) {
@@ -275,7 +275,7 @@ namespace {
             at_path(path, "expected List but got " + std::string(kind_label(value))));
     }
 
-    if (expected.kind == Kind::Set || is_nominal_std_set(expected)) {
+    if (is_nominal_std_set(expected)) {
         if (const auto *set = std::get_if<SetValue>(&value.node)) {
             if (const auto *element_type = first_type_arg(expected); element_type != nullptr) {
                 for (std::size_t index_value = 0; index_value < set->items.size(); ++index_value) {
@@ -298,7 +298,7 @@ namespace {
             at_path(path, "expected Set but got " + std::string(kind_label(value))));
     }
 
-    if (expected.kind == Kind::Map || is_nominal_std_map(expected)) {
+    if (is_nominal_std_map(expected)) {
         if (const auto *map = std::get_if<MapValue>(&value.node)) {
             const auto *key_type = first_type_arg(expected);
             const auto *value_type = second_type_arg(expected);

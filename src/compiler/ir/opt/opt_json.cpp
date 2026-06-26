@@ -73,14 +73,6 @@ void write_string(std::ostream &out, std::string_view value) {
         return "struct";
     case TypeRefKind::Enum:
         return "enum";
-    case TypeRefKind::Optional:
-        return "optional";
-    case TypeRefKind::List:
-        return "list";
-    case TypeRefKind::Set:
-        return "set";
-    case TypeRefKind::Map:
-        return "map";
     case TypeRefKind::Fn:
         return "fn";
     }

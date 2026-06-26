@@ -141,9 +141,6 @@ struct MatchPattern {
     std::string text;
 };
 
-/// none literal
-struct NoneLiteralExpr {};
-
 /// Boolean literal: true / false
 struct BoolLiteralExpr {
     bool value{false};
@@ -172,11 +169,6 @@ struct StringLiteralExpr {
 /// Duration literal: 30s, 5m
 struct DurationLiteralExpr {
     std::string spelling;
-};
-
-/// some expression: some(expr)
-struct SomeExpr {
-    ExprRef value;
 };
 
 /// Path expression: input.field, ctx.field, node_name.field
@@ -211,27 +203,6 @@ struct StructFieldInit {
 struct StructLiteralExpr {
     std::string type_name;               // Type name
     std::vector<StructFieldInit> fields; // Field initializer list
-};
-
-/// List literal: [a, b, c]
-struct ListLiteralExpr {
-    std::vector<ExprRef> items;
-};
-
-/// Set literal: {a, b, c}
-struct SetLiteralExpr {
-    std::vector<ExprRef> items;
-};
-
-/// Map key-value pair
-struct MapEntryExpr {
-    ExprRef key;
-    ExprRef value;
-};
-
-/// Map literal: {k1: v1, k2: v2}
-struct MapLiteralExpr {
-    std::vector<MapEntryExpr> entries;
 };
 
 /// Unary expression: !expr, -expr
@@ -272,23 +243,20 @@ struct MatchExpr {
     std::vector<MatchArmExpr> arms;
 };
 
-/// Expression node (21 variant alternatives)
-using ExprNode = std::variant<NoneLiteralExpr,
-                              BoolLiteralExpr,
+/// Expression node (16 variant alternatives - P5 Big Bang: container literals
+/// lowered to CallExpr via nominal stdlib constructors, Option variants via
+/// QualifiedValueExpr + CallExpr)
+using ExprNode = std::variant<BoolLiteralExpr,
                               IntegerLiteralExpr,
                               FloatLiteralExpr,
                               DecimalLiteralExpr,
                               StringLiteralExpr,
                               DurationLiteralExpr,
-                              SomeExpr,
                               PathExpr,
                               QualifiedValueExpr,
                               CallExpr,
                               LambdaExpr,
                               StructLiteralExpr,
-                              ListLiteralExpr,
-                              SetLiteralExpr,
-                              MapLiteralExpr,
                               UnaryExpr,
                               BinaryExpr,
                               MemberAccessExpr,

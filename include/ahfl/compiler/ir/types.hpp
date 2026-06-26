@@ -148,10 +148,6 @@ enum class TypeRefKind {
     Decimal,
     Struct,
     Enum,
-    Optional,
-    List,
-    Set,
-    Map,
     Fn,
 };
 

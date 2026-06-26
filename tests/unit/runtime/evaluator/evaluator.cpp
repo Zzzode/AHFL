@@ -57,9 +57,10 @@ StatementPtr make_stmt_ptr(StatementNode node) {
 
 void test_none_literal() {
     EvalContext ctx;
-    auto result = eval_expr(make_expr(NoneLiteralExpr{}), ctx);
+    auto result = eval_expr(
+        make_expr(CallExpr{.callee = "std::option::Option::None", .arguments = {}}), ctx);
     check(!result.has_errors(), "none_literal.no_error");
-    check(is_none(result.value), "none_literal.is_none");
+    check(is_optional_none(result.value), "none_literal.is_none");
 }
 
 void test_bool_literal() {
@@ -390,7 +391,8 @@ void test_list_literal() {
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"3"}));
 
-    auto expr = make_expr(ListLiteralExpr{std::move(items)});
+    auto expr = make_expr(CallExpr{
+        .callee = "std::collections::list_from_array", .arguments = std::move(items)});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "list_literal.no_error");
     auto *lv = get_list_if(result.value);
@@ -476,7 +478,9 @@ void test_index_out_of_bounds() {
 
 void test_some_expr() {
     EvalContext ctx;
-    auto expr = make_expr(SomeExpr{make_expr_ptr(IntegerLiteralExpr{"42"})});
+    auto expr = make_expr(CallExpr{
+        .callee = "std::option::Option::Some",
+        .arguments = {make_expr_ptr(IntegerLiteralExpr{"42"})}});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "some_expr.no_error");
     check(is_some(result.value), "some_expr.has_inner");
@@ -528,7 +532,8 @@ void test_std_builtin_hooks() {
     list_items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     auto list_length = make_expr(CallExpr{
         "list_raw_length",
-        {make_expr_ptr(ListLiteralExpr{std::move(list_items)})},
+        {make_expr_ptr(CallExpr{.callee = "std::collections::list_from_array",
+                               .arguments = std::move(list_items)})},
     });
     auto length_result = eval_expr(list_length, ctx);
     check(!length_result.has_errors(), "std.list_raw_length.no_error");
@@ -540,7 +545,8 @@ void test_std_builtin_hooks() {
     get_items.push_back(make_expr_ptr(IntegerLiteralExpr{"5"}));
     auto list_get = make_expr(CallExpr{
         "list_raw_get",
-        {make_expr_ptr(ListLiteralExpr{std::move(get_items)}),
+        {make_expr_ptr(CallExpr{.callee = "std::collections::list_from_array",
+                               .arguments = std::move(get_items)}),
          make_expr_ptr(IntegerLiteralExpr{"1"})},
     });
     auto get_result = eval_expr(list_get, ctx);
@@ -548,14 +554,19 @@ void test_std_builtin_hooks() {
     auto *list_value = std::get_if<IntValue>(&get_result.value.node);
     check(list_value != nullptr && list_value->value == 5, "std.list_raw_get.value");
 
-    std::vector<MapEntryExpr> map_entries;
-    map_entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"a"}),
-                                       make_expr_ptr(IntegerLiteralExpr{"10"})});
-    map_entries.push_back(MapEntryExpr{make_expr_ptr(StringLiteralExpr{"b"}),
-                                       make_expr_ptr(IntegerLiteralExpr{"20"})});
+    std::vector<ExprRef> map_ctor_args;
+    map_ctor_args.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"a"}),
+                               make_expr_ptr(IntegerLiteralExpr{"10"})}}));
+    map_ctor_args.push_back(make_expr_ptr(
+        CallExpr{.callee = "std::collections::map_entry_new",
+                 .arguments = {make_expr_ptr(StringLiteralExpr{"b"}),
+                               make_expr_ptr(IntegerLiteralExpr{"20"})}}));
     auto map_get = make_expr(CallExpr{
         "map_raw_get",
-        {make_expr_ptr(MapLiteralExpr{std::move(map_entries)}),
+        {make_expr_ptr(CallExpr{.callee = "std::collections::map_from_entries",
+                               .arguments = std::move(map_ctor_args)}),
          make_expr_ptr(StringLiteralExpr{"b"})},
     });
     auto map_result = eval_expr(map_get, ctx);
@@ -578,11 +589,9 @@ void test_std_builtin_hooks() {
     });
     auto option_some_result = eval_expr(option_some, ctx);
     check(!option_some_result.has_errors(), "std.option_constructor_some.no_error");
-    auto *some_value = std::get_if<OptionalValue>(&option_some_result.value.node);
-    check(some_value != nullptr && some_value->inner != nullptr,
-          "std.option_constructor_some.some");
-    if (some_value != nullptr && some_value->inner != nullptr) {
-        auto *value = std::get_if<IntValue>(&some_value->inner->node);
+    check(is_some(option_some_result.value), "std.option_constructor_some.some");
+    if (const Value *inner = optional_inner(option_some_result.value); inner != nullptr) {
+        auto *value = std::get_if<IntValue>(&inner->node);
         check(value != nullptr && value->value == 99, "std.option_constructor_some.value");
     }
 
@@ -592,9 +601,7 @@ void test_std_builtin_hooks() {
     });
     auto option_none_result = eval_expr(option_none, ctx);
     check(!option_none_result.has_errors(), "std.option_constructor_none.no_error");
-    auto *none_value = std::get_if<OptionalValue>(&option_none_result.value.node);
-    check(none_value != nullptr && none_value->inner == nullptr,
-          "std.option_constructor_none.none");
+    check(is_optional_none(option_none_result.value), "std.option_constructor_none.none");
 
     auto result_ok = make_expr(CallExpr{
         "std::result::Result::Ok",

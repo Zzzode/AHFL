@@ -90,16 +90,12 @@ void push_unique_workflow_value_read(std::vector<WorkflowValueRead> &values,
 
 void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string> &called_targets) {
     std::visit(Overloaded{
-                   [](const NoneLiteralExpr &) {},
                    [](const BoolLiteralExpr &) {},
                    [](const IntegerLiteralExpr &) {},
                    [](const FloatLiteralExpr &) {},
                    [](const DecimalLiteralExpr &) {},
                    [](const StringLiteralExpr &) {},
                    [](const DurationLiteralExpr &) {},
-                   [&](const SomeExpr &value) {
-                       collect_called_targets_from_expr(*value.value, called_targets);
-                   },
                    [](const PathExpr &) {},
                    [](const QualifiedValueExpr &) {},
                    [&](const CallExpr &value) {
@@ -116,22 +112,6 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
                    [&](const StructLiteralExpr &value) {
                        for (const auto &field : value.fields) {
                            collect_called_targets_from_expr(*field.value, called_targets);
-                       }
-                   },
-                   [&](const ListLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           collect_called_targets_from_expr(*item, called_targets);
-                       }
-                   },
-                   [&](const SetLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           collect_called_targets_from_expr(*item, called_targets);
-                       }
-                   },
-                   [&](const MapLiteralExpr &value) {
-                       for (const auto &entry : value.entries) {
-                           collect_called_targets_from_expr(*entry.key, called_targets);
-                           collect_called_targets_from_expr(*entry.value, called_targets);
                        }
                    },
                    [&](const UnaryExpr &value) {
@@ -260,16 +240,12 @@ void collect_workflow_value_reads(const Expr &expr,
                                   const std::vector<std::string> &workflow_node_names,
                                   std::vector<WorkflowValueRead> &reads) {
     std::visit(Overloaded{
-                   [](const NoneLiteralExpr &) {},
                    [](const BoolLiteralExpr &) {},
                    [](const IntegerLiteralExpr &) {},
                    [](const FloatLiteralExpr &) {},
                    [](const DecimalLiteralExpr &) {},
                    [](const StringLiteralExpr &) {},
                    [](const DurationLiteralExpr &) {},
-                   [&](const SomeExpr &value) {
-                       collect_workflow_value_reads(*value.value, workflow_node_names, reads);
-                   },
                    [&](const PathExpr &value) {
                        if (value.path.root_kind == PathRootKind::Input) {
                            push_unique_workflow_value_read(
@@ -314,22 +290,6 @@ void collect_workflow_value_reads(const Expr &expr,
                    [&](const StructLiteralExpr &value) {
                        for (const auto &field : value.fields) {
                            collect_workflow_value_reads(*field.value, workflow_node_names, reads);
-                       }
-                   },
-                   [&](const ListLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           collect_workflow_value_reads(*item, workflow_node_names, reads);
-                       }
-                   },
-                   [&](const SetLiteralExpr &value) {
-                       for (const auto &item : value.items) {
-                           collect_workflow_value_reads(*item, workflow_node_names, reads);
-                       }
-                   },
-                   [&](const MapLiteralExpr &value) {
-                       for (const auto &entry : value.entries) {
-                           collect_workflow_value_reads(*entry.key, workflow_node_names, reads);
-                           collect_workflow_value_reads(*entry.value, workflow_node_names, reads);
                        }
                    },
                    [&](const UnaryExpr &value) {

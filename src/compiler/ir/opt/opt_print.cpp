@@ -42,14 +42,6 @@ namespace {
         return "struct";
     case TypeRefKind::Enum:
         return "enum";
-    case TypeRefKind::Optional:
-        return "optional";
-    case TypeRefKind::List:
-        return "list";
-    case TypeRefKind::Set:
-        return "set";
-    case TypeRefKind::Map:
-        return "map";
     case TypeRefKind::Fn:
         return "fn";
     }
