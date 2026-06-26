@@ -17,4 +17,4 @@ tools/vscode/server/
 tools/vscode/dist/
 tools/vscode/*.vsix
 
-build-*
+build-*/
