@@ -42,6 +42,17 @@ jobs:
       - name: Check formatting
         run: cmake --build --preset build-format-check
 
+      # .ahfl formatter gate (M3-2). Runs ahflc fmt --check over the formatter
+      # golden fixtures. Currently continue-on-error because the formatter is
+      # non-idempotent / destructive on generics (corelib-support-workplan §3.5
+      # #8) — it reports drift without blocking CI. Drop continue-on-error and
+      # widen GATE_DIRS to std/ once the formatter is realigned to the grammar.
+      - name: Build ahflc (for fmt --check)
+        run: cmake --build --preset build-dev --target ahflc
+      - name: Check .ahfl formatting
+        continue-on-error: true
+        run: AHFLC=build/dev/src/tooling/cli/ahflc scripts/ci-format-check.sh
+
   build-and-test:
     name: Build And Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -146,6 +146,16 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
     const serverOptions: ServerOptions = {
         command: serverCommand,
         args: serverArgs,
+        options: {
+            env: {
+                ...process.env,
+                // M3-1: prefer the stdlib bundled inside the extension so a clean
+                // VSIX install resolves std::* without a source checkout. If the
+                // bundled std/ is absent (dev build), the LSP still falls through
+                // to its compiled-in AHFL_SOURCE_DIR and cwd-walk search roots.
+                AHFL_STDLIB_SEARCH_ROOT: vscode.Uri.joinPath(context.extensionUri, 'std').fsPath,
+            },
+        },
     };
 
     const clientOptions: LanguageClientOptions = {
