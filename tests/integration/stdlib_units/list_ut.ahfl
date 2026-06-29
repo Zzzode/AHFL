@@ -1,0 +1,39 @@
+module stdlib_units::list_ut;
+
+import std::collections as collections;
+import std::option as option;
+
+// List<T> unit-test matrix (M1-7 / B3). UFCS surface.
+fn list_ut() -> Int effect Pure decreases 0 {
+    let xs: collections::List<Int> = collections::list_cons<Int>(1, collections::list_cons<Int>(2, collections::singleton<Int>(3)));
+    let ys: collections::List<Int> = collections::empty<Int>();
+
+    // construction / size
+    assert(collections::length<Int>(xs) == 3);
+    assert(collections::length<Int>(ys) == 0);
+    assert(collections::is_empty<Int>(ys));
+    assert(collections::length<Int>(collections::singleton<Int>(7)) == 1);
+    assert(collections::length<Int>(collections::list_cons<Int>(0, xs)) == 4);
+
+    // access
+    assert(option::unwrap_or<Int>(collections::list_get<Int>(xs, 0), 0) == 1);
+    assert(option::unwrap_or<Int>(collections::list_get<Int>(xs, 2), 0) == 3);
+    assert(option::is_none<Int>(collections::list_get<Int>(xs, 9)));
+    assert(option::unwrap_or<Int>(collections::first<Int>(xs), 0) == 1);
+    assert(option::unwrap_or<Int>(collections::last<Int>(xs), 0) == 3);
+    assert(option::is_none<Int>(collections::first<Int>(ys)));
+
+    // fold / map / filter
+    assert(collections::fold<Int, Int>(xs, 0, \(acc: Int, x: Int) -> acc + x) == 6);
+    assert(collections::fold<Int, Int>(ys, 0, \(acc: Int, x: Int) -> acc + x) == 0);
+    assert(collections::length<Int>(collections::map<Int, Int>(xs, \x: Int -> x * 2)) == 3);
+    assert(option::unwrap_or<Int>(collections::first<Int>(collections::map<Int, Int>(xs, \x: Int -> x * 2)), 0) == 2);
+    assert(collections::length<Int>(collections::filter<Int>(xs, \x: Int -> x > 1)) == 2);
+    assert(collections::length<Int>(collections::filter<Int>(xs, \x: Int -> x > 9)) == 0);
+
+    // append
+    assert(collections::length<Int>(collections::append<Int>(xs, xs)) == 6);
+    assert(option::unwrap_or<Int>(collections::last<Int>(collections::append<Int>(xs, xs)), 0) == 3);
+
+    return 0;
+}

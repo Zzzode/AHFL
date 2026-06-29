@@ -1,0 +1,29 @@
+module stdlib_units::map_ut;
+
+import std::collections as collections;
+import std::option as option;
+
+// Map<K, V> unit-test matrix (M1-7 / B3). UFCS surface.
+fn map_ut() -> Int effect Pure decreases 0 {
+    let m: collections::Map<String, Int> = collections::map_singleton<String, Int>("a", 1);
+    let e: collections::Map<String, Int> = collections::map_empty<String, Int>();
+    let m2: collections::Map<String, Int> = collections::map_from_entries<String, Int>("a", 1, "b", 2, "c", 3, "d", 4);
+
+    // empty / singleton
+    assert(collections::map_is_empty<String, Int>(e));
+    assert(collections::contains_key<String, Int>(m, "a"));
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m, "a"), 0) == 1);
+    assert(option::is_none<Int>(collections::map_get<String, Int>(m, "z")));
+    assert(option::is_none<Int>(collections::map_get<String, Int>(e, "a")));
+
+    // multi-entry (map_from_entries: 4 pairs)
+    assert(collections::contains_key<String, Int>(m2, "a"));
+    assert(collections::contains_key<String, Int>(m2, "d"));
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m2, "a"), 0) == 1);
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m2, "b"), 0) == 2);
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m2, "c"), 0) == 3);
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m2, "d"), 0) == 4);
+    assert(option::is_none<Int>(collections::map_get<String, Int>(m2, "zzz")));
+
+    return 0;
+}
