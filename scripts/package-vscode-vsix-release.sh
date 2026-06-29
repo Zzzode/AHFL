@@ -55,6 +55,15 @@ mkdir -p "$SERVER_DIR"
 cp "$RELEASE_LSP" "$SERVER_BINARY"
 chmod 755 "$SERVER_BINARY"
 
+# Bundle the stdlib so the extension ships corelib sources (M3-1). The LSP
+# resolves std::* via AHFL_STDLIB_SEARCH_ROOT; the extension launcher (TS) must
+# point that env at the bundled <extension>/std path — that wiring is a
+# tools/vscode/src follow-up, but the sources must be in the VSIX first.
+STDLIB_DIR="tools/vscode/std"
+rm -rf "$STDLIB_DIR"
+mkdir -p "$STDLIB_DIR"
+cp std/*.ahfl "$STDLIB_DIR"/
+
 EXTENSION_VERSION="$(node -p "require('./tools/vscode/package.json').version")"
 VSIX_NAME="ahfl-language-${EXTENSION_VERSION}-${TARGET}.vsix"
 
