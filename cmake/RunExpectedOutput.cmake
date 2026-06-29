@@ -41,6 +41,14 @@ string(REPLACE "\r\n" "\n" actual_output "${actual_output}")
 string(REPLACE "\r\n" "\n" actual_error "${actual_error}")
 string(REPLACE "\r\n" "\n" expected_output "${expected_output}")
 
+# Optional: normalize positional JSON node "id" fields before comparing. See
+# RunExpectedCommandOutput.cmake for rationale (project IR-JSON embeds stdlib
+# IR, so node ids shift on stdlib growth; ids are structural, not semantic).
+if(DEFINED NORMALIZE_IDS AND NORMALIZE_IDS)
+    string(REGEX REPLACE "\"id\": [0-9]+" "\"id\": 0" actual_output "${actual_output}")
+    string(REGEX REPLACE "\"id\": [0-9]+" "\"id\": 0" expected_output "${expected_output}")
+endif()
+
 if(NOT actual_output STREQUAL expected_output)
     message(FATAL_ERROR
         "output mismatch for ${SUBCOMMAND} ${INPUT_FILE}\n"

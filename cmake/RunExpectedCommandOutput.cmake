@@ -32,6 +32,16 @@ string(REPLACE "\r\n" "\n" actual_output "${actual_output}")
 string(REPLACE "\r\n" "\n" actual_error "${actual_error}")
 string(REPLACE "\r\n" "\n" expected_output "${expected_output}")
 
+# Optional: normalize positional JSON node "id" fields before comparing. Project
+# IR-JSON embeds stdlib module IR, so the node ids shift whenever stdlib grows;
+# the ids are structural (not semantic), so normalizing them to 0 — like a
+# snapshot test normalizes pointers/timestamps — eliminates that golden churn
+# without touching the (refactor-entangled) ir_json.cpp. See workplan §3.5 #5.
+if(DEFINED NORMALIZE_IDS AND NORMALIZE_IDS)
+    string(REGEX REPLACE "\"id\": [0-9]+" "\"id\": 0" actual_output "${actual_output}")
+    string(REGEX REPLACE "\"id\": [0-9]+" "\"id\": 0" expected_output "${expected_output}")
+endif()
+
 if(NOT actual_output STREQUAL expected_output)
     message(FATAL_ERROR
         "output mismatch\n"

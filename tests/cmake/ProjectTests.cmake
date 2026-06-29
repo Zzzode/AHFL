@@ -2395,6 +2395,7 @@ add_test(NAME ahflc.emit_ir_json.project.ok_cross_file
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
             "-DAHFLC_ARGS=--search-root ${AHFL_TESTS_DIR}/integration/check_ok"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/ir/project_check_ok.json"
+            "-DNORMALIZE_IDS=1"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
@@ -2403,6 +2404,7 @@ add_test(NAME ahflc.emit_ir_json.project_manifest.workflow_value_flow
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit ir-json --project ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/ir/project_workflow_value_flow.json"
+            "-DNORMALIZE_IDS=1"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
@@ -3992,6 +3994,22 @@ add_test(NAME ahfl.semantics.effects_all
     COMMAND $<TARGET_FILE:ahfl_semantics_effects_tests>
 )
 
+add_test(NAME ahfl.semantics.diagnostic_matrix_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_diagnostic_matrix_tests>
+)
+
+add_test(NAME ahfl.semantics.type_mismatch_origin_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_type_mismatch_origin_tests>
+)
+
+add_test(NAME ahfl.semantics.stmt_diagnostics_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_stmt_diagnostics_tests>
+)
+
+add_test(NAME ahfl.semantics.const_sema_negatives_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_const_sema_negatives_tests>
+)
+
 add_test(NAME ahfl.semantics.flow_condition_all
     COMMAND $<TARGET_FILE:ahfl_semantics_flow_condition_tests>
 )
@@ -4056,6 +4074,11 @@ add_test(NAME ahfl.frontend.error_recovery_all
     COMMAND $<TARGET_FILE:ahfl_error_recovery_tests>
 )
 
+# Wave-21 A-1: parser recursion-depth guard (PARSER_STACK_OVERFLOW + 4 categories × 3 variants)
+add_test(NAME ahfl.frontend.parser_stack_depth_all
+    COMMAND $<TARGET_FILE:ahfl_parser_stack_depth_tests>
+)
+
 # DecreasesClauseSyntax (R-09: not dispatched through DeclKind).
 add_test(NAME ahfl.frontend.decreases_structure_all
     COMMAND $<TARGET_FILE:ahfl_decreases_structure_tests>
@@ -4068,6 +4091,21 @@ add_test(NAME ahfl.frontend.decreases_desugar_all
 )
 add_test(NAME ahfl.frontend.decreases_symmetry_all
     COMMAND $<TARGET_FILE:ahfl_decreases_symmetry_tests>
+)
+
+# Wave-19 Lane 3b F1 — RFC d-1 Enum variant named fields (struct variant)
+# minimal grammar POC. Coverage: parse → AST → ast_printer → formatter
+# roundtrip. Intentionally stops BEFORE resolver / typechecker / TypedHIR / IR.
+add_test(NAME ahfl.frontend.enum_struct_variant_all
+    COMMAND $<TARGET_FILE:ahfl_enum_struct_variant_tests>
+)
+
+# Wave-19 Lane 3b F2 — RFC e-1 Optional narrowing `if let Some(x) = expr`
+# minimal syntax POC. Coverage: parse → AST → ast_printer → formatter
+# roundtrip. Narrowing semantics / TypedHIR lowering / exhaustive-pattern
+# checks are intentionally NOT implemented (pre-approval demo).
+add_test(NAME ahfl.frontend.if_let_syntax_poc_all
+    COMMAND $<TARGET_FILE:ahfl_if_let_syntax_poc_tests>
 )
 
 add_test(NAME ahfl.support.thread_pool_all
@@ -4106,6 +4144,10 @@ add_test(NAME ahfl.formal.integration_improvement_all
 
 add_test(NAME ahfl.formal.counterexample_parse_all
     COMMAND $<TARGET_FILE:ahfl_counterexample_parse_tests>
+)
+
+add_test(NAME ahfl.formal.bmc_depth_customization_all
+    COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )
 
 add_test(NAME ahfl.runtime.parallel_scheduler_all
