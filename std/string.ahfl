@@ -39,6 +39,12 @@ fn string_trim_end(s: String) -> String effect Pure;
 @builtin("string_replace")
 fn string_replace(s: String, from: String, to: String) -> String effect Pure;
 
+@builtin("string_split")
+fn string_split(s: String, sep: String) -> collections::List<String> effect Pure;
+
+@builtin("string_parse_int")
+fn string_parse_int(s: String) -> option::Option<Int> effect Pure;
+
 @builtin("uuid_parse")
 fn string_parse_uuid(s: String) -> option::Option<UUID> effect Pure;
 
@@ -87,6 +93,14 @@ impl String {
 
     fn replace(self, from: String, to: String) -> String effect Pure decreases 0 {
         return string_replace(self, from, to);
+    }
+
+    fn split(self, sep: String) -> collections::List<String> effect Pure decreases 0 {
+        return string_split(self, sep);
+    }
+
+    fn parse_int(self) -> option::Option<Int> effect Pure decreases 0 {
+        return string_parse_int(self);
     }
 
     fn concat(self, other: String) -> String effect Pure decreases 0 {
@@ -173,6 +187,14 @@ fn trim_end(self: String) -> String effect Pure decreases 0 {
 
 fn replace(self: String, from: String, to: String) -> String effect Pure decreases 0 {
     return self.replace(from, to);
+}
+
+fn split(self: String, sep: String) -> collections::List<String> effect Pure decreases 0 {
+    return self.split(sep);
+}
+
+fn parse_int(self: String) -> option::Option<Int> effect Pure decreases 0 {
+    return self.parse_int();
 }
 
 fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {

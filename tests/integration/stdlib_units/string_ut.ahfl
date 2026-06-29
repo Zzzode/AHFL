@@ -58,5 +58,18 @@ fn string_ut() -> Int effect Pure decreases 0 {
     assert(s.replace("", "Q").length() == 5);
     assert("a-b-c".replace("-", "+").length() == 5);
 
+    // ===== split / parse_int (M1-4 new hooks) =====
+    assert(collections::length<String>("a,b,c".split(",")) == 3);
+    assert(collections::length<String>("hello".split(",")) == 1);
+    assert(collections::length<String>("".split(",")) == 1);
+    assert(collections::length<String>("abc".split("")) == 3);
+    assert(collections::length<String>("a,,b".split(",")) == 3);
+    assert("42".parse_int().is_some());
+    assert("42".parse_int().unwrap_or(0) == 42);
+    assert("-7".parse_int().is_some());
+    assert("-7".parse_int().unwrap_or(0) == -7);
+    assert("xyz".parse_int().is_none());
+    assert("12abc".parse_int().is_none());
+
     return 0;
 }

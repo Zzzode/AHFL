@@ -465,6 +465,53 @@ EvalResult builtin_string_replace(const std::vector<Value> &args, const EvalCont
     return EvalResult{make_string(result), {}};
 }
 
+/// string_split(s: String, sep: String) -> List<String>. Empty sep splits into
+/// individual characters; otherwise splits on every non-overlapping occurrence
+/// of sep (trailing empty field preserved, Rust str::split semantics).
+EvalResult builtin_string_split(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    const auto *sep = std::get_if<StringValue>(&args[1].node);
+    if (sv == nullptr || sep == nullptr)
+        return make_error("string_split: (String, String) required");
+    ListValue list;
+    const auto &s = sv->value;
+    const auto &sep_s = sep->value;
+    if (sep_s.empty()) {
+        list.items.reserve(s.size());
+        for (const char c : s) {
+            list.items.push_back(std::make_unique<Value>(make_string(std::string(1, c))));
+        }
+        return EvalResult{Value{std::move(list)}, {}};
+    }
+    std::size_t start = 0;
+    std::size_t pos = 0;
+    while ((pos = s.find(sep_s, start)) != std::string::npos) {
+        list.items.push_back(std::make_unique<Value>(make_string(s.substr(start, pos - start))));
+        start = pos + sep_s.size();
+    }
+    list.items.push_back(std::make_unique<Value>(make_string(s.substr(start))));
+    return EvalResult{Value{std::move(list)}, {}};
+}
+
+/// string_parse_int(s: String) -> Option<Int>. Parses a base-10 integer
+/// spanning the entire string; returns None on any trailing garbage or overflow.
+EvalResult builtin_string_parse_int(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_parse_int: argument must be a String");
+    const auto &s = sv->value;
+    long long n = 0;
+    const auto res = std::from_chars(s.data(), s.data() + s.size(), n);
+    if (res.ec == std::errc{} && res.ptr == s.data() + s.size()) {
+        return EvalResult{make_option_some(make_int(static_cast<int64_t>(n))), {}};
+    }
+    return EvalResult{make_option_none(), {}};
+}
+
 // ----------------------------------------------------------------------------
 // Numeric builtins
 // ----------------------------------------------------------------------------
@@ -1504,6 +1551,8 @@ void BuiltinTable::populate() {
     insert("string_trim_start", builtin_string_trim_start);
     insert("string_trim_end", builtin_string_trim_end);
     insert("string_replace", builtin_string_replace);
+    insert("string_split", builtin_string_split);
+    insert("string_parse_int", builtin_string_parse_int);
     insert("string_concat", builtin_string_raw_concat);
     insert("string_raw_compare", builtin_string_raw_compare);
     insert("cmp_raw_compare", builtin_cmp_raw_compare);
