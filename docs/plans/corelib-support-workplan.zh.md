@@ -210,7 +210,7 @@ gantt
    - **`try?` 算子**：需 grammar 加 `?` 后缀 + AST + sema，而 `AHFL.g4` / `ast.hpp` / `typecheck*.cpp` 均在进行中重构修改集——在未提交重构上叠加 grammar 改动 + regenerate parser 风险极高，**阻断**。D3 决策（`expr?`）已采纳，实现待重构落定。
    - **IR-JSON 节点 `"id"` 稳定化**：需改 `ir_json.cpp` / `ir_print.cpp`（重构修改集）+ 重设计 flat-store 节点索引（深改），**阻断**。(d) 已稳定 `_inst_` mangled name（`.ir` 文本零 churn），JSON-id 是残余 follow-up。
    - **`Result::flatten`** ✅ 已实现（commit 见下）：作自由函数 `fn flatten<T,E>(self: Result<Result<T,E>,E>) -> Result<T,E>`，用 `and_then(identity)` 绕过 P3 在自由函数体内直接构造泛型变体的限制（构造会退化为 `Any`）。
-   - **`Result::transpose`** ⏸ 阻断：需构造 `Some(Ok(v))` / `Some(Err(e))`，P3 在自由函数体内构造泛型变体时类型实参退化为 `Any`（`Result::Ok(v)`→`Result<T,Any>`），无 identity 式绕过。待 typechecker 现代化（泛型变体构造的类型推断）。
+   - **`Result::transpose`** ✅ 已实现：via 新构造 hook `result_ok/err` + `option_some`（builtin 签名携带类型，绕过 P3 在自由函数体内用 `Result::Ok(v)` 语法构造泛型变体时类型实参退化为 `Any` 的限制）。与 `flatten`（and_then identity）一并完成 M1-3 收口。
    - 结论：B 区是「等重构 + typechecker 现代化」的工作，非当前可推进项。
 
 ---

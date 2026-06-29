@@ -875,6 +875,32 @@ EvalResult builtin_cmp_raw_compare(const std::vector<Value> &args, const EvalCon
 }
 
 // ----------------------------------------------------------------------------
+// Variant constructor hooks (M1-3): bypass the P3 limitation where constructing
+// a generic enum variant via `Result::Ok(v)` syntax inside a free-function
+// body resolves the type args to Any. A hook's signature carries the types, so
+// result_ok<T,E>(v) / result_err<T,E>(e) / option_some<T>(v) build the variant
+// correctly. Enables transpose and any other construction-heavy generic fn.
+EvalResult builtin_result_ok(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    return EvalResult{make_enum("std::result::Result", "Ok",
+                                std::make_unique<Value>(clone_value(args[0]))), {}};
+}
+
+EvalResult builtin_result_err(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    return EvalResult{make_enum("std::result::Result", "Err",
+                                std::make_unique<Value>(clone_value(args[0]))), {}};
+}
+
+EvalResult builtin_option_some(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    return EvalResult{make_option_some(clone_value(args[0])), {}};
+}
+
+// ----------------------------------------------------------------------------
 // Time builtins
 // ----------------------------------------------------------------------------
 
@@ -1804,6 +1830,9 @@ void BuiltinTable::populate() {
     insert("string_concat", builtin_string_raw_concat);
     insert("string_raw_compare", builtin_string_raw_compare);
     insert("cmp_raw_compare", builtin_cmp_raw_compare);
+    insert("result_ok", builtin_result_ok);
+    insert("result_err", builtin_result_err);
+    insert("option_some", builtin_option_some);
 
     // —— Numeric ——
     insert("int_to_string", builtin_int_to_string);

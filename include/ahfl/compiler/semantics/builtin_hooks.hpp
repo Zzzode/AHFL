@@ -72,6 +72,9 @@ inline constexpr std::array kKnownBuiltinHooks{
     std::string_view{"decimal_raw_to_string"},
     std::string_view{"string_raw_compare"},
     std::string_view{"cmp_raw_compare"},
+    std::string_view{"result_ok"},
+    std::string_view{"result_err"},
+    std::string_view{"option_some"},
 };
 
 [[nodiscard]] inline constexpr const auto &known_builtin_hooks() noexcept {

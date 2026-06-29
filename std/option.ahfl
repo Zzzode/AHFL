@@ -5,6 +5,11 @@ enum Option<T> {
     None,
 }
 
+// Variant constructor hook (M1-3): bypass the P3 free-function variant-
+// construction limitation. Prefer Option::Some syntax where it typechecks.
+@builtin("option_some")
+fn option_some<T>(value: T) -> Option<T> effect Pure;
+
 // ---------------------------------------------------------------------------
 // Inherent impl (P3, RFC §2). Canonical surface: opt.map(f), opt.is_some().
 // ---------------------------------------------------------------------------

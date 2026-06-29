@@ -35,6 +35,15 @@ fn result_ut() -> Int effect Pure decreases 0 {
     let inner_err: result::Result<Int, String> = result::Result::Err("inner");
     let nested_inner_err: result::Result<result::Result<Int, String>, String> = result::Result::Ok(inner_err);
     assert(result::flatten<Int, String>(nested_inner_err).is_err());
+    // transpose (M1-3): Result<Option<T>,E> -> Option<Result<T,E>>
+    let some_v: option::Option<Int> = option::Option::Some(7);
+    let r_ok_some: result::Result<option::Option<Int>, String> = result::Result::Ok(some_v);
+    assert(result::transpose<Int, String>(r_ok_some).is_some());
+    let none_v: option::Option<Int> = option::Option::None;
+    let r_ok_none: result::Result<option::Option<Int>, String> = result::Result::Ok(none_v);
+    assert(result::transpose<Int, String>(r_ok_none).is_none());
+    let r_err_t: result::Result<option::Option<Int>, String> = result::Result::Err("boom");
+    assert(result::transpose<Int, String>(r_err_t).is_some());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").is_ok());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").unwrap_or(0) == 7);
     let hundred: result::Result<Int, String> = result::Result::Ok(100);

@@ -7,6 +7,15 @@ enum Result<T, E> {
     Err(E),
 }
 
+// Variant constructor hooks (M1-3): bypass the P3 free-function variant-
+// construction limitation (type args resolve to Any). Prefer Result::Ok / Err
+// syntax where it typechecks; use these in construction-heavy generic fns.
+@builtin("result_ok")
+fn result_ok<T, E>(value: T) -> Result<T, E> effect Pure;
+
+@builtin("result_err")
+fn result_err<T, E>(error: E) -> Result<T, E> effect Pure;
+
 // ===========================================================================
 // NOTE: arity-1 `Result::unwrap(self) -> T` and the top-level `try()` helper
 // are deferred to P4. They require `requires is_ok(self)` contract enforcement
@@ -168,6 +177,19 @@ fn flat_map<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, 
 /// the inner Result through unchanged avoids that construction.
 fn flatten<T, E>(self: Result<Result<T, E>, E>) -> Result<T, E> effect Pure decreases 0 {
     return self.and_then<T>(\inner: Result<T, E> -> inner);
+}
+
+/// transpose (M1-3): Result<Option<T>, E> -> Option<Result<T, E>>. Uses the
+/// result_ok / result_err / option_some constructor hooks because P3 cannot
+/// construct generic variants via syntax inside a free-function body.
+fn transpose<T, E>(self: Result<option::Option<T>, E>) -> option::Option<Result<T, E>> effect Pure decreases 0 {
+    return match self {
+        Ok(opt) => match opt {
+            option::Option::Some(v) => option::option_some<Result<T, E>>(result_ok<T, E>(v)),
+            option::Option::None => option::Option::None
+        },
+        Err(e) => option::option_some<Result<T, E>>(result_err<T, E>(e))
+    };
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
