@@ -79,6 +79,15 @@ fn set_is_subset<T>(a: Set<T>, b: Set<T>) -> Bool effect Pure;
 @builtin("map_from_entries")
 fn map_from_entries<K, V>(k0: K, v0: V, k1: K, v1: V, k2: K, v2: V, k3: K, v3: V) -> Map<K, V> effect Pure;
 
+@builtin("map_raw_keys")
+fn map_raw_keys<K, V>(m: Map<K, V>) -> List<K> effect Pure;
+
+@builtin("map_raw_values")
+fn map_raw_values<K, V>(m: Map<K, V>) -> List<V> effect Pure;
+
+@builtin("map_raw_insert")
+fn map_raw_insert<K, V>(m: Map<K, V>, k: K, v: V) -> Map<K, V> effect Pure;
+
 // ===========================================================================
 // Module-level constructors. These remain at module level because AHFL's
 // current dispatch path is receiver-first: impl methods must have a self
@@ -674,4 +683,47 @@ fn map_length<K, V>(self: Map<K, V>) -> Int effect Pure decreases 0 {
 /// should prefer `m.get_or(key, default)` via the inherent impl on `Map<K, V>`.
 fn map_get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V effect Pure decreases 0 {
     return self.get_or(key, default);
+}
+
+// ---------------------------------------------------------------------------
+// Map transforms (M2-3): map_values / filter_keys. Pure AHFL over the
+// map_raw_keys / map_raw_insert hooks — the closure runs in AHFL, so no
+// closure-calling builtin is needed. Manual recursion (decreases n - i) per
+// the same pattern as list_fold_from / string_join_step.
+// ---------------------------------------------------------------------------
+
+fn map_values_step<K, V, U>(src: Map<K, V>, keys: List<K>, f: Fn(V) -> U, i: Int, n: Int, acc: Map<K, U>) -> Map<K, U> effect Pure decreases n - i {
+    if (i >= n) {
+        return acc;
+    }
+    let k: K = list_raw_get<K>(keys, i);
+    let v: V = map_raw_get<K, V>(src, k);
+    let next_acc: Map<K, U> = map_raw_insert<K, U>(acc, k, f(v));
+    return map_values_step<K, V, U>(src, keys, f, i + 1, n, next_acc);
+}
+
+fn map_values<K, V, U>(self: Map<K, V>, f: Fn(V) -> U) -> Map<K, U> effect Pure
+    decreases map_raw_size<K, V>(self) {
+    let keys: List<K> = map_raw_keys<K, V>(self);
+    let n: Int = list_raw_length<K>(keys);
+    return map_values_step<K, V, U>(self, keys, f, 0, n, map_raw_empty<K, U>());
+}
+
+fn filter_keys_step<K, V>(src: Map<K, V>, keys: List<K>, p: Fn(K) -> Bool, i: Int, n: Int, acc: Map<K, V>) -> Map<K, V> effect Pure decreases n - i {
+    if (i >= n) {
+        return acc;
+    }
+    let k: K = list_raw_get<K>(keys, i);
+    if (p(k)) {
+        let v: V = map_raw_get<K, V>(src, k);
+        return filter_keys_step<K, V>(src, keys, p, i + 1, n, map_raw_insert<K, V>(acc, k, v));
+    }
+    return filter_keys_step<K, V>(src, keys, p, i + 1, n, acc);
+}
+
+fn filter_keys<K, V>(self: Map<K, V>, p: Fn(K) -> Bool) -> Map<K, V> effect Pure
+    decreases map_raw_size<K, V>(self) {
+    let keys: List<K> = map_raw_keys<K, V>(self);
+    let n: Int = list_raw_length<K>(keys);
+    return filter_keys_step<K, V>(self, keys, p, 0, n, map_raw_empty<K, V>());
 }

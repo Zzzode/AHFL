@@ -2060,7 +2060,12 @@ fn inferred_missing_value() -> Bool {
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             CHECK(site.type_args[0]->describe() == "K");
-            CHECK(site.type_args[1]->describe() == "V");
+            // Value type param is "V" for the std wrapper, or "U" for the
+            // map_values <K, U> accumulator call site (M2-3).
+            const auto empty_value_param = site.type_args[1]->describe();
+            const bool empty_is_value_type_param =
+                (empty_value_param == "V") || (empty_value_param == "U");
+            CHECK(empty_is_value_type_param);
         } else if (symbol->get().canonical_name == "std::collections::map_raw_singleton") {
             saw_map_raw_singleton_wrapper_call = true;
             REQUIRE(site.type_args.size() == 2);

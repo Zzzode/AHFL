@@ -25,5 +25,16 @@ fn map_ut() -> Int effect Pure decreases 0 {
     assert(option::unwrap_or<Int>(collections::map_get<String, Int>(m2, "d"), 0) == 4);
     assert(option::is_none<Int>(collections::map_get<String, Int>(m2, "zzz")));
 
+    // map_values / filter_keys (M2-3)
+    let mv: collections::Map<String, Int> = collections::map_raw_insert<String, Int>(collections::map_raw_insert<String, Int>(collections::map_singleton<String, Int>("a", 1), "b", 2), "c", 3);
+    let doubled: collections::Map<String, Int> = collections::map_values<String, Int, Int>(mv, \v: Int -> v * 2);
+    assert(collections::contains_key<String, Int>(doubled, "a"));
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(doubled, "a"), 0) == 2);
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(doubled, "c"), 0) == 6);
+    let only_a: collections::Map<String, Int> = collections::filter_keys<String, Int>(mv, \k: String -> k == "a");
+    assert(collections::contains_key<String, Int>(only_a, "a"));
+    assert(not collections::contains_key<String, Int>(only_a, "b"));
+    assert(not collections::contains_key<String, Int>(only_a, "c"));
+
     return 0;
 }

@@ -444,6 +444,61 @@ EvalResult builtin_map_raw_singleton(const std::vector<Value> &args, const EvalC
     return builtin_map_from_entries(args, ctx);
 }
 
+// Map enumeration + functional insert (M2-3): back pure-AHFL map_values /
+// filter_keys without needing a closure-calling builtin.
+EvalResult builtin_map_raw_keys(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *mv = std::get_if<MapValue>(&args[0].node);
+    if (mv == nullptr)
+        return make_error("map_raw_keys: argument must be a Map");
+    ListValue out;
+    out.items.reserve(mv->entries.size());
+    for (const auto &entry : mv->entries)
+        out.items.push_back(std::make_unique<Value>(clone_value(*entry.first)));
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+EvalResult builtin_map_raw_values(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *mv = std::get_if<MapValue>(&args[0].node);
+    if (mv == nullptr)
+        return make_error("map_raw_values: argument must be a Map");
+    ListValue out;
+    out.items.reserve(mv->entries.size());
+    for (const auto &entry : mv->entries)
+        out.items.push_back(std::make_unique<Value>(clone_value(*entry.second)));
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+/// map_raw_insert<K, V>(m, k, v) -> Map<K, V>: functional insert — returns a
+/// new map with k mapped to v (replacing if present).
+EvalResult builtin_map_raw_insert(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 3)
+        return arg_count_error(3, args.size());
+    const auto *mv = std::get_if<MapValue>(&args[0].node);
+    if (mv == nullptr)
+        return make_error("map_raw_insert: (Map, K, V) required");
+    MapValue out;
+    bool replaced = false;
+    for (const auto &entry : mv->entries) {
+        if (structurally_equal(*entry.first, args[1])) {
+            out.entries.emplace_back(std::make_unique<Value>(clone_value(args[1])),
+                                     std::make_unique<Value>(clone_value(args[2])));
+            replaced = true;
+        } else {
+            out.entries.emplace_back(std::make_unique<Value>(clone_value(*entry.first)),
+                                     std::make_unique<Value>(clone_value(*entry.second)));
+        }
+    }
+    if (!replaced) {
+        out.entries.emplace_back(std::make_unique<Value>(clone_value(args[1])),
+                                 std::make_unique<Value>(clone_value(args[2])));
+    }
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
 // ----------------------------------------------------------------------------
 // String builtins
 // ----------------------------------------------------------------------------
@@ -1725,6 +1780,9 @@ void BuiltinTable::populate() {
     insert("map_from_entries", builtin_map_from_entries);
     insert("map_raw_empty", builtin_map_raw_empty);
     insert("map_raw_singleton", builtin_map_raw_singleton);
+    insert("map_raw_keys", builtin_map_raw_keys);
+    insert("map_raw_values", builtin_map_raw_values);
+    insert("map_raw_insert", builtin_map_raw_insert);
 
     // —— String ——
     insert("string_raw_length", builtin_string_raw_length);
