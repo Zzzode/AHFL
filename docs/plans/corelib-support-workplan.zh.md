@@ -205,6 +205,11 @@ gantt
 6. **P3 跨方法链泛型推断有限**：`r.map(\x->…).unwrap_or(0)` 无法沿链把 `map` 的 `U` 推断到 `unwrap_or` 的 default（报 "expected U, got Int"）。`result_ut` 通过给 generic 方法显式类型实参（`map<Int>` / `and_then<Int>` / `map_err<String>` / `or_else<String>`）绕过；`string.ahfl` 的 join 亦用手工递归而非 fold-with-lambda 规避同问题。**建议**：M1-5/M3 期强化跨链推断，或文档化"generic 方法结果先 `let` 带注解/显式类型实参"惯例。
 7. **(b) String hook 已实现——§1.2「deferral」条目过时**：核查 `src/runtime/evaluator/builtins.cpp` 发现 `string_contains` / `string_starts_with` / `string_ends_with` **早已实现并注册**（L364/375/386 + 注册表 L1429-1431，基于 `std::string::starts_with/ends_with/find`）。`std/string.ahfl` 的 `@builtin` wrapper + C++ 实现 + 注册表三者齐全，runtime 可用；`string_ut` 已在 typecheck 层覆盖。先前"声明未实现"判断系 grep 只匹配 `raw` hook 所致误判。**真正仍缺的 String API**：`trim/trim_start/trim_end/split/split_whitespace/replace/parse`（需新字符串原语或纯 AHFL 逐字符实现，M1-4 后续）。本项（b）无需改代码。
 8. **formatter 对当前 std/ 语法是破坏性的（M3-2 阻断，关键）**：`ahflc fmt std/*.ahfl` 会**损坏**源码——剥离泛型（`enum Option<T>` → `enum Option`、`struct List<T>` → `struct List`）、把 `effect Pure` 改成 `[Pure]`、移动 import 等，导致 12 个 stdlib 测试全红（已 `git checkout std/` 恢复）。原因：formatter 的语法覆盖**落后于进行中的 grammar 重构**（AHFL.g4 / ast.hpp / formatter 源码均在重构修改集）。**结论**：M3-2「stdlib formatter 全量 regenerate + CI `--check` 门禁」在 formatter 修复前**不可行**（会损坏 std/）。CI 现有 clang-format 门禁（C++）仍有效；`.ahfl` formatter 门禁需等重构落定、formatter 对齐新 grammar 后再做。VSIX 打包带 std/（M3-1）同理待重构后评估（不改 release 脚本，避免无法本地验证的发布改动）。
+9. **B 区三项（try? / JSON-id / transpose-flatten）全部阻断，已逐项核实（2026-06-29）**：
+   - **`try?` 算子**：需 grammar 加 `?` 后缀 + AST + sema，而 `AHFL.g4` / `ast.hpp` / `typecheck*.cpp` 均在进行中重构修改集——在未提交重构上叠加 grammar 改动 + regenerate parser 风险极高，**阻断**。D3 决策（`expr?`）已采纳，实现待重构落定。
+   - **IR-JSON 节点 `"id"` 稳定化**：需改 `ir_json.cpp` / `ir_print.cpp`（重构修改集）+ 重设计 flat-store 节点索引（深改），**阻断**。(d) 已稳定 `_inst_` mangled name（`.ir` 文本零 churn），JSON-id 是残余 follow-up。
+   - **`Result::transpose/flatten`**：probe `impl<T,E> Result<Result<T,E>,E> { fn flatten ... }` 失败——P3 不支持嵌套泛型 inherent impl（类型参数解析为 `Any`、嵌套 match 的构造子 pattern binding 失败 `unknown value 'v'`）。**P3 sema 限制，阻断**，待 typechecker 现代化（嵌套泛型实例化 + narrowing）。
+   - 结论：B 区是「等重构 + typechecker 现代化」的工作，非当前可推进项。
 
 ---
 
