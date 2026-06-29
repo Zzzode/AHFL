@@ -45,5 +45,18 @@ fn string_ut() -> Int effect Pure decreases 0 {
     assert(s.concat("").length() == 5);
     assert(string::join(words, "").length() == 3);
 
+    // ===== trim / replace (M1-4 new hooks) =====
+    assert(s.trim().length() == 5);
+    assert("  hi  ".trim().length() == 2);
+    assert("  hi  ".trim_start().length() == 4);
+    assert("  hi  ".trim_end().length() == 4);
+    assert(e.trim().length() == 0);
+    assert("   ".trim().length() == 0);
+    assert(s.replace("l", "L").length() == 5);
+    assert(s.replace("l", "LL").length() == 7);
+    assert(s.replace("xyz", "Q").length() == 5);
+    assert(s.replace("", "Q").length() == 5);
+    assert("a-b-c".replace("-", "+").length() == 5);
+
     return 0;
 }

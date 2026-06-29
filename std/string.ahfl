@@ -27,6 +27,18 @@ fn string_starts_with(s: String, prefix: String) -> Bool effect Pure;
 @builtin("string_ends_with")
 fn string_ends_with(s: String, suffix: String) -> Bool effect Pure;
 
+@builtin("string_trim")
+fn string_trim(s: String) -> String effect Pure;
+
+@builtin("string_trim_start")
+fn string_trim_start(s: String) -> String effect Pure;
+
+@builtin("string_trim_end")
+fn string_trim_end(s: String) -> String effect Pure;
+
+@builtin("string_replace")
+fn string_replace(s: String, from: String, to: String) -> String effect Pure;
+
 @builtin("uuid_parse")
 fn string_parse_uuid(s: String) -> option::Option<UUID> effect Pure;
 
@@ -59,6 +71,22 @@ impl String {
 
     fn ends_with(self, suffix: String) -> Bool effect Pure decreases 0 {
         return string_ends_with(self, suffix);
+    }
+
+    fn trim(self) -> String effect Pure decreases 0 {
+        return string_trim(self);
+    }
+
+    fn trim_start(self) -> String effect Pure decreases 0 {
+        return string_trim_start(self);
+    }
+
+    fn trim_end(self) -> String effect Pure decreases 0 {
+        return string_trim_end(self);
+    }
+
+    fn replace(self, from: String, to: String) -> String effect Pure decreases 0 {
+        return string_replace(self, from, to);
     }
 
     fn concat(self, other: String) -> String effect Pure decreases 0 {
@@ -129,6 +157,22 @@ fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
 
 fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
     return self.ends_with(suffix);
+}
+
+fn trim(self: String) -> String effect Pure decreases 0 {
+    return self.trim();
+}
+
+fn trim_start(self: String) -> String effect Pure decreases 0 {
+    return self.trim_start();
+}
+
+fn trim_end(self: String) -> String effect Pure decreases 0 {
+    return self.trim_end();
+}
+
+fn replace(self: String, from: String, to: String) -> String effect Pure decreases 0 {
+    return self.replace(from, to);
 }
 
 fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {

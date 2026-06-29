@@ -394,6 +394,77 @@ EvalResult builtin_string_ends_with(const std::vector<Value> &args, const EvalCo
     return EvalResult{make_bool(value->value.ends_with(suffix->value)), {}};
 }
 
+/// string_trim(s: String) -> String — strip ASCII whitespace from both ends.
+EvalResult builtin_string_trim(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_trim: argument must be a String");
+    constexpr std::string_view ws = " \t\n\r\f\v";
+    const auto start = sv->value.find_first_not_of(ws);
+    if (start == std::string::npos)
+        return EvalResult{make_string(""), {}};
+    const auto end = sv->value.find_last_not_of(ws);
+    return EvalResult{make_string(sv->value.substr(start, end - start + 1)), {}};
+}
+
+/// string_trim_start(s: String) -> String — strip leading ASCII whitespace.
+EvalResult builtin_string_trim_start(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_trim_start: argument must be a String");
+    constexpr std::string_view ws = " \t\n\r\f\v";
+    const auto start = sv->value.find_first_not_of(ws);
+    if (start == std::string::npos)
+        return EvalResult{make_string(""), {}};
+    return EvalResult{make_string(sv->value.substr(start)), {}};
+}
+
+/// string_trim_end(s: String) -> String — strip trailing ASCII whitespace.
+EvalResult builtin_string_trim_end(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_trim_end: argument must be a String");
+    constexpr std::string_view ws = " \t\n\r\f\v";
+    const auto end = sv->value.find_last_not_of(ws);
+    if (end == std::string::npos)
+        return EvalResult{make_string(""), {}};
+    return EvalResult{make_string(sv->value.substr(0, end + 1)), {}};
+}
+
+/// string_replace(s: String, from: String, to: String) -> String — replace
+/// every non-overlapping occurrence of `from` with `to`. Empty `from` is a
+/// no-op (matches Rust std::string::replace behaviour on empty needle).
+EvalResult builtin_string_replace(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 3)
+        return arg_count_error(3, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    const auto *from = std::get_if<StringValue>(&args[1].node);
+    const auto *to = std::get_if<StringValue>(&args[2].node);
+    if (sv == nullptr || from == nullptr || to == nullptr)
+        return make_error("string_replace: (String, String, String) required");
+    std::string result = sv->value;
+    if (!from->value.empty()) {
+        std::string out;
+        out.reserve(result.size());
+        size_t pos = 0;
+        size_t last = 0;
+        while ((pos = result.find(from->value, last)) != std::string::npos) {
+            out.append(result, last, pos - last);
+            out.append(to->value);
+            last = pos + from->value.size();
+        }
+        out.append(result, last, std::string::npos);
+        result = std::move(out);
+    }
+    return EvalResult{make_string(result), {}};
+}
+
 // ----------------------------------------------------------------------------
 // Numeric builtins
 // ----------------------------------------------------------------------------
@@ -1429,6 +1500,10 @@ void BuiltinTable::populate() {
     insert("string_contains", builtin_string_contains);
     insert("string_starts_with", builtin_string_starts_with);
     insert("string_ends_with", builtin_string_ends_with);
+    insert("string_trim", builtin_string_trim);
+    insert("string_trim_start", builtin_string_trim_start);
+    insert("string_trim_end", builtin_string_trim_end);
+    insert("string_replace", builtin_string_replace);
     insert("string_concat", builtin_string_raw_concat);
     insert("string_raw_compare", builtin_string_raw_compare);
     insert("cmp_raw_compare", builtin_cmp_raw_compare);
