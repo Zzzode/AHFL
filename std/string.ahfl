@@ -45,6 +45,12 @@ fn string_split(s: String, sep: String) -> collections::List<String> effect Pure
 @builtin("string_parse_int")
 fn string_parse_int(s: String) -> option::Option<Int> effect Pure;
 
+@builtin("string_split_whitespace")
+fn string_split_whitespace(s: String) -> collections::List<String> effect Pure;
+
+@builtin("string_parse_float")
+fn string_parse_float(s: String) -> option::Option<Float> effect Pure;
+
 @builtin("uuid_parse")
 fn string_parse_uuid(s: String) -> option::Option<UUID> effect Pure;
 
@@ -101,6 +107,14 @@ impl String {
 
     fn parse_int(self) -> option::Option<Int> effect Pure decreases 0 {
         return string_parse_int(self);
+    }
+
+    fn split_whitespace(self) -> collections::List<String> effect Pure decreases 0 {
+        return string_split_whitespace(self);
+    }
+
+    fn parse_float(self) -> option::Option<Float> effect Pure decreases 0 {
+        return string_parse_float(self);
     }
 
     fn concat(self, other: String) -> String effect Pure decreases 0 {
@@ -195,6 +209,14 @@ fn split(self: String, sep: String) -> collections::List<String> effect Pure dec
 
 fn parse_int(self: String) -> option::Option<Int> effect Pure decreases 0 {
     return self.parse_int();
+}
+
+fn split_whitespace(self: String) -> collections::List<String> effect Pure decreases 0 {
+    return self.split_whitespace();
+}
+
+fn parse_float(self: String) -> option::Option<Float> effect Pure decreases 0 {
+    return self.parse_float();
 }
 
 fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {

@@ -512,6 +512,47 @@ EvalResult builtin_string_parse_int(const std::vector<Value> &args, const EvalCo
     return EvalResult{make_option_none(), {}};
 }
 
+/// string_split_whitespace(s: String) -> List<String>. Splits on runs of ASCII
+/// whitespace; leading/trailing/consecutive whitespace produces no empty fields
+/// (Rust str::split_whitespace semantics).
+EvalResult builtin_string_split_whitespace(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_split_whitespace: argument must be a String");
+    constexpr std::string_view ws = " \t\n\r\f\v";
+    ListValue list;
+    const auto &s = sv->value;
+    const std::size_t n = s.size();
+    std::size_t i = 0;
+    while (i < n) {
+        while (i < n && ws.find(s[i]) != std::string_view::npos) ++i;
+        if (i >= n) break;
+        const std::size_t start = i;
+        while (i < n && ws.find(s[i]) == std::string_view::npos) ++i;
+        list.items.push_back(std::make_unique<Value>(make_string(s.substr(start, i - start))));
+    }
+    return EvalResult{Value{std::move(list)}, {}};
+}
+
+/// string_parse_float(s: String) -> Option<Float>. Parses a floating-point
+/// literal spanning the entire string; None on trailing garbage or overflow.
+EvalResult builtin_string_parse_float(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *sv = std::get_if<StringValue>(&args[0].node);
+    if (sv == nullptr)
+        return make_error("string_parse_float: argument must be a String");
+    const auto &s = sv->value;
+    double d = 0.0;
+    const auto res = std::from_chars(s.data(), s.data() + s.size(), d);
+    if (res.ec == std::errc{} && res.ptr == s.data() + s.size()) {
+        return EvalResult{make_option_some(make_float(d)), {}};
+    }
+    return EvalResult{make_option_none(), {}};
+}
+
 // ----------------------------------------------------------------------------
 // Numeric builtins
 // ----------------------------------------------------------------------------
@@ -1553,6 +1594,8 @@ void BuiltinTable::populate() {
     insert("string_replace", builtin_string_replace);
     insert("string_split", builtin_string_split);
     insert("string_parse_int", builtin_string_parse_int);
+    insert("string_split_whitespace", builtin_string_split_whitespace);
+    insert("string_parse_float", builtin_string_parse_float);
     insert("string_concat", builtin_string_raw_concat);
     insert("string_raw_compare", builtin_string_raw_compare);
     insert("cmp_raw_compare", builtin_cmp_raw_compare);

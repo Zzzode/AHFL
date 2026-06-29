@@ -71,5 +71,14 @@ fn string_ut() -> Int effect Pure decreases 0 {
     assert("xyz".parse_int().is_none());
     assert("12abc".parse_int().is_none());
 
+    // ===== split_whitespace / parse_float (M1-4) =====
+    assert(collections::length<String>("a b  c".split_whitespace()) == 3);
+    assert(collections::length<String>("  hi  ".split_whitespace()) == 1);
+    assert(collections::length<String>("".split_whitespace()) == 0);
+    assert("3.14".parse_float().is_some());
+    assert("-0.5".parse_float().is_some());
+    assert("xyz".parse_float().is_none());
+    assert("3.14abc".parse_float().is_none());
+
     return 0;
 }

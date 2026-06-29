@@ -63,7 +63,7 @@
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 240
+        "id": 244
       },
       "state_handlers": [
         {
@@ -222,7 +222,7 @@
             "canonical_name": "lib::agents::AliasAgent",
             "local_name": "AliasAgent",
             "module_name": "lib::agents",
-            "id": 240
+            "id": 244
           },
           "input": {
             "kind": "path",
@@ -568,7 +568,7 @@
         "canonical_name": "lib::agents::Echo",
         "local_name": "Echo",
         "module_name": "lib::agents",
-        "id": 239
+        "id": 243
       },
       "params": [
         {
@@ -616,7 +616,7 @@
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 240
+        "id": 244
       },
       "input_type": "lib::types::Request",
       "input_type_ref": {
@@ -665,7 +665,7 @@
           "canonical_name": "lib::agents::Echo",
           "local_name": "Echo",
           "module_name": "lib::agents",
-          "id": 239
+          "id": 243
         }
       ],
       "quota": [],
@@ -693,7 +693,7 @@
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 240
+        "id": 244
       },
       "type_args": [
         {
