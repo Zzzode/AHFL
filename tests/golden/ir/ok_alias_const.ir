@@ -98,7 +98,7 @@ workflow ir::alias_const::EchoWorkflow {
   return: run
 }
 
-instance capability _inst_0000000000000005_ir_alias_X5fconst_Echo_ir_alias_X5fconst_Request {
+instance capability _inst_d242c65e3d13731e_ir_alias_X5fconst_Echo_ir_alias_X5fconst_Request {
   symbol: ir::alias_const::Echo
   type_args: [ir::alias_const::Request]
   params: (request: ir::alias_const::Request)
@@ -110,7 +110,7 @@ instance capability _inst_0000000000000005_ir_alias_X5fconst_Echo_ir_alias_X5fco
   workflow_output: Any
 }
 
-instance predicate _inst_0000000000000006_ir_alias_X5fconst_non_X5fempty_String {
+instance predicate _inst_2524014717c4717b_ir_alias_X5fconst_non_X5fempty_String {
   symbol: ir::alias_const::non_empty
   type_args: [String]
   params: (value: String)
@@ -122,7 +122,7 @@ instance predicate _inst_0000000000000006_ir_alias_X5fconst_non_X5fempty_String 
   workflow_output: Any
 }
 
-instance agent _inst_0000000000000007_ir_alias_X5fconst_EchoAgent_ir_alias_X5fconst_Request_ir_alias_X5fconst_Context_ir_alias_X5fconst_Response {
+instance agent _inst_e4c10a477d78dbbf_ir_alias_X5fconst_EchoAgent_ir_alias_X5fconst_Request_ir_alias_X5fconst_Context_ir_alias_X5fconst_Response {
   symbol: ir::alias_const::EchoAgent
   type_args: [ir::alias_const::Request, ir::alias_const::Context, ir::alias_const::Response]
   return: Any

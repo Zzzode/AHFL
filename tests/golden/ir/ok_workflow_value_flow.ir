@@ -73,7 +73,7 @@ workflow ir::workflow_value_flow::ValueFlowWorkflow {
   return: ir::workflow_value_flow::Response { value: second.value }
 }
 
-instance agent _inst_0000000000000003_ir_workflow_X5fvalue_X5fflow_EchoAgent_ir_workflow_X5fvalue_X5fflow_Request_ir_workflow_X5fvalue_X5fflow_Context_ir_workflow_X5fvalue_X5fflow_Response {
+instance agent _inst_73ab6db432dbe745_ir_workflow_X5fvalue_X5fflow_EchoAgent_ir_workflow_X5fvalue_X5fflow_Request_ir_workflow_X5fvalue_X5fflow_Context_ir_workflow_X5fvalue_X5fflow_Response {
   symbol: ir::workflow_value_flow::EchoAgent
   type_args: [ir::workflow_value_flow::Request, ir::workflow_value_flow::Context, ir::workflow_value_flow::Response]
   return: Any

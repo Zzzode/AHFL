@@ -119,7 +119,7 @@ workflow ir::expr_temporal::ExprWorkflow {
   return: run
 }
 
-instance capability _inst_0000000000000005_ir_expr_X5ftemporal_Decide_ir_expr_X5ftemporal_Request {
+instance capability _inst_df4e79b495d852d3_ir_expr_X5ftemporal_Decide_ir_expr_X5ftemporal_Request {
   symbol: ir::expr_temporal::Decide
   type_args: [ir::expr_temporal::Request]
   params: (request: ir::expr_temporal::Request)
@@ -131,7 +131,7 @@ instance capability _inst_0000000000000005_ir_expr_X5ftemporal_Decide_ir_expr_X5
   workflow_output: Any
 }
 
-instance predicate _inst_0000000000000006_ir_expr_X5ftemporal_ready_String {
+instance predicate _inst_635bd40d0c02748e_ir_expr_X5ftemporal_ready_String {
   symbol: ir::expr_temporal::ready
   type_args: [String]
   params: (value: String)
@@ -143,7 +143,7 @@ instance predicate _inst_0000000000000006_ir_expr_X5ftemporal_ready_String {
   workflow_output: Any
 }
 
-instance agent _inst_0000000000000007_ir_expr_X5ftemporal_ExprAgent_ir_expr_X5ftemporal_Request_ir_expr_X5ftemporal_Context_ir_expr_X5ftemporal_Response {
+instance agent _inst_a6d0aabac425f419_ir_expr_X5ftemporal_ExprAgent_ir_expr_X5ftemporal_Request_ir_expr_X5ftemporal_Context_ir_expr_X5ftemporal_Response {
   symbol: ir::expr_temporal::ExprAgent
   type_args: [ir::expr_temporal::Request, ir::expr_temporal::Context, ir::expr_temporal::Response]
   return: Any

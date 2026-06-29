@@ -200,7 +200,7 @@ workflow refund::audit::RefundAuditWorkflow {
   return: audit
 }
 
-instance capability _inst_0000000000000006_refund_audit_OrderQuery_String {
+instance capability _inst_53d9b8a9cc8ae9d4_refund_audit_OrderQuery_String {
   symbol: refund::audit::OrderQuery
   type_args: [String]
   params: (order_id: String)
@@ -212,7 +212,7 @@ instance capability _inst_0000000000000006_refund_audit_OrderQuery_String {
   workflow_output: Any
 }
 
-instance capability _inst_0000000000000007_refund_audit_AuditDecision_refund_audit_OrderInfo_refund_audit_RefundRequest {
+instance capability _inst_fdd540605fe59c06_refund_audit_AuditDecision_refund_audit_OrderInfo_refund_audit_RefundRequest {
   symbol: refund::audit::AuditDecision
   type_args: [refund::audit::OrderInfo, refund::audit::RefundRequest]
   params: (order: refund::audit::OrderInfo, request: refund::audit::RefundRequest)
@@ -224,7 +224,7 @@ instance capability _inst_0000000000000007_refund_audit_AuditDecision_refund_aud
   workflow_output: Any
 }
 
-instance capability _inst_0000000000000008_refund_audit_TicketCreate_String_String {
+instance capability _inst_b8175b918dd9bdc0_refund_audit_TicketCreate_String_String {
   symbol: refund::audit::TicketCreate
   type_args: [String, String]
   params: (order_id: String, reason: String)
@@ -236,7 +236,7 @@ instance capability _inst_0000000000000008_refund_audit_TicketCreate_String_Stri
   workflow_output: Any
 }
 
-instance predicate _inst_000000000000000b_refund_audit_order_X5fexists_String {
+instance predicate _inst_176e95b20d6ad2b0_refund_audit_order_X5fexists_String {
   symbol: refund::audit::order_exists
   type_args: [String]
   params: (order_id: String)
@@ -248,7 +248,7 @@ instance predicate _inst_000000000000000b_refund_audit_order_X5fexists_String {
   workflow_output: Any
 }
 
-instance predicate _inst_000000000000000c_refund_audit_order_X5fbelongs_X5fto_X5fuser_String_String {
+instance predicate _inst_cb36b270dd4478d6_refund_audit_order_X5fbelongs_X5fto_X5fuser_String_String {
   symbol: refund::audit::order_belongs_to_user
   type_args: [String, String]
   params: (order_id: String, user_id: String)
@@ -260,7 +260,7 @@ instance predicate _inst_000000000000000c_refund_audit_order_X5fbelongs_X5fto_X5
   workflow_output: Any
 }
 
-instance predicate _inst_000000000000000d_refund_audit_refund_X5famount_X5fwithin_X5ftotal_String_Decimal_X282_X29 {
+instance predicate _inst_002ba8e59a51b626_refund_audit_refund_X5famount_X5fwithin_X5ftotal_String_Decimal_X282_X29 {
   symbol: refund::audit::refund_amount_within_total
   type_args: [String, Decimal(2)]
   params: (order_id: String, amount: Decimal(2))
@@ -272,7 +272,7 @@ instance predicate _inst_000000000000000d_refund_audit_refund_X5famount_X5fwithi
   workflow_output: Any
 }
 
-instance predicate _inst_000000000000000e_refund_audit_non_X5fempty_String {
+instance predicate _inst_401db6c58bdadb94_refund_audit_non_X5fempty_String {
   symbol: refund::audit::non_empty
   type_args: [String]
   params: (value: String)
@@ -284,7 +284,7 @@ instance predicate _inst_000000000000000e_refund_audit_non_X5fempty_String {
   workflow_output: Any
 }
 
-instance agent _inst_000000000000000f_refund_audit_RefundAudit_refund_audit_RefundRequest_refund_audit_RefundContext_refund_audit_RefundDecision {
+instance agent _inst_ae1c42f118e474dd_refund_audit_RefundAudit_refund_audit_RefundRequest_refund_audit_RefundContext_refund_audit_RefundDecision {
   symbol: refund::audit::RefundAudit
   type_args: [refund::audit::RefundRequest, refund::audit::RefundContext, refund::audit::RefundDecision]
   return: Any

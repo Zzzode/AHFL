@@ -112,7 +112,7 @@ TEST_CASE("mangle_instance always starts with _inst_ prefix") {
     CHECK(name.substr(0, 6) == "_inst_");
 }
 
-TEST_CASE("mangle_instance embeds zero-padded SymbolId as 16-digit hex") {
+TEST_CASE("mangle_instance is stable: identical content hashes identically regardless of SymbolId") {
     TypeArena types;
     MockResolver r;
     r.names.emplace(1u, "a::Cap");
@@ -121,12 +121,21 @@ TEST_CASE("mangle_instance embeds zero-padded SymbolId as 16-digit hex") {
         SymbolId{1u}, std::span<const TypePtr>{}, r.fn());
     const auto n256 = mangle_instance(
         SymbolId{256u}, std::span<const TypePtr>{}, r.fn());
-    // 0x01 = 0000000000000001
-    CHECK(n1.find("_inst_0000000000000001_") == 0);
-    // 0x100 = 0000000000000100
-    CHECK(n256.find("_inst_0000000000000100_") == 0);
-    // Distinct SymbolIds always differ even when canonical names collide.
-    CHECK(n1 != n256);
+    // The hex prefix is a deterministic FNV-1a hash of (canonical name, type
+    // args), NOT the sequential SymbolId. Identical content therefore hashes
+    // identically regardless of which SymbolId references it — this is what
+    // keeps IR instance names stable when unrelated symbols are registered
+    // (stdlib growth no longer churns IR goldens). The IR data model still
+    // keys instances by (SymbolId, type_args), so the mangled name is a
+    // display/identity label. See mangling.hpp doc + workplan §3.5 finding #5.
+    CHECK(n1 == n256);
+    // Format: _inst_<16 lowercase hex digits>_...
+    CHECK(n1.substr(0, 6) == "_inst_");
+    CHECK(n1.size() >= 6 + 16 + 1);
+    for (const char c : n1.substr(6, 16)) {
+        const bool is_hex_digit = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        CHECK(is_hex_digit);
+    }
 }
 
 TEST_CASE("mangle_instance embeds escaped canonical name with namespace preserved") {
@@ -216,8 +225,12 @@ TEST_CASE("mangle_instance uses _UNKNOWN_SYMBOL_ sentinel for missing resolver e
 TEST_CASE("mangle_instance: full key bijection over cross product") {
     TypeArena types;
     MockResolver r;
-    r.names.emplace(1u, "a::Cap");
-    r.names.emplace(2u, "a::Cap");
+    // Distinct canonical names: under the content-hash scheme the mangled name
+    // is keyed by (canonical name, type_args), so each id needs a distinct
+    // canonical for the cross product to be a bijection. Two ids sharing one
+    // canonical name would intentionally collide — see the stability test above.
+    r.names.emplace(1u, "a::Cap1");
+    r.names.emplace(2u, "a::Cap2");
     r.names.emplace(3u, "b::Cap");
     const auto t0 = types.make_int();
     const auto t1 = types.make_string();

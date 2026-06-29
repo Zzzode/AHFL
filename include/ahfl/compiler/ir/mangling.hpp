@@ -79,63 +79,74 @@ namespace detail {
 ///
 /// Layout:
 ///   ```
-///   _inst_<hexSymbolId>_<escapedCanonicalName>[_<escapedType>...]
+///   _inst_<hexContentHash>_<escapedCanonicalName>[_<escapedType>...]
 ///   ```
 ///
 /// Properties:
 ///   * ASCII-safe: every byte matches `[a-zA-Z0-9_]`.
 ///   * Namespace-prefixed: `::` in the canonical name becomes `_`, so the
 ///     originating module is preserved in the mangled text.
-///   * Stable: identical inputs produce identical outputs across processes
-///     and incremental rebuilds (depends only on SymbolId.value, canonical
-///     name, and type descriptors).
-///   * Injective: different `(SymbolId, type_args)` keys produce different
-///     names (both the SymbolId and the escaped canonical name are embedded,
-///     so even accidental canonical-name aliases between distinct numeric
-///     SymbolIds cannot collide).
+///   * Stable across symbol-registration order: the hex prefix is a
+///     deterministic FNV-1a 64-bit hash of (canonical name, type descriptors),
+///     NOT the sequential SymbolId. Growing stdlib (or any unrelated symbol
+///     registration) therefore no longer shifts instance names or churns IR
+///     goldens. Identical (canonical, type_args) always hash identically
+///     across processes and incremental rebuilds.
+///   * Injective in practice: different (canonical name, type_args) keys
+///     produce different hashes (64-bit collision-negligible). The IR data
+///     model still keys instances by (SymbolId, type_args), so the mangled
+///     name is a display/identity label, not the sole key.
 [[nodiscard]] inline std::string
 mangle_instance(SymbolId symbol,
                 std::span<const TypePtr> type_args,
                 const SymbolCanonicalNameFn &resolver) {
+    // Resolve the canonical name first; together with the type args it uniquely
+    // identifies the instance and is stable across symbol-registration order.
+    const auto canonical = resolver ? resolver(symbol) : std::nullopt;
+
+    // Build the content suffix: escaped canonical name + escaped type args.
+    // On resolution failure emit a sentinel so downstream diagnostics surface
+    // the bug rather than silently producing a plausible-but-wrong name.
+    std::ostringstream suffix;
+    if (canonical.has_value() && !canonical->empty()) {
+        suffix << detail::mangle_escape(*canonical);
+    } else {
+        suffix << "_UNKNOWN_SYMBOL_";
+    }
+    for (const TypePtr t : type_args) {
+        suffix << '_';
+        if (t == nullptr) {
+            suffix << "Any";
+            continue;
+        }
+        suffix << detail::mangle_escape(t->describe());
+    }
+    const std::string content = suffix.str();
+
+    // Stable identifier: FNV-1a 64-bit hash of the content suffix. This
+    // replaces the old numeric SymbolId (a sequential registration counter) so
+    // the mangled name no longer shifts when unrelated symbols are registered
+    // — i.e. growing stdlib no longer churns IR goldens. The IR data model
+    // still keys instances by (SymbolId, type_args), so this name remains a
+    // display/identity label. See corelib-support-workplan §3.5 finding #5.
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    for (const unsigned char c : content) {
+        h ^= c;
+        h *= 0x100000001b3ULL;
+    }
+
     std::ostringstream out;
-
-    // Visual prefix so instance names are immediately recognisable in IR JSON.
     out << "_inst_";
-
-    // SymbolId value: 16-digit zero-padded lowercase hex of the numeric id.
-    // Including this guarantees that two distinct nominal symbols never
-    // collide even if their (escaped) canonical names accidentally coincide.
     {
         char buf[32];
         const int n = std::snprintf(
-            buf, sizeof(buf), "%016zx", static_cast<std::size_t>(symbol.value));
+            buf, sizeof(buf), "%016zx", static_cast<std::size_t>(h));
         if (n > 0) {
             out.write(buf, n);
         }
     }
     out << '_';
-
-    // Resolve and append the escaped canonical name. On resolution failure
-    // emit a sentinel so downstream diagnostics surface the bug rather than
-    // silently producing a plausible-but-wrong name.
-    const auto canonical = resolver ? resolver(symbol) : std::nullopt;
-    if (canonical.has_value() && !canonical->empty()) {
-        out << detail::mangle_escape(*canonical);
-    } else {
-        out << "_UNKNOWN_SYMBOL_";
-    }
-
-    // Append each type argument's describe() output via mangle_escape so
-    // that `List<Int>` and `Map<String, Int>` remain visually separable.
-    for (const TypePtr t : type_args) {
-        out << '_';
-        if (t == nullptr) {
-            out << "Any";
-            continue;
-        }
-        out << detail::mangle_escape(t->describe());
-    }
-
+    out << content;
     return out.str();
 }
 
