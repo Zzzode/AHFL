@@ -2,6 +2,7 @@
 
 > **Status:** Draft v1 — actionable backlog for "接下来一段时间工作重点 = 支持 corelib 用 AHFL 来写"
 > **Progress (2026-06-29):** M0 实质完成 — M0-1（`formatted_struct_2spaces.ahfl` 工作树本地分歧对齐 HEAD，4 红→全绿）、M0-2（R1 D1 默认值落地 `lib/std/DEPRECATED.md` + 确认 `/lib/std` 不在搜索路径）、M0-3（`option_ut` 30/30：25 断言 + 5 负例，已挂 ctest）、M0-4（`AhflInstall.cmake` 加 `install(std/)` 并验证）、M0-5（formatter golden 本地分歧对齐）、M0-6（baked-in std 解析验证）均落地；M0-4 容器 / M0-5 CI 基建部分依赖 M3。本计划已纳入 `docs/README.md` 索引。设计侧（RFC + 4 附件）已定稿并自洽（见 [`corelib-rfc.zh.md`](../design/corelib-rfc.zh.md)）。
+> **M1 进展（2026-06-29）：** 启动 M1-2 / M1-4 / M1-7 — 新增纯 AHFL API `Option::xor`、`String::repeat`（不需新 builtin hook）；新增测试矩阵 `result_ut`（28 断言）+ `string_ut`（29 断言）+ `option_ut` 扩 xor（29 断言）= 3 模块 / 86 断言全绿。`Result::transpose/flatten` 需嵌套泛型 inherent impl（`impl Result<Result<T,E>,E>`，P3 支持性待验证），暂缓；`try?`（M1-1）待 D3 决策；`String::trim/split/replace` 需新字符串原语（M1-4 后续）。
 > **Created:** 2026-06-29
 > **Baseline commit:** develop/wave-21-top
 > **Audit source:** `docs/int/wave-21-integration-final-report.md` + `stdlib/` 只读盘点（2026-06-29）
@@ -152,7 +153,7 @@ gantt
 
 **M1 关口条件：**
 - [ ] `Prelude::try?` 能处理 `Option<Option<Int>>` → `Option<Int>`，且类型错误时报 TYPE_MISMATCH 而非 crash
-- [ ] `ctest -R stdlib_unit` 单项全绿，总 assertions ≥ 30 × 5 = 150
+- [~] `ctest -R stdlib_unit` 单项全绿，总 assertions ≥ 30 × 5 = 150 —— **进展（2026-06-29）：option(29) + result(28) + string(29) = 3 模块 86 断言全绿**；还差 list/set/map/cmp 等 ~2 模块达 150
 - [ ] M1-6 JSON pretty 与 stringify 结果 diff ≤ 10% 行（格式化差异可控）
 
 ### 3.3 M2：集合深化（~3 周）
@@ -200,6 +201,8 @@ gantt
 2. **基线 4 个 `ahflc.fmt.*` 红非 HEAD 缺陷**：`formatted_struct_2spaces.ahfl` 工作树本地为 4 空格（进行中重构引入的未提交分歧），而 HEAD 为正确的 2 空格（`indent_width=2`）、formatter binary 产 2 空格。本次将工作树对齐回 HEAD，测试转绿，**无新 commit**（golden == HEAD）。提示：进行中重构若有意改缩进策略，需同步改 formatter binary + regenerate golden。
 3. **`/lib/std/` 不在任何代码搜索路径上**：`project.cpp::builtin_stdlib_search_roots()` 只解析 `<root>/std/prelude.ahfl`，全仓无 `lib/std` / `lib::std` 引用。故 M0-2 "project.cpp fallback 打印 deprecation warning" 子项对当前代码 **N/A**（无 fallback 路径触发）；`DEPRECATED.md` 的 fallback 段落描述的是历史/规划路径。M0-2 实质完成。
 4. **stdlib 既有 `lint.UNUSED_IMPORT` 告警**：`std/fmt.ahfl`、`std/traits.ahfl` 各有一条未用 import 告警（check 仍过，warning 不阻断）。非本次引入，建议 M1 收口时清理。
+5. **IR 实例 ID 计数器对 stdlib 增长脆弱（M1 首次撞到）**：`ahflc emit ir` / `emit ir-json` 的实例 ID 是全局单调计数器（`_inst_<hex>_…` / JSON `"id": N`）。**新增任何 stdlib 函数都会偏移该计数器**，使下游用户 agent 的实例 ID 后移，导致 IR golden 不匹配。M1 加 `Option::xor` / `String::repeat` 后偏移 +3，需 regen 3 份 golden（`project_check_ok.{ir,json}`、`project_workflow_value_flow.json`，diff 全为 id 字段、无语义变化）。**影响**：M1/M2 每加一批 stdlib API 都会 churn IR golden。**建议（Wave-future）**：让实例 ID 稳定化（按模块内序号 / 内容哈希，而非全局计数器），从根上消除该脆弱性；在此之前，加 stdlib API 时配套 regen IR golden。
+6. **P3 跨方法链泛型推断有限**：`r.map(\x->…).unwrap_or(0)` 无法沿链把 `map` 的 `U` 推断到 `unwrap_or` 的 default（报 "expected U, got Int"）。`result_ut` 通过给 generic 方法显式类型实参（`map<Int>` / `and_then<Int>` / `map_err<String>` / `or_else<String>`）绕过；`string.ahfl` 的 join 亦用手工递归而非 fold-with-lambda 规避同问题。**建议**：M1-5/M3 期强化跨链推断，或文档化"generic 方法结果先 `let` 带注解/显式类型实参"惯例。
 
 ---
 

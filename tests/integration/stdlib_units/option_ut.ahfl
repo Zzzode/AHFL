@@ -39,5 +39,11 @@ fn option_ut() -> Int effect Pure decreases 0 {
     assert(option::unwrap_or<Int>(option::and_then<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x)), 7) == 7);
     assert(option::unwrap_or<Int>(option::or_else<Int>(option::Option::None, \ -> option::Option::Some(11)), 0) == 11);
 
+    // ===== 4 xor (M1-2): Some iff exactly one of self/other is Some =====
+    assert(option::is_some<Int>(option::xor<Int>(option::Option::Some(1), option::Option::None)));
+    assert(option::is_some<Int>(option::xor<Int>(option::Option::None, option::Option::Some(2))));
+    assert(option::is_none<Int>(option::xor<Int>(option::Option::Some(1), option::Option::Some(2))));
+    assert(option::is_none<Int>(option::xor<Int>(option::Option::None, option::Option::None)));
+
     return 0;
 }

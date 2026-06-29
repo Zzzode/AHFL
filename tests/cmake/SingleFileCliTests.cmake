@@ -940,6 +940,24 @@ set_tests_properties(ahflc.check.stdlib_option_ut PROPERTIES
     LABELS "stdlib;unit;option"
 )
 
+ahfl_add_check_test(
+    ahflc.check.stdlib_result_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/result_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_result_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;result"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_string_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/string_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_string_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;string"
+)
+
 ahfl_add_check_fail_test(
     ahflc.fail.stdlib_option_neg_map
     "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_map.ahfl"

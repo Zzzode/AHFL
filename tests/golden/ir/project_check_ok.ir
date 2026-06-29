@@ -101,7 +101,7 @@ agent lib::agents::AliasAgent {
   transition Init -> Done
 }
 
-instance agent _inst_00000000000000df_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response {
+instance agent _inst_00000000000000e2_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response {
   symbol: lib::agents::AliasAgent
   type_args: [lib::types::Request, lib::types::Context, lib::types::Response]
   return: Any

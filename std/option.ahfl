@@ -88,6 +88,21 @@ impl<T> Option<T> {
             None => Option::None,
         };
     }
+
+    // xor (M1-2): returns Some only when exactly one of self / other is Some;
+    // None when both are Some or both are None. Pure AHFL (nested match), no
+    // builtin hook. unzip / copied are out of scope here: unzip needs real
+    // tuple types (ZippedPair is an empty nominal workaround), copied needs
+    // borrow/refs which AHFL does not have.
+    fn xor(self, other: Option<T>) -> Option<T> effect Pure decreases 0 {
+        return match self {
+            Some(va) => match other {
+                Some(_) => Option::None,
+                None => Option::Some(va)
+            },
+            None => other
+        };
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +150,12 @@ fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pu
 /// should prefer `opt.or_else(alt)` via the inherent impl on `Option<T>`.
 fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
     return self.or_else(alt);
+}
+
+// UFCS surface for xor (M1-2, new API): allows option::xor<T>(a, b) as well as
+// a.xor(b). Not deprecated — this is the primary free-function entry point.
+fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 0 {
+    return self.xor(other);
 }
 
 fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {

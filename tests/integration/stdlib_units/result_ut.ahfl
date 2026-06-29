@@ -1,0 +1,49 @@
+module stdlib_units::result_ut;
+
+import std::result as result;
+import std::option as option;
+
+// Result<T, E> unit-test matrix (corelib-support-workplan M1-7 / blocker B3).
+// 28 assertions: 14 positive (Ok) + 14 boundary (Err). Method-form surface.
+// Generic methods carry explicit type args because P3 does not propagate U/F
+// inference across a method chain into the receiver of the next call.
+fn result_ut() -> Int effect Pure decreases 0 {
+    let ok: result::Result<Int, String> = result::Result::Ok(5);
+    let err: result::Result<Int, String> = result::Result::Err("boom");
+
+    // ===== 14 positive: Ok operations =====
+    assert(ok.is_ok());
+    assert(ok.map<Int>(\x: Int -> x * 2).unwrap_or(0) == 10);
+    assert(ok.map<Int>(\x: Int -> x + 1).is_ok());
+    assert(ok.map_err<String>(\e: String -> e).unwrap_or(0) == 5);
+    assert(ok.and_then<Int>(\x: Int -> result::Result::Ok(x * 3)).unwrap_or(0) == 6);
+    assert(ok.and_then<Int>(\x: Int -> result::Result::Ok(x + 1)).is_ok());
+    assert(ok.or_else<String>(\e: String -> result::Result::Ok(0)).unwrap_or(0) == 5);
+    assert(ok.unwrap_or(0) == 5);
+    assert(ok.unwrap_or_else(\e: String -> 0) == 5);
+    assert(ok.ok().is_some());
+    assert(ok.err().is_none());
+    assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").is_ok());
+    assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").unwrap_or(0) == 7);
+    let hundred: result::Result<Int, String> = result::Result::Ok(100);
+    assert(hundred.is_ok());
+
+    // ===== 14 boundary: Err operations =====
+    assert(err.is_err());
+    assert(err.unwrap_or(99) == 99);
+    assert(err.unwrap_or_else(\e: String -> 99) == 99);
+    assert(err.map<Int>(\x: Int -> x + 1).is_err());
+    assert(err.map<Int>(\x: Int -> x + 1).unwrap_or(42) == 42);
+    assert(err.map_err<String>(\e: String -> "mapped").is_err());
+    assert(err.and_then<Int>(\x: Int -> result::Result::Ok(x)).is_err());
+    assert(err.and_then<Int>(\x: Int -> result::Result::Ok(x)).unwrap_or(7) == 7);
+    assert(err.or_else<String>(\e: String -> result::Result::Ok(11)).unwrap_or(0) == 11);
+    assert(err.or_else<String>(\e: String -> result::Result::Err("other")).is_err());
+    assert(err.ok().is_none());
+    assert(err.err().is_some());
+    assert(result::from_option<Int, String>(option::Option::None, \ -> "x").is_err());
+    let zerr: result::Result<Int, String> = result::Result::Err("z");
+    assert(zerr.is_err());
+
+    return 0;
+}

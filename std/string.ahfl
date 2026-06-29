@@ -83,6 +83,15 @@ impl String {
     fn raw_length(self) -> Int effect Pure decreases 0 {
         return self.length();
     }
+
+    // repeat (M1-4, P0): self concatenated n times. Pure AHFL over
+    // string_raw_concat (no new builtin hook). n <= 0 yields the empty string.
+    fn repeat(self, n: Int) -> String effect Pure decreases 0 {
+        if n <= 0 {
+            return "";
+        }
+        return string_repeat_step(self, n, 0, "");
+    }
 }
 
 // ===========================================================================
@@ -124,6 +133,20 @@ fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
 
 fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {
     return self.contains(needle);
+}
+
+// string_repeat_step: tail-recursive helper for String::repeat (M1-4).
+// Manual recursion over the count (decreases n - i) using string_raw_concat.
+fn string_repeat_step(s: String, n: Int, i: Int, buf: String) -> String effect Pure decreases n - i {
+    if i >= n {
+        return buf;
+    }
+    return string_repeat_step(s, n, i + 1, string_raw_concat(buf, s));
+}
+
+// repeat (M1-4): UFCS surface for s.repeat(n).
+fn repeat(self: String, n: Int) -> String effect Pure decreases 0 {
+    return self.repeat(n);
 }
 
 // ===========================================================================

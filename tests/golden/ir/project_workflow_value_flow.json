@@ -63,7 +63,7 @@
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 223
+        "id": 226
       },
       "state_handlers": [
         {
@@ -222,7 +222,7 @@
             "canonical_name": "lib::agents::AliasAgent",
             "local_name": "AliasAgent",
             "module_name": "lib::agents",
-            "id": 223
+            "id": 226
           },
           "input": {
             "kind": "path",
@@ -265,7 +265,7 @@
             "canonical_name": "lib::agents::AliasAgent",
             "local_name": "AliasAgent",
             "module_name": "lib::agents",
-            "id": 223
+            "id": 226
           },
           "input": {
             "kind": "struct_literal",
@@ -639,7 +639,7 @@
         "canonical_name": "lib::agents::Echo",
         "local_name": "Echo",
         "module_name": "lib::agents",
-        "id": 222
+        "id": 225
       },
       "params": [
         {
@@ -687,7 +687,7 @@
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 223
+        "id": 226
       },
       "input_type": "lib::types::Request",
       "input_type_ref": {
@@ -736,7 +736,7 @@
           "canonical_name": "lib::agents::Echo",
           "local_name": "Echo",
           "module_name": "lib::agents",
-          "id": 222
+          "id": 225
         }
       ],
       "quota": [],
@@ -757,14 +757,14 @@
           "end_offset": 395
         }
       },
-      "name": "_inst_00000000000000df_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response",
+      "name": "_inst_00000000000000e2_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response",
       "instance_kind": "agent",
       "symbol_ref": {
         "kind": "agent",
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 223
+        "id": 226
       },
       "type_args": [
         {

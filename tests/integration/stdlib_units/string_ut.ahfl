@@ -1,0 +1,49 @@
+module stdlib_units::string_ut;
+
+import std::string as string;
+import std::collections as collections;
+
+// String unit-test matrix (corelib-support-workplan M1-7 / blocker B3).
+// 29 assertions: 15 positive + 14 boundary. Method-form surface.
+// NOTE: contains/starts_with/ends_with route to @builtin hooks declared in
+// the known-hook whitelist; they type-check here (runtime impl is M1-4 follow-up).
+fn string_ut() -> Int effect Pure decreases 0 {
+    let s: String = "hello";
+    let e: String = "";
+    let words: collections::List<String> = collections::list_from_array<String>("a", "b", "c");
+
+    // ===== 15 positive =====
+    assert(s.length() == 5);
+    assert(s.concat(" world").length() == 11);
+    assert(s.starts_with("hel"));
+    assert(s.ends_with("llo"));
+    assert(s.contains("ell"));
+    assert(s.substring(0, 3).length() == 3);
+    assert(s.substring(1, 4).contains("ell"));
+    assert(s.repeat(2).length() == 10);
+    assert(s.repeat(3).starts_with("hello"));
+    assert(s.repeat(1).length() == 5);
+    assert(string::concat("ab", "cd").length() == 4);
+    assert(string::join(words, ",").length() == 5);
+    assert(string::join(words, ",").contains(","));
+    assert(s.substring(0, 5).length() == 5);
+    assert(s.concat("!").ends_with("!"));
+
+    // ===== 14 boundary =====
+    assert(e.is_empty());
+    assert(e.length() == 0);
+    assert(e.repeat(5).is_empty());
+    assert(e.concat("x").length() == 1);
+    assert(e.starts_with(""));
+    assert(s.starts_with(""));
+    assert(s.ends_with(""));
+    assert(s.contains(""));
+    assert(s.substring(0, 0).is_empty());
+    assert(e.repeat(0).is_empty());
+    assert(string::concat("", "").is_empty());
+    assert(s.repeat(0).length() == 0);
+    assert(s.concat("").length() == 5);
+    assert(string::join(words, "").length() == 3);
+
+    return 0;
+}
