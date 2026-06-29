@@ -26,6 +26,15 @@ fn result_ut() -> Int effect Pure decreases 0 {
     // flat_map (M1-1): alias of and_then, mirrors Option / List.
     assert(result::flat_map<Int, Int, String>(ok, \x: Int -> result::Result::Ok(x * 3)).unwrap_or(0) == 6);
     assert(result::flat_map<Int, Int, String>(err, \x: Int -> result::Result::Ok(x * 3)).is_err());
+    // flatten (M1-3): Result<Result<T,E>,E> -> Result<T,E>
+    let inner_ok: result::Result<Int, String> = result::Result::Ok(5);
+    let nested_ok: result::Result<result::Result<Int, String>, String> = result::Result::Ok(inner_ok);
+    assert(result::flatten<Int, String>(nested_ok).unwrap_or(0) == 5);
+    let nested_outer_err: result::Result<result::Result<Int, String>, String> = result::Result::Err("boom");
+    assert(result::flatten<Int, String>(nested_outer_err).is_err());
+    let inner_err: result::Result<Int, String> = result::Result::Err("inner");
+    let nested_inner_err: result::Result<result::Result<Int, String>, String> = result::Result::Ok(inner_err);
+    assert(result::flatten<Int, String>(nested_inner_err).is_err());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").is_ok());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").unwrap_or(0) == 7);
     let hundred: result::Result<Int, String> = result::Result::Ok(100);

@@ -162,6 +162,14 @@ fn flat_map<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, 
     return self.and_then<U>(f);
 }
 
+/// flatten (M1-3): collapse Result<Result<T, E>, E> -> Result<T, E>. Uses
+/// and_then(identity) because P3 cannot directly construct a generic enum
+/// variant inside a free-function body (the type args resolve to Any); passing
+/// the inner Result through unchanged avoids that construction.
+fn flatten<T, E>(self: Result<Result<T, E>, E>) -> Result<T, E> effect Pure decreases 0 {
+    return self.and_then<T>(\inner: Result<T, E> -> inner);
+}
+
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `r.or_else(alt)` via the inherent impl on `Result<T, E>`.
 fn or_else<T, E, F>(self: Result<T, E>, alt: Fn(E) -> Result<T, F>) -> Result<T, F> effect Pure decreases 0 {
