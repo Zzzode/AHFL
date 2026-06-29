@@ -1,0 +1,35 @@
+module stdlib_units::set_ut;
+
+import std::collections as collections;
+
+// Set<T> unit-test matrix (M1-7 / B3). UFCS surface. Set's public API is thin
+// (empty/singleton/is_empty/contains); set-theoretic ops are M2. Negatives use
+// `not` / `== true` (both verified to typecheck).
+fn set_ut() -> Int effect Pure decreases 0 {
+    let s: collections::Set<Int> = collections::set_singleton<Int>(1);
+    let e: collections::Set<Int> = collections::set_empty<Int>();
+
+    // empty / non-empty
+    assert(collections::set_is_empty<Int>(e));
+    assert(not collections::set_is_empty<Int>(s));
+    assert(collections::set_is_empty<Int>(collections::set_empty<Int>()) == true);
+    assert(collections::set_is_empty<Int>(collections::set_singleton<Int>(0)) == false);
+
+    // contains (positive)
+    assert(collections::contains<Int>(s, 1));
+    assert(collections::contains<Int>(collections::set_singleton<Int>(5), 5));
+    assert(collections::contains<Int>(collections::set_singleton<Int>(0), 0));
+
+    // contains (negative)
+    assert(not collections::contains<Int>(s, 99));
+    assert(not collections::contains<Int>(collections::set_singleton<Int>(5), 6));
+    assert(not collections::contains<Int>(collections::set_singleton<Int>(0), 1));
+    assert(not collections::contains<Int>(e, 1));
+    assert(not collections::contains<Int>(e, 0));
+
+    // distinct singletons are distinct
+    assert(collections::contains<Int>(collections::set_singleton<Int>(42), 42));
+    assert(not collections::contains<Int>(collections::set_singleton<Int>(42), 7));
+
+    return 0;
+}

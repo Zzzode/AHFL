@@ -1,0 +1,45 @@
+module stdlib_units::cmp_ut;
+
+import std::cmp as cmp;
+
+// Ordering + compare/min/max/clamp unit-test matrix (M1-7 / B3). UFCS surface.
+// compare routes to the cmp_raw_compare builtin (typechecks here; runtime impl
+// covers Int/Float/Bool/String primitives).
+fn cmp_ut() -> Int effect Pure decreases 0 {
+    // compare on Int -> Ordering
+    assert(cmp::compare<Int>(1, 2).is_less());
+    assert(cmp::compare<Int>(2, 1).is_greater());
+    assert(cmp::compare<Int>(5, 5).is_equal());
+
+    // predicate helpers
+    assert(cmp::is_less(cmp::compare<Int>(0, 1)));
+    assert(cmp::is_greater(cmp::compare<Int>(9, 3)));
+    assert(cmp::is_equal(cmp::compare<Int>(7, 7)));
+
+    // reverse
+    assert(cmp::compare<Int>(1, 2).reverse().is_greater());
+    assert(cmp::compare<Int>(2, 1).reverse().is_less());
+    assert(cmp::compare<Int>(5, 5).reverse().is_equal());
+
+    // min / max
+    assert(cmp::min<Int>(1, 2) == 1);
+    assert(cmp::min<Int>(5, 3) == 3);
+    assert(cmp::max<Int>(1, 2) == 2);
+    assert(cmp::max<Int>(5, 3) == 5);
+    assert(cmp::min<Int>(0, 0) == 0);
+    assert(cmp::max<Int>(100, 100) == 100);
+
+    // clamp
+    assert(cmp::clamp<Int>(5, 0, 10) == 5);
+    assert(cmp::clamp<Int>(-5, 0, 10) == 0);
+    assert(cmp::clamp<Int>(15, 0, 10) == 10);
+    assert(cmp::clamp<Int>(3, 3, 3) == 3);
+    assert(cmp::clamp<Int>(0, 0, 10) == 0);
+
+    // Ordering variants directly
+    assert(cmp::Ordering::Less.is_less());
+    assert(cmp::Ordering::Equal.is_equal());
+    assert(cmp::Ordering::Greater.is_greater());
+
+    return 0;
+}

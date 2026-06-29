@@ -2,7 +2,7 @@
 
 > **Status:** Draft v1 — actionable backlog for "接下来一段时间工作重点 = 支持 corelib 用 AHFL 来写"
 > **Progress (2026-06-29):** M0 实质完成 — M0-1（`formatted_struct_2spaces.ahfl` 工作树本地分歧对齐 HEAD，4 红→全绿）、M0-2（R1 D1 默认值落地 `lib/std/DEPRECATED.md` + 确认 `/lib/std` 不在搜索路径）、M0-3（`option_ut` 30/30：25 断言 + 5 负例，已挂 ctest）、M0-4（`AhflInstall.cmake` 加 `install(std/)` 并验证）、M0-5（formatter golden 本地分歧对齐）、M0-6（baked-in std 解析验证）均落地；M0-4 容器 / M0-5 CI 基建部分依赖 M3。本计划已纳入 `docs/README.md` 索引。设计侧（RFC + 4 附件）已定稿并自洽（见 [`corelib-rfc.zh.md`](../design/corelib-rfc.zh.md)）。
-> **M1 进展（2026-06-29）：** 启动 M1-2 / M1-4 / M1-7 — 新增纯 AHFL API `Option::xor`、`String::repeat`（不需新 builtin hook）；测试矩阵 `option_ut`（29，含 xor）+ `result_ut`（28）+ `string_ut`（29）+ `list_ut`（19）+ `map_ut`（12）= **5 模块 / 117 断言全绿**。`Result::transpose/flatten` 需嵌套泛型 inherent impl（`impl Result<Result<T,E>,E>`，P3 支持性待验证），暂缓；`try?`（M1-1）待 D3 决策；`String::trim/split/replace` 需新字符串原语（M1-4 后续）；`set_ut`/`cmp_ut` 待补（Set 公开 API 偏薄）。
+> **M1 进展（2026-06-29）：** 启动 M1-2 / M1-4 / M1-7 — 新增纯 AHFL API `Option::xor`、`String::repeat`（不需新 builtin hook）；测试矩阵 `option_ut`（29，含 xor）+ `result_ut`（28）+ `string_ut`（29）+ `list_ut`（19）+ `map_ut`（12）+ `set_ut`（14）+ `cmp_ut`（23）= **7 模块 / 154 断言全绿**，M1「≥150 断言」关口**达成**（12/12 测试）。`Result::transpose/flatten` 需嵌套泛型 inherent impl（`impl Result<Result<T,E>,E>`，P3 支持性待验证），暂缓；`try?`（M1-1）待 D3 决策；`String::trim/split/replace` 需新字符串原语（M1-4 后续）。
 > **Created:** 2026-06-29
 > **Baseline commit:** develop/wave-21-top
 > **Audit source:** `docs/int/wave-21-integration-final-report.md` + `stdlib/` 只读盘点（2026-06-29）
@@ -153,7 +153,7 @@ gantt
 
 **M1 关口条件：**
 - [ ] `Prelude::try?` 能处理 `Option<Option<Int>>` → `Option<Int>`，且类型错误时报 TYPE_MISMATCH 而非 crash
-- [~] `ctest -R stdlib_unit` 单项全绿，总 assertions ≥ 30 × 5 = 150 —— **进展（2026-06-29）：option(29) + result(28) + string(29) + list(19) + map(12) = 5 模块 / 117 断言全绿**；5 模块达标，断言数 117/150（缺口 ~33，机械扩充 list/map 矩阵或加 set/cmp 即可）
+- [x] `ctest -R stdlib_unit` 单项全绿，总 assertions ≥ 30 × 5 = 150 —— **达成（2026-06-29）：option(29) + result(28) + string(29) + list(19) + map(12) + set(14) + cmp(23) = 7 模块 / 154 断言全绿**（12/12 测试 PASS）
 - [ ] M1-6 JSON pretty 与 stringify 结果 diff ≤ 10% 行（格式化差异可控）
 
 ### 3.3 M2：集合深化（~3 周）

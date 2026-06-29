@@ -976,6 +976,24 @@ set_tests_properties(ahflc.check.stdlib_map_ut PROPERTIES
     LABELS "stdlib;unit;map"
 )
 
+ahfl_add_check_test(
+    ahflc.check.stdlib_set_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/set_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_set_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;set"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_cmp_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/cmp_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_cmp_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;cmp"
+)
+
 ahfl_add_check_fail_test(
     ahflc.fail.stdlib_option_neg_map
     "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_map.ahfl"
