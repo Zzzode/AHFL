@@ -152,6 +152,68 @@ EvalResult builtin_list_from_array(const std::vector<Value> &args, const EvalCon
 }
 
 // ----------------------------------------------------------------------------
+// List algorithms (M2-1): sort / dedup / slice. Pure C++ over ListValue,
+// comparing elements via the same primitive cascade as cmp_raw_compare.
+// ----------------------------------------------------------------------------
+
+// Three-way compare of two primitive Values: -1 / 0 / 1. Mixed / unknown
+// kinds compare equal, matching cmp_raw_compare's identity fallback so sort
+// and dedup terminate with a total order over primitives.
+static int compare_values(const Value &a, const Value &b) {
+    if (const auto *ia = std::get_if<IntValue>(&a.node)) {
+        if (const auto *ib = std::get_if<IntValue>(&b.node))
+            return ia->value < ib->value ? -1 : ia->value > ib->value ? 1 : 0;
+    } else if (const auto *fa = std::get_if<FloatValue>(&a.node)) {
+        if (const auto *fb = std::get_if<FloatValue>(&b.node))
+            return fa->value < fb->value ? -1 : fa->value > fb->value ? 1 : 0;
+    } else if (const auto *ba = std::get_if<BoolValue>(&a.node)) {
+        if (const auto *bb = std::get_if<BoolValue>(&b.node))
+            return (!ba->value && bb->value) ? -1 : (ba->value && !bb->value) ? 1 : 0;
+    } else if (const auto *sa = std::get_if<StringValue>(&a.node)) {
+        if (const auto *sb = std::get_if<StringValue>(&b.node)) {
+            const int c = sa->value.compare(sb->value);
+            return c < 0 ? -1 : c > 0 ? 1 : 0;
+        }
+    }
+    return 0;
+}
+
+/// list_sort<T>(xs: List<T>) -> List<T> — stable ascending sort over primitive T.
+EvalResult builtin_list_sort(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *lv = std::get_if<ListValue>(&args[0].node);
+    if (lv == nullptr)
+        return make_error("list_sort: argument must be a List");
+    std::vector<const Value *> elems;
+    elems.reserve(lv->items.size());
+    for (const auto &item : lv->items) elems.push_back(item.get());
+    std::stable_sort(elems.begin(), elems.end(),
+                     [](const Value *a, const Value *b) { return compare_values(*a, *b) < 0; });
+    ListValue out;
+    out.items.reserve(elems.size());
+    for (const Value *e : elems) out.items.push_back(std::make_unique<Value>(clone_value(*e)));
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+/// list_dedup<T>(xs: List<T>) -> List<T> — drop consecutive equal elements
+/// (call after sort for full uniqueness).
+EvalResult builtin_list_dedup(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *lv = std::get_if<ListValue>(&args[0].node);
+    if (lv == nullptr)
+        return make_error("list_dedup: argument must be a List");
+    ListValue out;
+    for (const auto &item : lv->items) {
+        if (!out.items.empty() && compare_values(*out.items.back(), *item) == 0)
+            continue;
+        out.items.push_back(std::make_unique<Value>(clone_value(*item)));
+    }
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+// ----------------------------------------------------------------------------
 // Container builtins (Set)
 // ----------------------------------------------------------------------------
 
@@ -1563,6 +1625,8 @@ void BuiltinTable::populate() {
     insert("list_raw_set", builtin_list_raw_set);
     insert("list_raw_alloc", builtin_list_raw_alloc);
     insert("list_from_array", builtin_list_from_array);
+    insert("list_sort", builtin_list_sort);
+    insert("list_dedup", builtin_list_dedup);
 
     // —— Set ——
     insert("set_raw_size", builtin_set_raw_size);

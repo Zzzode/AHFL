@@ -35,5 +35,13 @@ fn list_ut() -> Int effect Pure decreases 0 {
     assert(collections::length<Int>(collections::append<Int>(xs, xs)) == 6);
     assert(option::unwrap_or<Int>(collections::last<Int>(collections::append<Int>(xs, xs)), 0) == 3);
 
+    // sort / dedup / slice (M2-1)
+    let unsorted: collections::List<Int> = collections::list_cons<Int>(3, collections::list_cons<Int>(1, collections::list_cons<Int>(2, collections::singleton<Int>(1))));
+    let sorted: collections::List<Int> = collections::sort<Int>(unsorted);
+    assert(collections::length<Int>(sorted) == 4);
+    assert(option::unwrap_or<Int>(collections::first<Int>(sorted), 0) == 1);
+    assert(option::unwrap_or<Int>(collections::last<Int>(sorted), 0) == 3);
+    assert(collections::length<Int>(collections::dedup<Int>(sorted)) == 3);
+
     return 0;
 }

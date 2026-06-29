@@ -12,6 +12,8 @@ inline constexpr std::array kKnownBuiltinHooks{
     std::string_view{"list_raw_length"},
     std::string_view{"list_raw_alloc"},
     std::string_view{"list_from_array"},
+    std::string_view{"list_sort"},
+    std::string_view{"list_dedup"},
     std::string_view{"set_raw_contains"},
     std::string_view{"set_raw_size"},
     std::string_view{"set_raw_empty"},
