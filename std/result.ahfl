@@ -156,6 +156,12 @@ fn and_then<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, 
     return self.and_then<U>(f);
 }
 
+/// flat_map (M1-1 Prelude trio): alias of and_then, mirroring Option and List
+/// (prelude.ahfl has List::flat_map). Pure AHFL dispatch to inherent and_then.
+fn flat_map<T, U, E>(self: Result<T, E>, f: Fn(T) -> Result<U, E>) -> Result<U, E> effect Pure decreases 0 {
+    return self.and_then<U>(f);
+}
+
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `r.or_else(alt)` via the inherent impl on `Result<T, E>`.
 fn or_else<T, E, F>(self: Result<T, E>, alt: Fn(E) -> Result<T, F>) -> Result<T, F> effect Pure decreases 0 {

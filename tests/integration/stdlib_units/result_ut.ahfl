@@ -23,6 +23,9 @@ fn result_ut() -> Int effect Pure decreases 0 {
     assert(ok.unwrap_or_else(\e: String -> 0) == 5);
     assert(ok.ok().is_some());
     assert(ok.err().is_none());
+    // flat_map (M1-1): alias of and_then, mirrors Option / List.
+    assert(result::flat_map<Int, Int, String>(ok, \x: Int -> result::Result::Ok(x * 3)).unwrap_or(0) == 6);
+    assert(result::flat_map<Int, Int, String>(err, \x: Int -> result::Result::Ok(x * 3)).is_err());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").is_ok());
     assert(result::from_option<Int, String>(option::Option::Some(7), \ -> "x").unwrap_or(0) == 7);
     let hundred: result::Result<Int, String> = result::Result::Ok(100);

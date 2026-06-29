@@ -158,6 +158,14 @@ fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 
     return self.xor(other);
 }
 
+// flat_map (M1-1 Prelude trio): alias of and_then, so Option shares the
+// flat_map name with Result and List (prelude.ahfl has List::flat_map). Pure
+// AHFL dispatch to the inherent and_then. try? / for_each remain deferred
+// (try? needs the `?` operator grammar+sema; for_each needs a Unit return).
+fn flat_map<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+    return self.and_then<U>(f);
+}
+
 fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     return option_filter_value<T>(value, p);
 }

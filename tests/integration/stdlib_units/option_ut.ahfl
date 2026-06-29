@@ -45,5 +45,9 @@ fn option_ut() -> Int effect Pure decreases 0 {
     assert(option::is_none<Int>(option::xor<Int>(option::Option::Some(1), option::Option::Some(2))));
     assert(option::is_none<Int>(option::xor<Int>(option::Option::None, option::Option::None)));
 
+    // ===== 2 flat_map (M1-1): alias of and_then =====
+    assert(option::is_some<Int>(option::flat_map<Int, Int>(option::Option::Some(2), \x: Int -> option::Option::Some(x * 3))));
+    assert(option::is_none<Int>(option::flat_map<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x))));
+
     return 0;
 }
