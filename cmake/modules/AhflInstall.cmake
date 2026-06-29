@@ -17,6 +17,17 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/compiler/syntax/parser/generated/
     FILES_MATCHING PATTERN "*.h"
 )
 
+# Standard library sources (corelib). Shipped so a clean SDK install resolves
+# `std::*` types without a source checkout — `ahflc check` searches for
+# `<root>/std/prelude.ahfl` (see src/compiler/syntax/frontend/project.cpp,
+# builtin_stdlib_search_roots). The install root is ${datadir}/ahfl, with the
+# flat std/ layout mirrored under it. See docs/plans/corelib-support-workplan.zh.md
+# M0-4 / blocker B4.
+install(DIRECTORY ${PROJECT_SOURCE_DIR}/std/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/ahfl/std
+    FILES_MATCHING PATTERN "*.ahfl"
+)
+
 # Libraries
 option(AHFL_INSTALL_INTERNAL_TARGETS
     "Install the full internal AHFL target graph for local development packaging"

@@ -1,0 +1,10 @@
+module stdlib_units::option_neg_not_option;
+
+import std::option as option;
+
+// Negative (M0-3): is_some expects an Option<T>, not a bare value.
+// Calling it on an Int is a TYPE_MISMATCH (expected Option<Int>, got Int).
+fn neg() -> Int effect Pure decreases 0 {
+    let b = option::is_some<Int>(42);
+    return 0;
+}

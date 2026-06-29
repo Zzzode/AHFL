@@ -798,7 +798,7 @@ ahfl_add_check_fail_test(
 ahfl_add_check_fail_test(
     ahflc.fail.assert_condition_not_bool
     "${AHFL_TESTS_DIR}/golden/typecheck/assert_condition_not_bool.ahfl"
-    "assert condition must have type Bool"
+    "type mismatch in assert condition: expected Bool, got"
 )
 
 ahfl_add_check_fail_test(
@@ -923,4 +923,45 @@ set_tests_properties(p5_smv_golden_lock.negative_diag PROPERTIES
     PASS_REGULAR_EXPRESSION "negative self-test passed.*golden mismatch.*diff cmd :.*diff -u"
     FAIL_REGULAR_EXPRESSION "negative case did not trigger|ERROR: negative"
     LABELS "p5;golden_lock;smv;formal;negative"
+)
+
+# ---------------------------------------------------------------------------
+# stdlib unit-test matrix (corelib-support-workplan M0-3 / blocker B3).
+# option_ut is the template for the other 11 stdlib modules: 25 assertions
+# (15 positive + 10 boundary) over the Option<T> API surface. The five
+# option_neg_* fixtures are the negative-path counterpart.
+# ---------------------------------------------------------------------------
+ahfl_add_check_test(
+    ahflc.check.stdlib_option_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_option_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;option"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.stdlib_option_neg_map
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_map.ahfl"
+    "got Fn"
+)
+ahfl_add_check_fail_test(
+    ahflc.fail.stdlib_option_neg_unwrap_or
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_unwrap_or.ahfl"
+    "got Bool"
+)
+ahfl_add_check_fail_test(
+    ahflc.fail.stdlib_option_neg_not_option
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_not_option.ahfl"
+    "got Int"
+)
+ahfl_add_check_fail_test(
+    ahflc.fail.stdlib_option_neg_arity
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_arity.ahfl"
+    "WRONG_ARITY"
+)
+ahfl_add_check_fail_test(
+    ahflc.fail.stdlib_option_neg_unknown
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_unknown.ahfl"
+    "UNKNOWN_CALLABLE"
 )

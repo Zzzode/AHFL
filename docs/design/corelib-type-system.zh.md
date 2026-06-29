@@ -737,7 +737,7 @@ Q2 决议（§4.5）与 Q7 决议联动：
 1. **Q3 effect 系统与 capability effect 统一粒度** → [`corelib-effect-system.zh.md`](./corelib-effect-system.zh.md)
 2. **Q4 `std::result` 与现有错误模型** → [`corelib-stdlib-api.zh.md`](./corelib-stdlib-api.zh.md)
 3. **Q5 prelude stability policy** → [`corelib-stdlib-api.zh.md`](./corelib-stdlib-api.zh.md)
-4. **Q6 P5 容器库化对 SMV 编码迁移** → [`corelib-container-smv-migration.zh.md`](./corelib-container-smv-migration.zh.md)
+4. **Q6 P5 容器库化对 SMV 编码迁移** → [`corelib-container-migration.zh.md`](./corelib-container-migration.zh.md)
 5. **关联类型约束 `<T as Iter>::Item: Ord`** → P3+ 决议
 6. **higher-ranked bound `for<U>`** → P3+ 决议
 7. **闭包 subtyping 完整版（参数逆变 + 返回协变）** → P3+ 决议

@@ -1,0 +1,10 @@
+module stdlib_units::option_neg_unwrap_or;
+
+import std::option as option;
+
+// Negative (M0-3): unwrap_or's default must match the inner type T.
+// Passing a Bool default for Option<Int> is a TYPE_MISMATCH (expected Int, got Bool).
+fn neg() -> Int effect Pure decreases 0 {
+    let v = option::unwrap_or<Int>(option::Option::Some(1), true);
+    return 0;
+}

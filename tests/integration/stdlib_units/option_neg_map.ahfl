@@ -1,0 +1,10 @@
+module stdlib_units::option_neg_map;
+
+import std::option as option;
+
+// Negative (M0-3): map's closure must be Fn(T) -> U for the Option<T>.
+// Passing Fn(Bool) -> Int where Fn(Int) -> Int is expected is a TYPE_MISMATCH.
+fn neg() -> Int effect Pure decreases 0 {
+    let m = option::map<Int, Int>(option::Option::Some(1), \x: Bool -> 1);
+    return 0;
+}

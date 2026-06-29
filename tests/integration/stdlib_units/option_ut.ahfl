@@ -1,0 +1,43 @@
+module stdlib_units::option_ut;
+
+import std::option as option;
+
+// Option<T> unit-test template (corelib-support-workplan M0-3 / blocker B3).
+// 25 assertions: 15 positive (Some operations) + 10 boundary (None / edge).
+// Each `assert` carries a meaningful Bool over the Option API surface, so the
+// file both type-checks the public API (`ahflc check`) and encodes intended
+// runtime semantics for a future execution harness. Modeled on
+// tests/integration/stdlib_api_smoke (free-function surface + explicit type
+// arguments). This file is the template for the other 11 stdlib modules.
+fn option_ut() -> Int effect Pure decreases 0 {
+    // ===== 15 positive: Option::Some(...) operations =====
+    assert(option::is_some<Int>(option::Option::Some(1)));
+    assert(option::is_none<Int>(option::Option::None));
+    assert(option::is_some<Int>(option::map<Int, Int>(option::Option::Some(1), \x: Int -> x + 1)));
+    assert(option::unwrap_or<Int>(option::map<Int, Int>(option::Option::Some(5), \x: Int -> x * 2), 0) == 10);
+    assert(option::is_some<Int>(option::and_then<Int, Int>(option::Option::Some(1), \x: Int -> option::Option::Some(x + 1))));
+    assert(option::unwrap_or<Int>(option::and_then<Int, Int>(option::Option::Some(2), \x: Int -> option::Option::Some(x * 3)), 0) == 6);
+    assert(option::unwrap_or<Int>(option::filter<Int>(option::Option::Some(4), \x: Int -> x > 0), 0) == 4);
+    assert(option::unwrap_or<Int>(option::or_else<Int>(option::Option::Some(8), \ -> option::Option::Some(0)), 0) == 8);
+    assert(option::unwrap_or<Int>(option::Option::Some(9), 0) == 9);
+    assert(option::unwrap_or_else<Int>(option::Option::Some(3), \ -> 0) == 3);
+    assert(option::get_or_insert<Int>(option::Option::Some(7), 0) == 7);
+    assert(option::unwrap_or<Int>(option::map<Int, Int>(option::Option::Some(10), \x: Int -> x - 1), 0) == 9);
+    assert(option::is_some<Int>(option::or_else<Int>(option::Option::Some(1), \ -> option::Option::Some(2))));
+    assert(option::unwrap_or<Int>(option::or_else<Int>(option::Option::Some(5), \ -> option::Option::Some(2)), 0) == 5);
+    assert(option::unwrap_or<Int>(option::map<Int, Int>(option::Option::Some(6), \x: Int -> x + x), 0) == 12);
+
+    // ===== 10 boundary: Option::None and edge behaviors =====
+    assert(option::is_none<Int>(option::map<Int, Int>(option::Option::None, \x: Int -> x + 1)));
+    assert(option::is_none<Int>(option::and_then<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x))));
+    assert(option::is_none<Int>(option::and_then<Int, Int>(option::Option::Some(1), \x: Int -> option::Option::None)));
+    assert(option::is_none<Int>(option::filter<Int>(option::Option::Some(4), \x: Int -> x > 10)));
+    assert(option::is_none<Int>(option::filter<Int>(option::Option::None, \x: Int -> x > 0)));
+    assert(option::unwrap_or<Int>(option::Option::None, 42) == 42);
+    assert(option::unwrap_or_else<Int>(option::Option::None, \ -> 42) == 42);
+    assert(option::get_or_insert<Int>(option::Option::None, 8) == 8);
+    assert(option::unwrap_or<Int>(option::and_then<Int, Int>(option::Option::None, \x: Int -> option::Option::Some(x)), 7) == 7);
+    assert(option::unwrap_or<Int>(option::or_else<Int>(option::Option::None, \ -> option::Option::Some(11)), 0) == 11);
+
+    return 0;
+}
