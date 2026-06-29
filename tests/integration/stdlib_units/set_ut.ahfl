@@ -31,5 +31,24 @@ fn set_ut() -> Int effect Pure decreases 0 {
     assert(collections::contains<Int>(collections::set_singleton<Int>(42), 42));
     assert(not collections::contains<Int>(collections::set_singleton<Int>(42), 7));
 
+    // set algebra (M2-2): union / intersection / difference / is_subset
+    let s12: collections::Set<Int> = collections::set_union<Int>(collections::set_singleton<Int>(1), collections::set_singleton<Int>(2));
+    let s23: collections::Set<Int> = collections::set_union<Int>(collections::set_singleton<Int>(2), collections::set_singleton<Int>(3));
+    // union
+    assert(collections::contains<Int>(s12, 1));
+    assert(collections::contains<Int>(s12, 2));
+    assert(not collections::contains<Int>(s12, 3));
+    // intersection {1,2} ∩ {2,3} = {2}
+    assert(collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 2));
+    assert(not collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 1));
+    assert(not collections::contains<Int>(collections::set_intersection<Int>(s12, s23), 3));
+    // difference {1,2} - {2,3} = {1}
+    assert(collections::contains<Int>(collections::set_difference<Int>(s12, s23), 1));
+    assert(not collections::contains<Int>(collections::set_difference<Int>(s12, s23), 2));
+    // is_subset
+    assert(collections::set_is_subset<Int>(s, s12));
+    assert(not collections::set_is_subset<Int>(s12, s));
+    assert(collections::set_is_subset<Int>(s12, s12));
+
     return 0;
 }

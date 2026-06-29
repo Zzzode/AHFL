@@ -64,6 +64,18 @@ fn list_dedup<T>(xs: List<T>) -> List<T> effect Pure;
 @builtin("set_from_array")
 fn set_from_array<T>(v0: T, v1: T, v2: T, v3: T, v4: T, v5: T, v6: T, v7: T) -> Set<T> effect Pure;
 
+@builtin("set_union")
+fn set_union<T>(a: Set<T>, b: Set<T>) -> Set<T> effect Pure;
+
+@builtin("set_intersection")
+fn set_intersection<T>(a: Set<T>, b: Set<T>) -> Set<T> effect Pure;
+
+@builtin("set_difference")
+fn set_difference<T>(a: Set<T>, b: Set<T>) -> Set<T> effect Pure;
+
+@builtin("set_is_subset")
+fn set_is_subset<T>(a: Set<T>, b: Set<T>) -> Bool effect Pure;
+
 @builtin("map_from_entries")
 fn map_from_entries<K, V>(k0: K, v0: V, k1: K, v1: V, k2: K, v2: V, k3: K, v3: V) -> Map<K, V> effect Pure;
 

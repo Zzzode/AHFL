@@ -278,6 +278,85 @@ EvalResult builtin_set_raw_singleton(const std::vector<Value> &args, const EvalC
 }
 
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Set algebra (M2-2): union / intersection / difference / is_subset. Pure C++
+// over SetValue.items with structurally_equal membership; no element-type
+// callback needed (unlike sort_by / map_values).
+// ----------------------------------------------------------------------------
+
+EvalResult builtin_set_union(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *a = std::get_if<SetValue>(&args[0].node);
+    const auto *b = std::get_if<SetValue>(&args[1].node);
+    if (a == nullptr || b == nullptr)
+        return make_error("set_union: (Set, Set) required");
+    SetValue out;
+    const auto add_all = [&](const SetValue *src) {
+        for (const auto &e : src->items) {
+            bool present = false;
+            for (const auto &o : out.items)
+                if (structurally_equal(*o, *e)) { present = true; break; }
+            if (!present) out.items.push_back(std::make_unique<Value>(clone_value(*e)));
+        }
+    };
+    add_all(a);
+    add_all(b);
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+EvalResult builtin_set_intersection(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *a = std::get_if<SetValue>(&args[0].node);
+    const auto *b = std::get_if<SetValue>(&args[1].node);
+    if (a == nullptr || b == nullptr)
+        return make_error("set_intersection: (Set, Set) required");
+    SetValue out;
+    for (const auto &ea : a->items) {
+        for (const auto &eb : b->items) {
+            if (structurally_equal(*ea, *eb)) {
+                out.items.push_back(std::make_unique<Value>(clone_value(*ea)));
+                break;
+            }
+        }
+    }
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+EvalResult builtin_set_difference(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *a = std::get_if<SetValue>(&args[0].node);
+    const auto *b = std::get_if<SetValue>(&args[1].node);
+    if (a == nullptr || b == nullptr)
+        return make_error("set_difference: (Set, Set) required");
+    SetValue out;
+    for (const auto &ea : a->items) {
+        bool in_b = false;
+        for (const auto &eb : b->items)
+            if (structurally_equal(*ea, *eb)) { in_b = true; break; }
+        if (!in_b) out.items.push_back(std::make_unique<Value>(clone_value(*ea)));
+    }
+    return EvalResult{Value{std::move(out)}, {}};
+}
+
+EvalResult builtin_set_is_subset(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *a = std::get_if<SetValue>(&args[0].node);
+    const auto *b = std::get_if<SetValue>(&args[1].node);
+    if (a == nullptr || b == nullptr)
+        return make_error("set_is_subset: (Set, Set) required");
+    for (const auto &ea : a->items) {
+        bool in_b = false;
+        for (const auto &eb : b->items)
+            if (structurally_equal(*ea, *eb)) { in_b = true; break; }
+        if (!in_b) return EvalResult{make_bool(false), {}};
+    }
+    return EvalResult{make_bool(true), {}};
+}
+
 // Container builtins (Map)
 // ----------------------------------------------------------------------------
 
@@ -1632,6 +1711,10 @@ void BuiltinTable::populate() {
     insert("set_raw_size", builtin_set_raw_size);
     insert("set_raw_contains", builtin_set_raw_contains);
     insert("set_from_array", builtin_set_from_array);
+    insert("set_union", builtin_set_union);
+    insert("set_intersection", builtin_set_intersection);
+    insert("set_difference", builtin_set_difference);
+    insert("set_is_subset", builtin_set_is_subset);
     insert("set_raw_empty", builtin_set_raw_empty);
     insert("set_raw_singleton", builtin_set_raw_singleton);
 
