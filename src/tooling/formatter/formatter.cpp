@@ -250,6 +250,109 @@ class AstFormatter {
         return out.str();
     }
 
+    // Render a single where-clause constraint to a plain string.  Used both
+    // for the inline (short) rendering and by format_where_clause to collect
+    // the textual width of each bound before deciding whether to emit the
+    // whole clause on one line or break each constraint onto its own line.
+    std::string
+    render_where_constraint(const ahfl::ast::WhereConstraintSyntax &constraint) {
+        std::ostringstream out;
+        if (constraint.subject) {
+            out << constraint.subject->spelling();
+        }
+        if (constraint.is_predicate) {
+            out << "::" << constraint.trait_name << "(";
+            for (std::size_t index = 0; index < constraint.arguments.size(); ++index) {
+                if (index != 0) {
+                    out << ", ";
+                }
+                if (constraint.arguments[index]) {
+                    out << constraint.arguments[index]->spelling();
+                }
+            }
+            out << ")";
+        } else {
+            out << ": ";
+            for (std::size_t index = 0; index < constraint.bounds.size(); ++index) {
+                if (index != 0) {
+                    out << " + ";
+                }
+                if (constraint.bounds[index]) {
+                    out << constraint.bounds[index]->spelling();
+                }
+            }
+        }
+        return out.str();
+    }
+
+    // Emit `where` followed by the constraint list.  Short clauses that fit
+    // inside the 80-column soft limit are rendered inline; otherwise every
+    // constraint is emitted on its own indented line with the `where` keyword
+    // on the line introducing the clause.  A trailing comma is intentionally
+    // NOT emitted so the output matches `trait Foo<T> where T: A + B, U: C`.
+    [[nodiscard]] bool format_where_clause(const ahfl::ast::WhereClauseSyntax &clause) {
+        // Pre-compute each constraint's textual form so we can size up the
+        // whole clause without double-formatting anything.
+        std::vector<std::string> rendered;
+        rendered.reserve(clause.constraints.size());
+        std::size_t total_length = 6; // "where "
+        for (const auto &constraint : clause.constraints) {
+            if (!constraint) {
+                continue;
+            }
+            auto text = render_where_constraint(*constraint);
+            if (!rendered.empty()) {
+                total_length += 2; // ", "
+            }
+            total_length += text.size();
+            rendered.push_back(std::move(text));
+        }
+
+        // Heuristic: use the current line prefix width plus the rendered
+        // clause length.  We approximate line prefix as current indent * width
+        // plus whatever was already emitted on the current line by peeking at
+        // the length of the last `\n`-terminated line in `out_`.
+        std::string accumulated = out_.str();
+        std::size_t line_prefix = 0;
+        auto last_nl = accumulated.find_last_of('\n');
+        if (last_nl == std::string::npos) {
+            line_prefix = accumulated.size();
+        } else {
+            line_prefix = accumulated.size() - (last_nl + 1);
+        }
+        constexpr std::size_t kColumnLimit = 80;
+
+        if (line_prefix + total_length <= kColumnLimit) {
+            write("where ");
+            for (std::size_t index = 0; index < rendered.size(); ++index) {
+                if (index != 0) {
+                    write(", ");
+                }
+                write(rendered[index]);
+            }
+        } else {
+            write("where");
+            newline();
+            indent_++;
+            for (std::size_t index = 0; index < rendered.size(); ++index) {
+                write(make_indent(indent_, opts_));
+                write(rendered[index]);
+                if (index != rendered.size() - 1) {
+                    write(",");
+                }
+                newline();
+            }
+            indent_--;
+            // NOTE: callers should NOT prefix `{` / `;` with a space
+            // after us in the multi-line branch – we leave the current
+            // line sitting at column 0 (just after the last newline).  Use the
+            // returned flag to decide whether to re-indent before the next
+            // trailing token.
+            return true;
+        }
+        return false;
+    }
+
     void format_trait(const ahfl::ast::TraitDecl &t) {
         write("trait " + t.name + format_type_params(t.type_params));
         if (!t.super_traits.empty()) {
@@ -263,7 +366,17 @@ class AstFormatter {
                 }
             }
         }
-        write(" {");
+        bool where_multi = false;
+        if (t.where_clause && !t.where_clause->constraints.empty()) {
+            write(" ");
+            where_multi = format_where_clause(*t.where_clause);
+        }
+        if (where_multi) {
+            write(make_indent(indent_, opts_));
+            write("{");
+        } else {
+            write(" {");
+        }
         newline();
         indent_++;
         for (const auto &item : t.items) {
@@ -281,6 +394,19 @@ class AstFormatter {
                 out_ << ")";
                 if (item->return_type) {
                     out_ << " -> " << item->return_type->spelling();
+                }
+                if (item->where_clause && !item->where_clause->constraints.empty()) {
+                    out_ << " ";
+                    const bool item_multi = format_where_clause(*item->where_clause);
+                    if (item_multi) {
+                        // Multi-line where: the terminator `;` is placed on
+                        // its own line, re-aligned with the `fn` keyword at
+                        // the top of the trait item.  We already wrote the
+                        // item indent before `fn`, and `indent_` reflects
+                        // the trait-body indent level that same indent is
+                        // built from, so re-emitting it here re-anchors `;`.
+                        out_ << make_indent(indent_ + 1, opts_);
+                    }
                 }
                 out_ << ";";
             } else if (item->kind == ahfl::ast::TraitItemKind::AssocType) {
@@ -324,7 +450,17 @@ class AstFormatter {
         if (i.target_type) {
             write(i.target_type->spelling());
         }
-        write(" {");
+        bool impl_where_multi = false;
+        if (i.where_clause && !i.where_clause->constraints.empty()) {
+            write(" ");
+            impl_where_multi = format_where_clause(*i.where_clause);
+        }
+        if (impl_where_multi) {
+            write(make_indent(indent_, opts_));
+            write("{");
+        } else {
+            write(" {");
+        }
         newline();
         indent_++;
         for (const auto &method : i.methods) {
@@ -346,9 +482,22 @@ class AstFormatter {
                 out_ << " ";
                 format_effect_clause(*method->effect_clause);
             }
-            if (method->body) {
+            if (method->where_clause && !method->where_clause->constraints.empty()) {
                 out_ << " ";
+                const bool m_multi = format_where_clause(*method->where_clause);
+                if (m_multi) {
+                    out_ << make_indent(indent_, opts_);
+                }
+            }
+            if (method->body) {
+                out_ << " {";
+                newline();
+                indent_++;
                 format_block(*method->body);
+                indent_--;
+                write(make_indent(indent_, opts_));
+                out_ << "}";
+                newline();
             } else {
                 out_ << ";";
                 newline();
@@ -413,10 +562,27 @@ class AstFormatter {
             write(" ");
             format_effect_clause(*f.effect_clause);
         }
-        if (f.body) {
+        bool fn_where_multi = false;
+        if (f.where_clause && !f.where_clause->constraints.empty()) {
             write(" ");
+            fn_where_multi = format_where_clause(*f.where_clause);
+        }
+        if (f.body) {
+            if (fn_where_multi) {
+                write(make_indent(indent_, opts_));
+            }
+            write(" {");
+            newline();
+            indent_++;
             format_block(*f.body);
+            indent_--;
+            write(make_indent(indent_, opts_));
+            write("}");
+            newline();
         } else {
+            if (fn_where_multi) {
+                write(make_indent(indent_, opts_));
+            }
             write(";");
             newline();
         }
@@ -473,6 +639,19 @@ class AstFormatter {
                         text += ", ";
                     }
                     text += variant->payload[i]->spelling();
+                }
+                text += ")";
+            } else if (!variant->named_fields.empty()) {
+                text += "(";
+                for (std::size_t i = 0; i < variant->named_fields.size(); ++i) {
+                    if (i > 0) {
+                        text += ", ";
+                    }
+                    const auto &f = variant->named_fields[i];
+                    text += f->name + ": " + (f->type ? f->type->spelling() : std::string("?"));
+                    if (f->default_value) {
+                        text += " = " + f->default_value->text;
+                    }
                 }
                 text += ")";
             }
@@ -774,6 +953,48 @@ class AstFormatter {
                 }
             }
             break;
+        case Kind::IfLet:
+            // RFC e-1 minimal POC: `if let Variant(x[, y]*) = scrutinee {`
+            // with optional `} else {`.  Formatting mirrors regular `if` so
+            // downstream code-style tooling keeps working.
+            if (stmt.if_let_stmt) {
+                out_ << "if let ";
+                if (stmt.if_let_stmt->pattern) {
+                    out_ << stmt.if_let_stmt->pattern->variant_name;
+                    if (!stmt.if_let_stmt->pattern->bindings.empty()) {
+                        out_ << "(";
+                        for (std::size_t i = 0;
+                             i < stmt.if_let_stmt->pattern->bindings.size(); ++i) {
+                            if (i != 0) {
+                                out_ << ", ";
+                            }
+                            out_ << stmt.if_let_stmt->pattern->bindings[i];
+                        }
+                        out_ << ")";
+                    }
+                }
+                out_ << " = ";
+                if (stmt.if_let_stmt->scrutinee) {
+                    format_expr(*stmt.if_let_stmt->scrutinee);
+                }
+                out_ << " {";
+                newline();
+                indent_++;
+                if (stmt.if_let_stmt->then_block) {
+                    format_block(*stmt.if_let_stmt->then_block);
+                }
+                indent_--;
+                write(make_indent(indent_, opts_) + "}");
+                if (stmt.if_let_stmt->else_block) {
+                    out_ << " else {";
+                    newline();
+                    indent_++;
+                    format_block(*stmt.if_let_stmt->else_block);
+                    indent_--;
+                    write(make_indent(indent_, opts_) + "}");
+                }
+            }
+            break;
         case Kind::Goto:
             if (stmt.goto_stmt) {
                 write("goto " + stmt.goto_stmt->target_state + ";");
@@ -791,8 +1012,47 @@ class AstFormatter {
         case Kind::Assert:
             if (stmt.assert_stmt) {
                 write("assert(");
-                format_expr(*stmt.assert_stmt->condition);
+                if (stmt.assert_stmt->condition) {
+                    format_expr(*stmt.assert_stmt->condition);
+                }
+                if (stmt.assert_stmt->message) {
+                    out_ << ", ";
+                    format_expr(*stmt.assert_stmt->message);
+                }
                 write(");");
+            }
+            break;
+        case Kind::Unwrap:
+            if (stmt.unwrap_stmt) {
+                write("unwrap(");
+                if (stmt.unwrap_stmt->operand) {
+                    format_expr(*stmt.unwrap_stmt->operand);
+                }
+                write(");");
+            }
+            break;
+        case Kind::Requires:
+            if (stmt.requires_stmt) {
+                write("requires(");
+                if (stmt.requires_stmt->condition) {
+                    format_expr(*stmt.requires_stmt->condition);
+                }
+                if (stmt.requires_stmt->message) {
+                    out_ << ", ";
+                    format_expr(*stmt.requires_stmt->message);
+                }
+                write(");");
+            }
+            break;
+        case Kind::Unreachable:
+            if (stmt.unreachable_stmt) {
+                if (stmt.unreachable_stmt->message) {
+                    write("unreachable(");
+                    format_expr(*stmt.unreachable_stmt->message);
+                    write(");");
+                } else {
+                    write("unreachable;");
+                }
             }
             break;
         case Kind::Expr:
@@ -996,6 +1256,13 @@ class AstFormatter {
                     if (e.body) {
                         format_expr(*e.body);
                     }
+                },
+                [&](const ahfl::ast::UnwrapExprSyntax &e) {
+                    write("unwrap(");
+                    if (e.operand) {
+                        format_expr(*e.operand);
+                    }
+                    write(")");
                 },
             },
             expr.node);

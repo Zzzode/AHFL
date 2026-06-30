@@ -240,6 +240,7 @@ struct CodeAction {
     bool is_preferred{false};
     std::optional<WorkspaceEdit> edit;
     std::optional<std::string> command;
+    std::vector<std::string> command_arguments;
 };
 
 // ---------- Folding Range ----------

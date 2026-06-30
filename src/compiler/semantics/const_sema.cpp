@@ -384,6 +384,13 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 reason = "lambda expressions are not compile-time constants";
                 return false;
             },
+            [&reason](const ast::UnwrapExprSyntax &e) {
+                if (!e.operand) {
+                    reason = "unwrap operand is missing";
+                    return false;
+                }
+                return is_const_expr_syntax(*e.operand, reason);
+            },
         },
         expr.node);
 }
@@ -476,7 +483,12 @@ void ConstDiagnosticEmitter::emit_all(std::vector<ConstDiagnosticReport> reports
 
 ConstTypeRelationValidator::ConstTypeRelationValidator(TypeRelationContext &relations,
                                                        ConstDiagnosticEmitter diagnostics)
-    : relations_(relations), diagnostics_(diagnostics) {}
+    : relations_(relations), diagnostics_(std::move(diagnostics)), symbols_(nullptr) {}
+
+ConstTypeRelationValidator::ConstTypeRelationValidator(TypeRelationContext &relations,
+                                                       ConstDiagnosticEmitter diagnostics,
+                                                       const SymbolTable *symbols)
+    : relations_(relations), diagnostics_(std::move(diagnostics)), symbols_(symbols) {}
 
 bool ConstTypeRelationValidator::check_assignable(const Type &source,
                                                   const Type &target,
@@ -500,6 +512,22 @@ bool ConstTypeRelationValidator::check_assignable(const Type &source,
         .message = actual_type_note(source),
         .range = range,
     });
+
+    if (symbols_) {
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(target, *symbols_), target.describe(),
+            "expected type");
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(source, *symbols_), source.describe(),
+            "actual type");
+        // g-1 Phase 2: single-declaration nominal counterpart.
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(target, *symbols_), target.describe(),
+            "expected type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(source, *symbols_), source.describe(),
+            "actual type");
+    }
 
     diagnostics_.emit(ConstDiagnosticReport{
         .diagnostic =
@@ -542,6 +570,22 @@ bool ConstTypeRelationValidator::check_exact_schema_boundary(
         .message = actual_type_note(source),
         .range = range,
     });
+
+    if (symbols_) {
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(target, *symbols_), target.describe(),
+            "expected type");
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(source, *symbols_), source.describe(),
+            "actual type");
+        // g-1 Phase 2: single-declaration nominal counterpart.
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(target, *symbols_), target.describe(),
+            "expected type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(source, *symbols_), source.describe(),
+            "actual type");
+    }
 
     diagnostics_.emit(ConstDiagnosticReport{
         .diagnostic =
@@ -1243,6 +1287,24 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
             [](const ast::MatchExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             // P2 (RFC §6): closures are runtime values, not foldable constants.
             [](const ast::LambdaExpr &) -> std::optional<ConstValue> { return std::nullopt; },
+            [this](const ast::UnwrapExprSyntax &e) -> std::optional<ConstValue> {
+                if (!e.operand) {
+                    return std::nullopt;
+                }
+                auto inner = evaluate(*e.operand);
+                if (!inner.has_value()) {
+                    return std::nullopt;
+                }
+                // Only Some payloads unwrap cleanly; None yields nullopt
+                // (the emitter will surface an error later).
+                if (inner->kind == ConstValueKind::Some && inner->children.size() == 1) {
+                    return std::move(inner->children[0]);
+                }
+                if (inner->kind == ConstValueKind::NoneLiteral) {
+                    return std::nullopt;
+                }
+                return std::nullopt;
+            },
         },
         expr.node);
 }

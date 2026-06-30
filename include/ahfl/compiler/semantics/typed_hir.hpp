@@ -19,6 +19,25 @@
 namespace ahfl {
 
 // ----------------------------------------------------------------------------
+// AssertionKind — typed classifier for statements that produce ExecAssertFailed
+// at runtime (P4-01 / Wave-20 N-5). Replaces the legacy `std::string
+// failure_kind` field so downstream consumers (CLI failure report, LSP hover
+// counterexample, runtime journal structured logs) can dispatch on a stable
+// enum instead of string-parsing. The string form is provided by
+// to_string(AssertionKind) for diagnostic messages and JSON serialization.
+// ----------------------------------------------------------------------------
+enum class AssertionKind {
+    None = 0,       ///< Not an assertion-producing statement (default).
+    Assert,         ///< `assert(c[, "msg"])`.
+    Unwrap,         ///< `unwrap(e)` statement or expression.
+    Requires,       ///< `requires(c[, "msg"])`.
+    Unreachable,    ///< `unreachable(["msg"])`.
+};
+
+[[nodiscard]] const char *to_string(AssertionKind kind) noexcept;
+[[nodiscard]] AssertionKind parse_assertion_kind(std::string_view s) noexcept;
+
+// ----------------------------------------------------------------------------
 // TypedDeclPayload — self-contained structural data for a declaration.
 // Populated from TypeEnvironment after declaration analysis so downstream
 // consumers can read TypedProgram without borrowing TypeEnvironment storage.
@@ -124,9 +143,13 @@ enum class TypedStmtKind : std::uint8_t {
     Let,
     Assign,
     If,
+    IfLet,       // RFC e-1 (Wave-19 Lane 3b): if let Variant(x) = e { } else { }
     Goto,
     Return,
     Assert,
+    Unwrap,
+    Requires,
+    Unreachable,
     ExprStatement,
 };
 
@@ -406,10 +429,19 @@ struct TypedStatement {
     // without reaching back into the originating PathSyntax.
     AssignTargetRootKind assign_target_root_kind{AssignTargetRootKind::Identifier};
 
-    // Assert message (T1.7 P1).
-    // Current AssertStmtSyntax has no user-facing message field, so this remains
-    // empty and mirrors the current syntax model.
+    // Assert message (T1.7 P1 / P4-01).
+    // For `assert(c, "msg")` / `requires(c, "msg")` / `unreachable("msg")` the
+    // message expression index is carried in children_expr_index. This string
+    // field carries the (optional) compile-time constant default message when
+    // the user wrote an arity-1 form without a message expression.
     std::string assert_message;
+
+    // Failure-kind classifier for statements that can produce ExecAssertFailed
+    // at runtime (P4-01 / Wave-20 N-5). Mirrors AssertionKind enum so
+    // downstream consumers (CLI failure report, LSP hover counterexample,
+    // runtime journal) can dispatch on a stable enum instead of string-parsing.
+    // Defaults to AssertionKind::None for Let/Assign/If/Return etc.
+    AssertionKind assertion_kind{AssertionKind::None};
 };
 
 struct TypedTemporalExpr {
@@ -722,6 +754,8 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_match(expr);
     case ast::ExprSyntaxKind::Lambda:
         return std::forward<Visitor>(visitor).visit_lambda(expr);
+    case ast::ExprSyntaxKind::UnwrapExpr:
+        return std::forward<Visitor>(visitor).visit_unwrap_expr(expr);
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);
@@ -743,12 +777,20 @@ decltype(auto) typed_visit(const TypedStatement &stmt, Visitor &&visitor) {
         return std::forward<Visitor>(visitor).visit_assign_stmt(stmt);
     case TypedStmtKind::If:
         return std::forward<Visitor>(visitor).visit_if_stmt(stmt);
+    case TypedStmtKind::IfLet:
+        return std::forward<Visitor>(visitor).visit_if_let_stmt(stmt);
     case TypedStmtKind::Goto:
         return std::forward<Visitor>(visitor).visit_goto_stmt(stmt);
     case TypedStmtKind::Return:
         return std::forward<Visitor>(visitor).visit_return_stmt(stmt);
     case TypedStmtKind::Assert:
         return std::forward<Visitor>(visitor).visit_assert_stmt(stmt);
+    case TypedStmtKind::Unwrap:
+        return std::forward<Visitor>(visitor).visit_unwrap_stmt(stmt);
+    case TypedStmtKind::Requires:
+        return std::forward<Visitor>(visitor).visit_requires_stmt(stmt);
+    case TypedStmtKind::Unreachable:
+        return std::forward<Visitor>(visitor).visit_unreachable_stmt(stmt);
     case TypedStmtKind::ExprStatement:
         return std::forward<Visitor>(visitor).visit_expr_stmt(stmt);
     case TypedStmtKind::None:

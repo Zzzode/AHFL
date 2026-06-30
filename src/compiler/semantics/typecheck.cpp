@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "ahfl/compiler/semantics/type_expectation.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
@@ -228,6 +229,17 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                 if (e.body) {
                     append_typed_child(
                         children, program, e.body.get(), source_id, TypedExprChildRole::Operand);
+                }
+            },
+            // P4-02: unwrap(e) — operand is the only typed child. The operand's
+            // expression record is already appended by the normal recursion.
+            [&](const ast::UnwrapExprSyntax &e) {
+                if (e.operand) {
+                    append_typed_child(children,
+                                       program,
+                                       e.operand.get(),
+                                       source_id,
+                                       TypedExprChildRole::Operand);
                 }
             },
         },
@@ -927,6 +939,9 @@ MaybeCRef<Symbol> TypeCheckPass::find_local_here(SymbolNamespace name_space,
     return resolve_result_.symbol_table.find_local(name_space, name);
 }
 
+namespace {
+} // namespace
+
 MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind kind,
                                                                 SourceRange range) const {
     return resolve_result_.find_reference(kind, range, current_source_id_);
@@ -1580,6 +1595,7 @@ bool ConstSema::ensure_const_value(SymbolId id, SourceRange use_range) {
                 driver_->result_.diagnostics,
                 driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
             },
+            &driver_->resolve_result_.symbol_table,
         };
         const bool assignable = const_relations.check_assignable(*value.checked_expr.type,
                                                                  declared_type->get(),
@@ -1628,6 +1644,24 @@ bool TypeCheckPass::check_assignable(const Type &source,
         .message = actual_type_note(source),
         .range = range,
     });
+    // g-4 MultipleModuleDeclarations compromise: surface additional
+    // declaration sites when either side of the mismatch is a nominal type
+    // declared in more than one module.
+    append_multi_declaration_notes(
+        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(), "expected type");
+    append_multi_declaration_notes(
+        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(), "actual type");
+    // g-1 Phase 2: single-declaration nominal counterpart — when a type is
+    // declared exactly once, append a direct "declared here" note pointing at
+    // its definition site so the user can jump to it from either side.
+    append_nominal_declared_here_note(
+        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(), "expected type");
+    append_nominal_declared_here_note(
+        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(), "actual type");
     typecheck_error_here(error_codes::typecheck::TypeMismatch,
                          messages::typecheck::TypeMismatch.format_with(
                              context_label, target.describe(), source.describe()),
@@ -1658,6 +1692,22 @@ bool TypeCheckPass::check_assignable(const Type &source,
         .message = actual_type_note(source),
         .range = range,
     });
+    // g-4 MultipleModuleDeclarations compromise: surface additional
+    // declaration sites when either side of the mismatch is a nominal type
+    // declared in more than one module.
+    append_multi_declaration_notes(
+        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(), "expected type");
+    append_multi_declaration_notes(
+        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(), "actual type");
+    // g-1 Phase 2: single-declaration nominal counterpart.
+    append_nominal_declared_here_note(
+        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(), "expected type");
+    append_nominal_declared_here_note(
+        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(), "actual type");
     typecheck_error_here(error_codes::typecheck::TypeMismatch,
                          messages::typecheck::TypeMismatch.format_with(
                              context_label, target.describe(), source.describe()),
@@ -2299,11 +2349,31 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                         }
                         break;
                     }
+                    case ast::StatementSyntaxKind::IfLet: {
+                        // Walk then/else bodies so nested `let self = ...`
+                        // bindings are still visible during shadow detection.
+                        // Narrowing semantics are not implemented (RFC e-1,
+                        // Wave-19 Lane 3b minimal POC).
+                        const auto *ifl = stmt->if_let_stmt.get();
+                        if (ifl == nullptr) {
+                            break;
+                        }
+                        if (ifl->then_block != nullptr) {
+                            collect_self_lets(*ifl->then_block);
+                        }
+                        if (ifl->else_block != nullptr) {
+                            collect_self_lets(*ifl->else_block);
+                        }
+                        break;
+                    }
                     case ast::StatementSyntaxKind::Let:
                     case ast::StatementSyntaxKind::Assign:
                     case ast::StatementSyntaxKind::Goto:
                     case ast::StatementSyntaxKind::Return:
                     case ast::StatementSyntaxKind::Assert:
+                    case ast::StatementSyntaxKind::Unwrap:
+                    case ast::StatementSyntaxKind::Requires:
+                    case ast::StatementSyntaxKind::Unreachable:
                     case ast::StatementSyntaxKind::Expr:
                         break;
                     }
@@ -2827,6 +2897,25 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     last_written_statement_index_.reset();
     (void)state_name;
 
+    // Shared helper: emit a `typecheck.WRONG_ARITY` diagnostic using the
+    // canonical messages::typecheck::WrongArity template.  `kind_spelling`
+    // is the leading qualifier (e.g. "statement:unwrap") so downstream
+    // diagnostic categorisation can group WRONG_ARITY origins without
+    // having to introduce new diagnostic codes.  `expected_range_str` is
+    // written literally into the "expects X argument(s)" slot so callers
+    // can pass open ranges such as "1 or 2" / "0 or 1" as well as exact
+    // counts like "1".
+    const auto emit_wrong_arity = [this, &statement](std::string_view kind_spelling,
+                                                     std::string_view display_name,
+                                                     std::string_view expected_range_str,
+                                                     std::size_t actual_count) {
+        typecheck_error_here(error_codes::typecheck::WrongArity,
+                             messages::typecheck::WrongArity.format_with(
+                                 std::string{kind_spelling}, std::string{display_name},
+                                 std::string{expected_range_str}, std::to_string(actual_count)),
+                             statement.range);
+    };
+
     switch (statement.kind) {
     case ast::StatementSyntaxKind::Let: {
         TypePtr annotated_type;
@@ -3071,6 +3160,74 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         });
         break;
     }
+    case ast::StatementSyntaxKind::IfLet: {
+        // RFC e-1 minimal POC: `if let Variant(...) = expr { ... } else { ... }`.
+        // Narrowing semantics / TypedHIR lowering / binding introduction are
+        // intentionally deferred.  The scrutinee is still type-checked so a
+        // plain parse-only source file (without stdlib) reports genuine
+        // errors, and the then/else bodies are traversed recursively so
+        // downstream passes keep compiling against a fully-walked AST.
+        const auto *ifl = statement.if_let_stmt.get();
+        if (ifl != nullptr) {
+            if (ifl->scrutinee != nullptr) {
+                auto scrutinee_context = ValueContext{
+                    .bindings = clone_bindings(context.bindings),
+                    .flow_facts = context.flow_facts,
+                    .call_context = CallContext::PureOnly,
+                    .current_agent = context.current_agent,
+                };
+                (void)check_expr(*ifl->scrutinee, scrutinee_context);
+            }
+            if (ifl->then_block != nullptr) {
+                auto then_context = ValueContext{
+                    .bindings = clone_bindings(context.bindings),
+                    .flow_facts = context.flow_facts,
+                    .call_context = context.call_context,
+                    .current_agent = context.current_agent,
+                };
+                check_block(*ifl->then_block,
+                            then_context,
+                            expected_return_type,
+                            state_name,
+                            expected_return_origin);
+            }
+            if (ifl->else_block != nullptr) {
+                auto else_context = ValueContext{
+                    .bindings = clone_bindings(context.bindings),
+                    .flow_facts = context.flow_facts,
+                    .call_context = context.call_context,
+                    .current_agent = context.current_agent,
+                };
+                check_block(*ifl->else_block,
+                            else_context,
+                            expected_return_type,
+                            state_name,
+                            expected_return_origin);
+            }
+            last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
+                .kind = TypedStmtKind::IfLet,
+                .range = statement.range,
+                .source_id = current_source_id_,
+                .children_expr_index =
+                    ifl->scrutinee
+                        ? std::vector<std::uint32_t>{resolve_payload_expr_index(*ifl->scrutinee)}
+                        : std::vector<std::uint32_t>{UINT32_MAX},
+                .target_name = {},
+                .goto_target_state = {},
+                .then_block_index = ifl->then_block
+                                        ? find_block_index_by_range(*ifl->then_block)
+                                        : UINT32_MAX,
+                .else_block_index = ifl->else_block
+                                        ? find_block_index_by_range(*ifl->else_block)
+                                        : UINT32_MAX,
+                .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+                .let_type = nullptr,
+                .assign_target_root_kind = AssignTargetRootKind::Identifier,
+                .assert_message = {},
+            });
+        }
+        break;
+    }
     case ast::StatementSyntaxKind::Goto: {
         // GotoStmtSyntax::target_state is always populated by the parser; the
         // typed-record field mirrors it directly so lowering never needs to
@@ -3158,38 +3315,81 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         break;
     }
     case ast::StatementSyntaxKind::Assert: {
-        auto condition_context = ValueContext{
+        // ---- Arity check ----
+        // `assert(c[, "msg"])` accepts 1 or 2 arguments.  Arity enforcement is
+        // semantic (not syntactic) so a single, stable `typecheck.WRONG_ARITY`
+        // code is produced, matching the diagnostic contract for capability /
+        // predicate / fn call argument mismatches.
+        //
+        // effective_arity = (condition != nullptr) + (message != nullptr).
+        // The frontend records the raw parser argument count in
+        // `AssertStmtSyntax::raw_arg_count`, which coincides with this sum for
+        // well-formed inputs and is used here so out-of-range arguments (e.g.
+        // `assert(a, b, c)`) still produce the correct WRONG_ARITY diagnostic
+        // even when only the first two slots are materialised on the AST node.
+        const std::size_t arity =
+            statement.assert_stmt ? statement.assert_stmt->raw_arg_count : 0;
+        if (arity == 0) {
+            emit_wrong_arity("statement:assert", "assert", "1 or 2", 0);
+            break;
+        }
+        if (arity > 2) {
+            emit_wrong_arity("statement:assert", "assert", "1 or 2", arity);
+            break;
+        }
+
+        ValueContext pure_ctx{
             .bindings = clone_bindings(context.bindings),
             .flow_facts = context.flow_facts,
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
-        const auto condition = check_expr(*statement.assert_stmt->condition, condition_context);
+        const auto condition = check_expr(*statement.assert_stmt->condition, pure_ctx);
         if (!is_bool_type(*condition.type) && !is_error_type(*condition.type)) {
-            typecheck_error_here(
-                error_codes::typecheck::TypeMismatch,
-                messages::typecheck::BoolExpressionRequired.format_with("assert condition"),
-                statement.assert_stmt->condition->range,
-                std::vector<Diagnostic::Related>{Diagnostic::Related{
-                    .message = actual_type_note(*condition.type),
-                    .range = statement.assert_stmt->condition->range,
-                }});
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = actual_type_note(*condition.type),
+                .range = statement.assert_stmt->condition->range,
+            });
+            typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                 messages::typecheck::TypeMismatch.format_with(
+                                     "assert condition", "Bool", condition.type->describe()),
+                                 statement.assert_stmt->condition->range,
+                                 std::move(notes));
         }
         if (!condition.is_pure) {
             non_pure_error_here(
                 "assert condition", condition.effect, statement.assert_stmt->condition->range);
         }
 
-        // AssertStmtSyntax currently does not carry a user-facing message, so
-        // the typed record mirrors the current AST shape with an empty message.
-        std::string assert_msg;
-        (void)assert_msg; // silence unused warning when the AST lacks the field
+        std::vector<std::uint32_t> children;
+        children.push_back(resolve_payload_expr_index(*statement.assert_stmt->condition));
+        if (statement.assert_stmt->message) {
+            const auto msg_expr = check_expr(*statement.assert_stmt->message, pure_ctx);
+            if (!msg_expr.type->holds<types::StringT>() && !is_error_type(*msg_expr.type)) {
+                std::vector<Diagnostic::Related> notes;
+                notes.push_back(Diagnostic::Related{
+                    .message = actual_type_note(*msg_expr.type),
+                    .range = statement.assert_stmt->message->range,
+                });
+                typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                     messages::typecheck::TypeMismatch.format_with(
+                                         "assert message", "String", msg_expr.type->describe()),
+                                     statement.assert_stmt->message->range,
+                                     std::move(notes));
+            }
+            if (!msg_expr.is_pure) {
+                non_pure_error_here("assert message", msg_expr.effect,
+                                    statement.assert_stmt->message->range);
+            }
+            children.push_back(resolve_payload_expr_index(*statement.assert_stmt->message));
+        }
 
         last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Assert,
             .range = statement.range,
             .source_id = current_source_id_,
-            .children_expr_index = {resolve_payload_expr_index(*statement.assert_stmt->condition)},
+            .children_expr_index = std::move(children),
             .target_name = {},
             .goto_target_state = {},
             .then_block_index = UINT32_MAX,
@@ -3197,7 +3397,216 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
             .let_type = nullptr,
             .assign_target_root_kind = AssignTargetRootKind::Identifier,
-            .assert_message = std::move(assert_msg),
+            .assert_message = {},
+            .assertion_kind = AssertionKind::Assert,
+        });
+        break;
+    }
+    case ast::StatementSyntaxKind::Unwrap: {
+        // `unwrap(e)` expects exactly 1 argument whose type is Option<T>.
+        //
+        // effective_arity = (operand != nullptr).  The parser-materialised
+        // `UnwrapStmtSyntax::raw_arg_count` is used as the arity value so
+        // malformed inputs like `unwrap()` still surface the correct
+        // WRONG_ARITY diagnostic.
+        const std::size_t arity =
+            statement.unwrap_stmt ? statement.unwrap_stmt->raw_arg_count : 0;
+        if (arity != 1) {
+            emit_wrong_arity("statement:unwrap", "unwrap", "1", arity);
+            break;
+        }
+        ValueContext pure_ctx{
+            .bindings = clone_bindings(context.bindings),
+            .flow_facts = context.flow_facts,
+            .call_context = CallContext::PureOnly,
+            .current_agent = context.current_agent,
+        };
+        const auto operand = check_expr(*statement.unwrap_stmt->operand, pure_ctx);
+        // P4-01: strict Optional<T> gate via stdlib_bridge (covers the nominal
+        // `std::option::Option` enum as well as narrowed EnumVariantT views).
+        // Any other concrete type is a TYPE_MISMATCH; error types are tolerated
+        // to avoid cascading diagnostics.
+        const bool is_optional = [&] {
+            if (is_error_type(*operand.type)) return true;
+            const auto view = stdlib_bridge::std_container_type_view(*operand.type);
+            return view.has_value() && view->kind == stdlib_bridge::StdContainerKind::Option;
+        }();
+        if (!is_optional) {
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = actual_type_note(*operand.type),
+                .range = statement.unwrap_stmt->operand->range,
+            });
+            typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                 messages::typecheck::TypeMismatch.format_with(
+                                     "unwrap operand", "Optional<T>", operand.type->describe()),
+                                 statement.unwrap_stmt->operand->range,
+                                 std::move(notes));
+        }
+        if (!operand.is_pure) {
+            non_pure_error_here(
+                "unwrap operand", operand.effect, statement.unwrap_stmt->operand->range);
+        }
+
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
+            .kind = TypedStmtKind::Unwrap,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {resolve_payload_expr_index(*statement.unwrap_stmt->operand)},
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
+            .assertion_kind = AssertionKind::Unwrap,
+        });
+        break;
+    }
+    case ast::StatementSyntaxKind::Requires: {
+        // `requires(c[, "msg"])` — 1 or 2 arguments; mirrors assert semantics
+        // but produces a separate failure kind so callers can distinguish
+        // assertion failures from contract violations at runtime.
+        //
+        // effective_arity = (condition != nullptr) + (message != nullptr).
+        // Uses `raw_arg_count` so `requires(a, b, c)` (3 args) still reports
+        // WRONG_ARITY with count == 3 even though only two slots are stored.
+        const std::size_t arity =
+            statement.requires_stmt ? statement.requires_stmt->raw_arg_count : 0;
+        if (arity == 0) {
+            emit_wrong_arity("statement:requires", "requires", "1 or 2", 0);
+            break;
+        }
+        if (arity > 2) {
+            emit_wrong_arity("statement:requires", "requires", "1 or 2", arity);
+            break;
+        }
+
+        ValueContext pure_ctx{
+            .bindings = clone_bindings(context.bindings),
+            .flow_facts = context.flow_facts,
+            .call_context = CallContext::PureOnly,
+            .current_agent = context.current_agent,
+        };
+        const auto condition = check_expr(*statement.requires_stmt->condition, pure_ctx);
+        if (!is_bool_type(*condition.type) && !is_error_type(*condition.type)) {
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = actual_type_note(*condition.type),
+                .range = statement.requires_stmt->condition->range,
+            });
+            typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                 messages::typecheck::TypeMismatch.format_with(
+                                     "requires condition", "Bool", condition.type->describe()),
+                                 statement.requires_stmt->condition->range,
+                                 std::move(notes));
+        }
+        if (!condition.is_pure) {
+            non_pure_error_here(
+                "requires condition", condition.effect, statement.requires_stmt->condition->range);
+        }
+
+        std::vector<std::uint32_t> children;
+        children.push_back(resolve_payload_expr_index(*statement.requires_stmt->condition));
+        if (statement.requires_stmt->message) {
+            const auto msg_expr = check_expr(*statement.requires_stmt->message, pure_ctx);
+            if (!msg_expr.type->holds<types::StringT>() && !is_error_type(*msg_expr.type)) {
+                std::vector<Diagnostic::Related> notes;
+                notes.push_back(Diagnostic::Related{
+                    .message = actual_type_note(*msg_expr.type),
+                    .range = statement.requires_stmt->message->range,
+                });
+                typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                     messages::typecheck::TypeMismatch.format_with(
+                                         "requires message", "String", msg_expr.type->describe()),
+                                     statement.requires_stmt->message->range,
+                                     std::move(notes));
+            }
+            if (!msg_expr.is_pure) {
+                non_pure_error_here("requires message", msg_expr.effect,
+                                    statement.requires_stmt->message->range);
+            }
+            children.push_back(resolve_payload_expr_index(*statement.requires_stmt->message));
+        }
+
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
+            .kind = TypedStmtKind::Requires,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = std::move(children),
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
+            .assertion_kind = AssertionKind::Requires,
+        });
+        break;
+    }
+    case ast::StatementSyntaxKind::Unreachable: {
+        // `unreachable;` (arity 0) or `unreachable("msg")` (arity 1).  The
+        // statement is semantically equivalent to a hard-fail assert: its
+        // reachability is *not* verified by this pass (P4-01 scope) — that is
+        // a dedicated Control-Flow Verification pass (P4-03).
+        //
+        // effective_arity = (message != nullptr).  The parser-side
+        // `raw_arg_count` is used as the arity so inputs like
+        // `unreachable("a", "b")` still emit WRONG_ARITY with count == 2.
+        const std::size_t arity =
+            statement.unreachable_stmt ? statement.unreachable_stmt->raw_arg_count : 0;
+        if (arity > 1) {
+            emit_wrong_arity("statement:unreachable", "unreachable", "0 or 1", arity);
+            break;
+        }
+
+        ValueContext pure_ctx{
+            .bindings = clone_bindings(context.bindings),
+            .flow_facts = context.flow_facts,
+            .call_context = CallContext::PureOnly,
+            .current_agent = context.current_agent,
+        };
+
+        std::vector<std::uint32_t> children;
+        if (statement.unreachable_stmt->message) {
+            const auto msg_expr = check_expr(*statement.unreachable_stmt->message, pure_ctx);
+            if (!msg_expr.type->holds<types::StringT>() && !is_error_type(*msg_expr.type)) {
+                std::vector<Diagnostic::Related> notes;
+                notes.push_back(Diagnostic::Related{
+                    .message = actual_type_note(*msg_expr.type),
+                    .range = statement.unreachable_stmt->message->range,
+                });
+                typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                     messages::typecheck::TypeMismatch.format_with(
+                                         "unreachable message", "String", msg_expr.type->describe()),
+                                     statement.unreachable_stmt->message->range,
+                                     std::move(notes));
+            }
+            if (!msg_expr.is_pure) {
+                non_pure_error_here("unreachable message", msg_expr.effect,
+                                    statement.unreachable_stmt->message->range);
+            }
+            children.push_back(resolve_payload_expr_index(*statement.unreachable_stmt->message));
+        }
+
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
+            .kind = TypedStmtKind::Unreachable,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = std::move(children),
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
+            .assertion_kind = AssertionKind::Unreachable,
         });
         break;
     }

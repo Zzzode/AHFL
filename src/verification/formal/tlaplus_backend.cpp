@@ -101,7 +101,9 @@ namespace ahfl::formal {
     return result;
 }
 
-[[nodiscard]] VerificationSummary TLAPlusBackend::verify(const std::string & /*model_text*/) {
+[[nodiscard]] VerificationSummary
+TLAPlusBackend::verify(const std::string & /*model_text*/,
+                       const BackendVerificationOptions & /*options*/) {
     VerificationSummary summary;
     summary.all_passed = false;
     summary.properties_checked = 0;

@@ -218,6 +218,9 @@ void test_assert_fail() {
     check(!result.has_errors(), "assert_fail.no_diag_error");
     auto *af = std::get_if<ExecAssertFailed>(&result.outcome);
     check(af != nullptr, "assert_fail.is_assert_failed");
+    check(af != nullptr && af->kind == AssertionKind::ASSERT_CLAUSE,
+          "assert_fail.kind_is_assert_clause");
+    check(af != nullptr && !af->message.empty(), "assert_fail.message_non_empty");
 }
 
 // ============================================================================

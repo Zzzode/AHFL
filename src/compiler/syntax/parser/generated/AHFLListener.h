@@ -1,5 +1,5 @@
 
-// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -31,6 +31,12 @@ public:
 
   virtual void enterQualifiedIdent(AHFLParser::QualifiedIdentContext *ctx) = 0;
   virtual void exitQualifiedIdent(AHFLParser::QualifiedIdentContext *ctx) = 0;
+
+  virtual void enterCallableNamePiece(AHFLParser::CallableNamePieceContext *ctx) = 0;
+  virtual void exitCallableNamePiece(AHFLParser::CallableNamePieceContext *ctx) = 0;
+
+  virtual void enterCallableName(AHFLParser::CallableNameContext *ctx) = 0;
+  virtual void exitCallableName(AHFLParser::CallableNameContext *ctx) = 0;
 
   virtual void enterQualifiedIdentList(AHFLParser::QualifiedIdentListContext *ctx) = 0;
   virtual void exitQualifiedIdentList(AHFLParser::QualifiedIdentListContext *ctx) = 0;
@@ -292,6 +298,15 @@ public:
 
   virtual void enterAssertStmt(AHFLParser::AssertStmtContext *ctx) = 0;
   virtual void exitAssertStmt(AHFLParser::AssertStmtContext *ctx) = 0;
+
+  virtual void enterUnwrapStmt(AHFLParser::UnwrapStmtContext *ctx) = 0;
+  virtual void exitUnwrapStmt(AHFLParser::UnwrapStmtContext *ctx) = 0;
+
+  virtual void enterRequiresStmt(AHFLParser::RequiresStmtContext *ctx) = 0;
+  virtual void exitRequiresStmt(AHFLParser::RequiresStmtContext *ctx) = 0;
+
+  virtual void enterUnreachableStmt(AHFLParser::UnreachableStmtContext *ctx) = 0;
+  virtual void exitUnreachableStmt(AHFLParser::UnreachableStmtContext *ctx) = 0;
 
   virtual void enterExprStmt(AHFLParser::ExprStmtContext *ctx) = 0;
   virtual void exitExprStmt(AHFLParser::ExprStmtContext *ctx) = 0;

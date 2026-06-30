@@ -519,6 +519,9 @@ class ValidationPass final {
         case ast::StatementSyntaxKind::Let:
         case ast::StatementSyntaxKind::Assign:
         case ast::StatementSyntaxKind::Assert:
+        case ast::StatementSyntaxKind::Unwrap:
+        case ast::StatementSyntaxKind::Requires:
+        case ast::StatementSyntaxKind::Unreachable:
         case ast::StatementSyntaxKind::Expr:
             return ControlFlowSummary{};
         case ast::StatementSyntaxKind::Goto: {
@@ -556,6 +559,30 @@ class ValidationPass final {
 
             return ControlFlowSummary{
                 .may_fallthrough = !statement.if_stmt->else_block || then_summary.may_fallthrough ||
+                                   else_summary.may_fallthrough,
+                .saw_goto = then_summary.saw_goto || else_summary.saw_goto,
+                .saw_return = then_summary.saw_return || else_summary.saw_return,
+            };
+        }
+        case ast::StatementSyntaxKind::IfLet: {
+            // RFC e-1 minimal POC: control-flow mirrors `if` — then branch
+            // may introduce bindings (deferred); fallthrough behaviour is
+            // identical so reachability reports stay accurate.
+            const auto *ifl = statement.if_let_stmt.get();
+            const auto then_summary = ifl && ifl->then_block
+                                          ? analyze_block(*ifl->then_block,
+                                                          agent_decl,
+                                                          handler_state,
+                                                          is_final_handler)
+                                          : ControlFlowSummary{};
+            const auto else_summary = ifl && ifl->else_block
+                                          ? analyze_block(*ifl->else_block,
+                                                          agent_decl,
+                                                          handler_state,
+                                                          is_final_handler)
+                                          : ControlFlowSummary{};
+            return ControlFlowSummary{
+                .may_fallthrough = !ifl || !ifl->else_block || then_summary.may_fallthrough ||
                                    else_summary.may_fallthrough,
                 .saw_goto = then_summary.saw_goto || else_summary.saw_goto,
                 .saw_return = then_summary.saw_return || else_summary.saw_return,

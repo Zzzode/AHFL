@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "runtime/evaluator/executor.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -14,6 +15,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace ahfl::test_support {
@@ -24,9 +26,35 @@ namespace ahfl::test_support {
         if (entry.message.find(needle) != std::string::npos) {
             return true;
         }
+        for (const auto &related : entry.related) {
+            if (related.message.find(needle) != std::string::npos) {
+                return true;
+            }
+        }
     }
 
     return false;
+}
+
+[[nodiscard]] inline std::size_t diagnostic_count_with_code(const DiagnosticBag &diagnostics,
+                                                            std::string_view code) {
+    std::size_t count = 0;
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == code) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+[[nodiscard]] inline const Diagnostic *diagnostic_with_code(const DiagnosticBag &diagnostics,
+                                                            std::string_view code) {
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == code) {
+            return &entry;
+        }
+    }
+    return nullptr;
 }
 
 [[nodiscard]] inline bool diagnostics_contain_code(const DiagnosticBag &diagnostics,
@@ -127,6 +155,38 @@ load_project_ir(const std::filesystem::path &project_descriptor) {
     }
 
     return lower_program_ir(project_result.graph, resolve_result, type_check_result);
+}
+
+// ---------------------------------------------------------------------------
+// Evaluator / ExecAssertFailed helpers (P4-02 structured-kind assertions)
+// ---------------------------------------------------------------------------
+
+/// If the optional ExecResult carries an ExecAssertFailed outcome, return a
+/// pointer to it; otherwise nullptr.  Caller retains ownership.
+[[nodiscard]] inline const evaluator::ExecAssertFailed *
+extract_assert_failed(const std::optional<evaluator::ExecResult> &exec_result) {
+    if (!exec_result.has_value()) return nullptr;
+    return std::get_if<evaluator::ExecAssertFailed>(&exec_result->outcome);
+}
+
+/// True iff the ExecResult carries an ExecAssertFailed whose `kind` matches
+/// `expected`.  Returns false when the result is missing or the outcome is
+/// not an assertion failure.
+[[nodiscard]] inline bool
+assert_failed_kind_is(const std::optional<evaluator::ExecResult> &exec_result,
+                      evaluator::AssertionKind expected) {
+    const auto *af = extract_assert_failed(exec_result);
+    return af != nullptr && af->kind == expected;
+}
+
+/// True iff the ExecResult carries an ExecAssertFailed whose message contains
+/// the provided substring.  String-matching fallback kept alongside the kind
+/// helper so tests can verify both dimensions independently.
+[[nodiscard]] inline bool
+assert_failed_message_contains(const std::optional<evaluator::ExecResult> &exec_result,
+                               std::string_view needle) {
+    const auto *af = extract_assert_failed(exec_result);
+    return af != nullptr && af->message.find(needle) != std::string::npos;
 }
 
 } // namespace ahfl::test_support

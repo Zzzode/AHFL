@@ -392,6 +392,11 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                            collect_expr_tokens(*e.body, source, tokens);
                        }
                    },
+                   [&](const ast::UnwrapExprSyntax &e) {
+                       if (e.operand != nullptr) {
+                           collect_expr_tokens(*e.operand, source, tokens);
+                       }
+                   },
                },
                expr.node);
 }
@@ -444,6 +449,38 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
             }
         }
         break;
+    case ast::StatementSyntaxKind::IfLet:
+        // RFC e-1 minimal POC: tag pattern bindings as Variables so the LSP
+        // client renders them like regular `let` bindings.  Narrowing and
+        // symbol-resolution integration are deliberately deferred.
+        if (stmt.if_let_stmt != nullptr) {
+            if (stmt.if_let_stmt->pattern != nullptr) {
+                if (!stmt.if_let_stmt->pattern->variant_name.empty()) {
+                    add_token_for_name(tokens,
+                                       source,
+                                       stmt.if_let_stmt->pattern->range,
+                                       stmt.if_let_stmt->pattern->variant_name,
+                                       SemanticTokenType::Enum);
+                }
+                for (const auto &binding : stmt.if_let_stmt->pattern->bindings) {
+                    add_token_for_name(tokens,
+                                       source,
+                                       stmt.if_let_stmt->pattern->range,
+                                       binding,
+                                       SemanticTokenType::Variable);
+                }
+            }
+            if (stmt.if_let_stmt->scrutinee != nullptr) {
+                collect_expr_tokens(*stmt.if_let_stmt->scrutinee, source, tokens);
+            }
+            if (stmt.if_let_stmt->then_block != nullptr) {
+                collect_block_tokens(*stmt.if_let_stmt->then_block, source, tokens);
+            }
+            if (stmt.if_let_stmt->else_block != nullptr) {
+                collect_block_tokens(*stmt.if_let_stmt->else_block, source, tokens);
+            }
+        }
+        break;
     case ast::StatementSyntaxKind::Goto:
         if (stmt.goto_stmt != nullptr) {
             add_token_for_name(tokens,
@@ -459,8 +496,33 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
         }
         break;
     case ast::StatementSyntaxKind::Assert:
-        if (stmt.assert_stmt != nullptr && stmt.assert_stmt->condition != nullptr) {
-            collect_expr_tokens(*stmt.assert_stmt->condition, source, tokens);
+        if (stmt.assert_stmt != nullptr) {
+            if (stmt.assert_stmt->condition != nullptr) {
+                collect_expr_tokens(*stmt.assert_stmt->condition, source, tokens);
+            }
+            if (stmt.assert_stmt->message != nullptr) {
+                collect_expr_tokens(*stmt.assert_stmt->message, source, tokens);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Unwrap:
+        if (stmt.unwrap_stmt != nullptr && stmt.unwrap_stmt->operand != nullptr) {
+            collect_expr_tokens(*stmt.unwrap_stmt->operand, source, tokens);
+        }
+        break;
+    case ast::StatementSyntaxKind::Requires:
+        if (stmt.requires_stmt != nullptr) {
+            if (stmt.requires_stmt->condition != nullptr) {
+                collect_expr_tokens(*stmt.requires_stmt->condition, source, tokens);
+            }
+            if (stmt.requires_stmt->message != nullptr) {
+                collect_expr_tokens(*stmt.requires_stmt->message, source, tokens);
+            }
+        }
+        break;
+    case ast::StatementSyntaxKind::Unreachable:
+        if (stmt.unreachable_stmt != nullptr && stmt.unreachable_stmt->message != nullptr) {
+            collect_expr_tokens(*stmt.unreachable_stmt->message, source, tokens);
         }
         break;
     case ast::StatementSyntaxKind::Expr:

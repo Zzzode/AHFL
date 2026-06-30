@@ -192,9 +192,23 @@ namespace {
         if (!related.range.has_value()) {
             continue;
         }
+        // A related note may live in a different source unit than the primary
+        // diagnostic (e.g. "other declaration in module M" surfaced across
+        // module boundaries). Prefer source_id, then fall back to the primary
+        // source's URI + range conversion when no id is recorded.
+        const LspSourceSnapshot *related_source = &source;
+        if (related.source_id.has_value()) {
+            const auto *by_id = snapshot.source_for_id(*related.source_id);
+            if (by_id != nullptr) {
+                related_source = by_id;
+            }
+        }
+        if (related_source->source == nullptr) {
+            continue;
+        }
         LspDiagnostic::RelatedInformation info;
-        info.location.uri = source.uri;
-        info.location.range = to_lsp_range(*source.source, *related.range);
+        info.location.uri = related_source->uri;
+        info.location.range = to_lsp_range(*related_source->source, *related.range);
         info.message = related.message;
         result.related_information.push_back(std::move(info));
     }

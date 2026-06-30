@@ -96,6 +96,18 @@ struct MethodCandidate {
     return name;
 }
 
+// Strip the module-qualification prefix from a symbol spelling so the
+// per-argument diagnostic refers to the short callable name (e.g. "handle"
+// instead of "lib::api::handle"). Keeps a class-method style dot separator so
+// receiver-type qualified method names render as "Receiver.method".
+[[nodiscard]] std::string callable_basename(std::string_view qualified) noexcept {
+    const auto sep = qualified.rfind("::");
+    if (sep == std::string_view::npos) {
+        return std::string{qualified};
+    }
+    return std::string{qualified.substr(sep + 2)};
+}
+
 // P2d (RFC §3.5): unification for generic fn call-site type-argument inference.
 //
 // Walks a declared parameter type (which may contain TypeVars bound to the
@@ -251,6 +263,18 @@ class ExpressionCheckerServices final {
         }
 
         std::vector<Diagnostic::Related> notes;
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(), "expected type");
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(), "actual type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(), "expected type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(), "actual type");
         notes.push_back(Diagnostic::Related{
             .message = actual_type_note(source),
             .range = range,
@@ -277,6 +301,18 @@ class ExpressionCheckerServices final {
         }
 
         std::vector<Diagnostic::Related> notes;
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(), "expected type");
+        append_multi_declaration_notes(
+            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(), "actual type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(), "expected type");
+        append_nominal_declared_here_note(
+            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(), "actual type");
         notes.push_back(Diagnostic::Related{
             .message = expected_type_note(target, expectation),
             .range = expectation.origin_range,
@@ -663,6 +699,8 @@ class ExpressionChecker final {
                 [&](const ast::GroupExpr &) { return visit_group(expr); },
                 [&](const ast::MatchExpr &) { return visit_match(expr); },
                 [&](const ast::LambdaExpr &) { return visit_lambda(expr); },
+                // P4-02: unwrap(e) as right-hand-side expression.
+                [&](const ast::UnwrapExprSyntax &) { return visit_unwrap(expr); },
             },
             expr.node);
     }
@@ -966,6 +1004,88 @@ class ExpressionChecker final {
                                   ? *unified_body_type
                                   : values_.make_error_type();
         return values_.typed_effect(std::move(result_type), joined);
+    }
+
+    // P4-02: `unwrap(e)` — operand must be an Option<T>; result type is T.
+    // Mirrors the statement-level unwrap (P4-01) in the TypeCheckPass but
+    // produces a T-valued TypedValue so the expression can appear as a
+    // right-hand side, call argument, etc.
+    [[nodiscard]] TypedValue visit_unwrap(const ast::ExprSyntax &expr) const {
+        const auto &unwrap = expr.as<ast::UnwrapExprSyntax>();
+        if (unwrap.operand == nullptr) {
+            return values_.error_typed();
+        }
+
+        // Same pure gate as statement-level unwrap: the operand cannot call
+        // side-effecting capabilities — option-extraction should be
+        // observable only through its optional value, not side effects.
+        ValueContext pure_ctx{
+            .bindings = context_.bindings,
+            .flow_facts = context_.flow_facts,
+            .call_context = CallContext::PureOnly,
+            .current_agent = context_.current_agent,
+        };
+        const auto operand = services_.check_expr(*unwrap.operand, pure_ctx, std::nullopt);
+
+        TypePtr result_type = nullptr;
+        const bool is_optional = [&] {
+            if (operand.type == nullptr) return false;
+            if (is_error_type(*operand.type)) return true;
+            const auto view = stdlib_bridge::std_container_type_view(*operand.type);
+            if (!view.has_value() || view->kind != stdlib_bridge::StdContainerKind::Option) {
+                return false;
+            }
+            // Extract T from Option<T>'s instantiated template args.  The
+            // nominal std::option::Option enum has exactly one type parameter
+            // — that is the unwrap result type.
+            if (const auto *enm = operand.type->get_if<types::EnumT>();
+                enm != nullptr && !enm->type_args.empty()) {
+                result_type = enm->type_args.front() != nullptr
+                                  ? enm->type_args.front()->clone()
+                                  : values_.make_error_type();
+            } else if (const auto *var = operand.type->get_if<types::EnumVariantT>();
+                       var != nullptr && !var->type_args.empty()) {
+                result_type = var->type_args.front() != nullptr
+                                  ? var->type_args.front()->clone()
+                                  : values_.make_error_type();
+            }
+            return true;
+        }();
+
+        if (!is_optional) {
+            std::vector<Diagnostic::Related> notes;
+            if (operand.type != nullptr) {
+                notes.push_back(Diagnostic::Related{
+                    .message = std::string("actual type: ") + operand.type->describe(),
+                    .range = unwrap.operand->range,
+                });
+            }
+            services_.typecheck_error_here(
+                error_codes::typecheck::TypeMismatch,
+                std::string("unwrap operand must be of type Option<T>"),
+                unwrap.operand->range,
+                std::move(notes));
+            return values_.error_typed_effect(operand.effect);
+        }
+
+        if (result_type == nullptr) {
+            // Type extraction failed (e.g. Option was referenced but never
+            // actually instantiated with T).  Tolerate the missing type so
+            // diagnostics never cascade.
+            result_type = values_.make_error_type();
+        }
+
+        if (!operand.is_pure) {
+            // Mirror the statement-level unwrap's non-pure error.  Emit via
+            // the shared typecheck-error sink so diagnostics are uniform.
+            services_.typecheck_error_here(
+                error_codes::typecheck::NonPureExpression,
+                std::string("unwrap operand must be pure; expression effect: ") +
+                    std::string(to_string(operand.effect)),
+                unwrap.operand->range);
+        }
+
+        return values_.typed_effect(std::move(result_type), operand.effect);
     }
 
   private:
@@ -1663,6 +1783,8 @@ class ExpressionChecker final {
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(method.name),
+                .argument_index = index + 1,
             };
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);
@@ -1684,11 +1806,14 @@ class ExpressionChecker final {
             if (param.type == nullptr || arg_types[index] == nullptr) {
                 continue;
             }
+            // g-1 Phase 2: per-argument diff note with method name.
             const auto expectation = TypeExpectation{
                 .expected = param.type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(method.name),
+                .argument_index = index + 1,
             };
             if (is_generic) {
                 const auto instantiated_param =
@@ -1757,11 +1882,17 @@ class ExpressionChecker final {
         for (std::size_t index = 0; index < limit; ++index) {
             const auto param_type = fn_type->params[index] != nullptr ? fn_type->params[index]
                                                                       : values_.make_error_type();
+            // g-1 Phase 2: per-argument diff note for function-value calls.
+            // The callable spelling is kept for correlation; FnT does not
+            // carry a declared param source_range so we fall back to the
+            // call expression range.
             const auto expectation = TypeExpectation{
                 .expected = param_type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = expr.range,
                 .description = "function value parameter",
+                .callable_name = callable_basename(call.callee->spelling()),
+                .argument_index = index + 1,
             };
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);
@@ -1903,6 +2034,8 @@ class ExpressionChecker final {
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(call.callee->spelling()),
+                .argument_index = index + 1,
             };
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);
@@ -1985,11 +2118,16 @@ class ExpressionChecker final {
             if (param.type == nullptr || arg_types[index] == nullptr) {
                 continue;
             }
+            // g-1 Phase 2: surface the 1-based argument index and callable
+            // name in the TypeMismatch note so users can navigate from the
+            // call-site directly to the parameter declaration.
             const auto expectation = TypeExpectation{
                 .expected = param.type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(call.callee->spelling()),
+                .argument_index = index + 1,
             };
             if (is_generic) {
                 const auto instantiated_param =
@@ -2142,11 +2280,14 @@ class ExpressionChecker final {
             if (payload_type == nullptr || arg_types[index] == nullptr) {
                 continue;
             }
+            // g-1 Phase 2: per-argument diff note for enum variant constructors.
             const auto expectation = TypeExpectation{
                 .expected = payload_type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = variant->get().declaration_range,
                 .description = "enum variant payload",
+                .callable_name = std::string(segments.back()),
+                .argument_index = index + 1,
             };
             const auto effective_payload =
                 is_generic ? substitute_type(payload_type, subst, services_.types()) : payload_type;
@@ -2221,11 +2362,14 @@ class ExpressionChecker final {
         const auto limit = std::min(call.arguments.size(), capability->get().params.size());
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = capability->get().params[index];
+            // g-1 Phase 2: per-argument diff note with capability name.
             const auto expectation = TypeExpectation{
                 .expected = param.type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(call.callee->spelling()),
+                .argument_index = index + 1,
             };
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);
@@ -2268,11 +2412,14 @@ class ExpressionChecker final {
         const auto limit = std::min(call.arguments.size(), predicate->get().params.size());
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = predicate->get().params[index];
+            // g-1 Phase 2: per-argument diff note with predicate name.
             const auto expectation = TypeExpectation{
                 .expected = param.type,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
+                .callable_name = callable_basename(call.callee->spelling()),
+                .argument_index = index + 1,
             };
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);

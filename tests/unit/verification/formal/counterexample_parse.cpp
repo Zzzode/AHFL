@@ -380,6 +380,466 @@ void test_report_includes_structured_explanation() {
     check(text.find("\"status\":\"failed\"") != std::string::npos, "report_explain.includes_json");
 }
 
+// ============================================================================
+// h-12 (QW-3) 4-dim mapping tests (2 golden
+// ============================================================================
+
+void test_h12_D4_classify_contract() {
+    // G1
+    auto never_info = classify_violated_contract("never(PAID_STATE)");
+    check(never_info.kind == ViolatedContractKind::Invariant, "d4.never_kind");
+    check(never_info.description.find("PAID_STATE") != std::string::npos, "d4.never_desc");
+    check(never_info.raw_spec == "never(PAID_STATE)", "d4.never_raw");
+    // G2
+    auto reach_info = classify_violated_contract("reachable(PAID_STATE)");
+    check(reach_info.kind == ViolatedContractKind::Ensures, "d4.reach_kind");
+    check(reach_info.description.find("progress obligation") != std::string::npos, "d4.reach_desc");
+    // G3 - leading-space G
+    auto g_info = classify_violated_contract("  G (agent__MyAgent__state = IDLE)");
+    check(g_info.kind == ViolatedContractKind::Invariant, "d4.G_kind");
+    // G4 - F eventually
+    auto f_info = classify_violated_contract("F (agent__MyAgent__state = Done)");
+    check(f_info.kind == ViolatedContractKind::Ensures, "d4.F_kind");
+    // G5 - Custom
+    auto c_info = classify_violated_contract("G F done != done");
+    check(c_info.kind == ViolatedContractKind::Custom, "d4.custom_kind");
+    // G6 - Empty
+    auto u_info = classify_violated_contract("");
+    check(u_info.kind == ViolatedContractKind::Unknown, "d4.empty_kind");
+}
+
+void test_h12_full_4dim_enhance() {
+    // Trace with AHFL_MAP agent state, workflow phase, input and context
+    // transitions.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(PAID)";
+    trace.trace_description = "LTL Counterexample";
+    trace.trace_type = "Counterexample";
+
+    SourceMapping ag_map{
+        .smv_symbol = "agent__OrderBot__state",
+        .description = "agent shop::OrderBot state",
+        .source_path = "order.ahfl",
+        .begin_offset = 20,
+        .end_offset = 120,
+    };
+    SourceMapping wf_map{
+        .smv_symbol = "workflow__Checkout__node__pay__phase",
+        .description = "workflow shop::Checkout pay phase",
+        .source_path = "order.ahfl",
+        .begin_offset = 200,
+        .end_offset = 300,
+    };
+    SourceMapping input_map{
+        .smv_symbol = "input__retry_count",
+        .description = "input retry_count",
+        .source_path = "order.ahfl",
+        .begin_offset = 10,
+        .end_offset = 18,
+    };
+    SourceMapping ctx_map{
+        .smv_symbol = "context__balance",
+        .description = "context balance",
+        .source_path = "order.ahfl",
+        .begin_offset = 30,
+        .end_offset = 40,
+    };
+
+    // 3 states.
+    trace.states.push_back(CounterexampleState{
+        .label = "1.1",
+        .assignments =
+            {
+                CounterexampleAssignment{.variable = "agent__OrderBot__state", .value = "Idle", .mapping = ag_map},
+                CounterexampleAssignment{.variable = "workflow__Checkout__node__pay__phase",
+                                      .value = "Idle",
+                                      .mapping = wf_map},
+                CounterexampleAssignment{.variable = "input__retry_count", .value = "2", .mapping = input_map},
+                CounterexampleAssignment{.variable = "context__balance", .value = "0", .mapping = ctx_map},
+            },
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.2",
+        .assignments =
+            {
+                CounterexampleAssignment{.variable = "agent__OrderBot__state", .value = "Working", .mapping = ag_map},
+                CounterexampleAssignment{.variable = "workflow__Checkout__node__pay__phase",
+                                      .value = "Running",
+                                      .mapping = wf_map},
+                CounterexampleAssignment{.variable = "context__balance", .value = "0", .mapping = ctx_map},
+            },
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.3",
+        .assignments =
+            {
+                CounterexampleAssignment{.variable = "agent__OrderBot__state", .value = "PAID", .mapping = ag_map},
+                CounterexampleAssignment{.variable = "workflow__Checkout__node__pay__phase",
+                                      .value = "Running",
+                                      .mapping = wf_map},
+                // context diverged between initial and final
+                CounterexampleAssignment{.variable = "context__balance", .value = "99", .mapping = ctx_map},
+            },
+    });
+
+    ViolationExplanation expl;
+    expl.violated_property = trace.violated_spec;
+    enhance_counterexample_mapping(trace, expl);
+
+    // D4 contract
+    check(expl.violated_contract.kind == ViolatedContractKind::Invariant, "h12.d4_kind");
+    check(trace.state_transitions.size() == 2, "h12.d1_len");
+
+    // D1 (step 1) agent+wf
+    const auto &step0 = trace.state_transitions[0];
+    check(step0.size() == 2, "h12.d1_s0_count"); // agent + wf change
+    bool has_agent_step0 = false;
+    bool has_wf_step0 = false;
+    for (const auto &r : step0) {
+        if (r.role == "agent_state") {
+            has_agent_step0 = true;
+            check(r.owner_name == "OrderBot", "h12.d1_s0_owner");
+            check(r.value_from == "Idle", "h12.d1_s0_from");
+            check(r.value_to == "Working", "h12.d1_s0_to");
+            check(r.source_path == "order.ahfl", "h12.d1_path");
+        }
+        if (r.role == "workflow_phase") {
+            has_wf_step0 = true;
+            check(r.owner_name == "Checkout.node.pay", "h12.d1_s0_wfowner");
+        }
+    }
+    check(has_agent_step0, "h12.d1_s0_agent");
+    check(has_wf_step0, "h12.d1_s0_wf");
+
+    // D1 step 2: agent Idle→Working→PAID; wf stays, context change.
+    const auto &step1 = trace.state_transitions[1];
+    check(step1.size() == 2, "h12.d1_s1_count");
+    for (const auto &r : step1) {
+        if (r.role == "agent_state") {
+            check(r.value_from == "Working", "h12.d1_s1_from");
+            check(r.value_to == "PAID", "h12.d1_s1_to");
+        }
+    }
+
+    // D2 trigger_input
+    check(trace.trigger_input.size() == 1, "h12.d2_count");
+    check(trace.trigger_input[0].logical_path == "input.retry_count", "h12.d2_path");
+    check(trace.trigger_input[0].value == "2", "h12.d2_value");
+    check(trace.trigger_input[0].initial_value.empty(), "h12.d2_no_initial");
+
+    // D3 faulty_ctx
+    check(trace.faulty_ctx_fields.size() == 1, "h12.d3_count");
+    check(trace.faulty_ctx_fields[0].logical_path == "context.balance", "h12.d3_path");
+    check(trace.faulty_ctx_fields[0].value == "99", "h12.d3_final");
+    check(trace.faulty_ctx_fields[0].initial_value == "0", "h12.d3_initial");
+
+    // JSON round-trip: serialize and verify 4dim fields appear.
+    const auto json = counterexample_to_json(trace, expl);
+    check(json.find("\"violated_contract\"") != std::string::npos, "h12.json.d4_in_json");
+    check(json.find("\"invariant\"") != std::string::npos, "h12.json.d4_kind_in_json");
+    check(json.find("\"state_transitions\"") != std::string::npos, "h12.json.d1_in_json");
+    check(json.find("\"trigger_input\"") != std::string::npos, "h12.json.d2_in_json");
+    check(json.find("\"faulty_ctx_fields\"") != std::string::npos, "h12.json.d3_in_json");
+    check(json.find("\"OrderBot\"") != std::string::npos, "h12.json.d1_owner_in_json");
+    check(json.find("\"input.retry_count\"") != std::string::npos, "h12.json.d2_path_in_json");
+    check(json.find("\"context.balance\"") != std::string::npos, "h12.json.d3_path_in_json");
+}
+
+// ============================================================================
+// h-12 D5: action_trace_alignment
+// ============================================================================
+
+void test_h12_D5_action_trace_alignment() {
+    // Build a 3-state synthetic trace that includes AHFL transition
+    // `_fired` / `_guard` variables with the documented mangling pattern.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(PAYMENT_TIMEOUT)";
+    trace.trace_description = "LTL Counterexample";
+    trace.trace_type = "Counterexample";
+
+    SourceMapping trans_fire1{
+        .smv_symbol = "__ahfl_transition__Checkout__node__pay__authorize_fired",
+        .description = "transition authorize fires",
+        .source_path = "order.ahfl",
+        .begin_offset = 310,
+        .end_offset = 340,
+    };
+    SourceMapping trans_guard1{
+        .smv_symbol = "__ahfl_transition__Checkout__node__pay__authorize_guard",
+        .description = "transition authorize guard",
+        .source_path = "order.ahfl",
+        .begin_offset = 290,
+        .end_offset = 310,
+    };
+    SourceMapping trans_fire2{
+        .smv_symbol = "__ahfl_transition__Checkout__node__ship__dispatch_fired",
+        .description = "transition dispatch fires",
+        .source_path = "order.ahfl",
+        .begin_offset = 410,
+        .end_offset = 440,
+    };
+    SourceMapping trans_guard2{
+        .smv_symbol = "__ahfl_transition__Checkout__node__ship__dispatch_guard",
+        .description = "transition dispatch guard",
+        .source_path = "order.ahfl",
+        .begin_offset = 390,
+        .end_offset = 410,
+    };
+
+    // State 1: initial state (no actions fired).
+    trace.states.push_back(CounterexampleState{
+        .label = "1.1",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_fired",
+                    .value = "FALSE",
+                    .mapping = trans_fire1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_guard",
+                    .value = "FALSE",
+                    .mapping = trans_guard1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_fired",
+                    .value = "FALSE",
+                    .mapping = trans_fire2,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_guard",
+                    .value = "TRUE",
+                    .mapping = trans_guard2,
+                },
+            },
+    });
+    // State 2: step 0→1 fires authorize (guard=true) and dispatch stays off.
+    trace.states.push_back(CounterexampleState{
+        .label = "1.2",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_fired",
+                    .value = "TRUE",
+                    .mapping = trans_fire1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_guard",
+                    .value = "TRUE",
+                    .mapping = trans_guard1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_fired",
+                    .value = "FALSE",
+                    .mapping = trans_fire2,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_guard",
+                    .value = "TRUE",
+                    .mapping = trans_guard2,
+                },
+            },
+    });
+    // State 3: step 1→2 fires dispatch (guard=TRUE matches the variable name).
+    trace.states.push_back(CounterexampleState{
+        .label = "1.3",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_fired",
+                    .value = "FALSE",
+                    .mapping = trans_fire1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__pay__authorize_guard",
+                    .value = "FALSE",
+                    .mapping = trans_guard1,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_fired",
+                    .value = "TRUE",
+                    .mapping = trans_fire2,
+                },
+                CounterexampleAssignment{
+                    .variable = "__ahfl_transition__Checkout__node__ship__dispatch_guard",
+                    .value = "TRUE",
+                    .mapping = trans_guard2,
+                },
+            },
+    });
+
+    ViolationExplanation expl;
+    expl.violated_property = trace.violated_spec;
+    enhance_counterexample_mapping(trace, expl);
+
+    // 3 states → 2 steps.
+    check(trace.action_trace.size() == 2, "d5.action_trace_len");
+    check(trace.state_transitions.size() == trace.action_trace.size(),
+          "d5.parallel_to_state_transitions");
+
+    // Step 0: authorize fired, guard=TRUE.
+    const auto &s0 = trace.action_trace[0];
+    check(s0.size() == 1, "d5.s0_count");
+    if (!s0.empty()) {
+        check(s0[0].action_name == "authorize", "d5.s0_action");
+        // logical_path must mention the owning workflow "Checkout".
+        check(s0[0].logical_path.find("Checkout") != std::string::npos,
+              "d5.s0_path_has_wf");
+        // Also must mention the node.
+        check(s0[0].logical_path.find("pay") != std::string::npos,
+              "d5.s0_path_has_node");
+        check(s0[0].guard_value == true, "d5.s0_guard_true");
+        check(s0[0].source.source_path == "order.ahfl", "d5.s0_source_path");
+    }
+
+    // Step 1: dispatch fired, guard=TRUE.
+    const auto &s1 = trace.action_trace[1];
+    check(s1.size() == 1, "d5.s1_count");
+    if (!s1.empty()) {
+        check(s1[0].action_name == "dispatch", "d5.s1_action");
+        check(s1[0].logical_path.find("Checkout") != std::string::npos,
+              "d5.s1_path_has_wf");
+        check(s1[0].logical_path.find("ship") != std::string::npos,
+              "d5.s1_path_has_node");
+        // Guard value must match the sibling `_guard` variable.
+        check(s1[0].guard_value == true, "d5.s1_guard_true");
+    }
+
+    // JSON serialization must include the new field.
+    const auto json = counterexample_to_json(trace, expl);
+    check(json.find("\"action_trace\"") != std::string::npos, "d5.json.has_action_trace");
+    check(json.find("\"logical_path\"") != std::string::npos, "d5.json.has_logical_path");
+    check(json.find("\"action_name\"") != std::string::npos, "d5.json.has_action_name");
+    check(json.find("\"guard_value\"") != std::string::npos, "d5.json.has_guard_value");
+    check(json.find("\"authorize\"") != std::string::npos, "d5.json.authorize_present");
+    check(json.find("\"dispatch\"") != std::string::npos, "d5.json.dispatch_present");
+}
+
+// ============================================================================
+// h-12 D6: natural_language_summary for all 4 ViolatedContractKind values
+// ============================================================================
+
+namespace {
+
+// Helper: run enhance and return natural_language_summary for a trace with
+// `spec` plus optional D3 faulty_ctx_fields population.
+std::string run_d6_summary(std::string_view spec, ViolatedContractKind expected_kind) {
+    CounterexampleTrace trace;
+    trace.violated_spec = std::string(spec);
+    trace.states.push_back(CounterexampleState{
+        .label = "1.1",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "context__balance",
+                    .value = "0",
+                    .mapping = SourceMapping{.smv_symbol = "context__balance",
+                                             .description = "context balance",
+                                             .source_path = "t.ahfl",
+                                             .begin_offset = 10,
+                                             .end_offset = 20},
+                },
+            },
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.2",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "context__balance",
+                    .value = "999",
+                    .mapping = SourceMapping{.smv_symbol = "context__balance",
+                                             .description = "context balance",
+                                             .source_path = "t.ahfl",
+                                             .begin_offset = 10,
+                                             .end_offset = 20},
+                },
+            },
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.3",
+        .assignments =
+            {
+                CounterexampleAssignment{
+                    .variable = "context__balance",
+                    .value = "999",
+                    .mapping = SourceMapping{.smv_symbol = "context__balance",
+                                             .description = "context balance",
+                                             .source_path = "t.ahfl",
+                                             .begin_offset = 10,
+                                             .end_offset = 20},
+                },
+            },
+    });
+
+    ViolationExplanation expl;
+    expl.violated_property = trace.violated_spec;
+    enhance_counterexample_mapping(trace, expl);
+
+    check(expl.violated_contract.kind == expected_kind,
+          std::string("d6.kind_match for ") + std::string(spec));
+    return expl.natural_language_summary;
+}
+
+// Count newlines in a string (line count = 1 + newlines, clamped to 1).
+std::size_t count_lines(const std::string &s) {
+    std::size_t n = 1;
+    for (char c : s)
+        if (c == '\n') ++n;
+    return n;
+}
+
+} // namespace (inner)
+
+void test_h12_D6_natural_language_summary() {
+    // Kind 1: Invariant (via never() pattern).
+    {
+        const auto s = run_d6_summary("never(BAD_BALANCE)", ViolatedContractKind::Invariant);
+        check(!s.empty(), "d6.inv.non_empty");
+        check(s.find("violated") != std::string::npos, "d6.inv.has_violated");
+        check(s.find("bounds") != std::string::npos, "d6.inv.has_bounds");
+        check(count_lines(s) <= 4, "d6.inv.at_most_4_lines");
+    }
+    // Kind 2: Ensures (via reachable() pattern).
+    {
+        const auto s = run_d6_summary("reachable(PAID)", ViolatedContractKind::Ensures);
+        check(!s.empty(), "d6.ens.non_empty");
+        check(s.find("failed") != std::string::npos, "d6.ens.has_failed");
+        check(s.find("post-condition") != std::string::npos,
+              "d6.ens.has_post_condition");
+        check(count_lines(s) <= 4, "d6.ens.at_most_4_lines");
+    }
+    // Kind 3: Custom (e.g. a combined G F that isn't a pure safety/eventuality).
+    {
+        const auto s = run_d6_summary("G F p != q", ViolatedContractKind::Custom);
+        check(!s.empty(), "d6.cus.non_empty");
+        check(s.find("failed") != std::string::npos ||
+                  s.find("violated") != std::string::npos,
+              "d6.cus.has_failed_or_violated");
+        check(s.find("custom") != std::string::npos, "d6.cus.mentions_custom");
+        check(count_lines(s) <= 4, "d6.cus.at_most_4_lines");
+    }
+    // Kind 4: Unknown (empty spec).
+    {
+        const auto s = run_d6_summary("", ViolatedContractKind::Unknown);
+        check(!s.empty(), "d6.unk.non_empty");
+        check(s.find("failed") != std::string::npos, "d6.unk.has_failed");
+        check(count_lines(s) <= 4, "d6.unk.at_most_4_lines");
+    }
+
+    // JSON serialization must carry natural_language_summary.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(X)";
+    trace.states.push_back(CounterexampleState{.label = "1.1", .assignments = {}});
+    trace.states.push_back(CounterexampleState{.label = "1.2", .assignments = {}});
+    ViolationExplanation expl;
+    expl.violated_property = trace.violated_spec;
+    enhance_counterexample_mapping(trace, expl);
+    const auto json = counterexample_to_json(trace, expl);
+    check(json.find("\"natural_language_summary\"") != std::string::npos,
+          "d6.json.has_field");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -396,6 +856,11 @@ int main() {
 
     test_integration_parse_explain_json();
     test_report_includes_structured_explanation();
+
+    test_h12_D4_classify_contract();
+    test_h12_full_4dim_enhance();
+    test_h12_D5_action_trace_alignment();
+    test_h12_D6_natural_language_summary();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

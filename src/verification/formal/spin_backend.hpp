@@ -12,7 +12,8 @@ class SpinBackend final : public ModelCheckerBackend {
     [[nodiscard]] ModelCheckerCapabilities capabilities() const override;
     [[nodiscard]] ModelCheckerAvailability availability() const override;
     [[nodiscard]] ModelEmissionResult emit_model(const BmcStateMachine &machine) override;
-    [[nodiscard]] VerificationSummary verify(const std::string &model_text) override;
+    [[nodiscard]] VerificationSummary verify(const std::string &model_text,
+                                             const BackendVerificationOptions &options) override;
 };
 
 } // namespace ahfl::formal

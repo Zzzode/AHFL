@@ -172,6 +172,7 @@ enum class ExprSyntaxKind {
     Group,           // (expr) parenthesized grouping
     Match,           // match scrutinee { arm* } (P1 ADT, RFC §1.6)
     Lambda,          // \ params -> expr  (P2 closures, RFC §6)
+    UnwrapExpr,      // unwrap(operand_expr) - expr-level Option extract (P4-02)
 };
 
 /// Unary operators
@@ -201,13 +202,17 @@ enum class ExprBinaryOp {
 
 /// Statement kinds
 enum class StatementSyntaxKind {
-    Let,    // let x: Type = expr;
-    Assign, // ctx.field = expr;
-    If,     // if (cond) { ... } else { ... }
-    Goto,   // goto StateName;
-    Return, // return expr;
-    Assert, // assert(cond);
-    Expr,   // expr; (expression statement, typically a capability call)
+    Let,         // let x: Type = expr;
+    Assign,      // ctx.field = expr;
+    If,          // if (cond) { ... } else { ... }
+    IfLet,       // if let Variant(x) = expr { ... } else { ... }  (RFC e-1, Wave-19 Lane 3b)
+    Goto,        // goto StateName;
+    Return,      // return expr;
+    Assert,      // assert(cond); / assert(cond, "msg"); / legacy: assert cond;
+    Unwrap,      // unwrap(option_expr);
+    Requires,    // requires(cond); / requires(cond, "msg");
+    Unreachable, // unreachable; / unreachable("msg");
+    Expr,        // expr; (expression statement, typically a capability call)
 };
 
 /// Temporal expression kinds (for formal verification / SMV generation)
@@ -495,6 +500,16 @@ struct GroupExpr {
     Owned<ExprSyntax> inner;
 };
 
+/// Unwrap expression: unwrap(operand) — P4-02.
+///
+/// Runtime behaviour: operand must be an Optional<T> with variant Some(x),
+/// in which case the expression evaluates to x (type T). If the operand is
+/// the None variant, the evaluator raises ExecAssertFailed with the same
+/// default message used by the statement-level `unwrap(...)`.
+struct UnwrapExprSyntax {
+    Owned<ExprSyntax> operand;
+};
+
 // ----------------------------------------------------------------------------
 // P1 (ADT) pattern syntax (RFC §1.6)
 // ----------------------------------------------------------------------------
@@ -724,7 +739,8 @@ using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     IndexAccessExpr,
                                     GroupExpr,
                                     MatchExpr,
-                                    LambdaExpr>;
+                                    LambdaExpr,
+                                    UnwrapExprSyntax>;
 
 /// Expression syntax node
 ///
@@ -797,6 +813,30 @@ struct IfStmtSyntax {
     Owned<BlockSyntax> else_block; // else branch (optional)
 };
 
+/// Minimal POC pattern for `if let` (RFC e-1, Wave-19 Lane 3b F2).
+/// Only variant forms are accepted: `VariantName` (unit variant) or
+/// `VariantName(x[, y]*)` (tuple-like).  Narrowing / exhaustive-pattern
+/// semantics are intentionally deferred; this struct stores exactly the
+/// source shape the grammar accepts.
+struct IfLetPatternSyntax {
+    ahfl::SourceRange range;
+    std::string variant_name;            // e.g. "Some"
+    std::vector<std::string> bindings;   // e.g. {"x"} for `Some(x)`
+};
+
+/// `if let` pattern-match statement (RFC e-1, Wave-19 Lane 3b F2, minimal POC).
+/// Pattern match against `scrutinee`; on success execute `then_block` with
+/// bindings in scope, otherwise fall through to `else_block` (when present).
+/// Type narrowing / TypedHIR lowering are NOT implemented in this POC — this
+/// node exists only at the syntax layer (parse + AST + printer + formatter).
+struct IfLetStmtSyntax {
+    ahfl::SourceRange range;
+    Owned<IfLetPatternSyntax> pattern;   // variant pattern on the left of `=`
+    Owned<ExprSyntax> scrutinee;         // expression on the right of `=`
+    Owned<BlockSyntax> then_block;       // success branch
+    Owned<BlockSyntax> else_block;       // failure branch (optional)
+};
+
 /// State jump statement: goto StateName;
 struct GotoStmtSyntax {
     ahfl::SourceRange range;
@@ -809,10 +849,54 @@ struct ReturnStmtSyntax {
     Owned<ExprSyntax> value; // return value expression
 };
 
-/// Assertion statement: assert(condition);
+/// Assertion statement: assert(condition[, "message"]);
+/// Legacy form `assert condition;` is normalized by the frontend to use the
+/// same struct with `message` left empty (nullptr).
 struct AssertStmtSyntax {
     ahfl::SourceRange range;
-    Owned<ExprSyntax> condition; // assertion condition
+    Owned<ExprSyntax> condition; // assertion condition (required)
+    Owned<ExprSyntax> message;   // optional diagnostic message (String-typed), may be nullptr
+    // Number of expressions actually written in the source arglist.  May be
+    // larger than 2 (3+) — used by typechecker to emit a stable WRONG_ARITY
+    // diagnostic with the real count rather than silently truncating.
+    std::size_t raw_arg_count{0};
+};
+
+/// Unwrap statement: unwrap(option_expr);
+/// Semantics (P4-01): verifies the operand is an Optional<T> with Some(T);
+/// otherwise fails at runtime with ExecAssertFailed.  Does NOT propagate
+/// the extracted T value (P4-02 adds unwrap-as-expression for that).
+struct UnwrapStmtSyntax {
+    ahfl::SourceRange range;
+    Owned<ExprSyntax> operand; // expression expected to have Optional<T> type
+    // See AssertStmtSyntax::raw_arg_count.  Distinguishes arity-0 `unwrap()`
+    // (should trigger WRONG_ARITY) from a malformed AST with a null operand.
+    std::size_t raw_arg_count{0};
+};
+
+/// Requires statement: requires(condition[, "message"]);
+/// Semantically equivalent to `assert` with a different default failure
+/// message ("requires violation").  Used for preconditions and contract-like
+/// checks expressed inside regular code blocks (distinct from the
+/// contract-level `requires:` declaration syntax).
+struct RequiresStmtSyntax {
+    ahfl::SourceRange range;
+    Owned<ExprSyntax> condition; // boolean predicate (required)
+    Owned<ExprSyntax> message;   // optional diagnostic message, may be nullptr
+    // See AssertStmtSyntax::raw_arg_count.
+    std::size_t raw_arg_count{0};
+};
+
+/// Unreachable statement: unreachable; / unreachable("message");
+/// Semantics: any code path that reaches `unreachable` at runtime is a
+/// logic bug; always reports ExecAssertFailed with the message or default.
+struct UnreachableStmtSyntax {
+    ahfl::SourceRange range;
+    Owned<ExprSyntax> message; // optional diagnostic message, may be nullptr
+    // Total number of message-slot arguments written (0 or 1 for legal
+    // unreachable; 2+ triggers WRONG_ARITY).  `unreachable;` (no parens)
+    // is represented with raw_arg_count == 0 and message == nullptr.
+    std::size_t raw_arg_count{0};
 };
 
 /// Expression statement (e.g. a capability call): expr;
@@ -828,9 +912,13 @@ struct StatementSyntax {
     Owned<LetStmtSyntax> let_stmt;
     Owned<AssignStmtSyntax> assign_stmt;
     Owned<IfStmtSyntax> if_stmt;
+    Owned<IfLetStmtSyntax> if_let_stmt;       // RFC e-1, Wave-19 Lane 3b: if let Variant(x) = e { }
     Owned<GotoStmtSyntax> goto_stmt;
     Owned<ReturnStmtSyntax> return_stmt;
     Owned<AssertStmtSyntax> assert_stmt;
+    Owned<UnwrapStmtSyntax> unwrap_stmt;        // P4-01: new
+    Owned<RequiresStmtSyntax> requires_stmt;    // P4-01: new
+    Owned<UnreachableStmtSyntax> unreachable_stmt; // P4-01: new
     Owned<ExprStmtSyntax> expr_stmt;
 };
 
@@ -964,14 +1052,24 @@ struct StructFieldDeclSyntax {
 
 /// Enum variant alternative declaration.
 ///
-/// P1 (ADT, RFC §1.5): a variant optionally carries a positional tuple
-/// payload (`Some(T)`, `Err(E)`). `payload` is empty for payload-less
-/// variants, preserving full backward compatibility with the legacy
-/// `enumDecl: IDENT` grammar.
+/// P1 (ADT, RFC §1.5): a variant optionally carries a payload:
+///   * `payload` (positional tuple) — `Some(T)`, `Err(E)`
+///   * `named_fields` (struct form, RFC d-1 minimal POC) —
+///     `Point(x: Int, y: Int)`. A variant may have at most one kind of
+///     payload; both vectors empty means the classic payload-less form
+///     (`None`), preserving full backward compatibility.
+struct EnumVariantFieldSyntax {
+    ahfl::SourceRange range;
+    std::string name;
+    Owned<TypeSyntax> type;
+    Owned<ExprSyntax> default_value; // optional default value
+};
+
 struct EnumVariantDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
-    std::vector<Owned<TypeSyntax>> payload; // optional positional tuple payload
+    std::vector<Owned<TypeSyntax>> payload;           // positional tuple payload
+    std::vector<Owned<EnumVariantFieldSyntax>> named_fields; // struct variant payload
 };
 
 /// State transition declaration: from_state -> to_state
@@ -1431,6 +1529,7 @@ struct TraitDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<TypeSyntax>> super_traits; // optional super-trait bounds
+    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
     std::vector<Owned<TraitItemSyntax>> items;
 
     TraitDecl(std::string name, ahfl::SourceRange range = {});
@@ -1630,6 +1729,11 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             // touching every visitor; `visit_unknown` is the shared escape
             // hatch consumers already provide for unspecialised kinds.
             [&](const LambdaExpr &) { return std::forward<Visitor>(visitor).visit_unknown(expr); },
+            // P4-02: unwrap(e) — unwrap expression dispatches through the
+            // generic `visit_unknown` fallback (same rationale as LambdaExpr).
+            [&](const UnwrapExprSyntax &) {
+                return std::forward<Visitor>(visitor).visit_unknown(expr);
+            },
         },
         expr.node);
 }
@@ -1657,6 +1761,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const GroupExpr &) { return ExprSyntaxKind::Group; },
             [](const MatchExpr &) { return ExprSyntaxKind::Match; },
             [](const LambdaExpr &) { return ExprSyntaxKind::Lambda; },
+            [](const UnwrapExprSyntax &) { return ExprSyntaxKind::UnwrapExpr; },
         },
         expr.node);
 }

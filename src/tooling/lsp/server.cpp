@@ -1794,11 +1794,11 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
 
     const auto *snapshot = analysis_.snapshot_for_uri(uri);
     const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
-    if (snapshot == nullptr || source == nullptr || source->source == nullptr ||
-        !snapshot->type_check_result) {
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
         send_null(transport_, req.id);
         return;
     }
+    const bool has_typecheck = (snapshot->type_check_result != nullptr);
 
     const auto offset = offset_at(*source->source, position);
     const auto context = call_context_before_cursor(*source->source, offset);
@@ -1808,36 +1808,109 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
     }
 
     const auto &[callable_name, active_parameter] = *context;
-    const auto &environment = snapshot->type_check_result->environment;
     SignatureHelp help;
     help.active_signature = 0;
     help.active_parameter = active_parameter;
 
-    if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
-            SymbolNamespace::Capabilities, callable_name);
-        symbol.has_value()) {
-        const auto capability = environment.get_capability(symbol->get().id);
-        if (capability.has_value()) {
-            SignatureInformation info;
-            info.label = callable_signature(capability->get());
-            info.documentation = "capability " + capability->get().canonical_name;
-            fill_signature_parameters(info, capability->get());
-            help.signatures.push_back(std::move(info));
+    if (has_typecheck) {
+        const auto &environment = snapshot->type_check_result->environment;
+        if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+                SymbolNamespace::Capabilities, callable_name);
+            symbol.has_value()) {
+            const auto capability = environment.get_capability(symbol->get().id);
+            if (capability.has_value()) {
+                SignatureInformation info;
+                info.label = callable_signature(capability->get());
+                info.documentation = "capability " + capability->get().canonical_name;
+                fill_signature_parameters(info, capability->get());
+                help.signatures.push_back(std::move(info));
+            }
+        }
+
+        if (help.signatures.empty()) {
+            if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+                    SymbolNamespace::Predicates, callable_name);
+                symbol.has_value()) {
+                const auto predicate = environment.get_predicate(symbol->get().id);
+                if (predicate.has_value()) {
+                    SignatureInformation info;
+                    info.label = callable_signature(predicate->get());
+                    info.documentation = "predicate " + predicate->get().canonical_name;
+                    fill_signature_parameters(info, predicate->get());
+                    help.signatures.push_back(std::move(info));
+                }
+            }
         }
     }
 
     if (help.signatures.empty()) {
-        if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
-                SymbolNamespace::Predicates, callable_name);
-            symbol.has_value()) {
-            const auto predicate = environment.get_predicate(symbol->get().id);
-            if (predicate.has_value()) {
-                SignatureInformation info;
-                info.label = callable_signature(predicate->get());
-                info.documentation = "predicate " + predicate->get().canonical_name;
-                fill_signature_parameters(info, predicate->get());
-                help.signatures.push_back(std::move(info));
+        // Keyword-signature fallback: statement-level assert-family keywords
+        // do not live in the Capabilities/Predicates symbol namespaces, so we
+        // resolve them here against the literal callable name extracted from
+        // the source text.
+        if (callable_name == "assert") {
+            SignatureInformation info;
+            info.label = "assert(condition: Bool[, message: String])";
+            info.documentation =
+                "Predicate assertion; throws assertion failure when condition is False. "
+                "Optional message is rendered in the diagnostic.";
+            {
+                ParameterInformation p;
+                p.label = "condition: Bool";
+                p.documentation = "Bool predicate that must hold.";
+                info.parameters.push_back(std::move(p));
             }
+            {
+                ParameterInformation p;
+                p.label = "[message: String] (optional)";
+                p.documentation = "Optional diagnostic message string.";
+                info.parameters.push_back(std::move(p));
+            }
+            help.signatures.push_back(std::move(info));
+        } else if (callable_name == "unwrap") {
+            SignatureInformation info;
+            info.label = "unwrap(value: Option<T>) -> T";
+            info.documentation =
+                "Optional deconstructor; if value is Some<T> returns T; "
+                "if None raises unwrap-none assertion failure (kind: UNWRAP_NONE).";
+            {
+                ParameterInformation p;
+                p.label = "value: Option<T>";
+                p.documentation = "Optional value to deconstruct.";
+                info.parameters.push_back(std::move(p));
+            }
+            help.signatures.push_back(std::move(info));
+        } else if (callable_name == "requires") {
+            SignatureInformation info;
+            info.label = "requires(condition: Bool[, message: String])";
+            info.documentation =
+                "Contract requirement; fails contract evaluation "
+                "(distinct from assert; kind: REQUIRES_VIOLATION) when condition is False.";
+            {
+                ParameterInformation p;
+                p.label = "condition: Bool";
+                p.documentation = "Bool contract predicate that must hold.";
+                info.parameters.push_back(std::move(p));
+            }
+            {
+                ParameterInformation p;
+                p.label = "[message: String] (optional)";
+                p.documentation = "Optional diagnostic message string.";
+                info.parameters.push_back(std::move(p));
+            }
+            help.signatures.push_back(std::move(info));
+        } else if (callable_name == "unreachable") {
+            SignatureInformation info;
+            info.label = "unreachable([message: String])";
+            info.documentation =
+                "Unreachable code marker; if ever executed raises kind: UNREACHABLE_EXECUTED.";
+            {
+                ParameterInformation p;
+                p.label = "[message: String] (optional)";
+                p.documentation = "Optional diagnostic message string.";
+                info.parameters.push_back(std::move(p));
+            }
+            help.signatures.push_back(std::move(info));
         }
     }
 
@@ -1983,6 +2056,21 @@ void LspServer::handle_code_action(const JsonRpcRequest &req) {
     }
 
     auto actions = compute_code_actions(document->text, range, diagnostics);
+
+    // compute_code_actions uses "" as a sentinel URI in WorkspaceEdit::changes;
+    // substitute it with the actual document URI here (single-document edits).
+    for (auto &action : actions) {
+        if (!action.edit) {
+            continue;
+        }
+        auto it = action.edit->changes.find("");
+        if (it == action.edit->changes.end()) {
+            continue;
+        }
+        auto edits = std::move(it->second);
+        action.edit->changes.erase(it);
+        action.edit->changes.emplace(uri, std::move(edits));
+    }
 
     auto result = json::JsonValue::make_array();
     for (const auto &action : actions) {

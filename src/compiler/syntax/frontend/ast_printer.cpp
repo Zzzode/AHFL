@@ -237,6 +237,19 @@ class AstPrinter final {
                     label += variant->payload[i]->spelling();
                 }
                 label += ")";
+            } else if (!variant->named_fields.empty()) {
+                label += " (";
+                for (std::size_t i = 0; i < variant->named_fields.size(); ++i) {
+                    if (i != 0) {
+                        label += ", ";
+                    }
+                    const auto &f = variant->named_fields[i];
+                    label += f->name + ": " + (f->type ? f->type->spelling() : std::string("?"));
+                    if (f->default_value) {
+                        label += " = " + f->default_value->text;
+                    }
+                }
+                label += ")";
             }
             line(2, label);
         }
@@ -463,6 +476,10 @@ class AstPrinter final {
             for (const auto &super_trait : node.super_traits) {
                 line(3, super_trait ? super_trait->spelling() : std::string{});
             }
+        }
+
+        if (node.where_clause) {
+            print_where_clause(*node.where_clause, 2);
         }
 
         for (const auto &item : node.items) {
@@ -885,6 +902,12 @@ class AstPrinter final {
                     line(indent_level + 1, "body");
                     print_expr(*e.body, indent_level + 2);
                 },
+                // P4-02: unwrap(e) expression printer — mirrors the statement
+                // form's "unwrap" keyword and operand layout so diffs stay small.
+                [&](const ast::UnwrapExprSyntax &e) {
+                    line(indent_level, "unwrap_expr");
+                    print_expr_field("operand", e.operand.get(), indent_level + 1);
+                },
             },
             expr.node);
     }
@@ -960,6 +983,42 @@ class AstPrinter final {
                 print_block(*statement.if_stmt->else_block, indent_level + 2);
             }
             break;
+        case ast::StatementSyntaxKind::IfLet: {
+            // RFC e-1 minimal POC: mirrors the `if` printer shape with an
+            // additional `pattern` section that serializes variant(binding*).
+            // Roundtripping the textual surface is handled by the formatter;
+            // this printer is for developer/debug consumption.
+            line(indent_level, "if_let");
+            std::ostringstream pattern_builder;
+            if (statement.if_let_stmt && statement.if_let_stmt->pattern) {
+                const auto &p = *statement.if_let_stmt->pattern;
+                pattern_builder << p.variant_name;
+                if (!p.bindings.empty()) {
+                    pattern_builder << "(";
+                    for (std::size_t i = 0; i < p.bindings.size(); ++i) {
+                        if (i != 0) {
+                            pattern_builder << ", ";
+                        }
+                        pattern_builder << p.bindings[i];
+                    }
+                    pattern_builder << ")";
+                }
+            }
+            line(indent_level + 1, "pattern " + pattern_builder.str());
+            if (statement.if_let_stmt) {
+                print_expr_field(
+                    "scrutinee", statement.if_let_stmt->scrutinee.get(), indent_level + 1);
+                line(indent_level + 1, "then");
+                if (statement.if_let_stmt->then_block) {
+                    print_block(*statement.if_let_stmt->then_block, indent_level + 2);
+                }
+                if (statement.if_let_stmt->else_block) {
+                    line(indent_level + 1, "else");
+                    print_block(*statement.if_let_stmt->else_block, indent_level + 2);
+                }
+            }
+            break;
+        }
         case ast::StatementSyntaxKind::Goto:
             line(indent_level, "goto " + statement.goto_stmt->target_state);
             break;
@@ -970,6 +1029,26 @@ class AstPrinter final {
         case ast::StatementSyntaxKind::Assert:
             line(indent_level, "assert");
             print_expr_field("condition", statement.assert_stmt->condition.get(), indent_level + 1);
+            if (statement.assert_stmt->message) {
+                print_expr_field("message", statement.assert_stmt->message.get(), indent_level + 1);
+            }
+            break;
+        case ast::StatementSyntaxKind::Unwrap:
+            line(indent_level, "unwrap");
+            print_expr_field("operand", statement.unwrap_stmt->operand.get(), indent_level + 1);
+            break;
+        case ast::StatementSyntaxKind::Requires:
+            line(indent_level, "requires");
+            print_expr_field("condition", statement.requires_stmt->condition.get(), indent_level + 1);
+            if (statement.requires_stmt->message) {
+                print_expr_field("message", statement.requires_stmt->message.get(), indent_level + 1);
+            }
+            break;
+        case ast::StatementSyntaxKind::Unreachable:
+            line(indent_level, "unreachable");
+            if (statement.unreachable_stmt && statement.unreachable_stmt->message) {
+                print_expr_field("message", statement.unreachable_stmt->message.get(), indent_level + 1);
+            }
             break;
         case ast::StatementSyntaxKind::Expr:
             line(indent_level, "expr_stmt");

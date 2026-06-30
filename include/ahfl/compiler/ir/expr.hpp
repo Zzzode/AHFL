@@ -243,9 +243,38 @@ struct MatchExpr {
     std::vector<MatchArmExpr> arms;
 };
 
-/// Expression node (16 variant alternatives - P5 Big Bang: container literals
+/// P4-02: unwrap(operand) as a right-hand-side expression.  Produces T from
+/// an Option<T>-typed operand at runtime; when the operand is the None
+/// variant the evaluator raises ExecAssertFailed with the message stored in
+/// `fallback_none_message` (or the built-in default when null).
+struct UnwrapExpr {
+    ExprRef operand;
+    ExprRef fallback_none_message{nullptr}; // user-provided failure message (rare)
+};
+
+/// Expression node (17 variant alternatives - P5 Big Bang: container literals
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
 /// QualifiedValueExpr + CallExpr)
+///
+/// ---------------------------------------------------------------------------
+/// SWEEP CHECKLIST — every new ExprNode alternative MUST update all 8 locations
+/// ---------------------------------------------------------------------------
+/// Whenever you add a variant to `ExprNode`, grep each file below for the
+/// pattern "case ExprKind::" / ".emplace<NewAlternative>" / the last similar
+/// alternative and add the matching branch.  Missing any one of these produces
+/// a silent data-loss bug (default branches tend to skip the new node).
+///
+///   1. src/compiler/ir/analysis.cpp            – IR traversals / cost models
+///   2. src/compiler/ir/ir_print.cpp            – textual IR dumper
+///   3. src/compiler/ir/verify.cpp              – BackendReady structural verifier
+///   4. src/compiler/ir/ir_json.cpp             – JSON (de)serialization for IR
+///   5. src/compiler/ir/opt/opt_lower.cpp       – optimisation / simplification
+///   6. src/compiler/ir/visitor.cpp             – both const AND mutating visitors
+///   7. src/compiler/ir/typed_hir_lower.cpp     – Typed HIR → IR construction
+///   8. src/compiler/assurance/assurance.cpp    – assurance-probe IR walk
+///
+/// Wave-18 P4-02 baseline: this checklist was derived from a full repository
+/// sweep after introducing UnwrapExpr; treat the list as authoritative.
 using ExprNode = std::variant<BoolLiteralExpr,
                               IntegerLiteralExpr,
                               FloatLiteralExpr,
@@ -261,7 +290,8 @@ using ExprNode = std::variant<BoolLiteralExpr,
                               BinaryExpr,
                               MemberAccessExpr,
                               IndexAccessExpr,
-                              MatchExpr>;
+                              MatchExpr,
+                              UnwrapExpr>;
 
 /// Expression wrapper struct
 struct Expr {
@@ -369,9 +399,36 @@ struct ReturnStatement {
     ExprRef value; // Return value expression
 };
 
-/// Assert statement: assert(condition);
+/// Assert statement: assert(condition[, "message"]);
 struct AssertStatement {
-    ExprRef condition; // Assertion condition
+    ExprRef condition;          // Assertion condition (Bool)
+    ExprRef message{nullptr};   // Optional user-facing failure message (String)
+};
+
+/// Unwrap statement: unwrap(operand);
+///
+/// P4-01 semantics: assert that the operand is Some(_). Value extraction
+/// (`let x = unwrap(opt)`) is deferred to a follow-up P4-02 `unwrap_expr`.
+struct UnwrapStatement {
+    ExprRef operand; // Expression of type Optional<T>
+};
+
+/// Requires statement: requires(condition[, "message"]);
+///
+/// Mirrors AssertStatement at the IR level; a distinct struct is kept so that
+/// backends (CLI failure reports, LSP diagnostics, formal verifiers) can
+/// present "contract violation" vs. "internal assert failure" differently.
+struct RequiresStatement {
+    ExprRef condition;          // Bool guard
+    ExprRef message{nullptr};   // Optional failure message
+};
+
+/// Unreachable statement: unreachable[("message")];
+///
+/// A hard dynamic failure: evaluator throws ExecAssertFailed whenever this
+/// statement is executed. Static reachability proofs are a separate pass.
+struct UnreachableStatement {
+    ExprRef message{nullptr}; // Optional failure message
 };
 
 /// Expression statement (e.g. capability call): expr;
@@ -379,13 +436,16 @@ struct ExprStatement {
     ExprRef expr;
 };
 
-/// Statement node (7 variant alternatives)
+/// Statement node (11 variant alternatives)
 using StatementNode = std::variant<LetStatement,
                                    AssignStatement,
                                    IfStatement,
                                    GotoStatement,
                                    ReturnStatement,
                                    AssertStatement,
+                                   UnwrapStatement,
+                                   RequiresStatement,
+                                   UnreachableStatement,
                                    ExprStatement>;
 
 /// Statement wrapper struct

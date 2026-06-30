@@ -1990,6 +1990,13 @@ ahfl_label_tests(
         ahfl.frontend.error_recovery_all
 )
 
+# Wave-21 A-1: parser stack-depth guard (PARSER_STACK_OVERFLOW diagnostic)
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-parser-hardening
+    TESTS
+        ahfl.frontend.parser_stack_depth_all
+)
+
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-support-lib
     TESTS
@@ -2027,6 +2034,12 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-counterexample
     TESTS
         ahfl.formal.counterexample_parse_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-bmc-depth
+    TESTS
+        ahfl.formal.bmc_depth_customization_all
 )
 
 ahfl_label_tests(

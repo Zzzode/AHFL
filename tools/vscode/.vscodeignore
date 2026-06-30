@@ -1,8 +1,10 @@
 .vscode/**
 .vscode-test/**
+.git/**
 node_modules/**
 src/**
 test/**
+docs/**
 dist/**
 *.vsix
 tsconfig.json

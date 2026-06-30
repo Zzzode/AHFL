@@ -92,6 +92,58 @@ void JsonDiagnosticConsumer::consume(
             out_ << ",\"column\":" << position.column;
         }
 
+        // Attach the structured related-notes array so machine consumers
+        // (CI log parsers, editor CLI diagnostics) can surface secondary
+        // locations alongside the primary diagnostic.
+        if (!diagnostic.related.empty()) {
+            out_ << ",\"relatedInformation\":[";
+            bool first_related = true;
+            for (const auto &related : diagnostic.related) {
+                if (!first_related) {
+                    out_ << ",";
+                }
+                first_related = false;
+                out_ << "{\"message\":\"";
+                json_escape(out_, related.message);
+                out_ << "\"";
+
+                std::optional<std::string_view> related_file;
+                std::optional<ahfl::SourcePosition> related_pos;
+                if (related.source_name.has_value()) {
+                    related_file = *related.source_name;
+                } else if (diagnostic.source_name.has_value()) {
+                    related_file = *diagnostic.source_name;
+                } else if (source.has_value()) {
+                    related_file = source->get().display_name;
+                }
+                if (source.has_value() && related.range.has_value() &&
+                    (!related.source_name.has_value() ||
+                     (diagnostic.source_name.has_value() &&
+                      *related.source_name == *diagnostic.source_name))) {
+                    related_pos = source->get().locate(related.range->begin_offset);
+                }
+
+                if (related_file.has_value() || related.range.has_value()) {
+                    out_ << ",\"location\":{";
+                    if (related_file.has_value()) {
+                        out_ << "\"file\":\"";
+                        json_escape(out_, *related_file);
+                        out_ << "\"";
+                    }
+                    if (related_pos.has_value()) {
+                        if (related_file.has_value()) {
+                            out_ << ",";
+                        }
+                        out_ << "\"line\":" << related_pos->line
+                             << ",\"column\":" << related_pos->column;
+                    }
+                    out_ << "}";
+                }
+                out_ << "}";
+            }
+            out_ << "]";
+        }
+
         out_ << "}\n";
         first_ = false;
     }

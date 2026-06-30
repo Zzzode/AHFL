@@ -508,6 +508,22 @@ class ProgramVerifier {
 
     void verify_statement_node(const AssertStatement &stmt, const std::string &path) {
         verify_required_expr_ref(stmt.condition, path + ".condition");
+        // message is optional on arity-1 assert forms.
+        verify_optional_expr_ref(stmt.message, path + ".message");
+    }
+
+    void verify_statement_node(const UnwrapStatement &stmt, const std::string &path) {
+        verify_required_expr_ref(stmt.operand, path + ".operand");
+    }
+
+    void verify_statement_node(const RequiresStatement &stmt, const std::string &path) {
+        verify_required_expr_ref(stmt.condition, path + ".condition");
+        verify_optional_expr_ref(stmt.message, path + ".message");
+    }
+
+    void verify_statement_node(const UnreachableStatement &stmt, const std::string &path) {
+        // message is optional on the bare `unreachable;` form.
+        verify_optional_expr_ref(stmt.message, path + ".message");
     }
 
     void verify_statement_node(const ExprStatement &stmt, const std::string &path) {
@@ -585,6 +601,13 @@ class ProgramVerifier {
             verify_optional_expr_ref(expr.arms[index].guard, arm_path + ".guard");
             verify_required_expr_ref(expr.arms[index].body, arm_path + ".body");
         }
+    }
+
+    // P4-02: unwrap(operand) — operand is required; optional failure message is
+    // optional (pure user-facing data; a null ref is fine and means "use default").
+    void verify_expr_node(const UnwrapExpr &expr, const std::string &path) {
+        verify_required_expr_ref(expr.operand, path + ".operand");
+        verify_optional_expr_ref(expr.fallback_none_message, path + ".fallback_none_message");
     }
 
     void verify_match_pattern(const MatchPattern &pattern, const std::string &path) {

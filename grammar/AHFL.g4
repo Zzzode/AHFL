@@ -29,9 +29,22 @@ moduleDecl: 'module' qualifiedIdent ';';
 
 importDecl: 'import' qualifiedIdent ('as' identifier)? ';';
 
-identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self';
+identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self' | 'unwrap' | 'requires' | 'unreachable';
 
 qualifiedIdent: identifier ('::' identifier)*;
+
+// Identifier used at the head of a standalone call expression.  Explicitly
+// excludes the statement-family keywords ('unwrap', 'requires', 'unreachable')
+// so constructs like `requires(true, "msg");` always parse as requiresStmt
+// (listed before exprStmt in the `statement` rule alternatives) rather than
+// as a function call.  Member-call syntax `.unwrap(sentinel)` still works
+// because postfixExpr's call-suffix arm uses the keyword-permissive
+// `identifier` rule directly.
+callableNamePiece
+    :   IDENT
+    |   'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self'
+    ;
+callableName: callableNamePiece ('::' callableNamePiece)*;
 
 qualifiedIdentList: qualifiedIdent (',' qualifiedIdent)* ','?;
 
@@ -69,10 +82,27 @@ structFieldDecl: IDENT ':' type_ ('=' constExpr)? ';';
 enumDecl:
 	'enum' identifier typeParams? '{' enumVariant (',' enumVariant)* ','? '}';
 
-// P1 (ADT): an enum variant optionally carries a positional tuple payload,
-// e.g. `Some(T)`, `Err(E)`. Existing payload-less variants parse unchanged
-// (payload is optional), preserving full backward compatibility.
-enumVariant: IDENT ('(' typeList ')')?;
+// P1 (ADT): an enum variant optionally carries a payload, one of:
+//   * absent — classic payload-less variant (e.g. `None`)
+//   * positional tuple — `IDENT ( typeList )` (e.g. `Some(T)`, `Err(E)`)
+//   * struct (named fields) — `IDENT ( variantFieldList )` (RFC d-1 POC,
+//     e.g. `Point(x: Int, y: Int)`). Absence vs tuple vs struct is
+//     disambiguated by the first token after `(`: if the second token is
+//     `:` it is a struct variant; otherwise a positional tuple is assumed.
+//     Backward compatibility with payload-less variants is preserved.
+enumVariant
+    : IDENT                                                              # unitEnumVariant
+    | IDENT '(' variantFieldList ')'                                     # structEnumVariant
+    | IDENT '(' typeList ')'                                             # tupleEnumVariant
+    ;
+
+// Named-field payload for a struct enum variant (RFC d-1 minimal POC).
+// Mirrors the surface syntax of fn param declarations / struct field
+// declarations but without the trailing semicolon and with an optional
+// default-initialiser, matching struct-field grammar.
+variantFieldDecl: IDENT ':' type_ ('=' constExpr)?;
+
+variantFieldList: variantFieldDecl (',' variantFieldDecl)* ','?;
 
 // Positional tuple payload type list (RFC §1.5 TupleFieldList). Reused by
 // variant patterns below.
@@ -137,8 +167,8 @@ param:
 	| 'mut'? 'self' (':' type_)?;
 
 agentDecl:
-	'agent' IDENT '{' inputDecl contextDecl outputDecl statesDecl initialDecl finalDecl
-		capabilitiesDecl quotaDecl? transitionDecl* '}';
+	'agent' IDENT '{' inputDecl contextDecl? outputDecl statesDecl initialDecl finalDecl
+		capabilitiesDecl? quotaDecl? transitionDecl* '}';
 
 inputDecl: 'input' ':' type_ ';';
 
@@ -294,7 +324,7 @@ lambdaParam: IDENT (':' type_)?;
 //   trait Name<T>: Super { fn method<U>(p: T) -> Ret [effect] [where ...]; type Assoc; }
 //   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type Assoc = T; }
 traitDecl:
-	DOC_COMMENT? 'trait' IDENT typeParams? (':' typeBoundList)? '{' traitItem* '}';
+	DOC_COMMENT? 'trait' IDENT typeParams? (':' typeBoundList)? whereClause? '{' traitItem* '}';
 
 traitItem: traitFnItem | assocTypeItem | assocConstItem;
 
@@ -351,9 +381,13 @@ statement:
 	letStmt
 	| assignStmt
 	| ifStmt
+	| ifLetStmt
 	| gotoStmt
 	| returnStmt
 	| assertStmt
+	| unwrapStmt
+	| requiresStmt
+	| unreachableStmt
 	| exprStmt;
 
 letStmt: 'let' IDENT (':' type_)? '=' expr ';';
@@ -362,11 +396,44 @@ assignStmt: lValue '=' expr ';';
 
 ifStmt: 'if' expr block ('else' block)?;
 
+// RFC e-1 (Wave-19 Lane 3b F2): optional narrowing surface syntax, minimal POC.
+// Only VariantName(ident[, ident]*) patterns are accepted at this stage.
+// Narrowing semantics / typecheck integration are deliberately deferred.
+ifLetStmt: 'if' 'let' iflet_pattern=ifLetPattern '=' expr thenBlock=block ('else' elseBlock=block)?;
+ifLetPattern: variant=IDENT ('(' ifLetPatternVar (',' ifLetPatternVar)* ','? ')')?;
+ifLetPatternVar: IDENT;
+
 gotoStmt: 'goto' IDENT ';';
 
 returnStmt: 'return' expr ';';
 
-assertStmt: 'assert' expr ';';
+// assert has two legal syntactic forms so legacy user code (`assert cond;`)
+// still parses while the new `assert(cond[, "msg"]);` form supports optional
+// message (arity-2).  Both are normalized to `AssertStmtSyntax` by the
+// frontend so downstream stages see a single shape.  P4-01 emits WrongArity
+// at semantic level for `assert();` (0 args) or `assert(a,b,c,...);` (3+).
+assertStmt
+	: 'assert' '(' exprList? ')' ';'
+	| 'assert' expr ';'
+	;
+
+// unwrap expects exactly one expression (Option<T>).  Variable arity is
+// accepted by the grammar so WrongArity can be reported at the typechecker
+// (with a stable `typecheck.WRONG_ARITY` code) instead of as a parse error.
+unwrapStmt: 'unwrap' '(' exprList? ')' ';';
+
+// requires mirrors assert: accepts 1 (condition) or 2 (condition + message)
+// arguments.  Disambiguated from contract `requires:` by the `(` lookahead.
+requiresStmt: 'requires' '(' exprList? ')' ';';
+
+// unreachable has two forms: bare `unreachable;` (0 args) and the
+// message-bearing `unreachable(["msg"]);` form.  Using exprList for the
+// parenthesized body allows semantic-level WrongArity when someone writes
+// `unreachable("a", "b");` (2 args).
+unreachableStmt
+	: 'unreachable' '(' exprList? ')' ';'
+	| 'unreachable' ';'
+	;
 
 exprStmt: expr ';';
 
@@ -401,12 +468,19 @@ postfixExpr:
 primaryExpr:
 	  literal
 	| callExpr
+	| unwrapExpr
 	| structLiteral
 	| qualifiedValueExpr
 	| pathExpr
 	| matchExpr
 	| lambdaExpr
 	| '(' expr ')';
+
+// P4-02: `unwrap(e)` is an expression that produces T from an Option<T>
+// operand at runtime, or raises ExecAssertFailed if the operand is None.
+// Grammatically it lives in primaryExpr so precedence is identical to
+// callExpr / parenthesised expressions (higher than any postfix suffix).
+unwrapExpr: 'unwrap' '(' expr ')';
 
 // P1 (ADT): `match` expression. `match scrutinee { arm1; arm2; ... }`.
 // Each arm is `pattern [if guard] => expr,`. The trailing comma is optional
@@ -470,7 +544,7 @@ pathRoot: IDENT | 'input' | 'output' | 'self';
 
 qualifiedValueExpr: identifier '::' identifier ('::' identifier)*;
 
-callExpr: qualifiedIdent ('<' typeList '>')? '(' exprList? ')';
+callExpr: callableName ('<' typeList '>')? '(' exprList? ')';
 
 exprList: expr (',' expr)* ','?;
 

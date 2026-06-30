@@ -6,6 +6,7 @@
 #include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -85,6 +86,7 @@ class ResolverPass final {
         run_program(program);
 
         detect_type_alias_cycles();
+        run_lint_pass();
         return std::move(result_);
     }
 
@@ -97,6 +99,7 @@ class ResolverPass final {
         run_source_graph_pass(graph, Pass::ResolveReferences);
 
         detect_type_alias_cycles();
+        run_lint_pass();
         return std::move(result_);
     }
 
@@ -148,7 +151,10 @@ class ResolverPass final {
             visit(static_cast<const ast::ImplDecl &>(node));
             return;
         case ast::NodeKind::Program:
-            emit_error("unexpected program node in declarations list", current_source_, node.range);
+            emit_error(error_codes::resolve::MultipleModuleDeclarations,
+                       MessageTemplate{"unexpected program node in declarations list"},
+                       current_source_,
+                       node.range);
             return;
         }
     }
@@ -160,7 +166,8 @@ class ResolverPass final {
 
         if (source_graph_mode_ && current_source_id_.has_value()) {
             if (module_name_.has_value() && node.name->spelling() != *module_name_) {
-                emit_error("source unit module boundary does not match graph owner",
+                emit_error(error_codes::resolve::ModuleBoundaryMismatch,
+                           messages::resolve::ModuleBoundaryMismatch,
                            current_source_,
                            node.range);
             }
@@ -174,10 +181,14 @@ class ResolverPass final {
             return;
         }
 
-        emit_error("multiple module declarations are not supported in one source file",
+        emit_error(error_codes::resolve::MultipleModuleDeclarations,
+                   MessageTemplate{"multiple module declarations are not supported in one source file"},
                    current_source_,
                    node.range);
-        emit_note("first module declaration is here", current_source_, module_range_);
+        emit_note(error_codes::resolve::MultipleModuleDeclarations,
+                  messages::resolve::FirstModuleDeclarationHere,
+                  current_source_,
+                  module_range_);
     }
 
     void visit(const ast::ImportDecl &node) {
@@ -197,11 +208,17 @@ class ResolverPass final {
 
         if (const auto existing = import_alias_index_.find(node.alias);
             existing != import_alias_index_.end()) {
-            emit_error("duplicate import alias '" + node.alias + "'", current_source_, node.range);
+            emit_error(error_codes::resolve::DuplicateImport,
+                       messages::resolve::DuplicateImport,
+                       current_source_,
+                       node.range,
+                       node.alias);
             const auto &prev_import = result_.imports()[existing->second];
             if (auto src = source_unit_for(*prev_import.source_id); src.has_value()) {
-                emit_note(
-                    "previous import alias is here", &src->get(), prev_import.declaration_range);
+                emit_note(error_codes::resolve::DuplicateImport,
+                          messages::resolve::PreviousImportHere,
+                          &src->get(),
+                          prev_import.declaration_range);
             }
             return;
         }
@@ -617,6 +634,19 @@ class ResolverPass final {
                 resolve_type(*super_trait);
             }
 
+            if (node.where_clause) {
+                for (const auto &constraint : node.where_clause->constraints) {
+                    if (constraint->subject) {
+                        resolve_type(*constraint->subject);
+                    }
+                    for (const auto &bound : constraint->bounds) {
+                        if (bound) {
+                            resolve_type(*bound);
+                        }
+                    }
+                }
+            }
+
             for (const auto &item : node.items) {
                 resolve_trait_item(*item);
             }
@@ -812,31 +842,83 @@ class ResolverPass final {
         return std::nullopt;
     }
 
-    void emit_error(std::string message,
+    void emit_error(ErrorCode<DiagnosticCategory::Resolve> code,
+                    MessageTemplate message_template,
                     const SourceUnit *source,
                     std::optional<SourceRange> range = std::nullopt) {
+        const auto message = std::string(message_template.format);
         if (source != nullptr) {
             result_.diagnostics.error()
-                .message(std::move(message))
+                .code(code)
+                .message(message)
                 .range(range)
                 .source(source->source)
                 .emit();
         } else {
-            result_.diagnostics.error().message(std::move(message)).range(range).emit();
+            result_.diagnostics.error().code(code).message(message).range(range).emit();
         }
     }
 
-    void emit_note(std::string message,
-                   const SourceUnit *source,
-                   std::optional<SourceRange> range = std::nullopt) {
+    template <typename... Args>
+    void emit_error(ErrorCode<DiagnosticCategory::Resolve> code,
+                    const MessageTemplate &message_template,
+                    const SourceUnit *source,
+                    std::optional<SourceRange> range,
+                    Args &&...args) {
+        const auto message = message_template.format_with(std::forward<Args>(args)...);
         if (source != nullptr) {
-            result_.diagnostics.note()
-                .message(std::move(message))
+            result_.diagnostics.error()
+                .code(code)
+                .message(std::string(message))
                 .range(range)
                 .source(source->source)
                 .emit();
         } else {
-            result_.diagnostics.note().message(std::move(message)).range(range).emit();
+            result_.diagnostics.error()
+                .code(code)
+                .message(std::string(message))
+                .range(range)
+                .emit();
+        }
+    }
+
+    void emit_note(ErrorCode<DiagnosticCategory::Resolve> code,
+                   MessageTemplate message_template,
+                   const SourceUnit *source,
+                   std::optional<SourceRange> range = std::nullopt) {
+        const auto message = std::string(message_template.format);
+        if (source != nullptr) {
+            result_.diagnostics.note()
+                .code(code)
+                .message(message)
+                .range(range)
+                .source(source->source)
+                .emit();
+        } else {
+            result_.diagnostics.note().code(code).message(message).range(range).emit();
+        }
+    }
+
+    template <typename... Args>
+    void emit_note(ErrorCode<DiagnosticCategory::Resolve> code,
+                   const MessageTemplate &message_template,
+                   const SourceUnit *source,
+                   std::optional<SourceRange> range,
+                   Args &&...args) {
+        const auto message = message_template.format_with(std::forward<Args>(args)...);
+        if (source != nullptr) {
+            result_.diagnostics.note()
+                .code(code)
+                .message(std::string(message))
+                .range(range)
+                .source(source->source)
+                .emit();
+        } else {
+            result_.diagnostics.note()
+                .code(code)
+                .message(std::string(message))
+                .range(range)
+                .emit();
         }
     }
 
@@ -850,15 +932,18 @@ class ResolverPass final {
         if (const auto existing = module_index.find(std::string(local_name));
             existing != module_index.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            emit_error("duplicate " + namespace_name(name_space) + " '" + std::string(local_name) +
-                           "'",
+            emit_error(error_codes::resolve::DuplicateSymbol,
+                       messages::resolve::DuplicateSymbol,
                        current_source_,
-                       range);
+                       range,
+                       namespace_name(name_space),
+                       std::string(local_name));
 
             if (previous_symbol.has_value()) {
                 if (auto src = source_unit_for(*previous_symbol->get().source_id);
                     src.has_value()) {
-                    emit_note("previous declaration is here",
+                    emit_note(error_codes::resolve::DuplicateSymbol,
+                              messages::resolve::PreviousDeclarationHere,
                               &src->get(),
                               previous_symbol->get().declaration_range);
                 }
@@ -882,15 +967,18 @@ class ResolverPass final {
         if (const auto existing = index.canonical_names.find(symbol.canonical_name);
             existing != index.canonical_names.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            emit_error("duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name +
-                           "'",
+            emit_error(error_codes::resolve::DuplicateSymbol,
+                       messages::resolve::DuplicateSymbol,
                        current_source_,
-                       range);
+                       range,
+                       namespace_name(name_space),
+                       symbol.canonical_name);
 
             if (previous_symbol.has_value()) {
                 if (auto src = source_unit_for(*previous_symbol->get().source_id);
                     src.has_value()) {
-                    emit_note("previous declaration is here",
+                    emit_note(error_codes::resolve::DuplicateSymbol,
+                              messages::resolve::PreviousDeclarationHere,
                               &src->get(),
                               previous_symbol->get().declaration_range);
                 }
@@ -1013,9 +1101,12 @@ class ResolverPass final {
                                                             std::string_view expected_name) {
         const auto resolved = lookup(name_space, name);
         if (!resolved.has_value()) {
-            emit_error("unknown " + std::string(expected_name) + " '" + name.spelling() + "'",
+            emit_error(error_codes::resolve::UnknownSymbol,
+                       messages::resolve::UnknownSymbol,
                        current_source_,
-                       name.range);
+                       name.range,
+                       std::string(expected_name),
+                       std::string(name.spelling()));
             return std::nullopt;
         }
 
@@ -1036,14 +1127,16 @@ class ResolverPass final {
         const auto function = lookup(SymbolNamespace::Functions, name);
 
         if (capability.has_value() && predicate.has_value()) {
-            emit_error("ambiguous callable '" + name.spelling() +
-                           "' matches both a capability and a predicate",
+            emit_error(error_codes::resolve::AmbiguousCallable,
+                       messages::resolve::AmbiguousCallable,
                        current_source_,
-                       name.range);
+                       name.range,
+                       name.spelling());
 
             if (const auto symbol = result_.symbol_table.get(*capability); symbol.has_value()) {
                 if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
-                    emit_note("capability declaration is here",
+                    emit_note(error_codes::resolve::AmbiguousCallable,
+                              messages::resolve::CapabilityDeclarationHere,
                               &src->get(),
                               symbol->get().declaration_range);
                 }
@@ -1051,7 +1144,8 @@ class ResolverPass final {
 
             if (const auto symbol = result_.symbol_table.get(*predicate); symbol.has_value()) {
                 if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
-                    emit_note("predicate declaration is here",
+                    emit_note(error_codes::resolve::AmbiguousCallable,
+                              messages::resolve::PredicateDeclarationHere,
                               &src->get(),
                               symbol->get().declaration_range);
                 }
@@ -1131,7 +1225,11 @@ class ResolverPass final {
             return std::nullopt;
         }
 
-        emit_error("unknown callable '" + name.spelling() + "'", current_source_, name.range);
+        emit_error(error_codes::resolve::UnknownCallable,
+                   messages::resolve::UnknownCallable,
+                   current_source_,
+                   name.range,
+                   name.spelling());
         return std::nullopt;
     }
 
@@ -1394,6 +1492,14 @@ class ResolverPass final {
                                resolve_declaration_expr(*e.body);
                            }
                        },
+                       // P4-02: unwrap(e) — the operand is the only child
+                       // expression; its qualified-value / callable references
+                       // must be registered before typecheck.
+                       [&](const ast::UnwrapExprSyntax &e) {
+                           if (e.operand) {
+                               resolve_declaration_expr(*e.operand);
+                           }
+                       },
                        [&](const ast::QualifiedValueExpr &e) {
                            if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
                                resolved.has_value()) {
@@ -1437,8 +1543,12 @@ class ResolverPass final {
             case ast::StatementSyntaxKind::Assign:
             case ast::StatementSyntaxKind::Return:
             case ast::StatementSyntaxKind::Assert:
+            case ast::StatementSyntaxKind::Unwrap:
+            case ast::StatementSyntaxKind::Requires:
+            case ast::StatementSyntaxKind::Unreachable:
             case ast::StatementSyntaxKind::Expr:
             case ast::StatementSyntaxKind::Goto:
+            case ast::StatementSyntaxKind::IfLet:
                 break;
             }
         }
@@ -1460,11 +1570,46 @@ class ResolverPass final {
                     resolve_block_exprs(*statement->if_stmt->else_block);
                 }
                 break;
+            case ast::StatementSyntaxKind::IfLet:
+                // RFC e-1 if-let (Wave-19 Lane 3b E): minimal walker stub so the
+                // -Wswitch gate stays green. The pattern has no nested AST
+                // nodes yet; only scrutinee + branches need traversal.
+                if (statement->if_let_stmt->scrutinee) {
+                    resolve_declaration_expr(*statement->if_let_stmt->scrutinee);
+                }
+                resolve_block_exprs(*statement->if_let_stmt->then_block);
+                if (statement->if_let_stmt->else_block) {
+                    resolve_block_exprs(*statement->if_let_stmt->else_block);
+                }
+                break;
             case ast::StatementSyntaxKind::Return:
                 resolve_declaration_expr(*statement->return_stmt->value);
                 break;
             case ast::StatementSyntaxKind::Assert:
-                resolve_declaration_expr(*statement->assert_stmt->condition);
+                if (statement->assert_stmt->condition) {
+                    resolve_declaration_expr(*statement->assert_stmt->condition);
+                }
+                if (statement->assert_stmt->message) {
+                    resolve_declaration_expr(*statement->assert_stmt->message);
+                }
+                break;
+            case ast::StatementSyntaxKind::Unwrap:
+                if (statement->unwrap_stmt->operand) {
+                    resolve_declaration_expr(*statement->unwrap_stmt->operand);
+                }
+                break;
+            case ast::StatementSyntaxKind::Requires:
+                if (statement->requires_stmt->condition) {
+                    resolve_declaration_expr(*statement->requires_stmt->condition);
+                }
+                if (statement->requires_stmt->message) {
+                    resolve_declaration_expr(*statement->requires_stmt->message);
+                }
+                break;
+            case ast::StatementSyntaxKind::Unreachable:
+                if (statement->unreachable_stmt->message) {
+                    resolve_declaration_expr(*statement->unreachable_stmt->message);
+                }
                 break;
             case ast::StatementSyntaxKind::Expr:
                 resolve_declaration_expr(*statement->expr_stmt->expr);
@@ -1519,6 +1664,353 @@ class ResolverPass final {
         }
     }
 
+    // ---- Wave-19 g-4 M7: lint-family pass ----
+    //
+    // Runs after the three core resolver passes and type-alias cycle
+    // detection. Emits Severity=Warning diagnostics under the new
+    // DiagnosticCategory::Lint. Lint diagnostics are *never* promoted to
+    // errors — the category value itself is the gate: no existing Werror
+    // post-processing path scans the category, so lint warnings cannot turn
+    // a clean build into a failure (see `lintSeverityStrategy` in the M7
+    // task spec for rationale).
+
+    [[nodiscard]] static std::string_view nominal_kind_label(SymbolKind kind) {
+        switch (kind) {
+        case SymbolKind::Struct:
+            return "struct";
+        case SymbolKind::Enum:
+            return "enum";
+        case SymbolKind::TypeAlias:
+            return "type alias";
+        case SymbolKind::Trait:
+            return "trait";
+        // Not nominal, but listed for completeness of the switch.
+        case SymbolKind::Const:
+            return "const";
+        case SymbolKind::Capability:
+            return "capability";
+        case SymbolKind::Predicate:
+            return "predicate";
+        case SymbolKind::Agent:
+            return "agent";
+        case SymbolKind::Workflow:
+            return "workflow";
+        case SymbolKind::Function:
+            return "fn";
+        }
+        return "declaration";
+    }
+
+    // L1: DUPLICATE_STRUCT_NAME — generalised to *any* nominal kind
+    // (struct/enum/type alias/trait) whose local name collides across 2+
+    // module boundaries. Same-module duplicates are handled by
+    // register_symbol() and produce DuplicateSymbol errors, so we skip any
+    // group that lives entirely in one module.
+    void lint_nominal_duplicates() {
+        // Walk every symbol namespace (not just Types — users can also have
+        // duplicate Capability/Predicate names across modules, though those
+        // are rarer). The "DUPLICATE_STRUCT_NAME" diagnostic code is reused
+        // for all nominal kinds (the message spells out the actual kind) —
+        // the identifier is stable per the task spec.
+        constexpr std::array<SymbolNamespace, 7> kLintNamespaces = {{
+            SymbolNamespace::Types,
+            SymbolNamespace::Capabilities,
+            SymbolNamespace::Predicates,
+            SymbolNamespace::Agents,
+            SymbolNamespace::Workflows,
+            SymbolNamespace::Functions,
+            SymbolNamespace::Consts,
+        }};
+
+        for (const auto name_space : kLintNamespaces) {
+            const auto &index = result_.symbol_table.index(name_space);
+
+            // Collect every (local_name, vector<SymbolId>) where the count
+            // of distinct module owners is >= 2. We iterate module by
+            // module rather than using find_all_local N times so the work
+            // stays O(total registered names).
+            //
+            // NOTE: we include symbols registered by the stdlib (std::*,
+            // option::, collection::, …) because users can still shadow
+            // them. However, *groups that consist entirely of stdlib
+            // modules* (module_name starts with "std::", "option::", etc.)
+            // are excluded — the stdlib itself is curated and the user has
+            // no way to rename those without patching it, so the warning
+            // would be unactionable noise. This also keeps the lint
+            // baseline stable across stdlib upgrades and prevents a
+            // single-module user project from seeing DUPLICATE_STRUCT_NAME
+            // warnings purely because List/Map/Option exist in multiple
+            // stdlib namespaces.
+            const auto is_stdlib_module = [](std::string_view mod) -> bool {
+                if (mod.empty()) return false;
+                if (mod.substr(0, 5) == "std::") return true;
+                return false;
+            };
+
+            std::unordered_map<std::string, std::vector<SymbolId>> by_local;
+            for (const auto &[mod, local_map] : index.module_local_names) {
+                if (is_stdlib_module(mod)) {
+                    continue;
+                }
+                for (const auto &[local_name, sid] : local_map) {
+                    by_local[local_name].push_back(sid);
+                }
+            }
+
+            for (const auto &[local_name, ids] : by_local) {
+                if (ids.size() < 2) {
+                    continue;
+                }
+
+                // Sub-partition by SymbolKind — we only report duplicates
+                // of the *same* nominal kind (task spec: "且都属于同一
+                // nominal kind") and skip cross-kind groups (those are
+                // NAME_COLLISION_ACROSS_KINDS territory, handled below).
+                std::unordered_map<SymbolKind, std::vector<SymbolId>> by_kind;
+                for (const auto sid : ids) {
+                    const auto sym = result_.symbol_table.get(sid);
+                    if (!sym.has_value()) {
+                        continue;
+                    }
+                    by_kind[sym->get().kind].push_back(sid);
+                }
+
+                for (auto &[kind, kind_ids] : by_kind) {
+                    if (kind_ids.size() < 2) {
+                        continue;
+                    }
+
+                    // Exemption: all ids come from the same module — the
+                    // earlier DuplicateSymbol / ExactSchemaMismatch
+                    // diagnostic already covered this case.
+                    const auto first_opt =
+                        result_.symbol_table.get(kind_ids.front());
+                    if (!first_opt.has_value()) {
+                        continue;
+                    }
+                    const Symbol &first = first_opt->get();
+                    bool all_same_module = true;
+                    for (const auto sid : kind_ids) {
+                        const auto s = result_.symbol_table.get(sid);
+                        if (!s.has_value() || s->get().module_name != first.module_name) {
+                            all_same_module = false;
+                            break;
+                        }
+                    }
+                    if (all_same_module) {
+                        continue;
+                    }
+
+                    // Stable sort by (module_name, begin_offset) to match
+                    // find_all_local's documented ordering.
+                    std::sort(kind_ids.begin(), kind_ids.end(),
+                              [&](SymbolId a, SymbolId b) {
+                                  const auto sa = result_.symbol_table.get(a);
+                                  const auto sb = result_.symbol_table.get(b);
+                                  if (!sa.has_value() || !sb.has_value()) {
+                                      return a.value < b.value;
+                                  }
+                                  if (sa->get().module_name != sb->get().module_name) {
+                                      return sa->get().module_name < sb->get().module_name;
+                                  }
+                                  return sa->get().declaration_range.begin_offset <
+                                         sb->get().declaration_range.begin_offset;
+                              });
+
+                    const auto n_str = std::to_string(kind_ids.size());
+                    const auto kind_str = std::string(nominal_kind_label(kind));
+                    const auto message =
+                        messages::lint::DuplicateStructName.format_with(
+                            kind_str, local_name, n_str);
+
+                    const auto primary_sym_opt =
+                        result_.symbol_table.get(kind_ids.front());
+                    if (!primary_sym_opt.has_value()) {
+                        continue;
+                    }
+                    const Symbol &primary_sym = primary_sym_opt->get();
+                    const auto primary_src =
+                        primary_sym.source_id.has_value()
+                            ? source_unit_for(*primary_sym.source_id)
+                            : std::nullopt;
+                    const SourceUnit *primary_src_ptr =
+                        primary_src.has_value() ? &primary_src->get() : nullptr;
+
+                    // Build the diagnostic as a fully materialized struct so
+                    // we avoid the lifetime pitfall of chained rvalue-ref
+                    // fluent calls (each .method() on an rvalue returns a
+                    // temporary whose referenced contents can dangle before
+                    // emit()).
+                    Diagnostic diag;
+                    diag.severity = DiagnosticSeverity::Warning;
+                    diag.message = message;
+                    diag.code =
+                        error_codes::lint::DuplicateStructName.full_code();
+                    diag.range = primary_sym.declaration_range;
+                    if (primary_src_ptr != nullptr) {
+                        diag.source_name = primary_src_ptr->source.display_name;
+                        diag.position = primary_src_ptr->source.locate(
+                            primary_sym.declaration_range.begin_offset);
+                    }
+
+                    // N-1 "other definition in module M at <location>" notes.
+                    for (std::size_t i = 1; i < kind_ids.size(); ++i) {
+                        const auto other = result_.symbol_table.get(kind_ids[i]);
+                        if (!other.has_value()) {
+                            continue;
+                        }
+                        auto note_msg = messages::lint::OtherDefinitionInModule.format_with(
+                            other->get().module_name);
+                        std::optional<SourceId> note_sid = other->get().source_id;
+                        std::optional<std::string> note_src_name;
+                        if (note_sid.has_value()) {
+                            if (auto su = source_unit_for(*note_sid); su.has_value()) {
+                                note_src_name = su->get().source.display_name;
+                            }
+                        }
+                        diag.related.push_back(Diagnostic::Related{
+                            .message = std::move(note_msg),
+                            .range = other->get().declaration_range,
+                            .source_id = note_sid,
+                            .source_name = std::move(note_src_name),
+                        });
+                    }
+
+                    result_.diagnostics.add_diagnostic(std::move(diag));
+                }
+            }
+        }
+    }
+
+    // L2: NAME_COLLISION_ACROSS_KINDS — NOT IMPLEMENTED (marked N/A).
+    //
+    // Reasoning (see notes in the Wave-19 M7 report): AHFL's SymbolTable
+    // partitions declarations into seven *disjoint* namespaces (Types,
+    // Consts, Capabilities, Predicates, Agents, Workflows, Functions). A
+    // `struct Foo` lives under SymbolNamespace::Types and a `fn Foo` lives
+    // under SymbolNamespace::Functions; the two indices never share a key
+    // (see NamespaceIndex in resolver.hpp). Because every call-site /
+    // type-position / qualified-value position in the AST dispatches to the
+    // correct resolver namespace up-front, struct/Foo and fn/Foo are
+    // *never* ambiguous in AHFL's surface grammar the way they are in e.g.
+    // Python or Scheme. Adding a lint that would warn on "struct Foo + fn
+    // Foo" co-existing would therefore be a false-positive machine: the
+    // only "collision" the user could observe is an imaginary one. We
+    // retain the error code + message template for forward compatibility
+    // (if a future unified namespace lands) but the pass body is empty.
+    void lint_name_collision_across_kinds() {
+        // Intentionally empty — see comment above.
+    }
+
+    // L3: UNUSED_IMPORT — per-source unused import detection.
+    //
+    // Strategy (minimal per-source-id used set): for every import binding in
+    // `result_.imports()`, check whether any `ResolvedReference` with a
+    // matching source_id has a `text` whose first segment equals the import
+    // alias. Because normalize_name() in the resolver rewrites `Alias::X` to
+    // `TargetModule::X` *before* writing the reference, and single-segment
+    // names only resolve when no import alias is active, the simplest
+    // reliable check is: walk every reference whose `text` starts with the
+    // import alias (equality, or `alias + "::"` prefix), and if none match,
+    // emit UNUSED_IMPORT. This works for both single-segment imports
+    // (`import Foo from X` → alias used as bare `Foo`) and multi-segment
+    // references (`import X::Y as Z` → alias used as `Z::QName`).
+    void lint_unused_imports() {
+        // Build per-source reference texts for O(1) membership checks.
+        //
+        // SourceId has no default std::hash, so we key by the underlying
+        // std::size_t value — equivalent and cheaper than defining a new
+        // hash struct.
+        std::unordered_map<std::size_t,
+                           std::unordered_set<std::string_view>>
+            ref_prefixes_per_source;
+        for (const auto &ref : result_.references()) {
+            if (!ref.source_id.has_value()) {
+                continue;
+            }
+            ref_prefixes_per_source[ref.source_id->value].emplace(ref.text);
+        }
+
+        // Helper: does any reference text for `sid` begin with alias,
+        // either as an exact match (single-segment use) or followed by "::"
+        // (multi-segment use)?
+        const auto alias_is_used = [&](SourceId sid,
+                                       std::string_view alias) -> bool {
+            const auto it = ref_prefixes_per_source.find(sid.value);
+            if (it == ref_prefixes_per_source.end()) {
+                return false;
+            }
+            const auto &texts = it->second;
+            // (a) exact match
+            if (texts.count(alias) > 0) {
+                return true;
+            }
+            // (b) alias + "::" prefix — scan texts because we need a
+            // prefix check. Reference counts per source are bounded by the
+            // source's expression count (~hundreds at most), so the linear
+            // scan is acceptable.
+            const std::string prefix = std::string(alias) + "::";
+            for (const auto t : texts) {
+                if (t.size() >= prefix.size() &&
+                    t.compare(0, prefix.size(), prefix) == 0) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for (const auto &binding : result_.imports()) {
+            // Skip wildcards / re-exports that have no alias (the
+            // CollectImports pass writes alias="" for these).
+            if (binding.alias.empty()) {
+                continue;
+            }
+            if (!binding.source_id.has_value()) {
+                continue;
+            }
+            if (alias_is_used(*binding.source_id, binding.alias)) {
+                continue;
+            }
+
+            auto message = messages::lint::UnusedImport.format_with(
+                binding.alias, binding.target_module);
+            auto src_unit_opt = source_unit_for(*binding.source_id);
+            Diagnostic diag;
+            diag.severity = DiagnosticSeverity::Warning;
+            diag.message = std::move(message);
+            diag.code = error_codes::lint::UnusedImport.full_code();
+            diag.range = binding.declaration_range;
+            if (src_unit_opt.has_value()) {
+                const auto &src_unit = src_unit_opt->get();
+                diag.source_name = src_unit.source.display_name;
+                diag.position = src_unit.source.locate(
+                    binding.declaration_range.begin_offset);
+                diag.related.push_back(Diagnostic::Related{
+                    .message = std::string(
+                        messages::lint::ImportDeclarationHere.format),
+                    .range = binding.declaration_range,
+                    .source_id = binding.source_id,
+                    .source_name = src_unit.source.display_name,
+                });
+            } else {
+                diag.related.push_back(Diagnostic::Related{
+                    .message = std::string(
+                        messages::lint::ImportDeclarationHere.format),
+                    .range = binding.declaration_range,
+                    .source_id = binding.source_id,
+                    .source_name = std::nullopt,
+                });
+            }
+            result_.diagnostics.add_diagnostic(std::move(diag));
+        }
+    }
+
+    void run_lint_pass() {
+        lint_nominal_duplicates();
+        lint_name_collision_across_kinds();
+        lint_unused_imports();
+    }
+
     void report_alias_cycle(const std::vector<SymbolId> &stack, SymbolId entry) {
         const auto cycle_begin = std::find(stack.begin(), stack.end(), entry);
         if (cycle_begin == stack.end()) {
@@ -1549,17 +2041,25 @@ class ResolverPass final {
             builder << (symbol.has_value() ? symbol->get().local_name : "<alias>");
         }
 
-        const auto message = builder.str();
+        const auto message = std::string(messages::resolve::CyclicTypeAlias.format_with(builder.str()));
 
         for (std::size_t index = 0; index + 1 < cycle.size(); ++index) {
             if (const auto symbol = result_.symbol_table.get(cycle[index]); symbol.has_value()) {
                 if (source_graph_ != nullptr) {
                     if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
-                        emit_error(message, &src->get(), symbol->get().declaration_range);
+                        emit_error(error_codes::resolve::CyclicTypeAlias,
+                                   messages::resolve::CyclicTypeAlias,
+                                   &src->get(),
+                                   symbol->get().declaration_range,
+                                   builder.str());
                     }
                 } else {
                     // Single-file mode - emit without source
-                    emit_error(message, nullptr, symbol->get().declaration_range);
+                    emit_error(error_codes::resolve::CyclicTypeAlias,
+                               messages::resolve::CyclicTypeAlias,
+                               nullptr,
+                               symbol->get().declaration_range,
+                               builder.str());
                 }
             }
         }
@@ -1660,6 +2160,20 @@ MaybeCRef<Symbol> SymbolTable::find_canonical(SymbolNamespace name_space,
     }
 
     return std::nullopt;
+}
+
+std::vector<SymbolId> SymbolTable::find_all_local(SymbolNamespace name_space,
+                                                  std::string_view name) const {
+    std::vector<SymbolId> matches;
+    const auto key = std::string(name);
+    const auto &name_index = index(name_space);
+    for (const auto &[owner_module, local_names] : name_index.module_local_names) {
+        (void)owner_module;
+        if (const auto iter = local_names.find(key); iter != local_names.end()) {
+            matches.push_back(iter->second);
+        }
+    }
+    return matches;
 }
 
 const SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) const {

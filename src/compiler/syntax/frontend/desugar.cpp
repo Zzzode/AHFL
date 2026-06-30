@@ -176,13 +176,49 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
         }
         break;
     case ast::StatementSyntaxKind::Assert:
-        stmt.assert_stmt->condition = desugar_expr_node(std::move(stmt.assert_stmt->condition));
+        if (stmt.assert_stmt->condition) {
+            stmt.assert_stmt->condition = desugar_expr_node(std::move(stmt.assert_stmt->condition));
+        }
+        if (stmt.assert_stmt->message) {
+            stmt.assert_stmt->message = desugar_expr_node(std::move(stmt.assert_stmt->message));
+        }
+        break;
+    case ast::StatementSyntaxKind::Unwrap:
+        if (stmt.unwrap_stmt->operand) {
+            stmt.unwrap_stmt->operand = desugar_expr_node(std::move(stmt.unwrap_stmt->operand));
+        }
+        break;
+    case ast::StatementSyntaxKind::Requires:
+        if (stmt.requires_stmt->condition) {
+            stmt.requires_stmt->condition = desugar_expr_node(std::move(stmt.requires_stmt->condition));
+        }
+        if (stmt.requires_stmt->message) {
+            stmt.requires_stmt->message = desugar_expr_node(std::move(stmt.requires_stmt->message));
+        }
+        break;
+    case ast::StatementSyntaxKind::Unreachable:
+        if (stmt.unreachable_stmt->message) {
+            stmt.unreachable_stmt->message = desugar_expr_node(std::move(stmt.unreachable_stmt->message));
+        }
         break;
     case ast::StatementSyntaxKind::Expr:
         stmt.expr_stmt->expr = desugar_expr_node(std::move(stmt.expr_stmt->expr));
         break;
     case ast::StatementSyntaxKind::Goto:
         break; // no expressions
+    case ast::StatementSyntaxKind::IfLet:
+        // IfLet (RFC e-1, Wave-19 Lane 3b) – no named struct variant payload
+        // to desugar inside the pattern at this phase; pattern fields are
+        // identifiers. The scrutinee and both branches are still desugared.
+        if (stmt.if_let_stmt->scrutinee) {
+            stmt.if_let_stmt->scrutinee =
+                desugar_expr_node(std::move(stmt.if_let_stmt->scrutinee));
+        }
+        desugar_block_node(*stmt.if_let_stmt->then_block);
+        if (stmt.if_let_stmt->else_block) {
+            desugar_block_node(*stmt.if_let_stmt->else_block);
+        }
+        break;
     }
 }
 

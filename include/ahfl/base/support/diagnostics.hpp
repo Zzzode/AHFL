@@ -49,6 +49,11 @@ enum class DiagnosticCategory {
     Backend,
     IO,
     Internal,
+    // M7 (Wave-19 g-4): project-wide lint diagnostics emitted after the
+    // resolution pass. Lint entries always carry Severity=Warning and are
+    // *never* promoted to errors, even when -Werror is enabled — they surface
+    // advisory information to the user rather than correctness failures.
+    Lint,
 };
 
 [[nodiscard]] inline std::string_view to_string(DiagnosticCategory category) noexcept {
@@ -69,6 +74,8 @@ enum class DiagnosticCategory {
         return "io";
     case DiagnosticCategory::Internal:
         return "internal";
+    case DiagnosticCategory::Lint:
+        return "lint";
     }
 
     return "unknown";
@@ -138,6 +145,11 @@ namespace parse {
 inline constexpr ErrorCode<DiagnosticCategory::Parse> UnexpectedToken{"UNEXPECTED_TOKEN"};
 inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidSyntax{"INVALID_SYNTAX"};
 inline constexpr ErrorCode<DiagnosticCategory::Parse> UnterminatedString{"UNTERMINATED_STRING"};
+// Wave-21 A-1: fired when ANTLR visitor recursion (tuple/paren/block/type nesting)
+// exceeds the ProgramBuilder::kMaxRecursionDepth (256) safety limit. Prevents
+// the native stack overflow observed in fuzz batch 2026-06-22 (deep parentheses).
+inline constexpr ErrorCode<DiagnosticCategory::Parse> ParserStackOverflow{
+    "PARSER_STACK_OVERFLOW"};
 } // namespace parse
 
 namespace resolve {
@@ -203,6 +215,14 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
     "CAPABILITY_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADOWED_BINDING"};
+// Wave-20 QW-4: optional agent grammar clauses. When `context` or
+// `capabilities` clauses are omitted from an agent declaration (allowed since
+// grammar was relaxed; see AHFL.g4 agentDecl) these two warning-level codes
+// carry a human-readable note explaining how to insert them back.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AgentContextOmitted{
+    "AGENT_CONTEXT_OMITTED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AgentCapabilitiesOmitted{
+    "AGENT_CAPABILITIES_OMITTED"};
 // P1 (ADT, RFC §1.6): match typecheck diagnostics. Surfaced by the P1b
 // match typecheck pass (scrutinee narrowing + arm unification + exhaustiveness).
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchNotYetSupported{
@@ -370,6 +390,25 @@ inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownWorkflow{"UNKNOWN
 inline constexpr ErrorCode<DiagnosticCategory::Backend> MissingBootstrap{"MISSING_BOOTSTRAP"};
 inline constexpr ErrorCode<DiagnosticCategory::Backend> InvalidDependency{"INVALID_DEPENDENCY"};
 } // namespace backend
+
+// ============================================================================
+// Wave-19 g-4 M7: Lint-family error codes
+// ============================================================================
+namespace lint {
+// L1: a nominal type (struct / enum / type alias / contract / trait) is
+// declared under the same local name in 2+ modules. Cross-module only —
+// same-module duplicates are already reported as DuplicateSymbol.
+inline constexpr ErrorCode<DiagnosticCategory::Lint> DuplicateStructName{
+    "DUPLICATE_STRUCT_NAME"};
+// L2: a name collides across different symbol kinds (e.g. struct Foo vs
+// capability Foo). Kept for completeness; only fires when a single user
+// namespace carries multiple kinds with the same local spelling.
+inline constexpr ErrorCode<DiagnosticCategory::Lint> NameCollisionAcrossKinds{
+    "NAME_COLLISION_ACROSS_KINDS"};
+// L3: an `import Alias from Module` binding in a source unit is never
+// referenced by any expression / type / callable in that unit.
+inline constexpr ErrorCode<DiagnosticCategory::Lint> UnusedImport{"UNUSED_IMPORT"};
+} // namespace lint
 } // namespace error_codes
 
 // ============================================================================
@@ -377,6 +416,15 @@ inline constexpr ErrorCode<DiagnosticCategory::Backend> InvalidDependency{"INVAL
 // ============================================================================
 
 namespace messages {
+// ---- Parse: parser-level diagnostics (ANTLR stage + ProgramBuilder lowering) ----
+namespace parse {
+// {0} = human-readable nesting kind ("expression parenthesisation", "tuple arity",
+//       "type-parameter nesting", "block depth")
+// {1} = current numeric depth
+// {2} = limit (always 256 in current implementation)
+inline constexpr MessageTemplate ParserStackOverflow{
+    "parser recursion too deep ({} nesting = {}; hard limit = {}). Simplify this expression or split it into smaller named declarations."};
+} // namespace parse
 namespace resolve {
 inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};
 inline constexpr MessageTemplate UnknownSymbol{"unknown {} '{}'"};
@@ -389,6 +437,13 @@ inline constexpr MessageTemplate ModuleBoundaryMismatch{
 // ---- Trait / Impl messages ----
 inline constexpr MessageTemplate TraitOrphanImpl{
     "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is local to this module"};
+// ---- Structured notes (shared error code with the primary diagnostic; distinguished by message text) ----
+inline constexpr MessageTemplate UnknownCallable{"unknown callable '{}'"};
+inline constexpr MessageTemplate PreviousDeclarationHere{"previous declaration is here"};
+inline constexpr MessageTemplate PreviousImportHere{"previous import alias is here"};
+inline constexpr MessageTemplate FirstModuleDeclarationHere{"first module declaration is here"};
+inline constexpr MessageTemplate CapabilityDeclarationHere{"capability declaration is here"};
+inline constexpr MessageTemplate PredicateDeclarationHere{"predicate declaration is here"};
 } // namespace resolve
 
 namespace typecheck {
@@ -404,6 +459,13 @@ inline constexpr MessageTemplate UnknownValue{"unknown value '{}'"};
 inline constexpr MessageTemplate UnknownQualifiedValue{"unknown qualified value '{}'"};
 inline constexpr MessageTemplate UnknownCallable{"unknown callable '{}'"};
 inline constexpr MessageTemplate ResolvedTypeSymbolMissing{"resolved type symbol is missing"};
+// --- Resolver-side structured notes (paired with DuplicateSymbol /
+// DuplicateImport / AmbiguousCallable / MultipleModuleDeclarations) ---
+inline constexpr MessageTemplate PreviousDeclarationHere{"previous declaration is here"};
+inline constexpr MessageTemplate PreviousImportHere{"previous import alias is here"};
+inline constexpr MessageTemplate FirstModuleDeclarationHere{"first module declaration is here"};
+inline constexpr MessageTemplate CapabilityDeclarationHere{"capability declaration is here"};
+inline constexpr MessageTemplate PredicateDeclarationHere{"predicate declaration is here"};
 inline constexpr MessageTemplate SymbolDoesNotNameType{"symbol '{}' does not name a type"};
 inline constexpr MessageTemplate TypeAliasCycleDuringResolution{
     "type alias cycle reached during type resolution"};
@@ -490,6 +552,12 @@ inline constexpr MessageTemplate DecreasesShadowedReceiver{
     "the termination measure is degraded to an abstract observation"};
 inline constexpr MessageTemplate UnknownCapabilityInAgent{
     "unknown capability '{}' in agent capability list"};
+// Wave-20 QW-4: message templates for the two optional-clause warning codes
+// (see diagnostics.hpp AGENT_CONTEXT_OMITTED / AGENT_CAPABILITIES_OMITTED).
+inline constexpr MessageTemplate AgentContextMissingNote{
+    "agent '{}' omits the optional `context` clause (stateless agents are allowed but discouraged for evolvability)"};
+inline constexpr MessageTemplate AgentCapabilitiesMissingNote{
+    "agent '{}' declares no `capabilities` clause (insert an empty `capabilities: [];` to silence)"};
 inline constexpr MessageTemplate CapabilityNotAllowed{
     "capability call '{}' is not allowed in this context"};
 inline constexpr MessageTemplate CapabilityNotDeclared{
@@ -664,6 +732,21 @@ inline constexpr MessageTemplate DecreasesShadowedReceiver{
 inline constexpr MessageTemplate DecreasesInNonPure{
     "decreases clause is only allowed in pure predicates; '{}' is marked impure"};
 } // namespace validation
+
+// ============================================================================
+// Wave-19 g-4 M7: Lint-family message templates
+// ============================================================================
+namespace lint {
+inline constexpr MessageTemplate DuplicateStructName{
+    "{} '{}' is defined in {} locations within project scope; use module qualification or rename"};
+inline constexpr MessageTemplate NameCollisionAcrossKinds{
+    "{} '{}' collides with {} with same name"};
+inline constexpr MessageTemplate UnusedImport{
+    "import '{}' from module '{}' is never used; remove to silence"};
+inline constexpr MessageTemplate OtherDefinitionInModule{
+    "other definition in module '{}'"};
+inline constexpr MessageTemplate ImportDeclarationHere{"import declaration is here"};
+} // namespace lint
 } // namespace messages
 
 // ============================================================================
@@ -684,6 +767,19 @@ struct Diagnostic {
     struct Related {
         std::string message;
         std::optional<SourceRange> range;
+
+        // When present, identifies the SourceFile that `range` is relative to.
+        // Used by LSP / JSON rendering to resolve the correct URI when a note
+        // references a different source unit than the primary diagnostic
+        // (e.g. "other declaration in module M" surfaced across module
+        // boundaries).
+        std::optional<SourceId> source_id;
+
+        // Human-readable display name for the source that owns this note's
+        // range. When present, CLI rendering will prefer it over the primary
+        // diagnostic's source_name so cross-module notes anchor to the right
+        // file label even without a full SourceFile registry.
+        std::optional<std::string> source_name;
     };
     std::vector<Related> related;
 };
@@ -763,13 +859,18 @@ class DiagnosticBuilder {
     }
 
     // Attach a secondary "related" note (e.g. "expected here", "declared here").
-    // The note inherits the primary diagnostic's source_name; its `range` is
-    // optional so callers can omit it when only contextual prose is needed.
+    // The note inherits the primary diagnostic's source_name unless
+    // `note_source_name` is provided (used for cross-module notes whose range
+    // lives in a different source unit).
     DiagnosticBuilder &&with_note(std::string note_message,
-                                  std::optional<SourceRange> note_range = std::nullopt) && {
+                                  std::optional<SourceRange> note_range = std::nullopt,
+                                  std::optional<SourceId> note_source_id = std::nullopt,
+                                  std::optional<std::string> note_source_name = std::nullopt) && {
         related_.push_back(Diagnostic::Related{
             .message = std::move(note_message),
             .range = note_range,
+            .source_id = note_source_id,
+            .source_name = std::move(note_source_name),
         });
         return std::move(*this);
     }
@@ -920,22 +1021,53 @@ class DiagnosticBag {
                     << std::string(span_end_in_line - col_start, '~') << '\n';
             }
 
-            // Render attached "related" notes (e.g. "note: expected here").
+            // Render attached "related" notes. Each note is indented and may
+            // anchor to a different source unit than the primary diagnostic
+            // (cross-module "other declaration in module M" notes).
             for (const auto &related : diagnostic.related) {
                 out << "  note: " << related.message;
-                if (related.range.has_value()) {
-                    if (diagnostic.source_name.has_value()) {
-                        out << " (" << *diagnostic.source_name;
-                        if (source.has_value()) {
-                            const auto pos = source->get().locate(related.range->begin_offset);
-                            out << ":" << pos.line << ":" << pos.column;
+                // A note may supply location metadata either as an explicit
+                // range (requires a valid source unit to translate into
+                // line/column) or purely as a source_name label. The block
+                // below covers both cases so CLI callers always see the
+                // owning source for cross-module notes even when no range is
+                // pinned.
+                const bool has_range = related.range.has_value();
+                const bool has_own_source = related.source_name.has_value();
+                const bool has_primary_source = diagnostic.source_name.has_value();
+                const bool has_context_source = source.has_value();
+
+                std::optional<std::string_view> display;
+                std::optional<SourcePosition> pos;
+
+                if (has_own_source) {
+                    display = *related.source_name;
+                } else if (has_primary_source) {
+                    display = *diagnostic.source_name;
+                } else if (has_context_source) {
+                    display = source->get().display_name;
+                }
+
+                if (has_range && has_context_source &&
+                    (!has_own_source ||
+                     (has_primary_source && *related.source_name == *diagnostic.source_name))) {
+                    // Notes pinned to the primary diagnostic's source unit
+                    // can resolve offsets to concrete line/column values.
+                    pos = source->get().locate(related.range->begin_offset);
+                }
+
+                if (display.has_value() || has_range) {
+                    if (display.has_value()) {
+                        out << " (" << *display;
+                        if (pos.has_value()) {
+                            out << ":" << pos->line << ":" << pos->column;
                         }
                         out << ")";
-                    } else if (source.has_value()) {
-                        const auto &src_file = source->get();
-                        const auto pos = src_file.locate(related.range->begin_offset);
-                        out << " (" << src_file.display_name << ":" << pos.line << ":" << pos.column
-                            << ")";
+                    } else if (has_range) {
+                        // No display name available but a range was set;
+                        // emit bare offset so callers can cross-reference
+                        // programmatically (rare fallback).
+                        out << " (@offset=" << related.range->begin_offset << ")";
                     }
                 }
                 out << '\n';

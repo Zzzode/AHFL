@@ -86,6 +86,38 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
     return seconds;
 }
 
+[[nodiscard]] std::optional<std::size_t> parse_bmc_depth(std::string_view value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    constexpr std::size_t kMaxBmcDepth = 1'000'000;
+    std::size_t depth = 0;
+    for (const char character : value) {
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        const std::size_t digit = static_cast<std::size_t>(character - '0');
+        if (depth > (kMaxBmcDepth - digit) / 10) {
+            return std::nullopt;
+        }
+        depth = depth * 10 + digit;
+    }
+    if (depth == 0) {
+        return std::nullopt;
+    }
+    return depth;
+}
+
+[[nodiscard]] std::optional<bool> parse_bool_flag(std::string_view value) {
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        return false;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] bool has_module_declaration(const ahfl::ast::Program &program) noexcept {
     return std::any_of(program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
         return decl && decl->kind == ahfl::ast::NodeKind::ModuleDecl;
@@ -810,6 +842,35 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.formal_model_out.has_value() && effective_command_ != CommandKind::VerifyFormal) {
         std::cerr << "error: --formal-model-out is only supported with verify-formal\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.bmc_depth.has_value() && effective_command_ != CommandKind::VerifyFormal &&
+        effective_command_ != CommandKind::EmitSmv) {
+        std::cerr << "error: --bmc-depth is only supported with verify-formal or emit smv\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.bmc_depth.has_value() && !parse_bmc_depth(*options_.bmc_depth).has_value()) {
+        std::cerr << "error: --bmc-depth expects a positive integer K in the range 1..1000000\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.bmc_boundary_invariants.has_value() &&
+        effective_command_ != CommandKind::VerifyFormal &&
+        effective_command_ != CommandKind::EmitSmv) {
+        std::cerr << "error: --bmc-boundary-invariants is only supported with verify-formal or "
+                     "emit smv\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.bmc_boundary_invariants.has_value() &&
+        !parse_bool_flag(*options_.bmc_boundary_invariants).has_value()) {
+        std::cerr << "error: --bmc-boundary-invariants expects true or false\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }

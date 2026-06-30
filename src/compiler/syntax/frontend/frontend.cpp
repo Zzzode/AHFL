@@ -9,6 +9,7 @@
 #include <optional>
 #include <ranges>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -22,6 +23,44 @@
 namespace ahfl {
 
 namespace {
+
+// Wave-21 A-1: thrown by ProgramBuilder::RecursionDepthGuard when the ANTLR
+// visitor descends past kMaxRecursionDepth (256). Caught by the existing
+// try/catch in Frontend::parse_text (frontend.cpp ~line 3090) which converts
+// it into a user-facing diagnostic.
+class ParserStackOverflowException : public std::runtime_error {
+  public:
+    ParserStackOverflowException(std::string nesting_kind,
+                                 std::size_t depth,
+                                 std::size_t limit,
+                                 SourceRange where)
+        : std::runtime_error(build_what(nesting_kind, depth, limit)),
+          nesting_kind_(std::move(nesting_kind)),
+          depth_(depth),
+          limit_(limit),
+          where_(where) {}
+
+    [[nodiscard]] const std::string &nesting_kind() const noexcept { return nesting_kind_; }
+    [[nodiscard]] std::size_t depth() const noexcept { return depth_; }
+    [[nodiscard]] std::size_t limit() const noexcept { return limit_; }
+    [[nodiscard]] SourceRange where() const noexcept { return where_; }
+
+  private:
+    static std::string build_what(const std::string &nesting_kind,
+                                  std::size_t depth,
+                                  std::size_t limit) {
+        std::ostringstream oss;
+        oss << "parser recursion too deep (" << nesting_kind << " nesting = " << depth
+            << "; hard limit = " << limit
+            << "). Simplify this expression or split it into smaller declarations.";
+        return oss.str();
+    }
+
+    std::string nesting_kind_;
+    std::size_t depth_;
+    std::size_t limit_;
+    SourceRange where_;
+};
 
 template <typename NodeT> [[nodiscard]] std::string text_of(NodeT &node) {
     return node.getText();
@@ -91,11 +130,27 @@ token_range(const antlr4::Token &start, MaybeCRef<antlr4::Token> stop, const Sou
     return clamp_range(begin_offset, end_offset, source);
 }
 
+// ── Helpers for the reference_wrapper unwrap in context_range below ───────
+namespace detail_is_rw_impl_ {
+template <typename T> struct is_reference_wrapper : std::false_type {};
+template <typename T> struct is_reference_wrapper<std::reference_wrapper<T>> : std::true_type {};
+} // namespace detail_is_rw_impl_
+template <typename T>
+struct detail_is_reference_wrapper
+    : detail_is_rw_impl_::is_reference_wrapper<std::remove_cv_t<T>> {};
+
 template <typename ContextT>
 [[nodiscard]] SourceRange context_range(ContextT &context, const SourceFile &source) {
-    return token_range(require(context.getStart(), "parser context start token is missing"),
-                       borrow(context.getStop()),
-                       source);
+    // Unwrap std::reference_wrapper<U> if present (ANTLR optional rules return
+    // reference_wrappers; call sites use borrow() which may yield wrappers).
+    using Unwrapped = std::remove_cvref_t<ContextT>;
+    if constexpr (detail_is_reference_wrapper<Unwrapped>::value) {
+        return context_range(context.get(), source);
+    } else {
+        return token_range(require(context.getStart(), "parser context start token is missing"),
+                           borrow(context.getStop()),
+                           source);
+    }
 }
 
 [[nodiscard]] SourceRange terminal_range(antlr4::tree::TerminalNode &node,
@@ -379,6 +434,45 @@ class ProgramBuilder {
     // const while still able to mint fresh ids.
     mutable std::uint64_t next_expr_id_{0};
 
+    // Wave-21 A-1: parser recursion guard. Incremented/decremented by
+    // RecursionDepthGuard at every build_* method entry/exit. Exceeding
+    // kMaxRecursionDepth throws ParserStackOverflowException which is caught
+    // by Frontend::parse_text and converted into a PARSER_STACK_OVERFLOW
+    // diagnostic. Hard-coded to 256 (conservative: macOS thread stacks are
+    // typically ~8 MB, and each build_* frame is ~1-2 KB, so 256 gives a
+    // generous 2x headroom).
+    static constexpr std::size_t kMaxRecursionDepth = 256;
+    mutable std::size_t recursion_depth_{0};
+
+    // RAII wrapper: {guard constructor increments & checks, destructor decrements}.
+    // One-liner at every build_* method entry:
+    //   auto guard = RecursionDepthGuard{*this, "kind_label", context_range(ctx, source_)};
+    class RecursionDepthGuard {
+      public:
+        RecursionDepthGuard(const ProgramBuilder &builder,
+                            std::string nesting_kind,
+                            SourceRange at_range)
+            : builder_(builder), nesting_kind_(std::move(nesting_kind)) {
+            ++builder_.recursion_depth_;
+            if (builder_.recursion_depth_ > kMaxRecursionDepth) {
+                throw ParserStackOverflowException(
+                    nesting_kind_,
+                    builder_.recursion_depth_,
+                    kMaxRecursionDepth,
+                    at_range);
+            }
+        }
+
+        ~RecursionDepthGuard() { --builder_.recursion_depth_; }
+
+        RecursionDepthGuard(const RecursionDepthGuard &) = delete;
+        RecursionDepthGuard &operator=(const RecursionDepthGuard &) = delete;
+
+      private:
+        const ProgramBuilder &builder_;
+        std::string nesting_kind_;
+    };
+
     // ProgramBuilder is the handwritten parse-tree lowering boundary. It is the
     // only place where later frontend work should routinely traverse generated
     // ANTLR contexts; resolver/checker stages must operate on ahfl::ast nodes.
@@ -490,9 +584,18 @@ class ProgramBuilder {
             declaration->input_type = build_type_syntax(
                 require(require(agent_decl->get().inputDecl(), "agent input is missing").type_(),
                         "agent input type is missing"));
-            declaration->context_type = build_type_syntax(require(
-                require(agent_decl->get().contextDecl(), "agent context is missing").type_(),
-                "agent context type is missing"));
+            // Wave-20 QW-4: `context` clause is optional on the grammar. When the
+            // user omits it (e.g. `agent A { input: X; output: Y; ... }`) we
+            // leave `context_type == nullptr` and let the typechecker emit a
+            // friendly "agent missing context type" diagnostic (see
+            // build_agent_types) instead of the parser's unreadable
+            // "mismatched input 'output' expecting 'context'" ANTLR message.
+            if (const auto ctx_decl = borrow(agent_decl->get().contextDecl())) {
+                declaration->context_type = build_type_syntax(
+                    require(ctx_decl->get().type_(), "agent context type is missing"));
+            } else {
+                declaration->context_type = nullptr;
+            }
             declaration->output_type = build_type_syntax(
                 require(require(agent_decl->get().outputDecl(), "agent output is missing").type_(),
                         "agent output type is missing"));
@@ -511,11 +614,18 @@ class ProgramBuilder {
                         "agent final states list is missing"));
             declaration->final_states_range =
                 context_range(*agent_decl->get().finalDecl(), source_);
-            declaration->capabilities = build_ident_list_opt(borrow(
-                require(agent_decl->get().capabilitiesDecl(), "agent capabilities are missing")
-                    .identListOpt()));
-            declaration->capabilities_range =
-                context_range(*agent_decl->get().capabilitiesDecl(), source_);
+            // Wave-20 QW-4: `capabilities` clause is optional on the grammar.
+            // When omitted, keep capabilities == empty vector and install a
+            // zero-length range so downstream diagnostics (e.g. "agent
+            // requires capability `Foo` but declares none") can point the
+            // user at the agent's opening keyword range with a helpful note.
+            if (const auto caps_decl = borrow(agent_decl->get().capabilitiesDecl())) {
+                declaration->capabilities = build_ident_list_opt(borrow(caps_decl->get().identListOpt()));
+                declaration->capabilities_range = context_range(*caps_decl, source_);
+            } else {
+                declaration->capabilities.clear();
+                declaration->capabilities_range = SourceRange{};
+            }
 
             if (const auto quota_decl = borrow(agent_decl->get().quotaDecl())) {
                 declaration->quota = build_agent_quota(quota_decl->get());
@@ -686,6 +796,10 @@ class ProgramBuilder {
                 declaration->super_traits.push_back(
                     build_type_syntax(require(bound_context, "super-trait bound is missing")));
             }
+        }
+
+        if (const auto where_clause = borrow(context.whereClause())) {
+            declaration->where_clause = build_where_clause(where_clause->get());
         }
 
         for (auto *item_context : context.traitItem()) {
@@ -1195,6 +1309,7 @@ class ProgramBuilder {
     }
 
     [[nodiscard]] Owned<ast::ExprSyntax> build_expr_syntax(AHFLParser::ExprContext &context) const {
+        auto guard = RecursionDepthGuard{*this, "expression", context_range(context, source_)};
         return rewrite_diamond_ambiguity(
             build_implies_expr(require(context.impliesExpr(), "expression body is missing")));
     }
@@ -1213,6 +1328,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::BlockSyntax>
     build_block_syntax(AHFLParser::BlockContext &context) const {
+        auto guard = RecursionDepthGuard{*this, "block", context_range(context, source_)};
         auto block = make_owned<ast::BlockSyntax>();
         block->range = context_range(context, source_);
 
@@ -1286,6 +1402,9 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::Lambda:
             expr->node = ast::LambdaExpr{};
+            break;
+        case ast::ExprSyntaxKind::UnwrapExpr:
+            expr->node = ast::UnwrapExprSyntax{};
             break;
         default:
             throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
@@ -1618,6 +1737,10 @@ class ProgramBuilder {
             return build_call_expr(call->get());
         }
 
+        if (const auto unwrap_expr = borrow(context.unwrapExpr())) {
+            return build_unwrap_expr(unwrap_expr->get());
+        }
+
         if (const auto struct_literal = borrow(context.structLiteral())) {
             return build_struct_literal_expr(struct_literal->get());
         }
@@ -1703,7 +1826,7 @@ class ProgramBuilder {
         auto expr = make_expr_syntax(ast::ExprSyntaxKind::Call, context_range(context, source_));
         auto &call_node = std::get<ast::CallExpr>(expr->node);
         call_node.callee =
-            build_qualified_name(require(context.qualifiedIdent(), "call target is missing"));
+            build_qualified_name(require(context.callableName(), "call target is missing"));
 
         if (const auto type_list = borrow(context.typeList())) {
             for (auto *type_context : type_list->get().type_()) {
@@ -1839,6 +1962,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::PatternSyntax>
     build_pattern(AHFLParser::PatternContext &context) const {
+        auto guard = RecursionDepthGuard{*this, "pattern", context_range(context, source_)};
         return build_or_pattern(require(context.orPattern(), "pattern body is missing"));
     }
 
@@ -2024,6 +2148,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::StatementSyntax>
     build_statement_syntax(AHFLParser::StatementContext &context) const {
+        auto guard = RecursionDepthGuard{*this, "statement", context_range(context, source_)};
         auto statement = make_owned<ast::StatementSyntax>();
         statement->range = context_range(context, source_);
 
@@ -2045,6 +2170,12 @@ class ProgramBuilder {
             return statement;
         }
 
+        if (const auto if_let_stmt = borrow(context.ifLetStmt())) {
+            statement->kind = ast::StatementSyntaxKind::IfLet;
+            statement->if_let_stmt = build_if_let_stmt(if_let_stmt->get());
+            return statement;
+        }
+
         if (const auto goto_stmt = borrow(context.gotoStmt())) {
             statement->kind = ast::StatementSyntaxKind::Goto;
             statement->goto_stmt = build_goto_stmt(goto_stmt->get());
@@ -2060,6 +2191,24 @@ class ProgramBuilder {
         if (const auto assert_stmt = borrow(context.assertStmt())) {
             statement->kind = ast::StatementSyntaxKind::Assert;
             statement->assert_stmt = build_assert_stmt(assert_stmt->get());
+            return statement;
+        }
+
+        if (const auto unwrap_stmt = borrow(context.unwrapStmt())) {
+            statement->kind = ast::StatementSyntaxKind::Unwrap;
+            statement->unwrap_stmt = build_unwrap_stmt(unwrap_stmt->get());
+            return statement;
+        }
+
+        if (const auto requires_stmt = borrow(context.requiresStmt())) {
+            statement->kind = ast::StatementSyntaxKind::Requires;
+            statement->requires_stmt = build_requires_stmt(requires_stmt->get());
+            return statement;
+        }
+
+        if (const auto unreachable_stmt = borrow(context.unreachableStmt())) {
+            statement->kind = ast::StatementSyntaxKind::Unreachable;
+            statement->unreachable_stmt = build_unreachable_stmt(unreachable_stmt->get());
             return statement;
         }
 
@@ -2115,6 +2264,38 @@ class ProgramBuilder {
         return statement;
     }
 
+    [[nodiscard]] Owned<ast::IfLetPatternSyntax>
+    build_if_let_pattern(AHFLParser::IfLetPatternContext &context) const {
+        auto pattern = make_owned<ast::IfLetPatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->variant_name = text_of(require(context.variant, "if let pattern variant is missing"));
+        for (const auto &var_ctx : context.ifLetPatternVar()) {
+            if (!var_ctx) {
+                continue;
+            }
+            auto &ident_token = require(var_ctx->IDENT(), "if let pattern binding is missing");
+            pattern->bindings.push_back(text_of(ident_token));
+        }
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::IfLetStmtSyntax>
+    build_if_let_stmt(AHFLParser::IfLetStmtContext &context) const {
+        auto statement = make_owned<ast::IfLetStmtSyntax>();
+        statement->range = context_range(context, source_);
+        statement->pattern = build_if_let_pattern(
+            require(context.iflet_pattern, "if let pattern section is missing"));
+        statement->scrutinee =
+            build_expr_syntax(require(context.expr(), "if let scrutinee is missing"));
+        statement->then_block = build_block_syntax(
+            require(context.thenBlock, "if let then block is missing"));
+        if (context.elseBlock != nullptr) {
+            statement->else_block = build_block_syntax(
+                require(context.elseBlock, "if let else block is missing"));
+        }
+        return statement;
+    }
+
     [[nodiscard]] Owned<ast::GotoStmtSyntax>
     build_goto_stmt(AHFLParser::GotoStmtContext &context) const {
         auto statement = make_owned<ast::GotoStmtSyntax>();
@@ -2135,8 +2316,89 @@ class ProgramBuilder {
     build_assert_stmt(AHFLParser::AssertStmtContext &context) const {
         auto statement = make_owned<ast::AssertStmtSyntax>();
         statement->range = context_range(context, source_);
-        statement->condition =
-            build_expr_syntax(require(context.expr(), "assert condition is missing"));
+
+        // Two grammatical forms share this builder (grammar AHFL.g4 assertStmt):
+        //   (a) 'assert' '(' exprList? ')' ';'   -- new arity-2 form
+        //   (b) 'assert' expr ';'                -- legacy arity-1 form (backward-compat)
+        // Both normalize to AssertStmtSyntax; arity-validation is deferred to the
+        // typechecker so a single, stable `typecheck.WRONG_ARITY` code is produced.
+        if (const auto list = borrow(context.exprList())) {
+            const auto exprs = list->get().expr();
+            statement->raw_arg_count = exprs.size();
+            if (!exprs.empty()) {
+                statement->condition = build_expr_syntax(require(exprs[0], "assert condition is missing"));
+            }
+            if (exprs.size() >= 2) {
+                statement->message = build_expr_syntax(require(exprs[1], "assert message is missing"));
+            }
+            // 3+ arguments are intentionally preserved as-is (via raw_arg_count)
+            // so the typechecker emits a WrongArity diagnostic referencing the
+            // real user-visible count.
+        } else if (const auto bare = borrow(context.expr())) {
+            // Legacy `assert cond;` form (no parens).
+            statement->condition = build_expr_syntax(bare->get());
+            statement->raw_arg_count = 1;
+        }
+        return statement;
+    }
+
+    [[nodiscard]] Owned<ast::UnwrapStmtSyntax>
+    build_unwrap_stmt(AHFLParser::UnwrapStmtContext &context) const {
+        auto statement = make_owned<ast::UnwrapStmtSyntax>();
+        statement->range = context_range(context, source_);
+        if (const auto list = borrow(context.exprList())) {
+            const auto exprs = list->get().expr();
+            statement->raw_arg_count = exprs.size();
+            if (!exprs.empty()) {
+                statement->operand = build_expr_syntax(require(exprs[0], "unwrap operand is missing"));
+            }
+        }
+        return statement;
+    }
+
+    // P4-02: expression-level `unwrap(operand)` — mirrors the statement form's
+    // operand-builder but stores into an UnwrapExprSyntax so `let x = unwrap(o)`
+    // produces a T-typed right-hand side instead of discarding the payload.
+    [[nodiscard]] Owned<ast::ExprSyntax>
+    build_unwrap_expr(AHFLParser::UnwrapExprContext &context) const {
+        auto expr = make_expr_syntax(ast::ExprSyntaxKind::UnwrapExpr,
+                                     context_range(context, source_));
+        auto &unwrap = std::get<ast::UnwrapExprSyntax>(expr->node);
+        unwrap.operand =
+            build_expr_syntax(require(context.expr(), "unwrap operand is missing"));
+        return expr;
+    }
+
+    [[nodiscard]] Owned<ast::RequiresStmtSyntax>
+    build_requires_stmt(AHFLParser::RequiresStmtContext &context) const {
+        auto statement = make_owned<ast::RequiresStmtSyntax>();
+        statement->range = context_range(context, source_);
+        if (const auto list = borrow(context.exprList())) {
+            const auto exprs = list->get().expr();
+            statement->raw_arg_count = exprs.size();
+            if (!exprs.empty()) {
+                statement->condition = build_expr_syntax(require(exprs[0], "requires condition is missing"));
+            }
+            if (exprs.size() >= 2) {
+                statement->message = build_expr_syntax(require(exprs[1], "requires message is missing"));
+            }
+        }
+        return statement;
+    }
+
+    [[nodiscard]] Owned<ast::UnreachableStmtSyntax>
+    build_unreachable_stmt(AHFLParser::UnreachableStmtContext &context) const {
+        auto statement = make_owned<ast::UnreachableStmtSyntax>();
+        statement->range = context_range(context, source_);
+        if (const auto list = borrow(context.exprList())) {
+            const auto exprs = list->get().expr();
+            statement->raw_arg_count = exprs.size();
+            if (!exprs.empty()) {
+                statement->message = build_expr_syntax(require(exprs[0], "unreachable message is missing"));
+            }
+        }
+        // `unreachable;` (no parentheses) reaches here with exprList()==nullptr
+        // and raw_arg_count == 0, which is the correct legal arity-0 form.
         return statement;
     }
 
@@ -2281,6 +2543,7 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::TypeSyntax>
     build_type_syntax(AHFLParser::Type_Context &context) const {
+        auto guard = RecursionDepthGuard{*this, "type parameter", context_range(context, source_)};
         if (const auto primitive_type = borrow(context.primitiveType())) {
             return build_primitive_type_syntax(primitive_type->get());
         }
@@ -2423,6 +2686,20 @@ class ProgramBuilder {
     [[nodiscard]] Owned<ast::QualifiedName>
     build_qualified_name(AHFLParser::QualifiedIdentContext &context) const {
         return build_qualified_name(context.identifier(), context_range(context, source_));
+    }
+
+    [[nodiscard]] Owned<ast::QualifiedName>
+    build_qualified_name(AHFLParser::CallableNameContext &context) const {
+        auto name = make_owned<ast::QualifiedName>();
+        name->range = context_range(context, source_);
+        for (auto *piece : context.callableNamePiece()) {
+            // Intentionally discard the `require` result: the null-check side effect
+            // (throws on null) is all we need here; dereferencing the returned
+            // reference is equivalent to using `piece` directly for getText().
+            (void)require(piece, "callable name segment is missing");
+            name->segments.push_back(piece->getText());
+        }
+        return name;
     }
 
     [[nodiscard]] Owned<ast::QualifiedName>
@@ -2671,19 +2948,56 @@ class ProgramBuilder {
     build_enum_variant_decl(AHFLParser::EnumVariantContext &context) const {
         auto variant = make_owned<ast::EnumVariantDeclSyntax>();
         variant->range = context_range(context, source_);
-        variant->name = text_of(require(context.IDENT(), "enum variant name is missing"));
 
-        // P1 (ADT, RFC §1.5): optional positional tuple payload, e.g.
-        // `Some(T)`, `Err(E)`. Absent for legacy payload-less variants —
-        // backward compatible (empty vector).
-        if (const auto type_list = borrow(context.typeList())) {
-            for (auto *type_context : type_list->get().type_()) {
-                variant->payload.push_back(build_type_syntax(
-                    require(type_context, "enum variant payload type is missing")));
-            }
+        // --------------------------------------------------------------------
+        // The grammar defines three labelled alternatives for enumVariant:
+        //   * unitEnumVariant   — bare IDENT (no payload)
+        //   * tupleEnumVariant  — IDENT ( typeList )
+        //   * structEnumVariant — IDENT ( variantFieldList )  [RFC d-1 POC]
+        //
+        // We downcast to the concrete context type so each arm reads the
+        // appropriate children without ambiguity.
+        // --------------------------------------------------------------------
+        if (auto *unit = dynamic_cast<AHFLParser::UnitEnumVariantContext *>(&context)) {
+            variant->name = text_of(require(unit->IDENT(), "enum variant name is missing"));
+            return variant;
         }
 
-        return variant;
+        if (auto *tuple = dynamic_cast<AHFLParser::TupleEnumVariantContext *>(&context)) {
+            variant->name = text_of(require(tuple->IDENT(), "enum variant name is missing"));
+            // P1 (ADT, RFC §1.5): optional positional tuple payload, e.g.
+            // `Some(T)`, `Err(E)`.
+            if (const auto type_list = borrow(tuple->typeList())) {
+                for (auto *type_context : type_list->get().type_()) {
+                    variant->payload.push_back(build_type_syntax(
+                        require(type_context, "enum variant payload type is missing")));
+                }
+            }
+            return variant;
+        }
+
+        if (auto *strct = dynamic_cast<AHFLParser::StructEnumVariantContext *>(&context)) {
+            variant->name = text_of(require(strct->IDENT(), "enum variant name is missing"));
+            // RFC d-1 minimal POC: struct-form enum variant with named fields,
+            // e.g. `Point(x: Int, y: Int)`.
+            if (const auto field_list = borrow(strct->variantFieldList())) {
+                for (auto *field_ctx : field_list->get().variantFieldDecl()) {
+                    auto field = make_owned<ast::EnumVariantFieldSyntax>();
+                    field->range = context_range(require(field_ctx, "struct variant field missing"), source_);
+                    field->name = text_of(require(field_ctx->IDENT(), "struct variant field name missing"));
+                    field->type = build_type_syntax(
+                        require(field_ctx->type_(), "struct variant field type missing"));
+                    if (const auto def = borrow(field_ctx->constExpr())) {
+                        field->default_value = build_expr_syntax(def->get());
+                    }
+                    variant->named_fields.push_back(std::move(field));
+                }
+            }
+            return variant;
+        }
+
+        // Defensive fallback (should not be reachable with the grammar above).
+        throw std::logic_error("enumVariant context did not match any labelled alternative");
     }
 
     [[nodiscard]] Owned<ast::TransitionSyntax>
@@ -2868,6 +3182,18 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         if (!invariant_violations.empty()) {
             result.program.reset();
         }
+    } catch (const ParserStackOverflowException &overflow) {
+        // Structured, code-carrying diagnostic (with ErrorCode for tooling).
+        // Code consumers (CLI / LSP / mutation) can branch on PARSER_STACK_OVERFLOW
+        // to propose "split into smaller declarations" refactors.
+        result.diagnostics.error()
+            .code(error_codes::parse::ParserStackOverflow)
+            .message(messages::parse::ParserStackOverflow,
+                     std::string_view(overflow.nesting_kind()),
+                     std::to_string(overflow.depth()),
+                     std::to_string(overflow.limit()))
+            .range(overflow.where())
+            .emit();
     } catch (const std::exception &exception) {
         result.diagnostics.error()
             .message("parser failed: " + std::string(exception.what()))

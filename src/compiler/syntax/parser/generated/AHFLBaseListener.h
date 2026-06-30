@@ -1,5 +1,5 @@
 
-// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -33,6 +33,12 @@ public:
 
   virtual void enterQualifiedIdent(AHFLParser::QualifiedIdentContext * /*ctx*/) override { }
   virtual void exitQualifiedIdent(AHFLParser::QualifiedIdentContext * /*ctx*/) override { }
+
+  virtual void enterCallableNamePiece(AHFLParser::CallableNamePieceContext * /*ctx*/) override { }
+  virtual void exitCallableNamePiece(AHFLParser::CallableNamePieceContext * /*ctx*/) override { }
+
+  virtual void enterCallableName(AHFLParser::CallableNameContext * /*ctx*/) override { }
+  virtual void exitCallableName(AHFLParser::CallableNameContext * /*ctx*/) override { }
 
   virtual void enterQualifiedIdentList(AHFLParser::QualifiedIdentListContext * /*ctx*/) override { }
   virtual void exitQualifiedIdentList(AHFLParser::QualifiedIdentListContext * /*ctx*/) override { }
@@ -294,6 +300,15 @@ public:
 
   virtual void enterAssertStmt(AHFLParser::AssertStmtContext * /*ctx*/) override { }
   virtual void exitAssertStmt(AHFLParser::AssertStmtContext * /*ctx*/) override { }
+
+  virtual void enterUnwrapStmt(AHFLParser::UnwrapStmtContext * /*ctx*/) override { }
+  virtual void exitUnwrapStmt(AHFLParser::UnwrapStmtContext * /*ctx*/) override { }
+
+  virtual void enterRequiresStmt(AHFLParser::RequiresStmtContext * /*ctx*/) override { }
+  virtual void exitRequiresStmt(AHFLParser::RequiresStmtContext * /*ctx*/) override { }
+
+  virtual void enterUnreachableStmt(AHFLParser::UnreachableStmtContext * /*ctx*/) override { }
+  virtual void exitUnreachableStmt(AHFLParser::UnreachableStmtContext * /*ctx*/) override { }
 
   virtual void enterExprStmt(AHFLParser::ExprStmtContext * /*ctx*/) override { }
   virtual void exitExprStmt(AHFLParser::ExprStmtContext * /*ctx*/) override { }

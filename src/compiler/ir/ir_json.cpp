@@ -894,6 +894,22 @@ class IrJsonPrinter final {
 	                        });
 	                    });
 	                },
+	                // P4-02: unwrap(operand) — operand mandatory; fallback_message is optional.
+	                [&](const ir::UnwrapExpr &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("unwrap"); });
+	                        print_expr_common_fields(field, expr, indent_level + 1);
+	                        field("operand",
+	                              [&]() { print_expr(*value.operand, indent_level + 1); });
+	                        field("fallback_none_message", [&]() {
+	                            if (value.fallback_none_message) {
+	                                print_expr(*value.fallback_none_message, indent_level + 1);
+	                            } else {
+	                                write_null();
+	                            }
+	                        });
+	                    });
+	                },
 	            },
 	            expr.node);
 	    }
@@ -1029,6 +1045,44 @@ class IrJsonPrinter final {
                         print_source_range_field(field, statement.source_range, indent_level + 1);
                         field("condition",
                               [&]() { print_expr(*value.condition, indent_level + 1); });
+                        if (value.message) {
+                            field("message",
+                                  [&]() { print_expr(*value.message, indent_level + 1); });
+                        }
+                    });
+                },
+                [&](const ir::UnwrapStatement &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("unwrap"); });
+                        print_source_range_field(field, statement.source_range, indent_level + 1);
+                        if (value.operand) {
+                            field("operand",
+                                  [&]() { print_expr(*value.operand, indent_level + 1); });
+                        }
+                    });
+                },
+                [&](const ir::RequiresStatement &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("requires"); });
+                        print_source_range_field(field, statement.source_range, indent_level + 1);
+                        if (value.condition) {
+                            field("condition",
+                                  [&]() { print_expr(*value.condition, indent_level + 1); });
+                        }
+                        if (value.message) {
+                            field("message",
+                                  [&]() { print_expr(*value.message, indent_level + 1); });
+                        }
+                    });
+                },
+                [&](const ir::UnreachableStatement &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("unreachable"); });
+                        print_source_range_field(field, statement.source_range, indent_level + 1);
+                        if (value.message) {
+                            field("message",
+                                  [&]() { print_expr(*value.message, indent_level + 1); });
+                        }
                     });
                 },
                 [&](const ir::ExprStatement &value) {

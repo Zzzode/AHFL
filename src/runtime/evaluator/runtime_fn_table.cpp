@@ -167,8 +167,9 @@ EvalResult invoke_body(const RuntimeFnEntry &entry,
                                        "' while evaluating fn '" + entry.mangled_name + "'");
             },
             [&](const ExecAssertFailed &a) -> EvalResult {
-                return make_call_error("assertion failed inside fn '" + entry.mangled_name + "': " +
-                                       a.message);
+                return make_call_error(
+                    "assertion failed inside fn '" + entry.mangled_name +
+                    "' (Failure type: " + std::string{to_string(a.kind)} + "): " + a.message);
             },
         },
         body_result.outcome);

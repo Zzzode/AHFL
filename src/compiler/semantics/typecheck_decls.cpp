@@ -745,12 +745,23 @@ void TypeCheckPass::build_agent_types() {
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
                 .input_type = resolve_type(*decl.get().input_type),
-                .context_type = resolve_type(*decl.get().context_type),
+                // Wave-20 QW-4: `context` clause is now optional at the
+                // grammar. When the user omits it we fall back to an
+                // anonymous struct type (empty fields — equivalent to no
+                // mutable state) AND emit a diagnostic telling them how to
+                // declare a context type (AHFL grammar requires input →
+                // context → output, but omitting context is allowed for
+                // stateless agents).
+                .context_type = decl.get().context_type != nullptr
+                                    ? resolve_type(*decl.get().context_type)
+                                    : make_type(TypeKind::Unit),
                 .output_type = resolve_type(*decl.get().output_type),
                 .capability_symbols = {},
                 .declaration_range = decl.get().range,
                 .input_type_range = decl.get().input_type->range,
-                .context_type_range = decl.get().context_type->range,
+                .context_type_range = decl.get().context_type != nullptr
+                                          ? decl.get().context_type->range
+                                          : decl.get().range,
                 .output_type_range = decl.get().output_type->range,
                 .states = {},
                 .initial_state = {},
@@ -759,11 +770,61 @@ void TypeCheckPass::build_agent_types() {
                 .quota = {},
             };
 
+            // Wave-20 QW-4: helpful diagnostics when optional fields are
+            // omitted. These replace the old opaque ANTLR "mismatched input
+            // 'output' expecting 'context'" (pre-QW-4 parse error) with a
+            // friendly semantic-level note.
+            if (decl.get().context_type == nullptr) {
+                auto builder =
+                    result_.diagnostics
+                        .warning()
+                        .code(error_codes::typecheck::AgentContextOmitted)
+                        .message(messages::typecheck::AgentContextMissingNote,
+                                 info.canonical_name)
+                        .range(decl.get().range)
+                        .with_note(
+                            "hint: insert `context: StructType;` between `input` and `output` sections to give this agent mutable state",
+                            decl.get().range);
+                if (current_source_ != nullptr) {
+                    std::move(builder).source(current_source_->source).emit();
+                } else {
+                    std::move(builder).emit();
+                }
+            }
+            if (decl.get().capabilities.empty() &&
+                decl.get().capabilities_range.empty()) {
+                auto builder =
+                    result_.diagnostics
+                        .warning()
+                        .code(error_codes::typecheck::
+                                     AgentCapabilitiesOmitted)
+                        .message(
+                            messages::typecheck::
+                                AgentCapabilitiesMissingNote,
+                            info.canonical_name)
+                        .range(decl.get().range)
+                        .with_note(
+                            "hint: insert `capabilities: [Cap1, Cap2];` (or `capabilities: [];` for none explicitly) between `final` and first `transition`",
+                            decl.get().range);
+                if (current_source_ != nullptr) {
+                    std::move(builder)
+                        .source(current_source_->source)
+                        .emit();
+                } else {
+                    std::move(builder).emit();
+                }
+            }
+
             check_schema_boundary_decl_type(
                 info.input_type, SchemaBoundaryKind::AgentInput, decl.get().input_type->range);
-            check_schema_boundary_decl_type(info.context_type,
-                                            SchemaBoundaryKind::AgentContextDefault,
-                                            decl.get().context_type->range);
+            // Wave-20 QW-4: when `context` is omitted (QW-4 grammar relaxed) we
+            // pass the synthetic empty struct type and the agent's whole range
+            // as the diagnostic anchor so warnings don't reference nullptr.
+            check_schema_boundary_decl_type(
+                info.context_type,
+                SchemaBoundaryKind::AgentContextDefault,
+                decl.get().context_type != nullptr ? decl.get().context_type->range
+                                                    : decl.get().range);
             check_schema_boundary_decl_type(
                 info.output_type, SchemaBoundaryKind::AgentOutput, decl.get().output_type->range);
 
@@ -1167,6 +1228,7 @@ void TypeCheckPass::build_trait_types() {
                 .super_traits = {},
                 .methods = {},
                 .assoc_types = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
             };
 
@@ -1803,6 +1865,7 @@ void ConstSema::check_struct_defaults() {
                         driver_->current_source_ != nullptr ? &driver_->current_source_->source
                                                             : nullptr,
                     },
+                    &driver_->resolve_result_.symbol_table,
                 };
                 (void)const_relations.check_struct_default(*value.checked_expr.type,
                                                            *field_info.type,

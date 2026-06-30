@@ -119,6 +119,12 @@ class SymbolTable {
                                                std::string_view module_name = "") const;
     [[nodiscard]] MaybeCRef<Symbol> find_canonical(SymbolNamespace name_space,
                                                    std::string_view name) const;
+    // Returns every symbol in the given namespace whose `local_name` matches
+    // `name`, regardless of which module owns it. Used by diagnostics that
+    // want to surface "declared in N locations" context when a name is
+    // provided by more than one module (e.g. TypeMismatch origin notes).
+    [[nodiscard]] std::vector<SymbolId> find_all_local(SymbolNamespace name_space,
+                                                       std::string_view name) const;
 
   private:
     friend class Resolver;

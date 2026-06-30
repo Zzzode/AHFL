@@ -253,6 +253,15 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
 	                           }
 	                       }
 	                   },
+	                   // P4-02: unwrap(operand) — walk operand; optional msg is data.
+	                   [&](const UnwrapExpr &value) {
+	                       if (!aborted_ && value.operand) {
+	                           visit_expr(*value.operand);
+	                       }
+	                       if (!aborted_ && value.fallback_none_message) {
+	                           visit_expr(*value.fallback_none_message);
+	                       }
+	                   },
 	               },
 	               expr.node);
 
@@ -345,6 +354,27 @@ void ProgramVisitor::visit_statement(const Statement &statement) {
                    [&](const AssertStatement &value) {
                        if (value.condition) {
                            visit_expr(*value.condition);
+                       }
+                       if (value.message) {
+                           visit_expr(*value.message);
+                       }
+                   },
+                   [&](const UnwrapStatement &value) {
+                       if (value.operand) {
+                           visit_expr(*value.operand);
+                       }
+                   },
+                   [&](const RequiresStatement &value) {
+                       if (value.condition) {
+                           visit_expr(*value.condition);
+                       }
+                       if (value.message) {
+                           visit_expr(*value.message);
+                       }
+                   },
+                   [&](const UnreachableStatement &value) {
+                       if (value.message) {
+                           visit_expr(*value.message);
                        }
                    },
                    [&](const ExprStatement &value) {
@@ -648,6 +678,17 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
 	                                  }
 	                                  return changed;
 	                              },
+	                              // P4-02: unwrap(operand) - walk + mutate children.
+	                              [&](UnwrapExpr &value) {
+	                                  bool changed = false;
+	                                  if (value.operand) {
+	                                      changed = rewrite_expr(*value.operand) || changed;
+	                                  }
+	                                  if (value.fallback_none_message) {
+	                                      changed = rewrite_expr(*value.fallback_none_message) || changed;
+	                                  }
+	                                  return changed;
+	                              },
 	                          },
 	                          expr.node) ||
                modified;
@@ -738,7 +779,28 @@ bool ProgramRewriter::rewrite_statement(Statement &statement) {
                            return value.value != nullptr && rewrite_expr(*value.value);
                        },
                        [&](AssertStatement &value) {
-                           return value.condition != nullptr && rewrite_expr(*value.condition);
+                           bool changed = value.condition != nullptr &&
+                                          rewrite_expr(*value.condition);
+                           if (value.message != nullptr) {
+                               changed = rewrite_expr(*value.message) || changed;
+                           }
+                           return changed;
+                       },
+                       [&](UnwrapStatement &value) {
+                           return value.operand != nullptr &&
+                                  rewrite_expr(*value.operand);
+                       },
+                       [&](RequiresStatement &value) {
+                           bool changed = value.condition != nullptr &&
+                                          rewrite_expr(*value.condition);
+                           if (value.message != nullptr) {
+                               changed = rewrite_expr(*value.message) || changed;
+                           }
+                           return changed;
+                       },
+                       [&](UnreachableStatement &value) {
+                           return value.message != nullptr &&
+                                  rewrite_expr(*value.message);
                        },
                        [&](ExprStatement &value) {
                            return value.expr != nullptr && rewrite_expr(*value.expr);

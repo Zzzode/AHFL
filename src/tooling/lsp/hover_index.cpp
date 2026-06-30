@@ -47,6 +47,11 @@ struct IdentifierSegment {
 [[nodiscard]] int default_priority(HoverTargetKind kind) noexcept {
     switch (kind) {
     case HoverTargetKind::Diagnostic:
+    case HoverTargetKind::StructLiteral:
+    case HoverTargetKind::EnumLiteral:
+    case HoverTargetKind::ConstEval:
+    case HoverTargetKind::ContractInstantiation:
+    case HoverTargetKind::CapabilityInstantiation:
         return 0;
     case HoverTargetKind::ModuleName:
     case HoverTargetKind::ImportPath:
@@ -73,6 +78,10 @@ struct IdentifierSegment {
     case HoverTargetKind::MemberAccess:
         return 2;
     case HoverTargetKind::Expression:
+        return 20;
+    case HoverTargetKind::Sentinel_ForStaticAssert:
+        // Sentinel is never registered into a hover index; fall through to the
+        // same "lowest priority" bucket as Expression so tie-breaks are stable.
         return 20;
     }
     return 20;
@@ -754,8 +763,34 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
 void add_struct_init_targets(HoverTargetIndex &index,
                              const LspAnalysisSnapshot &snapshot,
                              const LspSourceSnapshot &source,
+                             const ast::ExprSyntax &owner_expr,
                              const ast::StructLiteralExpr &expr) {
+    // A3: register the whole literal (TypeName { … }) as a construct-hover
+    // target. The hover renderer shows "Creates `Foo` with fields {…}".
     const auto owner = local_struct_symbol(snapshot, source, expr.type_name.get());
+    const std::string name_spelling =
+        expr.type_name != nullptr ? expr.type_name->spelling() : std::string{};
+    if (expr.type_name != nullptr) {
+        add_named_range_target(index,
+                               source,
+                               HoverTargetKind::StructLiteral,
+                               expr.type_name->range,
+                               name_spelling,
+                               owner,
+                               "struct literal construct site");
+    }
+    // Also register the full literal range so hovering the opening `{` or
+    // closing `}` surfaces the same construct summary.
+    index.add(HoverTarget{
+        .kind = HoverTargetKind::StructLiteral,
+        .token_range = owner_expr.range,
+        .source_id = source.source_id,
+        .symbol_id = owner,
+        .owner_symbol_id = owner,
+        .local_name = name_spelling,
+        .role = "struct literal construct site",
+    });
+
     for (const auto &field : expr.fields) {
         if (!field) {
             continue;
@@ -771,6 +806,162 @@ void add_struct_init_targets(HoverTargetIndex &index,
     }
 }
 
+// ---------------------------------------------------------------------------
+// Construct-Hover shared detection block.  Called from BOTH the AST-walk
+// entry (add_expr_syntax_targets, for MemberAccess / Path) and the typed-
+// expressions entry (add_typed_targets, as a belt-and-suspenders fallback).
+// The original detection lives in add_typed_targets; we replicate it here
+// because the TypedHIRBuilder does NOT populate `typed.expressions` for
+// most LSP pipelines (did_open / snapshot single-file mode) — the HIR
+// builder is gated behind has_errors() checks that short-circuit before
+// append_expression() on most non-trivial sources, even when typecheck
+// itself has successfully produced per-node type info via find_expr().
+//
+// So the reliable path is: AST-walk → typed_program.find_expr(node_id)
+// → use the node-local TypedExpr (populated by remember_expression_type
+// at typecheck time, not append_expression).
+// ---------------------------------------------------------------------------
+void try_register_construct_targets(HoverTargetIndex &index,
+                                    const LspAnalysisSnapshot &snapshot,
+                                    const LspSourceSnapshot &source,
+                                    const ast::ExprSyntax *expr,
+                                    std::uint32_t fallback_expr_index) {
+    if (snapshot.type_check_result == nullptr || expr == nullptr ||
+        source.source == nullptr) {
+        return;
+    }
+    const auto *type_check_result = snapshot.type_check_result.get();
+    const TypedExpr *typed = type_check_result->typed_program.find_expr(
+        expr->node_id, source.source_id);
+    std::uint32_t expr_index = fallback_expr_index;
+    if (typed == nullptr && fallback_expr_index < type_check_result->typed_program.expressions.size()) {
+        typed = &type_check_result->typed_program.expressions[fallback_expr_index];
+    }
+    if (typed == nullptr) {
+        return;
+    }
+    const auto &e = *typed;
+
+    // EnumLiteral detection — mirror of the add_typed_targets block.
+    if (e.type != nullptr) {
+        const EnumTypeInfo *matched_enum_info = nullptr;
+        const bool matched = e.type->visit(types::Overloads{
+            [&](const types::EnumT &enum_type) -> bool {
+                const EnumTypeInfo *enum_info = nullptr;
+                if (enum_type.symbol.has_value()) {
+                    auto it = type_check_result->environment.enums().find(
+                        enum_type.symbol->value);
+                    if (it != type_check_result->environment.enums().end()) {
+                        enum_info = &it->second;
+                    }
+                }
+                if (enum_info == nullptr) {
+                    for (const auto &[id, ei] :
+                         type_check_result->environment.enums()) {
+                        (void)id;
+                        if (ei.canonical_name == enum_type.canonical_name) {
+                            enum_info = &ei;
+                            break;
+                        }
+                    }
+                }
+                if (enum_info == nullptr) {
+                    return false;
+                }
+                std::string_view candidate_name;
+                if (e.kind == ast::ExprSyntaxKind::MemberAccess &&
+                    !e.member_name.empty()) {
+                    candidate_name = e.member_name;
+                } else {
+                    candidate_name = e.semantic_name;
+                }
+                // semantic_name is fully-qualified ("Priority::High"); strip
+                // the prefix so we match variant short names ("High") in
+                // has_variant().  Always use the last segment because:
+                //   - For MemberAccess with empty member_name (TypedExpr
+                //     path where remember_expression_type only populated
+                //     semantic_name), the last segment == the variant name.
+                //   - For PathExpr with plain variant, there's no "::" and
+                //     the string is returned unchanged.
+                if (const auto sep = candidate_name.rfind("::");
+                    sep != std::string_view::npos) {
+                    candidate_name = candidate_name.substr(sep + 2);
+                }
+                const bool is_variant =
+                    !candidate_name.empty() && enum_info->has_variant(candidate_name);
+                if (is_variant) {
+                    matched_enum_info = enum_info;
+                }
+                return is_variant;
+            },
+            [](const auto &) -> bool { return false; },
+        });
+        if (matched) {
+            SourceRange effective_range = e.range;
+                // Determine the identifier to narrow-to: prefer the concrete
+                // member_name (populated by TypedHirBuilder for the flat
+                // expressions vector); fall back to the last segment of the
+                // semantic_name (populated by remember_expression_type via
+                // the node_id index — this is the path that fires for AST-
+                // walk registrations where member_name is blank).
+                std::string narrow_target;
+                if (e.kind == ast::ExprSyntaxKind::MemberAccess &&
+                    !e.member_name.empty()) {
+                    narrow_target = std::string{e.member_name};
+                } else {
+                    const auto sep = e.semantic_name.rfind("::");
+                    if (sep != std::string::npos) {
+                        narrow_target =
+                            std::string{e.semantic_name.substr(sep + 2)};
+                    } else if (!e.semantic_name.empty()) {
+                        narrow_target = std::string{e.semantic_name};
+                    }
+                }
+                if (!narrow_target.empty()) {
+                    if (const auto narrow = last_identifier_range(
+                            *source.source, e.range, narrow_target);
+                        narrow.has_value()) {
+                        effective_range = *narrow;
+                    }
+                }
+            index.add(HoverTarget{
+                .kind = HoverTargetKind::EnumLiteral,
+                .token_range = effective_range,
+                .source_id = source.source_id,
+                .symbol_id = e.resolved_symbol,
+                // owner_symbol_id carries the enum type's SymbolId so the
+                // hover read-side can look up variant payload types for
+                // tuple-variant Construct Hover (Wave-21 Lane C-1).
+                .owner_symbol_id =
+                    matched_enum_info ? std::optional<SymbolId>{matched_enum_info->symbol}
+                                      : std::nullopt,
+                .typed_expr_index = expr_index,
+                .local_name = e.semantic_name,
+                .role = "enum-variant construct site",
+                .source_label = source.source->display_name,
+            });
+        }
+    }
+
+    // ConstEval detection — mirror of the add_typed_targets block.
+    if (e.resolved_symbol.has_value()) {
+        const auto ct = type_check_result->environment.get_const_type(
+            *e.resolved_symbol);
+        if (ct.has_value()) {
+            index.add(HoverTarget{
+                .kind = HoverTargetKind::ConstEval,
+                .token_range = e.range,
+                .source_id = source.source_id,
+                .symbol_id = e.resolved_symbol,
+                .typed_expr_index = expr_index,
+                .local_name = e.semantic_name,
+                .role = "compile-time constant reference",
+                .source_label = source.source->display_name,
+            });
+        }
+    }
+}
+
 void add_expr_syntax_targets(HoverTargetIndex &index,
                              const LspAnalysisSnapshot &snapshot,
                              const LspSourceSnapshot &source,
@@ -779,9 +970,21 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
         return;
     }
 
+    // Entry trace: surfaces every AST-expression walk so we can confirm
+    // struct-field default values and flow-body expressions are visited.
+
+    // NOTE: the `try_register_construct_targets` call below runs BEFORE the
+    // std::visit because MemberAccessExpr and PathExpr are both leaf-ish
+    // nodes w.r.t. construct detection — we want the narrowest (variant-
+    // identifier / const-reference) range registered as early as possible
+    // for tie-breaking.  Sub-expression recursion (done inside visit) then
+    // registers any nested construct sites, e.g. a ConstEval used as the
+    // enum-variant payload inside `Some(K * 2)`.
+    try_register_construct_targets(index, snapshot, source, expr, 0U);
+
     std::visit(Overloaded{
                    [&](const ast::StructLiteralExpr &e) {
-                       add_struct_init_targets(index, snapshot, source, e);
+                       add_struct_init_targets(index, snapshot, source, *expr, e);
                    },
                    [&](const ast::CallExpr &e) {
                        for (const auto &item : e.arguments) {
@@ -804,6 +1007,9 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
                    },
                    [&](const ast::MemberAccessExpr &e) {
                        add_expr_syntax_targets(index, snapshot, source, e.base.get());
+                   },
+                   [&](const ast::UnwrapExprSyntax &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.operand.get());
                    },
                    [](const auto &) {
                        // Leaf expressions with no sub-expressions — nothing to add
@@ -908,6 +1114,20 @@ void add_statement_targets(HoverTargetIndex &index,
                 index, snapshot, source, statement.if_stmt->else_block.get(), owner_agent);
         }
         return;
+    case ast::StatementSyntaxKind::IfLet:
+        // RFC e-1 minimal POC: walk scrutinee + then/else bodies so hover
+        // targets inside the new syntax are still indexed.  Pattern bindings
+        // are not materialised as symbols yet (narrowing / symbol-intro
+        // deferred to follow-up work).
+        if (statement.if_let_stmt) {
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.if_let_stmt->scrutinee.get());
+            add_block_targets(
+                index, snapshot, source, statement.if_let_stmt->then_block.get(), owner_agent);
+            add_block_targets(
+                index, snapshot, source, statement.if_let_stmt->else_block.get(), owner_agent);
+        }
+        return;
     case ast::StatementSyntaxKind::Return:
         if (statement.return_stmt) {
             add_expr_syntax_targets(index, snapshot, source, statement.return_stmt->value.get());
@@ -917,6 +1137,28 @@ void add_statement_targets(HoverTargetIndex &index,
         if (statement.assert_stmt) {
             add_expr_syntax_targets(
                 index, snapshot, source, statement.assert_stmt->condition.get());
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.assert_stmt->message.get());
+        }
+        return;
+    case ast::StatementSyntaxKind::Unwrap:
+        if (statement.unwrap_stmt) {
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.unwrap_stmt->operand.get());
+        }
+        return;
+    case ast::StatementSyntaxKind::Requires:
+        if (statement.requires_stmt) {
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.requires_stmt->condition.get());
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.requires_stmt->message.get());
+        }
+        return;
+    case ast::StatementSyntaxKind::Unreachable:
+        if (statement.unreachable_stmt) {
+            add_expr_syntax_targets(
+                index, snapshot, source, statement.unreachable_stmt->message.get());
         }
         return;
     case ast::StatementSyntaxKind::Expr:
@@ -1383,6 +1625,183 @@ void add_typed_targets(HoverTargetIndex &index,
                 });
             }
         }
+
+        // --------------------------------------------------------------------
+        // Construct Hover (Wave-19 Lane 3 + Wave-20 Lane 1): write-side
+        // registration for the priority-0 HoverTargetKind family.  The
+        // read-side lives in hover_service.cpp::target_payload(…), so every
+        // `index.add(…)` here must have a matching `case HoverTargetKind::…`
+        // branch there.  Priority 0 beats every other priority bucket in the
+        // ORDER CONTRACT, so adding these entries on the exact expression
+        // range (smallest containing range) makes Construct Hover win over
+        // the generic Expression, Reference, and MemberAccess entries.
+        // --------------------------------------------------------------------
+
+        // EnumLiteral: any expression that constructs a *specific* enum
+        // variant value (e.g. `Priority::High`, `Color::Red`).
+        //
+        // Detection uses a two-key match because variant declarations do
+        // not currently carry their own SymbolId (EnumVariantInfo only has
+        // name/range/payload).  The detection rule:
+        //   1. The expression's *result type* is the parent enum (EnumT),
+        //      which carries the correct canonical_name and an optional
+        //      SymbolId pointing at the enum declaration.
+        //   2. The expression accesses a *specific member name*
+        //      (MemberAccess.member_name for `Enum::Variant` form, or the
+        //      semantic_name for plain Path form).  That member name must
+        //      be present in the enum declaration's `has_variant(name)`
+        //      set.
+        //
+        // Narrowing to the variant identifier (see COMMENT block above on
+        // smallest-range tie-breaking) ensures the Construct Hover wins
+        // over the enum-declaration site when the developer hovers the
+        // *variant name* — the common IDE gesture.
+        if (expr.type != nullptr) {
+            const EnumTypeInfo *matched_enum_info = nullptr;
+            const bool matched = expr.type->visit(types::Overloads{
+                [&](const types::EnumT &enum_type) -> bool {
+                    // (a) Resolve the concrete EnumTypeInfo for this enum
+                    //     instantiation.  Prefer the SymbolId pointer; fall
+                    //     back to a linear canonical_name scan.
+                    const EnumTypeInfo *enum_info = nullptr;
+                    if (enum_type.symbol.has_value()) {
+                        auto it = type_check_result->environment.enums().find(
+                            enum_type.symbol->value);
+                        if (it != type_check_result->environment.enums().end()) {
+                            enum_info = &it->second;
+                        }
+                    }
+                    if (enum_info == nullptr) {
+                        for (const auto &[id, ei] :
+                             type_check_result->environment.enums()) {
+                            (void)id;
+                            if (ei.canonical_name == enum_type.canonical_name) {
+                                enum_info = &ei;
+                                break;
+                            }
+                        }
+                    }
+                    if (enum_info == nullptr) {
+                        return false;
+                    }
+                    // (b) Decide which identifier names the variant.
+                    std::string_view candidate_name;
+                    if (expr.kind == ast::ExprSyntaxKind::MemberAccess &&
+                        !expr.member_name.empty()) {
+                        candidate_name = expr.member_name;
+                    } else {
+                        candidate_name = expr.semantic_name;
+                    }
+                    // semantic_name may be fully-qualified
+                    // ("Priority::High"); strip to the last segment so
+                    // has_variant(name) matches (variants store short names).
+                    if (const auto sep = candidate_name.rfind("::");
+                        sep != std::string_view::npos) {
+                        candidate_name = candidate_name.substr(sep + 2);
+                    }
+                    const bool is_variant =
+                        !candidate_name.empty() && enum_info->has_variant(candidate_name);
+                    if (is_variant) {
+                        matched_enum_info = enum_info;
+                    }
+                    return is_variant;
+                },
+                [](const auto &) -> bool { return false; },
+            });
+            if (matched) {
+                SourceRange effective_range = expr.range;
+                // Narrow to the variant identifier: prefer member_name when
+                // populated; fall back to the last segment of semantic_name
+                // (see helper try_register_construct_targets for rationale).
+                std::string narrow_target;
+                if (expr.kind == ast::ExprSyntaxKind::MemberAccess &&
+                    !expr.member_name.empty()) {
+                    narrow_target = std::string{expr.member_name};
+                } else {
+                    const auto sep = expr.semantic_name.rfind("::");
+                    if (sep != std::string::npos) {
+                        narrow_target =
+                            std::string{expr.semantic_name.substr(sep + 2)};
+                    } else if (!expr.semantic_name.empty()) {
+                        narrow_target = std::string{expr.semantic_name};
+                    }
+                }
+                if (!narrow_target.empty()) {
+                    if (const auto narrow = last_identifier_range(
+                            *source.source, expr.range, narrow_target);
+                        narrow.has_value()) {
+                        effective_range = *narrow;
+                    }
+                }
+                index.add(HoverTarget{
+                    .kind = HoverTargetKind::EnumLiteral,
+                    .token_range = effective_range,
+                    .source_id = source.source_id,
+                    .symbol_id = expr.resolved_symbol,
+                    // owner_symbol_id carries the enum type's SymbolId so
+                    // the read-side can resolve variant payload types for
+                    // tuple-variant Construct Hover (Wave-21 Lane C-1).
+                    .owner_symbol_id =
+                        matched_enum_info
+                            ? std::optional<SymbolId>{matched_enum_info->symbol}
+                            : std::nullopt,
+                    .typed_expr_index = expr_index,
+                    .local_name = expr.semantic_name,
+                    .role = "enum-variant construct site",
+                    .source_label = source.source->display_name,
+                });
+            }
+        }
+
+        // ConstEval: any expression that resolves to a Compile-Time Constant
+        // symbol is a candidate for showing its fully-evaluated value inline
+        // (not just the declaration-site type).  The renderer appends
+        // `= <compile-time value>` after the canonical constant name.
+        if (expr.resolved_symbol.has_value()) {
+            const auto ct = type_check_result->environment.get_const_type(
+                *expr.resolved_symbol);
+            if (ct.has_value()) {
+                index.add(HoverTarget{
+                    .kind = HoverTargetKind::ConstEval,
+                    .token_range = expr.range,
+                    .source_id = source.source_id,
+                    .symbol_id = expr.resolved_symbol,
+                    .typed_expr_index = expr_index,
+                    .local_name = expr.semantic_name,
+                    .role = "compile-time constant reference",
+                    .source_label = source.source->display_name,
+                });
+            }
+        }
+    }
+
+    // Diagnostics: every diagnostic produced by the semantic pipeline (parse,
+    // resolve, typecheck, lint) is also a priority-0 HoverTarget so hovering
+    // the exact range shows the diagnostic message *before* any construct
+    // hover.  Ordinal 22 (the lowest in the priority-0 group) further ensures
+    // it wins over EnumLiteral / ConstEval on a fully-tied range.
+    for (const auto &d : type_check_result->diagnostics.entries()) {
+        if (!d.range.has_value() || range_size(*d.range) == 0) {
+            continue;
+        }
+        // Diagnostic::source_name is an optional human-readable label.  When it
+        // is set and does not match the current source, the diagnostic belongs
+        // to a different unit (cross-module note lifted to the top-level bag)
+        // and we skip it to avoid writing HoverTargets into the wrong file.
+        if (d.source_name.has_value() && source.source != nullptr &&
+            *d.source_name != source.source->display_name) {
+            continue;
+        }
+        const auto code_text = d.code.has_value() ? *d.code : std::string{};
+        index.add(HoverTarget{
+            .kind = HoverTargetKind::Diagnostic,
+            .token_range = *d.range,
+            .source_id = source.source_id,
+            .symbol_id = std::nullopt,
+            .local_name = code_text,
+            .role = d.message,
+            .source_label = source.source->display_name,
+        });
     }
 }
 
@@ -1404,6 +1823,10 @@ void HoverTargetIndex::sort() {
         if (lhs.priority != rhs.priority) {
             return lhs.priority < rhs.priority;
         }
+        // ⚠️ Tie-break: enum ordinal ASC. This matches the ORDER CONTRACT in
+        // hover_index.hpp above the HoverTargetKind enum — add new values to
+        // the enum IN THE RIGHT PRIORITY GROUP, never in between existing
+        // values within a group, because that changes tie-break semantics.
         return static_cast<int>(lhs.kind) < static_cast<int>(rhs.kind);
     });
 }
@@ -1411,6 +1834,8 @@ void HoverTargetIndex::sort() {
 const HoverTarget *HoverTargetIndex::lookup(std::size_t offset) const noexcept {
     const HoverTarget *best = nullptr;
     std::size_t best_size = std::numeric_limits<std::size_t>::max();
+    int best_priority = std::numeric_limits<int>::max();
+    auto best_kind = HoverTargetKind::Expression; // ordinal used as 4th tie-break
     for (const auto &target : targets_) {
         if (target.token_range.begin_offset > offset) {
             break;
@@ -1419,10 +1844,21 @@ const HoverTarget *HoverTargetIndex::lookup(std::size_t offset) const noexcept {
             continue;
         }
         const auto current_size = range_size(target.token_range);
-        if (best == nullptr || current_size < best_size ||
-            (current_size == best_size && target.priority < best->priority)) {
+        // Selection order (strict, mirrors sort comparator exactly):
+        //   1. smallest containing range
+        //   2. lowest numeric priority (0 = Construct family wins)
+        //   3. lowest enum ordinal (see ORDER CONTRACT in hover_index.hpp)
+        //   4. earlier in targets_ (implicit: first match wins on full tie)
+        const bool is_better =
+            best == nullptr || current_size < best_size ||
+            (current_size == best_size && target.priority < best_priority) ||
+            (current_size == best_size && target.priority == best_priority &&
+             static_cast<int>(target.kind) < static_cast<int>(best_kind));
+        if (is_better) {
             best = &target;
             best_size = current_size;
+            best_priority = target.priority;
+            best_kind = target.kind;
         }
     }
     return best;

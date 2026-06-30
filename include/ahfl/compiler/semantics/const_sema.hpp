@@ -103,6 +103,9 @@ struct ConstInitializerValidationPolicy {
 class ConstTypeRelationValidator final {
   public:
     ConstTypeRelationValidator(TypeRelationContext &relations, ConstDiagnosticEmitter diagnostics);
+    ConstTypeRelationValidator(TypeRelationContext &relations,
+                               ConstDiagnosticEmitter diagnostics,
+                               const SymbolTable *symbols);
 
     [[nodiscard]] bool check_assignable(const Type &source,
                                         const Type &target,
@@ -122,6 +125,7 @@ class ConstTypeRelationValidator final {
   private:
     TypeRelationContext &relations_;
     ConstDiagnosticEmitter diagnostics_;
+    const SymbolTable *symbols_{nullptr};
 };
 
 [[nodiscard]] ConstExprSyntaxResult classify_const_expr_syntax(const ast::ExprSyntax &expr);

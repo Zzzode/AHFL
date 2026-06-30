@@ -542,6 +542,10 @@ class TypedIrLowerer final {
                 [&](const ast::LambdaExpr &value) -> const ast::ExprSyntax * {
                     return value.body ? find_match_expr_in_expr(*value.body, typed) : nullptr;
                 },
+                [&](const ast::UnwrapExprSyntax &value) -> const ast::ExprSyntax * {
+                    return value.operand ? find_match_expr_in_expr(*value.operand, typed)
+                                         : nullptr;
+                },
             },
             expr.node);
     }
@@ -578,15 +582,64 @@ class TypedIrLowerer final {
                 }
             }
             return nullptr;
+        case ast::StatementSyntaxKind::IfLet:
+            // RFC e-1 minimal POC: walk scrutinee + then/else bodies so the
+            // typed expression origin finder still works on code using the
+            // new syntax.  Pattern bindings are not materialised yet.
+            if (statement.if_let_stmt) {
+                if (statement.if_let_stmt->scrutinee) {
+                    if (const auto *found = find_match_expr_in_expr(
+                            *statement.if_let_stmt->scrutinee, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+                if (statement.if_let_stmt->then_block) {
+                    if (const auto *found = find_match_expr_in_block(
+                            *statement.if_let_stmt->then_block, typed);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+                if (statement.if_let_stmt->else_block) {
+                    return find_match_expr_in_block(*statement.if_let_stmt->else_block, typed);
+                }
+            }
+            return nullptr;
         case ast::StatementSyntaxKind::Goto:
             return nullptr;
         case ast::StatementSyntaxKind::Return:
             return statement.return_stmt && statement.return_stmt->value
                        ? find_match_expr_in_expr(*statement.return_stmt->value, typed)
                        : nullptr;
-        case ast::StatementSyntaxKind::Assert:
-            return statement.assert_stmt && statement.assert_stmt->condition
-                       ? find_match_expr_in_expr(*statement.assert_stmt->condition, typed)
+        case ast::StatementSyntaxKind::Assert: {
+            const auto *result =
+                statement.assert_stmt && statement.assert_stmt->condition
+                    ? find_match_expr_in_expr(*statement.assert_stmt->condition, typed)
+                    : nullptr;
+            if (result == nullptr && statement.assert_stmt && statement.assert_stmt->message) {
+                result = find_match_expr_in_expr(*statement.assert_stmt->message, typed);
+            }
+            return result;
+        }
+        case ast::StatementSyntaxKind::Unwrap:
+            return statement.unwrap_stmt && statement.unwrap_stmt->operand
+                       ? find_match_expr_in_expr(*statement.unwrap_stmt->operand, typed)
+                       : nullptr;
+        case ast::StatementSyntaxKind::Requires: {
+            const auto *result =
+                statement.requires_stmt && statement.requires_stmt->condition
+                    ? find_match_expr_in_expr(*statement.requires_stmt->condition, typed)
+                    : nullptr;
+            if (result == nullptr && statement.requires_stmt &&
+                statement.requires_stmt->message) {
+                result = find_match_expr_in_expr(*statement.requires_stmt->message, typed);
+            }
+            return result;
+        }
+        case ast::StatementSyntaxKind::Unreachable:
+            return statement.unreachable_stmt && statement.unreachable_stmt->message
+                       ? find_match_expr_in_expr(*statement.unreachable_stmt->message, typed)
                        : nullptr;
         case ast::StatementSyntaxKind::Expr:
             return statement.expr_stmt && statement.expr_stmt->expr
@@ -1522,6 +1575,23 @@ class TypedIrLowerer final {
 
             return self.make_expr(std::move(match), range);
         }
+        // P4-02: unwrap(operand) — lowers directly to the IR UnwrapExpr node.
+        // The operand is lowered through the regular typed-tree path so any
+        // nested unwraps / constructs continue to compose (e.g. `unwrap(unwrap(x))`).
+        ir::ExprRef visit_unwrap_expr(const TypedExpr &e) const {
+            const TypedExpr *operand =
+                TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
+            ir::ExprRef lowered_operand = nullptr;
+            if (operand != nullptr) {
+                lowered_operand = self.lower_typed_expr(*operand);
+            }
+            return self.make_expr(
+                ir::UnwrapExpr{
+                    .operand = lowered_operand,
+                    .fallback_none_message = nullptr,
+                },
+                range);
+        }
         ir::ExprRef visit_unknown(const TypedExpr &e) const {
             (void)e;
             return nullptr;
@@ -1848,6 +1918,35 @@ class TypedIrLowerer final {
                 range);
         }
 
+        ir::StatementPtr visit_if_let_stmt(const TypedStatement &stmt) const {
+            // RFC e-1 minimal POC: lowering mirrors `if` so downstream IR
+            // stages (and their validation) keep working — but there is no
+            // binding introduction / pattern desugaring yet.  Narrowing
+            // semantics are deliberately deferred to a follow-up wave.
+            const TypedExpr *scrutinee = child_expr(0);
+            const auto *then_block =
+                stmt.then_block_index != UINT32_MAX &&
+                        stmt.then_block_index < self.typed_program_->blocks.size()
+                    ? &self.typed_program_->blocks[stmt.then_block_index]
+                    : nullptr;
+            const auto *else_block =
+                stmt.else_block_index != UINT32_MAX &&
+                        stmt.else_block_index < self.typed_program_->blocks.size()
+                    ? &self.typed_program_->blocks[stmt.else_block_index]
+                    : nullptr;
+            auto else_ptr =
+                else_block ? make_owned<ir::Block>(self.lower_typed_block(*else_block)) : nullptr;
+            return self.make_statement(
+                ir::IfStatement{
+                    .condition = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
+                    .then_block = then_block
+                                      ? make_owned<ir::Block>(self.lower_typed_block(*then_block))
+                                      : nullptr,
+                    .else_block = std::move(else_ptr),
+                },
+                range);
+        }
+
         ir::StatementPtr visit_goto_stmt(const TypedStatement &stmt) const {
             // T1.7 P2: read directly from the typed payload. Empty malformed
             // payloads remain empty so BackendReady verification reports the
@@ -1865,14 +1964,44 @@ class TypedIrLowerer final {
                 range);
         }
 
-        // T1.7 P2: assert message is stored on stmt.assert_message but the current
-        // IR AssertStatement shape carries only a condition field. The typed payload
-        // is used directly for the condition.
+        // T1.7 P2 + P4-01: children_expr_index[0] = condition, [1] = optional
+        // user-facing message (String) for arity-2 form.
         ir::StatementPtr visit_assert_stmt([[maybe_unused]] const TypedStatement &stmt) const {
             const TypedExpr *condition = child_expr(0);
+            const TypedExpr *message = child_expr(1);
             return self.make_statement(
                 ir::AssertStatement{
                     .condition = condition ? self.lower_typed_expr(*condition) : nullptr,
+                    .message = message ? self.lower_typed_expr(*message) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_unwrap_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *operand = child_expr(0);
+            return self.make_statement(
+                ir::UnwrapStatement{
+                    .operand = operand ? self.lower_typed_expr(*operand) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_requires_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *condition = child_expr(0);
+            const TypedExpr *message = child_expr(1);
+            return self.make_statement(
+                ir::RequiresStatement{
+                    .condition = condition ? self.lower_typed_expr(*condition) : nullptr,
+                    .message = message ? self.lower_typed_expr(*message) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_unreachable_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *message = child_expr(0);
+            return self.make_statement(
+                ir::UnreachableStatement{
+                    .message = message ? self.lower_typed_expr(*message) : nullptr,
                 },
                 range);
         }
@@ -1959,6 +2088,11 @@ class TypedIrLowerer final {
 	                               if (arm.body) {
 	                                   collect_called_targets_from_expr(*arm.body, called_targets);
 	                               }
+	                           }
+	                       },
+	                       [this, &called_targets](const ir::UnwrapExpr &value) {
+	                           if (value.operand) {
+	                               collect_called_targets_from_expr(*value.operand, called_targets);
 	                           }
 	                       },
 	                   },
@@ -2056,6 +2190,11 @@ class TypedIrLowerer final {
 	                               }
 	                           }
 	                       },
+	                       [this, &node_names, &reads](const ir::UnwrapExpr &value) {
+	                           if (value.operand) {
+	                               collect_workflow_value_reads(*value.operand, node_names, reads);
+	                           }
+	                       },
 	                   },
 	                   expr.node);
 	    }
@@ -2116,7 +2255,38 @@ class TypedIrLowerer final {
                 [this](const ir::AssertStatement &value) {
                     ir::StateHandler::Summary s;
                     collect_called_targets_from_expr(*value.condition, s.called_targets);
+                    if (value.message) {
+                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                    }
                     s.assert_count = 1;
+                    return s;
+                },
+                [this](const ir::UnwrapStatement &value) {
+                    ir::StateHandler::Summary s;
+                    if (value.operand) {
+                        collect_called_targets_from_expr(*value.operand, s.called_targets);
+                    }
+                    s.assert_count = 1;
+                    return s;
+                },
+                [this](const ir::RequiresStatement &value) {
+                    ir::StateHandler::Summary s;
+                    if (value.condition) {
+                        collect_called_targets_from_expr(*value.condition, s.called_targets);
+                    }
+                    if (value.message) {
+                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                    }
+                    s.assert_count = 1;
+                    return s;
+                },
+                [this](const ir::UnreachableStatement &value) {
+                    ir::StateHandler::Summary s;
+                    if (value.message) {
+                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                    }
+                    s.assert_count = 1;
+                    s.may_fallthrough = false;
                     return s;
                 },
                 [this](const ir::ExprStatement &value) {

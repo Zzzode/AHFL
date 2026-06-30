@@ -395,6 +395,7 @@ struct TraitTypeInfo {
     std::vector<SymbolId> super_traits;
     std::vector<TraitMethodInfo> methods;
     std::vector<TraitAssocTypeInfo> assoc_types;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
 
     // Linear lookups (small item count per trait, mirrors EnumTypeInfo).

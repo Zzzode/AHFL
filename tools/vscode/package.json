@@ -1,10 +1,10 @@
 {
-  "name": "ahfl-language",
-  "displayName": "AHFL Language Support",
-  "description": "Language support for AHFL (Agent Handoff Flow Language)",
-  "version": "0.1.0",
+  "name": "ahfl",
+  "displayName": "AHFL",
+  "description": "AHFL Agent Flow Language support",
+  "version": "0.2.0",
   "packageManager": "pnpm@10.10.0",
-  "publisher": "ahfl",
+  "publisher": "ahfl-team",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -128,6 +128,16 @@
           "default": "auto",
           "description": "Controls the MarkupContent kind requested from the AHFL language server."
         }
+      }
+    },
+    "configurationDefaults": {
+      "[ahfl]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.formatOnSave": false,
+        "editor.wordBasedSuggestions": "off",
+        "editor.semanticHighlighting.enabled": true,
+        "editor.rulers": [100]
       }
     }
   },

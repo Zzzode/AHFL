@@ -1972,6 +1972,88 @@ eval_call_expr(const ir::CallExpr &expr, const EvalContext &ctx, const CallEvalF
 }
 
 // ============================================================================
+// P4-02: UnwrapExpr evaluator
+// ============================================================================
+
+namespace {
+constexpr const char *kUnwrapExprDefault = "unwrap failed: value is None";
+} // namespace
+
+EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
+                             const EvalContext &ctx,
+                             const CallEvalFn *call_eval) {
+    if (!expr.operand) {
+        return make_error("UnwrapExpr has null operand");
+    }
+    auto op_result = eval_expr_impl(*expr.operand, ctx, call_eval);
+    if (op_result.has_errors()) {
+        return op_result;
+    }
+    const Value &v = op_result.value;
+
+    // P5 Big Bang (nominal Option): EnumValue carries variant name + payload.
+    // Prioritize this path over the legacy OptionalValue/NoneValue fallbacks
+    // so that std::option::Option::{Some,None} values always unwrap correctly.
+    if (const auto *ev = std::get_if<EnumValue>(&v.node)) {
+        if (ev->variant == "None") {
+            std::string msg = kUnwrapExprDefault;
+            if (expr.fallback_none_message) {
+                auto msg_result = eval_expr_impl(*expr.fallback_none_message, ctx, call_eval);
+                if (!msg_result.has_errors()) {
+                    if (const auto *sv = std::get_if<StringValue>(&msg_result.value.node);
+                        sv != nullptr) {
+                        msg = sv->value;
+                    }
+                }
+            }
+            return make_error(std::move(msg));
+        }
+        if (ev->variant == "Some") {
+            // Single-payload nominal Some: both `associated` (nominal
+            // evaluator-internal fast path) and `payload[0]` (AST / ADT
+            // construction) are supported.  op_result is local, so we can
+            // move the payload out — the caller only receives the unwrapped
+            // inner value, not the Some wrapper.
+            EvalResult out;
+            if (ev->associated) {
+                out.value = Value{std::move(*ev->associated).node};
+                *const_cast<std::unique_ptr<Value> *>(&ev->associated) = nullptr;
+                return out;
+            }
+            if (!ev->payload.empty() && ev->payload.front() != nullptr) {
+                out.value = Value{std::move(*ev->payload.front()).node};
+                return out;
+            }
+            return make_error(
+                "UnwrapExpr: Option::Some variant has no accessible payload");
+        }
+        // Non-Option enum value.  Don't unwrap — report the actual variant
+        // so users can see the real problem.
+        return make_error(std::string("UnwrapExpr: expected Optional<T>, got enum '") +
+                          ev->enum_name + "' variant '" + ev->variant + "'");
+    }
+
+    // Legacy runtime fallbacks (retain for compat with older stdlib / test
+    // fixtures that build OptionalValue / NoneValue directly).
+    if (const auto *opt = std::get_if<OptionalValue>(&v.node)) {
+        if (opt->inner != nullptr) {
+            EvalResult out;
+            out.value = Value{std::move(*opt->inner).node};
+            return out;
+        }
+        return make_error(kUnwrapExprDefault);
+    }
+    if (std::holds_alternative<NoneValue>(v.node)) {
+        return make_error(kUnwrapExprDefault);
+    }
+    // Any other value shape: unwrap() is defined only for Optional<T>.  Fail
+    // loudly instead of silently returning the value — the typechecker should
+    // have prevented this case, but the evaluator gate still fires for
+    // dynamically-typed / generated code paths.
+    return make_error("UnwrapExpr: operand is not an Optional<T> value");
+}
+
+// ============================================================================
 // Main eval_expr dispatcher
 // ============================================================================
 
@@ -2012,6 +2094,8 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_index_access(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::MatchExpr>) {
                 return eval_match_expr(node, ctx, call_eval);
+            } else if constexpr (std::is_same_v<T, ir::UnwrapExpr>) {
+                return eval_unwrap_expr(node, ctx, call_eval);
             }
         },
         expr.node);
@@ -2085,7 +2169,9 @@ struct ProgramCallState : std::enable_shared_from_this<ProgramCallState> {
         }
         if (auto *assert_failed = std::get_if<ExecAssertFailed>(&exec_result.outcome);
             assert_failed != nullptr) {
-            auto result = make_error("function assertion failed: " + assert_failed->message);
+            auto result = make_error("function assertion failed (Failure type: " +
+                                     std::string{to_string(assert_failed->kind)} + "): " +
+                                     assert_failed->message);
             result.diagnostics.append(std::move(diags));
             return result;
         }

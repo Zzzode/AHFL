@@ -141,6 +141,13 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
 	                           }
 	                       }
 	                   },
+	                   // P4-02: unwrap(operand) — operand participates in the
+	                   // called-targets summary; fallback message is pure data.
+	                   [&](const UnwrapExpr &value) {
+	                       if (value.operand) {
+	                           collect_called_targets_from_expr(*value.operand, called_targets);
+	                       }
+	                   },
 	               },
 	               expr.node);
 }
@@ -210,7 +217,38 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             [](const AssertStatement &value) {
                 StateHandler::Summary summary;
                 collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                if (value.message) {
+                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                }
                 summary.assert_count = 1;
+                return summary;
+            },
+            [](const UnwrapStatement &value) {
+                StateHandler::Summary summary;
+                if (value.operand) {
+                    collect_called_targets_from_expr(*value.operand, summary.called_targets);
+                }
+                summary.assert_count = 1;
+                return summary;
+            },
+            [](const RequiresStatement &value) {
+                StateHandler::Summary summary;
+                if (value.condition) {
+                    collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                }
+                if (value.message) {
+                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                }
+                summary.assert_count = 1;
+                return summary;
+            },
+            [](const UnreachableStatement &value) {
+                StateHandler::Summary summary;
+                if (value.message) {
+                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                }
+                summary.assert_count = 1;
+                summary.may_fallthrough = false;
                 return summary;
             },
             [](const ExprStatement &value) {
@@ -320,6 +358,14 @@ void collect_workflow_value_reads(const Expr &expr,
 	                               collect_workflow_value_reads(
 	                                   *arm.body, workflow_node_names, reads);
 	                           }
+	                       }
+	                   },
+	                   // P4-02: unwrap(operand) — only the operand contributes
+	                   // workflow reads; the optional fallback message is pure data.
+	                   [&](const UnwrapExpr &value) {
+	                       if (value.operand) {
+	                           collect_workflow_value_reads(
+	                               *value.operand, workflow_node_names, reads);
 	                       }
 	                   },
 	               },

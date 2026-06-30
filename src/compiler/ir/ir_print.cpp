@@ -207,6 +207,8 @@ namespace {
 	                          [](const ir::UnaryExpr &) { return true; },
 	                          [](const ir::BinaryExpr &) { return true; },
 	                          [](const ir::MatchExpr &) { return true; },
+                          // P4-02: unwrap(...) is a compound expression.
+                          [](const ir::UnwrapExpr &) { return true; },
 	                      },
 	                      expr.node);
 }
@@ -493,6 +495,15 @@ class IrProgramPrinter final {
                                             : std::string{"none"}) +
                            " { " + join(arms, ", ") + " }";
                 },
+                // P4-02: unwrap(operand) — mirrors the statement-level keyword
+                // so diffs stay readable; fall back to "<none>" for malformed
+                // ASTs (e.g. typed-tree rewrites that temporarily null the operand).
+                [this](const ir::UnwrapExpr &value) {
+                    return "unwrap(" +
+                           (value.operand ? render_expr(*value.operand)
+                                          : std::string{"<none>"}) +
+                           ")";
+                },
             },
             expr.node);
     }
@@ -565,7 +576,35 @@ class IrProgramPrinter final {
                            }
                        },
                        [this, indent_level](const ir::AssertStatement &value) {
-                           line(indent_level, "assert " + render_expr(*value.condition));
+                           std::string text = "assert " + render_expr(*value.condition);
+                           if (value.message) {
+                               text += ", " + render_expr(*value.message);
+                           }
+                           line(indent_level, text);
+                       },
+                       [this, indent_level](const ir::UnwrapStatement &value) {
+                           std::string text = "unwrap";
+                           if (value.operand) {
+                               text += " " + render_expr(*value.operand);
+                           }
+                           line(indent_level, text);
+                       },
+                       [this, indent_level](const ir::RequiresStatement &value) {
+                           std::string text = "requires";
+                           if (value.condition) {
+                               text += " " + render_expr(*value.condition);
+                           }
+                           if (value.message) {
+                               text += ", " + render_expr(*value.message);
+                           }
+                           line(indent_level, text);
+                       },
+                       [this, indent_level](const ir::UnreachableStatement &value) {
+                           std::string text = "unreachable";
+                           if (value.message) {
+                               text += " " + render_expr(*value.message);
+                           }
+                           line(indent_level, text);
                        },
                        [this, indent_level](const ir::ExprStatement &value) {
                            line(indent_level, render_expr(*value.expr));

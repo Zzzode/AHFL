@@ -44,6 +44,38 @@ namespace {
     return seconds;
 }
 
+[[nodiscard]] std::optional<std::size_t> parse_bmc_depth(std::string_view value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+    constexpr std::size_t kMaxBmcDepth = 1'000'000;
+    std::size_t depth = 0;
+    for (const char character : value) {
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        const std::size_t digit = static_cast<std::size_t>(character - '0');
+        if (depth > (kMaxBmcDepth - digit) / 10) {
+            return std::nullopt;
+        }
+        depth = depth * 10 + digit;
+    }
+    if (depth == 0) {
+        return std::nullopt;
+    }
+    return depth;
+}
+
+[[nodiscard]] std::optional<bool> parse_bool_flag(std::string_view value) {
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        return false;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -267,6 +299,18 @@ int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOpt
         }
     }
     formal_options.explain = options.explain_requested;
+
+    if (options.bmc_depth.has_value()) {
+        if (auto depth = parse_bmc_depth(*options.bmc_depth); depth.has_value()) {
+            formal_options.bmc_depth = *depth;
+            formal_options.bmc_use_bmc_engine = true;
+        }
+    }
+    if (options.bmc_boundary_invariants.has_value()) {
+        if (auto flag = parse_bool_flag(*options.bmc_boundary_invariants); flag.has_value()) {
+            formal_options.bmc_boundary_invariants = *flag;
+        }
+    }
 
     const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
 

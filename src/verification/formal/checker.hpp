@@ -28,6 +28,9 @@ struct FormalCheckerOptions {
     ModelCheckerKind backend_kind{ModelCheckerKind::NuXmv};
     std::chrono::seconds checker_timeout{60};
     bool explain = false;
+    std::size_t bmc_depth{20};
+    bool bmc_use_bmc_engine{false};
+    bool bmc_boundary_invariants{false};
 };
 
 struct FormalVerificationResult {

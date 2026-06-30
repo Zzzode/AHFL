@@ -1,5 +1,5 @@
 
-// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -36,6 +36,14 @@ public:
   }
 
   virtual std::any visitQualifiedIdent(AHFLParser::QualifiedIdentContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCallableNamePiece(AHFLParser::CallableNamePieceContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCallableName(AHFLParser::CallableNameContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -83,7 +91,23 @@ public:
     return visitChildren(ctx);
   }
 
-  virtual std::any visitEnumVariant(AHFLParser::EnumVariantContext *ctx) override {
+  virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitStructEnumVariant(AHFLParser::StructEnumVariantContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTupleEnumVariant(AHFLParser::TupleEnumVariantContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitVariantFieldDecl(AHFLParser::VariantFieldDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitVariantFieldList(AHFLParser::VariantFieldListContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -375,6 +399,18 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitIfLetStmt(AHFLParser::IfLetStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitIfLetPattern(AHFLParser::IfLetPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitIfLetPatternVar(AHFLParser::IfLetPatternVarContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitGotoStmt(AHFLParser::GotoStmtContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -384,6 +420,18 @@ public:
   }
 
   virtual std::any visitAssertStmt(AHFLParser::AssertStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnwrapStmt(AHFLParser::UnwrapStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitRequiresStmt(AHFLParser::RequiresStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnreachableStmt(AHFLParser::UnreachableStmtContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -436,6 +484,10 @@ public:
   }
 
   virtual std::any visitPrimaryExpr(AHFLParser::PrimaryExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnwrapExpr(AHFLParser::UnwrapExprContext *ctx) override {
     return visitChildren(ctx);
   }
 

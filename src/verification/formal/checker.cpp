@@ -103,16 +103,47 @@ struct ProcessResult {
 
 [[nodiscard]] ProcessResult run_checker(std::string_view checker_path,
                                         const std::filesystem::path &model_path,
-                                        std::chrono::seconds timeout) {
+                                        const FormalCheckerOptions &options) {
     ProcessConfig config;
     config.executable = std::string(checker_path);
-    config.arguments = {model_path.string()};
-    config.timeout = timeout;
+    config.timeout = options.checker_timeout;
+
+    std::filesystem::path cmd_path;
+    if (options.bmc_use_bmc_engine) {
+        // BMC engine requires a source script so we can invoke `go_bmc` plus
+        // the BMC-specific check commands with an explicit depth bound.
+        const auto temp_dir = model_path.parent_path();
+        cmd_path = temp_dir / ("ahfl-formal-cmd-" + model_path.filename().string() + ".txt");
+        {
+            std::ofstream cmd_file(cmd_path);
+            if (!cmd_file) {
+                return ProcessResult{-1, "failed to create checker source script", false};
+            }
+            cmd_file << "read_model -i " << model_path << "\n";
+            cmd_file << "go_bmc\n";
+            cmd_file << "check_ltlspec_bmc -k " << options.bmc_depth << "\n";
+            cmd_file << "check_invar_bmc -k " << options.bmc_depth << "\n";
+            cmd_file << "quit\n";
+        }
+        config.arguments = {"-source", cmd_path.string()};
+    } else {
+        // BDD/default engine: invoke the checker with the model file directly
+        // so wrapper scripts and fake checkers continue to work.  nuXmv and
+        // NuSMV both default to BDD LTL + invariant checking on a .smv file.
+        config.arguments = {model_path.string()};
+    }
+
     const auto result = launch_process(config);
     auto output = result.stdout_output;
     if (!result.stderr_output.empty()) {
         output += result.stderr_output;
     }
+
+    if (!cmd_path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(cmd_path, ec);
+    }
+
     return ProcessResult{
         .exit_code = result.exit_code,
         .output = std::move(output),
@@ -237,8 +268,154 @@ void parse_checker_output(FormalVerificationResult &result,
         if (contains(lower_copy(line), "ltlspec")) {
             ++count;
         }
+        if (contains(lower_copy(line), "invarspec")) {
+            ++count;
+        }
     }
     return count;
+}
+
+// Best-effort post-processing of a generated SMV model to inject
+// per-state boundary invariants.  Returns the (possibly rewritten) model
+// text plus the number of INVARSPEC entries that were appended, or 0 when
+// the model does not expose a simple scalar "state : {...}" variable.
+[[nodiscard]] std::pair<std::string, std::size_t>
+maybe_add_boundary_invariants(std::string_view model, std::size_t depth) {
+    // Pattern match on a block of the form:
+    //   VAR state : { S0, S1, ... };
+    const std::vector<std::string> lines = split_lines(model);
+    std::vector<std::string> state_names;
+    std::size_t var_state_line_end = std::string::npos;
+
+    // We want to capture a multi-line scalar enumeration, so join until we
+    // see a matching '};'.
+    std::size_t i = 0;
+    while (i < lines.size()) {
+        const auto &line = lines[i];
+        auto trimmed = trim_copy(line);
+        const auto var_prefix = std::string_view("VAR state : {");
+        if (trimmed.starts_with(var_prefix) ||
+            (trimmed.starts_with("VAR ") && trimmed.find("state : {") != std::string::npos)) {
+            std::string accum = trimmed;
+            std::size_t j = i;
+            while (accum.find("};") == std::string::npos && j + 1 < lines.size()) {
+                ++j;
+                accum += " " + trim_copy(lines[j]);
+            }
+            const auto lbrace = accum.find('{');
+            const auto rbrace = accum.find('}', lbrace);
+            if (lbrace != std::string::npos && rbrace != std::string::npos) {
+                const auto inner =
+                    std::string_view(accum).substr(lbrace + 1, rbrace - lbrace - 1);
+                std::string current;
+                for (char c : inner) {
+                    if (c == ',') {
+                        auto name = trim_copy(current);
+                        if (!name.empty())
+                            state_names.push_back(std::move(name));
+                        current.clear();
+                    } else {
+                        current.push_back(c);
+                    }
+                }
+                auto name = trim_copy(current);
+                if (!name.empty())
+                    state_names.push_back(std::move(name));
+                var_state_line_end = j;
+                i = j;
+                break;
+            }
+        }
+        ++i;
+    }
+
+    if (state_names.empty()) {
+        return {std::string(model), 0};
+    }
+
+    // Rebuild:
+    //  - Append cycles_visited VAR after the VAR state block.
+    //  - Append INIT cycles_visited = 0; after the first "INIT state = ..." line.
+    //  - Append TRANS next(cycles_visited) = ...  after the last existing TRANS block.
+    //  - Append per-state INVARSPEC lines before LTLSPEC lines or at EOF.
+
+    std::ostringstream out;
+    bool wrote_cycles_var = false;
+    bool wrote_cycles_init = false;
+    bool wrote_cycles_trans = false;
+    std::size_t line_idx = 0;
+    const std::size_t state_block_end = var_state_line_end;
+
+    auto write_boundary_invariants = [&]() {
+        out << "-- AHFL BMC boundary invariants (--bmc-boundary-invariants)\n";
+        for (const auto &s : state_names) {
+            out << "INVARSPEC (state = " << s << ") -> (_cycles_visited <= " << depth
+                << ");\n";
+        }
+    };
+
+    auto line_starts_with_ci = [](std::string_view line, std::string_view prefix) {
+        return lower_copy(trim_copy(std::string(line))).starts_with(lower_copy(std::string(prefix)));
+    };
+
+    while (line_idx < lines.size()) {
+        const auto &line = lines[line_idx];
+        out << line << "\n";
+
+        if (!wrote_cycles_var && line_idx == state_block_end) {
+            out << "VAR _cycles_visited : 0.." << depth << ";\n";
+            wrote_cycles_var = true;
+            ++line_idx;
+            continue;
+        }
+
+        if (!wrote_cycles_init && line_starts_with_ci(line, "INIT state ")) {
+            out << "INIT _cycles_visited = 0;\n";
+            wrote_cycles_init = true;
+            ++line_idx;
+            continue;
+        }
+
+        if (!wrote_cycles_trans) {
+            // Detect the end of a multi-line TRANS block: the line contains "esac;"
+            // (typical case/end) or is a "TRANS ... ;" one-liner.
+            const auto tl = trim_copy(line);
+            const bool is_trans_esac = tl == "esac;";
+            const bool is_trans_oneliner =
+                lower_copy(tl).starts_with("trans ") && tl.ends_with(';');
+            if (is_trans_esac || is_trans_oneliner) {
+                out << "TRANS next(_cycles_visited) = case\n";
+                out << "  next(state) != state : _cycles_visited + 1;\n";
+                out << "  TRUE : _cycles_visited;\n";
+                out << "esac;\n";
+                wrote_cycles_trans = true;
+                ++line_idx;
+                continue;
+            }
+        }
+
+        // Before the first LTLSPEC line, emit INVARSPEC entries.
+        if (wrote_cycles_var && wrote_cycles_init && wrote_cycles_trans &&
+            line_starts_with_ci(line, "LTLSPEC ")) {
+            write_boundary_invariants();
+            // Reset guard so we don't emit twice.
+            wrote_cycles_init = false;
+            ++line_idx;
+            continue;
+        }
+
+        ++line_idx;
+    }
+
+    // If we never saw LTLSPEC but have the counter wired, emit at EOF.
+    if (wrote_cycles_var && wrote_cycles_trans) {
+        // If wrote_cycles_init still true means we skipped the LTLSPEC branch.
+        if (wrote_cycles_init) {
+            write_boundary_invariants();
+        }
+    }
+
+    return {out.str(), state_names.size()};
 }
 
 void print_output_excerpt(std::string_view output, std::ostream &out) {
@@ -346,7 +523,13 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 
         std::ostringstream model_content;
         print_program_smv(program, model_content);
-        const auto model_text = model_content.str();
+        std::string model_text = model_content.str();
+        if (options.bmc_boundary_invariants) {
+            auto [rewritten, added] =
+                maybe_add_boundary_invariants(model_text, options.bmc_depth);
+            (void)added;
+            model_text = std::move(rewritten);
+        }
         symbol_mappings = parse_symbol_mappings(model_text);
         result.expected_specification_count = count_expected_specifications(model_text);
         result.model_content = model_text;
@@ -360,7 +543,7 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     }
 
     const auto process =
-        run_checker(result.checker_path, result.model_path, options.checker_timeout);
+        run_checker(result.checker_path, result.model_path, options);
     result.exit_code = process.exit_code;
     result.output = process.output;
     result.checker_timed_out = process.timed_out;
@@ -376,9 +559,12 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 
         if (options.explain) {
             const auto structured_mappings = parse_structured_symbol_mappings(result.model_content);
-            const auto trace = parse_counterexample_trace(result.output, structured_mappings);
+            auto trace = parse_counterexample_trace(result.output, structured_mappings);
             if (trace.has_value()) {
-                const auto explanation = explain_counterexample(*trace);
+                auto explanation = explain_counterexample(*trace);
+                // (h-12 QW-3) Fill the 4-dim projection fields (state_transitions,
+                // trigger_input, faulty_ctx_fields, violated_contract).
+                enhance_counterexample_mapping(*trace, explanation);
                 result.structured_explanation_json = counterexample_to_json(*trace, explanation);
             }
         }

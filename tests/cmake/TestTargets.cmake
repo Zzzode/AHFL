@@ -468,6 +468,7 @@ ahfl_apply_project_warnings(ahfl_semantics_type_resolver_tests)
 
 add_executable(ahfl_semantics_typed_hir_tests
     unit/compiler/semantics/typed_hir.cpp
+    unit/compiler/semantics/typed_hir_kind_coverage.cpp
 )
 target_link_libraries(ahfl_semantics_typed_hir_tests
     PRIVATE
@@ -486,6 +487,61 @@ target_link_libraries(ahfl_semantics_effects_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_effects_tests)
+
+add_executable(ahfl_semantics_diagnostic_matrix_tests
+    unit/compiler/semantics/diagnostic_matrix.cpp
+)
+target_link_libraries(ahfl_semantics_diagnostic_matrix_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_diagnostic_matrix_tests)
+
+add_executable(ahfl_semantics_type_mismatch_origin_tests
+    unit/compiler/semantics/type_mismatch_origin.cpp
+)
+target_link_libraries(ahfl_semantics_type_mismatch_origin_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        doctest
+)
+target_include_directories(ahfl_semantics_type_mismatch_origin_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+)
+ahfl_apply_project_warnings(ahfl_semantics_type_mismatch_origin_tests)
+
+add_executable(ahfl_semantics_stmt_diagnostics_tests
+    unit/compiler/semantics/stmt_diagnostics.cpp
+)
+target_link_libraries(ahfl_semantics_stmt_diagnostics_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_semantics_stmt_diagnostics_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+)
+ahfl_apply_project_warnings(ahfl_semantics_stmt_diagnostics_tests)
+
+add_executable(ahfl_semantics_const_sema_negatives_tests
+    unit/compiler/semantics/const_sema_negatives.cpp
+)
+target_link_libraries(ahfl_semantics_const_sema_negatives_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+target_include_directories(ahfl_semantics_const_sema_negatives_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+)
+ahfl_apply_project_warnings(ahfl_semantics_const_sema_negatives_tests)
 
 add_executable(ahfl_semantics_flow_condition_tests
     unit/compiler/semantics/flow_condition.cpp
@@ -636,6 +692,19 @@ target_link_libraries(ahfl_error_recovery_tests
 )
 ahfl_apply_project_warnings(ahfl_error_recovery_tests)
 
+# Wave-21 A-1: parser recursion-depth guard. Covers 4 nesting categories
+# (paren/expr, type parameter, block/statement, pattern) with under-limit +
+# over-limit cases, plus a mixed under-limit sanity (10 test functions ×
+# ~2-3 assertions each = ~48 total assertions).
+add_executable(ahfl_parser_stack_depth_tests
+    unit/compiler/syntax/frontend/parser_stack_depth.cpp
+)
+target_link_libraries(ahfl_parser_stack_depth_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_parser_stack_depth_tests)
+
 add_executable(ahfl_syntax_trait_impl_tests
     unit/compiler/syntax/trait_impl.cpp
 )
@@ -685,6 +754,37 @@ target_link_libraries(ahfl_decreases_symmetry_tests
 )
 ahfl_apply_project_warnings(ahfl_decreases_symmetry_tests)
 
+# Wave-19 Lane 3b F1 — RFC d-1 Enum variant named fields (struct variant)
+# minimal grammar POC. Tests only parser / AST / ast_printer / formatter
+# roundtrip: resolver, typechecker, TypedHIR and IR are intentionally NOT
+# modified because this is a pre-approval RFC demo.
+add_executable(ahfl_enum_struct_variant_tests
+    unit/compiler/syntax/frontend/enum_struct_variant.cpp
+)
+target_link_libraries(ahfl_enum_struct_variant_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        ahfl_tooling_formatter
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_enum_struct_variant_tests)
+
+# Wave-19 Lane 3b F2 — RFC e-1 Optional narrowing `if let Some(x) = expr`
+# minimal syntax POC.  Tests only parser / AST / ast_printer / formatter
+# roundtrip: narrowing semantics, TypedHIR lowering, and exhaustive-pattern
+# checking are intentionally NOT implemented because this is a pre-approval
+# RFC demo.
+add_executable(ahfl_if_let_syntax_poc_tests
+    unit/compiler/syntax/frontend/if_let_syntax_poc.cpp
+)
+target_link_libraries(ahfl_if_let_syntax_poc_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        ahfl_tooling_formatter
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_if_let_syntax_poc_tests)
+
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
 )
@@ -729,6 +829,17 @@ target_link_libraries(ahfl_verification_formal_integration_tests
         ahfl_verification_formal
 )
 ahfl_apply_project_warnings(ahfl_verification_formal_integration_tests)
+
+add_executable(ahfl_bmc_depth_customization_tests
+    unit/verification/formal/bmc_depth_customization.cpp
+    ${PROJECT_SOURCE_DIR}/src/tooling/cli/option_table.cpp
+)
+target_link_libraries(ahfl_bmc_depth_customization_tests
+    PRIVATE
+        ahfl_verification_formal
+        ahfl_cli_command_catalog
+)
+ahfl_apply_project_warnings(ahfl_bmc_depth_customization_tests)
 
 add_executable(ahfl_parallel_scheduler_tests
     unit/runtime/engine/parallel_scheduler.cpp
@@ -940,6 +1051,10 @@ foreach(_tgt
     ahfl_semantics_type_resolver_tests
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
+    ahfl_semantics_diagnostic_matrix_tests
+    ahfl_semantics_type_mismatch_origin_tests
+    ahfl_semantics_stmt_diagnostics_tests
+    ahfl_semantics_const_sema_negatives_tests
     ahfl_semantics_flow_condition_tests
     ahfl_semantics_validate_plumbing_tests
     ahfl_semantics_adt_match_tests
@@ -960,6 +1075,7 @@ foreach(_tgt
     ahfl_bmc_tests
     ahfl_model_checker_tests
     ahfl_verification_formal_integration_tests
+    ahfl_bmc_depth_customization_tests
     ahfl_parallel_scheduler_tests
     ahfl_sandbox_tests
     ahfl_distributed_tests
@@ -968,6 +1084,8 @@ foreach(_tgt
     ahfl_decreases_printer_tests
     ahfl_decreases_desugar_tests
     ahfl_decreases_symmetry_tests
+    ahfl_enum_struct_variant_tests
+    ahfl_if_let_syntax_poc_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests

@@ -4,11 +4,20 @@
   "scopeName": "source.ahfl",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#doc-comments" },
     { "include": "#keywords" },
+    { "include": "#storage-modifiers" },
+    { "include": "#builtin-constructs" },
+    { "include": "#operators" },
     { "include": "#strings" },
+    { "include": "#chars" },
     { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#self-keywords" },
+    { "include": "#option-variants" },
+    { "include": "#declarations" },
     { "include": "#types" },
-    { "include": "#declarations" }
+    { "include": "#attributes" }
   ],
   "repository": {
     "comments": {
@@ -17,23 +26,148 @@
         { "name": "comment.block.ahfl", "begin": "/\\*", "end": "\\*/" }
       ]
     },
+    "doc-comments": {
+      "patterns": [
+        { "name": "comment.block.documentation.ahfl", "match": "///.*$" },
+        {
+          "name": "comment.block.documentation.ahfl",
+          "begin": "/\\*\\*",
+          "end": "\\*/",
+          "patterns": [
+            { "name": "constant.character.escape.ahfl", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
     "keywords": {
       "patterns": [
         {
-          "name": "keyword.control.ahfl",
-          "match": "\\b(if|else|match|for|while|return|goto|let)\\b"
+          "name": "keyword.control.flow.ahfl",
+          "match": "\\b(if|else|match|return|let|unwrap|unreachable)\\b"
         },
         {
-          "name": "keyword.declaration.ahfl",
-          "match": "\\b(agent|workflow|capability|contract|flow|struct|type|module|import)\\b"
+          "name": "keyword.control.loop.ahfl",
+          "match": "\\b(for|while|goto)\\b"
         },
         {
-          "name": "keyword.other.ahfl",
-          "match": "\\b(input|output|context|states|initial|final|capabilities|transition|node|requires|ensures|invariant|always|eventually|never|called|quota)\\b"
+          "name": "keyword.declaration.module.ahfl",
+          "match": "\\b(module|import)\\b"
         },
         {
-          "name": "constant.language.ahfl",
-          "match": "\\b(true|false|null)\\b"
+          "name": "keyword.declaration.type.ahfl",
+          "match": "\\b(struct|enum|type|const)\\b"
+        },
+        {
+          "name": "keyword.declaration.fn.ahfl",
+          "match": "\\b(fn|predicate)\\b"
+        },
+        {
+          "name": "keyword.declaration.oo.ahfl",
+          "match": "\\b(trait|impl)\\b"
+        },
+        {
+          "name": "keyword.declaration.ahfl-domain.ahfl",
+          "match": "\\b(agent|workflow|capability|contract|flow|effect)\\b"
+        },
+        {
+          "name": "keyword.other.contract.ahfl",
+          "match": "\\b(requires|ensures|assert|invariant|always|eventually|never)\\b"
+        },
+        {
+          "name": "keyword.other.ffi.ahfl",
+          "match": "\\b(builtin|extern)\\b"
+        },
+        {
+          "name": "keyword.other.doc.ahfl",
+          "match": "\\b(doc)\\b"
+        },
+        {
+          "name": "keyword.other.domain-state.ahfl",
+          "match": "\\b(input|output|context|states|initial|final|capabilities|transition|node|called|quota|state)\\b"
+        }
+      ]
+    },
+    "storage-modifiers": {
+      "patterns": [
+        {
+          "name": "storage.modifier.effect.ahfl",
+          "match": "\\b(Pure|Nondet)\\b"
+        }
+      ]
+    },
+    "self-keywords": {
+      "patterns": [
+        {
+          "name": "variable.language.self.ahfl",
+          "match": "\\bself\\b"
+        },
+        {
+          "name": "variable.language.Self.ahfl",
+          "match": "\\bSelf\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.ahfl",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.ahfl",
+          "match": "\\b(null)\\b"
+        }
+      ]
+    },
+    "option-variants": {
+      "patterns": [
+        {
+          "name": "constant.language.option.some.ahfl",
+          "match": "\\bSome\\b"
+        },
+        {
+          "name": "constant.language.option.none.ahfl",
+          "match": "\\b(none)\\b"
+        }
+      ]
+    },
+    "builtin-constructs": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.ahfl",
+          "match": "\\b(assert|unwrap|unreachable)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.ahfl",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.ahfl",
+          "match": "(\\+|\\-|\\*|/|%|\\*\\*)"
+        },
+        {
+          "name": "keyword.operator.logical.ahfl",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.bitwise.ahfl",
+          "match": "(&|\\||\\^|<<|>>)"
+        },
+        {
+          "name": "keyword.operator.assignment.ahfl",
+          "match": "(=|\\+=|\\-=|\\*=|/=|%=|\\|=|&=)"
+        },
+        {
+          "name": "keyword.operator.arrow.ahfl",
+          "match": "(->|=>|\\.\\.\\.)"
+        },
+        {
+          "name": "keyword.operator.member.ahfl",
+          "match": "(\\.|::|:|\\?)"
         }
       ]
     },
@@ -49,16 +183,32 @@
         }
       ]
     },
+    "chars": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.ahfl",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.ahfl", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
     "numbers": {
       "patterns": [
-        { "name": "constant.numeric.ahfl", "match": "\\b[0-9]+(\\.[0-9]+)?\\b" }
+        { "name": "constant.numeric.integer.hexadecimal.ahfl", "match": "\\b0x[0-9a-fA-F][0-9a-fA-F_]*\\b" },
+        { "name": "constant.numeric.integer.octal.ahfl", "match": "\\b0o[0-7][0-7_]*\\b" },
+        { "name": "constant.numeric.integer.binary.ahfl", "match": "\\b0b[01][01_]*\\b" },
+        { "name": "constant.numeric.float.ahfl", "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)([eE][+-]?[0-9_]+)?\\b" },
+        { "name": "constant.numeric.integer.ahfl", "match": "\\b[0-9][0-9_]*\\b" }
       ]
     },
     "types": {
       "patterns": [
         {
-          "name": "support.type.ahfl",
-          "match": "\\b(String|Int|Float|Bool|Duration|List|Map|Option|Result)\\b"
+          "name": "support.type.primitive.ahfl",
+          "match": "\\b(String|Int|Float|Bool|Duration|List|Map|Option|Result|Unit|Never)\\b"
         }
       ]
     },
@@ -66,7 +216,29 @@
       "patterns": [
         {
           "name": "entity.name.type.ahfl",
-          "match": "(?<=\\b(agent|workflow|struct|type|capability)\\s+)[A-Z][A-Za-z0-9_]*"
+          "match": "(?<=\\b(agent|workflow|struct|enum|type|capability|contract|trait)\\s+)[A-Z][A-Za-z0-9_]*"
+        },
+        {
+          "name": "entity.name.function.ahfl",
+          "match": "(?<=\\b(fn|predicate|effect)\\s+)[a-z_][A-Za-z0-9_]*"
+        },
+        {
+          "name": "entity.name.module.ahfl",
+          "match": "(?<=\\bmodule\\s+)[a-z_][A-Za-z0-9_]*(::[a-z_][A-Za-z0-9_]*)*"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.ahfl",
+          "begin": "#\\[",
+          "end": "\\]",
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#constants" }
+          ]
         }
       ]
     }

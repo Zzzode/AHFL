@@ -735,4 +735,32 @@ std::vector<std::uint32_t> TypedProgram::lookup_impl_index_by_key(
     return iter->second;
 }
 
+// ----------------------------------------------------------------------------
+// AssertionKind helpers (Wave-20 N-5: typed classifier upgrade).
+// Mirrors the legacy string set {"assert", "unwrap", "requires", "unreachable"}
+// so consumers that already know the string form can round-trip losslessly.
+// ----------------------------------------------------------------------------
+
+const char *to_string(AssertionKind kind) noexcept {
+    switch (kind) {
+    case AssertionKind::None:        return "";
+    case AssertionKind::Assert:      return "assert";
+    case AssertionKind::Unwrap:      return "unwrap";
+    case AssertionKind::Requires:    return "requires";
+    case AssertionKind::Unreachable: return "unreachable";
+    }
+    return "";
+}
+
+AssertionKind parse_assertion_kind(std::string_view s) noexcept {
+    if (s.empty()) return AssertionKind::None;
+    if (s == "assert")      return AssertionKind::Assert;
+    if (s == "unwrap")      return AssertionKind::Unwrap;
+    if (s == "requires")    return AssertionKind::Requires;
+    if (s == "unreachable") return AssertionKind::Unreachable;
+    // Unknown / legacy strings fall back to None so unknown future strings
+    // don't crash serialization round-trips.
+    return AssertionKind::None;
+}
+
 } // namespace ahfl

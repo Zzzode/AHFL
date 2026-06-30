@@ -87,6 +87,8 @@ struct CommandLineOptions {
     std::optional<std::string_view> model_checker;
     std::optional<std::string_view> checker_timeout_seconds;
     std::optional<std::string_view> formal_model_out;
+    std::optional<std::string_view> bmc_depth;
+    std::optional<std::string_view> bmc_boundary_invariants;
     bool explain_requested{false};
     bool optimize_requested{false};
     bool time_passes_requested{false};

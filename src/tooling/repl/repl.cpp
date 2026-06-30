@@ -127,7 +127,8 @@ std::string default_verify_handler(const std::string &input) {
             result << "Agent " << agent->name << ": model emission failed\n";
             continue;
         }
-        auto verify = backend.verify(emit.model_text);
+        ahfl::formal::BackendVerificationOptions bvopts;
+        auto verify = backend.verify(emit.model_text, bvopts);
         result << "Agent " << agent->name << ": " << (verify.all_passed ? "PASS" : "FAIL") << " ("
                << verify.properties_checked << " properties)\n";
     }

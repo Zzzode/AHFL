@@ -187,6 +187,14 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
 
 [[nodiscard]] ModelEmissionResult NuXmvBackend::emit_model(const BmcStateMachine &machine) {
     ModelEmissionResult result;
+    BackendVerificationOptions default_opts;
+    return emit_model(machine, default_opts);
+}
+
+[[nodiscard]] ModelEmissionResult
+NuXmvBackend::emit_model(const BmcStateMachine &machine,
+                         const BackendVerificationOptions &options) {
+    ModelEmissionResult result;
 
     if (machine.states.empty()) {
         result.success = false;
@@ -207,8 +215,16 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
     }
     model += "};\n";
 
+    const bool want_boundary = options.bmc_boundary_invariants;
+    if (want_boundary) {
+        model += "VAR cycles_visited : 0.." + std::to_string(options.bmc_depth) + ";\n";
+    }
+
     // INIT
     model += "INIT state = " + machine.initial_state + ";\n";
+    if (want_boundary) {
+        model += "INIT cycles_visited = 0;\n";
+    }
 
     // TRANS
     model += "TRANS next(state) = case\n";
@@ -216,6 +232,19 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
         model += "  state = " + t.from + " : " + t.to + ";\n";
     }
     model += "  TRUE : state;\nesac;\n";
+
+    if (want_boundary) {
+        model += "TRANS next(cycles_visited) = case\n";
+        model += "  next(state) != state : cycles_visited + 1;\n";
+        model += "  TRUE : cycles_visited;\n";
+        model += "esac;\n";
+
+        // Boundary invariant: per state, cycles_visited <= depth.
+        for (const auto &s : machine.states) {
+            model += "INVARSPEC (state = " + s + ") -> (cycles_visited <= " +
+                     std::to_string(options.bmc_depth) + ");\n";
+        }
+    }
 
     // Properties as LTLSPEC
     for (const auto &prop : machine.properties) {
@@ -235,7 +264,8 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
     return result;
 }
 
-[[nodiscard]] VerificationSummary NuXmvBackend::verify(const std::string &model_text) {
+[[nodiscard]] VerificationSummary
+NuXmvBackend::verify(const std::string &model_text, const BackendVerificationOptions &options) {
     VerificationSummary summary;
 
     // Find the nuXmv/NuSMV binary
@@ -252,24 +282,33 @@ NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output,
     // Write model to temp file
     auto model_path = write_temp_model(model_text);
 
-    // Build verification command
-    // Use batch mode: nuXmv -source <cmd_file> <model_file>
-    // Or simpler: pipe commands via stdin
+    // Build verification command using a source script.
+    // BMC mode: "go_bmc; check_ltlspec_bmc -k <K>"  (INVARSPEC BMC via check_invar_bmc)
+    // BDD mode: "flatten_hierarchy; encode_variables; build_model; check_ltlspec; check_invar"
     auto cmd_path = fs::temp_directory_path() / "ahfl_verification_formal" / "verify_cmd.txt";
     {
         std::ofstream cmd_file(cmd_path, std::ios::trunc);
         cmd_file << "read_model -i " << model_path << "\n";
-        cmd_file << "flatten_hierarchy\n";
-        cmd_file << "encode_variables\n";
-        cmd_file << "build_model\n";
-        cmd_file << "check_ltlspec\n";
+        if (options.use_bmc_engine) {
+            // BMC engine path. -k <depth> controls how deep the BMC SAT unrolling runs.
+            cmd_file << "go_bmc\n";
+            cmd_file << "check_ltlspec_bmc -k " << options.bmc_depth << "\n";
+            cmd_file << "check_invar_bmc -k " << options.bmc_depth << "\n";
+        } else {
+            // BDD (default) path — keep existing behaviour.
+            cmd_file << "flatten_hierarchy\n";
+            cmd_file << "encode_variables\n";
+            cmd_file << "build_model\n";
+            cmd_file << "check_ltlspec\n";
+            cmd_file << "check_invar\n";
+        }
         cmd_file << "quit\n";
     }
 
     ProcessConfig process_config;
     process_config.executable = binary;
     process_config.arguments = {"-source", cmd_path.string()};
-    process_config.timeout = std::chrono::seconds{60};
+    process_config.timeout = options.timeout;
     const auto process_result = launch_process(process_config);
     std::string output = process_result.stdout_output;
     if (!process_result.stderr_output.empty()) {

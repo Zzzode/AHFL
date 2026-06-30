@@ -1,5 +1,5 @@
 
-// Generated from /Users/bytedance/Develop/AHFL/grammar/AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -31,6 +31,10 @@ public:
 
     virtual std::any visitQualifiedIdent(AHFLParser::QualifiedIdentContext *context) = 0;
 
+    virtual std::any visitCallableNamePiece(AHFLParser::CallableNamePieceContext *context) = 0;
+
+    virtual std::any visitCallableName(AHFLParser::CallableNameContext *context) = 0;
+
     virtual std::any visitQualifiedIdentList(AHFLParser::QualifiedIdentListContext *context) = 0;
 
     virtual std::any visitIdentList(AHFLParser::IdentListContext *context) = 0;
@@ -53,7 +57,15 @@ public:
 
     virtual std::any visitEnumDecl(AHFLParser::EnumDeclContext *context) = 0;
 
-    virtual std::any visitEnumVariant(AHFLParser::EnumVariantContext *context) = 0;
+    virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *context) = 0;
+
+    virtual std::any visitStructEnumVariant(AHFLParser::StructEnumVariantContext *context) = 0;
+
+    virtual std::any visitTupleEnumVariant(AHFLParser::TupleEnumVariantContext *context) = 0;
+
+    virtual std::any visitVariantFieldDecl(AHFLParser::VariantFieldDeclContext *context) = 0;
+
+    virtual std::any visitVariantFieldList(AHFLParser::VariantFieldListContext *context) = 0;
 
     virtual std::any visitTypeList(AHFLParser::TypeListContext *context) = 0;
 
@@ -199,11 +211,23 @@ public:
 
     virtual std::any visitIfStmt(AHFLParser::IfStmtContext *context) = 0;
 
+    virtual std::any visitIfLetStmt(AHFLParser::IfLetStmtContext *context) = 0;
+
+    virtual std::any visitIfLetPattern(AHFLParser::IfLetPatternContext *context) = 0;
+
+    virtual std::any visitIfLetPatternVar(AHFLParser::IfLetPatternVarContext *context) = 0;
+
     virtual std::any visitGotoStmt(AHFLParser::GotoStmtContext *context) = 0;
 
     virtual std::any visitReturnStmt(AHFLParser::ReturnStmtContext *context) = 0;
 
     virtual std::any visitAssertStmt(AHFLParser::AssertStmtContext *context) = 0;
+
+    virtual std::any visitUnwrapStmt(AHFLParser::UnwrapStmtContext *context) = 0;
+
+    virtual std::any visitRequiresStmt(AHFLParser::RequiresStmtContext *context) = 0;
+
+    virtual std::any visitUnreachableStmt(AHFLParser::UnreachableStmtContext *context) = 0;
 
     virtual std::any visitExprStmt(AHFLParser::ExprStmtContext *context) = 0;
 
@@ -230,6 +254,8 @@ public:
     virtual std::any visitPostfixExpr(AHFLParser::PostfixExprContext *context) = 0;
 
     virtual std::any visitPrimaryExpr(AHFLParser::PrimaryExprContext *context) = 0;
+
+    virtual std::any visitUnwrapExpr(AHFLParser::UnwrapExprContext *context) = 0;
 
     virtual std::any visitMatchExpr(AHFLParser::MatchExprContext *context) = 0;
 

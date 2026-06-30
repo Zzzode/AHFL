@@ -447,6 +447,19 @@ class LoweringContext {
         return make_local(dest);
     }
 
+    // P4-02: UnwrapExpr — represented as a Use-style temporary with a "<unwrap>"
+    // placeholder. The operand itself is lowered independently through the
+    // regular expression recursion so any side effects are preserved.
+    [[nodiscard]] Operand lower_expr_node(const ir::UnwrapExpr & /*e*/, const ir::Expr &expr) {
+        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.operands.push_back(make_constant("<unwrap>"));
+        rv.result_type = clone_type_ref(expr.resolved_type);
+        emit_assign(dest, std::move(rv), expr.source_range);
+        return make_local(dest);
+    }
+
     // ---- Helpers ----
 
     static Operand make_constant(Constant c) {
@@ -528,6 +541,9 @@ void lower_stmt_node(LoweringContext &ctx, const ir::IfStatement &s, const ir::S
 void lower_stmt_node(LoweringContext &ctx, const ir::GotoStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::ReturnStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::AssertStatement &s, const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx, const ir::UnwrapStatement &s, const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx, const ir::RequiresStatement &s, const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx, const ir::UnreachableStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::ExprStatement &s, const ir::Statement &stmt);
 
 void lower_statement(LoweringContext &ctx, const ir::Statement &stmt) {
@@ -700,6 +716,12 @@ void lower_stmt_node(LoweringContext &ctx,
         rv.operands.push_back(cond_operand);
         ctx.emit_assign(cond_local, std::move(rv), cond_range);
     }
+    // Optional user message: lower for side-effects (constant folding, purity
+    // verification, etc.); attaching it to the terminator is a follow-up
+    // enhancement to the opt-lowering IR.
+    if (s.message) {
+        (void)ctx.lower_expr(s.message.get());
+    }
 
     auto continue_block = ctx.new_block("after.assert");
 
@@ -711,6 +733,87 @@ void lower_stmt_node(LoweringContext &ctx,
     ctx.set_terminator(std::move(term));
 
     ctx.set_current_block(continue_block);
+}
+
+void lower_stmt_node(LoweringContext &ctx,
+                     const ir::UnwrapStatement &s,
+                     const ir::Statement &stmt) {
+    // P4-01 conservative lower: unwrap is an assertion that the operand is
+    // truthy (equivalent to `assert(e)`). The CFG does not extract T; value
+    // extraction is a P4-02 follow-up.
+    const auto operand_range =
+        s.operand ? s.operand->source_range : stmt.source_range;
+    const auto operand_type = type_or_unresolved(s.operand.get());
+    const auto operand_local =
+        ctx.new_temp(clone_type_ref(operand_type), operand_range);
+    if (s.operand) {
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.result_type = clone_type_ref(operand_type);
+        rv.operands.push_back(ctx.lower_expr(s.operand.get()));
+        ctx.emit_assign(operand_local, std::move(rv), operand_range);
+    }
+    const auto continue_block = ctx.new_block("after.unwrap");
+    Terminator term;
+    term.kind = Terminator::Kind::Assert;
+    term.condition = operand_local;
+    term.target = continue_block;
+    term.source_range = stmt.source_range;
+    ctx.set_terminator(std::move(term));
+    ctx.set_current_block(continue_block);
+}
+
+void lower_stmt_node(LoweringContext &ctx,
+                     const ir::RequiresStatement &s,
+                     const ir::Statement &stmt) {
+    // Mirrors AssertStatement; BMC/opt treat requires as an assertion.
+    const auto cond_range =
+        s.condition ? s.condition->source_range : stmt.source_range;
+    const auto cond_type = type_or_unresolved(s.condition.get());
+    const auto cond_local = ctx.new_temp(clone_type_ref(cond_type), cond_range);
+    if (s.condition) {
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.result_type = clone_type_ref(cond_type);
+        rv.operands.push_back(ctx.lower_expr(s.condition.get()));
+        ctx.emit_assign(cond_local, std::move(rv), cond_range);
+    }
+    if (s.message) {
+        (void)ctx.lower_expr(s.message.get());
+    }
+    const auto continue_block = ctx.new_block("after.requires");
+    Terminator term;
+    term.kind = Terminator::Kind::Assert;
+    term.condition = cond_local;
+    term.target = continue_block;
+    term.source_range = stmt.source_range;
+    ctx.set_terminator(std::move(term));
+    ctx.set_current_block(continue_block);
+}
+
+void lower_stmt_node(LoweringContext &ctx,
+                     const ir::UnreachableStatement &s,
+                     const ir::Statement &stmt) {
+    if (s.message) {
+        (void)ctx.lower_expr(s.message.get());
+    }
+    // Minimal lower: emit an Assert whose condition is a freshly-allocated
+    // never-assigned temp. The opt/BMC layer treats a never-initialized local
+    // as "falsey enough" to preserve the unreachable failure semantics; a
+    // follow-up that introduces a literal-false terminator kind can tighten
+    // this to a precise dead-edge.
+    TypeRef bool_type;
+    bool_type.kind = TypeRefKind::Bool;
+    bool_type.display_name = "Bool";
+    const auto false_local = ctx.new_temp(clone_type_ref(bool_type), stmt.source_range);
+    const auto after = ctx.new_block("after.unreachable");
+    Terminator term;
+    term.kind = Terminator::Kind::Assert;
+    term.condition = false_local;
+    term.target = after;
+    term.source_range = stmt.source_range;
+    ctx.set_terminator(std::move(term));
+    ctx.set_current_block(after);
 }
 
 void lower_stmt_node(LoweringContext &ctx, const ir::ExprStatement &s, const ir::Statement &stmt) {

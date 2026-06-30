@@ -386,7 +386,17 @@ std::unique_ptr<json::JsonValue> serialize_code_action(const CodeAction &action)
         obj->set("edit", serialize_workspace_edit(*action.edit));
     }
     if (action.command) {
-        obj->set("command", json::JsonValue::make_string(*action.command));
+        auto cmd = json::JsonValue::make_object();
+        cmd->set("title", json::JsonValue::make_string(action.title));
+        cmd->set("command", json::JsonValue::make_string(*action.command));
+        if (!action.command_arguments.empty()) {
+            auto args = json::JsonValue::make_array();
+            for (const auto &arg : action.command_arguments) {
+                args->push(json::JsonValue::make_string(arg));
+            }
+            cmd->set("arguments", std::move(args));
+        }
+        obj->set("command", std::move(cmd));
     }
     return obj;
 }

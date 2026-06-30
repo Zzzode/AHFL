@@ -92,6 +92,22 @@ template <typename E>
     return array;
 }
 
+[[nodiscard]] std::unique_ptr<Json> j_where_bound(const WhereBoundInfo &bound) {
+    auto object = Json::make_object();
+    object->set("subject_name", Json::make_string(bound.subject_name));
+    object->set("trait_names", j_string_array(bound.trait_names));
+    object->set("source_range", j_range(bound.source_range));
+    return object;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_where_clause(const WhereClauseInfo &info) {
+    auto array = Json::make_array();
+    for (const auto &bound : info.bounds) {
+        array->push(j_where_bound(bound));
+    }
+    return array;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_type(TypePtr type) {
     if (type == nullptr) {
         return Json::make_null();
@@ -330,6 +346,7 @@ template <typename E>
             fields->push(j_struct_field(field));
         }
         value->set("fields", std::move(fields));
+        value->set("where_clause", j_where_clause(info->where_clause));
         value->set("declaration_range", j_range(info->declaration_range));
         object->set("kind", Json::make_string("Struct"));
         object->set("value", std::move(value));
@@ -356,6 +373,7 @@ template <typename E>
             variants->push(std::move(variant_json));
         }
         value->set("variants", std::move(variants));
+        value->set("where_clause", j_where_clause(info->where_clause));
         value->set("declaration_range", j_range(info->declaration_range));
         object->set("kind", Json::make_string("Enum"));
         object->set("value", std::move(value));
@@ -372,6 +390,7 @@ template <typename E>
         }
         value->set("params", std::move(params));
         value->set("return_type", j_type(info->return_type));
+        value->set("where_clause", j_where_clause(info->where_clause));
         value->set("declaration_range", j_range(info->declaration_range));
         value->set("effect", j_capability_effect(info->effect));
         object->set("kind", Json::make_string("Capability"));
@@ -545,6 +564,7 @@ template <typename E>
             type_params->push(Json::make_string(type_param));
         }
         value->set("type_param_names", std::move(type_params));
+        value->set("where_clause", j_where_clause(info->where_clause));
         // Effect clause: kind is the ast::EffectClauseKind int (0=Pure,
         // 1=Nondet, 2=Capability) per FnEffectClauseInfo.
         auto effect = Json::make_object();
@@ -578,6 +598,92 @@ template <typename E>
         }
         value->set("body_block_index", j_int(info->body_block_index));
         object->set("kind", Json::make_string("Fn"));
+        object->set("value", std::move(value));
+        return object;
+    }
+
+    if (const auto *info = std::get_if<TraitTypeInfo>(&payload)) {
+        auto value = Json::make_object();
+        value->set("symbol", j_symbol_id(info->symbol));
+        value->set("canonical_name", Json::make_string(info->canonical_name));
+        value->set("local_name", Json::make_string(info->local_name));
+        value->set("type_param_names", j_string_array(info->type_param_names));
+        value->set("super_traits", j_symbol_array(info->super_traits));
+        auto methods = Json::make_array();
+        for (const auto &m : info->methods) {
+            auto mj = Json::make_object();
+            mj->set("name", Json::make_string(m.name));
+            auto mp = Json::make_array();
+            for (const auto &p : m.params) mp->push(j_param(p));
+            mj->set("params", std::move(mp));
+            mj->set("return_type", j_type(m.return_type));
+            mj->set("return_type_range", j_range(m.return_type_range));
+            mj->set("type_param_names", j_string_array(m.type_param_names));
+            mj->set("declaration_range", j_range(m.declaration_range));
+            methods->push(std::move(mj));
+        }
+        value->set("methods", std::move(methods));
+        auto assoc = Json::make_array();
+        for (const auto &a : info->assoc_types) {
+            auto aj = Json::make_object();
+            aj->set("name", Json::make_string(a.name));
+            aj->set("type_param_names", j_string_array(a.type_param_names));
+            aj->set("default_type", a.default_type ? j_type(a.default_type) : Json::make_null());
+            aj->set("declaration_range", j_range(a.declaration_range));
+            assoc->push(std::move(aj));
+        }
+        value->set("assoc_types", std::move(assoc));
+        value->set("where_clause", j_where_clause(info->where_clause));
+        value->set("declaration_range", j_range(info->declaration_range));
+        object->set("kind", Json::make_string("Trait"));
+        object->set("value", std::move(value));
+        return object;
+    }
+
+    if (const auto *info = std::get_if<ImplTypeInfo>(&payload)) {
+        auto value = Json::make_object();
+        value->set("index", j_int(static_cast<std::uint64_t>(info->index)));
+        value->set("is_inherent", Json::make_bool(info->is_inherent));
+        value->set("trait_symbol",
+                   info->trait_symbol ? j_symbol_id(*info->trait_symbol) : Json::make_null());
+        value->set("trait_name", Json::make_string(info->trait_name));
+        value->set("target_type", j_type(info->target_type));
+        value->set("target_symbol",
+                   info->target_symbol ? j_symbol_id(*info->target_symbol) : Json::make_null());
+        value->set("type_param_names", j_string_array(info->type_param_names));
+        auto methods = Json::make_array();
+        for (const auto &m : info->methods) {
+            auto mj = Json::make_object();
+            mj->set("name", Json::make_string(m.name));
+            mj->set("symbol", j_symbol_id(m.symbol));
+            auto mp = Json::make_array();
+            for (const auto &p : m.params) mp->push(j_param(p));
+            mj->set("params", std::move(mp));
+            mj->set("return_type", j_type(m.return_type));
+            mj->set("return_type_range", j_range(m.return_type_range));
+            mj->set("type_param_names", j_string_array(m.type_param_names));
+            mj->set("has_body", Json::make_bool(m.has_body));
+            mj->set("declaration_range", j_range(m.declaration_range));
+            mj->set("builtin_name",
+                    m.builtin_name ? Json::make_string(*m.builtin_name) : Json::make_null());
+            mj->set("body_block_index", j_int(m.body_block_index));
+            methods->push(std::move(mj));
+        }
+        value->set("methods", std::move(methods));
+        auto assoc = Json::make_array();
+        for (const auto &a : info->assoc_items) {
+            auto aj = Json::make_object();
+            aj->set("name", Json::make_string(a.name));
+            aj->set("type", j_type(a.type));
+            aj->set("declaration_range", j_range(a.declaration_range));
+            assoc->push(std::move(aj));
+        }
+        value->set("assoc_items", std::move(assoc));
+        value->set("declaration_range", j_range(info->declaration_range));
+        value->set("trait_ref_range", j_range(info->trait_ref_range));
+        value->set("target_type_range", j_range(info->target_type_range));
+        value->set("module_name", Json::make_string(info->module_name));
+        object->set("kind", Json::make_string("Impl"));
         object->set("value", std::move(value));
         return object;
     }
@@ -737,6 +843,11 @@ template <typename E>
     object->set("let_type", j_type(stmt.let_type));
     object->set("assign_target_root_kind", j_enum(stmt.assign_target_root_kind));
     object->set("assert_message", Json::make_string(stmt.assert_message));
+    // N-5: serialize AssertionKind via its canonical string form so old
+    // readers (that expect a "failure_kind" string field) can still parse
+    // the output produced by new code.
+    object->set("failure_kind", Json::make_string(to_string(stmt.assertion_kind)));
+    object->set("assertion_kind", j_enum(static_cast<int>(stmt.assertion_kind)));
     return object;
 }
 
@@ -1078,6 +1189,15 @@ class Reader {
             return default_value;
         }
         return static_cast<std::uint32_t>(integer);
+    }
+
+    [[nodiscard]] std::uint64_t
+    optional_u64_field(const Json &object, std::string_view key, std::uint64_t default_value) {
+        const auto *value = object.get(key);
+        if (value == nullptr || value->is_null()) {
+            return default_value;
+        }
+        return uint_value(value);
     }
 
     [[nodiscard]] std::vector<SymbolId> symbol_array_field(const Json &object,
@@ -1569,6 +1689,156 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         return info;
     }
 
+    if (kind == "Trait") {
+        TraitTypeInfo info{
+            .symbol = reader.symbol_id_field(*value, "symbol"),
+            .canonical_name = reader.string_field(*value, "canonical_name"),
+            .local_name = reader.optional_string_field(*value, "local_name").value_or(""),
+            .type_param_names = {},
+            .super_traits = {},
+            .methods = {},
+            .assoc_types = {},
+            .where_clause = {},
+            .declaration_range = reader.range_field(*value, "declaration_range"),
+        };
+        if (const auto *tps = reader.field(*value, "type_param_names");
+            tps != nullptr && tps->kind == json::Kind::Array) {
+            info.type_param_names = reader.string_array_field(*value, "type_param_names");
+        }
+        if (const auto *sts = reader.field(*value, "super_traits");
+            sts != nullptr && sts->kind == json::Kind::Array) {
+            info.super_traits.reserve(sts->array_items.size());
+            for (const auto &item : sts->array_items) {
+                info.super_traits.push_back(reader.symbol_id_value(item.get()));
+            }
+        }
+        if (const auto *arr = reader.field(*value, "where_clause");
+            arr != nullptr && arr->kind == json::Kind::Array) {
+            info.where_clause.bounds.reserve(arr->array_items.size());
+            for (const auto &item : arr->array_items) {
+                WhereBoundInfo b;
+                b.subject_name = reader.string_field(*item, "subject_name");
+                if (const auto *tn = reader.field(*item, "trait_names");
+                    tn != nullptr && tn->kind == json::Kind::Array) {
+                    b.trait_names = reader.string_array_field(*item, "trait_names");
+                }
+                b.source_range = reader.range_field(*item, "source_range");
+                info.where_clause.bounds.push_back(std::move(b));
+            }
+        }
+        if (const auto *methods = reader.field(*value, "methods");
+            methods != nullptr && methods->kind == json::Kind::Array) {
+            info.methods.reserve(methods->array_items.size());
+            for (const auto &item : methods->array_items) {
+                TraitMethodInfo m;
+                m.name = reader.string_field(*item, "name");
+                m.return_type = reader.type_field(*item, "return_type");
+                m.return_type_range = reader.range_field(*item, "return_type_range");
+                m.declaration_range = reader.range_field(*item, "declaration_range");
+                if (const auto *tps = reader.field(*item, "type_param_names");
+                    tps != nullptr && tps->kind == json::Kind::Array) {
+                    m.type_param_names = reader.string_array_field(*item, "type_param_names");
+                }
+                if (const auto *ps = reader.field(*item, "params");
+                    ps != nullptr && ps->kind == json::Kind::Array) {
+                    m.params.reserve(ps->array_items.size());
+                    for (const auto &p : ps->array_items) {
+                        m.params.push_back(ParamTypeInfo{
+                            .name = reader.string_field(*p, "name"),
+                            .type = reader.type_field(*p, "type"),
+                            .declaration_range = reader.range_field(*p, "declaration_range"),
+                        });
+                    }
+                }
+                info.methods.push_back(std::move(m));
+            }
+        }
+        if (const auto *at = reader.field(*value, "assoc_types");
+            at != nullptr && at->kind == json::Kind::Array) {
+            info.assoc_types.reserve(at->array_items.size());
+            for (const auto &item : at->array_items) {
+                TraitAssocTypeInfo a;
+                a.name = reader.string_field(*item, "name");
+                a.declaration_range = reader.range_field(*item, "declaration_range");
+                if (const auto *tps = reader.field(*item, "type_param_names");
+                    tps != nullptr && tps->kind == json::Kind::Array) {
+                    a.type_param_names = reader.string_array_field(*item, "type_param_names");
+                }
+                const auto *dt = reader.field(*item, "default_type");
+                a.default_type = (dt != nullptr && !dt->is_null()) ? reader.type_value(dt) : nullptr;
+                info.assoc_types.push_back(std::move(a));
+            }
+        }
+        return info;
+    }
+
+    if (kind == "Impl") {
+        ImplTypeInfo info{
+            .index = static_cast<std::size_t>(reader.optional_u64_field(*value, "index", 0)),
+            .is_inherent = reader.bool_field(*value, "is_inherent"),
+            .trait_symbol = reader.optional_symbol_id_field(*value, "trait_symbol"),
+            .trait_name = reader.string_field(*value, "trait_name"),
+            .target_type = reader.type_field(*value, "target_type"),
+            .target_symbol = reader.optional_symbol_id_field(*value, "target_symbol"),
+            .type_param_names = {},
+            .methods = {},
+            .assoc_items = {},
+            .declaration_range = reader.range_field(*value, "declaration_range"),
+            .trait_ref_range = reader.range_field(*value, "trait_ref_range"),
+            .target_type_range = reader.range_field(*value, "target_type_range"),
+            .source_id = std::nullopt,
+            .module_name = reader.optional_string_field(*value, "module_name").value_or(""),
+        };
+        if (const auto *tps = reader.field(*value, "type_param_names");
+            tps != nullptr && tps->kind == json::Kind::Array) {
+            info.type_param_names = reader.string_array_field(*value, "type_param_names");
+        }
+        if (const auto *methods = reader.field(*value, "methods");
+            methods != nullptr && methods->kind == json::Kind::Array) {
+            info.methods.reserve(methods->array_items.size());
+            for (const auto &item : methods->array_items) {
+                ImplMethodInfo m;
+                m.name = reader.string_field(*item, "name");
+                m.symbol = reader.symbol_id_field(*item, "symbol");
+                m.return_type = reader.type_field(*item, "return_type");
+                m.return_type_range = reader.range_field(*item, "return_type_range");
+                m.has_body = reader.optional_bool_field(*item, "has_body", false);
+                m.declaration_range = reader.range_field(*item, "declaration_range");
+                m.builtin_name = reader.optional_string_field(*item, "builtin_name");
+                m.body_block_index =
+                    reader.optional_u32_field(*item, "body_block_index", UINT32_MAX);
+                if (const auto *tps = reader.field(*item, "type_param_names");
+                    tps != nullptr && tps->kind == json::Kind::Array) {
+                    m.type_param_names = reader.string_array_field(*item, "type_param_names");
+                }
+                if (const auto *ps = reader.field(*item, "params");
+                    ps != nullptr && ps->kind == json::Kind::Array) {
+                    m.params.reserve(ps->array_items.size());
+                    for (const auto &p : ps->array_items) {
+                        m.params.push_back(ParamTypeInfo{
+                            .name = reader.string_field(*p, "name"),
+                            .type = reader.type_field(*p, "type"),
+                            .declaration_range = reader.range_field(*p, "declaration_range"),
+                        });
+                    }
+                }
+                info.methods.push_back(std::move(m));
+            }
+        }
+        if (const auto *at = reader.field(*value, "assoc_items");
+            at != nullptr && at->kind == json::Kind::Array) {
+            info.assoc_items.reserve(at->array_items.size());
+            for (const auto &item : at->array_items) {
+                ImplAssocItemInfo a;
+                a.name = reader.string_field(*item, "name");
+                a.type = reader.type_field(*item, "type");
+                a.declaration_range = reader.range_field(*item, "declaration_range");
+                info.assoc_items.push_back(std::move(a));
+            }
+        }
+        return info;
+    }
+
     return std::monostate{};
 }
 
@@ -1736,6 +2006,13 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .assign_target_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "assign_target_root_kind")),
         .assert_message = reader.string_field(object, "assert_message"),
+        // N-5: prefer new enum field; fall back to legacy string field so
+        // JSON archives produced before Wave-20 round-trip correctly.
+        .assertion_kind =
+            object.get("assertion_kind") != nullptr
+                ? static_cast<AssertionKind>(
+                      reader.int_field(object, "assertion_kind"))
+                : parse_assertion_kind(reader.string_field(object, "failure_kind")),
     };
 }
 

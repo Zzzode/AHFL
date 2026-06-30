@@ -313,6 +313,15 @@ class AstInvariantValidator final {
                         validate_expr(*e.body);
                     }
                 },
+                // P4-02: unwrap(e) — identical operand invariants to the
+                // statement-level unwrap, but expressed as an expression child.
+                [&](const UnwrapExprSyntax &e) {
+                    require(e.operand != nullptr, expr.range,
+                            "UnwrapExpr is missing operand");
+                    if (e.operand) {
+                        validate_expr(*e.operand);
+                    }
+                },
             },
             expr.node);
     }
@@ -382,9 +391,13 @@ class AstInvariantValidator final {
         active_count += statement.let_stmt != nullptr;
         active_count += statement.assign_stmt != nullptr;
         active_count += statement.if_stmt != nullptr;
+        active_count += statement.if_let_stmt != nullptr;
         active_count += statement.goto_stmt != nullptr;
         active_count += statement.return_stmt != nullptr;
         active_count += statement.assert_stmt != nullptr;
+        active_count += statement.unwrap_stmt != nullptr;
+        active_count += statement.requires_stmt != nullptr;
+        active_count += statement.unreachable_stmt != nullptr;
         active_count += statement.expr_stmt != nullptr;
         require(active_count == 1,
                 statement.range,
@@ -448,6 +461,36 @@ class AstInvariantValidator final {
                 }
             }
             break;
+        case StatementSyntaxKind::IfLet:
+            require(statement.if_let_stmt != nullptr,
+                    statement.range,
+                    "IfLet StatementSyntax is missing if_let_stmt");
+            if (statement.if_let_stmt) {
+                require(statement.if_let_stmt->pattern != nullptr,
+                        statement.if_let_stmt->range,
+                        "IfLetStmtSyntax is missing pattern");
+                require(statement.if_let_stmt->scrutinee != nullptr,
+                        statement.if_let_stmt->range,
+                        "IfLetStmtSyntax is missing scrutinee");
+                require(statement.if_let_stmt->then_block != nullptr,
+                        statement.if_let_stmt->range,
+                        "IfLetStmtSyntax is missing then_block");
+                if (statement.if_let_stmt->pattern) {
+                    require(!statement.if_let_stmt->pattern->variant_name.empty(),
+                            statement.if_let_stmt->pattern->range,
+                            "IfLetPatternSyntax is missing variant_name");
+                }
+                if (statement.if_let_stmt->scrutinee) {
+                    validate_expr(*statement.if_let_stmt->scrutinee);
+                }
+                if (statement.if_let_stmt->then_block) {
+                    validate_block(*statement.if_let_stmt->then_block);
+                }
+                if (statement.if_let_stmt->else_block) {
+                    validate_block(*statement.if_let_stmt->else_block);
+                }
+            }
+            break;
         case StatementSyntaxKind::Goto:
             require(statement.goto_stmt != nullptr,
                     statement.range,
@@ -471,12 +514,52 @@ class AstInvariantValidator final {
                     statement.range,
                     "Assert StatementSyntax is missing assert_stmt");
             if (statement.assert_stmt) {
-                require(statement.assert_stmt->condition != nullptr,
-                        statement.assert_stmt->range,
-                        "AssertStmtSyntax is missing condition");
+                // Arity-0 `assert()` is intentionally allowed through the AST
+                // layer so the typechecker can emit a single stable
+                // `typecheck.WRONG_ARITY` diagnostic instead of a low-level
+                // parse error.  Only recurse into child expressions when they
+                // are actually present.
                 if (statement.assert_stmt->condition) {
                     validate_expr(*statement.assert_stmt->condition);
                 }
+                if (statement.assert_stmt->message) {
+                    validate_expr(*statement.assert_stmt->message);
+                }
+            }
+            break;
+        case StatementSyntaxKind::Unwrap:
+            require(statement.unwrap_stmt != nullptr,
+                    statement.range,
+                    "Unwrap StatementSyntax is missing unwrap_stmt");
+            if (statement.unwrap_stmt) {
+                // Mirrors assert: arity-0 `unwrap()` is deferred to the
+                // typechecker so the stable WRONG_ARITY code is produced.
+                if (statement.unwrap_stmt->operand) {
+                    validate_expr(*statement.unwrap_stmt->operand);
+                }
+            }
+            break;
+        case StatementSyntaxKind::Requires:
+            require(statement.requires_stmt != nullptr,
+                    statement.range,
+                    "Requires StatementSyntax is missing requires_stmt");
+            if (statement.requires_stmt) {
+                // Mirrors assert: arity-0 `requires()` is deferred to the
+                // typechecker so the stable WRONG_ARITY code is produced.
+                if (statement.requires_stmt->condition) {
+                    validate_expr(*statement.requires_stmt->condition);
+                }
+                if (statement.requires_stmt->message) {
+                    validate_expr(*statement.requires_stmt->message);
+                }
+            }
+            break;
+        case StatementSyntaxKind::Unreachable:
+            require(statement.unreachable_stmt != nullptr,
+                    statement.range,
+                    "Unreachable StatementSyntax is missing unreachable_stmt");
+            if (statement.unreachable_stmt && statement.unreachable_stmt->message) {
+                validate_expr(*statement.unreachable_stmt->message);
             }
             break;
         case StatementSyntaxKind::Expr:
@@ -713,6 +796,9 @@ class AstInvariantValidator final {
                     require(!variant->name.empty(),
                             variant->range,
                             "EnumVariantDeclSyntax is missing name");
+                    require(variant->payload.empty() || variant->named_fields.empty(),
+                            variant->range,
+                            "EnumVariantDeclSyntax cannot carry both tuple and struct payloads");
                     // P1 (ADT): validate the optional positional payload types.
                     for (const auto &payload_type : variant->payload) {
                         require(payload_type != nullptr,
@@ -720,6 +806,26 @@ class AstInvariantValidator final {
                                 "EnumVariantDeclSyntax.payload contains null");
                         if (payload_type) {
                             validate_type(*payload_type);
+                        }
+                    }
+                    // RFC d-1 POC: validate struct (named-field) payload.
+                    for (const auto &field : variant->named_fields) {
+                        require(field != nullptr,
+                                variant->range,
+                                "EnumVariantDeclSyntax.named_fields contains null");
+                        if (field) {
+                            require(!field->name.empty(),
+                                    field->range,
+                                    "EnumVariantFieldSyntax is missing name");
+                            require(field->type != nullptr,
+                                    field->range,
+                                    "EnumVariantFieldSyntax is missing type");
+                            if (field->type) {
+                                validate_type(*field->type);
+                            }
+                            if (field->default_value) {
+                                validate_expr(*field->default_value);
+                            }
                         }
                     }
                 }

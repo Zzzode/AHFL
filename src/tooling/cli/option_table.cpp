@@ -108,6 +108,14 @@ void set_smv_size_report(CommandLineOptions &opts, std::optional<std::string_vie
     opts.smv_size_report_requested = true;
 }
 
+void set_bmc_depth(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.bmc_depth = val;
+}
+
+void set_bmc_boundary_invariants(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.bmc_boundary_invariants = val;
+}
+
 void set_trace_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.trace_export_path = val;
 }
@@ -234,6 +242,18 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_formal_model_out,
      "Output path for formal model",
      "an output path"},
+    {"--bmc-depth",
+     "",
+     OptionArgKind::RequiredValue,
+     set_bmc_depth,
+     "Bounded model checking depth bound (positive integer, default 20)",
+     "K"},
+    {"--bmc-boundary-invariants",
+     "",
+     OptionArgKind::RequiredValue,
+     set_bmc_boundary_invariants,
+     "Automatically add reachability boundary invariants per state (true/false)",
+     "true|false"},
     {"--search-root",
      "",
      OptionArgKind::RepeatableValue,
@@ -320,6 +340,24 @@ static_assert(option_table_has_unique_long_names(), "duplicate long_name in opti
         }
     }
     return nullptr;
+}
+
+// Split "--name=value" into {spec, value} when the argument uses '=' syntax.
+struct SplitOptionResult {
+    const OptionSpec *spec{nullptr};
+    std::string_view value;
+};
+[[nodiscard]] SplitOptionResult try_split_equals_option(std::string_view argument) {
+    const auto eq = argument.find('=');
+    if (eq == std::string_view::npos) {
+        return {};
+    }
+    const auto name = argument.substr(0, eq);
+    const auto *spec = find_option_spec(name);
+    if (spec == nullptr || spec->arg_kind == OptionArgKind::Flag) {
+        return {};
+    }
+    return SplitOptionResult{spec, argument.substr(eq + 1)};
 }
 
 [[nodiscard]] bool can_select_action(const CommandLineOptions &options) {
@@ -437,6 +475,12 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
                 }
                 spec->setter(options, arguments[++index]);
             }
+            continue;
+        }
+
+        // Try "--name=value" style (required / repeatable values only).
+        if (auto split = try_split_equals_option(argument); split.spec != nullptr) {
+            split.spec->setter(options, split.value);
             continue;
         }
 

@@ -56,6 +56,15 @@ struct VerificationSummary {
     std::string error_message;
 };
 
+/// Runtime options forwarded from the CLI / FormalCheckerOptions to the
+/// backend's verify() call.
+struct BackendVerificationOptions {
+    std::chrono::seconds timeout{60};
+    std::size_t bmc_depth{20};
+    bool use_bmc_engine{false};
+    bool bmc_boundary_invariants{false};
+};
+
 class ModelCheckerBackend {
   public:
     virtual ~ModelCheckerBackend() = default;
@@ -65,7 +74,8 @@ class ModelCheckerBackend {
     [[nodiscard]] virtual ModelCheckerCapabilities capabilities() const = 0;
     [[nodiscard]] virtual ModelCheckerAvailability availability() const = 0;
     [[nodiscard]] virtual ModelEmissionResult emit_model(const BmcStateMachine &machine) = 0;
-    [[nodiscard]] virtual VerificationSummary verify(const std::string &model_text) = 0;
+    [[nodiscard]] virtual VerificationSummary
+    verify(const std::string &model_text, const BackendVerificationOptions &options) = 0;
 };
 
 [[nodiscard]] std::unique_ptr<ModelCheckerBackend> create_backend(ModelCheckerKind kind);

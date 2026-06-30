@@ -26,7 +26,36 @@ struct ExecReturn {
     Value value;
 };
 
+// ============================================================================
+// AssertionKind - classifier for every failure shape unified under ExecAssertFailed
+// ============================================================================
+
+enum class AssertionKind {
+    /// `assert(cond, ...)` — cond evaluated to false.
+    ASSERT_CLAUSE,
+    /// `requires(cond, ...)` — contract precondition violated at runtime.
+    REQUIRES_VIOLATION,
+    /// Statement-level `unwrap(opt)` or expression-level `unwrap(expr)` where
+    /// the operand carried the None / empty variant.
+    UNWRAP_NONE,
+    /// `unreachable;` or `unreachable(msg);` executed at runtime.
+    UNREACHABLE_EXECUTED,
+};
+
+/// Human-readable name of an AssertionKind (UPPER_SNAKE — matches JSON/CLI output).
+[[nodiscard]] constexpr std::string_view to_string(AssertionKind k) noexcept {
+    using K = AssertionKind;
+    switch (k) {
+        case K::ASSERT_CLAUSE: return "ASSERT_CLAUSE";
+        case K::REQUIRES_VIOLATION: return "REQUIRES_VIOLATION";
+        case K::UNWRAP_NONE: return "UNWRAP_NONE";
+        case K::UNREACHABLE_EXECUTED: return "UNREACHABLE_EXECUTED";
+    }
+    return "ASSERTION_KIND_UNKNOWN";
+}
+
 struct ExecAssertFailed {
+    AssertionKind kind{AssertionKind::ASSERT_CLAUSE};
     std::string message;
 };
 

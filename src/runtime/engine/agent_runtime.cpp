@@ -10,6 +10,7 @@
 
 #include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/executor.hpp"
 
 namespace ahfl::runtime {
 
@@ -222,7 +223,9 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
             result.status = AgentStatus::Failed;
             auto &af = std::get<evaluator::ExecAssertFailed>(exec_result.outcome);
             result.diagnostics.error()
-                .message("assertion failed in state '" + result.current_state + "': " + af.message)
+                .message("assertion failed in state '" + result.current_state +
+                         "' (Failure type: " + std::string{to_string(af.kind)} + "): " +
+                         af.message)
                 .emit();
             break;
         }

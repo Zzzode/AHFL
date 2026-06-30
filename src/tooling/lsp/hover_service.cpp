@@ -119,7 +119,7 @@ namespace {
 }
 
 // P2 (RFC §3.2.2): fn signature for hover. Generic type parameters are listed
-// inline; the effect clause is appended when declared.
+// inline; the effect clause is rendered to the Hover "Effect" fact line (see below).
 [[nodiscard]] std::string callable_signature(const FnTypeInfo &fn) {
     std::string head = "fn " + fn.canonical_name;
     if (!fn.type_param_names.empty()) {
@@ -134,6 +134,54 @@ namespace {
     }
     head += "(" + params_signature(fn.params) + ") -> " + type_description(fn.return_type);
     return head;
+}
+
+[[nodiscard]] std::string symbol_display_name(const Symbol &symbol) {
+    return symbol.local_name.empty() ? symbol.canonical_name : symbol.local_name;
+}
+
+// h-3 (Wave-17 Group C): resolve a capability symbol id back to a human-readable
+// name. The symbol table lookup can fail (the id may point at a declaration
+// registered but later invalidated) so we guard against empty and prefer the
+// local_name over canonical_name for readability.
+[[nodiscard]] std::string
+capability_display_name(const ResolveResult &resolve_result, SymbolId id) {
+    const auto maybe_symbol = resolve_result.symbol_table.get(id);
+    if (!maybe_symbol.has_value()) {
+        return {};
+    }
+    return symbol_display_name(*maybe_symbol);
+}
+
+// h-3 helper. Render the Hover "Effect" fact line for a declared effect clause.
+// Pure/Nondet are one-word; Capability lists the resolved, inline-code-wrapped
+// capability names that the declaration depends on.
+[[nodiscard]] std::string describe_effect_fact_line(const FnEffectClauseInfo &effect,
+                                                    const ResolveResult &resolve_result) {
+    switch (static_cast<ast::EffectClauseKind>(effect.kind)) {
+    case ast::EffectClauseKind::Pure:
+        return "Pure";
+    case ast::EffectClauseKind::Nondet:
+        return "Nondet";
+    case ast::EffectClauseKind::Capability: {
+        if (effect.capabilities.empty()) {
+            return "Capability";
+        }
+        std::string line = "Capability";
+        const char *separator = ": ";
+        for (std::size_t index = 0; index < effect.capabilities.size(); ++index) {
+            const auto name = capability_display_name(resolve_result, effect.capabilities[index]);
+            if (name.empty()) {
+                continue;
+            }
+            line += separator;
+            line += "`" + name + "`";
+            separator = ", ";
+        }
+        return line;
+    }
+    }
+    return "Capability (unknown)";
 }
 
 template <typename T>
@@ -173,10 +221,6 @@ void add_secondary_fact(HoverPayload &payload, std::string label, std::string va
 
 [[nodiscard]] std::string inline_code(std::string_view value) {
     return "`" + std::string(value) + "`";
-}
-
-[[nodiscard]] std::string symbol_display_name(const Symbol &symbol) {
-    return symbol.local_name.empty() ? symbol.canonical_name : symbol.local_name;
 }
 
 [[nodiscard]] bool contains_name(const std::vector<std::string> &values, std::string_view name) {
@@ -330,20 +374,17 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
     case SymbolKind::Function: {
         // P2 (RFC §3.2.2): render the fn signature, surfacing the resolved
         // param/return types and the declared effect clause.
+        //
+        // h-3 (Wave-17 Group C): when the effect clause is Capability with a
+        // non-empty resolved symbol list, the "Effect" fact lists each
+        // capability by (local) name rather than just the keyword.
         if (environment != nullptr) {
             if (const auto info = environment->get_fn(symbol.id); info.has_value()) {
                 payload.signature = callable_signature(info->get());
-                switch (static_cast<ast::EffectClauseKind>(info->get().effect.kind)) {
-                case ast::EffectClauseKind::Pure:
-                    add_primary_fact(payload, "Effect", "Pure");
-                    break;
-                case ast::EffectClauseKind::Nondet:
-                    add_primary_fact(payload, "Effect", "Nondet");
-                    break;
-                case ast::EffectClauseKind::Capability:
-                    add_primary_fact(payload, "Effect", "Capability");
-                    break;
-                }
+                add_primary_fact(
+                    payload,
+                    "Effect",
+                    describe_effect_fact_line(info->get().effect, snapshot.resolve_result));
             }
         }
         if (payload.signature.empty()) {
@@ -354,13 +395,47 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
     case SymbolKind::Trait: {
         // P3 (RFC §3.2.2 / type-system §1.3): trait hover surfaces the trait
         // signature + method/assoc-type counts.
+        //
+        // h-3 (Wave-17 Group C): additionally surface the super-trait list and
+        // the trait-level where-clause bounds so a developer hovering on a
+        // trait reference sees the complete contract without navigating to
+        // the declaration.
         payload.signature = "trait " + symbol.canonical_name;
         if (environment != nullptr) {
             if (const auto info = environment->get_trait(symbol.id); info.has_value()) {
-                add_primary_fact(payload, "Methods", std::to_string(info->get().methods.size()));
+                const auto &trait = info->get();
+                add_primary_fact(payload, "Methods", std::to_string(trait.methods.size()));
                 add_primary_fact(payload,
                                  "Associated types",
-                                 std::to_string(info->get().assoc_types.size()));
+                                 std::to_string(trait.assoc_types.size()));
+                if (!trait.super_traits.empty()) {
+                    std::string joined;
+                    const char *sep = "";
+                    for (const auto super_id : trait.super_traits) {
+                        const auto name = capability_display_name(snapshot.resolve_result, super_id);
+                        if (name.empty()) {
+                            continue;
+                        }
+                        joined += sep;
+                        joined += "`" + name + "`";
+                        sep = ", ";
+                    }
+                    if (!joined.empty()) {
+                        add_primary_fact(payload, "Super traits", joined);
+                    }
+                }
+                if (!trait.where_clause.bounds.empty()) {
+                    for (const auto &bound : trait.where_clause.bounds) {
+                        std::string bound_line = bound.subject_name + ": ";
+                        const char *sep = "";
+                        for (const auto &trait_name : bound.trait_names) {
+                            bound_line += sep;
+                            bound_line += "`" + trait_name + "`";
+                            sep = " + ";
+                        }
+                        add_primary_fact(payload, "Bound", bound_line);
+                    }
+                }
             }
         }
         break;
@@ -799,7 +874,202 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
             return payload;
         }
         return base_payload(target, "local binding");
-    case HoverTargetKind::Diagnostic:
+    case HoverTargetKind::StructLiteral: {
+        auto payload = base_payload(target, "struct literal");
+        if (!target.local_name.empty()) {
+            payload.signature = "Creates a `" + target.local_name + "` struct";
+        }
+        // StructLiteral targets are registered via the shared add_named_range_target
+        // helper, which stores the struct's SymbolId into `owner_symbol_id` (not
+        // `symbol_id`) to match the convention used by StructField/EnumVariant.
+        // Fall back to owner_symbol_id so the payload can resolve the struct info.
+        const auto sid = target.symbol_id.has_value() ? target.symbol_id
+                                                       : target.owner_symbol_id;
+        if (sid.has_value() && snapshot.type_check_result != nullptr) {
+            const auto info = snapshot.type_check_result->environment.get_struct(*sid);
+            if (info.has_value()) {
+                payload.canonical_name = info->get().canonical_name;
+                if (!target.local_name.empty()) {
+                    payload.signature = "Creates a `" + info->get().canonical_name + "` struct";
+                }
+                add_primary_fact(payload,
+                                 "Fields",
+                                 std::to_string(info->get().fields.size()) + " total");
+                for (const auto &field : info->get().fields) {
+                    add_primary_fact(payload,
+                                     "`" + field.name + "`",
+                                     inline_code(type_description(field.type)) +
+                                         (field.has_default ? " (default)" : ""));
+                }
+            }
+        }
+        return payload;
+    }
+    case HoverTargetKind::Diagnostic: {
+        // NOTE: Diagnostic hover-targets are registered by add_typed_targets
+        // for every diagnostic produced by the pipeline (parse / resolve /
+        // typecheck / lint).  The primary consumer of diagnostics in LSP is
+        // `textDocument/publishDiagnostics`, but we also need a minimal
+        // hover payload so the tie-break order contract can be verified via
+        // end-to-end hover requests (the target-index lookup picks the
+        // lowest-ordinal priority-0 target; if the winner returned a null
+        // payload, the service would silently fall through to the expression
+        // fallback, which *looks* like the wrong target won).
+        auto payload = base_payload(target, "diagnostic");
+        if (!target.local_name.empty()) {
+            payload.signature = inline_code(target.local_name);
+        }
+        if (!target.role.empty()) {
+            add_primary_fact(payload, "message", target.role);
+        }
+        return payload;
+    }
+    // ---------------------------------------------------------------------
+    // Wave-20 Construct Hover / Wave-21 L1 Construct payload: 4 subclass
+    // payloads. Index writes are performed in hover_index.cpp's
+    // add_statement_targets / add_expr_targets dispatch.
+    // ---------------------------------------------------------------------
+    case HoverTargetKind::EnumLiteral: {
+        auto payload = base_payload(target, "enum literal");
+        // Convention: target.local_name carries "Enum::Variant" spelling
+        // written by add_enum_literal_target; role is optional variant
+        // sub-name (used when pretty-printing nested tuples / named fields).
+        const auto display =
+            !target.local_name.empty() ? target.local_name : target.role;
+        if (!display.empty()) {
+            payload.signature = "`" + display + "`";
+            payload.headline = "enum variant";
+        }
+        if (target.owner_symbol_id.has_value() &&
+            snapshot.type_check_result != nullptr) {
+            const auto info = snapshot.type_check_result->environment.get_enum(
+                *target.owner_symbol_id);
+            if (info.has_value()) {
+                payload.canonical_name = info->get().canonical_name;
+                add_primary_fact(payload,
+                                 "Variants",
+                                 std::to_string(info->get().variants.size()) +
+                                     " total");
+                // Highlight the selected variant (lookup by local_name suffix
+                // or by `role`).
+                const auto needle = target.role.empty() ? display : target.role;
+                for (const auto &v : info->get().variants) {
+                    const bool matches =
+                        !needle.empty() &&
+                        (v.name == needle ||
+                         (info->get().canonical_name + "::" + v.name) == needle ||
+                         payload.canonical_name + "::" + v.name == needle);
+                    const auto tag = matches ? ("`" + v.name + "` ◀")
+                                             : ("`" + v.name + "`");
+                    std::string payload_desc;
+                    if (v.payload.empty()) {
+                        payload_desc = "unit";
+                    } else {
+                        payload_desc = "(";
+                        for (std::size_t i = 0; i < v.payload.size(); ++i) {
+                            if (i > 0) payload_desc += ", ";
+                            payload_desc += type_description(v.payload[i]);
+                        }
+                        payload_desc += ")";
+                    }
+                    add_primary_fact(payload, tag, payload_desc);
+                }
+            }
+        }
+        return payload;
+    }
+    case HoverTargetKind::ConstEval: {
+        auto payload = base_payload(target, "const eval");
+        // Convention: role = const symbol name (canonical or local);
+        // local_name = computed value (ConstValue describe()).
+        if (!target.role.empty()) payload.signature = "`" + target.role + "`";
+        if (!target.local_name.empty()) {
+            add_primary_fact(payload, "evaluates to", target.local_name);
+        }
+        if (target.symbol_id.has_value()) {
+            if (const auto sym = snapshot.resolve_result.symbol_table.get(
+                    *target.symbol_id);
+                sym.has_value()) {
+                payload.canonical_name = sym->get().canonical_name;
+            }
+            if (snapshot.type_check_result != nullptr) {
+                const auto ct = snapshot.type_check_result->environment
+                                    .get_const_type(*target.symbol_id);
+                if (ct.has_value()) {
+                    add_secondary_fact(
+                        payload,
+                        "type",
+                        inline_code(type_description(&ct->get())));
+                }
+            }
+        }
+        return payload;
+    }
+    case HoverTargetKind::ContractInstantiation: {
+        auto payload = base_payload(target, "contract instantiation");
+        // Convention: role = contract name spelling (as written by user);
+        // owner_symbol_id = contract declaration SymbolId.
+        if (!target.role.empty()) {
+            payload.signature = "contract `" + target.role + "`";
+        }
+        if (target.owner_symbol_id.has_value() &&
+            snapshot.type_check_result != nullptr) {
+            const auto info =
+                snapshot.type_check_result->environment.get_contract(
+                    *target.owner_symbol_id);
+            if (info.has_value()) {
+                payload.canonical_name = info->get().target_name;
+                add_primary_fact(
+                    payload,
+                    "Clauses",
+                    std::to_string(info->get().clauses.size()));
+            }
+        }
+        if (target.symbol_id.has_value()) {
+            if (const auto sym = snapshot.resolve_result.symbol_table.get(
+                    *target.symbol_id);
+                sym.has_value() && !target.role.empty()) {
+                payload.canonical_name = sym->get().canonical_name;
+            }
+        }
+        return payload;
+    }
+    case HoverTargetKind::CapabilityInstantiation: {
+        auto payload = base_payload(target, "capability instantiation");
+        // Convention: role = capability name spelling;
+        // owner_symbol_id = capability declaration SymbolId.
+        if (!target.role.empty()) {
+            payload.signature = "capability `" + target.role + "`";
+        }
+        if (target.owner_symbol_id.has_value() &&
+            snapshot.type_check_result != nullptr) {
+            const auto info =
+                snapshot.type_check_result->environment.get_capability(
+                    *target.owner_symbol_id);
+            if (info.has_value()) {
+                payload.canonical_name = info->get().canonical_name;
+                add_primary_fact(
+                    payload,
+                    "Parameters",
+                    std::to_string(info->get().params.size()));
+                for (const auto &p : info->get().params) {
+                    add_primary_fact(
+                        payload, "`" + p.name + "`", type_description(p.type));
+                }
+                if (info->get().return_type != nullptr) {
+                    add_secondary_fact(
+                        payload,
+                        "return",
+                        inline_code(
+                            type_description(info->get().return_type)));
+                }
+            }
+        }
+        return payload;
+    }
+    case HoverTargetKind::Sentinel_ForStaticAssert:
+        // Sentinel is never instantiated as a target; defensively return
+        // nullopt so the caller falls through to fallback_expression_payload.
         return std::nullopt;
     }
     return std::nullopt;

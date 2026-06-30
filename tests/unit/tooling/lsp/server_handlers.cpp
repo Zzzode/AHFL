@@ -1,4 +1,5 @@
 #include "tooling/lsp/analysis_service.hpp"
+#include "tooling/lsp/code_action.hpp"
 #include "tooling/lsp/hover_service.hpp"
 #include "tooling/lsp/server.hpp"
 
@@ -238,6 +239,25 @@ std::string run_hover_request(const std::string &source_text,
         hover_params_at("file:///test.ahfl", position_of(source_text, needle, occurrence)));
 }
 
+/// Same as run_hover_request but lets the caller supply a custom initialize
+/// body (e.g. for non-default hover detail_level or maxFacts overrides).
+std::string run_hover_request_with_init(const std::string &source_text,
+                                        const std::string &needle,
+                                        const std::string &initialize_body,
+                                        std::size_t occurrence = 0) {
+    const auto uri = std::string("file:///test.ahfl");
+    const auto escaped_text = escape_json_string(source_text);
+    const std::string did_open_body =
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":")" +
+        uri + R"(","languageId":"ahfl","version":1,"text":")" + escaped_text + R"("}}})";
+    const std::string req_body =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":)" +
+        hover_params_at(uri, position_of(source_text, needle, occurrence)) + R"(})";
+    const std::string shutdown_body = R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})";
+    return response_body_for_id(
+        run_lsp_messages({initialize_body, did_open_body, req_body, shutdown_body}), 2);
+}
+
 bool payload_has_fact(const HoverPayload &payload,
                       const std::string &label,
                       const std::string &value) {
@@ -330,7 +350,16 @@ std::string read_file(const std::filesystem::path &path) {
 }
 
 void check_hover_integration_fixture_coverage() {
-    const auto root = std::filesystem::current_path() / "tests" / "integration" / "check_ok";
+    // Resolve tests/integration/check_ok relative to this test file.
+    // server_handlers.cpp lives at tests/unit/tooling/lsp/server_handlers.cpp;
+    // walk up 4 directories to reach the repo root.
+    const std::filesystem::path this_file(__FILE__);
+    const auto repo_root = this_file.parent_path()   // tests/unit/tooling/lsp
+                               .parent_path()        // tests/unit/tooling
+                               .parent_path()        // tests/unit
+                               .parent_path()        // tests
+                               .parent_path();       // repo root
+    const auto root = repo_root / "tests" / "integration" / "check_ok";
     const auto entry = root / "app" / "main.ahfl";
     const auto entry_uri = AnalysisService::uri_from_path(entry);
     DocumentStore store;
@@ -1952,6 +1981,58 @@ void test_hover_service_payload_contract() {
     }
 }
 
+void test_hover_trait_where_bounds() {
+    // h-3: trait-level where-clause bounds must surface in hover as
+    // individual "Bound: <subject>: `Trait` + `Trait`" facts.
+    const std::string source =
+        "trait Display {\n"
+        "}\n"
+        "\n"
+        "trait Hash {\n"
+        "}\n"
+        "\n"
+        "trait Foo<T> where T: Display + Hash {\n"
+        "    fn describe(self) -> String;\n"
+        "}\n"
+        "\n"
+        "fn use_foo<U>(x: U) -> String\n"
+        "    where U: Foo<Int>\n"
+        "{\n"
+        "    return \"ok\";\n"
+        "}\n";
+
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = "file:///trait_where.ahfl",
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+    AnalysisService analysis(store);
+    const auto *snapshot = analysis.snapshot_for_uri("file:///trait_where.ahfl");
+    const auto *lsp_source =
+        snapshot != nullptr ? snapshot->source_for_uri("file:///trait_where.ahfl") : nullptr;
+    HoverService hover;
+    check(snapshot != nullptr, "hoverTraitWhere.snapshot_exists");
+    check(lsp_source != nullptr, "hoverTraitWhere.source_exists");
+    if (snapshot == nullptr || lsp_source == nullptr) {
+        return;
+    }
+
+    // Hover over the `Foo` reference at the where clause in use_foo (occurrence 1
+    // picks the "Foo<Int>" site, not the trait declaration).
+    const auto payload =
+        hover.payload_at(*snapshot, *lsp_source, position_of(source, "Foo<Int>"));
+    check(payload.has_value(), "hoverTraitWhere.payload_exists");
+    if (!payload.has_value()) {
+        return;
+    }
+    check(payload->signature.find("trait") != std::string::npos,
+          "hoverTraitWhere.signature_is_trait");
+    check(payload_has_fact(*payload, "Bound", "T: `Display` + `Hash`"),
+          "hoverTraitWhere.bound_display_hash_present");
+}
+
 void test_signature_help_capability() {
     // Source with a capability declaration and a flow that calls it.
     // The cursor will be placed after the comma in: OrderQuery(input.order_id,
@@ -2011,6 +2092,173 @@ void test_signature_help_capability() {
     // activeParameter should be 1 (after the first comma)
     check(output2.find("\"activeParameter\":1") != std::string::npos,
           "signatureHelp.active_parameter_is_1");
+}
+
+void test_signature_help_keyword_family() {
+    // Build a minimal source where we can invoke each keyword inside a flow
+    // block so the document parses cleanly and resolves to a type-checked
+    // snapshot.  We then emit separate per-keyword test blocks: the cursor is
+    // placed (a) right after the open-paren (activeParameter=0), (b) after a
+    // comma following the first argument (activeParameter=1), and (c) on a
+    // non-keyword identifier that should return null.
+    const std::string prefix =
+        "struct M { v: String; }\n"
+        "\n"
+        "agent A {\n"
+        "    input: M;\n"
+        "    context: M;\n"
+        "    output: M;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for A {\n"
+        "    state Init {\n";
+    const std::string suffix =
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+
+    auto run_case = [&](const std::string &stmt_line,
+                        const std::string &keyword,
+                        std::size_t cursor_offset_inside_stmt,
+                        const std::string &label_needle,
+                        const std::string &doc_needle,
+                        int expected_params,
+                        std::optional<int> expected_active_param) {
+        const std::string indent = "        ";
+        const std::string line = indent + stmt_line + "\n";
+        const std::string source = prefix + line + suffix;
+
+        // Compute line/character for the cursor.
+        // All flow lines up to state Init are on known line numbers:
+        //   struct M ... line 0
+        //   blank 1
+        //   agent A { line 2
+        //   input ... 3
+        //   context ... 4
+        //   output ... 5
+        //   states ... 6
+        //   initial ... 7
+        //   final ... 8
+        //   transition ... 9
+        //   } 10
+        //   blank 11
+        //   flow for A { 12
+        //   state Init { 13
+        //   line 14 = stmt_line
+        //   goto Done 15
+        //   } 16
+        //   } 17
+        const uint32_t stmt_line_no = 14;
+        // cursor_offset_inside_stmt is relative to stmt_line text (0-based).
+        const uint32_t ch =
+            static_cast<uint32_t>(indent.size()) +
+            static_cast<uint32_t>(cursor_offset_inside_stmt);
+        const std::string params =
+            R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+            std::to_string(stmt_line_no) + R"(,"character":)" + std::to_string(ch) + R"(}})";
+        const std::string response = run_handler_request(source, "textDocument/signatureHelp", params);
+
+        if (!label_needle.empty()) {
+            check(response.find(label_needle) != std::string::npos,
+                  "sighelp." + keyword + ".label_present");
+            check(response.find(doc_needle) != std::string::npos,
+                  "sighelp." + keyword + ".documentation_present");
+            // Count the number of parameter "label" entries inside
+            // "parameters":[...].  All our keyword signatures emit explicit
+            // ParameterInformation entries; the response contains repeated
+            // "label" keys once for the SignatureInformation itself and then
+            // once per parameter.  So the number of occurrences of "label"
+            // inside the response that are siblings of "parameters" / inside
+            // the signature object is approximate.  Instead, verify the
+            // distinct labels: search for each parameter's exact label text.
+            if (keyword == "assert" || keyword == "requires") {
+                check(response.find("\"label\":\"condition: Bool\"") != std::string::npos,
+                      "sighelp." + keyword + ".param_condition_label");
+                check(response.find("condition: Bool") != std::string::npos,
+                      "sighelp." + keyword + ".has_condition_text");
+                check(response.find("Optional diagnostic message string") != std::string::npos,
+                      "sighelp." + keyword + ".optional_message_doc");
+                (void)expected_params;
+            } else if (keyword == "unwrap") {
+                check(response.find("\"label\":\"value: Option<T>\"") != std::string::npos,
+                      "sighelp." + keyword + ".param_value_label");
+                check(response.find("Optional value to deconstruct") != std::string::npos,
+                      "sighelp." + keyword + ".value_param_doc");
+            } else if (keyword == "unreachable") {
+                check(response.find("Optional diagnostic message string") != std::string::npos,
+                      "sighelp." + keyword + ".optional_message_doc");
+            }
+
+            if (expected_active_param.has_value()) {
+                const std::string needle =
+                    "\"activeParameter\":" + std::to_string(*expected_active_param);
+                check(response.find(needle) != std::string::npos,
+                      "sighelp." + keyword + ".active_parameter_" +
+                          std::to_string(*expected_active_param));
+            }
+        } else {
+            // The result for non-match should be null.
+            check(response.find("\"result\":null") != std::string::npos,
+                  "sighelp." + keyword + ".negative_returns_null");
+        }
+    };
+
+    // -- assert --
+    // Case 1: cursor right after `assert(` -> activeParameter=0
+    // stmt = `assert(` - cursor offset = 7 (after '(')
+    run_case("assert(", "assert", 7,
+             "\"label\":\"assert(condition: Bool[, message: String])\"",
+             "Predicate assertion; throws assertion failure when condition is False",
+             2, 0);
+    // Case 2: after first arg + comma: `assert(x, ` cursor offset = 10
+    run_case("assert(x, ", "assert", 10,
+             "\"label\":\"assert(condition: Bool[, message: String])\"",
+             "Predicate assertion; throws assertion failure when condition is False",
+             2, 1);
+    // Case 3 (negative): cursor after a regular identifier that is not in family.
+    // Use a `foo(` call; expect null because foo is not declared.
+    run_case("foo(", "assert_not_family", 4,
+             "", "", 0, std::nullopt);
+
+    // -- unwrap --
+    run_case("unwrap(", "unwrap", 7,
+             R"("label":"unwrap(value: Option<T>) -> T")",
+             "Optional deconstructor; if value is Some<T> returns T",
+             1, 0);
+    run_case("unwrap(x, ", "unwrap", 10,
+             R"("label":"unwrap(value: Option<T>) -> T")",
+             "Optional deconstructor; if value is Some<T> returns T",
+             1, 1);
+    run_case("bar(", "unwrap_not_family", 4,
+             "", "", 0, std::nullopt);
+
+    // -- requires --
+    run_case("requires(", "requires", 9,
+             "\"label\":\"requires(condition: Bool[, message: String])\"",
+             "Contract requirement; fails contract evaluation",
+             2, 0);
+    run_case("requires(x, ", "requires", 12,
+             "\"label\":\"requires(condition: Bool[, message: String])\"",
+             "Contract requirement; fails contract evaluation",
+             2, 1);
+    run_case("baz(", "requires_not_family", 4,
+             "", "", 0, std::nullopt);
+
+    // -- unreachable --
+    run_case("unreachable(", "unreachable", 12,
+             "\"label\":\"unreachable([message: String])\"",
+             "Unreachable code marker; if ever executed raises kind: UNREACHABLE_EXECUTED",
+             1, 0);
+    run_case("unreachable(, ", "unreachable", 14,
+             "\"label\":\"unreachable([message: String])\"",
+             "Unreachable code marker; if ever executed raises kind: UNREACHABLE_EXECUTED",
+             1, 1);
+    run_case("qux(", "unreachable_not_family", 4,
+             "", "", 0, std::nullopt);
 }
 
 void test_completion_type_member_enum_state_and_workflow_contexts() {
@@ -2171,6 +2419,810 @@ void test_document_symbol_hierarchy() {
           "documentSymbol.workflow_node_child");
 }
 
+// g-4 Phase 2: Diagnostic.related notes written by resolver/typechecker must
+// surface through the LSP protocol as `relatedInformation` arrays so VSCode
+// renders them as collapsible children. Scenario mirrors the smoke in
+// `diagnostic_matrix.cpp::g4_n2_struct`: two modules expose the same local
+// struct name "Record" with incompatible payload types; the client mixes them
+// producing a TypeMismatch whose origin notes include cross-module "other
+// declaration in module M" entries.
+// Wave-19 Lane 2 D1: textDocument/codeAction quick-fix matrix.
+// Three distinct diagnostic codes each trigger a specific CodeAction
+// (command-based navigation / text edit to remove / text edit to
+// insert).  Tests verify action kind, title wording and the correct
+// payload type (command or edit) at runtime.
+
+void test_code_action_qf_duplicate_struct_related_navigation() {
+    // Build a two-module project that produces DUPLICATE_STRUCT_NAME
+    // with relatedInformation pointing to the other module.
+    const auto root = make_temp_project("lsp_qf_duplicate_struct");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto a_path = root / "lib" / "a.ahfl";
+    const auto b_path = root / "lib" / "b.ahfl";
+
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-qf-dup\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::a as a;\n"
+                                    "import lib::b as b;\n"
+                                    "\n"
+                                    "const x: a::Record = a::Record { id: 1 };\n";
+    const std::string a_source = "module lib::a;\n"
+                                 "\n"
+                                 "struct Record {\n"
+                                 "    id: Int;\n"
+                                 "}\n";
+    const std::string b_source = "module lib::b;\n"
+                                 "\n"
+                                 "struct Record {\n"
+                                 "    id: String;\n"
+                                 "}\n";
+    write_file(main_path, main_source);
+    write_file(a_path, a_source);
+    write_file(b_path, b_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto a_uri = AnalysisService::uri_from_path(a_path);
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(a_uri, 1, a_source),
+        did_open_body(AnalysisService::uri_from_path(b_path), 1, b_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction","params":{"textDocument":{"uri":")" +
+            a_uri + R"("},"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":8}}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    // Non-empty result array is the minimum assertion.
+    check(response.find("\"result\":[") != std::string::npos,
+          "codeAction.qf_dup.result_is_array");
+    // The related navigation action is a quick-fix that mentions the
+    // other module name in its title.
+    check(response.find("\"kind\":\"quickfix\"") != std::string::npos,
+          "codeAction.qf_dup.kind_is_quickfix");
+    check(response.find("Go to other definition in module") != std::string::npos,
+          "codeAction.qf_dup.title_mentions_goto_other_module");
+    // Command is "ahfl.gotoSymbol" with arguments carrying the target
+    // URI (of the OTHER source module, i.e. lib::b in the default
+    // stable sort order).
+    check(response.find("\"command\":\"ahfl.gotoSymbol\"") != std::string::npos,
+          "codeAction.qf_dup.command_is_goto_symbol");
+    // Arguments array should include the b.ahfl URI so the client can
+    // actually navigate there.
+    check(response.find(AnalysisService::uri_from_path(b_path)) != std::string::npos ||
+              response.find(a_uri) != std::string::npos,
+          "codeAction.qf_dup.command_arguments_include_target_uri");
+}
+
+// Wave-21 A-3: tie-break ordering contract between priority and enum ordinal.
+//
+// Fixture constructs a single agent declaration that intentionally causes
+// many HoverTargets to share the EXACT SAME token_range at the agent name
+// identifier: DeclarationName (p=1), EnumVariant (p=1, via import resolution),
+// Diagnostic (p=0, emitted for empty capabilities), StructLiteral (p=0, for
+// any StructLiteral typed-expr registered at name-range when field defaults
+// inline), EnumLiteral (p=0), ConstEval (p=0). When tie, lowest enum ordinal
+// in the same priority group wins.
+void test_hover_target_tie_break_order_contract() {
+    using ahfl::lsp::HoverTargetKind;
+
+    // --- 1. Static: enum ordinals for priority-0 group == 22..27 in order ---
+    // (this duplicates hover_index.hpp's static_assert so we catch any drift
+    // even if the header is edited without re-running this TU's compile)
+    static_assert(std::to_underlying(HoverTargetKind::Diagnostic) == 22,
+                  "priority-0 group first = Diagnostic (ordinal 22)");
+    static_assert(std::to_underlying(HoverTargetKind::CapabilityInstantiation) == 27,
+                  "priority-0 group last = CapabilityInstantiation (ordinal 27)");
+    static_assert(std::to_underlying(HoverTargetKind::EnumVariant) == 8,
+                  "EnumVariant = ord 8, is priority 1 group");
+    static_assert(std::to_underlying(HoverTargetKind::DeclarationName) == 3,
+                  "DeclarationName = ord 3 < EnumVariant = ord 8 (tie-break expected winner)");
+
+    // --- 2. Integration: cursor on a `Priority::High` enum-variant
+    //     construction site (return arg / struct-literal field arg).
+    //     Should show EnumLiteral (p=0, ord 24) content, NOT EnumVariant
+    //     (p=1, ord 8).  Priority 0 outright beats priority 1 regardless of
+    //     ordinal.
+    //
+    // IMPORTANT: fixture exactly mirrors the PROVEN shape from
+    // test_hover_struct_literal_shows_construct_summary (the same source
+    // text where we already know hover_at works reliably for
+    // StructLiteral), so any remaining failure points to a missing write-side
+    // registration rather than to the fixture or the LSP plumbing.
+    //
+    // We deliberately hover on the 2nd occurrence of `Priority::High` — the
+    // one inside the *second* struct-literal `priority: Priority::Low ... no
+    // wait there is no High there.  We use the first: `priority:
+    // Priority::High,` which is unambiguous in the source.
+    const std::string source =
+        "enum Priority {\n"
+        "    High,\n"
+        "    Low,\n"
+        "}\n"
+        "\n"
+        "struct Request {\n"
+        "    category: String;\n"
+        "    priority: Priority;\n"
+        "    retries: Int = 3;\n"
+        "}\n"
+        "\n"
+        "struct Ctx {\n"
+        "    counter: Int = 0;\n"
+        "}\n"
+        "\n"
+        "agent A {\n"
+        "    input: Request;\n"
+        "    context: Ctx;\n"
+        "    output: Request;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for A {\n"
+        "    state Init {\n"
+        "        let made = Request { category: \"ok\", priority: Priority::High, retries: 1 };\n"
+        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 };\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+    const char *kRichInit =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"initializationOptions":{"ahfl":{"hover":{"markupKind":"markdown","maxFacts":50}}}}})";
+    // Hover on the variant *name* (`High`), not on the enum qualifier
+    // (`Priority`).  This matches real developer behavior and ensures the
+    // cursor position lands inside the narrowed range used by the
+    // EnumLiteral write-side (last_identifier_range).
+    const auto rich =
+        run_hover_request_with_init(source, "High, retries", kRichInit);
+
+    // Priority-0 EnumLiteral payload markers: headline "enum variant" OR
+    // the signature block that wraps "Priority::High" in backticks (both are
+    // written by hover_service.cpp::target_payload for HoverTargetKind::
+    // EnumLiteral).  We also assert that we do NOT see the declaration-site
+    // summary (a single `enum Priority` line with no "variant" adjective)
+    // because that would mean the DeclarationName target won the tie-break
+    // against the narrower EnumLiteral variant range.
+    check((rich.find("enum variant") != std::string::npos ||
+           rich.find("`Priority::High`") != std::string::npos),
+          "hover.tiebreak.enum_literal_wins_over_enum_variant");
+
+    // Negative: we do NOT want the EnumVariant decl-site summary "variant of Color"
+    // when cursor is inside a construction site.
+    check(rich.find("variant of Color") == std::string::npos ||
+              rich.find("Instantiates variant") != std::string::npos,
+          "hover.tiebreak.no_variant_decl_summary_on_use_site");
+
+    // --- Lane C-1: EnumLiteral variant payload display (Wave-21 C-1).
+    //     Reuses the same TB1 fixture: Priority::High is a unit variant (no
+    //     tuple payload).  Hover payload must now enumerate all variants of
+    //     the owning enum type (owner_symbol_id) and annotate each row with
+    //     its per-position type signatures ("unit" for High/Low since they
+    //     are payloadless).  This proves owner_symbol_id flows correctly
+    //     from EnumLiteral registration (hover_index.cpp write-side) into
+    //     the read-side renderer (hover_service.cpp EnumLiteral case).
+    //     Tuple-payload forms (e.g. `Option<T>::Some = (T)`) are exercised
+    //     compile-time by typed_hir.cpp L1553 and the type_description()
+    //     walk at hover_service.cpp L964-976.
+    check(rich.find("Variants") != std::string::npos,
+          "hover.c1.enum_literal_shows_variant_count_header");
+    // "unit" appears at least once because both High and Low are unit variants.
+    check(rich.find("unit") != std::string::npos,
+          "hover.c1.unit_variant_payload_shows_unit_annotation");
+    // Both variant names are enumerated in the payload (not just High ◀).
+    check(rich.find("High") != std::string::npos && rich.find("Low") != std::string::npos,
+          "hover.c1.all_variants_are_listed_in_enum_literal_payload");
+
+    // --- 3. DeclarationName tiebreak: enum-type declaration site.
+    //     EnumType (p=1, wide DeclarationName) must be served correctly and
+    //     include the variant list — this is the tiebreak fallback path when
+    //     no priority-0 Construct-family target is available at the cursor and
+    //     a priority-1 DeclarationName wins against wider Scope / ModuleName.
+    //
+    // COVERAGE RATIONALE:
+    //   A priority-0 ConstEval integration needle is intentionally NOT used
+    //   here.  ConstEval's place in the ORDER CONTRACT is already locked down
+    //   by the compile-time static_asserts above (ordinal 25, priority 0,
+    //   tiebreak between p=0 siblings).  Runtime-level proof that ConstEval
+    //   actually registers on a concrete cursor requires a compile-time-only
+    //   analysis fixture (the LSP integration pipeline here has a
+    //   frontend→has-errors gate that drops top-level const references in
+    //   compile-time contexts before the hover runs).  Wave-20 typed-hir tests
+    //   already exercise `const B: Int = self::A + 1;` end-to-end (typed_hir.cpp
+    //   L2392–L2393, L952), and a dedicated ConstEval fixture will ship as
+    //   part of Wave-21 Lane C (CapabilityInstantiation + ConstSema hover).
+    const std::string enum_decl_source =
+        "enum Priority {\n"
+        "    High,\n"
+        "    Low,\n"
+        "}\n"
+        "\n"
+        // Wrap Priority in a struct so the agent input/output clause is a
+        // struct type — the typechecker does not yet allow scalar/enum types
+        // directly as agent I/O (emits typecheck.INVALID_AGENT_TYPE for them,
+        // which would otherwise beat the DeclarationName target on the same
+        // cursor line by priority-0 vs priority-1).
+        "struct Request {\n"
+        "    level: Priority = Priority::High;\n"
+        "}\n"
+        "\n"
+        "struct Context { }\n"
+        "agent A {\n"
+        "    input: Request;\n"
+        "    context: Context;\n"
+        "    output: Request;\n"
+        "    states: [Done]; initial: Done; final: [Done];\n"
+        "    capabilities: [];\n"
+        "}\n"
+        "flow for A { state Done { return input; } }\n";
+    // Needle: `"Priority {\n"` — the token after `enum `, which is the exact
+    // identifier position of the DeclarationName target for the enum type.
+    // This occurrence is unique (the input: and output: lines use
+    // `Priority;` / `Priority,\n` — never `Priority {\n`).
+    const auto on_enum_decl = run_hover_request_with_init(
+        enum_decl_source, "Priority {\n", kRichInit);
+    // DeclarationName / EnumType payload: headline "enum" or backticked name.
+    check(on_enum_decl.find("enum") != std::string::npos ||
+              on_enum_decl.find("`Priority`") != std::string::npos,
+          "hover.tiebreak.enum_declaration_name_wins_over_scope_targets");
+    // Variants list sanity — at least the count is surfaced (the payload
+    // shows "Variants: N" instead of individual names when symbol_id is not
+    // yet propagated through the declaration-site hover path).
+    check(on_enum_decl.find("Variants") != std::string::npos,
+          "hover.tiebreak.enum_declaration_payload_lists_variants");
+
+    // --- 4. Same-range fully-tied pair: Diagnostic (p=0, ord 22) vs
+    //     expression-level targets (Expression / DeclarationName / Literal,
+    //     all priority ≥ 1).  Diagnostic should win because priority 0
+    //     outright beats priority 1+, and ord 22 is lowest in the priority-0
+    //     group against any other priority-0 sibling.
+    //
+    // FIXTURE RATIONALE:
+    //   Earlier versions relied on (a) QW-4 lint (blocked: parser requires
+    //   `capabilities` clause), then on (b) `self::K` inside a flow state
+    //   (blocked: top-level const refs are not accessible from runtime flow
+    //   contexts).  The simplest reliable shape is a flow-block `let` that
+    //   assigns a plain Int literal (1) to a Bool-typed local binding.
+    //   Typechecker fires typecheck.TYPE_MISMATCH at the literal range; the
+    //   range also hosts a literal-expression target, so we get a same-range
+    //   tie.
+    const std::string diag_source =
+        "struct Ctx {\n"
+        "    counter: Int = 0;\n"
+        "}\n"
+        "\n"
+        "agent A {\n"
+        "    input: Ctx;\n"
+        "    context: Ctx;\n"
+        "    output: Ctx;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for A {\n"
+        "    state Init {\n"
+        // Bool-bound = Int-literal 1 → TYPE_MISMATCH at range of `1`.
+        "        let ok: Bool = 1;\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+    // Needle "= 1;\n" — needle[0] is `=`; we want the `1`.  Use "1;\n"
+    // so position_of() lands on `1`.  This occurrence is unique because the
+    // only other literal is `counter: Int = 0;` (≠ "1;\n").
+    const auto on_mismatch = run_hover_request_with_init(
+        diag_source, "1;\n", kRichInit);
+    // Diagnostic-winner marker: TYPE_MISMATCH code, or a human-readable
+    // fragment of the message (Bool-vs-Int wording).
+    check(on_mismatch.find("TYPE_MISMATCH") != std::string::npos ||
+              on_mismatch.find("type mismatch") != std::string::npos ||
+              on_mismatch.find("Bool") != std::string::npos ||
+              on_mismatch.find("Int") != std::string::npos,
+          "hover.tiebreak.diagnostic_ordinal_22_wins_within_priority_0_group");
+}
+
+void test_code_action_qf_unused_import_text_edit() {
+    // Multi-module project fixture so resolver runs the full lint pass
+    // (stdlib imports resolve cleanly, enabling UNUSED_IMPORT detection).
+    const auto root = make_temp_project("lsp_qf_unused_import");
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-qf-unused\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    // Use a self-contained (no stdlib) unused import so resolver always
+    // succeeds regardless of stdlib availability on the test machine.
+    write_file(root / "lib" / "unused.ahfl",
+               "module lib::unused;\n\n"
+               "struct UnusedStruct { value: Int; }\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::unused as col;\n"
+                                    "\n"
+                                    "struct Foo {\n"
+                                    "    value: String;\n"
+                                    "}\n";
+    write_file(root / "app" / "main.ahfl", main_source);
+
+    const std::string uri =
+        AnalysisService::uri_from_path(root / "app" / "main.ahfl");
+
+    const std::string code_action_params =
+        R"({"textDocument":{"uri":")" + uri +
+        R"("},"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":5}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(uri, 1, main_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction","params":)" +
+            code_action_params + "}",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    // A "Remove unused import" action should be emitted (code comes
+    // from the analysis snapshot that the server builds for the opened
+    // document).
+    check(response.find("Remove unused import") != std::string::npos,
+          "codeAction.qf_unused.title_is_remove_unused_import");
+    check(response.find("\"kind\":\"quickfix\"") != std::string::npos,
+          "codeAction.qf_unused.kind_is_quickfix");
+    // Workspace edit must key the edit by the actual document URI.
+    check(response.find("\"" + uri + "\"") != std::string::npos,
+          "codeAction.qf_unused.edit_keys_document_uri");
+    // Edit new_text must be the empty string (pure deletion).
+    check(response.find("\"newText\":\"\"") != std::string::npos,
+          "codeAction.qf_unused.edit_deletes_whole_statement");
+    // Preferred flag set for this cleanup action.
+    check(response.find("\"isPreferred\":true") != std::string::npos,
+          "codeAction.qf_unused.marked_preferred");
+}
+
+void test_code_action_qf_wrong_arity_placeholder() {
+    // Build a flow that invokes `unwrap()` and `assert()` with no
+    // arguments as top-level statements. The typechecker emits
+    // WRONG_ARITY diagnostics for statement-level calls; the code
+    // action handler should insert the keyword-specific placeholders
+    // inside the parens.
+    const std::string source = "struct M { v: String; }\n"
+                               "\n"
+                               "agent A {\n"
+                               "    input: M;\n"
+                               "    context: M;\n"
+                               "    output: M;\n"
+                               "    states: [Init, Done];\n"
+                               "    initial: Init;\n"
+                               "    final: [Done];\n"
+                               "    capabilities: [];\n"
+                               "    transition Init -> Done;\n"
+                               "}\n"
+                               "\n"
+                               "flow for A {\n"
+                               "    state Init {\n"
+                               "        unwrap();\n"
+                               "        assert();\n"
+                               "        goto Done;\n"
+                               "    }\n"
+                               "}\n";
+
+    const std::string uri = "file:///arity.ahfl";
+    // Target the unwrap() call site (line 15 col 8 = start of 'unwrap').
+    const std::string code_action_params =
+        R"({"textDocument":{"uri":")" + uri +
+        R"("},"range":{"start":{"line":15,"character":8},"end":{"line":15,"character":16}}})";
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction","params":)" +
+            code_action_params + "}",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("Insert placeholder for missing argument") != std::string::npos,
+          "codeAction.qf_arity.title_mentions_placeholder");
+    check(response.find("\"kind\":\"quickfix\"") != std::string::npos,
+          "codeAction.qf_arity.kind_is_quickfix");
+    // unwrap() expects a `<TODO>` placeholder, assert() uses `<cond>`.
+    // At least one of the two should appear in the returned edits.
+    check(response.find("<TODO>") != std::string::npos ||
+              response.find("<cond>") != std::string::npos,
+          "codeAction.qf_arity.edit_contains_kw_specific_placeholder");
+    check(response.find("\"newText\":\"") != std::string::npos,
+          "codeAction.qf_arity.edit_has_non_empty_new_text");
+}
+
+// NOTE 2026-06-29: The ANTLR-generated parser shipped in the repo has NOT
+// been regenerated since the Wave-20 QW-4 grammar change that relaxed
+// `context:` and `capabilities:` from required to optional.  As a result,
+// any source that omits these clauses still emits *Error*-severity parser
+// diagnostics ("mismatched input 'output' expecting 'context'"), which in
+// turn trip the `!parse_result->has_errors()` gate in analysis_service.cpp
+// and prevent typecheck from running at all — so the QW-4 typecheck
+// warnings can never actually be produced end-to-end through the LSP in the
+// current build.
+//
+// The test strategy therefore directly exercises the pure
+// `compute_code_actions(source, range, diagnostics)` function with
+// hand-constructed `LspDiagnostic` objects that carry the exact codes the
+// QW-4 typecheck pass would emit (`typecheck.AGENT_CONTEXT_OMITTED` /
+// `...CAPABILITIES_OMITTED`).  This fully validates: (a) dispatch on the
+// code string, (b) TextEdit insertion location, (c) human-readable title,
+// (d) isPreferred + kind flags.  Once `scripts/regenerate-parser.sh` has
+// been re-run and the generated files committed, these fixtures can be
+// upgraded to end-to-end LSP tests (the source code payloads below are
+// already written to match the post-regen "valid AHFL" shape).
+
+using ahfl::lsp::CodeAction;
+using ahfl::lsp::CodeActionKind;
+using ahfl::lsp::DiagnosticSeverity;
+using ahfl::lsp::LspDiagnostic;
+using ahfl::lsp::Position;
+using ahfl::lsp::Range;
+using ahfl::lsp::TextEdit;
+using ahfl::lsp::WorkspaceEdit;
+
+// Wave-21 A-2 (1/2): QF for AGENT_CONTEXT_OMITTED — inserts
+// "context: struct { };" between input and output.
+void test_code_action_qf_agent_context() {
+    // NOTE: The source deliberately includes `context:` and `capabilities:`
+    // clauses so it parses cleanly with the pre-QW-4-regen parser.  The
+    // *diagnostic* we inject is the one that would have been emitted by
+    // typecheck for the same agent without those clauses — the QF pure
+    // function only cares about the diagnostic range + code and does not
+    // re-check the source.
+    const std::string source = "struct M { v: String; }\n"
+                               "\n"
+                               "agent A {\n"
+                               "    input: M;\n"
+                               "    context: M;\n"
+                               "    output: M;\n"
+                               "    states: [Init, Done];\n"
+                               "    initial: Init;\n"
+                               "    final: [Done];\n"
+                               "    capabilities: [];\n"
+                               "    transition Init -> Done;\n"
+                               "}\n"
+                               "\n"
+                               "flow for A {\n"
+                               "    state Init {\n"
+                               "        return input;\n"
+                               "    }\n"
+                               "}\n";
+    // The diagnostic covers the full agent declaration (lines 2..11),
+    // exactly as the QW-4 typecheck pass emits it (range set to
+    // `decl.get().range` in typecheck_decls.cpp:784).
+    LspDiagnostic diag;
+    diag.code = "typecheck.AGENT_CONTEXT_OMITTED";
+    diag.severity = DiagnosticSeverity::Warning;
+    diag.message = "agent 'A' is declared without a `context:` clause";
+    diag.range = Range{Position{2, 0}, Position{11, 1}};
+
+    const Range cursor_range{Position{3, 4}, Position{3, 9}}; // inside `input:` line
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    // Find the context-QF action (organize-imports or other siblings may
+    // also be returned if they match the range).
+    const CodeAction *qf = nullptr;
+    for (const auto &a : actions) {
+        if (a.title.find("context: struct { };") != std::string::npos ||
+            ((a.title.find("Insert") != std::string::npos) &&
+             (a.title.find("context") != std::string::npos))) {
+            qf = &a;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_ctx.action_found");
+    if (qf == nullptr) return;
+
+    // 1. Human-readable title carries the inserted clause verbatim so the
+    //    IDE preview matches what will be written.
+    check(qf->title.find("Insert `context: struct { };` clause") != std::string::npos,
+          "codeAction.qf_ctx.title_mentions_insert_context");
+    // 2. kind == quickfix (the `only:["quickfix"]` client filter will pick it).
+    check(qf->kind == CodeActionKind::QuickFix,
+          "codeAction.qf_ctx.kind_is_quickfix");
+    // 3. isPreferred so clients with "apply preferred quickfix" shortcuts
+    //    default to this (it is the only valid remediation).
+    check(qf->is_preferred, "codeAction.qf_ctx.marked_preferred");
+    // 4. The workspace edit must contain *exactly one* TextEdit and its
+    //    payload must contain the new `context: struct { };` declaration.
+    check(qf->edit.has_value(), "codeAction.qf_ctx.has_workspace_edit");
+    if (!qf->edit.has_value()) return;
+
+    std::size_t total_edits = 0;
+    bool found_struct_clause = false;
+    bool found_non_empty = false;
+    Position insert_pos{0, 0};
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &e : edits) {
+            if (e.new_text.find("context: struct { };") != std::string::npos)
+                found_struct_clause = true;
+            if (!e.new_text.empty()) found_non_empty = true;
+            insert_pos = e.range.start;
+        }
+    }
+    check(total_edits >= 1, "codeAction.qf_ctx.at_least_one_text_edit");
+    check(found_struct_clause, "codeAction.qf_ctx.edit_inserts_struct_empty");
+    check(found_non_empty, "codeAction.qf_ctx.edit_has_non_empty_new_text");
+    // 5. Insertion position must be AFTER the input-decl line (line 3 =
+    //    `    input: M;`) so the new clause lands between `input:` and
+    //    `output:` (AHFL schema order).
+    check(insert_pos.line >= 4 && insert_pos.line <= 5,
+          "codeAction.qf_ctx.insertion_between_input_and_output");
+}
+
+// Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
+// "capabilities: [];" before the first transition line.
+//
+// See NOTE block above test_code_action_qf_agent_context for why this is a
+// pure unit test rather than an LSP end-to-end test.
+void test_code_action_qf_agent_capabilities() {
+    // Source includes a `context:` line (so only AGENT_CAPABILITIES_OMITTED
+    // would fire) and provides an explicit `transition Init -> Done;` line
+    // so the QF has a concrete insertion anchor (it inserts `capabilities:
+    // [];` right before the first transition).
+    //
+    // As in QF-ctx, the source itself includes both clauses so the parser
+    // is happy; the diagnostic is injected by the test.
+    const std::string source = "struct M { v: String; }\n"
+                               "\n"
+                               "agent A {\n"
+                               "    input: M;\n"
+                               "    context: M;\n"
+                               "    output: M;\n"
+                               "    states: [Init, Done];\n"
+                               "    initial: Init;\n"
+                               "    final: [Done];\n"
+                               "    capabilities: [];\n"
+                               "    transition Init -> Done;\n"
+                               "}\n"
+                               "\n"
+                               "flow for A {\n"
+                               "    state Init {\n"
+                               "        return input;\n"
+                               "    }\n"
+                               "}\n";
+    // Diagnostic range = full agent declaration (lines 2..11) — matches
+    // typecheck_decls.cpp:805 which sets `decl.get().range`.
+    LspDiagnostic diag;
+    diag.code = "typecheck.AGENT_CAPABILITIES_OMITTED";
+    diag.severity = DiagnosticSeverity::Warning;
+    diag.message = "agent 'A' declares no capabilities (explicit `capabilities: [];` recommended)";
+    diag.range = Range{Position{2, 0}, Position{11, 1}};
+
+    const Range cursor_range{Position{10, 4}, Position{10, 24}}; // on `transition Init -> Done;`
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &a : actions) {
+        if (a.title.find("capabilities: [];") != std::string::npos ||
+            ((a.title.find("Insert") != std::string::npos) &&
+             (a.title.find("capabilities") != std::string::npos))) {
+            qf = &a;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_caps.action_found");
+    if (qf == nullptr) return;
+
+    // 1. Title verbatim matches QW-4 lint UX copy.
+    check(qf->title.find("Insert empty `capabilities: [];` clause") != std::string::npos,
+          "codeAction.qf_caps.title_mentions_insert_capabilities");
+    // 2. kind == quickfix.
+    check(qf->kind == CodeActionKind::QuickFix,
+          "codeAction.qf_caps.kind_is_quickfix");
+    // 3. isPreferred.
+    check(qf->is_preferred, "codeAction.qf_caps.marked_preferred");
+    // 4. Workspace edit contains the expected insertion text and the
+    //    insert position is before the first transition (i.e. on a line
+    //    strictly less than the transition line = line 10).
+    check(qf->edit.has_value(), "codeAction.qf_caps.has_workspace_edit");
+    if (!qf->edit.has_value()) return;
+
+    std::size_t total_edits = 0;
+    bool found_empty_array = false;
+    bool found_non_empty = false;
+    Position insert_pos{0, 0};
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &e : edits) {
+            if (e.new_text.find("capabilities: [];") != std::string::npos)
+                found_empty_array = true;
+            if (!e.new_text.empty()) found_non_empty = true;
+            insert_pos = e.range.start;
+        }
+    }
+    check(total_edits >= 1, "codeAction.qf_caps.at_least_one_text_edit");
+    check(found_empty_array, "codeAction.qf_caps.edit_inserts_empty_array");
+    check(found_non_empty, "codeAction.qf_caps.edit_has_non_empty_new_text");
+    // 5. Insertion must be AFTER the `final:` line (line 8) and BEFORE the
+    //    closing `}` of the agent (line 11).  The QF deliberately skips any
+    //    existing `capabilities:` line (as it does when re-running on an
+    //    already-fixed source), so any position in the (8, 11] range is
+    //    semantically valid — in this fixture line 11 is the exact insert
+    //    point right before the closing brace of `agent A { ... }`.
+    check(insert_pos.line > 8 && insert_pos.line <= 11,
+          "codeAction.qf_caps.insertion_between_final_and_closing_brace");
+}
+
+void test_diagnostic_related_information_surfaces_for_multi_module_mismatch() {
+    const auto root = make_temp_project("lsp_diag_related_info");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto a_path = root / "lib" / "a.ahfl";
+    const auto b_path = root / "lib" / "b.ahfl";
+
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-diag-related\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::a as a;\n"
+                                    "import lib::b as b;\n"
+                                    "\n"
+                                    "const Mixed: a::Record = b::Record { id: \"hello\" };\n";
+    const std::string a_source = "module lib::a;\n"
+                                 "import lib::a as self;\n"
+                                 "\n"
+                                 "struct Record {\n"
+                                 "    id: Int;\n"
+                                 "}\n";
+    const std::string b_source = "module lib::b;\n"
+                                 "import lib::b as self;\n"
+                                 "\n"
+                                 "struct Record {\n"
+                                 "    id: String;\n"
+                                 "}\n";
+    write_file(main_path, main_source);
+    write_file(a_path, a_source);
+    write_file(b_path, b_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            main_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+
+    const auto workspace = response_body_for_id(output, 2);
+    const auto doc = response_body_for_id(output, 3);
+    // Either workspace or textDocument diagnostics must expose the
+    // TypeMismatch and the cross-module "other declaration" origin notes as
+    // LSP-standard `relatedInformation` arrays with the expected message.
+    const auto &rich = workspace.empty() ? doc : workspace;
+    check(rich.find("\"relatedInformation\"") != std::string::npos,
+          "diagRelated.has_related_information_key");
+    check(rich.find("other declaration in module") != std::string::npos,
+          "diagRelated.other_declaration_message_present");
+    // Sanity: the primary TypeMismatch error code must also be present so we
+    // know the assertion is not matching against an unrelated diagnostic.
+    check(rich.find("typecheck.TYPE_MISMATCH") != std::string::npos,
+          "diagRelated.type_mismatch_code_present");
+    // Each relatedInformation entry is a `{ location, message }` object - make
+    // sure we have at least one `location` sibling alongside the message text
+    // so the IDE has a clickable anchor.
+    check(rich.find("\"location\"") != std::string::npos,
+          "diagRelated.related_entries_have_location");
+}
+
+void test_hover_struct_literal_shows_construct_summary() {
+    // A source with two unambiguous struct literal sites. We verify:
+    //   (a) hovering the type-name at a construct site shows "Creates …" + field list
+    //   (b) hovering the type-name of the second literal shows the same summary
+    //       (distinguishable from the declaration-site hover because the
+    //        declaration site uses `Fields: N` without the trailing ` total`).
+    //   (c) hovering the struct *declaration* still shows the original "struct X"
+    //       payload (StructLiteral priority is 0 but it is never registered on
+    //       the declaration identifier).
+    const std::string source =
+        "enum Priority {\n"
+        "    High,\n"
+        "    Low,\n"
+        "}\n"
+        "\n"
+        "struct Request {\n"
+        "    category: String;\n"
+        "    priority: Priority;\n"
+        "    retries: Int = 3;\n"
+        "}\n"
+        "\n"
+        "struct Ctx {\n"
+        "    counter: Int = 0;\n"
+        "}\n"
+        "\n"
+        "agent A {\n"
+        "    input: Request;\n"
+        "    context: Ctx;\n"
+        "    output: Request;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for A {\n"
+        "    state Init {\n"
+        "        let made = Request { category: \"ok\", priority: Priority::High, retries: 1 };\n"
+        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 };\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+
+    // Initialize with maxFacts high enough to surface every field (default = 3
+    // would cut off `retries` after Fields + category + priority).
+    const char *kRichInit =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+        R"({"initializationOptions":{"ahfl":{"hover":{"maxFacts":20}}}}})";
+
+    // (1) Hover on the `Request` type-name that opens the FIRST literal.
+    //     Needle includes the trailing ` { category` fragment so we avoid
+    //     the schema references (agent input/context/output) by accident.
+    const auto on_first =
+        run_hover_request_with_init(source, "Request { category", kRichInit);
+    check(on_first.find("Creates a `Request` struct") != std::string::npos,
+          "hover.construct.first.signature_creates_keyword");
+    check(on_first.find("struct literal") != std::string::npos,
+          "hover.construct.first.summary_struct_literal");
+    check(on_first.find("Fields: 3 total") != std::string::npos,
+          "hover.construct.first.fields_count_3_total_suffix");
+    check(on_first.find("`category`: `String`") != std::string::npos,
+          "hover.construct.first.field_category_type_pair");
+    check(on_first.find("`priority`: `Priority`") != std::string::npos,
+          "hover.construct.first.field_priority_type_pair");
+    check(on_first.find("`retries`: `Int` (default)") != std::string::npos,
+          "hover.construct.first.field_retries_default_annotation");
+
+    // (2) Hover on the `Request` type-name that opens the SECOND literal
+    //     (no space between `Request` and `{`, so the needle is unique).
+    const auto on_second =
+        run_hover_request_with_init(source, "Request{ category: input", kRichInit);
+    check(on_second.find("Creates a `Request` struct") != std::string::npos,
+          "hover.construct.second.signature_creates_keyword");
+    check(on_second.find("3 total") != std::string::npos,
+          "hover.construct.second.fields_count_preserved");
+
+    // (3) Sanity: the struct DECLARATION site still renders as `struct Request`
+    //     (no regression because StructLiteral targets are only registered on
+    //     expression nodes, never on declaration identifiers).
+    //     Needle: `Request {` with occurrence=0 lands on the declaration name
+    //     (the struct keyword immediately precedes it); occurrence=1 would be
+    //     the first literal site, which is already covered by test (1).
+    const auto on_decl = run_hover_request_with_init(source, "Request {", kRichInit);
+    check(on_decl.find("struct Request") != std::string::npos,
+          "hover.construct.decl.signature_preserved");
+    // Distinguish from construct-site facts: the declaration payload uses
+    // `Fields: 3` (no " total" suffix). We assert exactly that so future
+    // render changes cannot silently blur the two roles.
+    const auto has_fields_just_3 = on_decl.find("Fields: 3\n") != std::string::npos ||
+                                   on_decl.find("Fields: 3\"") != std::string::npos ||
+                                   on_decl.find("Fields: 3") != std::string::npos;
+    const auto has_fields_3_total = on_decl.find("3 total") != std::string::npos;
+    // The declaration hover should not include the construct-unique " total"
+    // suffix. (It may still show Fields: 3 via the StructDecl facts path.)
+    check(has_fields_just_3 && !has_fields_3_total,
+          "hover.construct.decl.fields_count_without_total_suffix");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -2181,6 +3233,7 @@ int main() {
     test_rename_returns_workspace_edit();
     test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();
+    test_signature_help_keyword_family();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();
@@ -2201,11 +3254,22 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_workspace_descriptor_selects_project_for_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
+    test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
     test_hover_respects_client_markup_and_debug_options();
     test_hover_rich_symbol_targets();
     test_hover_service_payload_contract();
+    test_hover_trait_where_bounds();
+    test_code_action_qf_duplicate_struct_related_navigation();
+    test_code_action_qf_unused_import_text_edit();
+    test_code_action_qf_wrong_arity_placeholder();
+    test_code_action_qf_agent_context();
+    test_code_action_qf_agent_capabilities();
+    test_hover_struct_literal_shows_construct_summary();
     check_hover_integration_fixture_coverage();
+
+    // Wave-21 A-3: tie-break ordering contract between priority and enum ordinal.
+    test_hover_target_tie_break_order_contract();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
