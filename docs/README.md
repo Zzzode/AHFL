@@ -88,6 +88,7 @@ Avoid:
 - [source-graph.zh.md](./design/source-graph.zh.md)
 - [spec-restructure.zh.md](./design/spec-restructure.zh.md)
 - [testing-strategy.zh.md](./design/testing-strategy.zh.md)
+- [try-operator-impl-plan.zh.md](./design/try-operator-impl-plan.zh.md)
 
 ### Plan
 

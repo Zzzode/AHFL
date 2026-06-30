@@ -463,6 +463,7 @@ postfixExpr:
 		'.' identifier ('<' typeList '>')? '(' exprList? ')'
 		| '.' identifier
 		| '[' expr ']'
+		| '?'
 	)*;
 
 primaryExpr:
