@@ -2,10 +2,12 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <chrono>
 
 namespace {
 
@@ -32,6 +34,15 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 
 [[nodiscard]] bool contains_text(std::string_view text, std::string_view needle) {
     return text.find(needle) != std::string_view::npos;
+}
+
+[[nodiscard]] bool write_text_file(const std::filesystem::path &path, std::string_view text) {
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+    out << text;
+    return static_cast<bool>(out);
 }
 
 int run_diagnostics_support_metadata_smoke() {
@@ -230,6 +241,66 @@ int run_fail_duplicate_owner(const std::filesystem::path &entry,
     return 0;
 }
 
+int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::path &source_root) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto bundle_root =
+        std::filesystem::temp_directory_path() /
+        ("ahfl-project-parse-bundled-stdlib-" + std::to_string(stamp));
+    const auto bundle_std = bundle_root / "std";
+
+    std::error_code error;
+    std::filesystem::remove_all(bundle_root, error);
+    if (!std::filesystem::create_directories(bundle_std, error) || error) {
+        std::cerr << "failed to create bundled stdlib fixture: " << bundle_std << '\n';
+        return 1;
+    }
+
+    if (!write_text_file(bundle_std / "prelude.ahfl", "module std::prelude;\n") ||
+        !write_text_file(bundle_std / "option.ahfl",
+                         "module std::option;\n"
+                         "enum Option<T> { Some(T), None, }\n")) {
+        std::cerr << "failed to write bundled stdlib fixture\n";
+        std::filesystem::remove_all(bundle_root, error);
+        return 1;
+    }
+
+    const ahfl::Frontend frontend;
+    const auto result = frontend.parse_project(ahfl::ProjectInput{
+        .entry_files = {source_root / "std" / "collections.ahfl"},
+        .search_roots = {source_root},
+        .stdlib_search_roots = {bundle_root},
+    });
+
+    std::filesystem::remove_all(bundle_root, error);
+
+    if (result.has_errors()) {
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    const auto option_source = result.graph.module_to_source.find("std::option");
+    if (option_source == result.graph.module_to_source.end()) {
+        std::cerr << "missing std::option module owner\n";
+        return 1;
+    }
+
+    const auto expected = source_root / "std" / "option.ahfl";
+    for (const auto &source : result.graph.sources) {
+        if (source.id != option_source->second) {
+            continue;
+        }
+        if (!std::filesystem::equivalent(source.path, expected, error) || error) {
+            std::cerr << "std::option resolved to unexpected path: " << source.path
+                      << " expected " << expected << '\n';
+            return 1;
+        }
+        return 0;
+    }
+
+    std::cerr << "std::option source id did not map to a loaded source\n";
+    return 1;
+}
+
 int run_fail_manifest_escape(const std::filesystem::path &descriptor) {
     const ahfl::Frontend frontend;
     const auto result = frontend.load_project_descriptor(descriptor);
@@ -391,6 +462,10 @@ int main(int argc, char **argv) {
 
     if (test_case == "fail-duplicate-owner") {
         return run_fail_duplicate_owner(entry, root);
+    }
+
+    if (test_case == "ok-project-stdlib-root-wins-over-bundled-copy") {
+        return run_ok_project_stdlib_root_wins_over_bundled_copy(entry);
     }
 
     if (test_case == "fail-manifest-escape") {

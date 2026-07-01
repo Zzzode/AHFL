@@ -33,6 +33,12 @@ add_test(NAME ahfl.frontend.project.fail_duplicate_owner
             "${AHFL_TESTS_DIR}/integration/duplicate_owner"
 )
 
+add_test(NAME ahfl.frontend.project.ok_project_stdlib_root_wins_over_bundled_copy
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            ok-project-stdlib-root-wins-over-bundled-copy
+            "${PROJECT_SOURCE_DIR}"
+)
+
 add_test(NAME ahfl.frontend.project.fail_manifest_escape
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
             fail-manifest-escape

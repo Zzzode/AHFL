@@ -150,10 +150,12 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
             env: {
                 ...process.env,
                 // M3-1: prefer the stdlib bundled inside the extension so a clean
-                // VSIX install resolves std::* without a source checkout. If the
-                // bundled std/ is absent (dev build), the LSP still falls through
-                // to its compiled-in AHFL_SOURCE_DIR and cwd-walk search roots.
-                AHFL_STDLIB_SEARCH_ROOT: vscode.Uri.joinPath(context.extensionUri, 'std').fsPath,
+                // VSIX install resolves std::* without a source checkout. The
+                // search root must be the extension dir (parent of std/) because
+                // module "std::collections" resolves to <root>/std/collections.ahfl.
+                // If the bundled std/ is absent (dev build), the LSP falls
+                // through to its compiled-in AHFL_SOURCE_DIR and cwd-walk roots.
+                AHFL_STDLIB_SEARCH_ROOT: context.extensionUri.fsPath,
             },
         },
     };
