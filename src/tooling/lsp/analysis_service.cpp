@@ -241,6 +241,51 @@ struct LspPackageGraphInput {
     std::filesystem::path manifest_path;
 };
 
+[[nodiscard]] std::vector<std::string>
+exported_module_paths(const std::vector<manifest::ExportedModuleManifest> &modules) {
+    std::vector<std::string> paths;
+    paths.reserve(modules.size());
+    for (const auto &module : modules) {
+        paths.push_back(module.module_path);
+    }
+    return paths;
+}
+
+[[nodiscard]] package_graph::PackageGraph
+sysroot_only_graph_for_lsp(const manifest::PackageManifest &manifest,
+                           const std::filesystem::path &manifest_path) {
+    const auto normalized_manifest =
+        std::filesystem::path(AnalysisService::normalized_path_key(manifest_path));
+    const auto package_root = std::filesystem::path(
+        AnalysisService::normalized_path_key(normalized_manifest.parent_path()));
+    const auto module_root =
+        std::filesystem::path(AnalysisService::normalized_path_key(package_root /
+                                                                   manifest.module_root));
+
+    package_graph::PackageGraph graph;
+    graph.packages.push_back(package_graph::PackageNode{
+        .id = package_graph::PackageId{0},
+        .source = package_graph::PackageSourceKind::Sysroot,
+        .name = manifest.package_name,
+        .version = manifest.package_version,
+        .kind = manifest.package_kind,
+        .module_prefix = manifest.module_prefix,
+        .package_root = package_root,
+        .module_root = module_root,
+        .manifest_path = normalized_manifest,
+        .checksum = {},
+        .exported_modules = exported_module_paths(manifest.exported_modules),
+        .compiler_intrinsics_allow = manifest.compiler_intrinsics_allow,
+        .targets = {},
+    });
+    graph.module_roots.push_back(package_graph::ModuleRootEntry{
+        .prefix = manifest.module_prefix,
+        .package = package_graph::PackageId{0},
+        .root = module_root,
+    });
+    return graph;
+}
+
 [[nodiscard]] std::optional<LspPackageGraphInput>
 build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
                                    const std::vector<std::filesystem::path> &workspace_roots) {
@@ -258,6 +303,16 @@ build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
     const auto sysroot_manifest = find_lsp_sysroot_manifest(workspace_roots);
     if (!sysroot_manifest.has_value()) {
         return std::nullopt;
+    }
+    const auto normalized_package_manifest =
+        std::filesystem::path(AnalysisService::normalized_path_key(*package_manifest_path));
+    const auto normalized_sysroot_manifest =
+        std::filesystem::path(AnalysisService::normalized_path_key(*sysroot_manifest));
+    if (normalized_package_manifest == normalized_sysroot_manifest) {
+        return LspPackageGraphInput{
+            .graph = sysroot_only_graph_for_lsp(*package_manifest, normalized_sysroot_manifest),
+            .manifest_path = normalized_sysroot_manifest,
+        };
     }
 
     auto workspace_manifest_path =

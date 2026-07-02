@@ -456,6 +456,31 @@ void write_workspace_manifest(const std::filesystem::path &workspace_root,
                    "version = 1\n");
 }
 
+void write_std_manifest(const std::filesystem::path &sysroot_std_root) {
+    write_file(sysroot_std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"option\", \"collections\", \"prelude\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"option\"]\n");
+}
+
 std::string did_open_body(const std::string &uri, int version, const std::string &text) {
     return R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":")" +
            uri + R"(","languageId":"ahfl","version":)" + std::to_string(version) + R"(,"text":")" +
@@ -1561,6 +1586,58 @@ void test_descriptorless_std_file_does_not_add_overlapping_workspace_root() {
             return diagnostic.message.find("ambiguous across search roots") != std::string::npos;
         });
     check(!has_ambiguous_import, "descriptorless_std.no_ambiguous_import");
+}
+
+void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
+    const auto root = make_temp_project("sysroot_std_manifest");
+    const auto std_root = root / "std";
+    const auto collections_path = std_root / "collections.ahfl";
+    const auto option_path = std_root / "option.ahfl";
+    const std::string collections_source = "module std::collections;\n"
+                                           "import std::option as option;\n"
+                                           "\n"
+                                           "struct List<T> {}\n";
+    write_std_manifest(std_root);
+    write_file(collections_path, collections_source);
+    write_file(option_path,
+               "module std::option;\n"
+               "\n"
+               "enum Option<T> { Some(T), None, }\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+
+    const auto collections_uri = AnalysisService::uri_from_path(collections_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = collections_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = collections_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_roots({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
+    check(snapshot != nullptr, "sysroot_std.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    check(snapshot->project_aware, "sysroot_std.project_aware");
+    check(snapshot->package_graph_manifest.has_value(), "sysroot_std.manifest_recorded");
+    if (snapshot->package_graph_manifest.has_value()) {
+        check(*snapshot->package_graph_manifest ==
+                  std::filesystem::path(
+                      AnalysisService::normalized_path_key(std_root / "ahfl.toml")),
+              "sysroot_std.manifest_is_std");
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(collections_uri);
+    const auto has_ambiguous_import =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("ambiguous across search roots") != std::string::npos;
+        });
+    check(!has_ambiguous_import, "sysroot_std.no_ambiguous_import");
 }
 
 void test_descriptorless_workspace_does_not_inject_prelude() {
@@ -3239,6 +3316,7 @@ int main() {
     test_package_graph_workspace_selects_member_dependency_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
     test_descriptorless_std_file_does_not_add_overlapping_workspace_root();
+    test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_descriptorless_workspace_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
