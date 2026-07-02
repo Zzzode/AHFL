@@ -35,3 +35,25 @@ function(ahfl_apply_third_party_warnings target_name)
         )
     endif()
 endfunction()
+
+function(ahfl_assert_no_external_toml_runtime target_name)
+    get_target_property(AHFL_TOML_POLICY_LINK_LIBRARIES "${target_name}" LINK_LIBRARIES)
+    if(NOT AHFL_TOML_POLICY_LINK_LIBRARIES)
+        return()
+    endif()
+
+    foreach(AHFL_TOML_POLICY_DEP IN LISTS AHFL_TOML_POLICY_LINK_LIBRARIES)
+        if(AHFL_TOML_POLICY_DEP STREQUAL "ahfl_base_toml")
+            continue()
+        endif()
+
+        string(TOLOWER "${AHFL_TOML_POLICY_DEP}" AHFL_TOML_POLICY_DEP_LOWER)
+        if(AHFL_TOML_POLICY_DEP_LOWER MATCHES
+           "(^|::|[-_])toml($|[-_+:.])|tomlplusplus|toml11|cpptoml")
+            message(FATAL_ERROR
+                "RFC 0005 forbids non-vendored TOML runtime dependencies on "
+                "${target_name}: ${AHFL_TOML_POLICY_DEP}"
+            )
+        endif()
+    endforeach()
+endfunction()
