@@ -214,6 +214,35 @@ TEST_CASE("TOML parser rejects invalid escapes as syntax diagnostics") {
     CHECK(result.document.diagnostics.front().code == "toml.invalid_escape");
 }
 
+TEST_CASE("TOML parser rejects RFC-required malformed syntax forms") {
+    SUBCASE("unterminated string") {
+        constexpr std::string_view input = "name = \"unterminated\nnext = 1\n";
+
+        auto result = ahfl::toml::parse(input);
+        REQUIRE(result.has_errors());
+        CHECK(has_diagnostic(result.document, "toml.unterminated_string"));
+    }
+
+    SUBCASE("malformed table header") {
+        constexpr std::string_view input = R"TOML([targets.workflow
+kind = "handoff"
+)TOML";
+
+        auto result = ahfl::toml::parse(input);
+        REQUIRE(result.has_errors());
+        CHECK(has_diagnostic(result.document, "toml.invalid_table_header"));
+    }
+
+    SUBCASE("inline table closure") {
+        constexpr std::string_view input = R"TOML(dep = { source = "path", path = "../core"
+)TOML";
+
+        auto result = ahfl::toml::parse(input);
+        REQUIRE(result.has_errors());
+        CHECK(has_diagnostic(result.document, "toml.unclosed_inline_table"));
+    }
+}
+
 TEST_CASE("TOML parser rejects invalid dotted keys and keeps parsing following keys") {
     constexpr std::string_view input = R"TOML(package. = "bad"
 [targets.]
