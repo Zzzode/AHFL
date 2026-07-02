@@ -269,6 +269,20 @@ void validate_kebab(std::string_view value,
     }
 }
 
+void validate_target_name(std::string_view value,
+                          SourceRange range,
+                          std::vector<ManifestDiagnostic> &diagnostics) {
+    if (value.empty()) {
+        add_diag(diagnostics, kInvalidValue, "target name must not be empty", range);
+        return;
+    }
+    const bool is_kebab = matches_regex(value, "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$");
+    const bool is_snake = matches_regex(value, "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$");
+    if (!is_kebab && !is_snake) {
+        add_diag(diagnostics, kInvalidValue, "target name must be kebab-case or snake_case", range);
+    }
+}
+
 void validate_module_prefix(std::string_view value,
                             SourceRange range,
                             std::vector<ManifestDiagnostic> &diagnostics) {
@@ -433,9 +447,7 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
         TargetManifest target;
         target.name = entry.key;
         target.range = entry.value_range;
-        if (target.name.empty()) {
-            add_diag(diagnostics, kInvalidValue, "target name must not be empty", entry.key_range);
-        }
+        validate_target_name(target.name, entry.key_range, diagnostics);
         std::string normalized = target.name;
         std::replace(normalized.begin(), normalized.end(), '-', '_');
         if (!normalized_names.insert(normalized).second) {

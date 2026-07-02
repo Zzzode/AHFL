@@ -172,6 +172,37 @@ TEST_CASE("Package manifest schema accepts repository sysroot std manifest") {
     CHECK(result.manifest->targets.empty());
 }
 
+TEST_CASE("Package manifest schema accepts snake case target names") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.agent_entry]
+kind = "test"
+entry = "src/agent_entry_test.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    REQUIRE(result.manifest->targets.size() == 1);
+    CHECK(result.manifest->targets.front().name == "agent_entry");
+}
+
 TEST_CASE("Package manifest schema keeps TOML syntax separate from schema diagnostics") {
     constexpr std::string_view input = R"TOML(manifest_version = "1"
 
@@ -194,6 +225,40 @@ registry = { source = "registry" }
     CHECK(has_code(result.diagnostics, "E::manifest_type"));
     CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
     CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+}
+
+TEST_CASE("Package manifest schema rejects invalid target names") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets."BadName"]
+kind = "library"
+entry = "src/lib.ahfl"
+
+[targets."bad-name_case"]
+kind = "test"
+entry = "src/bad.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics, "target name must be kebab-case or snake_case"));
 }
 
 TEST_CASE("Package manifest schema rejects unknown fields") {
