@@ -16,7 +16,7 @@ modules = ["main"]
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
-exports = ["refund_audit::main::RefundAuditWorkflow"]
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [dependencies]
 std = { source = "sysroot" }

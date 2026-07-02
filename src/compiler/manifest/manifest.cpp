@@ -212,23 +212,10 @@ read_handoff_exports(const Value &table,
     std::vector<HandoffExportManifest> exports;
     exports.reserve(entry->value->array_items.size());
     for (const auto &item : entry->value->array_items) {
-        if (item->kind == ValueKind::String) {
-            if (item->string_value.empty()) {
-                reject_empty_string_array_item(display, item->range, diagnostics);
-                continue;
-            }
-            exports.push_back(HandoffExportManifest{
-                .kind = "workflow",
-                .name = item->string_value,
-                .range = item->range,
-            });
-            continue;
-        }
         if (item->kind != ValueKind::InlineTable && item->kind != ValueKind::Table) {
             add_diag(diagnostics,
                      kType,
-                     "manifest field '" + std::string(display) +
-                         "' items must be strings or tables",
+                     "manifest field '" + std::string(display) + "' items must be tables",
                      item->range);
             continue;
         }

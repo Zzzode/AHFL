@@ -16,12 +16,12 @@ modules = ["main"]
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
-exports = ["refund_audit::main::RefundAuditWorkflow"]
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [targets.bad-private]
 kind = "handoff"
 entry = "refund_audit::private_import::BadPrivateImportWorkflow"
-exports = ["refund_audit::private_import::BadPrivateImportWorkflow"]
+exports = [{ kind = "workflow", name = "refund_audit::private_import::BadPrivateImportWorkflow" }]
 
 [dependencies]
 audit-core = { source = "workspace" }
