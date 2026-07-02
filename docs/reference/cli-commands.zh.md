@@ -14,21 +14,22 @@
 | 演进阶段 | 合并后保留的信息 |
 |----------|------------------|
 | 早期 core 命令族 | core check / dump / emit / formal 命令族、基础输入模式、退出码。 |
-| Project-aware 扩展 | project-aware 输入、`emit-native-json`、project/workspace 命令形态。 |
-| Package authoring | package authoring、`emit-package-review`、native package 路径。 |
+| PackageGraph 扩展 | `ahfl.toml`、`ahfl.workspace.toml`、`dump package-graph`、manifest/workspace 命令形态。 |
+| Handoff target authoring | handoff target、`emit native-json --manifest --target`、native package 路径。 |
 | Runtime artifact 链 | runtime session / journal / replay / scheduler / persistence / store import 输出链路。 |
 | Provider 与选项表 | Provider artifact 可见性、声明式选项表、`CliDriver`、结构化 diagnostics 与 `run` 入口。 |
 
 ## 当前口径摘要
 
 1. `ahflc` 是主要编译、验证、artifact 与 runtime CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
-2. project 输入统一支持 `<input.ahfl>`、`--search-root`、`--project`、`--workspace --project-name`。
-3. package authoring 仍通过独立 `--package <ahfl.package.json>` 输入进入 native package / review / runtime-adjacent artifact。
-4. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
-5. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
-6. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
-7. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-8. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+2. package-aware 输入优先使用 `--manifest <ahfl.toml>`，workspace 输入使用 `--workspace <ahfl.workspace.toml> --package <name>`。
+3. 单文件 `<input.ahfl>` 和 `--search-root` 仍可用于草稿、smoke 和低层调试，但不再是工程配置模型。
+4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
+5. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
+6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
+7. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
+8. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+9. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 
@@ -36,10 +37,10 @@
 
 ```text
 <input-mode> ::=
-    <input.ahfl>
+    --manifest <ahfl.toml> [--target <name>]
+  | --workspace <ahfl.workspace.toml> --package <name> [--target <name>]
+  | <input.ahfl>
   | [--search-root <dir>]... <input.ahfl>
-  | --project <ahfl.project.json>
-  | --workspace <ahfl.workspace.json> --project-name <name>
 ```
 
 核心命令：
@@ -48,30 +49,32 @@
 ahflc check <input-mode>
 ahflc run --workflow <name> --input '<json>' [--llm-config <path>] [--tool-catalog <path>] <input-mode>
 ahflc fmt [--check] <input.ahfl|dir>...
-ahflc fmt [--check] --project <ahfl.project.json>
-ahflc fmt [--check] --workspace <ahfl.workspace.json> --project-name <name>
+ahflc fmt [--check] --manifest <ahfl.toml>
+ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>
 ahflc dump-ast <input-mode>
 ahflc dump-types <input-mode>
 ahflc dump-project <input-mode>
+ahflc dump package-graph --manifest <ahfl.toml>
+ahflc dump package-graph --workspace <ahfl.workspace.toml> --package <name>
 ahflc emit-ir <input-mode>
 ahflc emit-ir-json <input-mode>
 ahflc emit-opt-ir <input-mode>
 ahflc emit-opt-ir-json <input-mode>
-ahflc emit-native-json [--package <ahfl.package.json>] <input-mode>
-ahflc emit-execution-plan [--package <ahfl.package.json>] <input-mode>
-ahflc emit-runtime-session --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-execution-journal --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-replay-view --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-scheduler-snapshot --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-scheduler-review --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-audit-report --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-dry-run-trace --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
-ahflc emit-package-review [--package <ahfl.package.json>] <input-mode>
+ahflc emit-native-json --manifest <ahfl.toml> --target <handoff-target>
+ahflc emit-execution-plan <input-mode>
+ahflc emit-runtime-session --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-execution-journal --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-replay-view --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-scheduler-snapshot --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-scheduler-review --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-audit-report --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-dry-run-trace --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
+ahflc emit-package-review <input-mode>
 ahflc emit-summary <input-mode>
 ahflc emit-smv [--smv-size-report] <input-mode>
-ahflc emit-assurance-json [--package <ahfl.package.json>] <input-mode>
-ahflc validate-assurance [--package <ahfl.package.json>] <input-mode>
-ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-checker <path>] [--formal-model-out <model.smv>] [--package ...] <input-mode>
+ahflc emit-assurance-json <input-mode>
+ahflc validate-assurance <input-mode>
+ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-checker <path>] [--formal-model-out <model.smv>] <input-mode>
 ```
 
 开发者工具入口：
@@ -88,11 +91,12 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
-| `--project` | `<ahfl.project.json>` | 单个 project descriptor 作为输入 |
-| `--workspace` | `<ahfl.workspace.json>` | workspace descriptor 作为输入 |
-| `--project-name` | `<name>` | 与 `--workspace` 配合选择目标 project |
+| `--manifest` | `<ahfl.toml>` | AHFL package manifest；用于 package-aware check / fmt / emit / dump |
+| `--workspace` | `<ahfl.workspace.toml>` | AHFL workspace manifest；必须配合 `--package <name>` 选择 member package |
+| `--package` | `<name>` | 与 `--workspace` 配合选择 workspace package |
+| `--target` | `<name>` | 选择 manifest target；多 target package 必须显式传入 |
+| `--sysroot` | `<path>` | AHFL sysroot；目录下必须包含 `std/ahfl.toml` |
 | `--search-root` | `<dir>` | 额外搜索根目录 (可重复) |
-| `--package` | `<ahfl.package.json>` | package authoring descriptor |
 | `--capability-mocks` | `<mocks.json>` | deterministic capability mock 输入；`run` 中作为 LLM function tools source |
 | `--tool-catalog` | `<tools.json>` | 仅 `run`：deterministic runtime tool catalog 输入，作为 LLM function tools source |
 | `--capability-bindings` | `<bindings.json>` | 仅 `run`：HTTP/gRPC JSON transcoding runtime capability binding 输入 |
@@ -125,7 +129,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 ## Formatter
 
-`ahflc fmt <input.ahfl|dir>...` 使用 formatter library 格式化源文件并原地写回；目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`ahflc fmt --project <ahfl.project.json>` 和 `ahflc fmt --workspace <ahfl.workspace.json> --project-name <name>` 会格式化 descriptor 中声明的 `entry_sources`。
+`ahflc fmt <input.ahfl|dir>...` 使用 formatter library 格式化源文件并原地写回；目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`ahflc fmt --manifest <ahfl.toml>` 会格式化 package module root 内由 PackageGraph 覆盖的 `.ahfl` source；`ahflc fmt --workspace <ahfl.workspace.toml> --package <name>` 会格式化选中 workspace package 的 source。
 
 `ahflc fmt --check ...` 只检查文件是否已经符合格式，不写回；如果需要改动，命令返回非零退出码。批量模式会继续检查所有可读取文件，并在 stderr 输出 `format failed for X of N input(s)` 作为 partial failure 汇总。
 
@@ -181,7 +185,7 @@ ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl
 当前边界：
 
 1. 入口使用进程内 `IrCache`，适合 smoke test 和 daemon-facing 原型验证，不提供跨进程持久缓存。
-2. 入口不会读取 project/workspace descriptor，也不会从 import graph 自动发现 transitive dependents；project-aware invalidation contract 仍是后续工作。
+2. 入口不会读取 PackageGraph manifest，也不会从 import graph 自动发现 transitive dependents；package-aware invalidation contract 仍是后续工作。
 
 ## Profiling
 
@@ -301,15 +305,15 @@ ahflc --show-hidden --help
 
 # 执行 Public provider diagnostic artifact
 ahflc emit-provider-artifact provider/write-attempt \
-  --project tests/project/workflow_value_flow/ahfl.project.json \
-  --package tests/project/workflow_value_flow/ahfl.package.json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
   --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
   --input-fixture fixture.request.partial
 
 # 执行 Internal provider diagnostic artifact
 ahflc emit-provider-artifact provider/runtime-preflight --show-hidden \
-  --project tests/project/workflow_value_flow/ahfl.project.json \
-  --package tests/project/workflow_value_flow/ahfl.package.json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
   --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
   --input-fixture fixture.request.partial
 ```
@@ -331,7 +335,7 @@ ahflc emit-provider-artifact provider/runtime-preflight --show-hidden \
 
 ```cpp
 struct OptionSpec {
-    std::string_view long_name;     // "--project"
+    std::string_view long_name;     // "--manifest"
     std::string_view short_name;    // "" or "-O"
     OptionArgKind arg_kind;         // Flag / RequiredValue / RepeatableValue
     OptionSetter setter;            // void (*)(CommandLineOptions&, optional<string_view>)

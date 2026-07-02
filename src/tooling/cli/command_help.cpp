@@ -39,13 +39,15 @@ namespace ahfl::cli {
 
 void print_usage(std::ostream &out, bool show_internal) {
     out << "Usage:\n"
-        << "  ahflc check [options] <input.ahfl>\n"
-        << "  ahflc run --workflow <name> --input '<json>' [options] <input.ahfl>\n"
+        << "  ahflc check [options] [<input.ahfl>]\n"
+        << "  ahflc run --workflow <name> --input '<json>' [options] [<input.ahfl>]\n"
         << "  ahflc fmt [--check] <input.ahfl|dir>...\n"
-        << "  ahflc emit <artifact> [options] <input.ahfl>\n"
-        << "  ahflc dump <target> [options] <input.ahfl>\n"
-        << "  ahflc verify [options] <input.ahfl>\n"
-        << "  ahflc validate [options] <input.ahfl>\n"
+        << "  ahflc fmt [--check] --manifest <ahfl.toml>\n"
+        << "  ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>\n"
+        << "  ahflc emit <artifact> [options] [<input.ahfl>]\n"
+        << "  ahflc dump <target> [options] [<input.ahfl>]\n"
+        << "  ahflc verify [options] [<input.ahfl>]\n"
+        << "  ahflc validate [options] [<input.ahfl>]\n"
         << "\n"
         << "Actions:\n"
         << "  check               Type-check source files\n"
@@ -108,13 +110,10 @@ void print_usage(std::ostream &out, bool show_internal) {
 
     // Options grouped by scope
     out << "\nInput Options:\n"
-        << "  --package <path|name>       Package descriptor; workspace package name with "
-           "--workspace\n"
-        << "  --project <path>            Project descriptor\n"
-        << "  --workspace <path>          Workspace descriptor\n"
-        << "  --manifest <path>           AHFL package manifest\n"
+        << "  --manifest <path>           AHFL package manifest (ahfl.toml)\n"
+        << "  --workspace <path>          AHFL workspace manifest (ahfl.workspace.toml)\n"
+        << "  --package <name>            Workspace package name with --workspace\n"
         << "  --sysroot <path>            AHFL sysroot containing std/ahfl.toml\n"
-        << "  --project-name <name>       Target project in workspace\n"
         << "  --target <name>             Target name within an AHFL package manifest\n"
         << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n"
         << "  --search-root <dir>         Additional source search path (repeatable)\n";
