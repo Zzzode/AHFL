@@ -1,246 +1,241 @@
-# AHFL Project Usage
+# AHFL Package Usage
 
-本文是 `docs/reference` 中 project usage 的统一入口，整合了历史各版本的项目装载与 descriptor 规则，不再保留独立版本入口。
+本文是 AHFL 工程配置的用户入口。当前公开工程模型以 `ahfl.toml` package manifest、`ahfl.workspace.toml` workspace manifest 和 sysroot `std/ahfl.toml` 为核心；编译器、LSP、formatter、native handoff 与 lockfile 都应通过同一条 PackageGraph 链路理解工程。
 
 关联文档：
 
-- [project-descriptor-architecture.zh.md](../design/project-descriptor-architecture.zh.md)
-- [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)
-- [cli-commands.zh.md](./cli-commands.zh.md)
-- [native-handoff-usage.zh.md](./native-handoff-usage.zh.md)
-- [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)
+- [RFC 0005：Package Configuration System](../rfcs/0005-package-configuration-system.zh.md)
+- [CLI 命令参考](./cli-commands.zh.md)
+- [Native Handoff Usage](./native-handoff-usage.zh.md)
+- [Native Runtime Artifacts](./native-runtime-artifacts.zh.md)
 
-## 合并范围
+## 当前口径
 
-| 合并后保留的信息 |
-|------------------|
-| search-root 输入、最小目录约定、ownership / search root 失败模式。 |
-| project / workspace descriptor、三种输入模式、project-aware CLI 支持矩阵。 |
-| package authoring descriptor、native package / package review / reference consumer 路径。 |
-
-## 当前口径摘要
-
-1. `ahfl.project.json` / `ahfl.workspace.json` 只描述 source graph 装载，不承载 package authoring 元数据。
-2. `ahfl.package.json` 是独立 authoring 输入，当前只由 package / runtime-adjacent 输出链路消费。
-3. `--search-root`、`--project`、`--workspace --project-name` 最终进入同一条 compiler 主链路。
-4. display name 只能作为 authoring convenience；进入 handoff package 前必须规范化为 canonical name。
-5. review/debug 与 direct consumer helper 必须复用 `handoff::Package`，不能绕回 AST、source 或 raw JSON。
+1. 一个 AHFL package 必须由 `ahfl.toml` 描述；package identity、module root、exports、targets 和 dependencies 属于同一份 manifest。
+2. 多 package 工程必须由 `ahfl.workspace.toml` 枚举成员；workspace 不会隐式包含未声明的子目录。
+3. `std` 是 sysroot package；选中的 sysroot 必须包含 `std/ahfl.toml`。
+4. PackageGraph 是工具层稳定接口；工具不应各自推断 search roots、target metadata 或 stdlib 位置。
+5. Native handoff package 由 manifest target metadata 驱动，不再需要单独的 runtime-facing package descriptor。
 
 ## 术语
 
-- `project manifest`
-  - `ahfl.project.json`，声明 entry source、search roots 与项目名称。
-- `workspace descriptor`
-  - `ahfl.workspace.json`，声明一组 project manifest，并通过 `--project-name` 选择其中一个 project。
-- `package authoring descriptor`
-  - `ahfl.package.json`，声明 package identity、entry target、export targets 与 capability binding key。
-- `source graph`
-  - 由 entry source、递归装载到的 source、以及 import edge 组成的稳定前端输入模型。
-- `handoff package`
-  - compiler 输出给 runtime-adjacent consumer 的稳定 Native package 数据模型。
+| 术语 | 含义 |
+|---|---|
+| package manifest | `ahfl.toml`，描述一个 AHFL package 的身份、源码根、导出模块、target 和依赖。 |
+| workspace manifest | `ahfl.workspace.toml`，声明一组 package 成员和 workspace 级依赖策略。 |
+| sysroot | 包含 `std/ahfl.toml` 的目录；通过 `--sysroot`、`AHFL_SYSROOT` 或编译期默认值选择。 |
+| PackageGraph | 由 manifest / workspace / sysroot 构建出的编译输入图，包含 `PackageId`、dependency DAG、module root table、target metadata 和 diagnostics。 |
+| target | manifest 中 `[targets.<name>]` 声明的可编译或可发射入口，例如 handoff workflow。 |
 
 ## 输入边界
 
-当前把项目输入和 package authoring 输入明确拆成两层：
-
 ```mermaid
 flowchart TD
-    Input["project/workspace/search-root input"] --> ProjectInput["ProjectInput"]
-    ProjectInput --> SourceGraph["SourceGraph"]
-    SourceGraph --> Semantics["resolve / typecheck / validate"]
-    Semantics --> PackageNormalization["optional package authoring normalization"]
-    PackageNormalization --> Package["handoff::Package"]
-    Package --> Consumers["review / consumer bootstrap"]
+    Manifest["ahfl.toml"] --> Builder["PackageGraph builder"]
+    Workspace["ahfl.workspace.toml"] --> Builder
+    Sysroot["sysroot std/ahfl.toml"] --> Builder
+    Builder --> Graph["PackageGraph"]
+    Graph --> Loader["frontend source loader"]
+    Loader --> Semantics["resolve / typecheck / validate"]
+    Graph --> Native["native handoff target metadata"]
+    Semantics --> Backends["IR / JSON / SMV / native-json"]
+    Native --> Backends
 ```
 
-其中：
+`ProjectInput` 仍可能作为 frontend loader 内部结构存在，但它不是公开工程模型。用户、文档和工具入口应面向 PackageGraph，而不是直接暴露 loader 细节。
 
-1. `ahfl.project.json` / `ahfl.workspace.json` 负责描述编译输入与 source graph 装载。
-2. `ahfl.package.json` 负责描述 package metadata authoring。
-3. `ahfl.package.json` 当前不会内联进 project 或 workspace descriptor。
-4. 只有 `emit-native-json` 与 `emit-package-review` 会消费 `--package`。
+## 最小目录
 
-## 最小目录约定
-
-典型的 project 目录可以像这样组织：
+单 package 工程：
 
 ```text
-tests/project/workflow_value_flow/
-  ahfl.project.json
-  ahfl.package.json
-  ahfl.display.package.json
-  app/main.ahfl
-  lib/types.ahfl
-  lib/agents.ahfl
-
-tests/project/
-  handoff.workspace.json
+refund-audit/
+  ahfl.toml
+  src/main.ahfl
 ```
 
-最小 `ahfl.project.json` 形态：
+最小 `ahfl.toml`：
 
-```json
-{
-  "format_version": "ahfl.project",
-  "name": "workflow-value-flow",
-  "entry_sources": ["app/main.ahfl"],
-  "search_roots": ["."]
-}
+```toml
+manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = ["refund_audit::main::RefundAuditWorkflow"]
+
+[dependencies]
+std = { source = "sysroot" }
 ```
 
-最小 `ahfl.package.json` 形态：
+多 package workspace：
 
-```json
-{
-  "format_version": "ahfl.package-authoring",
-  "package": {
-    "name": "workflow-value-flow",
-    "version": "x.y.z"
-  },
-  "entry": {
-    "kind": "workflow",
-    "name": "app::main::ValueFlowWorkflow"
-  },
-  "exports": [
-    {
-      "kind": "workflow",
-      "name": "app::main::ValueFlowWorkflow"
-    },
-    {
-      "kind": "agent",
-      "name": "lib::agents::AliasAgent"
-    }
-  ],
-  "capability_bindings": [
-    {
-      "capability": "lib::agents::Echo",
-      "binding_key": "runtime.echo"
-    }
-  ]
-}
+```text
+commerce-workflows/
+  ahfl.workspace.toml
+  packages/refund-audit/ahfl.toml
+  packages/refund-audit/src/main.ahfl
+  packages/audit-core/ahfl.toml
+  packages/audit-core/src/lib.ahfl
 ```
 
-最小 `ahfl.workspace.json` 形态：
+最小 `ahfl.workspace.toml`：
 
-```json
-{
-  "format_version": "ahfl.workspace",
-  "name": "handoff-workspace",
-  "projects": ["workflow_value_flow/ahfl.project.json"]
-}
+```toml
+manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = [
+  "packages/refund-audit",
+  "packages/audit-core",
+]
+
+[resolver]
+version = 1
+
+[dependencies]
+std = { source = "sysroot" }
 ```
 
-## 三种项目输入模式
+## 常用命令
 
-仍保留三条等价的 project-aware 输入路径：
-
-1. `--search-root ... <entry.ahfl>`
-   - 适合最小复现和快速实验。
-2. `--project <ahfl.project.json>`
-   - 适合稳定项目与文档化命令。
-3. `--workspace <ahfl.workspace.json> --project-name <name>`
-   - 适合多 project 工作区。
-
-这三条路径最终都会进入同一条 compiler 主链路；差异只在 source graph 的定位方式，不在后续 handoff lowering 或 review / consumer bootstrap 语义。
-
-## 典型路径
-
-### 1. 只验证 project-aware 输入
+检查单 package：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc check \
-  --project tests/project/workflow_value_flow/ahfl.project.json
+ahflc check \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ```
 
-### 2. 发射带 package authoring 的 native package
+检查 workspace 中的 package：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit-native-json \
-  --project tests/project/workflow_value_flow/ahfl.project.json \
-  --package tests/project/workflow_value_flow/ahfl.package.json
+ahflc check \
+  --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml \
+  --package refund-audit \
+  --target workflow \
+  --sysroot .
 ```
 
-### 3. 用 display name 做 authoring review
+查看 PackageGraph：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit-package-review \
-  --workspace tests/project/handoff.workspace.json \
-  --project-name workflow-value-flow \
-  --package tests/project/workflow_value_flow/ahfl.display.package.json
+ahflc dump package-graph \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --sysroot .
 ```
 
-### 4. 进入 direct reference consumer helper
+发射 native handoff JSON：
 
-```mermaid
-flowchart TD
-    Load["load project/workspace"] --> ParsePackage["parse ahfl.package.json"]
-    ParsePackage --> LowerPackage["handoff::lower_package(...)"]
-    LowerPackage --> ReaderSummary["build_package_reader_summary(...)"]
-    ReaderSummary --> PlannerBootstrap["build_execution_planner_bootstrap(...)"]
+```bash
+ahflc emit native-json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ```
+
+格式化 package 覆盖的源码：
+
+```bash
+ahflc fmt --check \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --sysroot .
+```
+
+## Sysroot 选择
+
+sysroot 选择顺序：
+
+1. `--sysroot <path>`
+2. `AHFL_SYSROOT`
+3. 编译期默认 sysroot
+
+选中目录必须满足：
+
+```text
+<sysroot>/std/ahfl.toml
+<sysroot>/std/*.ahfl
+```
+
+`std` 依赖必须写作：
+
+```toml
+[dependencies]
+std = { source = "sysroot" }
+```
+
+如果 sysroot 缺失，PackageGraph 阶段失败；工具不应回退到当前目录猜测 stdlib。
+
+## Manifest 字段
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `manifest_version` | 是 | 当前为 `1`。 |
+| `[package].name` | 是 | PackageGraph 中的 package identity；同一 graph 内不能重复。 |
+| `[package].version` | 是 | package 版本。 |
+| `[package].edition` | 是 | 语言 edition。 |
+| `[package].kind` | 是 | `application`、`library`、`standard-library` 等 package 分类。 |
+| `[module].prefix` | 是 | module namespace 前缀；同一 graph 内不能冲突。 |
+| `[module].root` | 是 | package 内源码根目录。 |
+| `[exports].modules` | 是 | 对外导出的 module 列表。 |
+| `[targets.<name>]` | 视需求 | 可检查、发射或打包的目标入口。 |
+| `[dependencies]` | 视需求 | `sysroot` 或 `path` dependency。 |
 
 ## 支持矩阵
 
-| 命令 | `--search-root` | `--project` | `--workspace --project-name` | `--package` |
-| --- | --- | --- | --- | --- |
-| `check` | 是 | 是 | 是 | 否 |
-| `dump-ast` | 是 | 是 | 是 | 否 |
-| `dump-project` | 是 | 是 | 是 | 否 |
-| `dump-types` | 是 | 是 | 是 | 否 |
-| `emit-ir` | 是 | 是 | 是 | 否 |
-| `emit-ir-json` | 是 | 是 | 是 | 否 |
-| `emit-native-json` | 是 | 是 | 是 | 是 |
-| `emit-package-review` | 是 | 是 | 是 | 是 |
-| `emit-summary` | 是 | 是 | 是 | 否 |
-| `emit-smv` | 是 | 是 | 是 | 否 |
+| 命令 | `--manifest` | `--workspace --package` | `--target` | `--sysroot` |
+|---|---:|---:|---:|---:|
+| `check` | 是 | 是 | 是 | 是 |
+| `fmt` | 是 | 是 | 否 | 是 |
+| `dump package-graph` | 是 | 是 | 否 | 是 |
+| `dump lockfile` | 是 | 是 | 否 | 是 |
+| `emit native-json` | 是 | 是 | 是 | 是 |
 
-## 常见失败场景
+## 常见失败
 
-- `unsupported package authoring descriptor format_version '...'`
-  - `ahfl.package.json` 的版本标识不匹配当前 parser。
-- `package entry target '...' is not a workflow target`
-  - `entry` 最终规范化到了错误的 executable kind，无法作为 execution planner bootstrap 入口。
-- `package authoring field 'export_targets' refers to '...' with wrong executable kind`
-  - `exports[]` 的 `kind` 与实际解析到的 executable target 类型不一致。
-- `unknown package authoring capability '...'`
-  - capability 引用不存在，或 display name 无法唯一规范化到 canonical name。
-- `workspace does not contain project named '...'`
-  - workspace 中不存在传入的 `--project-name`。
-- `descriptor field 'search_roots' must not escape the descriptor root`
-  - project / workspace descriptor 中的相对路径越过 descriptor 根目录。
+- `failed to locate sysroot std/ahfl.toml`
+  - 传入 `--sysroot`，或设置 `AHFL_SYSROOT` 指向包含 `std/ahfl.toml` 的目录。
+- `dependency package '...' is not in PackageGraph`
+  - dependency 未在 workspace members 中声明，或 path dependency 指向了无效 package。
+- `workspace does not contain package named '...'`
+  - `--package` 必须匹配 workspace 中某个 member 的 `[package].name`。
+- `target '...' does not exist`
+  - `--target` 必须匹配 `[targets.<name>]`。
+- `module prefix '...' conflicts with package '...'`
+  - 两个 package 声明了相同或冲突的 module prefix，应在 manifest 层重命名。
 
-这些错误的正式回归样例位于 `tests/project/`、`tests/native/`、`tests/review/` 与 `tests/handoff/`。
+## 最小验证
 
-## 最小验证建议
-
-只验证 package authoring 路径时，建议至少跑：
+修改 package 配置后，至少运行：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L package-authoring-model
-ctest --preset test-dev --output-on-failure -L package-authoring-validation
-ctest --preset test-dev --output-on-failure -L package-review
-ctest --preset test-dev --output-on-failure -L reference-consumer
+ctest --preset test-dev --output-on-failure -R 'ahflc\.(check|dump_package_graph|dump_lockfile)\.(manifest|workspace)'
+ctest --preset test-dev --output-on-failure -R 'ahfl\.package_graph\.core_all'
+python3 scripts/check-rfc.py
 ```
 
-## 对贡献者的含义
+## 对贡献者的要求
 
-1. project/workspace descriptor 与 `ahfl.package.json` 是两条独立输入边界，不能互相偷带字段。
-2. package authoring 的 display name 只是输入便利层；进入 handoff package 前必须规范化到 canonical name。
-3. review/debug 与 direct consumer helper 都必须复用 `handoff::Package`，不能回退去扫 raw JSON 或 AST。
-4. 改 project-aware 输入模式时，要同步更新：
-   - `docs/design/project-descriptor-architecture.zh.md`
-   - `docs/reference/cli-commands.zh.md`
+1. 新工具入口必须消费 PackageGraph，不得复制 manifest、workspace 或 sysroot 解析规则。
+2. 新 native handoff 能力必须挂到 `[targets.<name>]` metadata，而不是新增旁路描述文件。
+3. 新 package 配置字段必须有 manifest parser、canonical serialization、diagnostic 和 regression test。
+4. 修改工程配置语义时，同步更新：
+   - [RFC 0005](../rfcs/0005-package-configuration-system.zh.md)
+   - [CLI 命令参考](./cli-commands.zh.md)
    - `tests/cmake/ProjectTests.cmake`
-   - `tests/project/`
-5. 改 package authoring 或 handoff usage 时，要同步更新：
-   - `docs/reference/native-handoff-usage.zh.md`
-   - `docs/reference/native-runtime-artifacts.zh.md`
-   - `docs/reference/contributor-guide.zh.md`
-
-## 当前状态
-
-截至当前实现：
-
-1. project-aware 输入路径仍复用当前 project / workspace descriptor 形态。
-2. `emit-native-json --package` 与 `emit-package-review --package` 已形成正式 authoring 入口。
-3. 仓库内已存在从 package authoring、review 到 reference consumer bootstrap 的完整最小路径。
+   - PackageGraph unit / integration fixtures
