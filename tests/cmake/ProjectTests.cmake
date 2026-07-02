@@ -9,6 +9,8 @@ set(AHFL_CHECK_OK_WORKSPACE_ARGS --workspace "${AHFL_CHECK_OK_WORKSPACE}" --pack
 set(AHFL_CHECK_FAIL_INPUT_WORKSPACE "${AHFL_TESTS_DIR}/integration/check_fail_input/ahfl.workspace.toml")
 set(AHFL_STDLIB_API_SMOKE_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/ahfl.toml")
 set(AHFL_STDLIB_API_SMOKE_ARGS --manifest "${AHFL_STDLIB_API_SMOKE_MANIFEST}" --target lib --sysroot "${PROJECT_SOURCE_DIR}")
+set(AHFL_PRELUDE_EXPLICIT_MANIFEST "${AHFL_TESTS_DIR}/integration/prelude_explicit/app/ahfl.toml")
+set(AHFL_PRELUDE_EXPLICIT_ARGS --manifest "${AHFL_PRELUDE_EXPLICIT_MANIFEST}" --target lib --sysroot "${PROJECT_SOURCE_DIR}")
 
 add_test(NAME ahfl.frontend.project.ok_basic
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
@@ -2644,6 +2646,14 @@ add_test(NAME ahflc.check.stdlib_api_smoke
             ${AHFL_STDLIB_API_SMOKE_ARGS}
 )
 set_tests_properties(ahflc.check.stdlib_api_smoke PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+)
+
+add_test(NAME ahflc.check.explicit_prelude_import
+    COMMAND $<TARGET_FILE:ahflc> check
+            ${AHFL_PRELUDE_EXPLICIT_ARGS}
+)
+set_tests_properties(ahflc.check.explicit_prelude_import PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
 )
 

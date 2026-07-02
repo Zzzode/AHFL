@@ -42,4 +42,10 @@ allow = [
   "json_*",
   "time_*",
   "uuid_*",
+  "cmp_raw_compare",
+  "int_to_string",
+  "bool_to_string",
+  "float_to_string",
+  "float_trunc_to_int",
+  "int_to_float",
 ]

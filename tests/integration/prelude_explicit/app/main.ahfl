@@ -1,0 +1,8 @@
+module prelude_explicit::main;
+
+import std::prelude;
+
+fn uses_explicit_prelude() -> Bool effect Pure decreases 0 {
+    let value: Option<Int> = some<Int>(1);
+    return is_some<Int>(value);
+}
