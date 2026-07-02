@@ -790,6 +790,19 @@ template <typename E>
     object->set("resolved_symbol", j_optional_symbol_id(expr.resolved_symbol));
     object->set("semantic_name", Json::make_string(expr.semantic_name));
     object->set("call_target_kind", j_optional_enum(expr.call_target_kind));
+    // C-5 (Wave-24): serialize dispatch target for MethodCall expressions.
+    // When nullopt (non-method-call exprs), emit JSON null.
+    if (expr.dispatch_target.has_value()) {
+        auto dt = Json::make_object();
+        dt->set("impl_index", Json::make_int(static_cast<std::int64_t>(expr.dispatch_target->impl_index)));
+        dt->set("method_name", Json::make_string(expr.dispatch_target->method_name));
+        dt->set("is_inherent", Json::make_bool(expr.dispatch_target->is_inherent));
+        dt->set("method_symbol", j_optional_symbol_id(expr.dispatch_target->method_symbol));
+        dt->set("trait_symbol", j_optional_symbol_id(expr.dispatch_target->trait_symbol));
+        object->set("dispatch_target", std::move(dt));
+    } else {
+        object->set("dispatch_target", Json::make_null());
+    }
     object->set("path_root", Json::make_string(expr.path_root));
     object->set("path_root_kind", j_enum(expr.path_root_kind));
     object->set("member_path", j_string_array(expr.member_path));
@@ -804,6 +817,7 @@ template <typename E>
     object->set("literal_spelling", Json::make_string(expr.literal_spelling));
     object->set("member_name", Json::make_string(expr.member_name));
     object->set("lambda_params", j_string_array(expr.lambda_params));
+    object->set("captured_names", j_string_array(expr.captured_names));
     object->set("const_value", j_optional_const_value(expr.const_value));
     return object;
 }
@@ -1955,8 +1969,21 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .literal_spelling = reader.string_field(object, "literal_spelling"),
         .member_name = reader.string_field(object, "member_name"),
         .lambda_params = reader.string_array_field(object, "lambda_params"),
+        .captured_names = reader.string_array_field(object, "captured_names"),
         .const_value = read_optional_const_value(reader, object),
     };
+
+    // C-5 (Wave-24): deserialize dispatch_target for MethodCall expressions.
+    const auto *dt_json = reader.field(object, "dispatch_target");
+    if (dt_json != nullptr && dt_json->kind == json::Kind::Object) {
+        DispatchTarget dt;
+        dt.impl_index = static_cast<std::size_t>(reader.uint_field(*dt_json, "impl_index"));
+        dt.method_name = reader.string_field(*dt_json, "method_name");
+        dt.is_inherent = reader.bool_field(*dt_json, "is_inherent");
+        dt.method_symbol = reader.optional_symbol_id_field(*dt_json, "method_symbol");
+        dt.trait_symbol = reader.optional_symbol_id_field(*dt_json, "trait_symbol");
+        expr.dispatch_target = dt;
+    }
 
     const auto *children = reader.field(object, "children");
     if (children != nullptr && children->kind == json::Kind::Array) {

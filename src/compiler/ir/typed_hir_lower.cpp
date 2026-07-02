@@ -1222,13 +1222,32 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] std::string render_method_target(const TypedExpr &expr) const {
+        // C-5 (Wave-24): prefer stored dispatch_target when available.
+        // This avoids re-scanning all impl declarations — the typechecker
+        // already resolved which impl+method was selected.
+        if (expr.dispatch_target.has_value()) {
+            const auto &dt = *expr.dispatch_target;
+            // Find the ImplTypeInfo by index to check for @builtin hooks.
+            const ImplTypeInfo *impl_info = nullptr;
+            for (const auto &decl : typed_program_->declarations) {
+                const auto *impl = payload_as<ImplTypeInfo>(&decl);
+                if (impl != nullptr && impl->index == dt.impl_index) {
+                    impl_info = impl;
+                    break;
+                }
+            }
+            if (impl_info != nullptr) {
+                if (const auto *method = find_impl_method(*impl_info, dt.method_name);
+                    method != nullptr && method->builtin_name.has_value()) {
+                    return *method->builtin_name;
+                }
+            }
+            return "impl#" + std::to_string(dt.impl_index) + "::" + dt.method_name;
+        }
+        // Fallback: re-resolve (for deserialized HIR from older versions or
+        // expressions that didn't go through the new dispatch path).
         if (const auto target = resolve_method_target(expr);
             target.has_value() && target->impl != nullptr && target->method != nullptr) {
-            // P5 (RFC §3.3): when the resolved impl method is a facade for a
-            // C++ builtin hook (declared via `@builtin("hook_name")` in the
-            // source), dispatch directly to the hook name so the evaluator
-            // picks up BuiltinTable::find() without a synthetic "impl#..."
-            // callee string that the table would never match.
             if (target->method->builtin_name.has_value()) {
                 return *target->method->builtin_name;
             }
@@ -1367,10 +1386,12 @@ class TypedIrLowerer final {
         ir::ExprRef visit_lambda(const TypedExpr &e) const {
             const TypedExpr *body =
                 TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::Operand);
+            // Field order in the designated initializer follows ir::LambdaExpr.
             return self.make_expr(
                 ir::LambdaExpr{
                     .params = e.lambda_params,
                     .body = body ? self.lower_typed_expr(*body) : nullptr,
+                    .captures = e.captured_names,
                 },
                 range);
         }
@@ -2486,6 +2507,14 @@ class TypedIrLowerer final {
         for (const auto capability_symbol : info.capabilities) {
             effect.capabilities.push_back(symbol_ref_from_symbol(
                 typed_program_->find_symbol(capability_symbol), "fn effect capability"));
+        }
+        // D-3 (Wave-24): lower effect-clause `decreases X` measure expression.
+        effect.has_decreases = info.has_decreases;
+        if (effect.has_decreases && !info.decreases_expr_range.empty()) {
+            ir::ExprRef term = lower_expr_range(info.decreases_expr_range);
+            if (term != nullptr) {
+                effect.decreases_terms.push_back(std::move(term));
+            }
         }
         return effect;
     }

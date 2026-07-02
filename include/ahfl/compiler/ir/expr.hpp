@@ -191,6 +191,11 @@ struct CallExpr {
 struct LambdaExpr {
     std::vector<std::string> params;
     ExprRef body;
+    // C-4 (Wave-24): explicit capture list; empty = implicit-capture form.
+    // Placed after `body` so the pre-C-4 aggregate-initialization pattern
+    // LambdaExpr{params, body} remains well-formed (trailing fields are
+    // default-initialized to empty).
+    std::vector<std::string> captures;
 };
 
 /// Struct field initializer

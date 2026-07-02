@@ -296,12 +296,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::TraitDecl: {
-            // P3 (RFC §3.2.2 / type-system §1.3): index the trait declaration
-            // under its Trait symbol id so build_trait_types can resolve its
-            // method signatures + super-traits + assoc types.
+            // C-2 (Wave-24): traits live in the Traits namespace. Check
+            // Traits first, then fall back to Types (legacy path).
             const auto &decl = static_cast<const ast::TraitDecl &>(*declaration);
-            if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
-                symbol.has_value() && symbol->get().kind == SymbolKind::Trait) {
+            auto symbol = find_local(SymbolNamespace::Traits, decl.name);
+            if (!symbol.has_value()) {
+                symbol = find_local(SymbolNamespace::Types, decl.name);
+            }
+            if (symbol.has_value() && symbol->get().kind == SymbolKind::Trait) {
                 index_->trait_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
@@ -1083,6 +1085,9 @@ void TypeCheckPass::build_fn_types() {
                 info.effect.kind = static_cast<int>(clause.kind);
                 info.effect.source_range = clause.range;
                 info.effect.has_decreases = static_cast<bool>(clause.decreases_expr);
+                if (info.effect.has_decreases) {
+                    info.effect.decreases_expr_range = clause.decreases_expr->range;
+                }
                 if (clause.kind == ast::EffectClauseKind::Capability) {
                     for (const auto &capability_name : clause.capabilities) {
                         const auto reference = find_reference_here(ReferenceKind::AgentCapability,
@@ -1142,6 +1147,9 @@ TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &
     info.kind = static_cast<int>(clause->kind);
     info.source_range = clause->range;
     info.has_decreases = static_cast<bool>(clause->decreases_expr);
+    if (info.has_decreases) {
+        info.decreases_expr_range = clause->decreases_expr->range;
+    }
     if (clause->kind == ast::EffectClauseKind::Capability) {
         for (const auto &capability_name : clause->capabilities) {
             const auto reference =
@@ -1274,24 +1282,53 @@ void TypeCheckPass::build_trait_types() {
                 info.type_param_names.push_back(type_param->name);
             }
 
+            // B-2: augment with implicit "Self" as the front-most type
+            // parameter. The trait-level scope (when checking trait
+            // signatures, impl-method dispatch prefixes, super-trait
+            // bounds) is always:
+            //     [Self] + declared_type_params
+            // Any TypeVarT indexed from a trait method signature must use
+            // this exact same ordering, so we keep a single canonical
+            // copy on TraitTypeInfo instead of re-deriving per call site.
+            info.self_augmented_type_param_names.clear();
+            info.self_augmented_type_param_names.reserve(1 + info.type_param_names.size());
+            info.self_augmented_type_param_names.push_back("Self");
+            for (const auto &tp : info.type_param_names) {
+                info.self_augmented_type_param_names.push_back(tp);
+            }
+
             for (const auto &super_type : decl.get().super_traits) {
                 const auto super_named = super_type ? super_type->is<ast::NamedType>() : false;
                 if (!super_named) {
                     continue;
                 }
-                // P3: honour the resolver's TypeName reference (handles
-                // cross-module imports) rather than re-walking the symbol
-                // table, mirroring how type_resolver reads the same reference.
+                // C-2 (Wave-24): the resolver may have registered the super-trait
+                // as either a TypeName reference (pre-C-2) or a TraitBound reference
+                // (post-C-2). Check both, preferring TraitBound.
                 const auto super_ref =
-                    find_reference_here(ReferenceKind::TypeName, super_type->range);
+                    find_reference_here(ReferenceKind::TraitBound, super_type->range);
                 std::optional<SymbolId> super_id;
                 if (super_ref.has_value()) {
                     super_id = super_ref->get().target;
                 } else {
-                    const auto fallback = find_local_here(
-                        SymbolNamespace::Types, super_type->as<ast::NamedType>().name->spelling());
-                    if (fallback.has_value()) {
-                        super_id = fallback->get().id;
+                    // Fallback 1: TypeName reference (legacy path / cross-module)
+                    const auto type_ref =
+                        find_reference_here(ReferenceKind::TypeName, super_type->range);
+                    if (type_ref.has_value()) {
+                        super_id = type_ref->get().target;
+                    }
+                }
+                if (!super_id.has_value()) {
+                    // Fallback 2: direct namespace lookup — try Traits first,
+                    // then Types (legacy).
+                    const auto super_spelling =
+                        super_type->as<ast::NamedType>().name->spelling();
+                    auto fb = find_local_here(SymbolNamespace::Traits, super_spelling);
+                    if (!fb.has_value()) {
+                        fb = find_local_here(SymbolNamespace::Types, super_spelling);
+                    }
+                    if (fb.has_value()) {
+                        super_id = fb->get().id;
                     }
                 }
                 if (!super_id.has_value()) {
@@ -1428,11 +1465,34 @@ void TypeCheckPass::build_impl_types() {
             // signature (return type, param types), and every associated-type
             // RHS. Previously this scope was missing, which made impl bodies
             // type-annotated with `T` fail with unknown-type errors.
+            //
+            // B-2 (gap 3): the full scope for an impl block is four layers:
+            //     [Self] → [trait tparams] → [impl tparams] → [method tparams]
+            // We inject `Self` unconditionally (both inherent and trait impls
+            // reference Self in method signatures / body closures). For trait
+            // impls we additionally walk the matched TraitDecl to pull in its
+            // declared type-param names so `\x: TraitT -> x` closures inside
+            // method bodies resolve correctly. The names are prepended *before*
+            // the impl-level names so method_info.type_param_names (which is
+            // snapshotted from impl_and_method_tparams after method tparams are
+            // appended) carries the full four-layer prefix in canonical order;
+            // that snapshot is what ImplSema::check_impl_method_body uses as
+            // its TypeVarT-index baseline (vector B).
             const auto *prev_type_params = current_type_param_names_;
             // Reserve room for impl-level names + per-method extra params so
             // that appending method type params in the loop below never
             // reallocates the backing store (current_type_param_names_ points
             // directly into this vector).
+            //
+            // B-2 note: Self and trait-level type params are NOT injected
+            // here. The impl-level scope is strictly the impl-declared tparams
+            // (e.g. [T] for `impl<T> List<T>`). Self is resolved by the type
+            // resolver through the reference recorded by the resolver pass
+            // (the resolver's generic_type_params_ suppresses the UNKNOWN_SYMBOL
+            // diagnostic for "Self" inside impl blocks). Trait-level tparams
+            // are appended at the END of the body scope in check_impl_method_body
+            // via dedup_push_range, so they don't shift the TypeVarT indices
+            // of impl/method tparams embedded in method signatures.
             std::vector<std::string> impl_and_method_tparams;
             impl_and_method_tparams.reserve(info.type_param_names.size() + 16);
             impl_and_method_tparams.insert(
@@ -1453,23 +1513,36 @@ void TypeCheckPass::build_impl_types() {
                 info.target_symbol = nominal_symbol_of(*info.target_type);
             }
 
-            // Resolve trait_ref -> Trait symbol.
+            // Resolve trait_ref -> Trait symbol. C-2 (Wave-24): traits live in
+            // their own namespace; resolver writes TraitBound references.
             if (decl.trait_ref) {
                 const auto trait_named = decl.trait_ref->is<ast::NamedType>();
                 if (trait_named) {
-                    // P3: honour the resolver's TypeName reference (handles
-                    // cross-module imports); fall back to local lookup.
                     std::optional<SymbolId> trait_id;
-                    const auto trait_ref =
-                        find_reference_here(ReferenceKind::TypeName, decl.trait_ref->range);
-                    if (trait_ref.has_value()) {
-                        trait_id = trait_ref->get().target;
+                    // Primary: TraitBound reference (C-2 path)
+                    const auto trait_bound_ref =
+                        find_reference_here(ReferenceKind::TraitBound, decl.trait_ref->range);
+                    if (trait_bound_ref.has_value()) {
+                        trait_id = trait_bound_ref->get().target;
                     } else {
-                        const auto fallback =
-                            find_local_here(SymbolNamespace::Types,
-                                            decl.trait_ref->as<ast::NamedType>().name->spelling());
-                        if (fallback.has_value()) {
-                            trait_id = fallback->get().id;
+                        // Fallback 1: TypeName reference (legacy / cross-module)
+                        const auto type_ref =
+                            find_reference_here(ReferenceKind::TypeName, decl.trait_ref->range);
+                        if (type_ref.has_value()) {
+                            trait_id = type_ref->get().target;
+                        }
+                    }
+                    if (!trait_id.has_value()) {
+                        // Fallback 2: direct namespace lookup — Traits first,
+                        // then Types (legacy).
+                        const auto trait_spelling =
+                            decl.trait_ref->as<ast::NamedType>().name->spelling();
+                        auto fb = find_local_here(SymbolNamespace::Traits, trait_spelling);
+                        if (!fb.has_value()) {
+                            fb = find_local_here(SymbolNamespace::Types, trait_spelling);
+                        }
+                        if (fb.has_value()) {
+                            trait_id = fb->get().id;
                         }
                     }
                     if (!trait_id.has_value()) {

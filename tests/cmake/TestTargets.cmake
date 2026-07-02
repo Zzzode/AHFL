@@ -577,6 +577,41 @@ target_include_directories(ahfl_semantics_const_sema_negatives_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_const_sema_negatives_tests)
 
+add_executable(ahfl_semantics_c4_capture_list_tests
+    unit/compiler/semantics/c4_capture_list.cpp
+)
+target_link_libraries(ahfl_semantics_c4_capture_list_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_tooling_formatter
+        doctest
+)
+target_include_directories(ahfl_semantics_c4_capture_list_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+        ${PROJECT_SOURCE_DIR}/src
+)
+ahfl_apply_project_warnings(ahfl_semantics_c4_capture_list_tests)
+add_test(NAME c4_capture_list COMMAND ahfl_semantics_c4_capture_list_tests)
+
+add_executable(ahfl_semantics_d3_decreases_expr_tests
+    unit/compiler/semantics/d3_decreases_expr.cpp
+)
+target_link_libraries(ahfl_semantics_d3_decreases_expr_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_semantics_d3_decreases_expr_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+)
+ahfl_apply_project_warnings(ahfl_semantics_d3_decreases_expr_tests)
+add_test(NAME d3_decreases_expr COMMAND ahfl_semantics_d3_decreases_expr_tests)
+
 add_executable(ahfl_semantics_flow_condition_tests
     unit/compiler/semantics/flow_condition.cpp
 )

@@ -64,29 +64,30 @@ public:
     RuleFnDecl = 64, RuleTypeParams = 65, RuleTypeParam = 66, RuleTypeBoundList = 67,
     RuleFnBody = 68, RuleEffectClause = 69, RuleEffectSpec = 70, RuleCapabilityRef = 71,
     RuleDecreasesClause = 72, RuleWhereClause = 73, RuleWhereConstraint = 74,
-    RuleLambdaExpr = 75, RuleLambdaParamList = 76, RuleLambdaParam = 77,
-    RuleTraitDecl = 78, RuleTraitItem = 79, RuleTraitFnItem = 80, RuleAssocTypeItem = 81,
-    RuleAssocConstItem = 82, RuleImplDecl = 83, RuleTraitRef = 84, RuleImplItem = 85,
-    RuleImplFnItem = 86, RuleAssocTypeDef = 87, RuleAssocConstDef = 88,
-    RuleBlock = 89, RuleStatement = 90, RuleLetStmt = 91, RuleAssignStmt = 92,
-    RuleIfStmt = 93, RuleIfLetStmt = 94, RuleIfLetPattern = 95, RuleIfLetPatternVar = 96,
-    RuleGotoStmt = 97, RuleReturnStmt = 98, RuleAssertStmt = 99, RuleUnwrapStmt = 100,
-    RuleRequiresStmt = 101, RuleUnreachableStmt = 102, RuleExprStmt = 103,
-    RuleLValue = 104, RuleExpr = 105, RuleImpliesExpr = 106, RuleOrExpr = 107,
-    RuleAndExpr = 108, RuleEqualityExpr = 109, RuleCompareExpr = 110, RuleAddExpr = 111,
-    RuleMulExpr = 112, RuleUnaryExpr = 113, RulePostfixExpr = 114, RulePrimaryExpr = 115,
-    RuleUnwrapExpr = 116, RuleMatchExpr = 117, RuleMatchArm = 118, RulePattern = 119,
-    RuleOrPattern = 120, RuleConcatPattern = 121, RuleLiteralPattern = 122,
-    RuleVariantPattern = 123, RuleWildcardPattern = 124, RuleBindingPattern = 125,
-    RuleTuplePattern = 126, RulePatternList = 127, RulePathExpr = 128, RulePathRoot = 129,
-    RuleQualifiedValueExpr = 130, RuleCallExpr = 131, RuleExprList = 132,
-    RuleLiteral = 133, RuleIntegerLiteral = 134, RuleFloatLiteral = 135,
-    RuleDecimalLiteral = 136, RuleStringLiteral = 137, RuleDurationLiteral = 138,
-    RuleStructLiteral = 139, RuleListLiteral = 140, RuleSetLiteral = 141,
-    RuleMapLiteral = 142, RuleMapEntryList = 143, RuleMapEntry = 144, RuleStructInitList = 145,
-    RuleStructInit = 146, RuleConstExpr = 147, RuleTemporalExpr = 148, RuleWorkflowTemporalExpr = 149,
-    RuleTemporalImpliesExpr = 150, RuleTemporalOrExpr = 151, RuleTemporalAndExpr = 152,
-    RuleTemporalUntilExpr = 153, RuleTemporalUnaryExpr = 154, RuleTemporalAtom = 155
+    RuleLambdaExpr = 75, RuleLambdaCaptureListOpt = 76, RuleLambdaCaptureList = 77,
+    RuleLambdaParamList = 78, RuleLambdaParam = 79, RuleTraitDecl = 80,
+    RuleTraitItem = 81, RuleTraitFnItem = 82, RuleAssocTypeItem = 83, RuleAssocConstItem = 84,
+    RuleImplDecl = 85, RuleTraitRef = 86, RuleImplItem = 87, RuleImplFnItem = 88,
+    RuleAssocTypeDef = 89, RuleAssocConstDef = 90, RuleBlock = 91, RuleStatement = 92,
+    RuleLetStmt = 93, RuleAssignStmt = 94, RuleIfStmt = 95, RuleIfLetStmt = 96,
+    RuleIfLetPattern = 97, RuleIfLetPatternVar = 98, RuleGotoStmt = 99,
+    RuleReturnStmt = 100, RuleAssertStmt = 101, RuleUnwrapStmt = 102, RuleRequiresStmt = 103,
+    RuleUnreachableStmt = 104, RuleExprStmt = 105, RuleLValue = 106, RuleExpr = 107,
+    RuleImpliesExpr = 108, RuleOrExpr = 109, RuleAndExpr = 110, RuleEqualityExpr = 111,
+    RuleCompareExpr = 112, RuleAddExpr = 113, RuleMulExpr = 114, RuleUnaryExpr = 115,
+    RulePostfixExpr = 116, RulePrimaryExpr = 117, RuleUnwrapExpr = 118,
+    RuleMatchExpr = 119, RuleMatchArm = 120, RulePattern = 121, RuleOrPattern = 122,
+    RuleConcatPattern = 123, RuleLiteralPattern = 124, RuleVariantPattern = 125,
+    RuleWildcardPattern = 126, RuleBindingPattern = 127, RuleTuplePattern = 128,
+    RulePatternList = 129, RulePathExpr = 130, RulePathRoot = 131, RuleQualifiedValueExpr = 132,
+    RuleCallExpr = 133, RuleExprList = 134, RuleLiteral = 135, RuleIntegerLiteral = 136,
+    RuleFloatLiteral = 137, RuleDecimalLiteral = 138, RuleStringLiteral = 139,
+    RuleDurationLiteral = 140, RuleStructLiteral = 141, RuleListLiteral = 142,
+    RuleSetLiteral = 143, RuleMapLiteral = 144, RuleMapEntryList = 145,
+    RuleMapEntry = 146, RuleStructInitList = 147, RuleStructInit = 148,
+    RuleConstExpr = 149, RuleTemporalExpr = 150, RuleWorkflowTemporalExpr = 151,
+    RuleTemporalImpliesExpr = 152, RuleTemporalOrExpr = 153, RuleTemporalAndExpr = 154,
+    RuleTemporalUntilExpr = 155, RuleTemporalUnaryExpr = 156, RuleTemporalAtom = 157
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -182,6 +183,8 @@ public:
   class WhereClauseContext;
   class WhereConstraintContext;
   class LambdaExprContext;
+  class LambdaCaptureListOptContext;
+  class LambdaCaptureListContext;
   class LambdaParamListContext;
   class LambdaParamContext;
   class TraitDeclContext;
@@ -1384,6 +1387,7 @@ public:
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *BACKSLASH();
     ExprContext *expr();
+    LambdaCaptureListOptContext *lambdaCaptureListOpt();
     LambdaParamListContext *lambdaParamList();
 
 
@@ -1392,6 +1396,33 @@ public:
   };
 
   LambdaExprContext* lambdaExpr();
+
+  class  LambdaCaptureListOptContext : public antlr4::ParserRuleContext {
+  public:
+    LambdaCaptureListOptContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    LambdaCaptureListContext *lambdaCaptureList();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  LambdaCaptureListOptContext* lambdaCaptureListOpt();
+
+  class  LambdaCaptureListContext : public antlr4::ParserRuleContext {
+  public:
+    LambdaCaptureListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<IdentifierContext *> identifier();
+    IdentifierContext* identifier(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  LambdaCaptureListContext* lambdaCaptureList();
 
   class  LambdaParamListContext : public antlr4::ParserRuleContext {
   public:

@@ -1948,3 +1948,92 @@ fn save(l: Label) -> Int effect Pure decreases 0 where Label: Json {
     CHECK(has_dispatch_note(result, "bound NOT satisfied → TRAIT_BOUND_NOT_SATISFIED already emitted"));
     CHECK(has_exact_diagnostic_code(result, "typecheck.TRAIT_BOUND_NOT_SATISFIED"));
 }
+
+// B-3 (Wave-24): cross-module enum variant references inside a trait impl
+// body must not crash. Module A defines an enum; module B imports it and
+// writes a trait impl whose method body matches on A's variants and calls
+// variant constructors. The typechecker must resolve cross-module variant
+// metadata without nullptr dereference.
+//
+// AHFL syntax for cross-module variant constructors / match patterns:
+//   Module::Enum::Variant(args)  — call expression (3-segment qualified name)
+//   Module::Enum::Variant(pat)   — match arm pattern (3-segment qualified name)
+TEST_CASE("B-3 cross-module enum variant in trait impl body does not crash") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "shapes.ahfl",
+            .module_name = "shapes",
+            .text = R"AHFL(
+module shapes;
+
+enum Shape {
+    Circle(Int),
+    Rectangle(Int, Int),
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "shape_ops.ahfl",
+            .module_name = "shape_ops",
+            .text = R"AHFL(
+module shape_ops;
+
+import shapes;
+
+trait Area {
+    fn area(self: shapes::Shape) -> Int;
+}
+
+impl Area for shapes::Shape {
+    fn area(self: shapes::Shape) -> Int effect Pure decreases 0 {
+        return match self {
+            shapes::Shape::Circle(r) => r * r * 3,
+            shapes::Shape::Rectangle(w, h) => w * h,
+        };
+    }
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, true);
+    // Cross-module enum variant references must resolve cleanly — no crash,
+    // no spurious "unknown variant" or "missing type metadata" errors.
+    CHECK_FALSE(result.has_errors());
+}
+
+// B-3b: cross-module variant constructor as a call expression. Ensures
+// check_enum_variant_constructor handles the cross-module case via
+// get_enum() returning valid info.
+TEST_CASE("B-3 cross-module variant constructor call does not crash") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "colors.ahfl",
+            .module_name = "colors",
+            .text = R"AHFL(
+module colors;
+
+enum Color {
+    Rgb(Int, Int, Int),
+    Named(String),
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "palette.ahfl",
+            .module_name = "palette",
+            .text = R"AHFL(
+module palette;
+
+import colors;
+
+fn red() -> colors::Color effect Pure decreases 0 {
+    return colors::Color::Rgb(255, 0, 0);
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, true);
+    CHECK_FALSE(result.has_errors());
+}

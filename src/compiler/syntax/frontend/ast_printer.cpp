@@ -892,6 +892,12 @@ class AstPrinter final {
                 },
                 [&](const ast::LambdaExpr &e) {
                     line(indent_level, "lambda");
+                    if (!e.capture_list.empty()) {
+                        line(indent_level + 1, "captures");
+                        for (const auto &capture : e.capture_list) {
+                            line(indent_level + 2, capture);
+                        }
+                    }
                     for (const auto &param : e.params) {
                         std::string entry = "param " + param->name;
                         if (param->type) {

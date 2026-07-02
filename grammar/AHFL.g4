@@ -308,8 +308,15 @@ whereConstraint:
 //   \ param -> expr          (single param, optional parens)
 //   \ (p, ...) -> expr       (param list)
 //   \ -> expr                (zero-arg thunk)
+// C-4 (Wave-24): optional explicit capture list `\[a, b, ...]` prefix.
+//   When present, the identifiers enumerate outer bindings the closure is
+//   allowed to reference. Absent = implicit capture.
 // The body is a single expr (RFC §6 closures are expression-bodied).
-lambdaExpr: BACKSLASH lambdaParamList? '->' expr;
+lambdaExpr: BACKSLASH ('[' lambdaCaptureListOpt ']')? lambdaParamList? '->' expr;
+
+lambdaCaptureListOpt: lambdaCaptureList?;
+
+lambdaCaptureList: identifier (',' identifier)* ','?;
 
 lambdaParamList:
 	lambdaParam                             // single unparenthesised param

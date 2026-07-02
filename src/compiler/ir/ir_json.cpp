@@ -798,6 +798,11 @@ class IrJsonPrinter final {
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("params",
                               [&]() { write_string_array(value.params, indent_level + 1); });
+                        // C-4 (Wave-24): explicit capture list.
+                        if (!value.captures.empty()) {
+                            field("captures",
+                                  [&]() { write_string_array(value.captures, indent_level + 1); });
+                        }
                         field("body", [&]() {
                             if (value.body) {
                                 print_expr(*value.body, indent_level + 1);
@@ -1712,6 +1717,22 @@ class IrJsonPrinter final {
                                                  value.effect.capabilities) {
                                                 item([&]() {
                                                     print_symbol_ref(capability, indent_level + 3);
+                                                });
+                                            }
+                                        });
+                                    });
+                                }
+                                // D-3 (Wave-24): effect-clause decreases measure.
+                                entry("has_decreases",
+                                      [&]() { write_bool(value.effect.has_decreases); });
+                                if (value.effect.has_decreases ||
+                                    !value.effect.decreases_terms.empty()) {
+                                    entry("decreases_terms", [&]() {
+                                        print_array(indent_level + 2, [&](const auto &item) {
+                                            for (const auto &term :
+                                                 value.effect.decreases_terms) {
+                                                item([&]() {
+                                                    print_expr(*term, indent_level + 3);
                                                 });
                                             }
                                         });

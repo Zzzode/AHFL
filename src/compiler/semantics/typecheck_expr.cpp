@@ -1837,8 +1837,19 @@ class ExpressionChecker final {
             result_type = is_generic ? substitute_type(method.return_type, subst, services_.types())
                                      : method.return_type;
         }
-        return values_.typed_effect(
+        // C-5 (Wave-24): attach the dispatch target to the return value so
+        // remember_expression_type can copy it to the TypedExpr. Downstream
+        // passes read this directly instead of re-running dispatch resolution.
+        auto result = values_.typed_effect(
             result_type != nullptr ? result_type->clone() : values_.make_error_type(), effect);
+        result.dispatch_target = DispatchTarget{
+            .impl_index = candidate.impl->index,
+            .method_name = method.name,
+            .is_inherent = candidate.impl->is_inherent,
+            .method_symbol = method.symbol,
+            .trait_symbol = candidate.impl->trait_symbol,
+        };
+        return result;
     }
 
     [[nodiscard]] std::optional<TypedValue> check_fn_value_call(const ast::ExprSyntax &expr) const {

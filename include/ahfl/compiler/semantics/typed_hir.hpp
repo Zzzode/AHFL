@@ -97,6 +97,18 @@ static_assert(
     "TypedCallTargetKind must expose exactly 3 public values: "
     "InherentMethod, TraitMethod, Builtin");
 
+// C-5 (Wave-24): records the result of method dispatch for a MethodCall
+// expression. Stored on TypedExpr so downstream passes (lowering, codegen,
+// formal verification) can directly read which impl+method was selected
+// without re-running the dispatch resolution logic.
+struct DispatchTarget {
+    std::size_t impl_index{0};          // ImplTypeInfo::index in typed_program.declarations
+    std::string method_name;            // Selected method name
+    bool is_inherent{true};             // true = inherent impl, false = trait impl
+    std::optional<SymbolId> method_symbol;  // Method's Function symbol (if registered)
+    std::optional<SymbolId> trait_symbol;   // For trait impls: the trait symbol
+};
+
 enum class ConstValueKind : std::uint8_t {
     NoneLiteral = 0,
     Bool,
@@ -346,6 +358,11 @@ struct TypedExpr {
     std::optional<SymbolId> resolved_symbol;
     std::string semantic_name;
     std::optional<TypedCallTargetKind> call_target_kind;
+    // C-5 (Wave-24): for MethodCall expressions, records which impl+method
+    // was selected during dispatch. Empty for non-MethodCall expressions.
+    // Lets lowering / verification read the dispatch result directly
+    // instead of re-running dispatch resolution.
+    std::optional<DispatchTarget> dispatch_target;
     std::string path_root;
     AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;
@@ -363,6 +380,9 @@ struct TypedExpr {
     std::string literal_spelling;           // Integer/Float/Decimal/String/Duration literal
     std::string member_name;                // MemberAccess (right-hand field name)
     std::vector<std::string> lambda_params; // Lambda parameter names in declaration order.
+    /// Explicit capture list for Lambda nodes (parallel meaning to the AST
+    /// `LambdaExpr::capture_list` — empty for implicit-capture lambdas).
+    std::vector<std::string> captured_names;
     std::optional<ConstValue> const_value;
 };
 

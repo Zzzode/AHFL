@@ -302,6 +302,9 @@ class AstInvariantValidator final {
                 },
                 [&](const LambdaExpr &e) {
                     // P2 (RFC §6): closure body is the only expression child.
+                    require(e.capture_list.size() == e.capture_ranges.size(),
+                            expr.range,
+                            "LambdaExpr capture names/ranges size mismatch");
                     for (const auto &param : e.params) {
                         require(param != nullptr, expr.range, "LambdaExpr.params contains null");
                         if (param && param->type) {

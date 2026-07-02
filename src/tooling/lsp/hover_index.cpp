@@ -304,6 +304,7 @@ void add_symbol_target(HoverTargetIndex &index,
     case ReferenceKind::WorkflowNodeTarget:
         break;
     case ReferenceKind::TypeName:
+    case ReferenceKind::TraitBound:
     case ReferenceKind::ContractTarget:
     case ReferenceKind::FlowTarget:
         break;

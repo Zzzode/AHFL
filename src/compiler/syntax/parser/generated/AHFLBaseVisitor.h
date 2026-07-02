@@ -327,6 +327,14 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitLambdaCaptureListOpt(AHFLParser::LambdaCaptureListOptContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLambdaCaptureList(AHFLParser::LambdaCaptureListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *ctx) override {
     return visitChildren(ctx);
   }

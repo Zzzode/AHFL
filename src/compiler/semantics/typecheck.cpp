@@ -650,6 +650,24 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     return names;
 }
 
+/// C-4 (Wave-24): returns the explicit capture list of a Lambda AST node.
+/// Empty for non-lambda expressions *and* for lambdas that use the default
+/// implicit-capture form (no `[...]` prefix).
+[[nodiscard]] std::vector<std::string>
+lambda_capture_names_for(const ast::ExprSyntax &expr, const ResolveResult &resolve_result) {
+    if (expr.node_id != 0) {
+        if (const auto iter = resolve_result.captured_names_by_expr.find(expr.node_id);
+            iter != resolve_result.captured_names_by_expr.end()) {
+            return iter->second;
+        }
+    }
+    const auto *lambda = std::get_if<ast::LambdaExpr>(&expr.node);
+    if (lambda == nullptr) {
+        return {};
+    }
+    return lambda->capture_list;
+}
+
 [[nodiscard]] std::string_view narrowed_fact_description(TypeFactKind kind) noexcept {
     switch (kind) {
     case TypeFactKind::IsNone:
@@ -1391,7 +1409,12 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     if (const auto separator = trait_name.rfind("::"); separator != std::string_view::npos) {
         local_name = trait_name.substr(separator + 2);
     }
-    const auto trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
+    // C-2 (Wave-24): traits live in their own namespace. Check Traits first,
+    // then fall back to Types (legacy path for pre-C-2 code / cross-module).
+    auto trait_symbol = find_local_here(SymbolNamespace::Traits, local_name);
+    if (!trait_symbol.has_value()) {
+        trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
+    }
     if (!trait_symbol.has_value()) {
         // Unknown trait: the resolver would already have flagged an undeclared
         // trait reference at the where-clause declaration site. To avoid
@@ -1469,6 +1492,10 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->literal_spelling = literal_spelling_for(expr);
         typed_expr->member_name = expr_member_name(expr);
         typed_expr->lambda_params = lambda_param_names_for(expr);
+        typed_expr->captured_names = lambda_capture_names_for(expr, resolve_result_);
+        // C-5 (Wave-24): copy dispatch target for method calls so downstream
+        // passes can read the selected impl+method directly.
+        typed_expr->dispatch_target = typed.dispatch_target;
         return;
     }
 
@@ -1487,8 +1514,10 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->literal_spelling = literal_spelling_for(expr);
             typed_expr->member_name = expr_member_name(expr);
             typed_expr->lambda_params = lambda_param_names_for(expr);
+            typed_expr->captured_names = lambda_capture_names_for(expr, resolve_result_);
             typed_expr->path_root_kind =
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
+            typed_expr->dispatch_target = typed.dispatch_target;
             return;
         }
     }
@@ -1504,6 +1533,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .resolved_symbol = resolved_symbol_for(expr, resolve_result_, current_source_id_),
         .semantic_name = semantic_name_for(expr),
         .call_target_kind = call_target_kind_for(expr, resolve_result_, current_source_id_),
+        .dispatch_target = typed.dispatch_target,
         .path_root = path_payload.has_value() ? path_payload->root : std::string{},
         .path_root_kind = typed.path_root_kind.value_or(AssignTargetRootKind::Identifier),
         .member_path =
@@ -1516,6 +1546,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .literal_spelling = literal_spelling_for(expr),
         .member_name = expr_member_name(expr),
         .lambda_params = lambda_param_names_for(expr),
+        .captured_names = lambda_capture_names_for(expr, resolve_result_),
         .const_value = std::nullopt,
     });
     if (expr.node_id != 0) {
@@ -2627,6 +2658,11 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
             param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
     }
 
+    // D-3 (Wave-24): validate effect-clause decreases measure expression
+    // produces a well-typed Pure Int. Must happen AFTER param bindings so
+    // `decreases n` can resolve the parameter name.
+    check_effect_decreases_expr(decl.effect_clause.get(), context);
+
     // Type-check the body block.
     // Note: no expected_return_origin so the return statement uses
     // assignability check (not schema boundary check — that's for agent output).
@@ -2688,6 +2724,33 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     }
 }
 
+// D-3 (Wave-24): validate that the effect-clause `decreases X` measure
+// expression produces a well-typed Pure Int. Called from check_fn_body
+// AFTER parameter bindings are established so `decreases n` can resolve
+// the parameter name.
+void FnSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                         const ValueContext &context) {
+    if (effect_clause == nullptr || effect_clause->decreases_expr == nullptr) {
+        return;
+    }
+    const auto &expr = *effect_clause->decreases_expr;
+    const auto int_type = driver_->make_type(TypeKind::Int);
+    const auto value = driver_->check_expr(expr, context, std::cref(*int_type));
+    if (!value.type->holds<types::IntT>() && !is_error_type(*value.type)) {
+        driver_->typecheck_error_here(
+            error_codes::typecheck::TypeMismatch,
+            messages::typecheck::IntExpressionRequired.format_with("decreases clause"),
+            expr.range,
+            {Diagnostic::Related{
+                .message = actual_type_note(*value.type),
+                .range = expr.range,
+            }});
+    }
+    if (!value.is_pure) {
+        driver_->non_pure_error_here("decreases clause", value.effect, expr.range);
+    }
+}
+
 void ImplSema::run() {
     check_impls();
 }
@@ -2734,26 +2797,45 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
     // method.params / method.return_type align with method_info.type_param_names
     // positions (used by the call-site substitution map in
     // check_impl_method_call). But for *body* typechecking, the driver's
-    // current_type_param_names_ is read by TypeResolver::resolve_named_type_*
-    // via make_type_resolver() — which does prefix-free name lookup (any name
-    // in the vector counts, position doesn't matter). Including the same name
-    // twice (e.g. 'T' from both impl-level and method_info's duplicate) is
-    // harmless for name lookup but confuses anyone reading the scope; trim to
-    // just a deduplicated, name-only view.
-    std::vector<std::string> type_param_names;
-    type_param_names.reserve(impl_info.type_param_names.size() +
-                             method_info.type_param_names.size());
-    auto dedup_push = [&](const std::vector<std::string> &names) {
-        for (const auto &name : names) {
-            bool seen = false;
-            for (const auto &existing : type_param_names) {
-                if (existing == name) { seen = true; break; }
-            }
-            if (!seen) type_param_names.push_back(name);
+    // -------------------------------------------------------------------------
+    // B-2 critical invariant: the *order* of names in type_param_names MUST
+    // match the order used by build_impl_types() in typecheck_decls.cpp when
+    // method_info.params / return_type were materialized. Those types contain
+    // TypeVarT nodes whose `.index` field is the positional index in
+    // method_info.type_param_names. If we reorder names here, the result is
+    // spurious "T vs T" mismatches (describe identical but index differs).
+    //
+    // We therefore take method_info.type_param_names as the BASELINE (it was
+    // built as [Self] -> [trait tparams] -> [impl tparams] -> [method tparams]
+    // in build_impl_types), and only *append* any additional names the
+    // environment side knows about that the signature layer might not (e.g.
+    // derived bounds, super-trait carry-over) — never reordering the prefix.
+    // -------------------------------------------------------------------------
+    std::vector<std::string> type_param_names = method_info.type_param_names;
+    type_param_names.reserve(type_param_names.size() +
+                             impl_info.type_param_names.size() + 4);
+    auto dedup_push = [&](std::string_view name) {
+        for (const auto &existing : type_param_names) {
+            if (existing == name) return;
         }
+        type_param_names.emplace_back(name);
     };
-    dedup_push(impl_info.type_param_names);
-    dedup_push(method_info.type_param_names);
+    auto dedup_push_range = [&](const std::vector<std::string> &names) {
+        for (const auto &n : names) dedup_push(n);
+    };
+
+    // Trait-level scope — append-only. Self + trait tparams should already be
+    // present in the baseline for trait impls; dedup makes this idempotent.
+    if (impl_info.trait_symbol.has_value()) {
+        const auto trait_opt = driver_->environment().get_trait(*impl_info.trait_symbol);
+        if (trait_opt.has_value()) {
+            const auto &trait = trait_opt->get();
+            dedup_push_range(trait.self_augmented_type_param_names);
+        }
+    }
+    // Impl-level generics — should already be in the baseline; dedup keeps
+    // inherent-impl "Self" at index 0 (inserted by build_impl_types).
+    dedup_push_range(impl_info.type_param_names);
 
     const auto *prev_type_params = driver_->current_type_param_names_;
     if (!type_param_names.empty()) {
@@ -2767,6 +2849,11 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
         context.bindings.emplace(
             param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
     }
+
+    // D-3 (Wave-24): validate effect-clause decreases measure expression
+    // produces a well-typed Pure Int. Must happen AFTER param bindings so
+    // `decreases n` can resolve the parameter name + Self/self.
+    check_effect_decreases_expr(method_decl.effect_clause.get(), context);
 
     if (method_info.return_type != nullptr) {
         driver_->check_block(*method_decl.body,
@@ -2799,6 +2886,33 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
 
     if (body_block_idx < typed_program.blocks.size()) {
         record_impl_method_body_index(impl_index, method_info.name, body_block_idx);
+    }
+}
+
+// D-3 (Wave-24): validate that the effect-clause `decreases X` measure
+// expression on an impl method produces a well-typed Pure Int. Called from
+// check_impl_method_body AFTER parameter bindings are established so
+// `decreases n` / `decreases self.length` can resolve names.
+void ImplSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                           const ValueContext &context) {
+    if (effect_clause == nullptr || effect_clause->decreases_expr == nullptr) {
+        return;
+    }
+    const auto &expr = *effect_clause->decreases_expr;
+    const auto int_type = driver_->make_type(TypeKind::Int);
+    const auto value = driver_->check_expr(expr, context, std::cref(*int_type));
+    if (!value.type->holds<types::IntT>() && !is_error_type(*value.type)) {
+        driver_->typecheck_error_here(
+            error_codes::typecheck::TypeMismatch,
+            messages::typecheck::IntExpressionRequired.format_with("decreases clause"),
+            expr.range,
+            {Diagnostic::Related{
+                .message = actual_type_note(*value.type),
+                .range = expr.range,
+            }});
+    }
+    if (!value.is_pure) {
+        driver_->non_pure_error_here("decreases clause", value.effect, expr.range);
     }
 }
 

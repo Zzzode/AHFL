@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
@@ -32,6 +34,12 @@ enum class SymbolNamespace {
     // type of the same spelling, mirroring how the existing namespaces keep
     // capabilities and predicates disjoint at call sites.
     Functions,
+    // C-2 (Wave-24): trait declarations live in their own namespace so a
+    // trait name `Ord` is distinct from a type / type-alias of the same
+    // spelling. This prevents accidental shadowing (e.g. a struct named
+    // `Ord` colliding with the `Ord` trait) and lets the resolver emit
+    // precise "trait not found" vs "type not found" diagnostics.
+    Traits,
 };
 
 enum class SymbolKind {
@@ -45,9 +53,10 @@ enum class SymbolKind {
     Workflow,
     // P2 (RFC §3.2.2): a declared `fn` registers as a Function symbol.
     Function,
-    // P3 (RFC §3.2.2 / type-system §1.3): a declared `trait` registers as a
-    // Trait symbol in the Types namespace, so a trait name is usable both at
-    // bound positions (`T: Ord`) and at impl positions (`impl Ord for T`).
+    // C-2 (Wave-24): a declared `trait` registers as a Trait symbol in the
+    // Traits namespace, distinct from Types. A trait name is usable at bound
+    // positions (`T: Ord`) and impl positions (`impl Ord for T`) via a
+    // dedicated TraitBound reference kind.
     Trait,
 };
 
@@ -73,6 +82,11 @@ enum class ReferenceKind {
     // which has the EnumTypeInfo; the resolver only registers the owner so
     // the call site can be recognised without re-walking the Types namespace.
     EnumVariantConstructor,
+    // C-2 (Wave-24): a trait bound `T: Ord` resolves "Ord" to a Trait symbol
+    // in the Traits namespace. Kept distinct from TypeName so the typecheck
+    // pass can distinguish a trait reference from a regular type reference
+    // at where-clause / type-param bound positions.
+    TraitBound,
 };
 
 struct SymbolId {
@@ -147,6 +161,7 @@ class SymbolTable {
     NamespaceIndex agent_symbols_;
     NamespaceIndex workflow_symbols_;
     NamespaceIndex function_symbols_; // P2 (RFC §3.2.2)
+    NamespaceIndex trait_symbols_;    // C-2 (Wave-24)
 };
 
 struct ResolveResult {
@@ -158,6 +173,13 @@ struct ResolveResult {
 
     SymbolTable symbol_table;
     DiagnosticBag diagnostics;
+
+    // C-4 (Wave-24): per-lambda explicit capture list. Keyed by AST NodeId so
+    // the typecheck + lowering passes can recover the ordered list of outer
+    // names the user wrote in `\[a, b] ...` without reaching back into the
+    // parser-produced AST. Empty map entry is *not* stored when a lambda uses
+    // the implicit-capture default (no `[...]` prefix).
+    std::unordered_map<std::uint64_t, std::vector<std::string>> captured_names_by_expr;
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();

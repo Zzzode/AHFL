@@ -716,7 +716,19 @@ struct LambdaParamSyntax {
 /// `params` may be empty (zero-arg thunk: `\ -> expr`). The body is a single
 /// expression (RFC §6 closures are expression-bodied). Captured-variable
 /// resolution and effect inference happen in the typecheck pass (P2b).
+///
+/// An optional explicit `capture_list` (`\[a, b] params -> expr`) enumerates
+/// outer bindings the closure is allowed to reference. When empty (the
+/// default), capture semantics are inferred (the current behavior: every
+/// outer let referenced inside the body is captured by value).
 struct LambdaExpr {
+    /// Explicit capture list. Empty vector means "implicit capture" (no
+    /// `[...]` prefix was written in source).
+    std::vector<std::string> capture_list;
+    /// Source ranges for each entry in `capture_list`, parallel-indexed.
+    /// Used by the resolver to surface UNKNOWN_SYMBOL diagnostics anchored
+    /// to the specific capture identifier.
+    std::vector<ahfl::SourceRange> capture_ranges;
     std::vector<Owned<LambdaParamSyntax>> params;
     Owned<ExprSyntax> body;
 };

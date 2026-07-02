@@ -315,6 +315,12 @@ struct FnEffectClauseInfo {
     // P4a (RFC §3.1 / §3.4): whether a `decreases` measure was present on the
     // clause. Pure functions require one; non-Pure functions may omit it.
     bool has_decreases{false};
+    // D-3 (Wave-24): source range of the effect-clause `decreases X` measure
+    // expression. Only valid when `has_decreases == true`. The body-typecheck
+    // pass (FnSema / ImplSema) validates that the expression produces Int; the
+    // corresponding TypedExpr is recovered via TypedProgram::find_expr_by_range
+    // for downstream passes (IR lowering / BMC).
+    SourceRange decreases_expr_range;
 };
 
 // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): declaration-level signature of a
@@ -392,6 +398,13 @@ struct TraitTypeInfo {
     std::string canonical_name;
     std::string local_name;
     std::vector<std::string> type_param_names;
+    // B-2: ["Self"] + type_param_names, used as the scope baseline when
+    // typechecking trait method bodies and when computing impl method
+    // dispatch prefixes. We store this (instead of computing on every use)
+    // because the name list doubles as TypeVarT-index-aligned ground truth:
+    // any code that builds TypeVarT nodes with indices derived from trait
+    // method signatures must use the exact same name ordering.
+    std::vector<std::string> self_augmented_type_param_names;
     std::vector<SymbolId> super_traits;
     std::vector<TraitMethodInfo> methods;
     std::vector<TraitAssocTypeInfo> assoc_types;

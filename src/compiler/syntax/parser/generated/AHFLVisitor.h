@@ -175,6 +175,10 @@ public:
 
     virtual std::any visitLambdaExpr(AHFLParser::LambdaExprContext *context) = 0;
 
+    virtual std::any visitLambdaCaptureListOpt(AHFLParser::LambdaCaptureListOptContext *context) = 0;
+
+    virtual std::any visitLambdaCaptureList(AHFLParser::LambdaCaptureListContext *context) = 0;
+
     virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *context) = 0;
 
     virtual std::any visitLambdaParam(AHFLParser::LambdaParamContext *context) = 0;

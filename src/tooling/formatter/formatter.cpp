@@ -589,15 +589,15 @@ class AstFormatter {
     }
 
     void format_effect_clause(const ahfl::ast::EffectClauseSyntax &clause) {
+        write("effect ");
         switch (clause.kind) {
         case ahfl::ast::EffectClauseKind::Pure:
-            write("[Pure]");
+            write("Pure");
             break;
         case ahfl::ast::EffectClauseKind::Nondet:
-            write("[Nondet]");
+            write("Nondet");
             break;
         case ahfl::ast::EffectClauseKind::Capability: {
-            write("[");
             for (std::size_t index = 0; index < clause.capabilities.size(); ++index) {
                 if (index != 0) {
                     write(", ");
@@ -606,9 +606,13 @@ class AstFormatter {
                     write(clause.capabilities[index]->spelling());
                 }
             }
-            write("]");
             break;
         }
+        }
+        // D-3 (Wave-24): append `decreases X` when a measure is present.
+        if (clause.decreases_expr) {
+            write(" decreases ");
+            format_expr(*clause.decreases_expr);
         }
     }
 
@@ -1233,6 +1237,16 @@ class AstFormatter {
                 },
                 [&](const ahfl::ast::LambdaExpr &e) {
                     write("\\");
+                    if (!e.capture_list.empty()) {
+                        write("[");
+                        for (std::size_t index = 0; index < e.capture_list.size(); ++index) {
+                            if (index != 0) {
+                                write(", ");
+                            }
+                            write(e.capture_list[index]);
+                        }
+                        write("] ");
+                    }
                     if (e.params.size() == 1 && !e.params.front()->type) {
                         // Bare-IDENT form: `\x -> body`. Round-trip without
                         // adding parentheses the source did not carry.

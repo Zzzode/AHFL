@@ -170,7 +170,18 @@ TEST_CASE("CapabilityDecl (fn-like) where_clause propagates to CapabilityTypeInf
 TEST_CASE("StructDecl where_clause propagates to StructTypeInfo") {
     std::vector<Owned<Decl>> decls;
 
+    // B-2: the Ord trait must be registered as a symbol so the resolver's
+    // StructDecl where_clause bound walk (added for tparam scope parity) can
+    // validate the trait reference without emitting UNKNOWN_SYMBOL.
+    auto ord_trait = make_owned<TraitDecl>("Ord");
+    decls.push_back(std::move(ord_trait));
+
     auto s = make_owned<StructDecl>("SortedList");
+    // B-2: declare `T` as a struct type parameter so the resolver inserts it
+    // into generic_type_params_ before walking the where_clause bounds.
+    auto s_param = std::make_unique<TypeParamSyntax>();
+    s_param->name = "T";
+    s->type_params.push_back(std::move(s_param));
     s->where_clause = make_single_bound_where("T", "Ord");
     decls.push_back(std::move(s));
 
@@ -273,7 +284,23 @@ TEST_CASE("Declarations without where_clause keep default WhereClauseInfo") {
 TEST_CASE("Multi-trait multi-bound where clause plumbing") {
     std::vector<Owned<Decl>> decls;
 
+    // B-2: register Eq / Hash / Clone as trait symbols so the resolver's
+    // StructDecl where_clause bound walk validates them without emitting
+    // UNKNOWN_SYMBOL diagnostics.
+    decls.push_back(make_owned<TraitDecl>("Eq"));
+    decls.push_back(make_owned<TraitDecl>("Hash"));
+    decls.push_back(make_owned<TraitDecl>("Clone"));
+
     auto s = make_owned<StructDecl>("HashMap");
+    // B-2: declare K and V as struct type parameters so they're in the
+    // resolver's generic_type_params_ when where_clause subjects are walked.
+    auto k_param = std::make_unique<TypeParamSyntax>();
+    k_param->name = "K";
+    s->type_params.push_back(std::move(k_param));
+    auto v_param = std::make_unique<TypeParamSyntax>();
+    v_param->name = "V";
+    s->type_params.push_back(std::move(v_param));
+
     auto clause = make_owned<WhereClauseSyntax>();
 
     // K:Eq + Hash

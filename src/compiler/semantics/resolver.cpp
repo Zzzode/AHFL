@@ -10,6 +10,7 @@
 #include <functional>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -52,6 +53,8 @@ constexpr std::string_view kStdPreludeModule = "std::prelude";
         return "workflow";
     case SymbolNamespace::Functions:
         return "function";
+    case SymbolNamespace::Traits:
+        return "trait";
     }
 
     return "symbol";
@@ -278,12 +281,40 @@ class ResolverPass final {
         }
 
         if (current_pass_ == Pass::ResolveReferences) {
+            // B-2: mirror EnumDecl — push the struct's own type-param names
+            // into scope before walking field types / where-clause bounds.
+            // Without this, `struct Holder<T> { value: T; }` would report
+            // "unknown type 'T'" because the resolver wouldn't recognise T
+            // as a generic parameter while walking field types.
+            const auto previous_type_params = generic_type_params_;
+            for (const auto &type_param : node.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
+            for (const auto &type_param : node.type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
+            }
             for (const auto &field : node.fields) {
                 resolve_type(*field->type);
                 if (field->default_value) {
                     resolve_declaration_expr(*field->default_value);
                 }
             }
+            if (node.where_clause) {
+                for (const auto &constraint : node.where_clause->constraints) {
+                    if (constraint->subject) {
+                        resolve_type(*constraint->subject);
+                    }
+                    for (const auto &argument : constraint->arguments) {
+                        resolve_type(*argument);
+                    }
+                    for (const auto &bound : constraint->bounds) {
+                        resolve_type(*bound);
+                    }
+                }
+            }
+            generic_type_params_ = previous_type_params;
         }
     }
 
@@ -531,8 +562,13 @@ class ResolverPass final {
         resolve_effect_clause(node.effect_clause);
 
         if (node.body) {
+            push_value_scope();
+            for (const auto &param : node.params) {
+                add_value_binding(param->name);
+            }
             resolve_block_types(*node.body);
             resolve_block_exprs(*node.body);
+            pop_value_scope();
         }
 
         // Restore previous scope (pop method-level type params).
@@ -603,15 +639,14 @@ class ResolverPass final {
     }
 
     void visit(const ast::TraitDecl &node) {
-        // P3 (RFC §3.2.2 / type-system §1.3): a trait registers in the Types
-        // namespace as SymbolKind::Trait so it is usable at both bound
-        // positions (`T: Ord`) and impl positions (`impl Ord for T`). The
-        // trait's method signatures, super-trait bounds, and associated-type
-        // references are resolved in ResolveReferences; generic type params
-        // (including the implicit Self) enter scope so they are opaque during
-        // signature resolution.
+        // C-2 (Wave-24): a trait registers in the Traits namespace (distinct
+        // from Types) so a trait name never collides with a type / type-alias
+        // of the same spelling. Bound positions (`T: Ord`) and impl headers
+        // (`impl Ord for T`) resolve the trait name via the dedicated
+        // TraitBound reference kind.
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Types, SymbolKind::Trait, node.name, node.range);
+            (void)register_symbol(
+                SymbolNamespace::Traits, SymbolKind::Trait, node.name, node.range);
             return;
         }
 
@@ -668,6 +703,38 @@ class ResolverPass final {
             return;
         }
 
+        // B-2 (gap 3): save the outer generic_type_params_ so we can restore
+        // it at the end of the impl block. Previously the handler called
+        // .clear() unconditionally, which clobbered any enclosing generic
+        // scope (e.g. an impl nested inside a parametrized module context).
+        const auto previous_generic_type_params = generic_type_params_;
+
+        // B-2 layer 1: implicit Self is always in scope inside an impl block.
+        // Method signatures (self: Self, -> Self) and body closures
+        // (`\p: Self -> p`) reference it by name.
+        generic_type_params_.insert("Self");
+
+        // B-2 layer 2: trait-declared type params. We walk the current
+        // source program looking for a TraitDecl whose name matches the
+        // impl's trait_ref spelling; its type-param names are added to the
+        // generic set so `\x: TraitT -> x` closures resolve correctly.
+        if (node.trait_ref && node.trait_ref->is<ast::NamedType>()) {
+            const auto trait_spelling =
+                node.trait_ref->as<ast::NamedType>().name->spelling();
+            if (current_source_ != nullptr && current_source_->program) {
+                for (const auto &decl : current_source_->program->declarations) {
+                    if (!decl || decl->kind != ast::NodeKind::TraitDecl) continue;
+                    const auto &trait_decl = static_cast<const ast::TraitDecl &>(*decl);
+                    if (trait_decl.name != trait_spelling) continue;
+                    for (const auto &tp : trait_decl.type_params) {
+                        generic_type_params_.insert(tp->name);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // B-2 layer 3: impl-declared type params.
         for (const auto &type_param : node.type_params) {
             generic_type_params_.insert(type_param->name);
         }
@@ -736,7 +803,10 @@ class ResolverPass final {
             (void)assoc_const->value;
         }
 
-        generic_type_params_.clear();
+        // B-2: restore the enclosing generic scope instead of clearing — an
+        // impl can appear inside a parametrized module / fn context and we
+        // must not clobber the outer tparam names.
+        generic_type_params_ = previous_generic_type_params;
     }
 
   private:
@@ -763,6 +833,7 @@ class ResolverPass final {
     // resolving types inside a generic fn signature, these are opaque type
     // variables — not references to resolve. Cleared after fn signature.
     std::unordered_set<std::string> generic_type_params_;
+    std::vector<std::unordered_set<std::string>> value_scopes_;
 
     [[nodiscard]] std::string canonical_name_for(std::string_view local_name) const {
         if (!module_name_.has_value() || module_name_->empty()) {
@@ -807,6 +878,7 @@ class ResolverPass final {
         module_range_.reset();
         import_alias_index_.clear();
         import_aliases_.clear();
+        value_scopes_.clear();
 
         for (std::size_t index = 0; index < result_.imports().size(); ++index) {
             const auto &binding = result_.imports()[index];
@@ -1007,6 +1079,34 @@ class ResolverPass final {
         return std::nullopt;
     }
 
+    void push_value_scope() {
+        value_scopes_.emplace_back();
+    }
+
+    void pop_value_scope() {
+        if (value_scopes_.empty()) {
+            throw std::logic_error("resolver value scope stack underflow");
+        }
+        value_scopes_.pop_back();
+    }
+
+    void add_value_binding(std::string_view name) {
+        if (value_scopes_.empty()) {
+            throw std::logic_error("resolver value binding without an active scope");
+        }
+        value_scopes_.back().emplace(std::string{name});
+    }
+
+    [[nodiscard]] bool value_binding_visible(std::string_view name) const {
+        const auto key = std::string{name};
+        for (auto scope = value_scopes_.rbegin(); scope != value_scopes_.rend(); ++scope) {
+            if (scope->contains(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     [[nodiscard]] std::optional<SymbolId>
     lookup_prelude_symbol(const SymbolTable::NamespaceIndex &index,
                           const ast::QualifiedName &name) const {
@@ -1073,6 +1173,10 @@ class ResolverPass final {
             }
         }
 
+        // Prelude bare-name fallback: only resolves when std::prelude is
+        // actually loaded (inject_prelude=true in ProjectInput, or an explicit
+        // import). When prelude is not injected, the module won't be in the
+        // index and this returns nullopt.
         if (const auto prelude = lookup_prelude_symbol(index, name); prelude.has_value()) {
             return prelude;
         }
@@ -1238,10 +1342,22 @@ class ResolverPass final {
     // declared capability; an unresolvable capability is diagnosed here so
     // the typecheck pass can trust the clause's capability list later.
     void resolve_effect_clause(const Owned<ast::EffectClauseSyntax> &clause) {
-        if (!clause || clause->kind != ast::EffectClauseKind::Capability) {
+        if (!clause) {
             return;
         }
 
+        // D-3 (Wave-24): resolve the decreases measure expression so that
+        // typecheck's check_effect_decreases_expr can find call targets
+        // (e.g. `decreases list_raw_length(self)` needs list_raw_length
+        // registered as a CallTarget reference). Must happen regardless of
+        // effect kind — Pure and Nondet functions can carry decreases too.
+        if (clause->decreases_expr) {
+            resolve_declaration_expr(*clause->decreases_expr);
+        }
+
+        if (clause->kind != ast::EffectClauseKind::Capability) {
+            return;
+        }
         for (const auto &capability_name : clause->capabilities) {
             (void)resolve_reference(SymbolNamespace::Capabilities,
                                     *capability_name,
@@ -1327,7 +1443,8 @@ class ResolverPass final {
                     if (t.name->segments.size() == 1 && !t.type_args.empty()) {
                         const auto &head = t.name->segments.front();
                         if (head == "Option" || head == "Optional" ||
-                            head == "List" || head == "Set" || head == "Map") {
+                            head == "List" || head == "Set" || head == "Map" ||
+                            head == "Result" || head == "Ordering") {
                             // Silent lookup first — only record a symbol
                             // reference if the symbol actually exists. Do not
                             // call resolve_reference() because it emits an
@@ -1368,8 +1485,41 @@ class ResolverPass final {
                             return;
                         }
                     }
-                    const auto resolved = resolve_reference(
-                        SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                    // C-2 (Wave-24): try Types namespace first, then Traits.
+                    // Do silent lookups first so we don't emit "unknown type"
+                    // for a trait name that happens to be used in a type
+                    // position (e.g. bound `T: Display` resolves Display via
+                    // the NamedType path; cross-module `fmtlib::Describe`
+                    // resolves via canonical_names in the Traits index).
+                    // Only emit an error when neither namespace has the
+                    // symbol.
+                    std::optional<SymbolId> resolved;
+                    ReferenceKind resolved_kind = ReferenceKind::TypeName;
+                    const auto type_lookup = lookup(SymbolNamespace::Types, *t.name);
+                    if (type_lookup.has_value()) {
+                        resolved = type_lookup;
+                        resolved_kind = ReferenceKind::TypeName;
+                    } else {
+                        const auto trait_lookup = lookup(SymbolNamespace::Traits, *t.name);
+                        if (trait_lookup.has_value()) {
+                            resolved = trait_lookup;
+                            resolved_kind = ReferenceKind::TraitBound;
+                        }
+                    }
+                    if (!resolved.has_value()) {
+                        // Not found in either namespace — emit the diagnostic.
+                        (void)resolve_reference(
+                            SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                    } else {
+                        // Register the reference with the appropriate kind.
+                        result_.add_reference(ResolvedReference{
+                            .kind = resolved_kind,
+                            .text = t.name->spelling(),
+                            .source_id = current_source_id_,
+                            .range = t.name->range,
+                            .target = *resolved,
+                        });
+                    }
 
                     if (resolved.has_value() && current_type_alias_.has_value()) {
                         const auto symbol = result_.symbol_table.get(*resolved);
@@ -1483,6 +1633,26 @@ class ResolverPass final {
                            // closure are recorded. Parameter type annotations
                            // are resolved by the fn typecheck pass which owns
                            // the typed environment for generic instantiation.
+                           if (!e.capture_list.empty()) {
+                               result_.captured_names_by_expr.insert_or_assign(
+                                   expr.node_id, e.capture_list);
+                           }
+                           for (std::size_t index = 0; index < e.capture_list.size(); ++index) {
+                               const auto &capture = e.capture_list[index];
+                               if (value_binding_visible(capture)) {
+                                   continue;
+                               }
+                               const auto range = index < e.capture_ranges.size()
+                                                      ? std::optional<SourceRange>{
+                                                            e.capture_ranges[index]}
+                                                      : std::nullopt;
+                               emit_error(error_codes::resolve::UnknownSymbol,
+                                          messages::resolve::UnknownSymbol,
+                                          current_source_,
+                                          range,
+                                          "value",
+                                          capture);
+                           }
                            for (const auto &param : e.params) {
                                if (param->type) {
                                    resolve_type(*param->type);
@@ -1555,10 +1725,12 @@ class ResolverPass final {
     }
 
     void resolve_block_exprs(const ast::BlockSyntax &block) {
+        push_value_scope();
         for (const auto &statement : block.statements) {
             switch (statement->kind) {
             case ast::StatementSyntaxKind::Let:
                 resolve_declaration_expr(*statement->let_stmt->initializer);
+                add_value_binding(statement->let_stmt->name);
                 break;
             case ast::StatementSyntaxKind::Assign:
                 resolve_declaration_expr(*statement->assign_stmt->value);
@@ -1618,6 +1790,7 @@ class ResolverPass final {
                 break;
             }
         }
+        pop_value_scope();
     }
 
     void detect_type_alias_cycles() {
@@ -1712,7 +1885,7 @@ class ResolverPass final {
         // are rarer). The "DUPLICATE_STRUCT_NAME" diagnostic code is reused
         // for all nominal kinds (the message spells out the actual kind) —
         // the identifier is stable per the task spec.
-        constexpr std::array<SymbolNamespace, 7> kLintNamespaces = {{
+        constexpr std::array<SymbolNamespace, 8> kLintNamespaces = {{
             SymbolNamespace::Types,
             SymbolNamespace::Capabilities,
             SymbolNamespace::Predicates,
@@ -1720,6 +1893,7 @@ class ResolverPass final {
             SymbolNamespace::Workflows,
             SymbolNamespace::Functions,
             SymbolNamespace::Consts,
+            SymbolNamespace::Traits, // C-2 (Wave-24)
         }};
 
         for (const auto name_space : kLintNamespaces) {
@@ -2070,7 +2244,8 @@ class ResolverPass final {
 
 ResolveResult::ResolveResult(const ResolveResult &other)
     : symbol_table(other.symbol_table), diagnostics(other.diagnostics),
-      references_(other.references_), imports_(other.imports_) {
+      captured_names_by_expr(other.captured_names_by_expr), references_(other.references_),
+      imports_(other.imports_) {
     invalidate_reference_lookup_cache();
 }
 
@@ -2081,6 +2256,7 @@ ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
 
     symbol_table = other.symbol_table;
     diagnostics = other.diagnostics;
+    captured_names_by_expr = other.captured_names_by_expr;
     references_ = other.references_;
     imports_ = other.imports_;
     invalidate_reference_lookup_cache();
@@ -2089,6 +2265,7 @@ ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
 
 ResolveResult::ResolveResult(ResolveResult &&other) noexcept
     : symbol_table(std::move(other.symbol_table)), diagnostics(std::move(other.diagnostics)),
+      captured_names_by_expr(std::move(other.captured_names_by_expr)),
       references_(std::move(other.references_)), imports_(std::move(other.imports_)) {
     invalidate_reference_lookup_cache();
     other.invalidate_reference_lookup_cache();
@@ -2101,6 +2278,7 @@ ResolveResult &ResolveResult::operator=(ResolveResult &&other) noexcept {
 
     symbol_table = std::move(other.symbol_table);
     diagnostics = std::move(other.diagnostics);
+    captured_names_by_expr = std::move(other.captured_names_by_expr);
     references_ = std::move(other.references_);
     imports_ = std::move(other.imports_);
     invalidate_reference_lookup_cache();
@@ -2192,6 +2370,8 @@ const SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space
         return workflow_symbols_;
     case SymbolNamespace::Functions:
         return function_symbols_;
+    case SymbolNamespace::Traits:
+        return trait_symbols_;
     }
 
     return type_symbols_;
@@ -2213,6 +2393,8 @@ SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) {
         return workflow_symbols_;
     case SymbolNamespace::Functions:
         return function_symbols_;
+    case SymbolNamespace::Traits:
+        return trait_symbols_;
     }
 
     return type_symbols_;

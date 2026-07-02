@@ -306,6 +306,13 @@ struct FnEffectClause {
     // clause. Empty for Pure / Nondet.
     std::vector<SymbolRef> capabilities;
     SourceRangeOpt source_range;
+    // D-3 (Wave-24): `decreases X` measure on the effect clause.
+    // `has_decreases` is true when a measure was present on the source
+    // signature; `decreases_terms` carries the lowered IR expression(s).
+    // BMC / SMV backends consume the measure for termination proofs;
+    // passes that don't need it can safely ignore both fields.
+    bool has_decreases{false};
+    std::vector<ExprRef> decreases_terms;
 };
 
 struct FnDecl {

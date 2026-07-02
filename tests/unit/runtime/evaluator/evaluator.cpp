@@ -674,7 +674,8 @@ void test_runtime_callable_calls() {
                                                               ExprBinaryOp::Add,
                                                               local_expr("x"),
                                                               int_literal("1"),
-                                                          })}),
+                                                          }),
+                                                          {}}),
                                      ctx);
     check(!increment_value.has_errors(), "runtime.lambda_value.no_error");
     ctx.bind_local("f", std::move(increment_value.value));
@@ -690,7 +691,8 @@ void test_runtime_callable_calls() {
                                                              ExprBinaryOp::Add,
                                                              local_expr("x"),
                                                              local_expr("offset"),
-                                                         })}),
+                                                         }),
+                                                         {}}),
                                     ctx);
     check(!captured_value.has_errors(), "runtime.lambda_capture.no_error");
     ctx.bind_local("captured", std::move(captured_value.value));
@@ -811,6 +813,7 @@ void test_program_function_call_eval() {
         {make_expr_ptr(LambdaExpr{
              {"y"},
              make_expr_ptr(CallExpr{"add_one", {local_expr("y")}}),
+             {},
          }),
          int_literal("41")},
     });

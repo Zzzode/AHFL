@@ -300,6 +300,10 @@ class FnSema {
     void check_fns();
     void check_fns_in_program(const ast::Program &program);
     void check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl);
+    // D-3 (Wave-24): validate that the effect-clause decreases measure, when
+    // present, produces a well-typed Pure Int in the supplied ValueContext.
+    void check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                     const internal::ValueContext &context);
 };
 
 // P3c: impl-method body type-check pass. Signatures are resolved during
@@ -326,6 +330,10 @@ class ImplSema {
     void record_impl_method_body_index(std::size_t impl_index,
                                        std::string_view method_name,
                                        std::uint32_t body_block_index);
+    // D-3 (Wave-24): validate that the effect-clause decreases measure, when
+    // present, produces a well-typed Pure Int in the supplied ValueContext.
+    void check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                     const internal::ValueContext &context);
 };
 
 class TypedHirBuilder {

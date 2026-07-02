@@ -376,6 +376,21 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                        // P2 (RFC §6): tokenize lambda params (names) and walk
                        // the body. Param type annotations are tokenized via
                        // collect_type_syntax_tokens.
+                       //
+                       // C-4 (Wave-24): explicit capture list entries are
+                       // outer-variable references bound by name, so they
+                       // render as VARIABLE tokens anchored to the
+                       // per-capture SourceRange stored on the AST node.
+                       for (std::size_t i = 0; i < e.capture_list.size(); ++i) {
+                           const auto range =
+                               i < e.capture_ranges.size() ? e.capture_ranges[i]
+                                                           : SourceRange{};
+                           add_token_for_name(tokens,
+                                              source,
+                                              range,
+                                              e.capture_list[i],
+                                              SemanticTokenType::Variable);
+                       }
                        for (const auto &param : e.params) {
                            if (param != nullptr) {
                                add_token_for_name(tokens,

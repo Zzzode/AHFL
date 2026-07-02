@@ -48,6 +48,10 @@ struct ExpressionValue {
     ExprEffect effect{ExprEffect::Pure};
     bool is_pure{true};
     std::optional<AssignTargetRootKind> path_root_kind;
+    // C-5 (Wave-24): for MethodCall expressions, records which impl+method
+    // was selected during dispatch. Propagated to TypedExpr via
+    // remember_expression_type so downstream passes can read it directly.
+    std::optional<DispatchTarget> dispatch_target;
 };
 
 struct ExpressionContext {

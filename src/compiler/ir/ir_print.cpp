@@ -454,7 +454,11 @@ class IrProgramPrinter final {
                 },
                 [this](const ir::LambdaExpr &value) {
                     const auto body = value.body ? render_expr(*value.body) : std::string{"none"};
-                    return "\\" + join(value.params, ", ") + " -> " + body;
+                    std::string prefix = "\\";
+                    if (!value.captures.empty()) {
+                        prefix += "[" + join(value.captures, ", ") + "] ";
+                    }
+                    return prefix + join(value.params, ", ") + " -> " + body;
                 },
                 [this](const ir::StructLiteralExpr &value) {
                     std::vector<std::string> fields;
@@ -853,6 +857,11 @@ class IrProgramPrinter final {
             line(1,
                  "capabilities: [" + join(symbol_names(declaration.effect.capabilities), ", ") +
                      "]");
+        }
+        // D-3 (Wave-24): effect-clause decreases measure.
+        if (declaration.effect.has_decreases) {
+            const auto count = declaration.effect.decreases_terms.size();
+            line(1, "decreases_terms: " + std::to_string(count));
         }
         if (declaration.body) {
             line(1, "body {");

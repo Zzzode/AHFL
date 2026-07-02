@@ -1917,9 +1917,23 @@ class ProgramBuilder {
         auto expr = make_expr_syntax(ast::ExprSyntaxKind::Lambda, context_range(context, source_));
         auto &lambda_node = std::get<ast::LambdaExpr>(expr->node);
 
-        // lambdaExpr: BACKSLASH lambdaParamList? '->' expr
+        // lambdaExpr: BACKSLASH ('[' lambdaCaptureListOpt ']')? lambdaParamList? '->' expr
         // The single direct `expr` child is the body; lambdaParamList is the
         // optional parameter list (absent for a zero-arg thunk `\ -> expr`).
+        if (const auto capture_list = borrow(context.lambdaCaptureListOpt());
+            capture_list.has_value()) {
+            const auto ident_list = borrow(capture_list->get().lambdaCaptureList());
+            const auto captures = ident_list.has_value()
+                                      ? ident_list->get().identifier()
+                                      : std::vector<AHFLParser::IdentifierContext *>{};
+            lambda_node.capture_list.reserve(captures.size());
+            lambda_node.capture_ranges.reserve(captures.size());
+            for (auto *capture : captures) {
+                auto &terminal = require(capture, "lambda capture name is missing");
+                lambda_node.capture_list.push_back(identifier_text(terminal));
+                lambda_node.capture_ranges.push_back(context_range(terminal, source_));
+            }
+        }
         if (const auto param_list = borrow(context.lambdaParamList())) {
             lambda_node.params = build_lambda_param_list(param_list->get());
         }
