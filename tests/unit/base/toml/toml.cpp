@@ -164,6 +164,35 @@ binding_key = "order.query"
     REQUIRE(bindings->array_items.front()->table_fields.size() == 2);
 }
 
+TEST_CASE("TOML parser accepts dotted and quoted keys") {
+    constexpr std::string_view input = R"TOML(package.name = "refund-audit"
+
+[targets."workflow.prod"]
+kind = "handoff"
+
+[quoted]
+"literal.key" = 'value'
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *name = result.document.find({"package", "name"});
+    REQUIRE(name != nullptr);
+    CHECK(name->kind == ahfl::toml::ValueKind::String);
+    CHECK(name->string_value == "refund-audit");
+
+    const auto *kind = result.document.find({"targets", "workflow.prod", "kind"});
+    REQUIRE(kind != nullptr);
+    CHECK(kind->kind == ahfl::toml::ValueKind::String);
+    CHECK(kind->string_value == "handoff");
+
+    const auto *literal = result.document.find({"quoted", "literal.key"});
+    REQUIRE(literal != nullptr);
+    CHECK(literal->kind == ahfl::toml::ValueKind::String);
+    CHECK(literal->string_value == "value");
+}
+
 TEST_CASE("TOML parser rejects duplicate keys with key range") {
     constexpr std::string_view input = R"TOML([package]
 name = "a"
@@ -183,6 +212,29 @@ TEST_CASE("TOML parser rejects invalid escapes as syntax diagnostics") {
     auto result = ahfl::toml::parse(input);
     REQUIRE(result.has_errors());
     CHECK(result.document.diagnostics.front().code == "toml.invalid_escape");
+}
+
+TEST_CASE("TOML parser rejects invalid dotted keys and keeps parsing following keys") {
+    constexpr std::string_view input = R"TOML(package. = "bad"
+[targets.]
+kind = "handoff"
+next = 1
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic(result.document, "toml.invalid_key"));
+
+    const auto invalid_keys =
+        std::count_if(result.document.diagnostics.begin(),
+                      result.document.diagnostics.end(),
+                      [](const auto &diag) { return diag.code == "toml.invalid_key"; });
+    CHECK(invalid_keys == 2);
+
+    const auto *next = result.document.find({"next"});
+    REQUIRE(next != nullptr);
+    CHECK(next->kind == ahfl::toml::ValueKind::Integer);
+    CHECK(next->integer_value == 1);
 }
 
 TEST_CASE("TOML parser rejects malformed datetimes but keeps parsing following keys") {

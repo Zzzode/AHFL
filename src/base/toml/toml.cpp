@@ -525,23 +525,37 @@ class Parser {
         skip_spaces();
         result.range.begin_offset = pos_;
         std::size_t last_part_end = pos_;
+        bool requires_part = true;
+        std::size_t required_part_begin = pos_;
 
         while (!at_end()) {
             skip_spaces();
             auto part = parse_key_part();
             if (!part.has_value()) {
+                if (requires_part && !result.parts.empty()) {
+                    add_error("toml.invalid_key",
+                              "expected TOML key segment after '.'",
+                              SourceRange{.begin_offset = required_part_begin,
+                                          .end_offset = pos_});
+                    result.ok = false;
+                    result.range.end_offset = pos_;
+                    return result;
+                }
                 break;
             }
             result.parts.push_back(std::move(*part));
             last_part_end = pos_;
+            requires_part = false;
             skip_spaces();
             if (!consume('.')) {
                 break;
             }
+            requires_part = true;
+            required_part_begin = pos_ - 1;
         }
 
         result.range.end_offset = last_part_end;
-        result.ok = !result.parts.empty();
+        result.ok = !result.parts.empty() && !requires_part;
         if (!result.ok) {
             add_error("toml.invalid_key",
                       "expected TOML key",
