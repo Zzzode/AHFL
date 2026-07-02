@@ -54,6 +54,8 @@ modules = ["main", "agents"]
     REQUIRE(modules->array_items.size() == 2);
     CHECK(modules->array_items[0]->string_value == "main");
     CHECK(modules->array_items[1]->string_value == "agents");
+    CHECK(slice(input, modules->array_items[0]->range) == R"("main")");
+    CHECK(slice(input, modules->array_items[1]->range) == R"("agents")");
 }
 
 TEST_CASE("TOML parser accepts RFC-required value forms") {
