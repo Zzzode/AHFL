@@ -2068,8 +2068,8 @@ ahfl_label_tests(
         ahflc.fmt.check_fail
         ahflc.fmt.formats_directory
         ahflc.fmt.check_directory_fail
-        ahflc.fmt.formats_project
-        ahflc.fmt.formats_workspace
+        ahflc.fmt.rejects_legacy_project_descriptor
+        ahflc.fmt.rejects_legacy_workspace_descriptor
         ahflc.fmt.formats_manifest
         ahflc.fmt.formats_package_graph_workspace
         ahfl.formatter.formatter_all

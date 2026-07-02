@@ -1321,30 +1321,42 @@ std::optional<ExitCode> CliDriver::validate_options() {
         }
     }
 
-    const bool descriptor_input =
-        options_.project_descriptor.has_value() || options_.workspace_descriptor.has_value();
+    const bool legacy_descriptor_input =
+        options_.project_descriptor.has_value() ||
+        (options_.workspace_descriptor.has_value() && !package_graph_workspace);
+    const bool package_graph_input =
+        (options_.manifest_path.has_value() && !package_graph_descriptor_dump) ||
+        package_graph_workspace;
+    const bool structured_input = legacy_descriptor_input || package_graph_input;
     const bool manifest_input =
         options_.manifest_path.has_value() && !package_graph_descriptor_dump;
     if (effective_command_ == CommandKind::Format) {
-        if ((descriptor_input || manifest_input) && !options_.positional.empty()) {
-            std::cerr << "error: fmt accepts either positional files/directories or a "
-                         "project/workspace/package descriptor, not both\n";
+        if (legacy_descriptor_input) {
+            std::cerr << "error: fmt requires --manifest <ahfl.toml> or --workspace "
+                         "<ahfl.workspace.toml> --package <name>; legacy project/workspace "
+                         "descriptors are removed\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (!descriptor_input && !manifest_input && options_.positional.empty()) {
+        if (package_graph_input && !options_.positional.empty()) {
+            std::cerr << "error: fmt accepts either positional files/directories or a "
+                         "package manifest/workspace, not both\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!package_graph_input && options_.positional.empty()) {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
         if (!options_.search_roots.empty()) {
             std::cerr << "error: --search-root is not supported with fmt; pass directories or "
-                         "use --project/--workspace\n";
+                         "use --manifest or --workspace --package\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
     } else if (!package_graph_descriptor_dump &&
                (manifest_input     ? !options_.positional.empty()
-                : descriptor_input ? !options_.positional.empty()
+                : structured_input ? !options_.positional.empty()
                                    : options_.positional.size() != 1)) {
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -1990,19 +2002,6 @@ ExitCode CliDriver::format_source_file() {
         }
         collection.batch_source = true;
         collect_formatter_input_path(collection, package->module_root, std::cerr);
-    } else if (options_.project_descriptor.has_value() ||
-               options_.workspace_descriptor.has_value()) {
-        ahfl::ProjectInput input;
-        if (const auto load_status =
-                load_project_input(options_, frontend_, input, *diag_consumer_);
-            load_status >= 0) {
-            return load_status == 0 ? ExitCode::Success : ExitCode::CompileError;
-        }
-
-        collection.batch_source = true;
-        for (const auto &entry_file : input.entry_files) {
-            collect_formatter_input_path(collection, entry_file, std::cerr);
-        }
     } else {
         collection.batch_source = options_.positional.size() > 1;
         for (const auto positional : options_.positional) {

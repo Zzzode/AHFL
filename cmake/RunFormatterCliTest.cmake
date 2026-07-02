@@ -51,24 +51,6 @@ function(assert_formatter_tree_unchanged ROOT_DIR)
     assert_file_matches("${SOURCE_FILE}" "${ROOT_DIR}/src/nested/b.ahfl")
 endfunction()
 
-function(write_formatter_project_descriptors ROOT_DIR)
-    file(WRITE "${ROOT_DIR}/ahfl.project.json"
-"{
-  \"format_version\": \"ahfl.project.v0.3\",
-  \"name\": \"fmt-project\",
-  \"search_roots\": [\".\"],
-  \"entry_sources\": [\"src/a.ahfl\", \"src/nested/b.ahfl\"]
-}
-")
-    file(WRITE "${ROOT_DIR}/ahfl.workspace.json"
-"{
-  \"format_version\": \"ahfl.workspace.v0.3\",
-  \"name\": \"fmt-workspace\",
-  \"projects\": [\"ahfl.project.json\"]
-}
-")
-endfunction()
-
 function(write_formatter_package_manifest PACKAGE_ROOT)
     file(WRITE "${PACKAGE_ROOT}/ahfl.toml"
 "manifest_version = 1
@@ -202,42 +184,6 @@ elseif(MODE STREQUAL "check-directory-fail")
         message(FATAL_ERROR "expected directory fmt partial failure summary\n${ahflc_output}")
     endif()
     assert_formatter_tree_unchanged("${WORK_DIR}")
-elseif(MODE STREQUAL "format-project")
-    seed_formatter_tree("${WORK_DIR}")
-    write_formatter_project_descriptors("${WORK_DIR}")
-    execute_process(
-        COMMAND "${AHFLC}" fmt --project "${WORK_DIR}/ahfl.project.json"
-        RESULT_VARIABLE ahflc_result
-        OUTPUT_VARIABLE ahflc_stdout
-        ERROR_VARIABLE ahflc_stderr
-    )
-
-    string(CONCAT ahflc_output "${ahflc_stdout}" "${ahflc_stderr}")
-    if(NOT ahflc_result EQUAL 0)
-        message(FATAL_ERROR "expected project fmt to succeed\n${ahflc_output}")
-    endif()
-    if(NOT ahflc_output MATCHES "ok: formatted 2 file\\(s\\), 2 changed")
-        message(FATAL_ERROR "expected project fmt summary\n${ahflc_output}")
-    endif()
-    assert_formatter_tree_matches_expected("${WORK_DIR}")
-elseif(MODE STREQUAL "format-workspace")
-    seed_formatter_tree("${WORK_DIR}")
-    write_formatter_project_descriptors("${WORK_DIR}")
-    execute_process(
-        COMMAND "${AHFLC}" fmt --workspace "${WORK_DIR}/ahfl.workspace.json" --project-name fmt-project
-        RESULT_VARIABLE ahflc_result
-        OUTPUT_VARIABLE ahflc_stdout
-        ERROR_VARIABLE ahflc_stderr
-    )
-
-    string(CONCAT ahflc_output "${ahflc_stdout}" "${ahflc_stderr}")
-    if(NOT ahflc_result EQUAL 0)
-        message(FATAL_ERROR "expected workspace fmt to succeed\n${ahflc_output}")
-    endif()
-    if(NOT ahflc_output MATCHES "ok: formatted 2 file\\(s\\), 2 changed")
-        message(FATAL_ERROR "expected workspace fmt summary\n${ahflc_output}")
-    endif()
-    assert_formatter_tree_matches_expected("${WORK_DIR}")
 elseif(MODE STREQUAL "format-manifest")
     require_sysroot_dir()
     seed_formatter_tree("${WORK_DIR}")
