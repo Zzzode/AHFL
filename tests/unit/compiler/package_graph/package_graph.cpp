@@ -568,6 +568,103 @@ entry = "src/lib.ahfl"
     CHECK(result.graph->dependencies[1].to.value == 2);
 }
 
+TEST_CASE("PackageGraph checksum boundaries follow RFC 0005 source rules") {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root_dir = std::filesystem::temp_directory_path() /
+                          ("ahfl-package-graph-checksum-boundary-" + std::to_string(stamp));
+    const auto sysroot_dir = root_dir / "sysroot" / "std";
+    const auto package_dir = root_dir / "app";
+
+    std::error_code error;
+    std::filesystem::remove_all(root_dir, error);
+    REQUIRE(std::filesystem::create_directories(sysroot_dir, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directories(package_dir / "src", error));
+    REQUIRE_FALSE(error);
+
+    REQUIRE(write_text_file(sysroot_dir / "prelude.ahfl", "module std::prelude;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "option.ahfl", "module std::option;\n"));
+    REQUIRE(write_text_file(package_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = ["prelude", "option"]
+
+[compiler_intrinsics]
+allow = ["option_*"]
+)TOML"));
+    REQUIRE(write_text_file(package_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML"));
+
+    const auto build_graph = [&]() {
+        auto result = ahfl::package_graph::build_package_graph_from_manifests(
+            ahfl::package_graph::ManifestBuildInput{
+                .root_manifest_path = package_dir / "ahfl.toml",
+                .sysroot_manifest_path = sysroot_dir / "ahfl.toml",
+            });
+        INFO("checksum boundary diagnostics count: " << result.diagnostics.size());
+        REQUIRE_FALSE(result.has_errors());
+        REQUIRE(result.graph.has_value());
+        REQUIRE(result.graph->packages.size() == 2);
+        return std::move(*result.graph);
+    };
+
+    const auto initial = build_graph();
+    const auto initial_std_checksum = initial.packages[0].checksum;
+    const auto initial_app_checksum = initial.packages[1].checksum;
+
+    REQUIRE(write_text_file(package_dir / "src" / "main.ahfl",
+                            "module refund_audit::main;\nstruct Changed { value: Int; }\n"));
+    const auto user_source_changed = build_graph();
+    CHECK(user_source_changed.packages[0].checksum == initial_std_checksum);
+    CHECK(user_source_changed.packages[1].checksum == initial_app_checksum);
+
+    REQUIRE(write_text_file(sysroot_dir / "option.ahfl",
+                            "module std::option;\nstruct Added { value: Int; }\n"));
+    const auto std_source_changed = build_graph();
+    CHECK(std_source_changed.packages[0].checksum != initial_std_checksum);
+    CHECK(std_source_changed.packages[1].checksum == initial_app_checksum);
+
+    std::filesystem::remove_all(root_dir, error);
+}
+
 TEST_CASE("Manifest PackageGraph loader rejects invalid exported modules") {
     SUBCASE("missing exported module") {
         std::string manifest;
