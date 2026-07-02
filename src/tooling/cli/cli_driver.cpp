@@ -1235,15 +1235,17 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.target_name.has_value() && !options_.manifest_path.has_value() &&
-        !options_.workspace_descriptor.has_value() && !package_graph_discovery) {
-        std::cerr << "error: --target requires --manifest or --workspace\n";
+        !package_graph_workspace && !package_graph_discovery) {
+        std::cerr << "error: --target requires --manifest, ahfl.workspace.toml, or discovered "
+                     "ahfl.toml\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
     if (options_.sysroot_path.has_value() && !options_.manifest_path.has_value() &&
-        !options_.workspace_descriptor.has_value() && !package_graph_discovery) {
-        std::cerr << "error: --sysroot requires --manifest or --workspace\n";
+        !package_graph_workspace && !package_graph_discovery) {
+        std::cerr << "error: --sysroot requires --manifest, ahfl.workspace.toml, or discovered "
+                     "ahfl.toml\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }

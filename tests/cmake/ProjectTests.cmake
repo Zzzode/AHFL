@@ -2548,6 +2548,24 @@ set_tests_properties(ahflc.check.workspace.ok_cross_file PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
+add_test(NAME ahflc.check.workspace_json_rejects_target
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;check-ok\;--target\;workflow"
+            "-DEXPECTED_REGEX=--target requires --manifest, ahfl\\.workspace\\.toml, or discovered ahfl\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.workspace_json_rejects_sysroot
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;check-ok\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--sysroot requires --manifest, ahfl\\.workspace\\.toml, or discovered ahfl\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_ast.project_manifest.ok_cross_file
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
