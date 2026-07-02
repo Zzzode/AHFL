@@ -250,6 +250,12 @@ read_handoff_exports(const Value &table,
         }
         exports.push_back(std::move(export_item));
     }
+    if (required && exports.empty()) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 "manifest field '" + std::string(display) + "' must not be empty",
+                 entry->value_range);
+    }
     return exports;
 }
 
