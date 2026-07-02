@@ -666,7 +666,7 @@ entry = "src/lib.ahfl"
                          "'audit-core'"));
 }
 
-TEST_CASE("Workspace PackageGraph loader resolves path member dependencies and sysroot defaults") {
+TEST_CASE("Workspace PackageGraph loader resolves normalized path member dependencies and sysroot defaults") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /
                           ("ahfl-package-graph-workspace-loader-" + std::to_string(stamp));
@@ -720,7 +720,7 @@ allow = ["option_*"]
 
 [workspace]
 name = "commerce-workflows"
-members = ["packages/refund-audit", "packages/audit-core"]
+members = ["packages/../packages/refund-audit", "packages/../packages/audit-core"]
 
 [resolver]
 version = 1

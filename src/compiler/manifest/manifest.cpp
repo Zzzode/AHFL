@@ -394,9 +394,13 @@ void validate_relative_path(std::string_view value,
                             SourceRange range,
                             std::vector<ManifestDiagnostic> &diagnostics) {
     const std::filesystem::path path{std::string{value}};
-    const bool has_parent_escape =
-        std::any_of(path.begin(), path.end(), [](const auto &part) { return part == ".."; });
-    if (value.empty() || path.is_absolute() || has_parent_escape) {
+    const auto normalized = path.lexically_normal();
+    const bool escapes_root =
+        normalized == ".." ||
+        std::any_of(normalized.begin(), normalized.end(), [](const auto &part) {
+            return part == "..";
+        });
+    if (value.empty() || path.is_absolute() || escapes_root) {
         add_diag(diagnostics,
                  kPathEscape,
                  "manifest field '" + std::string(display) + "' must not escape package root",
@@ -885,9 +889,16 @@ ManifestResult<WorkspaceManifest> parse_workspace_manifest(std::string_view inpu
         }
         manifest.members =
             read_string_array(*workspace, "members", "workspace.members", true, result.diagnostics);
-        for (const auto &member : manifest.members) {
-            validate_relative_path(
-                member, "workspace.members", workspace->range, result.diagnostics);
+        if (const auto *members_entry = find_entry(*workspace, "members");
+            members_entry != nullptr && members_entry->value->kind == ValueKind::Array) {
+            for (const auto &item : members_entry->value->array_items) {
+                if (item->kind == ValueKind::String && !item->string_value.empty()) {
+                    validate_relative_path(item->string_value,
+                                           "workspace.members",
+                                           item->range,
+                                           result.diagnostics);
+                }
+            }
         }
         if (manifest.members.empty()) {
             add_diag(result.diagnostics,

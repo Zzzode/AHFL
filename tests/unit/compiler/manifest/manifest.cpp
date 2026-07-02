@@ -359,6 +359,35 @@ audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }
     CHECK(result.manifest->dependencies[1].path == "../audit-core");
 }
 
+TEST_CASE("Package manifest schema accepts normalized non-escaping paths") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "refund_audit"
+root = "src/../src"
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "src/../src/lib.ahfl"
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    CHECK(result.manifest->module_root == "src/../src");
+    REQUIRE(result.manifest->targets.size() == 1);
+    CHECK(result.manifest->targets.front().entry == "src/../src/lib.ahfl");
+}
+
 TEST_CASE("Package manifest schema rejects string handoff exports") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
@@ -557,6 +586,36 @@ std = { source = "sysroot" }
                       "manifest field 'targets.entry' must not escape package root"));
     CHECK(has_message(result.diagnostics,
                       "targets.entry must be a canonical AHFL symbol name for handoff targets"));
+}
+
+TEST_CASE("Package manifest schema rejects normalized escaping paths") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "refund_audit"
+root = "src/../../outside"
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "src/../../lib.ahfl"
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'module.root' must not escape package root"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'targets.entry' must not escape package root"));
 }
 
 TEST_CASE("Package manifest schema rejects prelude on non-standard-library packages") {
@@ -782,7 +841,59 @@ version = 1
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
-    CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+    const auto found = std::find_if(result.diagnostics.begin(),
+                                    result.diagnostics.end(),
+                                    [](const auto &diagnostic) {
+                                        return diagnostic.code == "E::manifest_path_escape";
+    });
+    REQUIRE(found != result.diagnostics.end());
+    constexpr std::string_view invalid_member = "\"../outside\"";
+    const auto invalid_member_offset = input.find(invalid_member);
+    CHECK(found->range.begin_offset == invalid_member_offset);
+    CHECK(found->range.end_offset == invalid_member_offset + invalid_member.size());
+}
+
+TEST_CASE("Workspace manifest schema accepts normalized non-escaping members") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/../refund-audit"]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    REQUIRE(result.manifest->members.size() == 1);
+    CHECK(result.manifest->members.front() == "packages/../refund-audit");
+}
+
+TEST_CASE("Workspace manifest schema rejects normalized escaping members") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/../../outside"]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE(result.has_errors());
+    const auto found = std::find_if(result.diagnostics.begin(),
+                                    result.diagnostics.end(),
+                                    [](const auto &diagnostic) {
+                                        return diagnostic.code == "E::manifest_path_escape";
+    });
+    REQUIRE(found != result.diagnostics.end());
+    constexpr std::string_view invalid_member = "\"packages/../../outside\"";
+    const auto invalid_member_offset = input.find(invalid_member);
+    CHECK(found->range.begin_offset == invalid_member_offset);
+    CHECK(found->range.end_offset == invalid_member_offset + invalid_member.size());
 }
 
 TEST_CASE("Workspace manifest schema rejects empty string fields") {
