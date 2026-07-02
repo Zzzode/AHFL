@@ -92,6 +92,30 @@ add_test(NAME ahflc.fmt.formats_workspace
             -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
 )
 
+add_test(NAME ahflc.fmt.formats_manifest
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format-manifest"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DSYSROOT_DIR=${PROJECT_SOURCE_DIR}"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-manifest"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.formats_package_graph_workspace
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format-workspace-manifest"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DSYSROOT_DIR=${PROJECT_SOURCE_DIR}"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-package-graph-workspace"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
 add_test(NAME ahflc.profile.time_passes.emit_summary
     COMMAND $<TARGET_FILE:ahflc> emit summary -O --time-passes
             "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"

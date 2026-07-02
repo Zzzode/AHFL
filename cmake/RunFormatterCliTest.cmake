@@ -69,6 +69,54 @@ function(write_formatter_project_descriptors ROOT_DIR)
 ")
 endfunction()
 
+function(write_formatter_package_manifest PACKAGE_ROOT)
+    file(WRITE "${PACKAGE_ROOT}/ahfl.toml"
+"manifest_version = 1
+
+[package]
+name = \"fmt-package\"
+version = \"0.1.0\"
+edition = \"2026\"
+kind = \"library\"
+
+[module]
+prefix = \"fmt_package\"
+root = \"src\"
+
+[exports]
+modules = [\"a\", \"nested/b\"]
+
+[targets.lib]
+kind = \"library\"
+entry = \"src/a.ahfl\"
+
+[dependencies]
+std = { source = \"sysroot\" }
+")
+endfunction()
+
+function(write_formatter_workspace_manifest ROOT_DIR)
+    file(WRITE "${ROOT_DIR}/ahfl.workspace.toml"
+"manifest_version = 1
+
+[workspace]
+name = \"fmt-workspace\"
+members = [\"packages/fmt-package\"]
+
+[resolver]
+version = 1
+
+[dependencies]
+std = { source = \"sysroot\" }
+")
+endfunction()
+
+function(require_sysroot_dir)
+    if(NOT DEFINED SYSROOT_DIR)
+        message(FATAL_ERROR "SYSROOT_DIR is required for package graph formatter modes")
+    endif()
+endfunction()
+
 if(MODE STREQUAL "format")
     execute_process(
         COMMAND "${AHFLC}" fmt "${work_file}"
@@ -190,6 +238,46 @@ elseif(MODE STREQUAL "format-workspace")
         message(FATAL_ERROR "expected workspace fmt summary\n${ahflc_output}")
     endif()
     assert_formatter_tree_matches_expected("${WORK_DIR}")
+elseif(MODE STREQUAL "format-manifest")
+    require_sysroot_dir()
+    seed_formatter_tree("${WORK_DIR}")
+    write_formatter_package_manifest("${WORK_DIR}")
+    execute_process(
+        COMMAND "${AHFLC}" fmt --manifest "${WORK_DIR}/ahfl.toml" --sysroot "${SYSROOT_DIR}"
+        RESULT_VARIABLE ahflc_result
+        OUTPUT_VARIABLE ahflc_stdout
+        ERROR_VARIABLE ahflc_stderr
+    )
+
+    string(CONCAT ahflc_output "${ahflc_stdout}" "${ahflc_stderr}")
+    if(NOT ahflc_result EQUAL 0)
+        message(FATAL_ERROR "expected manifest fmt to succeed\n${ahflc_output}")
+    endif()
+    if(NOT ahflc_output MATCHES "ok: formatted 2 file\\(s\\), 2 changed")
+        message(FATAL_ERROR "expected manifest fmt summary\n${ahflc_output}")
+    endif()
+    assert_formatter_tree_matches_expected("${WORK_DIR}")
+elseif(MODE STREQUAL "format-workspace-manifest")
+    require_sysroot_dir()
+    set(package_root "${WORK_DIR}/packages/fmt-package")
+    seed_formatter_tree("${package_root}")
+    write_formatter_package_manifest("${package_root}")
+    write_formatter_workspace_manifest("${WORK_DIR}")
+    execute_process(
+        COMMAND "${AHFLC}" fmt --workspace "${WORK_DIR}/ahfl.workspace.toml" --package fmt-package --sysroot "${SYSROOT_DIR}"
+        RESULT_VARIABLE ahflc_result
+        OUTPUT_VARIABLE ahflc_stdout
+        ERROR_VARIABLE ahflc_stderr
+    )
+
+    string(CONCAT ahflc_output "${ahflc_stdout}" "${ahflc_stderr}")
+    if(NOT ahflc_result EQUAL 0)
+        message(FATAL_ERROR "expected package graph workspace fmt to succeed\n${ahflc_output}")
+    endif()
+    if(NOT ahflc_output MATCHES "ok: formatted 2 file\\(s\\), 2 changed")
+        message(FATAL_ERROR "expected package graph workspace fmt summary\n${ahflc_output}")
+    endif()
+    assert_formatter_tree_matches_expected("${package_root}")
 else()
     message(FATAL_ERROR "unknown formatter CLI test mode: ${MODE}")
 endif()

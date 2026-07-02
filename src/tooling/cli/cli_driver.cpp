@@ -333,7 +333,8 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
 }
 
 [[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
-    return command == CommandKind::Check || command == CommandKind::EmitNativeJson;
+    return command == CommandKind::Check || command == CommandKind::Format ||
+           command == CommandKind::EmitNativeJson;
 }
 
 [[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
@@ -1202,7 +1203,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     if (options_.manifest_path.has_value()) {
         if (!command_supports_package_graph_input(effective_command_) &&
             !package_graph_descriptor_dump) {
-            std::cerr << "error: --manifest is currently only supported with check, emit "
+            std::cerr << "error: --manifest is currently only supported with check, fmt, emit "
                          "native-json, and dump package-graph/lockfile\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
@@ -1286,13 +1287,13 @@ std::optional<ExitCode> CliDriver::validate_options() {
     const bool manifest_input =
         options_.manifest_path.has_value() && !package_graph_descriptor_dump;
     if (effective_command_ == CommandKind::Format) {
-        if (descriptor_input && !options_.positional.empty()) {
+        if ((descriptor_input || manifest_input) && !options_.positional.empty()) {
             std::cerr << "error: fmt accepts either positional files/directories or a "
-                         "project/workspace descriptor, not both\n";
+                         "project/workspace/package descriptor, not both\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (!descriptor_input && options_.positional.empty()) {
+        if (!descriptor_input && !manifest_input && options_.positional.empty()) {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1896,10 +1897,62 @@ ExitCode CliDriver::dump_lockfile() {
 
 ExitCode CliDriver::format_source_file() {
     FormatterInputCollection collection;
-    const bool descriptor_input =
-        options_.project_descriptor.has_value() || options_.workspace_descriptor.has_value();
+    const bool package_graph_workspace = uses_package_graph_workspace(options_, effective_command_);
 
-    if (descriptor_input) {
+    if (options_.manifest_path.has_value() || package_graph_workspace) {
+        const auto sysroot_manifest = sysroot_manifest_from_options(options_);
+        if (!sysroot_manifest.has_value()) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+            return ExitCode::UsageError;
+        }
+
+        ahfl::package_graph::BuildResult graph_result;
+        std::filesystem::path lockfile_directory;
+        if (options_.manifest_path.has_value()) {
+            const auto root_manifest_path = normalize_manifest_path(
+                std::filesystem::path{std::string{*options_.manifest_path}});
+            graph_result = ahfl::package_graph::build_package_graph_from_manifests(
+                ahfl::package_graph::ManifestBuildInput{
+                    .root_manifest_path = root_manifest_path,
+                    .sysroot_manifest_path = *sysroot_manifest,
+                });
+            lockfile_directory = root_manifest_path.parent_path();
+        } else {
+            const auto package_name = workspace_package_name(options_, effective_command_);
+            if (!package_name.has_value()) {
+                std::cerr << "error: --workspace requires --package <name>\n";
+                return ExitCode::UsageError;
+            }
+            const auto workspace_manifest_path = normalize_manifest_path(
+                std::filesystem::path{std::string{*options_.workspace_descriptor}});
+            graph_result = ahfl::package_graph::build_package_graph_from_workspace(
+                ahfl::package_graph::WorkspaceBuildInput{
+                    .workspace_manifest_path = workspace_manifest_path,
+                    .package_name = std::string{*package_name},
+                    .sysroot_manifest_path = *sysroot_manifest,
+                });
+            lockfile_directory = workspace_manifest_path.parent_path();
+        }
+
+        if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+            print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
+            return ExitCode::CompileError;
+        }
+        if (auto lock_status =
+                check_lockfile_if_present(*graph_result.graph, lockfile_directory, std::cerr);
+            lock_status.has_value()) {
+            return *lock_status;
+        }
+
+        const auto *package = root_package(*graph_result.graph);
+        if (package == nullptr) {
+            std::cerr << "error: PackageGraph is missing root package\n";
+            return ExitCode::CompileError;
+        }
+        collection.batch_source = true;
+        collect_formatter_input_path(collection, package->module_root, std::cerr);
+    } else if (options_.project_descriptor.has_value() ||
+               options_.workspace_descriptor.has_value()) {
         ahfl::ProjectInput input;
         if (const auto load_status =
                 load_project_input(options_, frontend_, input, *diag_consumer_);

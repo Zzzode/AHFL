@@ -2070,6 +2070,8 @@ ahfl_label_tests(
         ahflc.fmt.check_directory_fail
         ahflc.fmt.formats_project
         ahflc.fmt.formats_workspace
+        ahflc.fmt.formats_manifest
+        ahflc.fmt.formats_package_graph_workspace
         ahfl.formatter.formatter_all
 )
 
