@@ -327,9 +327,17 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
     return graph.find_package(ahfl::package_graph::PackageId{1});
 }
 
+[[nodiscard]] bool path_has_extension(std::string_view value, std::string_view extension) {
+    return std::filesystem::path{std::string{value}}.extension().generic_string() == extension;
+}
+
+[[nodiscard]] bool is_legacy_json_descriptor_path(std::string_view value) {
+    return path_has_extension(value, ".json");
+}
+
 [[nodiscard]] bool is_toml_workspace_descriptor(const CommandLineOptions &options) {
     return options.workspace_descriptor.has_value() &&
-           std::filesystem::path{std::string{*options.workspace_descriptor}}.extension() == ".toml";
+           path_has_extension(*options.workspace_descriptor, ".toml");
 }
 
 [[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
@@ -1211,7 +1219,23 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
+    if (package_graph_descriptor_dump && options_.workspace_descriptor.has_value() &&
+        !is_toml_workspace_descriptor(options_)) {
+        std::cerr << "error: dump " << command_short_name(*effective_command_)
+                  << " --workspace expects ahfl.workspace.toml; legacy ahfl.workspace.json "
+                     "descriptors are removed; migrate workspace members into "
+                     "ahfl.workspace.toml\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
     if (options_.manifest_path.has_value()) {
+        if (is_legacy_json_descriptor_path(*options_.manifest_path)) {
+            std::cerr << "error: --manifest expects ahfl.toml; legacy JSON descriptors are "
+                         "removed; migrate project/package metadata into ahfl.toml targets\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
         if (!command_supports_package_graph_input(effective_command_) &&
             !package_graph_descriptor_dump) {
             std::cerr << "error: --manifest is currently only supported with check, fmt, emit "

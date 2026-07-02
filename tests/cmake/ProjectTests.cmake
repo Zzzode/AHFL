@@ -2352,6 +2352,15 @@ set_tests_properties(ahflc.check.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.manifest_rejects_legacy_project_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--manifest expects ahfl\\.toml; legacy JSON descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.manifest_basic
     COMMAND $<TARGET_FILE:ahflc> emit native-json
             --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
@@ -2418,6 +2427,15 @@ add_test(NAME ahflc.dump_package_graph.workspace_rejects_project_name
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.dump_package_graph.workspace_rejects_legacy_workspace_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
+            "-DAHFLC_ARGS=dump\;package-graph\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--package\;check-ok\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=dump package-graph --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_package_graph.workspace_rejects_legacy_package_descriptor
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -2435,6 +2453,15 @@ add_test(NAME ahflc.dump_lockfile.workspace_basic
 )
 set_tests_properties(ahflc.dump_lockfile.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "\"manifest\":\"packages/refund-audit/ahfl.toml\""
+)
+
+add_test(NAME ahflc.dump_lockfile.workspace_rejects_legacy_workspace_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
+            "-DAHFLC_ARGS=dump\;lockfile\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--package\;check-ok\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=dump lockfile --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.check.workspace_basic
