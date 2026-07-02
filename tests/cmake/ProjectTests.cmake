@@ -2348,6 +2348,15 @@ set_tests_properties(ahflc.check.manifest_library_target PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.manifest_requires_target_for_multi_target_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=package 'refund-audit' contains 2 targets; pass --target <name>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.manifest_uses_ahfl_sysroot_env
     COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
             ${CMAKE_COMMAND} -E env
@@ -2502,6 +2511,15 @@ add_test(NAME ahflc.check.workspace_basic
 )
 set_tests_properties(ahflc.check.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.workspace_requires_target_for_multi_target_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;refund-audit\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=package 'refund-audit' contains 3 targets; pass --target <name>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.check.workspace_rejects_legacy_workspace_json
