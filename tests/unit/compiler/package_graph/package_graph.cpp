@@ -277,6 +277,47 @@ TEST_CASE("PackageGraph assigns sysroot std to PackageId(0) and root to PackageI
     CHECK(result.graph->module_roots[1].prefix == "refund_audit");
 }
 
+TEST_CASE("PackageGraph rejects sysroot std manifests that violate RFC contract") {
+    SUBCASE("module root") {
+        auto sysroot = std_input();
+        sysroot.manifest.module_root = "src";
+
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std::move(sysroot),
+            .root_package = app_input(),
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result, "sysroot std module.root must be '.'"));
+    }
+
+    SUBCASE("prelude declaration") {
+        auto sysroot = std_input();
+        sysroot.manifest.prelude_module.reset();
+
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std::move(sysroot),
+            .root_package = app_input(),
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result, "sysroot std must declare prelude.module 'std::prelude'"));
+    }
+
+    SUBCASE("builtin allowlist") {
+        auto sysroot = std_input();
+        sysroot.manifest.compiler_intrinsics_allow.clear();
+
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std::move(sysroot),
+            .root_package = app_input(),
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result, "sysroot std must declare compiler_intrinsics.allow"));
+    }
+}
+
 TEST_CASE("PackageGraph resolves explicit workspace dependencies only") {
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),

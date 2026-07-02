@@ -469,6 +469,31 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
     }
 }
 
+void validate_sysroot_std_contract(const PackageInput &sysroot_std,
+                                   std::vector<Diagnostic> &diagnostics) {
+    if (sysroot_std.manifest.package_name != "std" ||
+        sysroot_std.manifest.package_kind != "standard-library" ||
+        sysroot_std.manifest.module_prefix != "std") {
+        add_error(diagnostics,
+                  "sysroot package must be standard-library package 'std' with prefix 'std'");
+    }
+
+    if (sysroot_std.manifest.module_root != ".") {
+        add_error(diagnostics, "sysroot std module.root must be '.'");
+    }
+
+    if (sysroot_std.manifest.prelude_module != "std::prelude" ||
+        sysroot_std.manifest.prelude_injection != "explicit") {
+        add_error(diagnostics,
+                  "sysroot std must declare prelude.module 'std::prelude' with explicit "
+                  "injection");
+    }
+
+    if (sysroot_std.manifest.compiler_intrinsics_allow.empty()) {
+        add_error(diagnostics, "sysroot std must declare compiler_intrinsics.allow");
+    }
+}
+
 } // namespace
 
 const PackageNode *PackageGraph::find_package(PackageId id) const {
@@ -512,12 +537,7 @@ BuildResult build_package_graph(const BuildInput &input) {
         append(PackageId{next_id++}, path_package);
     }
 
-    if (input.sysroot_std.manifest.package_name != "std" ||
-        input.sysroot_std.manifest.package_kind != "standard-library" ||
-        input.sysroot_std.manifest.module_prefix != "std") {
-        add_error(result.diagnostics,
-                  "sysroot package must be standard-library package 'std' with prefix 'std'");
-    }
+    validate_sysroot_std_contract(input.sysroot_std, result.diagnostics);
 
     std::unordered_map<std::string, PackageId> by_name;
     std::unordered_map<std::string, PackageId> by_prefix;
