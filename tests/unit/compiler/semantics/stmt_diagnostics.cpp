@@ -31,6 +31,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/runtime_fn_table.hpp"
 #include "runtime/evaluator/value.hpp"
@@ -43,8 +44,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -89,11 +90,12 @@ struct CompileArtifacts {
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    a.parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {a.root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    a.parse = ahfl::parse_project(frontend,
+                                  ahfl::ProjectInput{
+                                      .entry_files = {main_path},
+                                      .search_roots = {a.root, std::filesystem::path{"std"}},
+                                      .inject_prelude = true,
+                                  });
 
     const ahfl::Resolver resolver;
     a.resolve = resolver.resolve(a.parse.graph);
@@ -104,10 +106,11 @@ struct CompileArtifacts {
 }
 
 /// TypedHIR shape helpers — retained for smoke cases that also assert on HIR.
-[[nodiscard]] const ahfl::TypedStatement *
-find_first_stmt(const ahfl::TypeCheckResult &result, ahfl::TypedStmtKind kind) {
+[[nodiscard]] const ahfl::TypedStatement *find_first_stmt(const ahfl::TypeCheckResult &result,
+                                                          ahfl::TypedStmtKind kind) {
     for (const auto &stmt : result.typed_program.statements) {
-        if (stmt.kind == kind) return &stmt;
+        if (stmt.kind == kind)
+            return &stmt;
     }
     return nullptr;
 }
@@ -117,7 +120,8 @@ find_nth_stmt(const ahfl::TypeCheckResult &result, ahfl::TypedStmtKind kind, std
     std::size_t count = 0;
     for (const auto &stmt : result.typed_program.statements) {
         if (stmt.kind == kind) {
-            if (count == n) return &stmt;
+            if (count == n)
+                return &stmt;
             ++count;
         }
     }
@@ -130,15 +134,16 @@ struct EvaluatorRun {
     std::optional<ahfl::evaluator::ExecResult> exec_result;
 };
 
-[[nodiscard]] EvaluatorRun run_function_body(const CompileArtifacts &a,
-                                             std::string_view fn_name) {
+[[nodiscard]] EvaluatorRun run_function_body(const CompileArtifacts &a, std::string_view fn_name) {
     using namespace ahfl::evaluator;
     EvaluatorRun r;
     if (a.parse.has_errors() || a.resolve.has_errors() || a.tc.has_errors()) {
         return r;
     }
 
-    auto program_ir = ahfl::lower_program_ir(a.parse.graph, a.resolve, a.tc,
+    auto program_ir = ahfl::lower_program_ir(a.parse.graph,
+                                             a.resolve,
+                                             a.tc,
                                              /*include_stdlib=*/true);
     RuntimeFunctionTable fn_table(program_ir);
 
@@ -146,7 +151,8 @@ struct EvaluatorRun {
     const std::string suffix = std::string("::") + std::string(fn_name);
     for (const auto &decl : program_ir.declarations) {
         const auto *fn = std::get_if<ahfl::ir::FnDecl>(&decl);
-        if (fn == nullptr) continue;
+        if (fn == nullptr)
+            continue;
         const auto &cname = fn->symbol_ref.canonical_name;
         if (fn->name == fn_name || cname == fn_name) {
             body = fn->body.get();
@@ -158,7 +164,8 @@ struct EvaluatorRun {
             break;
         }
     }
-    if (body == nullptr) return r;
+    if (body == nullptr)
+        return r;
 
     ExecContext ctx;
     RuntimeFnTrace trace_cfg;
@@ -236,8 +243,7 @@ fn caller_none() -> Int {
         const auto run = run_function_body(a, "caller_none");
         REQUIRE(run.ok);
         REQUIRE(run.exec_result.has_value());
-        const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(
-            &run.exec_result->outcome);
+        const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(&run.exec_result->outcome);
         REQUIRE(af != nullptr);
         CHECK(af->message.find("unwrap failed: value is None") != std::string::npos);
     }
@@ -257,9 +263,8 @@ fn caller() -> Int {
     const auto a = compile_project_loose("t3_requires_arity3", source);
     CHECK(a.tc.has_errors());
     CHECK(diagnostic_count_with_code(a.tc.diagnostics, "typecheck.WRONG_ARITY") == 1);
-    CHECK(diagnostics_contain(
-        a.tc.diagnostics,
-        "statement:requires 'requires' expects 1 or 2 argument(s), got 3"));
+    CHECK(diagnostics_contain(a.tc.diagnostics,
+                              "statement:requires 'requires' expects 1 or 2 argument(s), got 3"));
 }
 
 // =============================================================================
@@ -348,8 +353,7 @@ fn never_pass_direct() -> Int {
         REQUIRE(run.ok);
         REQUIRE(run.exec_result.has_value());
         CHECK_FALSE(run.exec_result->has_errors());
-        const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(
-            &run.exec_result->outcome);
+        const auto *ret = std::get_if<ahfl::evaluator::ExecReturn>(&run.exec_result->outcome);
         REQUIRE(ret != nullptr);
         const auto *iv = std::get_if<ahfl::evaluator::IntValue>(&ret->value.node);
         REQUIRE(iv != nullptr);
@@ -364,8 +368,7 @@ fn never_pass_direct() -> Int {
         const auto run = run_function_body(a, "never_pass_direct");
         REQUIRE(run.ok);
         REQUIRE(run.exec_result.has_value());
-        const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(
-            &run.exec_result->outcome);
+        const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(&run.exec_result->outcome);
         REQUIRE(af != nullptr);
         CHECK(af->message.find("stmt_requires_violated_xyz") != std::string::npos);
     }
@@ -386,8 +389,7 @@ fn caller() -> Int {
     CHECK(a.tc.has_errors());
     CHECK(diagnostic_count_with_code(a.tc.diagnostics, "typecheck.WRONG_ARITY") == 1);
     CHECK(diagnostics_contain(
-        a.tc.diagnostics,
-        "statement:unreachable 'unreachable' expects 0 or 1 argument(s), got 2"));
+        a.tc.diagnostics, "statement:unreachable 'unreachable' expects 0 or 1 argument(s), got 2"));
 }
 
 // =============================================================================
@@ -453,8 +455,7 @@ fn caller() -> Int {
     const auto run = run_function_body(a, "caller");
     REQUIRE(run.ok);
     REQUIRE(run.exec_result.has_value());
-    const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(
-        &run.exec_result->outcome);
+    const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(&run.exec_result->outcome);
     REQUIRE(af != nullptr);
     CHECK(af->message.find("custom_failure_text_xyz") != std::string::npos);
 }
@@ -540,8 +541,7 @@ fn driver() -> Int {
     const auto run = run_function_body(a, "driver");
     REQUIRE(run.ok);
     REQUIRE(run.exec_result.has_value());
-    const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(
-        &run.exec_result->outcome);
+    const auto *af = std::get_if<ahfl::evaluator::ExecAssertFailed>(&run.exec_result->outcome);
     REQUIRE(af != nullptr);
     CHECK(af->message.find("unwrap failed: value is None") != std::string::npos);
 }
@@ -576,8 +576,7 @@ fn caller() -> Int {
     const auto a = compile_project_loose("uex5_unwrap_plain_int", source);
     CHECK(a.tc.has_errors());
     CHECK(diagnostic_count_with_code(a.tc.diagnostics, "typecheck.TYPE_MISMATCH") >= 1);
-    CHECK(diagnostics_contain(a.tc.diagnostics,
-                              "unwrap operand must be of type Option<T>"));
+    CHECK(diagnostics_contain(a.tc.diagnostics, "unwrap operand must be of type Option<T>"));
 }
 
 TEST_CASE("UEX-6 unwrap inside const initializer — None payload fails at evaluation") {
@@ -594,11 +593,9 @@ fn caller() -> Int {
     bool runtime_failure = false;
     if (!a.tc.has_errors() && !a.resolve.has_errors()) {
         const auto run = run_function_body(a, "caller");
-        runtime_failure =
-            (run.ok && run.exec_result.has_value() && run.exec_result->has_errors());
+        runtime_failure = (run.ok && run.exec_result.has_value() && run.exec_result->has_errors());
     }
-    const bool something_reported =
-        a.tc.has_errors() || a.resolve.has_errors() || runtime_failure;
+    const bool something_reported = a.tc.has_errors() || a.resolve.has_errors() || runtime_failure;
     CHECK(something_reported);
 }
 

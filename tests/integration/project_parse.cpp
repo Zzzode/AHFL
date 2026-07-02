@@ -1,5 +1,6 @@
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -102,11 +103,12 @@ int run_source_file_position_smoke() {
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {entry},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry},
+                                                .search_roots = {root},
+                                                .inject_prelude = true,
+                                            });
 
     if (result.has_errors()) {
         print_diagnostics(result.diagnostics);
@@ -148,11 +150,12 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 
 int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {entry},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry},
+                                                .search_roots = {root},
+                                                .inject_prelude = true,
+                                            });
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -173,11 +176,12 @@ int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::
 
 int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {entry},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry},
+                                                .search_roots = {root},
+                                                .inject_prelude = true,
+                                            });
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -200,11 +204,12 @@ int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem:
 
 int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {entry},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry},
+                                                .search_roots = {root},
+                                                .inject_prelude = true,
+                                            });
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -226,11 +231,12 @@ int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem
 int run_fail_duplicate_owner(const std::filesystem::path &entry,
                              const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {entry, root / "alt" / "types.ahfl"},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry, root / "alt" / "types.ahfl"},
+                                                .search_roots = {root},
+                                                .inject_prelude = true,
+                                            });
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -288,11 +294,13 @@ int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::pat
     }
 
     const ahfl::Frontend frontend;
-    const auto result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {source_root / "std" / "collections.ahfl"},
-        .search_roots = {source_root},
-        .stdlib_search_roots = {bundle_root},
-    });
+    const auto result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {source_root / "std" / "collections.ahfl"},
+                                .search_roots = {source_root},
+                                .stdlib_search_roots = {bundle_root},
+                            });
 
     std::filesystem::remove_all(bundle_root, error);
 
@@ -366,7 +374,7 @@ int run_package_dependency_gates_imports(const std::filesystem::path &workspace_
     };
 
     const ahfl::Frontend frontend;
-    const auto missing_dependency = frontend.parse_project(make_input({}));
+    const auto missing_dependency = ahfl::parse_project(frontend, make_input({}));
     if (!missing_dependency.has_errors() ||
         !contains_message(missing_dependency.diagnostics,
                           "package prefix 'app' does not depend on package prefix 'lib'")) {
@@ -375,7 +383,7 @@ int run_package_dependency_gates_imports(const std::filesystem::path &workspace_
         return 1;
     }
 
-    const auto declared_dependency = frontend.parse_project(make_input({"lib"}));
+    const auto declared_dependency = ahfl::parse_project(frontend, make_input({"lib"}));
     if (declared_dependency.has_errors()) {
         print_diagnostics(declared_dependency.diagnostics);
         return 1;

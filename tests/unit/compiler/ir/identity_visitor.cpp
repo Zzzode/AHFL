@@ -14,6 +14,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -730,7 +731,8 @@ flow for DetachedHirAgent {
     const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
     if (flow == nullptr) {
         for (auto iter = lowered.declarations.rbegin();
-             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+             iter != lowered.declarations.rend() && flow == nullptr;
+             ++iter) {
             flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
         }
     }
@@ -787,11 +789,12 @@ flow for IndexAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto parse_result = ahfl::parse_project(frontend,
+                                                  ahfl::ProjectInput{
+                                                      .entry_files = {main_path},
+                                                      .search_roots = {root},
+                                                      .inject_prelude = true,
+                                                  });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -875,11 +878,12 @@ flow for LiteralAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto parse_result = ahfl::parse_project(frontend,
+                                                  ahfl::ProjectInput{
+                                                      .entry_files = {main_path},
+                                                      .search_roots = {root},
+                                                      .inject_prelude = true,
+                                                  });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -975,11 +979,12 @@ flow for OptionAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto parse_result = ahfl::parse_project(frontend,
+                                                  ahfl::ProjectInput{
+                                                      .entry_files = {main_path},
+                                                      .search_roots = {root},
+                                                      .inject_prelude = true,
+                                                  });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -1016,16 +1021,16 @@ flow for OptionAgent {
             CHECK(call->arguments.size() == argument_count);
         };
 
-    const auto expect_let_qualified_value =
-        [&](std::size_t statement_index, std::string_view value) {
-            const auto *let = std::get_if<ahfl::ir::LetStatement>(
-                &flow->state_handlers.front().body.statements[statement_index]->node);
-            REQUIRE(let != nullptr);
-            REQUIRE(let->initializer != nullptr);
-            const auto *qve = std::get_if<ahfl::ir::QualifiedValueExpr>(&let->initializer->node);
-            REQUIRE(qve != nullptr);
-            CHECK(qve->value == value);
-        };
+    const auto expect_let_qualified_value = [&](std::size_t statement_index,
+                                                std::string_view value) {
+        const auto *let = std::get_if<ahfl::ir::LetStatement>(
+            &flow->state_handlers.front().body.statements[statement_index]->node);
+        REQUIRE(let != nullptr);
+        REQUIRE(let->initializer != nullptr);
+        const auto *qve = std::get_if<ahfl::ir::QualifiedValueExpr>(&let->initializer->node);
+        REQUIRE(qve != nullptr);
+        CHECK(qve->value == value);
+    };
 
     expect_let_call(0, "std::option::Option::Some", 1);
     expect_let_qualified_value(1, "std::option::Option::None");
@@ -1074,11 +1079,12 @@ flow for HigherOrderAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root},
-        .inject_prelude = true,
-    });
+    const auto parse_result = ahfl::parse_project(frontend,
+                                                  ahfl::ProjectInput{
+                                                      .entry_files = {main_path},
+                                                      .search_roots = {root},
+                                                      .inject_prelude = true,
+                                                  });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -1194,7 +1200,8 @@ flow for MetadataCallAgent {
     const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
     if (flow == nullptr) {
         for (auto iter = lowered.declarations.rbegin();
-             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+             iter != lowered.declarations.rend() && flow == nullptr;
+             ++iter) {
             flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
         }
     }
@@ -1361,7 +1368,8 @@ flow for MetadataStructAgent {
     const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
     if (flow == nullptr) {
         for (auto iter = lowered.declarations.rbegin();
-             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+             iter != lowered.declarations.rend() && flow == nullptr;
+             ++iter) {
             flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
         }
     }
@@ -1456,7 +1464,8 @@ flow for MetadataQualifiedValueAgent {
     const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
     if (flow == nullptr) {
         for (auto iter = lowered.declarations.rbegin();
-             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+             iter != lowered.declarations.rend() && flow == nullptr;
+             ++iter) {
             flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
         }
     }
@@ -1747,12 +1756,13 @@ TEST_CASE("Semantic IR verifier rejects malformed TypeRef children") {
         .symbol_ref = {},
     });
 
-    const auto result = ahfl::ir::verify_ir_program(
-        program, ahfl::ir::IrVerificationMode::BackendReady);
+    const auto result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
 
     CHECK(result.has_errors());
-    CHECK(has_ir_diagnostic_containing(
-        result, ahfl::ir::VerificationSeverity::Error, "nominal type reference is missing canonical name"));
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "nominal type reference is missing canonical name"));
 }
 
 TEST_CASE("Semantic IR verifier rejects duplicate statement ids") {

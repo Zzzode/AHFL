@@ -36,6 +36,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include "common/test_support.hpp"
 
@@ -67,18 +68,19 @@ void write_file(const std::filesystem::path &path, std::string_view contents) {
         std::replace(s.begin(), s.end(), '.', '_');
         return s;
     }();
-    const auto root =
-        std::filesystem::temp_directory_path() / ("ahfl_const_neg_" + sanitized);
+    const auto root = std::filesystem::temp_directory_path() / ("ahfl_const_neg_" + sanitized);
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -124,8 +126,8 @@ const BAD: Reply = Fetch();
     const auto result = typecheck_project_loose("n2_cap_call", source);
     CHECK(result.has_errors());
     CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") >= 1);
-    CHECK(diagnostics_contain(result.diagnostics,
-                              "expression has runtime effect: capability call"));
+    CHECK(
+        diagnostics_contain(result.diagnostics, "expression has runtime effect: capability call"));
 }
 
 // ---------------------------------------------------------------------------

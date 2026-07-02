@@ -10,6 +10,7 @@
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -27,8 +28,8 @@ namespace {
 // Helpers (namespace scope).
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] ahfl::SourceRange range_of(std::string_view source, std::string_view needle,
-                                         std::size_t offset = 0) {
+[[nodiscard]] ahfl::SourceRange
+range_of(std::string_view source, std::string_view needle, std::size_t offset = 0) {
     const auto pos = source.find(needle, offset);
     REQUIRE(pos != std::string_view::npos);
     return ahfl::SourceRange{
@@ -38,8 +39,8 @@ namespace {
 }
 
 // Return the n-th (1-indexed) occurrence of needle in source.
-[[nodiscard]] ahfl::SourceRange range_of_nth(std::string_view source, std::string_view needle,
-                                             std::size_t n) {
+[[nodiscard]] ahfl::SourceRange
+range_of_nth(std::string_view source, std::string_view needle, std::size_t n) {
     std::size_t pos = 0;
     std::size_t found = 0;
     while (found < n) {
@@ -186,11 +187,13 @@ struct ProjectTypeCheckResult {
     write_file(main_path, project_source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     if (parse_result.has_errors()) {
         std::ostringstream ss;
         parse_result.diagnostics.render(ss);
@@ -239,17 +242,17 @@ find_expr_by_text(const std::string &source,
 }
 
 [[nodiscard]] const ahfl::TypedExpr *find_expr_by_nth(const std::string &source,
-                                                     const ahfl::TypeCheckResult &result,
-                                                     std::string_view needle, std::size_t n) {
+                                                      const ahfl::TypeCheckResult &result,
+                                                      std::string_view needle,
+                                                      std::size_t n) {
     return result.typed_program.find_expr_by_range(range_of_nth(source, needle, n), std::nullopt);
 }
 
-[[nodiscard]] const ahfl::TypedExpr *
-find_project_expr_by_nth(const ProjectTypeCheckResult &result,
-                         std::string_view needle,
-                         std::size_t n) {
-    return result.typecheck.typed_program.find_expr_by_range(
-        range_of_nth(result.source, needle, n), result.app_source_id);
+[[nodiscard]] const ahfl::TypedExpr *find_project_expr_by_nth(const ProjectTypeCheckResult &result,
+                                                              std::string_view needle,
+                                                              std::size_t n) {
+    return result.typecheck.typed_program.find_expr_by_range(range_of_nth(result.source, needle, n),
+                                                             result.app_source_id);
 }
 
 void check_std_string_option(ahfl::TypePtr type) {
@@ -347,12 +350,11 @@ struct NoneComparisonFinder {
 // TC1: Optional simple narrow — `if (x != none)` unwraps x in the then-block.
 // ---------------------------------------------------------------------------
 TEST_CASE("Optional simple narrow unwraps type on then branch") {
-    const std::string body =
-        "        if (ctx.token != std::option::Option::None) {\n"
-        "            return Response { value: ctx.token };\n"
-        "        } else {\n"
-        "            return Response { value: input.fallback };\n"
-        "        }\n";
+    const std::string body = "        if (ctx.token != std::option::Option::None) {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
     const auto legacy_source = render_body(body, kSkeletonString);
 
     const auto project = typecheck_project_source(legacy_source, "simple_narrow_project");
@@ -366,8 +368,7 @@ TEST_CASE("Optional simple narrow unwraps type on then branch") {
         std::find_if(result.typed_program.expressions.begin(),
                      result.typed_program.expressions.end(),
                      [cmp_range, source_id = project.app_source_id](const ahfl::TypedExpr &e) {
-                         return e.semantic_name == "ctx.token" &&
-                                e.source_id == source_id &&
+                         return e.semantic_name == "ctx.token" && e.source_id == source_id &&
                                 e.range.begin_offset >= cmp_range.begin_offset &&
                                 e.range.end_offset <= cmp_range.end_offset;
                      });
@@ -395,8 +396,8 @@ TEST_CASE("Optional flow narrowing unwraps std nominal Option") {
     ahfl::FlowFacts facts;
     facts.add(ahfl::TypeFact{.place = token_place, .kind = ahfl::TypeFactKind::IsNotNone});
 
-    const auto narrowed = ahfl::apply_expression_flow_narrowing(
-        option_type, token_place, facts, environment, types);
+    const auto narrowed =
+        ahfl::apply_expression_flow_narrowing(option_type, token_place, facts, environment, types);
     REQUIRE(narrowed != nullptr);
     CHECK(narrowed->holds<ahfl::types::StringT>());
 }
@@ -412,12 +413,11 @@ TEST_CASE("Optional &&-chain narrow propagates into second conjunct") {
     // trivially-true second conjunct) and verifies the then-block sees the
     // exact same narrowing facts it would see for a bare `x != none`
     // condition.
-    const std::string body =
-        "        if (ctx.token != std::option::Option::None && true) {\n"
-        "            return Response { value: ctx.token };\n"
-        "        } else {\n"
-        "            return Response { value: input.fallback };\n"
-        "        }\n";
+    const std::string body = "        if (ctx.token != std::option::Option::None && true) {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
     const auto legacy_source = render_body(body, kSkeletonString);
 
     const auto project = typecheck_project_source(legacy_source, "and_chain_narrow_project");
@@ -438,13 +438,12 @@ TEST_CASE("Optional &&-chain narrow propagates into second conjunct") {
 }
 
 TEST_CASE("Optional narrowing applies inside nested if conditions") {
-    const std::string body =
-        "        if (ctx.token != std::option::Option::None) {\n"
-        "            if (ctx.token == input.fallback) {\n"
-        "                return Response { value: ctx.token };\n"
-        "            }\n"
-        "        }\n"
-        "        return Response { value: input.fallback };\n";
+    const std::string body = "        if (ctx.token != std::option::Option::None) {\n"
+                             "            if (ctx.token == input.fallback) {\n"
+                             "                return Response { value: ctx.token };\n"
+                             "            }\n"
+                             "        }\n"
+                             "        return Response { value: input.fallback };\n";
     const auto legacy_source = render_body(body, kSkeletonString);
 
     const auto project = typecheck_project_source(legacy_source, "nested_if_narrow_project");
@@ -513,10 +512,8 @@ TEST_CASE("Assignment invalidates earlier narrowing for the same place") {
         std::count_if(result.typed_program.expressions.begin(),
                       result.typed_program.expressions.end(),
                       [source_id = project.app_source_id](const ahfl::TypedExpr &e) {
-                          return e.semantic_name == "ctx.token" &&
-                                 e.source_id == source_id &&
-                                 e.type &&
-                                 e.type->describe() == "std::option::Option<String>";
+                          return e.semantic_name == "ctx.token" && e.source_id == source_id &&
+                                 e.type && e.type->describe() == "std::option::Option<String>";
                       });
     CHECK(optional_tokens >= 2);
 }
@@ -525,12 +522,11 @@ TEST_CASE("Assignment invalidates earlier narrowing for the same place") {
 // TC5: ConditionFacts records complementary when_true / when_false edges.
 // ---------------------------------------------------------------------------
 TEST_CASE("ConditionFacts records complementary then/else facts") {
-    const std::string body =
-        "        if (ctx.token != std::option::Option::None) {\n"
-        "            return Response { value: ctx.token };\n"
-        "        } else {\n"
-        "            return Response { value: input.fallback };\n"
-        "        }\n";
+    const std::string body = "        if (ctx.token != std::option::Option::None) {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
     const auto source = render_body(body, kSkeletonString);
 
     const ahfl::Frontend frontend;
@@ -579,12 +575,11 @@ TEST_CASE("ConditionFacts records complementary then/else facts") {
 }
 
 TEST_CASE("ConditionFacts treats qualified None value as Optional none comparison") {
-    const std::string body =
-        "        if (ctx.token != std::option::Option::None) {\n"
-        "            return Response { value: ctx.token };\n"
-        "        } else {\n"
-        "            return Response { value: input.fallback };\n"
-        "        }\n";
+    const std::string body = "        if (ctx.token != std::option::Option::None) {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
     const auto source = render_body(body, kSkeletonString);
 
     const ahfl::Frontend frontend;
@@ -628,12 +623,11 @@ TEST_CASE("ConditionFacts treats qualified None value as Optional none compariso
 // TC6: Symmetric `none != x` behaves just like `x != none`.
 // ---------------------------------------------------------------------------
 TEST_CASE("Reversed none comparison (none != x) narrows symmetrically") {
-    const std::string body =
-        "        if (std::option::Option::None != ctx.token) {\n"
-        "            return Response { value: ctx.token };\n"
-        "        } else {\n"
-        "            return Response { value: input.fallback };\n"
-        "        }\n";
+    const std::string body = "        if (std::option::Option::None != ctx.token) {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
     const auto legacy_source = render_body(body, kSkeletonString);
 
     const auto project = typecheck_project_source(legacy_source, "reversed_none_narrow_project");
@@ -657,8 +651,7 @@ TEST_CASE("Reversed none comparison (none != x) narrows symmetrically") {
         std::count_if(result.typed_program.expressions.begin(),
                       result.typed_program.expressions.end(),
                       [source_id = project.app_source_id](const ahfl::TypedExpr &e) {
-                          return e.semantic_name == "ctx.token" &&
-                                 e.source_id == source_id &&
+                          return e.semantic_name == "ctx.token" && e.source_id == source_id &&
                                  e.type && e.type->holds<ahfl::types::StringT>();
                       });
     CHECK(narrowed_tokens >= 1);
@@ -1049,8 +1042,8 @@ flow for NarrowAgent {
 
 namespace {
 
-[[nodiscard]] const ahfl::ast::TraitDecl *
-find_trait_decl(const ahfl::ast::Program &program, std::string_view name) {
+[[nodiscard]] const ahfl::ast::TraitDecl *find_trait_decl(const ahfl::ast::Program &program,
+                                                          std::string_view name) {
     for (const auto &decl : program.declarations) {
         if (decl->kind != ahfl::ast::NodeKind::TraitDecl) {
             continue;
@@ -1073,8 +1066,7 @@ find_trait_decl(const ahfl::ast::Program &program, std::string_view name) {
     return count;
 }
 
-[[nodiscard]] const ahfl::ast::ImplDecl *
-first_impl_decl(const ahfl::ast::Program &program) {
+[[nodiscard]] const ahfl::ast::ImplDecl *first_impl_decl(const ahfl::ast::Program &program) {
     for (const auto &decl : program.declarations) {
         if (decl->kind == ahfl::ast::NodeKind::ImplDecl) {
             return static_cast<const ahfl::ast::ImplDecl *>(decl.get());
@@ -1086,8 +1078,7 @@ first_impl_decl(const ahfl::ast::Program &program) {
 // Parse-only helper: surfaces the first parse diagnostic via MESSAGE so a
 // parse failure is actionable rather than a silent boolean. The ParseResult
 // is returned by value so the caller owns the program for the test's lifetime.
-[[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename,
-                                           const std::string &source) {
+[[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename, const std::string &source) {
     const ahfl::Frontend frontend;
     auto parse_result = frontend.parse_text(std::string(filename), source);
     if (parse_result.has_errors()) {
@@ -1245,7 +1236,6 @@ impl Describe for Widget {
     REQUIRE_FALSE(resolve_result.has_errors());
 
     const ahfl::TypeChecker type_checker;
-    const auto typecheck_result =
-        type_checker.check(*parse_result.program, resolve_result);
+    const auto typecheck_result = type_checker.check(*parse_result.program, resolve_result);
     CHECK_FALSE(typecheck_result.has_errors());
 }

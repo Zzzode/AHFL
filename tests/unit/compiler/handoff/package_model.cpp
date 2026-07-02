@@ -5,6 +5,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include "common/test_support.hpp"
 
@@ -86,9 +87,8 @@ load_project_package(const std::filesystem::path &project_manifest_path) {
 int run_project_workflow_value_flow(const std::filesystem::path &project_manifest_path) {
     const ahfl::Frontend frontend;
 
-    const auto project_result =
-        frontend.parse_project(ahfl::test_support::workflow_value_flow_project_input(
-            project_manifest_path));
+    const auto project_result = ahfl::parse_project(
+        frontend, ahfl::test_support::workflow_value_flow_project_input(project_manifest_path));
     if (project_result.has_errors()) {
         project_result.diagnostics.render(std::cout);
         return 1;
@@ -535,7 +535,8 @@ int run_validate_execution_plan_rejects_unknown_value_read(
     return 0;
 }
 
-int run_validate_package_normalizes_display_names(const std::filesystem::path &project_manifest_path) {
+int run_validate_package_normalizes_display_names(
+    const std::filesystem::path &project_manifest_path) {
     const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
@@ -689,10 +690,11 @@ int run_validate_package_rejects_unknown_capability(
 int run_file_expr_temporal(const std::filesystem::path &input_file) {
     const ahfl::Frontend frontend;
 
-    auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {input_file},
-        .inject_prelude = true,
-    });
+    auto parse_result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {input_file},
+                                                .inject_prelude = true,
+                                            });
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(std::cout);
         return 1;

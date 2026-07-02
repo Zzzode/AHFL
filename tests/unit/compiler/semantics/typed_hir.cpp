@@ -23,9 +23,9 @@
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
-#include "compiler/semantics/std_container_types.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
-
+#include "compiler/semantics/std_container_types.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "runtime/evaluator/evaluator.hpp"
@@ -71,9 +71,8 @@ namespace {
                           std::vector{element});
 }
 
-[[nodiscard]] ahfl::TypePtr map_type(ahfl::TypeContext &tc,
-                                     ahfl::TypePtr key,
-                                     ahfl::TypePtr value) {
+[[nodiscard]] ahfl::TypePtr
+map_type(ahfl::TypeContext &tc, ahfl::TypePtr key, ahfl::TypePtr value) {
     return tc.struct_type(std::string{ahfl::stdlib_bridge::kMapType},
                           std::optional<ahfl::SymbolId>{},
                           std::vector{key, value});
@@ -124,11 +123,13 @@ struct TypedHIRFixture {
     check_project_with_frontend(const ahfl::Frontend &selected_frontend,
                                 const std::filesystem::path &root,
                                 const std::vector<std::filesystem::path> &entry_files) const {
-        const auto parse = selected_frontend.parse_project(ahfl::ProjectInput{
-            .entry_files = entry_files,
-            .search_roots = {root, std::filesystem::path{"std"}},
-            .inject_prelude = true,
-        });
+        const auto parse =
+            ahfl::parse_project(selected_frontend,
+                                ahfl::ProjectInput{
+                                    .entry_files = entry_files,
+                                    .search_roots = {root, std::filesystem::path{"std"}},
+                                    .inject_prelude = true,
+                                });
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);
@@ -176,11 +177,13 @@ struct TypedHIRFixture {
     [[nodiscard]] ahfl::TypeCheckResult
     check_project_with_errors(const std::filesystem::path &root,
                               const std::vector<std::filesystem::path> &entry_files) const {
-        const auto parse = frontend.parse_project(ahfl::ProjectInput{
-            .entry_files = entry_files,
-            .search_roots = {root, std::filesystem::path{"std"}},
-            .inject_prelude = true,
-        });
+        const auto parse =
+            ahfl::parse_project(frontend,
+                                ahfl::ProjectInput{
+                                    .entry_files = entry_files,
+                                    .search_roots = {root, std::filesystem::path{"std"}},
+                                    .inject_prelude = true,
+                                });
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);
@@ -235,8 +238,8 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     }
 }
 
-[[nodiscard]] std::optional<ahfl::SourceId>
-source_id_for_module(const ahfl::TypedProgram &program, std::string_view module_name) {
+[[nodiscard]] std::optional<ahfl::SourceId> source_id_for_module(const ahfl::TypedProgram &program,
+                                                                 std::string_view module_name) {
     for (const auto &decl : program.declarations) {
         if (decl.kind != ahfl::ast::NodeKind::ModuleDecl ||
             !std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload)) {
@@ -366,8 +369,6 @@ const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
     return signature;
 }
 
-
-
 // ---------------------------------------------------------------------------
 // P6a evaluator smoke-test helper.
 //
@@ -386,11 +387,12 @@ run_project_caller(const ahfl::Frontend &frontend,
     using namespace ahfl;
     using namespace ahfl::evaluator;
 
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = entry_files,
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = entry_files,
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     if (parse.has_errors()) {
         for (const auto &d : parse.diagnostics.entries()) {
             MESSAGE("parse: " << d.message);
@@ -419,8 +421,10 @@ run_project_caller(const ahfl::Frontend &frontend,
     // include_stdlib=true: ensure std module wrapper bodies (cmp::min /
     // decimal::add / json::parse / etc.) are emitted into the lowered IR so
     // RuntimeFunctionTable can dispatch through them to the C++ builtins.
-    auto program_ir = ahfl::lower_program_ir(parse.graph, resolve, tc,
-                                              /*include_stdlib=*/true);
+    auto program_ir = ahfl::lower_program_ir(parse.graph,
+                                             resolve,
+                                             tc,
+                                             /*include_stdlib=*/true);
     RuntimeFunctionTable fn_table(program_ir);
 
     // Find fn body. Match by short name, canonical name, or "::caller" suffix
@@ -429,7 +433,8 @@ run_project_caller(const ahfl::Frontend &frontend,
     const std::string suffix = std::string("::") + std::string(caller_name);
     for (const auto &decl : program_ir.declarations) {
         const auto *fn = std::get_if<ahfl::ir::FnDecl>(&decl);
-        if (fn == nullptr) continue;
+        if (fn == nullptr)
+            continue;
         const auto &cname = fn->symbol_ref.canonical_name;
         if (fn->name == caller_name || cname == caller_name) {
             body = fn->body.get();
@@ -767,9 +772,8 @@ const DurationEquivalent: Bool = 60s == 1m;
     REQUIRE(settings_value.children[4].symbol.has_value());
     CHECK(*settings_value.children[4].symbol == priority_symbol->id);
 
-    const auto *settings_label =
-        find_by_range(
-            program.expressions, range_of(source, "self::DefaultSettings.label"), source_id);
+    const auto *settings_label = find_by_range(
+        program.expressions, range_of(source, "self::DefaultSettings.label"), source_id);
     REQUIRE(settings_label != nullptr);
     REQUIRE(settings_label->const_value.has_value());
     CHECK(settings_label->const_value->kind == ahfl::ConstValueKind::ConstReference);
@@ -786,10 +790,10 @@ const DurationEquivalent: Bool = 60s == 1m;
         });
     REQUIRE(second_tag != program.expressions.end());
 
-    const auto *label_matches = find_by_range(
-        program.expressions,
-        range_of(source, "self::DefaultSettings.label == self::DefaultLabel"),
-        source_id);
+    const auto *label_matches =
+        find_by_range(program.expressions,
+                      range_of(source, "self::DefaultSettings.label == self::DefaultLabel"),
+                      source_id);
     REQUIRE(label_matches != nullptr);
     REQUIRE(label_matches->const_value.has_value());
     CHECK(label_matches->const_value->kind == ahfl::ConstValueKind::Bool);
@@ -884,9 +888,10 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
     const auto source_id = source_id_for_module(program, "typed::const_normalize");
     REQUIRE(source_id.has_value());
 
-    const auto *source_list = find_by_range(
-        program.expressions,
-        range_of(source, "std::collections::list_from_array<String>(\"b\", \"a\")"), source_id);
+    const auto *source_list =
+        find_by_range(program.expressions,
+                      range_of(source, "std::collections::list_from_array<String>(\"b\", \"a\")"),
+                      source_id);
     REQUIRE(source_list != nullptr);
     REQUIRE(source_list->const_value.has_value());
     CHECK(source_list->const_value->kind == ahfl::ConstValueKind::List);
@@ -894,12 +899,14 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
     CHECK(source_list->const_value->children[0].scalar == "\"b\"");
     CHECK(source_list->const_value->children[1].scalar == "\"a\"");
 
-    const auto *source_set = find_by_range(
-        program.expressions,
-        range_of(source, "std::collections::set_from_array<String>(\"b\", \"a\")"), source_id);
-    const auto *canonical_set = find_by_range(
-        program.expressions,
-        range_of(source, "std::collections::set_from_array<String>(\"a\", \"b\")"), source_id);
+    const auto *source_set =
+        find_by_range(program.expressions,
+                      range_of(source, "std::collections::set_from_array<String>(\"b\", \"a\")"),
+                      source_id);
+    const auto *canonical_set =
+        find_by_range(program.expressions,
+                      range_of(source, "std::collections::set_from_array<String>(\"a\", \"b\")"),
+                      source_id);
     REQUIRE(source_set != nullptr);
     REQUIRE(canonical_set != nullptr);
     REQUIRE(source_set->const_value.has_value());
@@ -913,13 +920,11 @@ const CanonicalMap: Map<String, Int> = std::collections::map_from_entries<String
 
     const auto *source_map = find_by_range(
         program.expressions,
-        range_of(source,
-                 "std::collections::map_from_entries<String, Int>(\"b\", 2, \"a\", 1)"),
+        range_of(source, "std::collections::map_from_entries<String, Int>(\"b\", 2, \"a\", 1)"),
         source_id);
     const auto *canonical_map = find_by_range(
         program.expressions,
-        range_of(source,
-                 "std::collections::map_from_entries<String, Int>(\"a\", 1, \"b\", 2)"),
+        range_of(source, "std::collections::map_from_entries<String, Int>(\"a\", 1, \"b\", 2)"),
         source_id);
     REQUIRE(source_map != nullptr);
     REQUIRE(canonical_map != nullptr);
@@ -1271,34 +1276,55 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
     auto is_generic_tparam_1 = [](std::string_view name) noexcept -> bool {
         return name.size() == 1 && name.front() >= 'A' && name.front() <= 'Z';
     };
-    auto each_ok_1 = [&](const std::string &actual, const std::string &expected,
-                         bool &concrete_flag, bool &wrapper_flag) noexcept -> bool {
-        if (actual == expected) { concrete_flag = true; return true; }
-        if (is_generic_tparam_1(actual)) { wrapper_flag = true; return true; }
+    auto each_ok_1 = [&](const std::string &actual,
+                         const std::string &expected,
+                         bool &concrete_flag,
+                         bool &wrapper_flag) noexcept -> bool {
+        if (actual == expected) {
+            concrete_flag = true;
+            return true;
+        }
+        if (is_generic_tparam_1(actual)) {
+            wrapper_flag = true;
+            return true;
+        }
         return false;
     };
     auto all_ok = [&](const std::vector<std::string> &actuals,
                       const std::vector<std::string> &expecteds,
-                      bool &concrete_flag, bool &wrapper_flag) noexcept -> bool {
+                      bool &concrete_flag,
+                      bool &wrapper_flag) noexcept -> bool {
         bool all_concrete = true;
         bool any_wrapper = false;
         for (std::size_t i = 0; i < actuals.size(); ++i) {
-            if (actuals[i] == expecteds[i]) continue;
+            if (actuals[i] == expecteds[i])
+                continue;
             all_concrete = false;
-            if (is_generic_tparam_1(actuals[i])) { any_wrapper = true; continue; }
+            if (is_generic_tparam_1(actuals[i])) {
+                any_wrapper = true;
+                continue;
+            }
             return false;
         }
-        if (all_concrete) { concrete_flag = true; return true; }
-        if (any_wrapper) { wrapper_flag = true; return true; }
+        if (all_concrete) {
+            concrete_flag = true;
+            return true;
+        }
+        if (any_wrapper) {
+            wrapper_flag = true;
+            return true;
+        }
         return false;
     };
 
     for (const auto &site : result.typed_program.fn_call_sites) {
         const auto symbol = result.typed_program.find_symbol(site.fn_symbol);
-        if (!symbol.has_value()) continue;
+        if (!symbol.has_value())
+            continue;
         const auto &cn = symbol->get().canonical_name;
         auto describe = [&](std::size_t i) -> std::string {
-            if (i >= site.type_args.size() || !site.type_args[i]) return {};
+            if (i >= site.type_args.size() || !site.type_args[i])
+                return {};
             return site.type_args[i]->describe();
         };
         std::string a0 = describe(0), a1 = describe(1), a2 = describe(2);
@@ -1313,12 +1339,15 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
             CHECK(each_ok_1(a0, "Int", saw_option_is_none, saw_option_is_none_wrapper));
         } else if (cn == "std::option::map") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
             CHECK(all_ok({a0, a1}, {"Int", "Int"}, saw_option_map, saw_option_map_wrapper));
         } else if (cn == "std::option::and_then") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "Int"}, saw_option_and_then, saw_option_and_then_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(
+                all_ok({a0, a1}, {"Int", "Int"}, saw_option_and_then, saw_option_and_then_wrapper));
         } else if (cn == "std::option::or_else") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
@@ -1334,46 +1363,72 @@ fn err_value(value: Result<Int, String>) -> Option<String> {
         } else if (cn == "std::option::unwrap_or_else") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
-            CHECK(each_ok_1(a0, "Int", saw_option_unwrap_or_else, saw_option_unwrap_or_else_wrapper));
+            CHECK(
+                each_ok_1(a0, "Int", saw_option_unwrap_or_else, saw_option_unwrap_or_else_wrapper));
         } else if (cn == "std::option::get_or_insert") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args[0] != nullptr);
             CHECK(each_ok_1(a0, "Int", saw_option_get_or_insert, saw_option_get_or_insert_wrapper));
         } else if (cn == "std::result::is_ok") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
             CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_is_ok, saw_result_is_ok_wrapper));
         } else if (cn == "std::result::is_err") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_is_err, saw_result_is_err_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(
+                all_ok({a0, a1}, {"Int", "String"}, saw_result_is_err, saw_result_is_err_wrapper));
         } else if (cn == "std::result::map") {
             REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr); REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2}, {"Int", "Int", "String"}, saw_result_map, saw_result_map_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(all_ok(
+                {a0, a1, a2}, {"Int", "Int", "String"}, saw_result_map, saw_result_map_wrapper));
         } else if (cn == "std::result::map_err") {
             REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr); REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2}, {"Int", "String", "String"}, saw_result_map_err, saw_result_map_err_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(all_ok({a0, a1, a2},
+                         {"Int", "String", "String"},
+                         saw_result_map_err,
+                         saw_result_map_err_wrapper));
         } else if (cn == "std::result::and_then") {
             REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr); REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2}, {"Int", "Int", "String"}, saw_result_and_then, saw_result_and_then_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(all_ok({a0, a1, a2},
+                         {"Int", "Int", "String"},
+                         saw_result_and_then,
+                         saw_result_and_then_wrapper));
         } else if (cn == "std::result::or_else") {
             REQUIRE(site.type_args.size() == 3);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr); REQUIRE(site.type_args[2] != nullptr);
-            CHECK(all_ok({a0, a1, a2}, {"Int", "String", "String"}, saw_result_or_else, saw_result_or_else_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[2] != nullptr);
+            CHECK(all_ok({a0, a1, a2},
+                         {"Int", "String", "String"},
+                         saw_result_or_else,
+                         saw_result_or_else_wrapper));
         } else if (cn == "std::result::unwrap_or") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
-            CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_unwrap_or, saw_result_unwrap_or_wrapper));
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
+            CHECK(all_ok(
+                {a0, a1}, {"Int", "String"}, saw_result_unwrap_or, saw_result_unwrap_or_wrapper));
         } else if (cn == "std::result::ok") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
             CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_ok, saw_result_ok_wrapper));
         } else if (cn == "std::result::err") {
             REQUIRE(site.type_args.size() == 2);
-            REQUIRE(site.type_args[0] != nullptr); REQUIRE(site.type_args[1] != nullptr);
+            REQUIRE(site.type_args[0] != nullptr);
+            REQUIRE(site.type_args[1] != nullptr);
             CHECK(all_ok({a0, a1}, {"Int", "String"}, saw_result_err, saw_result_err_wrapper));
         }
     }
@@ -1773,11 +1828,16 @@ fn inferred_missing_value() -> Bool {
                 char c = name.front();
                 return (c >= 'A' && c <= 'Z');
             }
-            if (name == "String") return true; // from string::join internals
-            if (name.find("std::collections::List<") == 0) return true;
-            if (name.find("std::collections::Map<") == 0) return true;
-            if (name.find("std::option::Option<") == 0) return true;
-            if (name.find("std::result::Result<") == 0) return true;
+            if (name == "String")
+                return true; // from string::join internals
+            if (name.find("std::collections::List<") == 0)
+                return true;
+            if (name.find("std::collections::Map<") == 0)
+                return true;
+            if (name.find("std::option::Option<") == 0)
+                return true;
+            if (name.find("std::result::Result<") == 0)
+                return true;
             return false;
         };
 
@@ -1785,30 +1845,42 @@ fn inferred_missing_value() -> Bool {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_length_call = true;
-            else if (is_generic_tparam(n)) saw_length_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_length_call = true;
+            else if (is_generic_tparam(n))
+                saw_length_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::is_empty") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_is_empty_call = true;
-            else if (is_generic_tparam(n)) saw_is_empty_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_is_empty_call = true;
+            else if (is_generic_tparam(n))
+                saw_is_empty_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::empty") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_empty_call = true;
-            else if (is_generic_tparam(n)) saw_empty_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_empty_call = true;
+            else if (is_generic_tparam(n))
+                saw_empty_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::singleton") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_singleton_call = true;
-            else if (is_generic_tparam(n)) saw_singleton_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_singleton_call = true;
+            else if (is_generic_tparam(n))
+                saw_singleton_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::append") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
@@ -1826,119 +1898,178 @@ fn inferred_missing_value() -> Bool {
             REQUIRE(site.type_args[1] != nullptr);
             const auto a = site.type_args[0]->describe();
             const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int") saw_map_call = true;
-            else if (is_generic_tparam(a) && is_generic_tparam(b)) saw_map_wrapper_call = true;
-            else { CHECK(a == "Int"); CHECK(b == "Int"); }
+            if (a == "Int" && b == "Int")
+                saw_map_call = true;
+            else if (is_generic_tparam(a) && is_generic_tparam(b))
+                saw_map_wrapper_call = true;
+            else {
+                CHECK(a == "Int");
+                CHECK(b == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::filter") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_filter_call = true;
-            else if (is_generic_tparam(n)) saw_filter_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_filter_call = true;
+            else if (is_generic_tparam(n))
+                saw_filter_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::fold") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto a = site.type_args[0]->describe();
             const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int") saw_fold_call = true;
-            else if (is_generic_tparam(a) && is_generic_tparam(b)) saw_fold_wrapper_call = true;
-            else { CHECK(a == "Int"); CHECK(b == "Int"); }
+            if (a == "Int" && b == "Int")
+                saw_fold_call = true;
+            else if (is_generic_tparam(a) && is_generic_tparam(b))
+                saw_fold_wrapper_call = true;
+            else {
+                CHECK(a == "Int");
+                CHECK(b == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::list_get") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_list_get_call = true;
-            else if (is_generic_tparam(n)) saw_list_get_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_list_get_call = true;
+            else if (is_generic_tparam(n))
+                saw_list_get_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::first") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_first_call = true;
-            else if (is_generic_tparam(n)) saw_first_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_first_call = true;
+            else if (is_generic_tparam(n))
+                saw_first_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::last") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_last_call = true;
-            else if (is_generic_tparam(n)) saw_last_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_last_call = true;
+            else if (is_generic_tparam(n))
+                saw_last_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::contains") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_contains_call = true;
-            else if (is_generic_tparam(n)) saw_contains_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_contains_call = true;
+            else if (is_generic_tparam(n))
+                saw_contains_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::set_is_empty") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_set_is_empty_call = true;
-            else if (is_generic_tparam(n)) saw_set_is_empty_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_set_is_empty_call = true;
+            else if (is_generic_tparam(n))
+                saw_set_is_empty_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::set_empty") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_set_empty_call = true;
-            else if (is_generic_tparam(n)) saw_set_empty_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_set_empty_call = true;
+            else if (is_generic_tparam(n))
+                saw_set_empty_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::set_singleton") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") saw_set_singleton_call = true;
-            else if (is_generic_tparam(n)) saw_set_singleton_wrapper_call = true;
-            else CHECK(n == "Int");
+            if (n == "Int")
+                saw_set_singleton_call = true;
+            else if (is_generic_tparam(n))
+                saw_set_singleton_wrapper_call = true;
+            else
+                CHECK(n == "Int");
         } else if (symbol->get().canonical_name == "std::collections::contains_key") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto k = site.type_args[0]->describe();
             const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int") saw_contains_key_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v)) saw_contains_key_wrapper_call = true;
-            else { CHECK(k == "String"); CHECK(v == "Int"); }
+            if (k == "String" && v == "Int")
+                saw_contains_key_call = true;
+            else if (is_generic_tparam(k) && is_generic_tparam(v))
+                saw_contains_key_wrapper_call = true;
+            else {
+                CHECK(k == "String");
+                CHECK(v == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::map_is_empty") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto k = site.type_args[0]->describe();
             const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int") saw_map_is_empty_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v)) saw_map_is_empty_wrapper_call = true;
-            else { CHECK(k == "String"); CHECK(v == "Int"); }
+            if (k == "String" && v == "Int")
+                saw_map_is_empty_call = true;
+            else if (is_generic_tparam(k) && is_generic_tparam(v))
+                saw_map_is_empty_wrapper_call = true;
+            else {
+                CHECK(k == "String");
+                CHECK(v == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::map_empty") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto k = site.type_args[0]->describe();
             const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int") saw_map_empty_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v)) saw_map_empty_wrapper_call = true;
-            else { CHECK(k == "String"); CHECK(v == "Int"); }
+            if (k == "String" && v == "Int")
+                saw_map_empty_call = true;
+            else if (is_generic_tparam(k) && is_generic_tparam(v))
+                saw_map_empty_wrapper_call = true;
+            else {
+                CHECK(k == "String");
+                CHECK(v == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::map_singleton") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto k = site.type_args[0]->describe();
             const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int") saw_map_singleton_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v)) saw_map_singleton_wrapper_call = true;
-            else { CHECK(k == "String"); CHECK(v == "Int"); }
+            if (k == "String" && v == "Int")
+                saw_map_singleton_call = true;
+            else if (is_generic_tparam(k) && is_generic_tparam(v))
+                saw_map_singleton_wrapper_call = true;
+            else {
+                CHECK(k == "String");
+                CHECK(v == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::map_get") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto k = site.type_args[0]->describe();
             const auto v = site.type_args[1]->describe();
-            if (k == "String" && v == "Int") saw_map_get_call = true;
-            else if (is_generic_tparam(k) && is_generic_tparam(v)) saw_map_get_wrapper_call = true;
-            else { CHECK(k == "String"); CHECK(v == "Int"); }
+            if (k == "String" && v == "Int")
+                saw_map_get_call = true;
+            else if (is_generic_tparam(k) && is_generic_tparam(v))
+                saw_map_get_wrapper_call = true;
+            else {
+                CHECK(k == "String");
+                CHECK(v == "Int");
+            }
         } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
@@ -2146,11 +2277,16 @@ fn inferred_missing_value() -> Bool {
             char c = name.front();
             return (c >= 'A' && c <= 'Z');
         }
-        if (name == "String") return true; // from string::join internals
-        if (name.find("std::collections::List<") == 0) return true;
-        if (name.find("std::collections::Map<") == 0) return true;
-        if (name.find("std::option::Option<") == 0) return true;
-        if (name.find("std::result::Result<") == 0) return true;
+        if (name == "String")
+            return true; // from string::join internals
+        if (name.find("std::collections::List<") == 0)
+            return true;
+        if (name.find("std::collections::Map<") == 0)
+            return true;
+        if (name.find("std::option::Option<") == 0)
+            return true;
+        if (name.find("std::result::Result<") == 0)
+            return true;
         return false;
     };
     for (const auto &site : restored->fn_call_sites) {
@@ -2162,34 +2298,54 @@ fn inferred_missing_value() -> Bool {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") restored_length_call = true;
-            else if (is_generic_tparam_2(n)) restored_length_wrapper_call = true;
-            else { bool ok = (n == "Int"); CHECK(ok); }
+            if (n == "Int")
+                restored_length_call = true;
+            else if (is_generic_tparam_2(n))
+                restored_length_wrapper_call = true;
+            else {
+                bool ok = (n == "Int");
+                CHECK(ok);
+            }
         } else if (symbol->get().canonical_name == "std::collections::is_empty") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
             const auto n = site.type_args.front()->describe();
-            if (n == "Int") restored_is_empty_call = true;
-            else if (is_generic_tparam_2(n)) restored_is_empty_wrapper_call = true;
-            else { bool ok = (n == "Int"); CHECK(ok); }
+            if (n == "Int")
+                restored_is_empty_call = true;
+            else if (is_generic_tparam_2(n))
+                restored_is_empty_wrapper_call = true;
+            else {
+                bool ok = (n == "Int");
+                CHECK(ok);
+            }
         } else if (symbol->get().canonical_name == "std::collections::map") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto a = site.type_args[0]->describe();
             const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int") restored_map_call = true;
-            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b)) restored_map_wrapper_call = true;
-            else { bool ok = (a == "Int" && b == "Int"); CHECK(ok); }
+            if (a == "Int" && b == "Int")
+                restored_map_call = true;
+            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b))
+                restored_map_wrapper_call = true;
+            else {
+                bool ok = (a == "Int" && b == "Int");
+                CHECK(ok);
+            }
         } else if (symbol->get().canonical_name == "std::collections::fold") {
             REQUIRE(site.type_args.size() == 2);
             REQUIRE(site.type_args[0] != nullptr);
             REQUIRE(site.type_args[1] != nullptr);
             const auto a = site.type_args[0]->describe();
             const auto b = site.type_args[1]->describe();
-            if (a == "Int" && b == "Int") restored_fold_call = true;
-            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b)) restored_fold_wrapper_call = true;
-            else { bool ok = (a == "Int" && b == "Int"); CHECK(ok); }
+            if (a == "Int" && b == "Int")
+                restored_fold_call = true;
+            else if (is_generic_tparam_2(a) && is_generic_tparam_2(b))
+                restored_fold_wrapper_call = true;
+            else {
+                bool ok = (a == "Int" && b == "Int");
+                CHECK(ok);
+            }
         } else if (symbol->get().canonical_name == "std::collections::list_raw_get") {
             REQUIRE(site.type_args.size() == 1);
             REQUIRE(site.type_args.front() != nullptr);
@@ -2336,8 +2492,7 @@ fn parse_id(s: String) -> Option<UUID> {
     CHECK(saw_uuid);
 }
 
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "P6 stdlib builtin declarations match compiler hook allowlist") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 stdlib builtin declarations match compiler hook allowlist") {
     const auto root = make_temp_project("stdlib_builtin_contract_project");
     const auto main_path = root / "app" / "main.ahfl";
 
@@ -2407,20 +2562,22 @@ fn raw_length(value: String) -> Int effect Pure;
 )AHFL");
 
     const auto check_with_allowlist = [&](std::vector<std::string> allowlist) {
-        const auto parse = frontend.parse_project(ahfl::ProjectInput{
-            .entry_files = {source_path},
-            .module_roots =
-                {
-                    ahfl::ProjectInput::ModuleRoot{
-                        .prefix = "std",
-                        .root = std_root,
-                        .exported_modules = {"bad"},
-                        .compiler_intrinsics_allow = std::move(allowlist),
-                    },
-                },
-            .include_stdlib = false,
-            .inject_prelude = false,
-        });
+        const auto parse =
+            ahfl::parse_project(frontend,
+                                ahfl::ProjectInput{
+                                    .entry_files = {source_path},
+                                    .module_roots =
+                                        {
+                                            ahfl::ProjectInput::ModuleRoot{
+                                                .prefix = "std",
+                                                .root = std_root,
+                                                .exported_modules = {"bad"},
+                                                .compiler_intrinsics_allow = std::move(allowlist),
+                                            },
+                                        },
+                                    .include_stdlib = false,
+                                    .inject_prelude = false,
+                                });
         REQUIRE_FALSE(parse.has_errors());
 
         ahfl::Resolver resolver;
@@ -2716,13 +2873,12 @@ const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
 
     const auto result = check_project_with_errors(root, {source_path});
     REQUIRE(result.has_errors());
-    CHECK(diagnostic_with_code_and_message(
-        result.diagnostics,
-        "typecheck.TYPE_MISMATCH",
-        ahfl::messages::typecheck::TypeMismatch.format_with(
-            "const initializer",
-            "std::collections::Map<String, Int>",
-            "std::collections::Map<String(2, 8), Int>")));
+    CHECK(diagnostic_with_code_and_message(result.diagnostics,
+                                           "typecheck.TYPE_MISMATCH",
+                                           ahfl::messages::typecheck::TypeMismatch.format_with(
+                                               "const initializer",
+                                               "std::collections::Map<String, Int>",
+                                               "std::collections::Map<String(2, 8), Int>")));
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "TypeEnvironment nominal lookup is SymbolId-first") {
@@ -3094,15 +3250,14 @@ workflow RunWorker {
     CHECK(restored->references.size() == tc.typed_program.references.size());
     CHECK(restored->const_dependencies.size() == tc.typed_program.const_dependencies.size());
 
-    const auto module_it =
-        std::find_if(restored->declarations.begin(),
-                     restored->declarations.end(),
-                     [](const ahfl::TypedDecl &decl) {
-                         return decl.kind == ahfl::ast::NodeKind::ModuleDecl &&
-                                std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload) &&
-                                std::get<ahfl::ModuleDeclInfo>(decl.payload).name ==
-                                    "typed::snapshot";
-                     });
+    const auto module_it = std::find_if(
+        restored->declarations.begin(),
+        restored->declarations.end(),
+        [](const ahfl::TypedDecl &decl) {
+            return decl.kind == ahfl::ast::NodeKind::ModuleDecl &&
+                   std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload) &&
+                   std::get<ahfl::ModuleDeclInfo>(decl.payload).name == "typed::snapshot";
+        });
     REQUIRE(module_it != restored->declarations.end());
     const auto *module_info = std::get_if<ahfl::ModuleDeclInfo>(&module_it->payload);
     REQUIRE(module_info != nullptr);
@@ -3721,11 +3876,12 @@ flow for Worker {
 )AHFL";
 
     write_file(source_path, source);
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {source_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {source_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_parity");
     REQUIRE(source_unit != nullptr);
@@ -3840,11 +3996,12 @@ flow for Worker {
 )AHFL";
 
     write_file(source_path, source);
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {source_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {source_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_children");
     REQUIRE(source_unit != nullptr);
@@ -3911,8 +4068,7 @@ flow for Worker {
 // serialization round-trip and lowered into IR ContractClause with symmetric
 // ir_json envelope.
 // ----------------------------------------------------------------------------
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "P4.S6 decreases fields round-trip through typed HIR and IR") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "P4.S6 decreases fields round-trip through typed HIR and IR") {
     const auto root = make_temp_project("p4_s6_decreases_project");
     const auto source_path = module_source_path(root, "p4::s6::decreases");
     const std::string source = R"AHFL(
@@ -4013,22 +4169,19 @@ flow for Worker {
     if (resolve.has_errors()) {
         std::ostringstream ss;
         resolve.diagnostics.render(ss);
-        std::fprintf(
-            stderr, "=== RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+        std::fprintf(stderr, "=== RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
     }
     // Resolver diagnostics are allowed here (we injected synthetic exprs).
     ahfl::TypeChecker checker;
     auto tc = checker.check(*parse.program, resolve);
 
     const auto &decls = tc.typed_program.declarations;
-    const auto contract_it =
-        std::find_if(decls.begin(), decls.end(), [](const ahfl::TypedDecl &d) {
-            return d.kind == ahfl::ast::NodeKind::ContractDecl &&
-                   std::holds_alternative<ahfl::ContractTypeInfo>(d.payload);
-        });
+    const auto contract_it = std::find_if(decls.begin(), decls.end(), [](const ahfl::TypedDecl &d) {
+        return d.kind == ahfl::ast::NodeKind::ContractDecl &&
+               std::holds_alternative<ahfl::ContractTypeInfo>(d.payload);
+    });
     REQUIRE(contract_it != decls.end());
-    const auto *contract_info =
-        std::get_if<ahfl::ContractTypeInfo>(&contract_it->payload);
+    const auto *contract_info = std::get_if<ahfl::ContractTypeInfo>(&contract_it->payload);
     REQUIRE(contract_info != nullptr);
     REQUIRE(contract_info->clauses.size() >= 3);
 
@@ -4039,8 +4192,7 @@ flow for Worker {
 
     // Acceptance signal 2: per-kind expectations.
     const auto &req = contract_info->clauses[0];
-    CHECK(req.clause_kind ==
-          static_cast<int>(ahfl::ast::ContractClauseKind::Requires));
+    CHECK(req.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Requires));
     CHECK(req.has_decreases);
     CHECK_FALSE(req.decreases_is_wildcard);
     CHECK(req.decreases_exprs.size() == 2);
@@ -4049,16 +4201,14 @@ flow for Worker {
     CHECK(req.decreases_range.begin_offset == 1);
 
     const auto &ens = contract_info->clauses[1];
-    CHECK(ens.clause_kind ==
-          static_cast<int>(ahfl::ast::ContractClauseKind::Ensures));
+    CHECK(ens.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Ensures));
     CHECK(ens.has_decreases);
     CHECK(ens.decreases_is_wildcard);
     CHECK(ens.decreases_exprs.empty());
     CHECK(ens.decreases_range.begin_offset == 11);
 
     const auto &inv = contract_info->clauses[2];
-    CHECK(inv.clause_kind ==
-          static_cast<int>(ahfl::ast::ContractClauseKind::Invariant));
+    CHECK(inv.clause_kind == static_cast<int>(ahfl::ast::ContractClauseKind::Invariant));
     CHECK(inv.has_decreases);
     CHECK_FALSE(inv.decreases_is_wildcard);
     CHECK(inv.decreases_exprs.size() == 1);
@@ -4072,16 +4222,13 @@ flow for Worker {
 
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
-    const auto restored_contract =
-        std::find_if(restored->declarations.begin(),
-                     restored->declarations.end(),
-                     [](const ahfl::TypedDecl &d) {
-                         return d.kind == ahfl::ast::NodeKind::ContractDecl &&
-                                std::holds_alternative<ahfl::ContractTypeInfo>(d.payload);
-                     });
+    const auto restored_contract = std::find_if(
+        restored->declarations.begin(), restored->declarations.end(), [](const ahfl::TypedDecl &d) {
+            return d.kind == ahfl::ast::NodeKind::ContractDecl &&
+                   std::holds_alternative<ahfl::ContractTypeInfo>(d.payload);
+        });
     REQUIRE(restored_contract != restored->declarations.end());
-    const auto *restored_info =
-        std::get_if<ahfl::ContractTypeInfo>(&restored_contract->payload);
+    const auto *restored_info = std::get_if<ahfl::ContractTypeInfo>(&restored_contract->payload);
     REQUIRE(restored_info != nullptr);
     REQUIRE(restored_info->clauses.size() >= 3);
     CHECK(restored_info->clauses[0].decreases_exprs.size() == 2);
@@ -4138,11 +4285,12 @@ fn t1() -> Bool effect Pure decreases 0 {
 
     // Lowering round-trip: the lowered IR must produce a valid verifiable
     // program and the t1 body must call an impl#-target (inherent dispatch).
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {main_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4178,11 +4326,12 @@ fn t2() -> String effect Pure decreases 0 {
     CHECK(call_expr->type->holds<ahfl::types::StringT>());
     CHECK(call_expr->member_name == "unwrap_or");
 
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {main_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4212,19 +4361,20 @@ fn t3() -> Int effect Pure decreases 0 {
     REQUIRE(app_source_id.has_value());
 
     const auto needle = "collections::list_from_array<Int>(1, 2, 3).length()";
-    const auto *call_expr = result.typed_program.find_expr_by_range(
-        range_of(main_source, needle), *app_source_id);
+    const auto *call_expr =
+        result.typed_program.find_expr_by_range(range_of(main_source, needle), *app_source_id);
     REQUIRE(call_expr != nullptr);
     REQUIRE(call_expr->type != nullptr);
     CHECK(call_expr->type->holds<ahfl::types::IntT>());
     CHECK(call_expr->is_pure);
     CHECK(call_expr->member_name == "length");
 
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {main_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4262,11 +4412,12 @@ fn t4() -> Int effect Pure decreases 0 {
     CHECK(call_expr->member_name == "length");
 
     // Full parse → resolve → typecheck → lower → verify round trip.
-    const auto parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse = ahfl::parse_project(frontend,
+                                           ahfl::ProjectInput{
+                                               .entry_files = {main_path},
+                                               .search_roots = {root, std::filesystem::path{"std"}},
+                                               .inject_prelude = true,
+                                           });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4288,7 +4439,6 @@ fn t4() -> Int effect Pure decreases 0 {
     const std::string ir = ss.str();
     CHECK(ir.find("string_raw_length") != std::string::npos);
 }
-
 
 // ===========================================================================
 // P6a end-to-end evaluator smoke tests.
@@ -4484,9 +4634,9 @@ fn caller() -> Int effect Pure decreases 0 {
 // arithmetic.
 // ============================================================================
 
-    // format_template(template: String, args: List<String>) — positional "{}"
-    // replacer. Builds args via collections::list_from_array<String>(up to 8
-    // items) because AHFL has no list-literal grammar at the surface yet.
+// format_template(template: String, args: List<String>) — positional "{}"
+// replacer. Builds args via collections::list_from_array<String>(up to 8
+// items) because AHFL has no list-literal grammar at the surface yet.
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P6a-04 fmt format_template basic replacement") {
     const auto root = make_temp_project("p6a_fmt_basic");

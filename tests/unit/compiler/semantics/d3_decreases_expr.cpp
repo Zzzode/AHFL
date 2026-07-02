@@ -25,6 +25,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -84,11 +85,12 @@ void dump_diags(const char *tag, const ahfl::DiagnosticBag &bag) {
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    a.parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {a.root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    a.parse = ahfl::parse_project(frontend,
+                                  ahfl::ProjectInput{
+                                      .entry_files = {main_path},
+                                      .search_roots = {a.root, std::filesystem::path{"std"}},
+                                      .inject_prelude = true,
+                                  });
 
     std::size_t parse_err_count = 0;
     for (const auto &d : a.parse.diagnostics.entries()) {
@@ -132,7 +134,8 @@ void dump_diags(const char *tag, const ahfl::DiagnosticBag &bag) {
                                                   std::string_view substr) {
     std::size_t count = 0;
     for (const auto &d : bag.entries()) {
-        if (d.severity != ahfl::DiagnosticSeverity::Error) continue;
+        if (d.severity != ahfl::DiagnosticSeverity::Error)
+            continue;
         const std::string msg = d.message;
         if (msg.find(substr) != std::string::npos) {
             ++count;
@@ -150,7 +153,7 @@ void dump_diags(const char *tag, const ahfl::DiagnosticBag &bag) {
 TEST_CASE("D-3 literal decreases measures remain valid") {
     SUBCASE("decreases 0 — baseline") {
         const auto a = compile_project_loose("t1_zero",
-            R"AHFL(
+                                             R"AHFL(
             module d3::t1_zero;
             fn countdown(n: Int) -> Int effect Pure decreases 0 {
                 return n;
@@ -166,7 +169,7 @@ TEST_CASE("D-3 literal decreases measures remain valid") {
 
     SUBCASE("decreases 1 — positive literal") {
         const auto a = compile_project_loose("t1_one",
-            R"AHFL(
+                                             R"AHFL(
             module d3::t1_one;
             fn f() -> Int effect Pure decreases 1 {
                 return 42;
@@ -178,7 +181,7 @@ TEST_CASE("D-3 literal decreases measures remain valid") {
 
     SUBCASE("decreases 100 — larger literal") {
         const auto a = compile_project_loose("t1_hundred",
-            R"AHFL(
+                                             R"AHFL(
             module d3::t1_hundred;
             fn f() -> Int effect Pure decreases 100 {
                 return 0;
@@ -195,7 +198,7 @@ TEST_CASE("D-3 literal decreases measures remain valid") {
 // ============================================================================
 TEST_CASE("D-3 decreases with Int parameter variable") {
     const auto a = compile_project_loose("t2_param_var",
-        R"AHFL(
+                                         R"AHFL(
         module d3::t2;
         fn countdown(n: Int) -> Int effect Pure decreases n {
             if (n <= 0) {
@@ -221,7 +224,7 @@ TEST_CASE("D-3 decreases with Int parameter variable") {
 // ============================================================================
 TEST_CASE("D-3 decreases with binary expression measure") {
     const auto a = compile_project_loose("t3_binary",
-        R"AHFL(
+                                         R"AHFL(
         module d3::t3;
         fn bounded_count(n: Int) -> Int effect Pure decreases n + 1 {
             if (n <= 0) {
@@ -244,7 +247,7 @@ TEST_CASE("D-3 decreases with binary expression measure") {
 // ============================================================================
 TEST_CASE("D-3 decreases with string literal emits TypeMismatch") {
     const auto a = compile_project_loose("t4_string_neg",
-        R"AHFL(
+                                         R"AHFL(
         module d3::t4;
         fn bad() -> Int effect Pure decreases "abc" {
             return 0;
@@ -262,7 +265,7 @@ TEST_CASE("D-3 decreases with string literal emits TypeMismatch") {
 // ============================================================================
 TEST_CASE("D-3 decreases with Bool variable emits TypeMismatch") {
     const auto a = compile_project_loose("t5_bool_neg",
-        R"AHFL(
+                                         R"AHFL(
         module d3::t5;
         fn bad(flag: Bool) -> Int effect Pure decreases flag {
             return 0;
@@ -282,7 +285,7 @@ TEST_CASE("D-3 decreases with Bool variable emits TypeMismatch") {
 // ============================================================================
 TEST_CASE("D-3 impl method decreases with self field access") {
     const auto a = compile_project_loose("t6_impl_self",
-        R"AHFL(
+                                         R"AHFL(
         module d3::t6;
         struct Counter {
             value: Int;

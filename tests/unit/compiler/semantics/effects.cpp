@@ -5,6 +5,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
 
@@ -109,14 +110,12 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     out << content;
 }
 
-template <typename DiagBag>
-void dump_diagnostics(std::string_view label, const DiagBag &bag) {
+template <typename DiagBag> void dump_diagnostics(std::string_view label, const DiagBag &bag) {
     std::ostringstream ss;
     for (const auto &entry : bag.entries()) {
-        ss << "DIAG " << label << ": code="
-           << (entry.code.has_value() ? std::string{*entry.code} : "-")
-           << " sev=" << static_cast<int>(entry.severity)
-           << " msg=[" << entry.message << "]\n";
+        ss << "DIAG " << label
+           << ": code=" << (entry.code.has_value() ? std::string{*entry.code} : "-")
+           << " sev=" << static_cast<int>(entry.severity) << " msg=[" << entry.message << "]\n";
         for (const auto &r : entry.related) {
             ss << "  RELATED: [" << r.message << "]\n";
         }
@@ -144,18 +143,20 @@ void dump_diagnostics(std::string_view label, const DiagBag &bag) {
 [[nodiscard]] ahfl::TypeCheckResult typecheck_project_source(std::string_view filename,
                                                              std::string_view source,
                                                              ahfl::TypeCheckOptions options = {}) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_effects_" + std::string{filename});
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_effects_" + std::string{filename});
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
     write_file(main_path, "module app::main;\n" + std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -166,10 +167,8 @@ void dump_diagnostics(std::string_view label, const DiagBag &bag) {
     return type_checker.check(parse_result.graph, resolve_result, options);
 }
 
-[[nodiscard]] ahfl::TypeCheckResult
-typecheck_project_module_source(std::string_view module_name,
-                                std::string_view source,
-                                ahfl::TypeCheckOptions options = {}) {
+[[nodiscard]] ahfl::TypeCheckResult typecheck_project_module_source(
+    std::string_view module_name, std::string_view source, ahfl::TypeCheckOptions options = {}) {
     std::string root_name{module_name};
     std::replace(root_name.begin(), root_name.end(), ':', '_');
     const auto root = std::filesystem::temp_directory_path() / ("ahfl_effects_" + root_name);
@@ -178,11 +177,13 @@ typecheck_project_module_source(std::string_view module_name,
     write_file(source_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {source_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {source_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -835,7 +836,8 @@ flow for FieldLiteralAgent {
 }
 )AHFL";
 
-    const auto type_result = typecheck_project_source("field_literal_diagnostic_codes.ahfl", source);
+    const auto type_result =
+        typecheck_project_source("field_literal_diagnostic_codes.ahfl", source);
     REQUIRE(type_result.has_errors());
 
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_MEMBER_ACCESS") ==
@@ -1776,18 +1778,16 @@ flow for NarrowDebugAgent {
     REQUIRE_FALSE(default_result.has_errors());
     CHECK(default_result.diagnostics.entries().empty());
 
-    const auto debug_result =
-        typecheck_project_source("optional_narrowing_debug.ahfl",
-                                 source,
-                                 ahfl::TypeCheckOptions{.explain_narrowing = true});
+    const auto debug_result = typecheck_project_source(
+        "optional_narrowing_debug.ahfl", source, ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
-    CHECK(diagnostics_contain(
-        debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != std::option::Option::None)' narrows 'ctx.token' to non-none on then "
-        "branch"));
-    CHECK(diagnostics_contain(
-        debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != std::option::Option::None)' narrows 'ctx.token' to none on else branch"));
+    CHECK(diagnostics_contain(debug_result.diagnostics,
+                              "narrowing: condition '(ctx.token != std::option::Option::None)' "
+                              "narrows 'ctx.token' to non-none on then "
+                              "branch"));
+    CHECK(diagnostics_contain(debug_result.diagnostics,
+                              "narrowing: condition '(ctx.token != std::option::Option::None)' "
+                              "narrows 'ctx.token' to none on else branch"));
 }
 
 TEST_CASE("Optional narrowing explanations describe unsupported disjunctive conditions") {
@@ -1825,14 +1825,15 @@ flow for NarrowDebugUnsupportedAgent {
 }
 )AHFL";
 
-    const auto debug_result = typecheck_project_source(
-        "optional_narrowing_debug_unsupported.ahfl",
-        source,
-        ahfl::TypeCheckOptions{.explain_narrowing = true});
+    const auto debug_result =
+        typecheck_project_source("optional_narrowing_debug_unsupported.ahfl",
+                                 source,
+                                 ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition '(ctx.token != std::option::Option::None || input.fallback != \"\")' did not produce "
+        "narrowing: condition '(ctx.token != std::option::Option::None || input.fallback != \"\")' "
+        "did not produce "
         "Optional narrowing facts because disjunctive conditions are not represented"));
 }
 
@@ -2012,8 +2013,7 @@ flow for NestedExpectationAgent {
 }
 )AHFL";
 
-    const auto type_result =
-        typecheck_project_source("struct_field_list_expectation.ahfl", source);
+    const auto type_result = typecheck_project_source("struct_field_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostics_contain(
         type_result.diagnostics,
@@ -2105,8 +2105,9 @@ flow for ParameterExpectationAgent {
     const ahfl::TypeChecker type_checker;
     const auto type_result = type_checker.check(*parse_result.program, resolve_result);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "argument #1: expected 'String' declared in `Do` from parameter 'value' declared here"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "argument #1: expected 'String' declared in `Do` from parameter 'value' declared here"));
 }
 
 TEST_CASE("Type diagnostics preserve flow return expectation through list literals") {
@@ -2178,10 +2179,10 @@ flow for AssignmentExpectationAgent {
     const auto type_result =
         typecheck_project_source("assignment_target_list_expectation.ahfl", source);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "expected type 'std::collections::List<String>' from assignment target "
-        "'ctx.values' declared here"));
+    CHECK(
+        diagnostics_contain(type_result.diagnostics,
+                            "expected type 'std::collections::List<String>' from assignment target "
+                            "'ctx.values' declared here"));
 }
 
 TEST_CASE("Type diagnostics describe actual expression origins") {
@@ -2362,9 +2363,9 @@ flow for SomeExpectationAgent {
         diagnostic_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH");
     REQUIRE(diagnostic != nullptr);
     CHECK(diagnostic->related.size() >= 2);
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "argument #1: expected 'String' declared in `Some` from enum variant payload declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "argument #1: expected 'String' declared in `Some` from enum variant "
+                              "payload declared here"));
     CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
 }
 
@@ -2564,11 +2565,13 @@ flow for HirAgent {
     write_file(main_path, "module app::main;\n" + source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -2594,11 +2597,10 @@ flow for HirAgent {
     REQUIRE_FALSE(type_result.typed_program.expressions.empty());
     CHECK_FALSE(type_result.typed_program.declarations.empty());
 
-    const auto expression = std::find_if(type_result.typed_program.expressions.begin(),
-                                         type_result.typed_program.expressions.end(),
-                                         [&](const ahfl::TypedExpr &expr) {
-                                             return expr.source_id == app_source_id;
-                                         });
+    const auto expression =
+        std::find_if(type_result.typed_program.expressions.begin(),
+                     type_result.typed_program.expressions.end(),
+                     [&](const ahfl::TypedExpr &expr) { return expr.source_id == app_source_id; });
     REQUIRE(expression != type_result.typed_program.expressions.end());
     const auto *typed_expr =
         type_result.typed_program.find_expr(expression->node_id, expression->source_id);
@@ -2634,8 +2636,7 @@ flow for HirAgent {
     const auto grouped_struct_literal = std::find_if(
         tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
-                   expr.source_id == app_source_id &&
-                   expr.children.size() == 1 &&
+                   expr.source_id == app_source_id && expr.children.size() == 1 &&
                    ahfl::resolve_child(tp, expr.children.front()) != nullptr &&
                    ahfl::resolve_child(tp, expr.children.front())->kind ==
                        ahfl::ast::ExprSyntaxKind::Group;
@@ -2646,8 +2647,8 @@ flow for HirAgent {
     CHECK(grouped_child->path_root == "input");
     CHECK(grouped_child->member_path == std::vector<std::string>{"value"});
 
-    const auto call =
-        std::find_if(tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
+    const auto call = std::find_if(
+        tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Do" &&
                    expr.source_id == app_source_id;
         });
@@ -2666,8 +2667,8 @@ flow for HirAgent {
     CHECK(call_child->path_root == "reply");
     CHECK(call_child->member_path == std::vector<std::string>{"value"});
 
-    const auto predicate_call =
-        std::find_if(tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
+    const auto predicate_call = std::find_if(
+        tp.expressions.begin(), tp.expressions.end(), [&](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Ready" &&
                    expr.source_id == app_source_id;
         });
@@ -2815,22 +2816,21 @@ flow for DecreasesShadowAgent {
 
     // Locate the agent symbol via the contract target reference (contract
     // and flow share the same target SymbolId).
-    const auto contract_it = std::find_if(
-        parse_result.program->declarations.begin(),
-        parse_result.program->declarations.end(),
-        [](const ahfl::Owned<ahfl::ast::Decl> &d) {
-            return d != nullptr && d->kind == ahfl::ast::NodeKind::ContractDecl;
-        });
+    const auto contract_it =
+        std::find_if(parse_result.program->declarations.begin(),
+                     parse_result.program->declarations.end(),
+                     [](const ahfl::Owned<ahfl::ast::Decl> &d) {
+                         return d != nullptr && d->kind == ahfl::ast::NodeKind::ContractDecl;
+                     });
     REQUIRE(contract_it != parse_result.program->declarations.end());
-    const auto &contract =
-        static_cast<const ahfl::ast::ContractDecl &>(**contract_it);
-    const auto agent_ref = resolve_result.find_reference(
-        ahfl::ReferenceKind::ContractTarget, contract.target->range);
+    const auto &contract = static_cast<const ahfl::ast::ContractDecl &>(**contract_it);
+    const auto agent_ref =
+        resolve_result.find_reference(ahfl::ReferenceKind::ContractTarget, contract.target->range);
     REQUIRE(agent_ref.has_value());
 
     ahfl::TypeCheckPass type_checker(*parse_result.program, resolve_result);
-    type_checker.inject_flow_self_shadowing_for_test(
-        agent_ref->get().target.value, std::string{"List<Int>"});
+    type_checker.inject_flow_self_shadowing_for_test(agent_ref->get().target.value,
+                                                     std::string{"List<Int>"});
     const auto type_result = type_checker.run();
     CHECK_FALSE(type_result.has_errors());
     CHECK(type_result.diagnostics.has_warning());
@@ -2907,16 +2907,11 @@ flow for M {
 
     const auto type_result = typecheck_project_source("method_call.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") == 1);
     // Template format: "{} '{}' expects {} argument(s), got {}"
     //  → method 'app::main::Pair.scaled_add' expects 2 argument(s), got 1
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "expects 2 argument(s), got 1"));
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "scaled_add"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "scaled_add"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: lambda vs expected Fn param size") {
@@ -2942,14 +2937,13 @@ flow for L {
 }
 )AHFL";
 
-    const auto type_result = typecheck_project_source("lambda_vs_expected_fn_param_size.ahfl", source);
+    const auto type_result =
+        typecheck_project_source("lambda_vs_expected_fn_param_size.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") == 1);
     // lambda '<closure>' expects 2 argument(s), got 1
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "lambda '<closure>' expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "lambda '<closure>' expects 2 argument(s), got 1"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: standalone function call") {
@@ -2976,12 +2970,10 @@ flow for F {
 
     const auto type_result = typecheck_project_source("standalone_function_call.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
     // function 'add3' expects 3 argument(s), got 2
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "function 'add3' expects 3 argument(s), got 2"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "function 'add3' expects 3 argument(s), got 2"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: function value call arity") {
@@ -3011,11 +3003,8 @@ flow for FV {
     const auto type_result = typecheck_project_source("function_value_call_arity.ahfl", source);
     CHECK(type_result.has_errors());
     // function value '<fn-value>' expects 1 argument(s), got 2
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "expects 1 argument(s), got 2"));
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostics_contain(type_result.diagnostics, "expects 1 argument(s), got 2"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: explicit type arguments on function") {
@@ -3040,14 +3029,13 @@ flow for TA {
 }
 )AHFL";
 
-    const auto type_result = typecheck_project_source("explicit_type_arguments_on_function.ahfl", source);
+    const auto type_result =
+        typecheck_project_source("explicit_type_arguments_on_function.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
     // function type arguments 'id' expects 1 argument(s), got 2
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "function type arguments 'id' expects 1 argument(s), got 2"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "function type arguments 'id' expects 1 argument(s), got 2"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: method explicit type arguments") {
@@ -3077,17 +3065,13 @@ flow for MA {
 }
 )AHFL";
 
-    const auto type_result = typecheck_project_source("method_explicit_type_arguments.ahfl", source);
+    const auto type_result =
+        typecheck_project_source("method_explicit_type_arguments.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
     // method type arguments 'Box.map' expects 1 argument(s), got 2
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "method type arguments"));
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "expects 1 argument(s), got 2"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "method type arguments"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "expects 1 argument(s), got 2"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: enum variant payload arity") {
@@ -3118,15 +3102,10 @@ flow for EV {
 
     const auto type_result = typecheck_project_source("enum_variant_payload_arity.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
     // enum variant 'Result::Ok' expects 2 argument(s), got 1
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "enum variant"));
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "enum variant"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "expects 2 argument(s), got 1"));
 }
 
 TEST_CASE("WRONG_ARITY unified message: type constructor arity") {
@@ -3154,12 +3133,9 @@ flow for TC {
 
     const auto type_result = typecheck_project_source("type_constructor_arity.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(
-              type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") >= 1);
     // type 'Map' expects 2 argument(s), got 1
-    CHECK(diagnostics_contain(
-        type_result.diagnostics,
-        "type 'Map' expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "type 'Map' expects 2 argument(s), got 1"));
 }
 
 // ============================================================================
@@ -3196,8 +3172,7 @@ flow for UV {
 
     const auto type_result = typecheck_project_source("unknown_value.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.UNKNOWN_VALUE") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_VALUE") >= 1);
     // message: "unknown value 'unresolved_name_here'"
     CHECK(diagnostics_contain(type_result.diagnostics, "unknown value"));
     CHECK(diagnostics_contain(type_result.diagnostics, "unresolved_name_here"));
@@ -3236,8 +3211,7 @@ flow for UQV_P {
     const auto type_result = typecheck_project_source("uqv_placeholder.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
     // Compile-time pin: identifier resolves in the diagnostic enum.
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_QUALIFIED_VALUE"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_QUALIFIED_VALUE"};
     (void)_pin;
 }
 
@@ -3276,8 +3250,7 @@ flow for IQV {
                                      "typecheck.INVALID_QUALIFIED_VALUE") >= 1);
     // message: "qualified value '...' must refer to a constant or enum variant"
     CHECK(diagnostics_contain(type_result.diagnostics, "qualified value"));
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "must refer to a constant or enum variant"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "must refer to a constant or enum variant"));
 }
 
 // ---------------------------------------------------------------------------
@@ -3306,7 +3279,8 @@ flow for ISLT_P {
 )AHFL";
     const auto type_result = typecheck_project_source("islt_placeholder.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"INVALID_STRUCT_LITERAL_TARGET"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
+        "INVALID_STRUCT_LITERAL_TARGET"};
     (void)_pin;
 }
 
@@ -3425,8 +3399,7 @@ flow for UKCap {
 
     const auto type_result = typecheck_project_source("unknown_capability.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.UNKNOWN_CAPABILITY") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_CAPABILITY") >= 1);
     // message: "unknown capability 'ghost_cap_no_such_definition' in agent capability list"
     CHECK(diagnostics_contain(type_result.diagnostics, "unknown capability"));
     CHECK(diagnostics_contain(type_result.diagnostics, "ghost_cap_no_such_definition"));
@@ -3573,7 +3546,8 @@ flow for TMSM_P {
 )AHFL";
     const auto type_result = typecheck_project_source("trait_sig_mismatch_ph.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"TRAIT_METHOD_SIGNATURE_MISMATCH"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
+        "TRAIT_METHOD_SIGNATURE_MISMATCH"};
     (void)_pin;
 }
 
@@ -3633,8 +3607,8 @@ flow for MST {
 
     const auto type_result = typecheck_project_source("missing_super_trait.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.MISSING_SUPER_TRAIT") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_SUPER_TRAIT") >=
+          1);
     // message: "trait 'Derived' requires super-trait 'Base' but no impl is found"
     CHECK(diagnostics_contain(type_result.diagnostics, "requires super-trait"));
     CHECK(diagnostics_contain(type_result.diagnostics, "but no impl is found"));
@@ -3688,10 +3662,9 @@ flow for ATI {
 
     const auto type_result = typecheck_project_source("ambiguous_trait_impl.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.AMBIGUOUS_TRAIT_IMPL") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.AMBIGUOUS_TRAIT_IMPL") >=
+          1);
     // message: "multiple trait implementations match for type 'Container' and trait"
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "multiple trait implementations match"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "multiple trait implementations match"));
     CHECK(diagnostics_contain(type_result.diagnostics, "Container"));
 }

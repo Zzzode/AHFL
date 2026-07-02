@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/assurance/assurance.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "verification/formal/checker.hpp"
 
 #include <chrono>
@@ -85,9 +86,10 @@ namespace {
 std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
                                          std::ostream &diagnostics) {
     const Frontend frontend;
-    const auto parse_result = frontend.parse_project(ProjectInput{
-        .entry_files = {file_path},
-    });
+    const auto parse_result = ahfl::parse_project(frontend,
+                                                  ProjectInput{
+                                                      .entry_files = {file_path},
+                                                  });
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(diagnostics);
         return std::nullopt;

@@ -1,4 +1,4 @@
-#include "ahfl/compiler/frontend/frontend.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -96,8 +96,8 @@ void append_unique_normalized_path(std::vector<std::filesystem::path> &paths,
             module_name.substr(prefix.size(), 2) == "::");
 }
 
-[[nodiscard]] std::filesystem::path
-module_relative_path_after_prefix(std::string_view module_name, std::string_view prefix) {
+[[nodiscard]] std::filesystem::path module_relative_path_after_prefix(std::string_view module_name,
+                                                                      std::string_view prefix) {
     if (module_name == prefix) {
         return std::filesystem::path{"mod.ahfl"};
     }
@@ -379,7 +379,7 @@ resolve_import_path(std::string_view module_name,
 
 } // namespace
 
-ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
+ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &input) {
     ProjectParseResult result;
 
     if (input.entry_files.empty()) {
@@ -441,9 +441,9 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
         auto parse_result = [&]() {
             const auto overlay = input.source_overlays.find(path_key);
             if (overlay != input.source_overlays.end()) {
-                return parse_text(display_path(path), overlay->second);
+                return frontend.parse_text(display_path(path), overlay->second);
             }
-            return parse_file(path);
+            return frontend.parse_file(path);
         }();
         result.diagnostics.append_from_source(parse_result.diagnostics, parse_result.source);
 
@@ -509,9 +509,9 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                         .path = path,
                         .module_name = module_name,
                         .module_range = imports.modules.front().second,
-                        .compiler_intrinsics_allow =
-                            module_root == nullptr ? std::nullopt
-                                                   : module_root->compiler_intrinsics_allow,
+                        .compiler_intrinsics_allow = module_root == nullptr
+                                                         ? std::nullopt
+                                                         : module_root->compiler_intrinsics_allow,
                         .source = std::move(parse_result.source),
                         .program = std::move(parse_result.program),
                         .imports = imports.imports,

@@ -5,6 +5,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
 
@@ -18,7 +19,7 @@
 namespace {
 
 [[nodiscard]] [[maybe_unused]] ahfl::SourceRange range_of(std::string_view source,
-                                                           std::string_view needle) {
+                                                          std::string_view needle) {
     const auto offset = source.find(needle);
     REQUIRE(offset != std::string_view::npos);
     return ahfl::SourceRange{
@@ -91,18 +92,20 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
 [[nodiscard]] ahfl::TypeCheckResult typecheck_project_source(std::string_view filename,
                                                              std::string_view source,
                                                              ahfl::TypeCheckOptions options = {}) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_diagmatrix_" + std::string{filename});
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_diagmatrix_" + std::string{filename});
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
     write_file(main_path, "module app::main;\n" + std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -126,8 +129,8 @@ struct NamedModuleSource {
 [[nodiscard]] ahfl::TypeCheckResult
 typecheck_multi_module(std::string_view project_tag,
                        std::initializer_list<NamedModuleSource> modules) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_diagmatrix_mm_" + std::string{project_tag});
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_diagmatrix_mm_" + std::string{project_tag});
     std::filesystem::remove_all(root);
 
     std::optional<std::filesystem::path> entry_path;
@@ -157,11 +160,13 @@ typecheck_multi_module(std::string_view project_tag,
     }
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {*entry_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {*entry_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     {
         std::ostringstream ss;
         for (const auto &s : parse_result.graph.sources) {
@@ -203,18 +208,20 @@ typecheck_multi_module(std::string_view project_tag,
 [[nodiscard]] ahfl::TypeCheckResult typecheck_project_loose(std::string_view filename,
                                                             std::string_view source,
                                                             ahfl::TypeCheckOptions opts = {}) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_diagmatrix_l_" + std::string{filename});
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_diagmatrix_l_" + std::string{filename});
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
     write_file(main_path, "module app::main;\n" + std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     // If parsing produced no graph at all we cannot continue — return a
     // default-constructed result so the test can assert diagnostic counts
     // against the parse diagnostics instead.
@@ -240,18 +247,20 @@ typecheck_multi_module(std::string_view project_tag,
 [[nodiscard]] ahfl::ValidationResult validate_project_source(std::string_view filename,
                                                              std::string_view source,
                                                              bool require_typecheck_clean = true) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_diagmatrix_v_" + std::string{filename});
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_diagmatrix_v_" + std::string{filename});
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
     write_file(main_path, "module app::main;\n" + std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {main_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -298,8 +307,7 @@ flow for TBNS_Placeholder {
     const auto type_result = typecheck_project_source("trait_bound_placeholder.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
     // Compile-time pin: the identifier still resolves in the diagnostic enum.
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "TRAIT_BOUND_NOT_SATISFIED"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"TRAIT_BOUND_NOT_SATISFIED"};
     (void)_pin;
 }
 
@@ -342,8 +350,7 @@ flow for CConf {
 
     const auto type_result = typecheck_project_source("coherence_conflict.ahfl", source);
     CHECK(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.COHERENCE_CONFLICT") >= 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.COHERENCE_CONFLICT") >= 1);
     // message: "coherence conflict: multiple impls of trait 'Describer' for normalized type..."
     CHECK(diagnostics_contain(type_result.diagnostics, "coherence conflict"));
     CHECK(diagnostics_contain(type_result.diagnostics, "multiple impls of trait"));
@@ -456,8 +463,7 @@ flow for TATNF_Placeholder {
     const auto type_result = typecheck_project_source("trait_assoc_placeholder.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
     // Compile-time pin: identifier resolves.
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "TRAIT_ASSOC_TYPE_NOT_FOUND"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"TRAIT_ASSOC_TYPE_NOT_FOUND"};
     (void)_pin;
 }
 
@@ -500,8 +506,7 @@ flow for DuplCap {
                                      "validation.DUPLICATE_CAPABILITY") >= 1);
     // message: "duplicate capability 'std_cap_http_request_name' in agent capability list"
     CHECK(diagnostics_contain(validation_result.diagnostics, "duplicate capability"));
-    CHECK(diagnostics_contain(validation_result.diagnostics,
-                              "std_cap_http_request_name"));
+    CHECK(diagnostics_contain(validation_result.diagnostics, "std_cap_http_request_name"));
 }
 
 // ---------------------------------------------------------------------------
@@ -533,8 +538,7 @@ flow for EOP_Placeholder {
     const auto type_result = typecheck_project_source("effect_on_pred_placeholder.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
     // Compile-time pin: identifier resolves; row is present in the matrix.
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "EFFECT_ON_PREDICATE"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"EFFECT_ON_PREDICATE"};
     (void)_pin;
 }
 
@@ -637,8 +641,10 @@ flow for C1D3 {
     // effect-system diagnostic fired; row pins the (C1,D3) cell.
     const bool any_effect =
         diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >= 1;
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >=
+            1 ||
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >=
+            1;
     CHECK(any_effect);
     CHECK(diagnostics_contain(type_result.diagnostics, "effect"));
 }
@@ -694,8 +700,7 @@ flow for C1D5_NA {
 )AHFL";
     const auto type_result = typecheck_project_source("c1d5_na.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::Validation> _pin{
-        "DUPLICATE_AGENT_STATE"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::Validation> _pin{"DUPLICATE_AGENT_STATE"};
     (void)_pin;
 }
 
@@ -707,8 +712,7 @@ fn id(x: Int) -> Int effect Pure decreases 0 { return x; }
 )AHFL";
     const auto merged = typecheck_project_loose("c1d6_na.ahfl", source);
     (void)merged;
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_CAPABILITY_IN_AGENT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_CAPABILITY_IN_AGENT"};
     (void)_pin;
 }
 
@@ -760,12 +764,10 @@ flow for C1D8_Pin { state Done { return Response { out: input.v }; } }
     // diagnostic; if std-scope guard is ever removed, this assertion breaks.
     REQUIRE(diagnostic_count_with_code(type_result.diagnostics,
                                        "typecheck.MISSING_BUILTIN_EFFECT") == 0);
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin_d8{
-        "MISSING_BUILTIN_EFFECT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin_d8{"MISSING_BUILTIN_EFFECT"};
     const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin_iba{
         "INVALID_BUILTIN_ATTRIBUTE"};
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin_ubh{
-        "UNKNOWN_BUILTIN_HOOK"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin_ubh{"UNKNOWN_BUILTIN_HOOK"};
     (void)_pin_d8;
     (void)_pin_iba;
     (void)_pin_ubh;
@@ -833,8 +835,10 @@ flow for C2D3 {
 )AHFL";
     const auto type_result = typecheck_project_source("c2d3_cap_undeclared.ahfl", source);
     const bool any =
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_ALLOWED") >= 1 ||
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >=
+            1 ||
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_ALLOWED") >=
+            1 ||
         diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") >= 1;
     CHECK(any);
 }
@@ -897,12 +901,11 @@ flow for C2D6 {
     const auto merged = typecheck_project_loose("c2d6_unknown_cap.ahfl", source);
     const bool any =
         diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY") >= 1 ||
-        diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY_IN_AGENT") >= 1 ||
-        merged.has_errors() ||
-        !merged.diagnostics.entries().empty();
+        diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY_IN_AGENT") >=
+            1 ||
+        merged.has_errors() || !merged.diagnostics.entries().empty();
     CHECK(any);
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_CAPABILITY_IN_AGENT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_CAPABILITY_IN_AGENT"};
     (void)_pin;
 }
 
@@ -940,8 +943,7 @@ flow for C2D8_NA { state Done { return Response { out: input.v }; } }
 )AHFL";
     const auto type_result = typecheck_project_source("c2d8_na.ahfl", source);
     CHECK_FALSE(type_result.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "MISSING_BUILTIN_EFFECT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"MISSING_BUILTIN_EFFECT"};
     (void)_pin;
 }
 
@@ -1027,8 +1029,10 @@ flow for C3D3 { state Done { return Response { out: input.v }; } }
     const auto type_result = typecheck_project_source("c3d3_impl_effect.ahfl", source);
     const bool any =
         diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >= 1;
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >=
+            1 ||
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >=
+            1;
     CHECK(any);
 }
 
@@ -1063,8 +1067,7 @@ TEST_CASE("G3 C3×D6 impl_struct UNKNOWN_CAPABILITY [NOT-APPLICABLE]") {
     // Impl methods themselves don't declare capability lists. Pin.
     const auto merged = typecheck_project_loose("c3d6_na.ahfl", "struct X{a:Int;}");
     CHECK_FALSE(merged.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_CAPABILITY_IN_AGENT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_CAPABILITY_IN_AGENT"};
     (void)_pin;
 }
 
@@ -1093,10 +1096,9 @@ impl Inc for Box {
 TEST_CASE("G3 C3×D8 impl_struct MISSING_BUILTIN_EFFECT [REAL · DESIGN-INTENT == 0]") {
     const auto merged = typecheck_project_loose("c3d8_pin.ahfl", "struct X{a:Int;}");
     CHECK_FALSE(merged.has_errors());
-    REQUIRE(diagnostic_count_with_code(merged.diagnostics,
-                                       "typecheck.MISSING_BUILTIN_EFFECT") == 0);
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "MISSING_BUILTIN_EFFECT"};
+    REQUIRE(diagnostic_count_with_code(merged.diagnostics, "typecheck.MISSING_BUILTIN_EFFECT") ==
+            0);
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"MISSING_BUILTIN_EFFECT"};
     (void)_pin;
 }
 
@@ -1186,8 +1188,7 @@ TEST_CASE("G3 C4×D5 trait_default DUPLICATE_FIELD [NOT-APPLICABLE]") {
 TEST_CASE("G3 C4×D6 trait_default UNKNOWN_CAPABILITY [NOT-APPLICABLE]") {
     const auto merged = typecheck_project_loose("c4d6_na.ahfl", "struct X{a:Int;}");
     CHECK_FALSE(merged.has_errors());
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_CAPABILITY_IN_AGENT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_CAPABILITY_IN_AGENT"};
     (void)_pin;
 }
 
@@ -1218,10 +1219,9 @@ impl Inc for Box {
 TEST_CASE("G3 C4×D8 trait_default MISSING_BUILTIN_EFFECT [REAL · DESIGN-INTENT == 0]") {
     const auto merged = typecheck_project_loose("c4d8_pin.ahfl", "struct X{a:Int;}");
     CHECK_FALSE(merged.has_errors());
-    REQUIRE(diagnostic_count_with_code(merged.diagnostics,
-                                       "typecheck.MISSING_BUILTIN_EFFECT") == 0);
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "MISSING_BUILTIN_EFFECT"};
+    REQUIRE(diagnostic_count_with_code(merged.diagnostics, "typecheck.MISSING_BUILTIN_EFFECT") ==
+            0);
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"MISSING_BUILTIN_EFFECT"};
     (void)_pin;
 }
 
@@ -1294,8 +1294,10 @@ flow for C5D3 {
     const auto type_result = typecheck_project_source("c5d3_real.ahfl", source);
     const bool any =
         diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_NOT_PURE") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >= 1 ||
-        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_ALLOWED") >= 1;
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_DECLARED") >=
+            1 ||
+        diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_ALLOWED") >=
+            1;
     CHECK(any);
 }
 
@@ -1353,12 +1355,10 @@ flow for C5D5 {
     // typecheck level all prove the cell is exercised.
     const bool any =
         diagnostic_count_with_code(merged.diagnostics, "validation.DUPLICATE_AGENT_STATE") >= 1 ||
-        !merged.diagnostics.entries().empty() ||
-        merged.has_errors();
+        !merged.diagnostics.entries().empty() || merged.has_errors();
     CHECK(any);
     // Identifier pin for DUPLICATE_FIELD family (see C1D5 comment).
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::Validation> _pin{
-        "DUPLICATE_AGENT_STATE"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::Validation> _pin{"DUPLICATE_AGENT_STATE"};
     (void)_pin;
 }
 
@@ -1385,13 +1385,12 @@ flow for C5D6 {
     const auto merged = typecheck_project_loose("c5d6_real.ahfl", source);
     const bool any =
         diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY") >= 1 ||
-        diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY_IN_AGENT") >= 1 ||
-        merged.has_errors() ||
-        !merged.diagnostics.entries().empty();
+        diagnostic_count_with_code(merged.diagnostics, "typecheck.UNKNOWN_CAPABILITY_IN_AGENT") >=
+            1 ||
+        merged.has_errors() || !merged.diagnostics.entries().empty();
     CHECK(any);
     // Identifier pin for UNKNOWN_CAPABILITY family.
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "UNKNOWN_CAPABILITY_IN_AGENT"};
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"UNKNOWN_CAPABILITY_IN_AGENT"};
     (void)_pin;
 }
 
@@ -1433,10 +1432,9 @@ flow for C5D7 {
 TEST_CASE("G3 C5×D8 let_contract MISSING_BUILTIN_EFFECT [REAL · DESIGN-INTENT == 0]") {
     const auto merged = typecheck_project_loose("c5d8_pin.ahfl", "struct X{a:Int;}");
     CHECK_FALSE(merged.has_errors());
-    REQUIRE(diagnostic_count_with_code(merged.diagnostics,
-                                       "typecheck.MISSING_BUILTIN_EFFECT") == 0);
-    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{
-        "MISSING_BUILTIN_EFFECT"};
+    REQUIRE(diagnostic_count_with_code(merged.diagnostics, "typecheck.MISSING_BUILTIN_EFFECT") ==
+            0);
+    const ahfl::ErrorCode<ahfl::DiagnosticCategory::TypeCheck> _pin{"MISSING_BUILTIN_EFFECT"};
     (void)_pin;
 }
 
@@ -1447,10 +1445,9 @@ TEST_CASE("G3 C5×D8 let_contract MISSING_BUILTIN_EFFECT [REAL · DESIGN-INTENT 
 // ============================================================================
 
 namespace {
-[[nodiscard]] std::size_t
-count_related_with(const ahfl::DiagnosticBag &bag,
-                   std::string_view code,
-                   std::string_view needle_in_related) {
+[[nodiscard]] std::size_t count_related_with(const ahfl::DiagnosticBag &bag,
+                                             std::string_view code,
+                                             std::string_view needle_in_related) {
     std::size_t count = 0;
     for (const auto &entry : bag.entries()) {
         if (entry.code.has_value() && *entry.code == code) {
@@ -1486,9 +1483,8 @@ const Bad: String = Wrong { value: 1 }.value;
 
     // IMPORTANT: app::main is the FIRST entry (becomes the project entry
     // file). Entry-file module imports drive project-wide source discovery.
-    const NamedModuleSource mod_main = {
-        "app::main",
-        R"AHFL(
+    const NamedModuleSource mod_main = {"app::main",
+                                        R"AHFL(
 module app::main;
 import lib::a as a;
 import lib::b as b;
@@ -1497,9 +1493,8 @@ import lib::b as b;
 // b::Record → TypeMismatch emitted during ConstSema / env build.
 const Mixed: a::Record = b::Record { id: "hello" };
 )AHFL"};
-    const NamedModuleSource mod_a = {
-        "lib::a",
-        R"AHFL(
+    const NamedModuleSource mod_a = {"lib::a",
+                                     R"AHFL(
 module lib::a;
 import lib::a as self;
 
@@ -1507,9 +1502,8 @@ struct Record {
     id: Int;
 }
 )AHFL"};
-    const NamedModuleSource mod_b = {
-        "lib::b",
-        R"AHFL(
+    const NamedModuleSource mod_b = {"lib::b",
+                                     R"AHFL(
 module lib::b;
 import lib::b as self;
 
@@ -1527,14 +1521,14 @@ struct Record {
     CHECK(result.has_errors());
     CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH") >= 1);
     // Primary origin note says "declared in 2 locations ... (and 1 other location)"
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "declared in 2 locations") >= 1);
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "and 1 other location") >= 1);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "declared in 2 locations") >= 1);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "and 1 other location") >= 1);
     // Exactly one "other declaration in module" note per type side → at least
     // one overall (the struct Record in the other module).
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "other declaration in module") >= 1);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "other declaration in module") >= 1);
 }
 
 // Test (b): 3 modules each export a struct with the SAME local name "Packet"
@@ -1545,9 +1539,8 @@ struct Record {
 // per-declaration notes.
 TEST_CASE("g-4 MULTIPLE_MODULE_DECLARATIONS TypeMismatch origin N=3 (struct)") {
     // app::main FIRST (project entry drives source discovery).
-    const NamedModuleSource mod_main = {
-        "app::main",
-        R"AHFL(
+    const NamedModuleSource mod_main = {"app::main",
+                                        R"AHFL(
 module app::main;
 import lib::x as x;
 import lib::y as y;
@@ -1560,25 +1553,22 @@ const One: z::Packet = x::Packet { payload: 7 };
 // we can distinguish an N=3 header from an accidental N=2 hit.
 const Two: y::Packet = x::Packet { payload: 11 };
 )AHFL"};
-    const NamedModuleSource mod_x = {
-        "lib::x",
-        R"AHFL(
+    const NamedModuleSource mod_x = {"lib::x",
+                                     R"AHFL(
 module lib::x;
 import lib::x as self;
 
 struct Packet { payload: Int; }
 )AHFL"};
-    const NamedModuleSource mod_y = {
-        "lib::y",
-        R"AHFL(
+    const NamedModuleSource mod_y = {"lib::y",
+                                     R"AHFL(
 module lib::y;
 import lib::y as self;
 
 struct Packet { payload: String; }
 )AHFL"};
-    const NamedModuleSource mod_z = {
-        "lib::z",
-        R"AHFL(
+    const NamedModuleSource mod_z = {"lib::z",
+                                     R"AHFL(
 module lib::z;
 import lib::z as self;
 
@@ -1595,13 +1585,13 @@ struct Packet { payload: Bool; }
     CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH") >= 2);
     // N=3 → each TypeMismatch carries a "declared in 3 locations ... and 2
     // other locations" note for both the expected and the actual side.
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "declared in 3 locations") >= 2);
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "and 2 other locations") >= 2);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "declared in 3 locations") >= 2);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "and 2 other locations") >= 2);
     // Per-type, 2 "other declaration in module ..." notes → per TypeMismatch ≥2.
-    CHECK(count_related_with(result.diagnostics, "typecheck.TYPE_MISMATCH",
-                             "other declaration in module") >= 4);
+    CHECK(count_related_with(
+              result.diagnostics, "typecheck.TYPE_MISMATCH", "other declaration in module") >= 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,10 +1613,11 @@ struct ResolveOnlyResult {
     ahfl::ResolveResult resolve;
 };
 
-[[nodiscard]] ResolveOnlyResult resolve_multi_module(std::string_view project_tag,
-                                                     std::initializer_list<NamedModuleSource> modules) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_lint_m7_" + std::string{project_tag});
+[[nodiscard]] ResolveOnlyResult
+resolve_multi_module(std::string_view project_tag,
+                     std::initializer_list<NamedModuleSource> modules) {
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_lint_m7_" + std::string{project_tag});
     std::filesystem::remove_all(root);
 
     std::optional<std::filesystem::path> entry_path;
@@ -1642,16 +1633,18 @@ struct ResolveOnlyResult {
     REQUIRE(entry_path.has_value());
 
     const ahfl::Frontend frontend;
-    auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {*entry_path},
-        .search_roots = {root},
-        // Disable stdlib injection so L1 cross-module duplicate detection
-        // (and L3 unused-import detection) work against a clean graph
-        // containing only the modules under test. Without this the stdlib
-        // dominates reference counts and produces unactionable noise.
-        .include_stdlib = false,
-        .inject_prelude = false,
-    });
+    auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {*entry_path},
+                                .search_roots = {root},
+                                // Disable stdlib injection so L1 cross-module duplicate detection
+                                // (and L3 unused-import detection) work against a clean graph
+                                // containing only the modules under test. Without this the stdlib
+                                // dominates reference counts and produces unactionable noise.
+                                .include_stdlib = false,
+                                .inject_prelude = false,
+                            });
     {
         std::ostringstream ss;
         if (parse_result.has_errors()) {
@@ -1672,20 +1665,16 @@ struct ResolveOnlyResult {
         resolve_result.diagnostics.render(ss);
         ss << "symbols: " << resolve_result.symbol_table.symbols().size() << '\n';
         for (const auto &sym : resolve_result.symbol_table.symbols()) {
-            ss << "  sym " << sym.canonical_name
-               << " local=" << sym.local_name
-               << " mod=" << sym.module_name
-               << " kind=" << int(sym.kind) << '\n';
+            ss << "  sym " << sym.canonical_name << " local=" << sym.local_name
+               << " mod=" << sym.module_name << " kind=" << int(sym.kind) << '\n';
         }
         ss << "imports: " << resolve_result.imports().size() << '\n';
         for (const auto &imp : resolve_result.imports()) {
-            ss << "  import alias=" << imp.alias
-               << " target=" << imp.target_module << '\n';
+            ss << "  import alias=" << imp.alias << " target=" << imp.target_module << '\n';
         }
         ss << "references: " << resolve_result.references().size() << '\n';
         for (const auto &r : resolve_result.references()) {
-            ss << "  ref text=" << r.text
-               << " kind=" << int(r.kind) << '\n';
+            ss << "  ref text=" << r.text << " kind=" << int(r.kind) << '\n';
         }
         CAPTURE(ss.str());
         MESSAGE("resolve debug for ", project_tag, ":\n", ss.str());
@@ -1717,23 +1706,18 @@ module lib::b;
 struct Record { id: String; }
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l1_pos_struct", {mod_main, mod_a, mod_b});
+        const auto [parse, res] = resolve_multi_module("l1_pos_struct", {mod_main, mod_a, mod_b});
         (void)parse;
         // Resolver must be error-free (no duplicate-symbol / unknown-symbol
         // failures) for the lint pass to run.
         CHECK_FALSE(res.has_errors());
         // Exactly one lint entry: one duplicate-name group of size 2.
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.DUPLICATE_STRUCT_NAME") == 1);
-        const auto *diag = diagnostic_with_code(res.diagnostics,
-                                                "lint.DUPLICATE_STRUCT_NAME");
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME") == 1);
+        const auto *diag = diagnostic_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME");
         REQUIRE(diag != nullptr);
         CHECK(diag->severity == ahfl::DiagnosticSeverity::Warning);
-        CHECK(diagnostics_contain(res.diagnostics,
-                                  "struct 'Record' is defined in 2 locations"));
-        CHECK(diagnostics_contain(res.diagnostics,
-                                  "use module qualification or rename"));
+        CHECK(diagnostics_contain(res.diagnostics, "struct 'Record' is defined in 2 locations"));
+        CHECK(diagnostics_contain(res.diagnostics, "use module qualification or rename"));
         // N-1 == 1 "other definition in module" related note.
         CHECK(count_related_with(res.diagnostics,
                                  "lint.DUPLICATE_STRUCT_NAME",
@@ -1751,12 +1735,10 @@ module lib::a;
 struct SingleRecord { id: Int; }
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l1_neg_struct", {mod_main, mod_a});
+        const auto [parse, res] = resolve_multi_module("l1_neg_struct", {mod_main, mod_a});
         (void)parse;
         CHECK_FALSE(res.has_errors());
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.DUPLICATE_STRUCT_NAME") == 0);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME") == 0);
     }
 
     // --- L2: NAME_COLLISION_ACROSS_KINDS — N/A compile-time pin ---
@@ -1780,26 +1762,22 @@ capability Foo(x: Int) -> Int;   // same spelling, different namespace
 predicate Foo(x: Int) -> Bool;   // same spelling, different namespace
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l2_ns_disjoint", {mod_main});
+        const auto [parse, res] = resolve_multi_module("l2_ns_disjoint", {mod_main});
         (void)parse;
         // Parsing + resolution succeed: the three declarations happily
         // coexist because they land in different namespaces.
         CHECK_FALSE(res.has_errors());
         // No cross-kind lint fires (the lint pass body is intentionally
         // empty — see lint_name_collision_across_kinds in resolver.cpp).
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.NAME_COLLISION_ACROSS_KINDS") == 0);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.NAME_COLLISION_ACROSS_KINDS") == 0);
         // No false DUPLICATE_STRUCT_NAME either — different kinds go into
         // different NamespaceIndex instances, so the by_kind sub-partition
         // of L1 never reaches size >= 2 for the same (ns, local_name).
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.DUPLICATE_STRUCT_NAME") == 0);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME") == 0);
         // Compile-time pin: the error code identifier still resolves so
         // future implementations (e.g. a unified user namespace) can re-use
         // it without updating the catalogue elsewhere.
-        const ahfl::ErrorCode<ahfl::DiagnosticCategory::Lint> _pin{
-            "NAME_COLLISION_ACROSS_KINDS"};
+        const ahfl::ErrorCode<ahfl::DiagnosticCategory::Lint> _pin{"NAME_COLLISION_ACROSS_KINDS"};
         (void)_pin;
     }
 
@@ -1815,22 +1793,18 @@ module lib::a;
 struct Record { id: Int; }
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l3_pos_unused", {mod_main, mod_a});
+        const auto [parse, res] = resolve_multi_module("l3_pos_unused", {mod_main, mod_a});
         (void)parse;
         CHECK_FALSE(res.has_errors());
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.UNUSED_IMPORT") >= 1);
-        const auto *diag = diagnostic_with_code(res.diagnostics,
-                                                "lint.UNUSED_IMPORT");
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.UNUSED_IMPORT") >= 1);
+        const auto *diag = diagnostic_with_code(res.diagnostics, "lint.UNUSED_IMPORT");
         REQUIRE(diag != nullptr);
         CHECK(diag->severity == ahfl::DiagnosticSeverity::Warning);
         CHECK(diagnostics_contain(res.diagnostics,
                                   "import 'LibA' from module 'lib::a' is never used"));
         CHECK(diagnostics_contain(res.diagnostics, "remove to silence"));
-        CHECK(count_related_with(res.diagnostics,
-                                 "lint.UNUSED_IMPORT",
-                                 "import declaration is here") >= 1);
+        CHECK(count_related_with(
+                  res.diagnostics, "lint.UNUSED_IMPORT", "import declaration is here") >= 1);
     }
 
     // --- L3 negative: import is used at least once ---
@@ -1847,14 +1821,12 @@ module lib::a;
 struct Record { id: Int; }
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l3_neg_used", {mod_main, mod_a});
+        const auto [parse, res] = resolve_multi_module("l3_neg_used", {mod_main, mod_a});
         (void)parse;
         // Type syntax of `LibA::Record` resolves during ResolveReferences
         // (NamedType path in resolve_type) → LibA is marked used.
         CHECK_FALSE(res.has_errors());
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.UNUSED_IMPORT") == 0);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.UNUSED_IMPORT") == 0);
     }
 
     // --- Extra guard: L1 + L3 compose without double-reporting ---
@@ -1873,21 +1845,19 @@ module lib::b;
 struct Widget { w: String; }  // same local name → L1 fires
 )AHFL"};
 
-        const auto [parse, res] =
-            resolve_multi_module("l1_l3_composed", {mod_main, mod_a, mod_b});
+        const auto [parse, res] = resolve_multi_module("l1_l3_composed", {mod_main, mod_a, mod_b});
         (void)parse;
         CHECK_FALSE(res.has_errors());
         // Exactly one cross-module nominal duplicate.
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.DUPLICATE_STRUCT_NAME") == 1);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME") == 1);
         // Two unused imports (a, b).
-        CHECK(diagnostic_count_with_code(res.diagnostics,
-                                         "lint.UNUSED_IMPORT") == 2);
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.UNUSED_IMPORT") == 2);
         // Severity class check — every lint entry is Warning, never Error.
         std::size_t lint_entry_count = 0;
         bool all_lint_are_warning = true;
         for (const auto &entry : res.diagnostics.entries()) {
-            if (!entry.code.has_value()) continue;
+            if (!entry.code.has_value())
+                continue;
             if (entry.code->compare(0, 5, "lint.") == 0) {
                 ++lint_entry_count;
                 if (entry.severity != ahfl::DiagnosticSeverity::Warning) {
@@ -1895,7 +1865,7 @@ struct Widget { w: String; }  // same local name → L1 fires
                 }
             }
         }
-        CHECK(lint_entry_count == 3);   // 1 DUPLICATE + 2 UNUSED_IMPORT
+        CHECK(lint_entry_count == 3); // 1 DUPLICATE + 2 UNUSED_IMPORT
         CHECK(all_lint_are_warning);
         // Most importantly: no error-severity diagnostics were produced by
         // the lint pass → a -Werror-style gate cannot flip the exit code.

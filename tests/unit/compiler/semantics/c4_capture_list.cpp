@@ -22,6 +22,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "tooling/formatter/formatter.hpp"
 
 #include "common/test_support.hpp"
@@ -67,11 +68,12 @@ struct CompileArtifacts {
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    a.parse = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {main_path},
-        .search_roots = {a.root, std::filesystem::path{"std"}},
-        .inject_prelude = false,
-    });
+    a.parse = ahfl::parse_project(frontend,
+                                  ahfl::ProjectInput{
+                                      .entry_files = {main_path},
+                                      .search_roots = {a.root, std::filesystem::path{"std"}},
+                                      .inject_prelude = false,
+                                  });
 
     std::size_t parse_err_count = 0;
     if (a.parse.has_errors()) {
@@ -135,7 +137,7 @@ struct CompileArtifacts {
 // ============================================================================
 TEST_CASE("C-4 empty capture list parses like implicit capture") {
     const auto a = compile_project_loose("t1_empty_capture",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t1;
         fn apply(f: Fn(Int) -> Int, x: Int) -> Int effect Pure decreases 0 {
             return f(x);
@@ -164,7 +166,7 @@ TEST_CASE("C-4 empty capture list parses like implicit capture") {
 // ============================================================================
 TEST_CASE("C-4 single capture resolves and records captured_names") {
     const auto a = compile_project_loose("t2_single_capture",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t2;
         fn main() -> Int effect Pure decreases 0 {
             let x: Int = 10;
@@ -188,7 +190,7 @@ TEST_CASE("C-4 single capture resolves and records captured_names") {
 // ============================================================================
 TEST_CASE("C-4 multi capture preserves source order") {
     const auto a = compile_project_loose("t3_multi_capture",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t3;
         fn main() -> Int effect Pure decreases 0 {
             let a: Int = 1;
@@ -216,7 +218,7 @@ TEST_CASE("C-4 multi capture preserves source order") {
 // ============================================================================
 TEST_CASE("C-4 unknown capture emits UNKNOWN_SYMBOL") {
     const auto a = compile_project_loose("t4_unknown_capture",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t4;
         fn main() -> Int effect Pure decreases 0 {
             let x: Int = 1;
@@ -243,7 +245,7 @@ TEST_CASE("C-4 unknown capture emits UNKNOWN_SYMBOL") {
 // ============================================================================
 TEST_CASE("C-5 capture list inside impl<T> method body sees T") {
     const auto a = compile_project_loose("t5_impl_body_capture_T",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t5;
         trait Identity<T> {
             fn app(self: Self, f: Fn(T) -> T) -> T effect Pure;
@@ -275,14 +277,13 @@ TEST_CASE("C-5 capture list inside impl<T> method body sees T") {
 //     the capture list is non-empty.
 // ============================================================================
 TEST_CASE("C-6 formatter round-trip preserves capture list") {
-    const std::string original =
-        "module c4::t6;\n"
-        "fn main() -> Int effect Pure decreases 0 {\n"
-        "    let a: Int = 1;\n"
-        "    let b: Int = 2;\n"
-        "    let f = \\[a, b] (x: Int) -> x + a + b;\n"
-        "    return f(3);\n"
-        "}\n";
+    const std::string original = "module c4::t6;\n"
+                                 "fn main() -> Int effect Pure decreases 0 {\n"
+                                 "    let a: Int = 1;\n"
+                                 "    let b: Int = 2;\n"
+                                 "    let f = \\[a, b] (x: Int) -> x + a + b;\n"
+                                 "    return f(3);\n"
+                                 "}\n";
 
     const auto formatted = ahfl::formatter::format_source(original);
     REQUIRE(formatted.success);
@@ -310,7 +311,7 @@ TEST_CASE("C-6 formatter round-trip preserves capture list") {
 // ============================================================================
 TEST_CASE("C-7 no-brackets lambda keeps empty captured_names") {
     const auto a = compile_project_loose("t7_no_brackets",
-        R"AHFL(
+                                         R"AHFL(
         module c4::t7;
         fn main() -> Int effect Pure decreases 0 {
             let f = \x -> x + 1;

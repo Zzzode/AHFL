@@ -6,6 +6,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/executor.hpp"
 
 #include <filesystem>
@@ -113,8 +114,8 @@ struct TestDispatchEntry {
     return 2;
 }
 
-[[nodiscard]] inline ProjectInput workflow_value_flow_project_input(
-    const std::filesystem::path &app_manifest_path) {
+[[nodiscard]] inline ProjectInput
+workflow_value_flow_project_input(const std::filesystem::path &app_manifest_path) {
     const auto app_root = std::filesystem::weakly_canonical(app_manifest_path).parent_path();
     const auto fixture_root = app_root.parent_path();
     const auto repo_root = fixture_root.parent_path().parent_path().parent_path();
@@ -145,7 +146,7 @@ load_project_ir(const std::filesystem::path &app_manifest_path) {
     const Frontend frontend;
 
     const auto project_result =
-        frontend.parse_project(workflow_value_flow_project_input(app_manifest_path));
+        ahfl::parse_project(frontend, workflow_value_flow_project_input(app_manifest_path));
     if (project_result.has_errors()) {
         project_result.diagnostics.render(std::cout);
         return std::nullopt;
@@ -184,7 +185,8 @@ load_project_ir(const std::filesystem::path &app_manifest_path) {
 /// pointer to it; otherwise nullptr.  Caller retains ownership.
 [[nodiscard]] inline const evaluator::ExecAssertFailed *
 extract_assert_failed(const std::optional<evaluator::ExecResult> &exec_result) {
-    if (!exec_result.has_value()) return nullptr;
+    if (!exec_result.has_value())
+        return nullptr;
     return std::get_if<evaluator::ExecAssertFailed>(&exec_result->outcome);
 }
 

@@ -16,6 +16,7 @@
 #include "compiler/package_graph/lockfile.hpp"
 #include "compiler/package_graph/package_graph.hpp"
 #include "compiler/passes/pass_manager.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/cli_analysis_helpers.hpp"
 #include "tooling/cli/option_table.hpp"
@@ -643,9 +644,9 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
                 package != nullptr ? package->exported_modules : std::vector<std::string>{},
             .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
             .compiler_intrinsics_allow =
-                package == nullptr ? std::nullopt
-                                   : std::optional<std::vector<std::string>>{
-                                         package->compiler_intrinsics_allow},
+                package == nullptr
+                    ? std::nullopt
+                    : std::optional<std::vector<std::string>>{package->compiler_intrinsics_allow},
         });
     }
     return input;
@@ -662,9 +663,9 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
                                            const ahfl::package_graph::TargetNode &target) {
     auto entry_kind = ahfl::handoff::ExecutableKind::Workflow;
     if (const auto export_entry =
-            std::find_if(target.exports.begin(), target.exports.end(), [&](const auto &item) {
-                return item.name == target.entry;
-            });
+            std::find_if(target.exports.begin(),
+                         target.exports.end(),
+                         [&](const auto &item) { return item.name == target.entry; });
         export_entry != target.exports.end() && export_entry->kind == "agent") {
         entry_kind = ahfl::handoff::ExecutableKind::Agent;
     }
@@ -1258,8 +1259,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_manifest_path.has_value() &&
-        !is_workspace_manifest_path(options_)) {
+    if (options_.workspace_manifest_path.has_value() && !is_workspace_manifest_path(options_)) {
         std::cerr << "error: --workspace expects ahfl.workspace.toml\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -1355,7 +1355,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
             return ExitCode::UsageError;
         }
     } else if (!package_graph_descriptor_dump &&
-               (manifest_input     ? !options_.positional.empty()
+               (manifest_input        ? !options_.positional.empty()
                 : package_graph_input ? !options_.positional.empty()
                                       : options_.positional.size() != 1)) {
         print_usage(std::cerr);
@@ -1687,7 +1687,7 @@ ExitCode CliDriver::execute() {
     ahfl::ProjectInput input;
     input.entry_files.push_back(std::string(options_.positional.front()));
 
-    auto project_result = frontend_.parse_project(input);
+    auto project_result = ahfl::parse_project(frontend_, input);
     render_diagnostics(*diag_consumer_, project_result, std::nullopt);
     if (project_result.has_errors()) {
         return ExitCode::CompileError;
@@ -1737,8 +1737,8 @@ ExitCode CliDriver::run_workspace_package() {
         return ExitCode::UsageError;
     }
 
-    const auto workspace_manifest_path =
-        normalize_manifest_path(std::filesystem::path{std::string{*options_.workspace_manifest_path}});
+    const auto workspace_manifest_path = normalize_manifest_path(
+        std::filesystem::path{std::string{*options_.workspace_manifest_path}});
     const auto graph_result = ahfl::package_graph::build_package_graph_from_workspace(
         ahfl::package_graph::WorkspaceBuildInput{
             .workspace_manifest_path = workspace_manifest_path,
@@ -1786,7 +1786,7 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
     }
 
     auto input = project_input_from_package_graph(graph, *entry_file);
-    auto project_result = frontend_.parse_project(input);
+    auto project_result = ahfl::parse_project(frontend_, input);
     render_diagnostics(*diag_consumer_, project_result, std::nullopt);
     if (project_result.has_errors()) {
         return ExitCode::CompileError;

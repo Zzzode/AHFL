@@ -13,6 +13,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"

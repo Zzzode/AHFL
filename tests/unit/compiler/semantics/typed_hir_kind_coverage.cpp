@@ -26,6 +26,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <cstdio>
 #include <filesystem>
@@ -48,17 +49,18 @@ struct TypedHIRFixture {
     [[nodiscard]] ahfl::TypeCheckResult
     check_project(const std::filesystem::path &root,
                   const std::vector<std::filesystem::path> &entry_files) const {
-        const auto parse = frontend.parse_project(ahfl::ProjectInput{
-            .entry_files = entry_files,
-            .search_roots = {root, std::filesystem::path{"std"}},
-            .inject_prelude = true,
-        });
+        const auto parse =
+            ahfl::parse_project(frontend,
+                                ahfl::ProjectInput{
+                                    .entry_files = entry_files,
+                                    .search_roots = {root, std::filesystem::path{"std"}},
+                                    .inject_prelude = true,
+                                });
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);
-            std::fprintf(stderr,
-                         "=== PROJECT PARSE DIAGNOSTICS ===\n%s\n=== END ===\n",
-                         ss.str().c_str());
+            std::fprintf(
+                stderr, "=== PROJECT PARSE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
         }
         REQUIRE_FALSE(parse.has_errors());
 
@@ -67,9 +69,8 @@ struct TypedHIRFixture {
         if (resolve.has_errors()) {
             std::ostringstream ss;
             resolve.diagnostics.render(ss);
-            std::fprintf(stderr,
-                         "=== PROJECT RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n",
-                         ss.str().c_str());
+            std::fprintf(
+                stderr, "=== PROJECT RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
         }
         REQUIRE_FALSE(resolve.has_errors());
 
@@ -94,8 +95,8 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
 }
 
 [[nodiscard]] std::filesystem::path make_temp_project(std::string_view name) {
-    const auto root = std::filesystem::temp_directory_path() /
-                      ("ahfl_stmtcov_" + std::string(name));
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_stmtcov_" + std::string(name));
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
     return root;
@@ -293,7 +294,8 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
                   "TypedStmtKind matrix — round-trip preserves kind + payload per kind") {
     const auto root = make_temp_project("stmt_kind_roundtrip");
     const auto source_path = module_source_path(root, "cov::rt");
-    const auto source = std::string("module cov::rt;\n") + "import std::option as option;\n" + kSharedPrefix +
+    const auto source = std::string("module cov::rt;\n") + "import std::option as option;\n" +
+                        kSharedPrefix +
                         "agent CoverageAgent {\n"
                         "    input: Request;\n"
                         "    context: Context;\n"
@@ -407,11 +409,13 @@ struct KindDispatchCounter {
     }
 };
 
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "TypedStmtKind matrix — typed_visit dispatches every kind exactly once per statement") {
+TEST_CASE_FIXTURE(
+    TypedHIRFixture,
+    "TypedStmtKind matrix — typed_visit dispatches every kind exactly once per statement") {
     const auto root = make_temp_project("stmt_kind_dispatch");
     const auto source_path = module_source_path(root, "cov::dispatch");
-    const auto source = std::string("module cov::dispatch;\n") + "import std::option as option;\n" + kSharedPrefix +
+    const auto source = std::string("module cov::dispatch;\n") + "import std::option as option;\n" +
+                        kSharedPrefix +
                         "agent CoverageAgent {\n"
                         "    input: Request;\n"
                         "    context: Context;\n"

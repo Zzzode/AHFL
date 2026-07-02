@@ -244,9 +244,8 @@ sysroot_only_graph_for_lsp(const manifest::PackageManifest &manifest,
         std::filesystem::path(AnalysisService::normalized_path_key(manifest_path));
     const auto package_root = std::filesystem::path(
         AnalysisService::normalized_path_key(normalized_manifest.parent_path()));
-    const auto module_root =
-        std::filesystem::path(AnalysisService::normalized_path_key(package_root /
-                                                                   manifest.module_root));
+    const auto module_root = std::filesystem::path(
+        AnalysisService::normalized_path_key(package_root / manifest.module_root));
 
     package_graph::PackageGraph graph;
     graph.packages.push_back(package_graph::PackageNode{
@@ -429,9 +428,9 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     const auto *root_package = root_package_for_lsp(graph);
     const auto fallback_entry =
         std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
-    input.entry_files.push_back(root_package == nullptr ? fallback_entry
-                                                        : lsp_target_entry_file(*root_package,
-                                                                                fallback_entry));
+    input.entry_files.push_back(root_package == nullptr
+                                    ? fallback_entry
+                                    : lsp_target_entry_file(*root_package, fallback_entry));
     input.include_stdlib = false;
     input.inject_prelude = false;
     input.source_overlays = std::move(overlays);
@@ -728,7 +727,7 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
 
             auto project_input = project_input_from_package_graph(
                 package_graph_input->graph, *document_path, open_document_overlays());
-            auto project_result = frontend.parse_project(project_input);
+            auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =
                 std::make_unique<ProjectParseResult>(std::move(project_result));
 

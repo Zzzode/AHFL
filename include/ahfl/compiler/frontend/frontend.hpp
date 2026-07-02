@@ -60,43 +60,6 @@ struct SourceGraph {
     std::vector<ImportEdge> import_edges;
 };
 
-struct ProjectInput {
-    struct ModuleRoot {
-        std::string prefix;
-        std::filesystem::path root;
-        std::vector<std::string> exported_modules;
-        std::vector<std::string> dependency_prefixes;
-        std::optional<std::vector<std::string>> compiler_intrinsics_allow;
-    };
-
-    std::vector<std::filesystem::path> entry_files{};
-    std::vector<std::filesystem::path> search_roots{};
-    std::vector<ModuleRoot> module_roots{};
-    // Project-aware parses can include the repository stdlib by default.
-    // Prelude symbols are opt-in: users must explicitly import std modules,
-    // and tests that exercise the old implicit behavior must set
-    // inject_prelude=true deliberately.
-    bool include_stdlib{true};
-    bool inject_prelude{false};
-    std::vector<std::filesystem::path> stdlib_search_roots{};
-    // Normalized absolute path string -> unsaved document text. LSP and other
-    // project-aware tooling use this to overlay open editor buffers while
-    // reusing the canonical SourceGraph loader.
-    std::unordered_map<std::string, std::string> source_overlays{};
-    // PackageGraph-backed callers set this to require cross-package imports to
-    // match an explicit dependency edge. Raw source-root callers leave it off.
-    bool enforce_package_dependencies{false};
-};
-
-struct ProjectParseResult {
-    SourceGraph graph;
-    DiagnosticBag diagnostics;
-
-    [[nodiscard]] bool has_errors() const noexcept {
-        return diagnostics.has_error();
-    }
-};
-
 class Frontend {
   public:
     explicit Frontend(FrontendOptions options = {});
@@ -106,7 +69,6 @@ class Frontend {
     // rather than ANTLR parse-tree nodes.
     [[nodiscard]] ParseResult parse_file(const std::filesystem::path &path) const;
     [[nodiscard]] ParseResult parse_text(std::string display_name, std::string text) const;
-    [[nodiscard]] ProjectParseResult parse_project(const ProjectInput &input) const;
 
   private:
     FrontendOptions options_;

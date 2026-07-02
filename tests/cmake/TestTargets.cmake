@@ -5,6 +5,7 @@ target_link_libraries(ahfl_project_parse_tests
     PRIVATE
         ahfl_compiler_syntax
 )
+target_include_directories(ahfl_project_parse_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_project_parse_tests)
 
 add_executable(ahfl_project_resolve_tests
@@ -14,6 +15,7 @@ target_link_libraries(ahfl_project_resolve_tests
     PRIVATE
         ahfl_compiler_semantics
 )
+target_include_directories(ahfl_project_resolve_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_project_resolve_tests)
 
 add_executable(ahfl_project_check_tests
@@ -37,6 +39,7 @@ target_link_libraries(ahfl_compiler_ir_tests
         ahfl_compiler_handoff
         doctest
 )
+target_include_directories(ahfl_compiler_ir_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_compiler_ir_tests)
 
 add_executable(ahfl_compiler_ir_opt_tests
@@ -608,6 +611,7 @@ target_link_libraries(ahfl_semantics_d3_decreases_expr_tests
 target_include_directories(ahfl_semantics_d3_decreases_expr_tests
     PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/..
+        ${PROJECT_SOURCE_DIR}/src
 )
 ahfl_apply_project_warnings(ahfl_semantics_d3_decreases_expr_tests)
 add_test(NAME d3_decreases_expr COMMAND ahfl_semantics_d3_decreases_expr_tests)

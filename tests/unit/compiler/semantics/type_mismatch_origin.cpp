@@ -4,6 +4,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "compiler/syntax/frontend/project.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -82,21 +83,22 @@ typecheck_multi_module(std::string_view project_tag,
     const ahfl::Frontend frontend;
     auto dump_first = [&]() -> std::string {
         std::ifstream f(*entry_path);
-        if (!f) return {};
-        return std::string{(std::istreambuf_iterator<char>(f)),
-                           std::istreambuf_iterator<char>()};
+        if (!f)
+            return {};
+        return std::string{(std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()};
     };
-    const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = {*entry_path},
-        .search_roots = {root, std::filesystem::path{"std"}},
-        .inject_prelude = true,
-    });
+    const auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::ProjectInput{
+                                .entry_files = {*entry_path},
+                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .inject_prelude = true,
+                            });
     if (parse_result.has_errors()) {
         std::ostringstream ss;
         parse_result.diagnostics.render(ss);
         std::cerr << "[PARSE-ERR-" << project_tag << "]\n"
-                  << ss.str()
-                  << "[FIRST MODULE]\n"
+                  << ss.str() << "[FIRST MODULE]\n"
                   << dump_first() << "\n[END FIRST MODULE]\n";
     }
     REQUIRE_FALSE(parse_result.has_errors());
@@ -130,8 +132,7 @@ typecheck_multi_module(std::string_view project_tag,
     return false;
 }
 
-[[nodiscard]] std::size_t count_related_with(const ahfl::Diagnostic &d,
-                                             std::string_view needle) {
+[[nodiscard]] std::size_t count_related_with(const ahfl::Diagnostic &d, std::string_view needle) {
     std::size_t n = 0;
     for (const auto &r : d.related) {
         if (r.message.find(needle) != std::string::npos) {
@@ -141,8 +142,8 @@ typecheck_multi_module(std::string_view project_tag,
     return n;
 }
 
-[[nodiscard]] const ahfl::Diagnostic *
-find_diagnostic_with_code(const ahfl::DiagnosticBag &bag, std::string_view code) {
+[[nodiscard]] const ahfl::Diagnostic *find_diagnostic_with_code(const ahfl::DiagnosticBag &bag,
+                                                                std::string_view code) {
     for (const auto &d : bag.entries()) {
         if (d.code.has_value() && *d.code == code) {
             return &d;
@@ -169,11 +170,10 @@ void dump_if_mismatch(const char *tag, const ahfl::DiagnosticBag &bag) {
 // N1: struct cross-module — both sides carry "declared here" notes
 // ============================================================================
 TEST_CASE("TypeMismatch nominal: struct A vs struct B across modules carries declared-here notes") {
-    const auto result = typecheck_multi_module(
-        "n1_struct_cross",
-        {
-            NamedModuleSource{"app::main",
-                              R"AHFL(
+    const auto result = typecheck_multi_module("n1_struct_cross",
+                                               {
+                                                   NamedModuleSource{"app::main",
+                                                                     R"AHFL(
 module app::main;
 import lib::definitions as defs;
 fn consume(u: defs::User) -> Unit effect Pure decreases 0 { }
@@ -182,15 +182,14 @@ fn runTop() -> Unit effect Pure decreases 0 {
     let unit = consume(p);
 }
 )AHFL"},
-            NamedModuleSource{"lib::definitions",
-                              R"AHFL(
+                                                   NamedModuleSource{"lib::definitions",
+                                                                     R"AHFL(
 module lib::definitions;
 import lib::definitions as self;
 struct User { id: Int; name: String; }
 struct Product { sku: String; price: Int; }
 )AHFL"},
-        }
-    );
+                                               });
     dump_if_mismatch("n1", result.diagnostics);
 
     const auto *d = find_diagnostic_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH");
@@ -206,11 +205,10 @@ struct Product { sku: String; price: Int; }
 // N2: enum cross-module — each enum anchors its own declared-here note.
 // ============================================================================
 TEST_CASE("TypeMismatch nominal: enum X vs enum Y across modules carries declared-here notes") {
-    const auto result = typecheck_multi_module(
-        "n2_enum_cross",
-        {
-            NamedModuleSource{"app::main",
-                              R"AHFL(
+    const auto result = typecheck_multi_module("n2_enum_cross",
+                                               {
+                                                   NamedModuleSource{"app::main",
+                                                                     R"AHFL(
 module app::main;
 import lib::colors as c;
 import lib::shapes as s;
@@ -220,8 +218,8 @@ fn runTop() -> Unit effect Pure decreases 0 {
     let unit = pick(shape);
 }
 )AHFL"},
-            NamedModuleSource{"lib::colors",
-                              R"AHFL(
+                                                   NamedModuleSource{"lib::colors",
+                                                                     R"AHFL(
 module lib::colors;
 import lib::colors as self;
 enum Color {
@@ -230,8 +228,8 @@ enum Color {
     Blue,
 }
 )AHFL"},
-            NamedModuleSource{"lib::shapes",
-                              R"AHFL(
+                                                   NamedModuleSource{"lib::shapes",
+                                                                     R"AHFL(
 module lib::shapes;
 import lib::shapes as self;
 enum Shape {
@@ -239,8 +237,7 @@ enum Shape {
     Square,
 }
 )AHFL"},
-        }
-    );
+                                               });
     dump_if_mismatch("n2", result.diagnostics);
 
     const auto *d = find_diagnostic_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH");
@@ -257,11 +254,10 @@ enum Shape {
 // N3: same-module two structs — both declared-here notes anchor in that module
 // ============================================================================
 TEST_CASE("TypeMismatch nominal: two structs same-module carry declared-here notes") {
-    const auto result = typecheck_multi_module(
-        "n3_same_mod_structs",
-        {
-            NamedModuleSource{"app::main",
-                              R"AHFL(
+    const auto result = typecheck_multi_module("n3_same_mod_structs",
+                                               {
+                                                   NamedModuleSource{"app::main",
+                                                                     R"AHFL(
 module app::main;
 import lib::models as m;
 fn show(p: m::Profile) -> Unit effect Pure decreases 0 { }
@@ -270,15 +266,14 @@ fn runTop() -> Unit effect Pure decreases 0 {
     let unit = show(u);
 }
 )AHFL"},
-            NamedModuleSource{"lib::models",
-                              R"AHFL(
+                                                   NamedModuleSource{"lib::models",
+                                                                     R"AHFL(
 module lib::models;
 import lib::models as self;
 struct RawUser { id: Int; }
 struct Profile { owner: RawUser; }
 )AHFL"},
-        }
-    );
+                                               });
     dump_if_mismatch("n3", result.diagnostics);
 
     const auto *d = find_diagnostic_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH");
@@ -293,11 +288,10 @@ struct Profile { owner: RawUser; }
 // name + both-side nominal declared-here notes.
 // ============================================================================
 TEST_CASE("TypeMismatch per-argument: fn call argument #1 carries index and callable name") {
-    const auto result = typecheck_multi_module(
-        "a1_fn_arg1",
-        {
-            NamedModuleSource{"app::main",
-                              R"AHFL(
+    const auto result = typecheck_multi_module("a1_fn_arg1",
+                                               {
+                                                   NamedModuleSource{"app::main",
+                                                                     R"AHFL(
 module app::main;
 import lib::api as api;
 fn runTop() -> Unit effect Pure decreases 0 {
@@ -305,8 +299,8 @@ fn runTop() -> Unit effect Pure decreases 0 {
     let r = api::handle(fake, 1000);
 }
 )AHFL"},
-            NamedModuleSource{"lib::api",
-                              R"AHFL(
+                                                   NamedModuleSource{"lib::api",
+                                                                     R"AHFL(
 module lib::api;
 import lib::api as self;
 struct Request { body: String; }
@@ -315,8 +309,7 @@ fn handle(req: Request, timeoutMs: Int) -> Response effect Pure decreases 0 {
     return Response { status: 200 };
 }
 )AHFL"},
-        }
-    );
+                                               });
     dump_if_mismatch("a1", result.diagnostics);
 
     const auto *d = find_diagnostic_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH");
@@ -325,10 +318,8 @@ fn handle(req: Request, timeoutMs: Int) -> Response effect Pure decreases 0 {
     CHECK(count_related_with(*d, "declared in `handle`") == 1);
     CHECK(diagnostic_contains(*d, "Request"));
     CHECK(diagnostic_contains(*d, "Response"));
-    CHECK(count_related_with(*d,
-                             "expected type 'lib::api::Request' declared here in module") == 1);
-    CHECK(count_related_with(*d,
-                             "actual type 'lib::api::Response' declared here in module") == 1);
+    CHECK(count_related_with(*d, "expected type 'lib::api::Request' declared here in module") == 1);
+    CHECK(count_related_with(*d, "actual type 'lib::api::Response' declared here in module") == 1);
 }
 
 // ============================================================================
@@ -336,11 +327,10 @@ fn handle(req: Request, timeoutMs: Int) -> Response effect Pure decreases 0 {
 // callable name + both-side nominal declared-here notes.
 // ============================================================================
 TEST_CASE("TypeMismatch per-argument: predicate call 3rd arg carries index and callable name") {
-    const auto result = typecheck_multi_module(
-        "a2_pred_arg3",
-        {
-            NamedModuleSource{"app::main",
-                              R"AHFL(
+    const auto result = typecheck_multi_module("a2_pred_arg3",
+                                               {
+                                                   NamedModuleSource{"app::main",
+                                                                     R"AHFL(
 module app::main;
 import app::main as self;
 struct Tag { label: String; }
@@ -354,8 +344,7 @@ fn check() -> Bool effect Pure decreases 0 {
     return Valid(Target { id: 7 }, "try", wrong);
 }
 )AHFL"},
-        }
-    );
+                                               });
     dump_if_mismatch("a2", result.diagnostics);
 
     const auto *d = find_diagnostic_with_code(result.diagnostics, "typecheck.TYPE_MISMATCH");
@@ -382,10 +371,8 @@ fn runTop() -> Unit effect Pure decreases 0 {
     let u2 = label(n);
 }
 )AHFL";
-    const auto result = typecheck_multi_module(
-        "nneg_builtins",
-        {NamedModuleSource{"app::main", source}}
-    );
+    const auto result =
+        typecheck_multi_module("nneg_builtins", {NamedModuleSource{"app::main", source}});
     dump_if_mismatch("nneg", result.diagnostics);
 
     std::size_t mismatches = 0;
