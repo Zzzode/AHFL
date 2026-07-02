@@ -896,6 +896,51 @@ version = 1
     CHECK(found->range.end_offset == invalid_member_offset + invalid_member.size());
 }
 
+TEST_CASE("Workspace manifest schema rejects duplicate member paths") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/refund-audit", "packages/refund-audit"]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE(result.has_errors());
+    const auto found = std::find_if(result.diagnostics.begin(),
+                                    result.diagnostics.end(),
+                                    [](const auto &diagnostic) {
+                                        return diagnostic.message.find("duplicate member paths") !=
+                                               std::string::npos;
+    });
+    REQUIRE(found != result.diagnostics.end());
+    constexpr std::string_view duplicate_member = "\"packages/refund-audit\"";
+    const auto duplicate_member_offset =
+        input.find(duplicate_member, input.find(duplicate_member) + duplicate_member.size());
+    CHECK(found->range.begin_offset == duplicate_member_offset);
+    CHECK(found->range.end_offset == duplicate_member_offset + duplicate_member.size());
+}
+
+TEST_CASE("Workspace manifest schema rejects normalized duplicate member paths") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/refund-audit", "packages/../packages/refund-audit"]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics,
+                      "workspace.members must not contain duplicate member paths"));
+}
+
 TEST_CASE("Workspace manifest schema rejects empty string fields") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 

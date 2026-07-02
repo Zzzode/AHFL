@@ -891,12 +891,21 @@ ManifestResult<WorkspaceManifest> parse_workspace_manifest(std::string_view inpu
             read_string_array(*workspace, "members", "workspace.members", true, result.diagnostics);
         if (const auto *members_entry = find_entry(*workspace, "members");
             members_entry != nullptr && members_entry->value->kind == ValueKind::Array) {
+            std::unordered_set<std::string> normalized_members;
             for (const auto &item : members_entry->value->array_items) {
                 if (item->kind == ValueKind::String && !item->string_value.empty()) {
                     validate_relative_path(item->string_value,
                                            "workspace.members",
                                            item->range,
                                            result.diagnostics);
+                    const auto normalized =
+                        std::filesystem::path{item->string_value}.lexically_normal().generic_string();
+                    if (!normalized_members.insert(normalized).second) {
+                        add_diag(result.diagnostics,
+                                 kInvalidValue,
+                                 "workspace.members must not contain duplicate member paths",
+                                 item->range);
+                    }
                 }
             }
         }
