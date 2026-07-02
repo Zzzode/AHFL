@@ -2406,6 +2406,15 @@ add_test(NAME ahflc.check.manifest_rejects_legacy_project_json
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.manifest_rejects_workspace_dependency_source
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/packages/refund-audit/ahfl.toml"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/packages/refund-audit/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=workspace dependency 'audit-core' requires workspace manifest context"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.manifest_basic
     COMMAND $<TARGET_FILE:ahflc> emit native-json
             --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
