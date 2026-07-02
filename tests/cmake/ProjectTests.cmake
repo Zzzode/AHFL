@@ -2675,6 +2675,15 @@ add_test(NAME ahflc.emit_native_json.package_requires_workspace
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.emit_native_json.rejects_legacy_package_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.package.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--package\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.package.json\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/app/main.ahfl"
+            "-DEXPECTED_REGEX=--package is only supported with --workspace <ahfl\\.workspace\\.toml>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.emit_package_review.manifest.workflow_value_flow.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

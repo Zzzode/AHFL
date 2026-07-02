@@ -77,6 +77,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.5 v0.5-package-authoring-emission
     TESTS
         ahflc.emit_native_json.package_requires_workspace
+        ahflc.emit_native_json.rejects_legacy_package_json
         ahflc.emit_native_json.manifest_rejects_workspace_package_selector
         ahflc.emit_package_review.manifest_basic
         ahflc.emit_package_review.workspace_basic
