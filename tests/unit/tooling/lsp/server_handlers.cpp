@@ -3,6 +3,7 @@
 #include "tooling/lsp/hover_service.hpp"
 #include "tooling/lsp/server.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -1596,6 +1597,46 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
           "descriptorless_workspace.liveness_hover_signature");
     check(liveness_hover_output.find("workflow liveness property") != std::string::npos,
           "descriptorless_workspace.liveness_hover_headline");
+}
+
+void test_descriptorless_std_file_does_not_add_overlapping_workspace_root() {
+    const auto root = make_temp_project("descriptorless_std_workspace");
+    const auto collections_path = root / "std" / "collections.ahfl";
+    const auto option_path = root / "std" / "option.ahfl";
+    const std::string collections_source = "module std::collections;\n"
+                                           "import std::option as option;\n"
+                                           "\n"
+                                           "struct List<T> {}\n";
+    write_file(collections_path, collections_source);
+    write_file(option_path,
+               "module std::option;\n"
+               "\n"
+               "enum Option<T> { Some(T), None, }\n");
+
+    const auto collections_uri = AnalysisService::uri_from_path(collections_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = collections_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = collections_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_roots({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
+    check(snapshot != nullptr, "descriptorless_std.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(collections_uri);
+    const auto has_ambiguous_import =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("ambiguous across search roots") != std::string::npos;
+        });
+    check(!has_ambiguous_import, "descriptorless_std.no_ambiguous_import");
 }
 
 void test_hover_renderer_detail_levels() {
@@ -3254,6 +3295,7 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_workspace_descriptor_selects_project_for_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
+    test_descriptorless_std_file_does_not_add_overlapping_workspace_root();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
     test_hover_respects_client_markup_and_debug_options();

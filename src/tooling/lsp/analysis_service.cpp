@@ -445,6 +445,7 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
             auto project_result = frontend.parse_project(ProjectInput{
                 .entry_files = descriptor_result.descriptor->entry_files,
                 .search_roots = descriptor_result.descriptor->search_roots,
+                .inject_prelude = true,
                 .source_overlays = open_document_overlays(),
             });
             snapshot->project_result =
@@ -485,11 +486,16 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
 
     auto parse_result = frontend.parse_text(document->uri, document->text);
     if (document_path.has_value() && parse_result.program && !parse_result.has_errors()) {
+        const auto module_name = single_module_name(*parse_result.program);
+        const auto is_std_source =
+            module_name.has_value() && (*module_name == "std" || module_name->starts_with("std::"));
         const auto inferred_roots = infer_descriptorless_search_roots(*document_path, parse_result);
         if (!inferred_roots.empty()) {
             auto project_result = frontend.parse_project(ProjectInput{
                 .entry_files = {std::filesystem::path(normalized_path_key(*document_path))},
                 .search_roots = inferred_roots,
+                .include_stdlib = !is_std_source,
+                .inject_prelude = true,
                 .source_overlays = open_document_overlays(),
             });
             snapshot->project_aware = true;
