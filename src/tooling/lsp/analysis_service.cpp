@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <system_error>
+#include <vector>
 
 namespace ahfl::lsp {
 
@@ -359,6 +360,26 @@ root_package_for_lsp(const package_graph::PackageGraph &graph) {
     return fallback;
 }
 
+[[nodiscard]] std::vector<std::string>
+dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
+                                package_graph::PackageId package_id) {
+    std::vector<std::string> prefixes;
+    for (const auto &dependency : graph.dependencies) {
+        if (dependency.from != package_id) {
+            continue;
+        }
+
+        const auto *target = graph.find_package(dependency.to);
+        if (target != nullptr) {
+            prefixes.push_back(target->module_prefix);
+        }
+    }
+
+    std::sort(prefixes.begin(), prefixes.end());
+    prefixes.erase(std::unique(prefixes.begin(), prefixes.end()), prefixes.end());
+    return prefixes;
+}
+
 [[nodiscard]] ProjectInput
 project_input_from_package_graph(const package_graph::PackageGraph &graph,
                                  const std::filesystem::path &requested_file,
@@ -373,12 +394,14 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     input.include_stdlib = false;
     input.inject_prelude = false;
     input.source_overlays = std::move(overlays);
+    input.enforce_package_dependencies = true;
     input.module_roots.reserve(graph.packages.size());
     for (const auto &package : graph.packages) {
         input.module_roots.push_back(ProjectInput::ModuleRoot{
             .prefix = package.module_prefix,
             .root = package.module_root,
             .exported_modules = package.exported_modules,
+            .dependency_prefixes = dependency_prefixes_for_package(graph, package.id),
         });
     }
     return input;

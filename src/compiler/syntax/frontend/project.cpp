@@ -184,6 +184,7 @@ effective_module_roots(const ProjectInput &input) {
                 .prefix = root.prefix,
                 .root = normalized,
                 .exported_modules = root.exported_modules,
+                .dependency_prefixes = root.dependency_prefixes,
             });
         }
     }
@@ -223,9 +224,21 @@ find_module_root(std::string_view module_name,
            root.exported_modules.end();
 }
 
+[[nodiscard]] bool module_dependency_allowed(const ProjectInput::ModuleRoot &importer,
+                                             const ProjectInput::ModuleRoot &imported) {
+    if (imported.prefix == "std") {
+        return true;
+    }
+
+    return std::find(importer.dependency_prefixes.begin(),
+                     importer.dependency_prefixes.end(),
+                     imported.prefix) != importer.dependency_prefixes.end();
+}
+
 [[nodiscard]] bool enforce_import_visibility(std::string_view importer_module,
                                              const ImportRequest &import_request,
                                              const std::vector<ProjectInput::ModuleRoot> &roots,
+                                             bool enforce_package_dependencies,
                                              DiagnosticBag &diagnostics,
                                              const SourceFile &source) {
     if (roots.empty()) {
@@ -236,6 +249,18 @@ find_module_root(std::string_view module_name,
     const auto *imported_root = find_module_root(import_request.module_name, roots);
     if (importer_root == nullptr || imported_root == nullptr || importer_root == imported_root) {
         return true;
+    }
+
+    if (enforce_package_dependencies &&
+        !module_dependency_allowed(*importer_root, *imported_root)) {
+        diagnostics.error()
+            .message("package prefix '" + importer_root->prefix +
+                     "' does not depend on package prefix '" + imported_root->prefix +
+                     "' required by import '" + import_request.module_name + "'")
+            .range(import_request.range)
+            .source(source)
+            .emit();
+        return false;
     }
 
     if (module_is_exported(import_request.module_name, *imported_root)) {
@@ -509,6 +534,7 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                         if (!enforce_import_visibility(source_unit.module_name,
                                                        import_request,
                                                        module_roots,
+                                                       input.enforce_package_dependencies,
                                                        result.diagnostics,
                                                        source_unit.source)) {
                             continue;

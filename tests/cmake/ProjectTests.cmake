@@ -49,6 +49,12 @@ add_test(NAME ahfl.frontend.project.fail_duplicate_owner
             "${AHFL_TESTS_DIR}/integration/duplicate_owner"
 )
 
+add_test(NAME ahfl.frontend.project.package_dependency_gates_imports
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            package-dependency-gates-imports
+            "${CMAKE_BINARY_DIR}/package_dependency_gates_imports"
+)
+
 add_test(NAME ahfl.frontend.project.ok_project_stdlib_root_wins_over_bundled_copy
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
             ok-project-stdlib-root-wins-over-bundled-copy

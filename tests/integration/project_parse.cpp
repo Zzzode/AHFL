@@ -8,6 +8,9 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -321,6 +324,72 @@ int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::pat
     return 1;
 }
 
+int run_package_dependency_gates_imports(const std::filesystem::path &workspace_root) {
+    const auto app_root = workspace_root / "app";
+    const auto lib_root = workspace_root / "lib";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!std::filesystem::create_directories(app_root, error) || error ||
+        !std::filesystem::create_directories(lib_root, error) || error) {
+        std::cerr << "failed to create package dependency fixture: " << workspace_root << '\n';
+        return 1;
+    }
+
+    const auto app_main = app_root / "main.ahfl";
+    if (!write_text_file(app_main,
+                         "module app::main;\n"
+                         "import lib::api as lib_api;\n") ||
+        !write_text_file(lib_root / "api.ahfl", "module lib::api;\n")) {
+        std::cerr << "failed to write package dependency fixture\n";
+        return 1;
+    }
+
+    const auto make_input = [&](std::vector<std::string> app_dependencies) {
+        ahfl::ProjectInput input;
+        input.entry_files.push_back(app_main);
+        input.include_stdlib = false;
+        input.inject_prelude = false;
+        input.enforce_package_dependencies = true;
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "app",
+            .root = app_root,
+            .exported_modules = {"main"},
+            .dependency_prefixes = std::move(app_dependencies),
+        });
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "lib",
+            .root = lib_root,
+            .exported_modules = {"api"},
+        });
+        return input;
+    };
+
+    const ahfl::Frontend frontend;
+    const auto missing_dependency = frontend.parse_project(make_input({}));
+    if (!missing_dependency.has_errors() ||
+        !contains_message(missing_dependency.diagnostics,
+                          "package prefix 'app' does not depend on package prefix 'lib'")) {
+        print_diagnostics(missing_dependency.diagnostics);
+        std::cerr << "expected missing package dependency diagnostic\n";
+        return 1;
+    }
+
+    const auto declared_dependency = frontend.parse_project(make_input({"lib"}));
+    if (declared_dependency.has_errors()) {
+        print_diagnostics(declared_dependency.diagnostics);
+        return 1;
+    }
+
+    if (!declared_dependency.graph.module_to_source.contains("app::main") ||
+        !declared_dependency.graph.module_to_source.contains("lib::api")) {
+        std::cerr << "expected declared dependency import to load both modules\n";
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -356,6 +425,10 @@ int main(int argc, char **argv) {
 
     if (test_case == "ok-project-stdlib-root-wins-over-bundled-copy") {
         return run_ok_project_stdlib_root_wins_over_bundled_copy(entry);
+    }
+
+    if (test_case == "package-dependency-gates-imports") {
+        return run_package_dependency_gates_imports(entry);
     }
 
     if (test_case == "diagnostics-support-metadata-smoke") {

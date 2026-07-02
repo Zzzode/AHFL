@@ -64,6 +64,7 @@ struct ProjectInput {
         std::string prefix;
         std::filesystem::path root;
         std::vector<std::string> exported_modules;
+        std::vector<std::string> dependency_prefixes;
     };
 
     std::vector<std::filesystem::path> entry_files{};
@@ -83,6 +84,9 @@ struct ProjectInput {
     // project-aware tooling use this to overlay open editor buffers while
     // reusing the canonical SourceGraph loader.
     std::unordered_map<std::string, std::string> source_overlays{};
+    // PackageGraph-backed callers set this to require cross-package imports to
+    // match an explicit dependency edge. Raw source-root callers leave it off.
+    bool enforce_package_dependencies{false};
 };
 
 struct ProjectParseResult {

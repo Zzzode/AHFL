@@ -315,6 +315,26 @@ resolve_module_file_from_graph(const ahfl::package_graph::PackageGraph &graph,
     return candidates.front();
 }
 
+[[nodiscard]] std::vector<std::string>
+dependency_prefixes_for_package(const ahfl::package_graph::PackageGraph &graph,
+                                ahfl::package_graph::PackageId package_id) {
+    std::vector<std::string> prefixes;
+    for (const auto &dependency : graph.dependencies) {
+        if (dependency.from != package_id) {
+            continue;
+        }
+
+        const auto *target = graph.find_package(dependency.to);
+        if (target != nullptr) {
+            prefixes.push_back(target->module_prefix);
+        }
+    }
+
+    std::sort(prefixes.begin(), prefixes.end());
+    prefixes.erase(std::unique(prefixes.begin(), prefixes.end()), prefixes.end());
+    return prefixes;
+}
+
 [[nodiscard]] const ahfl::package_graph::PackageNode *
 root_package(const ahfl::package_graph::PackageGraph &graph) {
     return graph.find_package(ahfl::package_graph::PackageId{1});
@@ -583,6 +603,7 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
     input.entry_files.push_back(std::move(entry_file));
     input.include_stdlib = false;
     input.inject_prelude = false;
+    input.enforce_package_dependencies = true;
     input.module_roots.reserve(graph.module_roots.size());
     for (const auto &root : graph.module_roots) {
         const auto *package = graph.find_package(root.package);
@@ -591,6 +612,7 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
             .root = root.root,
             .exported_modules =
                 package != nullptr ? package->exported_modules : std::vector<std::string>{},
+            .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
         });
     }
     return input;
