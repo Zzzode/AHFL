@@ -5,12 +5,12 @@ ahfl_label_tests(
         ahfl.frontend.project.fail_manifest_duplicate_field
         ahfl.frontend.project.fail_workspace_duplicate_project_name
         ahflc.dump_project.project_manifest.ok_cross_file
-        ahflc.check.project_manifest.ok_cross_file
-        ahflc.check.project_manifest.fail_escape
-        ahflc.check.workspace.ok_cross_file
-        ahflc.check.workspace.fail_duplicate_project_name
-        ahflc.check.project_manifest.fail_invalid
-        ahflc.check.workspace.fail_missing_project
+        ahflc.check.project_manifest.rejects_legacy_descriptor
+        ahflc.check.project_manifest.rejects_legacy_escape_descriptor
+        ahflc.check.workspace.rejects_legacy_descriptor
+        ahflc.check.workspace.rejects_legacy_duplicate_project
+        ahflc.check.project_manifest.rejects_legacy_invalid_descriptor
+        ahflc.check.workspace.rejects_legacy_missing_project
 )
 
 ahfl_label_tests(
@@ -25,8 +25,8 @@ ahfl_label_tests(
     TESTS
         ahflc.check.project.ok_cross_file
         ahflc.check.project.fail_node_input
-        ahflc.check.project_manifest.ok_cross_file
-        ahflc.check.workspace.ok_cross_file
+        ahflc.check.manifest_basic
+        ahflc.check.workspace_basic
         ahfl.check.project.ok_expression_type_isolated
 )
 
@@ -96,7 +96,7 @@ ahfl_label_tests(
         ahflc.emit_native_json.workflow_value_flow.with_package
         ahflc.emit_native_json.project_manifest.workflow_value_flow.with_package
         ahflc.emit_native_json.workspace.workflow_value_flow.with_package
-        ahflc.check.project_manifest.fail_package_without_native_json
+        ahflc.check.project_manifest.rejects_legacy_descriptor_with_package
 )
 
 ahfl_label_tests(

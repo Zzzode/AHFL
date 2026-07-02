@@ -1212,6 +1212,21 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
+    if (effective_command_ == CommandKind::Check && options_.project_descriptor.has_value()) {
+        std::cerr << "error: check no longer accepts --project; use --manifest <ahfl.toml>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::Check && options_.workspace_descriptor.has_value() &&
+        !is_toml_workspace_descriptor(options_)) {
+        std::cerr << "error: check --workspace expects ahfl.workspace.toml; legacy "
+                     "ahfl.workspace.json descriptors are removed; use ahfl.workspace.toml with "
+                     "--package <name>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
     if (package_graph_descriptor_dump && options_.workspace_descriptor.has_value() &&
         !is_toml_workspace_descriptor(options_)) {
         std::cerr << "error: dump " << command_short_name(*effective_command_)

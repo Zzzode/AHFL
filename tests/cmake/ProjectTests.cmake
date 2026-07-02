@@ -2589,38 +2589,39 @@ set_tests_properties(ahflc.dump_project.project_manifest.ok_cross_file PROPERTIE
     PASS_REGULAR_EXPRESSION "source_graph \\(1 entry, 3 sources, 3 imports\\)"
 )
 
-add_test(NAME ahflc.check.project_manifest.ok_cross_file
-    COMMAND $<TARGET_FILE:ahflc> check
-            --project "${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
-)
-set_tests_properties(ahflc.check.project_manifest.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked"
-)
-
-add_test(NAME ahflc.check.workspace.ok_cross_file
-    COMMAND $<TARGET_FILE:ahflc> check
-            --workspace "${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
-            --project-name check-ok
-)
-set_tests_properties(ahflc.check.workspace.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked"
+add_test(NAME ahflc.check.project_manifest.rejects_legacy_descriptor
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
+            "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
+            "-DEXPECTED_REGEX=check no longer accepts --project; use --manifest <ahfl\\.toml>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.workspace_json_rejects_target
+add_test(NAME ahflc.check.workspace.rejects_legacy_descriptor
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;check-ok"
+            "-DEXPECTED_REGEX=check --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.workspace.rejects_legacy_descriptor_with_target
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;check-ok\;--target\;workflow"
-            "-DEXPECTED_REGEX=--target requires --manifest, ahfl\\.workspace\\.toml, or discovered ahfl\\.toml"
+            "-DEXPECTED_REGEX=check --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.workspace_json_rejects_sysroot
+add_test(NAME ahflc.check.workspace.rejects_legacy_descriptor_with_sysroot
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;check-ok\;--sysroot\;${PROJECT_SOURCE_DIR}"
-            "-DEXPECTED_REGEX=--sysroot requires --manifest, ahfl\\.workspace\\.toml, or discovered ahfl\\.toml"
+            "-DEXPECTED_REGEX=check --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -3856,39 +3857,39 @@ add_test(NAME ahflc.check.project.fail_node_input
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.project_manifest.fail_invalid
+add_test(NAME ahflc.check.project_manifest.rejects_legacy_invalid_descriptor
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/manifest_invalid/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/integration/manifest_invalid/ahfl.project.json"
-            "-DEXPECTED_REGEX=project descriptor requires non-empty 'search_roots'"
+            "-DEXPECTED_REGEX=check no longer accepts --project; use --manifest <ahfl\\.toml>"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.workspace.fail_missing_project
+add_test(NAME ahflc.check.workspace.rejects_legacy_missing_project
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json\;--project-name\;missing"
-            "-DEXPECTED_REGEX=workspace does not contain project named 'missing'"
+            "-DEXPECTED_REGEX=check --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.project_manifest.fail_escape
+add_test(NAME ahflc.check.project_manifest.rejects_legacy_escape_descriptor
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/manifest_escape/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/integration/manifest_escape/ahfl.project.json"
-            "-DEXPECTED_REGEX=descriptor field 'search_roots' must not escape the descriptor root"
+            "-DEXPECTED_REGEX=check no longer accepts --project; use --manifest <ahfl\\.toml>"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.project_manifest.fail_package_without_native_json
+add_test(NAME ahflc.check.project_manifest.rejects_legacy_descriptor_with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
-            "-DEXPECTED_REGEX=--package is only supported with emit native-json, emit execution-plan, emit execution-journal, emit replay-view, emit audit-report, emit scheduler-snapshot, emit checkpoint-record, emit checkpoint-review, emit scheduler-review, emit runtime-session, emit dry-run-trace, emit package-review"
+            "-DEXPECTED_REGEX=check no longer accepts --project; use --manifest <ahfl\\.toml>"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -3910,12 +3911,12 @@ add_test(NAME ahflc.emit_execution_plan.project_manifest.workflow_value_flow.fai
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.workspace.fail_duplicate_project_name
+add_test(NAME ahflc.check.workspace.rejects_legacy_duplicate_project
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workspace_duplicate/ahfl.workspace.json"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/workspace_duplicate/ahfl.workspace.json\;--project-name\;dup-project"
-            "-DEXPECTED_REGEX=workspace contains duplicate project name 'dup-project'"
+            "-DEXPECTED_REGEX=check --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
