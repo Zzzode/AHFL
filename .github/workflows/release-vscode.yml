@@ -1,0 +1,93 @@
+name: Release VS Code Extension (ahfl 0.2.0+)
+
+on:
+  push:
+    tags:
+      - "vscode-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to release (e.g. vscode-v0.2.0). Leave empty to use triggering tag."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    name: Build VSIX and Publish to Marketplace + Open VSX
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+          run_install: false
+
+      - name: Apply workflow-dispatch version (if provided)
+        working-directory: tools/vscode
+        if: inputs.version != ''
+        run: |
+          pnpm pkg set version="${{ inputs.version }}"
+
+      - name: Install extension dependencies (pnpm)
+        working-directory: tools/vscode
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type-check extension TypeScript
+        working-directory: tools/vscode
+        run: npx tsc --noEmit
+
+      - name: Bundle extension with esbuild
+        working-directory: tools/vscode
+        run: npx esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --outfile=out/extension.js --sourcemap
+
+      - name: Install @vscode/vsce and ovsx globally
+        run: npm install --global @vscode/vsce ovsx
+
+      - name: Package VSIX (vsce package)
+        working-directory: tools/vscode
+        run: vsce package --no-dependencies --out dist/ahfl.vsix
+
+      - name: Upload VSIX as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahfl-vsix
+          path: tools/vscode/dist/ahfl.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to Visual Studio Marketplace (vsce publish)
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        working-directory: tools/vscode
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::warning::VSCE_PAT secret is not set; skipping Visual Studio Marketplace publish."
+            exit 0
+          fi
+          vsce publish --no-dependencies --packagePath dist/ahfl.vsix --pat "$VSCE_PAT"
+
+      - name: Publish to Open VSX Registry (ovsx publish)
+        env:
+          OPEN_VSX_TOKEN: ${{ secrets.OPEN_VSX_TOKEN }}
+        working-directory: tools/vscode
+        run: |
+          if [ -z "$OPEN_VSX_TOKEN" ]; then
+            echo "::warning::OPEN_VSX_TOKEN secret is not set; skipping Open VSX publish."
+            exit 0
+          fi
+          ovsx publish --pat "$OPEN_VSX_TOKEN" dist/ahfl.vsix
