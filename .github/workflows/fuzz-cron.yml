@@ -1,0 +1,379 @@
+name: Fuzz Daily Cron
+
+# =============================================================================
+# 每天 03:17 UTC 跑一轮 3×20min libFuzzer；产生 crash 时：
+#   1. 上传 fuzz-artifacts-<YYYYMMDD> artifact（GitHub 保留 90 天）
+#   2. 自动创建 draft PR，把 crash 样例 + repro.sh + README 登记卡归档到
+#      tests/fuzz/corpus/<YYYYMMDD>/（遵循 docs/reference/fuzz-corpus-location.zh.md §2）
+# =============================================================================
+
+on:
+  schedule:
+    # 03:17 UTC = 11:17 Beijing / 19:17 PDT（避开团队 00:00-03:00 CI 高峰）
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: 'Per-target max fuzz seconds (default 1200)'
+        required: false
+        default: '1200'
+      targets:
+        description: 'Comma-separated subset (fuzz_parser,fuzz_typecheck,fuzz_smv_emitter)'
+        required: false
+        default: 'fuzz_parser,fuzz_typecheck,fuzz_smv_emitter'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-cron-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 3
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Step 1: libFuzzer 模式构建（= ASan + fuzzer sanitizer）
+  # ---------------------------------------------------------------------------
+  build-fuzz:
+    name: Build (libFuzzer mode)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    outputs:
+      date: ${{ steps.date.outputs.date }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: date
+        name: Emit date tag (UTC, YYYYMMDD)
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build clang llvm
+
+      - name: Configure (libFuzzer)
+        run: |
+          cmake -S . -B build-fuzz -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DAHFL_ENABLE_FUZZING=ON \
+            -DAHFL_WARNINGS_AS_ERRORS=OFF
+
+      - name: Build fuzz targets
+        run: cmake --build build-fuzz -j3 --target fuzz_parser fuzz_typecheck fuzz_smv_emitter
+
+      - name: Upload build tree
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-build-${{ steps.date.outputs.date }}
+          path: build-fuzz/tests/fuzz/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Step 2: 每个 target 跑 20 分钟 fuzzing（matrix 并行）
+  # ---------------------------------------------------------------------------
+  run-fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    needs: build-fuzz
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_parser, fuzz_typecheck, fuzz_smv_emitter]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: date
+        name: Date tag (UTC)
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if not in inputs.targets (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch' && contains(inputs.targets, matrix.target) == false
+        run: echo "Skipped by inputs.targets filter" && exit 0
+
+      - name: Install libFuzzer runtime deps
+        run: sudo apt-get update && sudo apt-get install --yes llvm
+
+      - name: Download build tree
+        uses: actions/download-artifact@v4
+        with:
+          name: fuzz-build-${{ needs.build-fuzz.outputs.date }}
+          path: build-fuzz/tests/fuzz/
+
+      - name: Restore executable bit + prep output dirs
+        run: |
+          chmod +x build-fuzz/tests/fuzz/${{ matrix.target }}
+          mkdir -p fuzz-output/${{ matrix.target }} fuzz-corpus/${{ matrix.target }}
+
+      - name: Run fuzzer (max 20 min)
+        id: run
+        env:
+          ASAN_OPTIONS: symbolize=1:abort_on_error=1:halt_on_error=1:detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          MAX_TIME: ${{ github.event.inputs.max_total_time || 1200 }}
+        run: |
+          set +e
+          ./build-fuzz/tests/fuzz/${{ matrix.target }} \
+            fuzz-corpus/${{ matrix.target }} \
+            -max_total_time=${MAX_TIME} \
+            -timeout=30 \
+            -rss_limit_mb=4096 \
+            -artifact_prefix=fuzz-output/${{ matrix.target }}/ \
+            -print_final_stats=1 \
+            2>&1 | tee fuzz-output/${{ matrix.target }}.log
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Move + rename artifact files to date-dir (§2 naming rule)
+        if: always()
+        run: |
+          DATE="${{ needs.build-fuzz.outputs.date }}"
+          OUT_DIR="tests/fuzz/corpus/${DATE}"
+          mkdir -p "${OUT_DIR}"
+          # 按规则：{target}.{kind}-<sha1>
+          for f in fuzz-output/${{ matrix.target }}/*; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            # base = crash-abc123 或 leak-abc123 ...，加上 target 前缀
+            cp "$f" "${OUT_DIR}/${{ matrix.target }}.${base}"
+            # 如果有 ASan stderr 输出，也存一下
+          done
+          # log 单独存
+          if [ -f "fuzz-output/${{ matrix.target }}.log" ]; then
+            cp "fuzz-output/${{ matrix.target }}.log" "${OUT_DIR}/${{ matrix.target }}.log.txt"
+          fi
+          echo "Files archived in ${OUT_DIR}:"
+          ls -la "${OUT_DIR}" || true
+
+      - name: Upload artifact (any crash/leak/timeout/oom + logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ needs.build-fuzz.outputs.date }}-${{ matrix.target }}
+          path: |
+            tests/fuzz/corpus/${{ needs.build-fuzz.outputs.date }}/
+          retention-days: 90
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Step 3: 汇总所有 target 的 crash 样本 → 开 draft PR
+  # ---------------------------------------------------------------------------
+  archive-to-pr:
+    name: Archive to draft PR (if any crash)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs:
+      - build-fuzz
+      - run-fuzz
+    if: always()
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - id: date
+        name: Date tag
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Download all target artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fuzz-artifacts-${{ needs.build-fuzz.outputs.date }}-*
+          merge-multiple: true
+          path: tests/fuzz/corpus/${{ steps.date.outputs.date }}
+
+      - name: Count crash samples
+        id: count
+        run: |
+          DIR="tests/fuzz/corpus/${{ steps.date.outputs.date }}"
+          N=0
+          if [ -d "$DIR" ]; then
+            # crash / leak / timeout / oom 前缀的文件 = 真实样本（排除 .log.txt / .stderr.txt）
+            N=$(find "$DIR" -type f \
+                \( -name '*.crash-*' -o -name '*.leak-*' -o -name '*.timeout-*' -o -name '*.oom-*' \) \
+                | wc -l | tr -d ' ')
+          fi
+          echo "crash_count=$N" >> "$GITHUB_OUTPUT"
+          echo "sample_count=$(( $(find "$DIR" -type f 2>/dev/null | wc -l | tr -d ' ') ))" >> "$GITHUB_OUTPUT"
+
+      - name: No crash → skip
+        if: steps.count.outputs.crash_count == 0
+        run: |
+          echo "No crash/leak/timeout/oom samples generated this run."
+          echo "Corpus dir content (logs only, will not open PR):"
+          ls -la tests/fuzz/corpus/${{ steps.date.outputs.date }}/ || true
+          # 也不保留空目录
+          rmdir tests/fuzz/corpus/${{ steps.date.outputs.date }} 2>/dev/null || true
+          exit 0
+
+      - name: Generate repro.sh + README 登记卡
+        run: |
+          DATE="${{ steps.date.outputs.date }}"
+          DIR="tests/fuzz/corpus/${DATE}"
+
+          # --- repro.sh（模板来自 docs/reference/fuzz-corpus-location.zh.md §5）----------------
+          {
+            echo '#!/usr/bin/env bash'
+            echo 'set -euo pipefail'
+            echo
+            echo 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"'
+            echo 'BUILD_DIR="${1:-$ROOT/build-fuzz}"'
+            echo "DATE=\"$DATE\""
+            echo 'CORPUS_DIR="$ROOT/tests/fuzz/corpus/$DATE"'
+            echo
+            echo 'echo "CORPUS_DATE=$DATE  BUILD_DIR=$BUILD_DIR"'
+            echo 'echo "------------------------------------------------------------"'
+            echo
+            echo 'CRASHES=('
+            # 按 {target}.{kind}-<sha1> 顺序生成行
+            find "$DIR" -type f \
+              \( -name '*.crash-*' -o -name '*.leak-*' -o -name '*.timeout-*' -o -name '*.oom-*' \) \
+              -printf '%f\n' | sort | while read -r f; do
+                target="${f%%.*}"
+                printf '  "%-16s %-55s nonzero"\n' "$target" "$f"
+              done
+            echo ')'
+            echo
+            cat <<'EOF'
+          echo ""
+          echo "============================================================"
+          any_fail=0
+          for row in "${CRASHES[@]}"; do
+            read -r target file expected <<< "$row"
+            bin="$BUILD_DIR/tests/fuzz/$target"
+            input="$CORPUS_DIR/$file"
+            if [ ! -x "$bin" ]; then
+              echo "[SKIP] $target binary not built at $bin"
+              continue
+            fi
+            echo ""
+            echo "===== $file ====="
+            set +e
+            "$bin" "$input" 2>&1 | head -60
+            rc=${PIPESTATUS[0]}
+            set -e
+            case "$expected" in
+              nonzero) if [ "$rc" -eq 0 ]; then echo "[FIXED?] exit=0 expected crash"; any_fail=1; fi
+                       else echo "[CONFIRMED] rc=$rc (crashed as expected)" ;;
+              zero)    if [ "$rc" -ne 0 ]; then echo "[REGRESSED] rc=$rc expected pass"; any_fail=1; fi
+                       else echo "[CONFIRMED] rc=0 (passed as expected)" ;;
+            esac
+          done
+
+          echo ""
+          echo "============================================================"
+          if [ "$any_fail" -eq 0 ]; then
+            echo "ALL SAMPLES IN EXPECTED STATE."
+            exit 0
+          else
+            echo "SOME SAMPLES CHANGED STATE (see above)."
+            exit 1
+          fi
+          EOF
+          } > "${DIR}/repro.sh"
+          chmod +x "${DIR}/repro.sh"
+
+          # --- README.md（模板来自 docs/reference/fuzz-corpus-location.zh.md §6）----------------
+          SAMPLE_COUNT="${{ steps.count.outputs.crash_count }}"
+          TOTAL_FILES="${{ steps.count.outputs.sample_count }}"
+          COMMIT_SHA="${GITHUB_SHA}"
+
+          {
+            echo "# Crash batch ${DATE:0:4}-${DATE:4:2}-${DATE:6:2}"
+            echo
+            echo '| Field | Value |'
+            echo '|---|---|'
+            echo "| **Date (UTC)** | ${DATE:0:4}-${DATE:4:2}-${DATE:6:2} |"
+            echo '| **Source** | cron (`fuzz-cron.yml` daily 03:17 UTC) |'
+            echo '| **Discovered by** | QE-bot / GitHub Actions cron |'
+            echo '| **libFuzzer / Sanitizer versions** | ubuntu:24.04 default clang (see `runner` logs) |'
+            echo "| **AHFL commit** | \`${COMMIT_SHA}\` |"
+            echo "| **Total samples** | ${SAMPLE_COUNT} crash/leak/timeout/oom files + ${TOTAL_FILES} files on disk (incl. logs) |"
+            echo '| **Status** | Open |'
+            echo
+            echo '## 1. 触发方式'
+            echo
+            echo '- Workflow: `.github/workflows/fuzz-cron.yml` schedule 03:17 UTC daily'
+            echo '- Per target: `-max_total_time=1200` (20 min), `-timeout=30s`, `-rss_limit_mb=4096`'
+            echo
+            echo '## 2. 样本列表'
+            echo
+            echo '| # | File | Target | Kind (crash/leak/timeout/oom) | 初步现象（一句话） | Issue / PR |'
+            echo '|---|---|---|---|---|---|'
+            i=1
+            find "$DIR" -type f \
+              \( -name '*.crash-*' -o -name '*.leak-*' -o -name '*.timeout-*' -o -name '*.oom-*' \) \
+              -printf '%f\n' | sort | while read -r f; do
+                target="${f%%.*}"
+                # kind = crash / leak / timeout / oom
+                after_target="${f#${target}.}"
+                kind="${after_target%%-*}"
+                printf '| %d | `%s` | %s | **%s** | *(待 triage)* | *(pending)* |\n' "$i" "$f" "$target" "$kind"
+                i=$((i+1))
+              done
+            echo
+            echo '## 3. Root cause 与修复进度'
+            echo
+            echo '- *(请 triage 值班人填写：每个样本一行根因分析 + 修复 PR/Issue)*'
+            echo
+            echo '## 4. 复现结果（随每个修复 PR 回填）'
+            echo
+            echo '\`\`\`'
+            echo 'cd <AHFL_ROOT>'
+            echo 'cmake --preset fuzz && cmake --build --preset build-fuzz -j8'
+            echo "./tests/fuzz/corpus/${DATE}/repro.sh"
+            echo '\`\`\`'
+          } > "${DIR}/README.md"
+
+          echo "=== Generated ${DATE} ==="
+          echo "repro.sh: $(wc -l < "${DIR}/repro.sh") lines"
+          echo "README.md: $(wc -l < "${DIR}/README.md") lines"
+          echo "Dir listing:"
+          ls -la "$DIR"
+
+      - name: Open draft PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "fuzz: archive crash batch ${{ steps.date.outputs.date }}"
+          branch: "fuzz/corpus-${{ steps.date.outputs.date }}"
+          base: develop
+          title: "fuzz: archive crash batch ${{ steps.date.outputs.date }} (${{ steps.count.outputs.crash_count }} samples)"
+          body: |
+            **来源**：`.github/workflows/fuzz-cron.yml` 每日 03:17 UTC cron。
+
+            - Samples: `${{ steps.count.outputs.crash_count }}` crash/leak/timeout/oom files
+            - Archive: `tests/fuzz/corpus/${{ steps.date.outputs.date }}/`
+            - Artifact: `fuzz-artifacts-${{ needs.build-fuzz.outputs.date }}-*` (GitHub Actions, 90-day retention)
+            - Commit: `${{ github.sha }}` (AHFL)
+
+            **Triage SLA**：3 个工作日内填完该批次 `README.md` 的 §2 "初步现象" 列 + §3 根因列。
+            详见 `docs/reference/fuzz-corpus-location.zh.md §8`。
+
+            Quick repro:
+            ```bash
+            gh pr checkout ${{ github.event.number }}
+            cmake --preset fuzz && cmake --build --preset build-fuzz -j8
+            ./tests/fuzz/corpus/${{ steps.date.outputs.date }}/repro.sh
+            ```
+          labels: |
+            fuzz
+            triage-required
+          add-paths: |
+            tests/fuzz/corpus/
+          draft: true

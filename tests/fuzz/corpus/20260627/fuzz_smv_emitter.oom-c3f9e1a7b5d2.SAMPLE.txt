@@ -1,0 +1,29 @@
+# Placeholder: 2026-06-27 fuzz_smv_emitter oom sample (128-state explosion)
+#
+# NOTE: The actual corpus file is a ~14 KB text that describes a single
+# agent with 128 states × 4 transitions each. Generating it once is faster
+# than committing 14 KB of nearly-identical state declarations.
+#
+# Generate an equivalent synthetic sample:
+#
+#   python3 - <<'PY'
+#   N = 128
+#   states = ", ".join(f"S{i}" for i in range(N))
+#   transitions = []
+#   for i in range(N):
+#       for j in range(min(4, N-i)):
+#           transitions.append(f"    {i} -> {i+j}: [input.x > {i+j}];")
+#   transitions_body = "\n".join(transitions)
+#   text = f"""agent A {{
+#   input: struct {{ x: Int; }}; context: struct {{ counter: Int = 0; }}; output: Int;
+#   states: [ {states} ];
+#   initial: S0; final: [ S{N-1} ]; capabilities: [];
+#   transition:
+# {transitions_body}
+# }}
+# contract C for A {{ requires: always (x < {N}); ensures: eventually (output > {N//2}); }}
+# workflow W {{ input: A.input; output: A.output; nodes: [a]; run a = A; }}
+# """
+#   with open("tests/fuzz/corpus/20260627/fuzz_smv_emitter.oom-c3f9e1a7b5d2", "w") as f:
+#       f.write(text)
+#   PY

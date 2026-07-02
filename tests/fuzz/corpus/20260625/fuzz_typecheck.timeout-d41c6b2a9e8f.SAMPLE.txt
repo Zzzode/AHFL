@@ -1,0 +1,20 @@
+# Placeholder: 2026-06-25 fuzz_typecheck timeout sample (60KB nested type)
+#
+# WARNING: the real sample is a ~60 KB binary AHFL source text containing
+# 500+ levels of nested `Option<Option<...<Struct<T>>>>`. It cannot be
+# committed verbatim (exceeds 50 KB git recommendation for text files, and
+# is 99% repeating boilerplate).
+#
+# Generate an equivalent synthetic sample:
+#
+#   cd <AHFL_ROOT>
+#   python3 - <<'PY'
+#   depth = 512
+#   inner = "struct { x: Int }"
+#   for _ in range(depth):
+#       inner = "Option<" + inner + ">"
+#   with open("tests/fuzz/corpus/20260625/fuzz_typecheck.timeout-d41c6b2a9e8f", "w") as f:
+#       f.write("agent A { input: Option<" + inner + ">; output: Int; states: [Done]; initial: Done; final: [Done]; capabilities: []; flow { state Done { return 1; } } }")
+#   PY
+#
+# sha1 prefix in filename matches: `sha1sum <sample> | head -c 12`.

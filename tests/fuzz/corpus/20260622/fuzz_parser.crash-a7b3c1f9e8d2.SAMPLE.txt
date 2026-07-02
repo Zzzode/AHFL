@@ -1,0 +1,9 @@
+# Placeholder crash sample (2026-06-22 / fuzz_parser / std::bad_any_cast)
+# NOTE: the real 17-byte corpus sample contains an isolated UTF-16 surrogate
+# which is not valid UTF-8; for repo hygiene we commit a human-readable
+# placeholder and store the binary sample in the fuzz-artifacts GitHub
+# Actions artifact upload (see fuzz-cron.yml for upload naming convention).
+#
+# Reconstruct the exact sample with:
+#   printf '\xed\xa0\x80{"agent":"\xff\xfe"}[0]' > tests/fuzz/corpus/20260622/fuzz_parser.crash-a7b3c1f9e8d2
+# This matches the sha1 prefix recorded in the filename.
