@@ -1110,6 +1110,21 @@ TEST_CASE("Lockfile drift rejects checksum mismatch") {
     CHECK(has_diagnostic(diagnostics, "field 'checksum'"));
 }
 
+TEST_CASE("Lockfile drift rejects package metadata mismatches") {
+    const auto graph = graph_with_workspace_dependency();
+    auto lockfile = ahfl::package_graph::make_lockfile(graph);
+    lockfile.packages[2].version = "0.2.0";
+    lockfile.packages[2].source = "path";
+    lockfile.packages[2].manifest = "wrong/ahfl.toml";
+
+    const auto diagnostics = ahfl::package_graph::check_lockfile_drift(graph, lockfile);
+
+    REQUIRE_FALSE(diagnostics.empty());
+    CHECK(has_diagnostic(diagnostics, "package id 2 field 'version'"));
+    CHECK(has_diagnostic(diagnostics, "package id 2 field 'source'"));
+    CHECK(has_diagnostic(diagnostics, "package id 2 field 'manifest'"));
+}
+
 TEST_CASE("Lockfile drift rejects unused packages") {
     const auto graph = graph_with_workspace_dependency();
     auto lockfile = ahfl::package_graph::make_lockfile(graph);
