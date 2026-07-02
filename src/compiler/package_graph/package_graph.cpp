@@ -580,9 +580,9 @@ BuildResult build_package_graph(const BuildInput &input) {
             return std::nullopt;
         }
 
-        if (dependency.source == "path" && target->source == PackageSourceKind::Sysroot) {
+        if (dependency.source == "path" && target->source != PackageSourceKind::Path) {
             add_error(result.diagnostics,
-                      "path dependency '" + dependency.key + "' cannot resolve to sysroot",
+                      "path dependency '" + dependency.key + "' does not resolve to a path package",
                       dependency.range);
             return std::nullopt;
         }

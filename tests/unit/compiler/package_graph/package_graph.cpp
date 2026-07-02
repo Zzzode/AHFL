@@ -294,6 +294,19 @@ TEST_CASE("PackageGraph resolves explicit workspace dependencies only") {
     CHECK(result.graph->dependencies[1].to.value == 2);
 }
 
+TEST_CASE("PackageGraph rejects path dependencies resolving to workspace packages") {
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = app_input(
+            "audit-core = { source = \"path\", path = \"../audit-core\", version = \"0.1.0\" }\n"),
+        .workspace_packages = {library_input(
+            "audit-core", "audit_core", PackageSourceKind::Workspace)},
+    });
+
+    REQUIRE(result.has_errors());
+    CHECK(has_error(result, "path dependency 'audit-core' does not resolve to a path package"));
+}
+
 TEST_CASE("PackageGraph rejects duplicate module prefix before resolver") {
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),
