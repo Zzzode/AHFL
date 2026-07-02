@@ -264,6 +264,11 @@ TEST_CASE("PackageGraph assigns sysroot std to PackageId(0) and root to PackageI
     CHECK(result.graph->packages[0].name == "std");
     CHECK(result.graph->packages[1].id.value == 1);
     CHECK(result.graph->packages[1].name == "refund-audit");
+    REQUIRE(result.graph->packages[1].targets.size() == 1);
+    REQUIRE(result.graph->packages[1].targets[0].exports.size() == 1);
+    CHECK(result.graph->packages[1].targets[0].exports[0].kind == "workflow");
+    CHECK(result.graph->packages[1].targets[0].exports[0].name ==
+          "refund_audit::main::RefundAuditWorkflow");
     REQUIRE(result.graph->dependencies.size() == 1);
     CHECK(result.graph->dependencies.front().from.value == 1);
     CHECK(result.graph->dependencies.front().to.value == 0);

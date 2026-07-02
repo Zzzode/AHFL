@@ -74,7 +74,7 @@ struct TargetNode {
     std::string name;
     std::string kind;
     std::string entry;
-    std::vector<std::string> exports;
+    std::vector<manifest::HandoffExportManifest> exports;
     std::vector<manifest::CapabilityBindingManifest> capability_bindings;
 };
 

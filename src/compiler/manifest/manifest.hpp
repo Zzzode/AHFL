@@ -29,11 +29,17 @@ struct CapabilityBindingManifest {
     SourceRange range{};
 };
 
+struct HandoffExportManifest {
+    std::string kind{"workflow"};
+    std::string name;
+    SourceRange range{};
+};
+
 struct TargetManifest {
     std::string name;
     std::string kind;
     std::string entry;
-    std::vector<std::string> exports;
+    std::vector<HandoffExportManifest> exports;
     std::vector<CapabilityBindingManifest> capability_bindings;
     SourceRange range{};
 };

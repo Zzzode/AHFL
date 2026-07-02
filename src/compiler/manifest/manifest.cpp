@@ -158,6 +158,72 @@ read_string_array(const Value &table,
     return values;
 }
 
+[[nodiscard]] std::vector<HandoffExportManifest>
+read_handoff_exports(const Value &table,
+                     std::string_view key,
+                     std::string_view display,
+                     bool required,
+                     std::vector<ManifestDiagnostic> &diagnostics) {
+    const auto *entry = find_entry(table, key);
+    if (entry == nullptr) {
+        if (required) {
+            add_diag(diagnostics,
+                     kRequired,
+                     "manifest is missing required field '" + std::string(display) + "'",
+                     table.range);
+        }
+        return {};
+    }
+    if (entry->value->kind != ValueKind::Array) {
+        add_diag(diagnostics,
+                 kType,
+                 "manifest field '" + std::string(display) + "' must be an array",
+                 entry->value_range);
+        return {};
+    }
+
+    std::vector<HandoffExportManifest> exports;
+    exports.reserve(entry->value->array_items.size());
+    for (const auto &item : entry->value->array_items) {
+        if (item->kind == ValueKind::String) {
+            exports.push_back(HandoffExportManifest{
+                .kind = "workflow",
+                .name = item->string_value,
+                .range = item->range,
+            });
+            continue;
+        }
+        if (item->kind != ValueKind::InlineTable && item->kind != ValueKind::Table) {
+            add_diag(diagnostics,
+                     kType,
+                     "manifest field '" + std::string(display) +
+                         "' items must be strings or tables",
+                     item->range);
+            continue;
+        }
+
+        reject_unknown_fields(*item, {"kind", "name"}, "targets.exports.", diagnostics);
+        HandoffExportManifest export_item;
+        export_item.range = item->range;
+        if (auto kind = read_required_string(*item, "kind", "targets.exports.kind", diagnostics);
+            kind.has_value()) {
+            export_item.kind = *kind;
+        }
+        if (auto name = read_required_string(*item, "name", "targets.exports.name", diagnostics);
+            name.has_value()) {
+            export_item.name = *name;
+        }
+        if (!contains({"workflow", "agent"}, export_item.kind) && !export_item.kind.empty()) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "target export kind must be workflow or agent",
+                     item->range);
+        }
+        exports.push_back(std::move(export_item));
+    }
+    return exports;
+}
+
 [[nodiscard]] bool matches_regex(std::string_view value, const char *pattern) {
     const std::regex regex{pattern};
     return std::regex_match(value.begin(), value.end(), regex);
@@ -339,7 +405,7 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
             target_entry.has_value()) {
             target.entry = *target_entry;
         }
-        target.exports = read_string_array(
+        target.exports = read_handoff_exports(
             *entry.value, "exports", "targets.exports", target.kind == "handoff", diagnostics);
 
         const auto *bindings = find_value(*entry.value, "capability_bindings");

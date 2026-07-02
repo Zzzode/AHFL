@@ -44,7 +44,10 @@ entry = "src/lib.ahfl"
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
-exports = ["refund_audit::main::RefundAuditWorkflow"]
+exports = [
+  { kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" },
+  { kind = "agent", name = "refund_audit::agents::RefundAudit" },
+]
 
 [[targets.workflow.capability_bindings]]
 capability = "OrderQuery"
@@ -60,6 +63,11 @@ std = { source = "sysroot" }
     CHECK(result.manifest->package_name == "refund-audit");
     CHECK(result.manifest->module_prefix == "refund_audit");
     REQUIRE(result.manifest->targets.size() == 2);
+    REQUIRE(result.manifest->targets[1].exports.size() == 2);
+    CHECK(result.manifest->targets[1].exports[0].kind == "workflow");
+    CHECK(result.manifest->targets[1].exports[0].name == "refund_audit::main::RefundAuditWorkflow");
+    CHECK(result.manifest->targets[1].exports[1].kind == "agent");
+    CHECK(result.manifest->targets[1].exports[1].name == "refund_audit::agents::RefundAudit");
     CHECK(result.manifest->targets[1].capability_bindings.size() == 1);
     REQUIRE(result.manifest->dependencies.size() == 1);
     CHECK(result.manifest->dependencies.front().source == "sysroot");
@@ -126,6 +134,8 @@ name = "refund-audit"
     CHECK(canonical == ahfl::manifest::canonicalize_package_manifest(*second_result.manifest));
     CHECK(canonical.find("[package]\nname = \"refund-audit\"\nversion = \"0.1.0\"") !=
           std::string::npos);
+    CHECK(canonical.find("exports = [{ kind = \"workflow\", name = "
+                         "\"refund_audit::main::RefundAuditWorkflow\" }]") != std::string::npos);
     CHECK(canonical.find("[dependencies]\naudit-core = { source = \"path\"") != std::string::npos);
 }
 

@@ -118,7 +118,7 @@ entry = "src/lib.ahfl"
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
-exports = ["refund_audit::main::RefundAuditWorkflow"]
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [dependencies]
 std = { source = "sysroot" }
@@ -172,7 +172,7 @@ std = { source = "sysroot" }
 | `[exports].modules` | library 和 standard-library 必填 | array string | 对依赖方可 import 的 public modules |
 | `[targets.<name>].kind` | 非 standard-library package 至少一个 target | string | `library` / `handoff` / `test` |
 | `[targets.<name>].entry` | 是 | string | `library` / `test` 为文件路径，`handoff` 为 canonical symbol name |
-| `[targets.<name>].exports` | handoff 必填 | array string | native handoff package 输出 surface |
+| `[targets.<name>].exports` | handoff 必填 | array table | native handoff package 输出 surface；每项必须声明 `kind` 与 `name` |
 | `[[targets.<name>.capability_bindings]]` | 否 | array table | 只允许 handoff target |
 | `[dependencies]` | 否 | table | dependency source spec map |
 
@@ -498,8 +498,8 @@ Runtime handoff package 是 compiler 输出，不是工程输入。用户在 tar
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
 exports = [
-  "refund_audit::main::RefundAuditWorkflow",
-  "refund_audit::agents::RefundAudit",
+  { kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" },
+  { kind = "agent", name = "refund_audit::agents::RefundAudit" },
 ]
 
 [[targets.workflow.capability_bindings]]
@@ -561,7 +561,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 | `ahfl.workspace.json.projects` | `ahfl.workspace.toml [workspace].members` |
 | `ahfl.package.json.package` | `[package]` |
 | `ahfl.package.json.entry` | `[targets.<name>].entry` |
-| `ahfl.package.json.exports` | `[targets.<name>].exports` |
+| `ahfl.package.json.exports` | `[targets.<name>].exports[]` 的 `{ kind, name }` 项 |
 | `ahfl.package.json.capability_bindings` | `[[targets.<name>.capability_bindings]]` |
 
 不保留双入口。迁移 PR 必须删除旧 descriptor fixture 或把它们改造成 negative tests，证明旧入口会给出明确诊断。

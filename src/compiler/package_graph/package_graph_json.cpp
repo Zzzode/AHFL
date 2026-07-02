@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace ahfl::package_graph {
 namespace {
@@ -18,13 +19,25 @@ make_string_array(const std::vector<std::string> &values) {
     return array;
 }
 
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+make_handoff_export_array(const std::vector<manifest::HandoffExportManifest> &values) {
+    auto array = json::JsonValue::make_array();
+    for (const auto &export_item : values) {
+        auto item = json::JsonValue::make_object();
+        item->set("kind", json::JsonValue::make_string(export_item.kind));
+        item->set("name", json::JsonValue::make_string(export_item.name));
+        array->push(std::move(item));
+    }
+    return array;
+}
+
 [[nodiscard]] std::unique_ptr<json::JsonValue> make_target_json(const TargetNode &target) {
     auto value = json::JsonValue::make_object();
     value->set("id", json::JsonValue::make_int(static_cast<std::int64_t>(target.id.value)));
     value->set("name", json::JsonValue::make_string(target.name));
     value->set("kind", json::JsonValue::make_string(target.kind));
     value->set("entry", json::JsonValue::make_string(target.entry));
-    value->set("exports", make_string_array(target.exports));
+    value->set("exports", make_handoff_export_array(target.exports));
     auto capability_bindings = json::JsonValue::make_array();
     for (const auto &binding : target.capability_bindings) {
         auto item = json::JsonValue::make_object();

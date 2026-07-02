@@ -66,6 +66,23 @@ void append_string_array(std::ostream &out,
     out << "]\n";
 }
 
+void append_handoff_export_array(std::ostream &out,
+                                 std::string_view key,
+                                 const std::vector<HandoffExportManifest> &values) {
+    out << key << " = [";
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            out << ", ";
+        }
+        out << "{ kind = ";
+        append_basic_string(out, values[index].kind);
+        out << ", name = ";
+        append_basic_string(out, values[index].name);
+        out << " }";
+    }
+    out << "]\n";
+}
+
 [[nodiscard]] std::vector<const DependencySpec *>
 sorted_dependencies(const std::vector<DependencySpec> &dependencies) {
     std::vector<const DependencySpec *> sorted;
@@ -158,7 +175,7 @@ std::string canonicalize_package_manifest(const PackageManifest &manifest) {
         append_key_value(out, "kind", target->kind);
         append_key_value(out, "entry", target->entry);
         if (!target->exports.empty()) {
-            append_string_array(out, "exports", target->exports);
+            append_handoff_export_array(out, "exports", target->exports);
         }
         for (const auto &binding : target->capability_bindings) {
             out << "\n[[targets." << target->name << ".capability_bindings]]\n";

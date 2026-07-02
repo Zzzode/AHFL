@@ -633,8 +633,9 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
     metadata.export_targets.reserve(target.exports.size());
     for (const auto &export_target : target.exports) {
         metadata.export_targets.push_back(ahfl::handoff::ExecutableRef{
-            .kind = ahfl::handoff::ExecutableKind::Workflow,
-            .canonical_name = export_target,
+            .kind = export_target.kind == "agent" ? ahfl::handoff::ExecutableKind::Agent
+                                                  : ahfl::handoff::ExecutableKind::Workflow,
+            .canonical_name = export_target.name,
         });
     }
     for (const auto &binding : target.capability_bindings) {
