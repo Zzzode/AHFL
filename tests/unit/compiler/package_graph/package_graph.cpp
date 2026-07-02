@@ -491,6 +491,109 @@ TEST_CASE("Manifest PackageGraph loader rejects invalid exported modules") {
     }
 }
 
+TEST_CASE("Manifest PackageGraph loader rejects path dependency key/name mismatch") {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root_dir = std::filesystem::temp_directory_path() /
+                          ("ahfl-package-graph-path-key-mismatch-" + std::to_string(stamp));
+    const auto sysroot_dir = root_dir / "sysroot" / "std";
+    const auto package_dir = root_dir / "app";
+    const auto dependency_dir = package_dir / "packages" / "audit-core";
+
+    std::error_code error;
+    std::filesystem::remove_all(root_dir, error);
+    REQUIRE(std::filesystem::create_directories(sysroot_dir, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directories(package_dir / "src", error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directories(dependency_dir / "src", error));
+    REQUIRE_FALSE(error);
+
+    REQUIRE(write_text_file(sysroot_dir / "prelude.ahfl", "module std::prelude;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "option.ahfl", "module std::option;\n"));
+    REQUIRE(write_text_file(package_dir / "src" / "main.ahfl", "module refund_audit::main;\n"));
+    REQUIRE(write_text_file(dependency_dir / "src" / "lib.ahfl", "module audit_core::lib;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = ["prelude", "option"]
+
+[compiler_intrinsics]
+allow = ["option_*"]
+)TOML"));
+    REQUIRE(write_text_file(package_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = ["refund_audit::main::RefundAuditWorkflow"]
+
+[dependencies]
+std = { source = "sysroot" }
+audit_alias = { source = "path", path = "packages/audit-core", version = "0.1.0" }
+)TOML"));
+    REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "audit-core"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "audit_core"
+root = "src"
+
+[exports]
+modules = ["lib"]
+
+[targets.lib]
+kind = "library"
+entry = "src/lib.ahfl"
+)TOML"));
+
+    auto result = ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = package_dir / "ahfl.toml",
+            .sysroot_manifest_path = sysroot_dir / "ahfl.toml",
+        });
+    std::filesystem::remove_all(root_dir, error);
+
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic(result.diagnostics,
+                         "path dependency key 'audit_alias' must match package name "
+                         "'audit-core'"));
+}
+
 TEST_CASE("Workspace PackageGraph loader resolves members and sysroot defaults") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /

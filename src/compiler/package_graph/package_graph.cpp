@@ -402,6 +402,13 @@ void collect_path_dependencies(const PackageInput &from,
         if (!loaded.has_value()) {
             continue;
         }
+        if (loaded->manifest.package_name != dependency.key) {
+            add_error(diagnostics,
+                      "path dependency key '" + dependency.key + "' must match package name '" +
+                          loaded->manifest.package_name + "'",
+                      dependency.range);
+            continue;
+        }
 
         path_packages.push_back(std::move(*loaded));
         const auto loaded_copy = path_packages.back();
