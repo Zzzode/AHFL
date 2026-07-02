@@ -2549,6 +2549,15 @@ add_test(NAME ahflc.check.discover_manifest_lockfile_drift_rejected
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.workspace_lockfile_drift_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DSOURCE_WORKSPACE=${AHFL_TESTS_DIR}/integration/package_graph_workspace"
+            "-DSYSROOT_DIR=${PROJECT_SOURCE_DIR}"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/package_graph_workspace_lock_drift"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunWorkspaceLockfileDriftTest.cmake"
+)
+
 add_test(NAME ahflc.dump_package_graph.workspace_basic
     COMMAND $<TARGET_FILE:ahflc> dump package-graph
             --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
