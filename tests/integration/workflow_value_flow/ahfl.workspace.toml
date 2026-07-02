@@ -1,0 +1,11 @@
+manifest_version = 1
+
+[workspace]
+name = "workflow-value-flow-workspace"
+members = [
+  "app",
+  "lib",
+]
+
+[resolver]
+version = 1

@@ -12,7 +12,7 @@ namespace ahfl::cli {
 
 enum class OptionArgKind {
     Flag,            // --dump-ast (no argument)
-    RequiredValue,   // --project <path>
+    RequiredValue,   // --manifest <path>
     RepeatableValue, // --search-root <dir> (can appear multiple times)
 };
 

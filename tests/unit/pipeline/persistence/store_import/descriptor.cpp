@@ -60,8 +60,8 @@ make_project_workflow_value_flow_metadata() {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -167,9 +167,9 @@ build_scheduler_snapshot(const ahfl::handoff::ExecutionPlan &plan,
 }
 
 [[nodiscard]] std::optional<StoreImportBootstrapFixture>
-build_bootstrap_fixture(const std::filesystem::path &project_descriptor,
+build_bootstrap_fixture(const std::filesystem::path &project_manifest_path,
                         SessionScenario scenario) {
-    const auto plan = load_project_plan(project_descriptor);
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return std::nullopt;
     }
@@ -593,8 +593,8 @@ int validate_store_import_review_rejects_unsupported_source_descriptor_format() 
 }
 
 int build_store_import_descriptor_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -638,8 +638,8 @@ int build_store_import_descriptor_project_workflow_value_flow(
 }
 
 int build_store_import_descriptor_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Failed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Failed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -679,8 +679,8 @@ int build_store_import_descriptor_failed_workflow(
 }
 
 int build_store_import_descriptor_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Partial);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Partial);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -725,8 +725,8 @@ int build_store_import_descriptor_partial_workflow(
 }
 
 int build_store_import_descriptor_rejects_invalid_manifest(
-    const std::filesystem::path &project_descriptor) {
-    auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -753,8 +753,8 @@ int build_store_import_descriptor_rejects_invalid_manifest(
 }
 
 int build_store_import_descriptor_rejects_manifest_workflow_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -782,8 +782,8 @@ int build_store_import_descriptor_rejects_manifest_workflow_mismatch(
 }
 
 int build_store_import_review_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -827,8 +827,8 @@ int build_store_import_review_project_workflow_value_flow(
 }
 
 int build_store_import_review_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Failed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Failed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -871,8 +871,8 @@ int build_store_import_review_failed_workflow(
 }
 
 int build_store_import_review_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Partial);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Partial);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -915,8 +915,8 @@ int build_store_import_review_partial_workflow(
 }
 
 int build_store_import_review_rejects_invalid_descriptor(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -1019,42 +1019,42 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const auto project_descriptor = std::filesystem::path(argv[2]);
+    const auto project_manifest_path = std::filesystem::path(argv[2]);
 
     if (command == "build-store-import-descriptor-project-workflow-value-flow") {
-        return build_store_import_descriptor_project_workflow_value_flow(project_descriptor);
+        return build_store_import_descriptor_project_workflow_value_flow(project_manifest_path);
     }
 
     if (command == "build-store-import-descriptor-failed-workflow") {
-        return build_store_import_descriptor_failed_workflow(project_descriptor);
+        return build_store_import_descriptor_failed_workflow(project_manifest_path);
     }
 
     if (command == "build-store-import-descriptor-partial-workflow") {
-        return build_store_import_descriptor_partial_workflow(project_descriptor);
+        return build_store_import_descriptor_partial_workflow(project_manifest_path);
     }
 
     if (command == "build-store-import-descriptor-rejects-invalid-manifest") {
-        return build_store_import_descriptor_rejects_invalid_manifest(project_descriptor);
+        return build_store_import_descriptor_rejects_invalid_manifest(project_manifest_path);
     }
 
     if (command == "build-store-import-descriptor-rejects-manifest-workflow-mismatch") {
-        return build_store_import_descriptor_rejects_manifest_workflow_mismatch(project_descriptor);
+        return build_store_import_descriptor_rejects_manifest_workflow_mismatch(project_manifest_path);
     }
 
     if (command == "build-store-import-review-project-workflow-value-flow") {
-        return build_store_import_review_project_workflow_value_flow(project_descriptor);
+        return build_store_import_review_project_workflow_value_flow(project_manifest_path);
     }
 
     if (command == "build-store-import-review-failed-workflow") {
-        return build_store_import_review_failed_workflow(project_descriptor);
+        return build_store_import_review_failed_workflow(project_manifest_path);
     }
 
     if (command == "build-store-import-review-partial-workflow") {
-        return build_store_import_review_partial_workflow(project_descriptor);
+        return build_store_import_review_partial_workflow(project_manifest_path);
     }
 
     if (command == "build-store-import-review-rejects-invalid-descriptor") {
-        return build_store_import_review_rejects_invalid_descriptor(project_descriptor);
+        return build_store_import_review_rejects_invalid_descriptor(project_manifest_path);
     }
 
     std::cerr << "unknown test command: " << command << '\n';

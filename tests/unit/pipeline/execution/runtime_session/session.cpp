@@ -62,8 +62,8 @@ make_node_failure_summary(std::string message,
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -80,8 +80,8 @@ load_project_plan(const std::filesystem::path &project_descriptor) {
 }
 
 [[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
-build_valid_runtime_session(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+build_valid_runtime_session(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return std::nullopt;
     }
@@ -114,8 +114,8 @@ build_valid_runtime_session(const std::filesystem::path &project_descriptor) {
 }
 
 int run_build_runtime_session_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -154,8 +154,8 @@ int run_build_runtime_session_project_workflow_value_flow(
 }
 
 int run_validate_runtime_session_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -170,8 +170,8 @@ int run_validate_runtime_session_project_workflow_value_flow(
 }
 
 int run_build_runtime_session_rejects_missing_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -212,8 +212,8 @@ int run_build_runtime_session_rejects_missing_workflow(
 }
 
 int run_build_runtime_session_rejects_missing_mock(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -252,8 +252,8 @@ int run_build_runtime_session_rejects_missing_mock(
 }
 
 int run_validate_runtime_session_rejects_incomplete_completed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -278,8 +278,8 @@ int run_validate_runtime_session_rejects_incomplete_completed_workflow(
 }
 
 int run_validate_runtime_session_rejects_missing_used_mock(
-    const std::filesystem::path &project_descriptor) {
-    auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -304,8 +304,8 @@ int run_validate_runtime_session_rejects_missing_used_mock(
 }
 
 int run_validate_runtime_session_accepts_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -326,8 +326,8 @@ int run_validate_runtime_session_accepts_partial_workflow(
 }
 
 int run_validate_runtime_session_accepts_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -350,8 +350,8 @@ int run_validate_runtime_session_accepts_failed_workflow(
 }
 
 int run_validate_runtime_session_rejects_failed_without_failure_summary(
-    const std::filesystem::path &project_descriptor) {
-    auto session = build_valid_runtime_session(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto session = build_valid_runtime_session(project_manifest_path);
     if (!session.has_value()) {
         return 1;
     }
@@ -380,8 +380,8 @@ int run_validate_runtime_session_rejects_failed_without_failure_summary(
 }
 
 int run_build_runtime_session_partial_on_pending_mock(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -427,8 +427,8 @@ int run_build_runtime_session_partial_on_pending_mock(
 }
 
 int run_build_runtime_session_failed_on_node_failure(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }

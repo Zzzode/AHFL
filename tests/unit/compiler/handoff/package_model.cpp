@@ -74,8 +74,8 @@ namespace {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::Package>
-load_project_package(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_package(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -83,19 +83,12 @@ load_project_package(const std::filesystem::path &project_descriptor) {
     return ahfl::handoff::lower_package(*ir_program, make_project_workflow_value_flow_metadata());
 }
 
-int run_project_workflow_value_flow(const std::filesystem::path &project_descriptor) {
+int run_project_workflow_value_flow(const std::filesystem::path &project_manifest_path) {
     const ahfl::Frontend frontend;
 
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return 1;
-    }
-
-    const auto project_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-    });
+    const auto project_result =
+        frontend.parse_project(ahfl::test_support::workflow_value_flow_project_input(
+            project_manifest_path));
     if (project_result.has_errors()) {
         project_result.diagnostics.render(std::cout);
         return 1;
@@ -212,8 +205,8 @@ int run_project_workflow_value_flow(const std::filesystem::path &project_descrip
 }
 
 int run_package_reader_summary_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -242,8 +235,8 @@ int run_package_reader_summary_project_workflow_value_flow(
 }
 
 int run_package_reader_summary_rejects_missing_export(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -271,8 +264,8 @@ int run_package_reader_summary_rejects_missing_export(
 }
 
 int run_execution_planner_bootstrap_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -301,8 +294,8 @@ int run_execution_planner_bootstrap_project_workflow_value_flow(
 }
 
 int run_execution_planner_bootstrap_rejects_agent_entry(
-    const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -332,8 +325,8 @@ int run_execution_planner_bootstrap_rejects_agent_entry(
 }
 
 int run_execution_planner_bootstrap_rejects_missing_dependency(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -369,8 +362,8 @@ int run_execution_planner_bootstrap_rejects_missing_dependency(
 }
 
 int run_execution_plan_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -416,8 +409,8 @@ int run_execution_plan_project_workflow_value_flow(
     return 0;
 }
 
-int run_execution_plan_rejects_agent_entry(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_execution_plan_rejects_agent_entry(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -452,8 +445,8 @@ int run_execution_plan_rejects_agent_entry(const std::filesystem::path &project_
 }
 
 int run_validate_execution_plan_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -475,8 +468,8 @@ int run_validate_execution_plan_project_workflow_value_flow(
 }
 
 int run_validate_execution_plan_rejects_missing_entry_workflow(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -509,8 +502,8 @@ int run_validate_execution_plan_rejects_missing_entry_workflow(
 }
 
 int run_validate_execution_plan_rejects_unknown_value_read(
-    const std::filesystem::path &project_descriptor) {
-    auto package = load_project_package(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto package = load_project_package(project_manifest_path);
     if (!package.has_value()) {
         return 1;
     }
@@ -542,8 +535,8 @@ int run_validate_execution_plan_rejects_unknown_value_read(
     return 0;
 }
 
-int run_validate_package_normalizes_display_names(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_validate_package_normalizes_display_names(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -594,8 +587,8 @@ int run_validate_package_normalizes_display_names(const std::filesystem::path &p
     return 0;
 }
 
-int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -625,8 +618,8 @@ int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project
 }
 
 int run_validate_package_rejects_duplicate_normalized_targets(
-    const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -667,8 +660,8 @@ int run_validate_package_rejects_duplicate_normalized_targets(
 }
 
 int run_validate_package_rejects_unknown_capability(
-    const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -698,6 +691,7 @@ int run_file_expr_temporal(const std::filesystem::path &input_file) {
 
     auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {input_file},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(std::cout);
@@ -796,70 +790,70 @@ int main(int argc, char **argv) {
     }
 
     const std::string test_case = argv[1];
-    const std::filesystem::path project_descriptor = argv[2];
+    const std::filesystem::path project_manifest_path = argv[2];
 
     if (test_case == "project-workflow-value-flow") {
-        return run_project_workflow_value_flow(project_descriptor);
+        return run_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "validate-package-normalizes-display-names") {
-        return run_validate_package_normalizes_display_names(project_descriptor);
+        return run_validate_package_normalizes_display_names(project_manifest_path);
     }
 
     if (test_case == "package-reader-summary-project-workflow-value-flow") {
-        return run_package_reader_summary_project_workflow_value_flow(project_descriptor);
+        return run_package_reader_summary_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "package-reader-summary-rejects-missing-export") {
-        return run_package_reader_summary_rejects_missing_export(project_descriptor);
+        return run_package_reader_summary_rejects_missing_export(project_manifest_path);
     }
 
     if (test_case == "execution-planner-bootstrap-project-workflow-value-flow") {
-        return run_execution_planner_bootstrap_project_workflow_value_flow(project_descriptor);
+        return run_execution_planner_bootstrap_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "execution-planner-bootstrap-rejects-agent-entry") {
-        return run_execution_planner_bootstrap_rejects_agent_entry(project_descriptor);
+        return run_execution_planner_bootstrap_rejects_agent_entry(project_manifest_path);
     }
 
     if (test_case == "execution-planner-bootstrap-rejects-missing-dependency") {
-        return run_execution_planner_bootstrap_rejects_missing_dependency(project_descriptor);
+        return run_execution_planner_bootstrap_rejects_missing_dependency(project_manifest_path);
     }
 
     if (test_case == "execution-plan-project-workflow-value-flow") {
-        return run_execution_plan_project_workflow_value_flow(project_descriptor);
+        return run_execution_plan_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "execution-plan-rejects-agent-entry") {
-        return run_execution_plan_rejects_agent_entry(project_descriptor);
+        return run_execution_plan_rejects_agent_entry(project_manifest_path);
     }
 
     if (test_case == "validate-execution-plan-project-workflow-value-flow") {
-        return run_validate_execution_plan_project_workflow_value_flow(project_descriptor);
+        return run_validate_execution_plan_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "validate-execution-plan-rejects-missing-entry-workflow") {
-        return run_validate_execution_plan_rejects_missing_entry_workflow(project_descriptor);
+        return run_validate_execution_plan_rejects_missing_entry_workflow(project_manifest_path);
     }
 
     if (test_case == "validate-execution-plan-rejects-unknown-value-read") {
-        return run_validate_execution_plan_rejects_unknown_value_read(project_descriptor);
+        return run_validate_execution_plan_rejects_unknown_value_read(project_manifest_path);
     }
 
     if (test_case == "validate-package-rejects-wrong-kind") {
-        return run_validate_package_rejects_wrong_kind(project_descriptor);
+        return run_validate_package_rejects_wrong_kind(project_manifest_path);
     }
 
     if (test_case == "validate-package-rejects-duplicate-normalized-targets") {
-        return run_validate_package_rejects_duplicate_normalized_targets(project_descriptor);
+        return run_validate_package_rejects_duplicate_normalized_targets(project_manifest_path);
     }
 
     if (test_case == "validate-package-rejects-unknown-capability") {
-        return run_validate_package_rejects_unknown_capability(project_descriptor);
+        return run_validate_package_rejects_unknown_capability(project_manifest_path);
     }
 
     if (test_case == "file-expr-temporal") {
-        return run_file_expr_temporal(project_descriptor);
+        return run_file_expr_temporal(project_manifest_path);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

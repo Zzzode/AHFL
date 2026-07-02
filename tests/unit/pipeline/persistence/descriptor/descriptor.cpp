@@ -58,8 +58,8 @@ make_project_workflow_value_flow_metadata() {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -165,9 +165,9 @@ build_scheduler_snapshot(const ahfl::handoff::ExecutionPlan &plan,
 }
 
 [[nodiscard]] std::optional<PersistenceBootstrapFixture>
-build_bootstrap_fixture(const std::filesystem::path &project_descriptor,
+build_bootstrap_fixture(const std::filesystem::path &project_manifest_path,
                         SessionScenario scenario) {
-    const auto plan = load_project_plan(project_descriptor);
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return std::nullopt;
     }
@@ -531,8 +531,8 @@ int build_persistence_review_rejects_invalid_descriptor() {
 }
 
 int build_persistence_descriptor_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -573,8 +573,8 @@ int build_persistence_descriptor_project_workflow_value_flow(
 }
 
 int build_persistence_descriptor_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Failed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Failed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -614,8 +614,8 @@ int build_persistence_descriptor_failed_workflow(
 }
 
 int build_persistence_descriptor_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Partial);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Partial);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -652,8 +652,8 @@ int build_persistence_descriptor_partial_workflow(
 }
 
 int build_persistence_descriptor_rejects_invalid_checkpoint_record(
-    const std::filesystem::path &project_descriptor) {
-    auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Partial);
+    const std::filesystem::path &project_manifest_path) {
+    auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Partial);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -683,8 +683,8 @@ int build_persistence_descriptor_rejects_invalid_checkpoint_record(
 }
 
 int build_persistence_descriptor_rejects_checkpoint_workflow_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -714,8 +714,8 @@ int build_persistence_descriptor_rejects_checkpoint_workflow_mismatch(
 }
 
 int build_persistence_review_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Completed);
+    const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Completed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -761,8 +761,8 @@ int build_persistence_review_project_workflow_value_flow(
     return 0;
 }
 
-int build_persistence_review_failed_workflow(const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Failed);
+int build_persistence_review_failed_workflow(const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Failed);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -806,8 +806,8 @@ int build_persistence_review_failed_workflow(const std::filesystem::path &projec
     return 0;
 }
 
-int build_persistence_review_partial_workflow(const std::filesystem::path &project_descriptor) {
-    const auto fixture = build_bootstrap_fixture(project_descriptor, SessionScenario::Partial);
+int build_persistence_review_partial_workflow(const std::filesystem::path &project_manifest_path) {
+    const auto fixture = build_bootstrap_fixture(project_manifest_path, SessionScenario::Partial);
     if (!fixture.has_value()) {
         return 1;
     }
@@ -923,38 +923,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const std::filesystem::path project_descriptor = argv[2];
+    const std::filesystem::path project_manifest_path = argv[2];
 
     if (command == "build-persistence-descriptor-project-workflow-value-flow") {
-        return build_persistence_descriptor_project_workflow_value_flow(project_descriptor);
+        return build_persistence_descriptor_project_workflow_value_flow(project_manifest_path);
     }
 
     if (command == "build-persistence-descriptor-failed-workflow") {
-        return build_persistence_descriptor_failed_workflow(project_descriptor);
+        return build_persistence_descriptor_failed_workflow(project_manifest_path);
     }
 
     if (command == "build-persistence-descriptor-partial-workflow") {
-        return build_persistence_descriptor_partial_workflow(project_descriptor);
+        return build_persistence_descriptor_partial_workflow(project_manifest_path);
     }
 
     if (command == "build-persistence-descriptor-rejects-invalid-checkpoint-record") {
-        return build_persistence_descriptor_rejects_invalid_checkpoint_record(project_descriptor);
+        return build_persistence_descriptor_rejects_invalid_checkpoint_record(project_manifest_path);
     }
 
     if (command == "build-persistence-descriptor-rejects-checkpoint-workflow-mismatch") {
-        return build_persistence_descriptor_rejects_checkpoint_workflow_mismatch(project_descriptor);
+        return build_persistence_descriptor_rejects_checkpoint_workflow_mismatch(project_manifest_path);
     }
 
     if (command == "build-persistence-review-project-workflow-value-flow") {
-        return build_persistence_review_project_workflow_value_flow(project_descriptor);
+        return build_persistence_review_project_workflow_value_flow(project_manifest_path);
     }
 
     if (command == "build-persistence-review-failed-workflow") {
-        return build_persistence_review_failed_workflow(project_descriptor);
+        return build_persistence_review_failed_workflow(project_manifest_path);
     }
 
     if (command == "build-persistence-review-partial-workflow") {
-        return build_persistence_review_partial_workflow(project_descriptor);
+        return build_persistence_review_partial_workflow(project_manifest_path);
     }
 
     std::cerr << "unknown test command: " << command << '\n';

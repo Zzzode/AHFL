@@ -80,6 +80,34 @@ function writeTextFile(filePath, content) {
   fs.writeFileSync(filePath, content, 'utf8');
 }
 
+function writePackageManifest(packageRoot, packageName, modulePrefix, exportedModules, targetEntry) {
+  const quotedModules = exportedModules.map((moduleName) => `"${moduleName}"`).join(', ');
+  writeTextFile(
+    path.join(packageRoot, 'ahfl.toml'),
+    [
+      'manifest_version = 1',
+      '',
+      '[package]',
+      `name = "${packageName}"`,
+      'version = "0.1.0"',
+      'edition = "2026"',
+      'kind = "library"',
+      '',
+      '[module]',
+      `prefix = "${modulePrefix}"`,
+      'root = "."',
+      '',
+      '[exports]',
+      `modules = [${quotedModules}]`,
+      '',
+      '[targets.lib]',
+      'kind = "library"',
+      `entry = "${targetEntry}"`,
+      '',
+    ].join('\n')
+  );
+}
+
 function diagnosticCodeText(diagnostic) {
   if (typeof diagnostic.code === 'string') {
     return diagnostic.code;
@@ -290,18 +318,7 @@ async function runCompletionRegression() {
 
 async function runRenameRegression() {
   const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-rename-'));
-  const projectFile = path.join(tempDir, 'ahfl.project.json');
   const tempFile = path.join(tempDir, 'rename.ahfl');
-  const projectDescriptor = `${JSON.stringify(
-    {
-      format_version: 'ahfl.project.v0.3',
-      name: 'vscode-rename',
-      search_roots: ['.'],
-      entry_sources: ['rename.ahfl'],
-    },
-    null,
-    2
-  )}\n`;
   const source = [
     'module scratch::rename;',
     '',
@@ -316,7 +333,7 @@ async function runRenameRegression() {
   ].join('\n');
 
   try {
-    writeTextFile(projectFile, projectDescriptor);
+    writePackageManifest(tempDir, 'vscode-rename', 'scratch', ['rename'], 'rename.ahfl');
     writeTextFile(tempFile, source);
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(tempFile));
     await vscode.window.showTextDocument(document, { preview: false });
@@ -356,23 +373,12 @@ async function replaceDocumentText(document, content) {
 
 async function runDiagnosticsRegression() {
   const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-diagnostics-'));
-  const projectFile = path.join(tempDir, 'ahfl.project.json');
   const tempFile = path.join(tempDir, 'broken.ahfl');
-  const projectDescriptor = `${JSON.stringify(
-    {
-      format_version: 'ahfl.project.v0.3',
-      name: 'vscode-diagnostics',
-      search_roots: ['.'],
-      entry_sources: ['broken.ahfl'],
-    },
-    null,
-    2
-  )}\n`;
   const brokenSource = 'module scratch::broken;\n\nstruct Broken {\n    value: Missing;\n}\n';
   const fixedSource = 'module scratch::broken;\n\nstruct Broken {\n    value: String;\n}\n';
 
   try {
-    writeTextFile(projectFile, projectDescriptor);
+    writePackageManifest(tempDir, 'vscode-diagnostics', 'scratch', ['broken'], 'broken.ahfl');
     writeTextFile(tempFile, brokenSource);
     const document = await vscode.workspace.openTextDocument(vscode.Uri.file(tempFile));
     await vscode.window.showTextDocument(document, { preview: false });
@@ -403,22 +409,11 @@ async function runDiagnosticsRegression() {
 
 async function runWatchedFilesRegression() {
   const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-watch-'));
-  const projectFile = path.join(tempDir, 'ahfl.project.json');
-  const mainFile = path.join(tempDir, 'app', 'main.ahfl');
-  const typesFile = path.join(tempDir, 'lib', 'types.ahfl');
-  const projectDescriptor = `${JSON.stringify(
-    {
-      format_version: 'ahfl.project.v0.3',
-      name: 'vscode-watch',
-      search_roots: ['.'],
-      entry_sources: ['app/main.ahfl'],
-    },
-    null,
-    2
-  )}\n`;
+  const mainFile = path.join(tempDir, 'main.ahfl');
+  const typesFile = path.join(tempDir, 'types.ahfl');
   const mainSource = [
     'module app::main;',
-    'import lib::types as types;',
+    'import app::types as types;',
     '',
     'struct Use {',
     '    payload: types::Msg;',
@@ -426,19 +421,19 @@ async function runWatchedFilesRegression() {
     '',
   ].join('\n');
   const validTypesSource = [
-    'module lib::types;',
+    'module app::types;',
     '',
     'struct Msg {',
     '    value: String;',
     '}',
     '',
   ].join('\n');
-  const missingTypeSource = ['module lib::types;', '', 'struct Other {', '    value: String;', '}', ''].join(
+  const missingTypeSource = ['module app::types;', '', 'struct Other {', '    value: String;', '}', ''].join(
     '\n'
   );
 
   try {
-    writeTextFile(projectFile, projectDescriptor);
+    writePackageManifest(tempDir, 'vscode-watch', 'app', ['main', 'types'], 'main.ahfl');
     writeTextFile(mainFile, mainSource);
     writeTextFile(typesFile, validTypesSource);
 

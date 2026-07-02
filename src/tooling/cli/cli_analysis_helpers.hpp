@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/diagnostic_consumer.hpp"
@@ -21,13 +20,6 @@ namespace ahfl::cli {
 /// Diagnostics are rendered to \p diagnostics on failure.
 [[nodiscard]] std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
                                                        std::ostream &diagnostics);
-
-// ---------------------------------------------------------------------------
-// Package metadata lowering
-// ---------------------------------------------------------------------------
-
-[[nodiscard]] ahfl::handoff::PackageMetadata
-lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor);
 
 // ---------------------------------------------------------------------------
 // Core backend emission
@@ -96,9 +88,7 @@ void print_success_summary(const ahfl::SourceGraph &graph,
                            std::ostream &out);
 
 [[nodiscard]] int load_project_input(const CommandLineOptions &options,
-                                     const ahfl::Frontend &frontend,
-                                     ahfl::ProjectInput &input,
-                                     DiagnosticConsumer &consumer);
+                                     ahfl::ProjectInput &input);
 
 // ---------------------------------------------------------------------------
 // Render diagnostics (template — inline)

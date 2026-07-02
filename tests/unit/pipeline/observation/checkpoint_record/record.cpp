@@ -44,8 +44,8 @@ make_project_workflow_value_flow_metadata() {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -408,8 +408,8 @@ int validate_checkpoint_record_rejects_durable_adjacent_without_checkpoint_frien
 }
 
 int build_checkpoint_record_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -461,8 +461,8 @@ int build_checkpoint_record_project_workflow_value_flow(
     return 0;
 }
 
-int build_checkpoint_record_failed_workflow(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+int build_checkpoint_record_failed_workflow(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -516,8 +516,8 @@ int build_checkpoint_record_failed_workflow(const std::filesystem::path &project
     return 0;
 }
 
-int build_checkpoint_record_partial_workflow(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+int build_checkpoint_record_partial_workflow(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -568,8 +568,8 @@ int build_checkpoint_record_partial_workflow(const std::filesystem::path &projec
 }
 
 int build_checkpoint_record_rejects_snapshot_workflow_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -613,8 +613,8 @@ int build_checkpoint_record_rejects_snapshot_workflow_mismatch(
     return 0;
 }
 
-int build_checkpoint_review_completed(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+int build_checkpoint_review_completed(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -675,8 +675,8 @@ int build_checkpoint_review_completed(const std::filesystem::path &project_descr
     return 0;
 }
 
-int build_checkpoint_review_failed(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+int build_checkpoint_review_failed(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -737,8 +737,8 @@ int build_checkpoint_review_failed(const std::filesystem::path &project_descript
     return 0;
 }
 
-int build_checkpoint_review_partial(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+int build_checkpoint_review_partial(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }

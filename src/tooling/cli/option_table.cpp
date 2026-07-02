@@ -12,12 +12,8 @@ namespace {
 // Setter functions — one per option
 // ---------------------------------------------------------------------------
 
-void set_project(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.project_descriptor = val;
-}
-
 void set_package(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.package_descriptor = val;
+    opts.package_name = val;
 }
 
 void set_capability_mocks(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -33,7 +29,7 @@ void set_capability_bindings(CommandLineOptions &opts, std::optional<std::string
 }
 
 void set_workspace(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.workspace_descriptor = val;
+    opts.workspace_manifest_path = val;
 }
 
 void set_manifest(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -42,10 +38,6 @@ void set_manifest(CommandLineOptions &opts, std::optional<std::string_view> val)
 
 void set_sysroot(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.sysroot_path = val;
-}
-
-void set_project_name(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.project_name = val;
 }
 
 void set_target_name(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -157,18 +149,12 @@ void set_format_check(CommandLineOptions &opts, std::optional<std::string_view>)
 // ---------------------------------------------------------------------------
 
 constexpr OptionSpec kOptionSpecs[] = {
-    {"--project",
-     "",
-     OptionArgKind::RequiredValue,
-     set_project,
-     "Legacy project descriptor migration input",
-     "a legacy descriptor path"},
     {"--package",
      "",
      OptionArgKind::RequiredValue,
      set_package,
-     "Workspace package name; legacy package descriptor migration input for old artifact paths",
-     "a package name or legacy descriptor path"},
+     "Package name selected from an AHFL workspace manifest",
+     "a package name"},
     {"--capability-mocks",
      "",
      OptionArgKind::RequiredValue,
@@ -205,12 +191,6 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_sysroot,
      "Path to AHFL sysroot containing std/ahfl.toml",
      "a sysroot path"},
-    {"--project-name",
-     "",
-     OptionArgKind::RequiredValue,
-     set_project_name,
-     "Legacy project name selector for descriptor migration",
-     "a legacy project name"},
     {"--target",
      "",
      OptionArgKind::RequiredValue,

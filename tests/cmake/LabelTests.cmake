@@ -1,23 +1,15 @@
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-project-model
     TESTS
-        ahfl.frontend.project.fail_manifest_escape
-        ahfl.frontend.project.fail_manifest_duplicate_field
-        ahfl.frontend.project.fail_workspace_duplicate_project_name
-        ahflc.dump_project.project_manifest.ok_cross_file
-        ahflc.check.project_manifest.rejects_legacy_descriptor
-        ahflc.check.project_manifest.rejects_legacy_escape_descriptor
-        ahflc.check.workspace.rejects_legacy_descriptor
-        ahflc.check.workspace.rejects_legacy_duplicate_project
-        ahflc.check.project_manifest.rejects_legacy_invalid_descriptor
-        ahflc.check.workspace.rejects_legacy_missing_project
+        ahflc.dump_project.search_root.ok_cross_file
+        ahflc.check.manifest_requires_toml_extension
 )
 
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-project-debug
     TESTS
-        ahflc.dump_project.project_manifest.ok_cross_file
-        ahflc.dump_ast.project_manifest.ok_cross_file
+        ahflc.dump_project.search_root.ok_cross_file
+        ahflc.dump_ast.search_root.ok_cross_file
 )
 
 ahfl_label_tests(
@@ -35,7 +27,7 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_ir.workflow_value_flow
         ahflc.emit_ir_json.workflow_value_flow
-        ahflc.emit_ir_json.project_manifest.workflow_value_flow
+        ahflc.emit_ir_json.search_root.workflow_value_flow
         ahfl.check.project.ok_expression_type_isolated
         ahfl.handoff.package_compat.escape_control_characters
 )
@@ -44,7 +36,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-backend
     TESTS
         ahflc.emit_summary.workflow_value_flow
-        ahflc.emit_summary.project_manifest.workflow_value_flow
+        ahflc.emit_summary.search_root.workflow_value_flow
         ahflc.emit_smv.project.ok_cross_file
 )
 
@@ -83,23 +75,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.5 v0.5-package-authoring-model
-    TESTS
-        ahfl.frontend.package_authoring.ok_basic
-        ahfl.frontend.package_authoring.fail_unsupported_format
-        ahfl.frontend.package_authoring.fail_duplicate_binding_key
-)
-
-ahfl_label_tests(
     LABELS ahfl-v0.5 v0.5-package-authoring-emission
     TESTS
-        ahflc.emit_native_json.rejects_legacy_package_descriptor
-        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_package
-        ahflc.emit_native_json.rejects_legacy_workspace_descriptor_with_package
+        ahflc.emit_native_json.package_requires_workspace
+        ahflc.emit_native_json.manifest_rejects_workspace_package_selector
         ahflc.emit_package_review.manifest_basic
         ahflc.emit_package_review.workspace_basic
         ahflc.emit_execution_plan.manifest_basic
-        ahflc.check.project_manifest.rejects_legacy_descriptor_with_package
 )
 
 ahfl_label_tests(
@@ -109,8 +91,6 @@ ahfl_label_tests(
         ahfl.handoff.package.validate_rejects_wrong_kind
         ahfl.handoff.package.validate_rejects_duplicate_normalized_targets
         ahfl.handoff.package.validate_rejects_unknown_capability
-        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_display_package
-        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_bad_package
 )
 
 ahfl_label_tests(
@@ -118,8 +98,7 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_package_review.workflow_value_flow.with_package
         ahflc.emit_package_review.manifest_basic
-        ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
-        ahflc.emit_package_review.project_manifest.workflow_value_flow.with_display_package
+        ahflc.emit_package_review.manifest.workflow_value_flow.with_package
         ahflc.emit_package_review.workspace_basic
         ahflc.emit_package_review.workspace.workflow_value_flow.with_package
 )
@@ -134,8 +113,7 @@ ahfl_label_tests(
         ahfl.handoff.package.execution_planner_bootstrap.fail_missing_dependency
         ahflc.emit_package_review.workflow_value_flow.with_package
         ahflc.emit_package_review.manifest_basic
-        ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
-        ahflc.emit_package_review.project_manifest.workflow_value_flow.with_display_package
+        ahflc.emit_package_review.manifest.workflow_value_flow.with_package
         ahflc.emit_package_review.workspace_basic
         ahflc.emit_package_review.workspace.workflow_value_flow.with_package
 )
@@ -152,7 +130,7 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_execution_plan.workflow_value_flow.with_package
         ahflc.emit_execution_plan.manifest_basic
-        ahflc.emit_execution_plan.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_execution_plan.manifest.workflow_value_flow.with_package
         ahflc.emit_execution_plan.workspace.workflow_value_flow.with_package
 )
 
@@ -162,7 +140,7 @@ ahfl_label_tests(
         ahfl.handoff.package.execution_plan.validate_project_workflow_value_flow
         ahfl.handoff.package.execution_plan.validate_fail_missing_entry_workflow
         ahfl.handoff.package.execution_plan.validate_fail_unknown_value_read
-        ahflc.emit_execution_plan.project_manifest.workflow_value_flow.fail_agent_entry
+        ahflc.emit_execution_plan.manifest.workflow_value_flow.fail_agent_entry
 )
 
 ahfl_label_tests(
@@ -187,7 +165,7 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_dry_run_trace.workflow_value_flow.with_package
         ahflc.emit_dry_run_trace.manifest_requires_capability_mocks
-        ahflc.emit_dry_run_trace.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_dry_run_trace.manifest.workflow_value_flow.with_package
         ahflc.emit_dry_run_trace.workspace.workflow_value_flow.with_package
 )
 
@@ -226,7 +204,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.7 v0.7-runtime-session-emission
     TESTS
         ahflc.emit_runtime_session.workflow_value_flow.with_package
-        ahflc.emit_runtime_session.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_runtime_session.manifest.workflow_value_flow.with_package
         ahflc.emit_runtime_session.workspace.workflow_value_flow.with_package
 )
 
@@ -234,7 +212,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.9 v0.9-runtime-session-emission
     TESTS
         ahflc.emit_runtime_session.alias_const.partial.with_package
-        ahflc.emit_runtime_session.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_runtime_session.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_runtime_session.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -273,7 +251,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.7 v0.7-execution-journal-emission
     TESTS
         ahflc.emit_execution_journal.workflow_value_flow.with_package
-        ahflc.emit_execution_journal.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_execution_journal.manifest.workflow_value_flow.with_package
         ahflc.emit_execution_journal.workspace.workflow_value_flow.with_package
 )
 
@@ -304,7 +282,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.8 v0.8-replay-view-emission
     TESTS
         ahflc.emit_replay_view.workflow_value_flow.with_package
-        ahflc.emit_replay_view.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_replay_view.manifest.workflow_value_flow.with_package
         ahflc.emit_replay_view.workspace.workflow_value_flow.with_package
 )
 
@@ -312,7 +290,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.9 v0.9-replay-view-emission
     TESTS
         ahflc.emit_replay_view.alias_const.partial.with_package
-        ahflc.emit_replay_view.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_replay_view.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_replay_view.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -343,7 +321,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.8 v0.8-audit-report-emission
     TESTS
         ahflc.emit_audit_report.workflow_value_flow.with_package
-        ahflc.emit_audit_report.project_manifest.workflow_value_flow.with_package
+        ahflc.emit_audit_report.manifest.workflow_value_flow.with_package
         ahflc.emit_audit_report.workspace.workflow_value_flow.with_package
 )
 
@@ -351,7 +329,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.9 v0.9-audit-report-emission
     TESTS
         ahflc.emit_audit_report.alias_const.partial.with_package
-        ahflc.emit_audit_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_audit_report.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_audit_report.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -403,7 +381,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.10 v0.10-scheduler-snapshot-emission
     TESTS
         ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
-        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -411,7 +389,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.10 v0.10-scheduler-review-emission
     TESTS
         ahflc.emit_scheduler_review.workflow_value_flow.with_package
-        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -419,10 +397,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.10 v0.10-scheduler-golden
     TESTS
         ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
-        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_scheduler_review.workflow_value_flow.with_package
-        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -454,10 +432,10 @@ ahfl_label_tests(
         ahfl.scheduler_review.compat.fail_prefix_size_mismatch
         ahfl.scheduler_review.compat.fail_runnable_terminal_reason
         ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
-        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_scheduler_review.workflow_value_flow.with_package
-        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -488,7 +466,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.11 v0.11-checkpoint-record-emission
     TESTS
         ahflc.emit_checkpoint_record.workflow_value_flow.with_package
-        ahflc.emit_checkpoint_record.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_record.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_checkpoint_record.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -510,7 +488,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.11 v0.11-checkpoint-review-emission
     TESTS
         ahflc.emit_checkpoint_review.workflow_value_flow.with_package
-        ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -518,10 +496,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.11 v0.11-checkpoint-golden
     TESTS
         ahflc.emit_checkpoint_record.workflow_value_flow.with_package
-        ahflc.emit_checkpoint_record.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_record.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_checkpoint_record.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_checkpoint_review.workflow_value_flow.with_package
-        ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -555,7 +533,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-descriptor-emission
     TESTS
         ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
-        ahflc.emit_persistence_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_descriptor.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_persistence_descriptor.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -600,7 +578,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.13 v0.13-persistence-export-manifest-emission
     TESTS
         ahflc.emit_export_manifest.workflow_value_flow.with_package
-        ahflc.emit_export_manifest.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_manifest.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_export_manifest.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -619,7 +597,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.13 v0.13-persistence-export-review-emission
     TESTS
         ahflc.emit_export_review.workflow_value_flow.with_package
-        ahflc.emit_export_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_export_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -627,10 +605,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.13 v0.13-export-golden
     TESTS
         ahflc.emit_export_manifest.workflow_value_flow.with_package
-        ahflc.emit_export_manifest.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_manifest.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_export_manifest.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_export_review.workflow_value_flow.with_package
-        ahflc.emit_export_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_export_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -675,10 +653,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.14 v0.14-store-import-emission
     TESTS
         ahflc.emit_store_import_descriptor.workflow_value_flow.with_package
-        ahflc.emit_store_import_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_descriptor.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_store_import_descriptor.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_store_import_review.workflow_value_flow.with_package
-        ahflc.emit_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_store_import_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -686,10 +664,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.14 v0.14-store-import-golden
     TESTS
         ahflc.emit_store_import_descriptor.workflow_value_flow.with_package
-        ahflc.emit_store_import_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_descriptor.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_store_import_descriptor.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_store_import_review.workflow_value_flow.with_package
-        ahflc.emit_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_store_import_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -730,10 +708,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.15 v0.15-durable-store-import-emission
     TESTS
         ahflc.emit_durable_store_import_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -741,10 +719,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.15 v0.15-durable-store-import-golden
     TESTS
         ahflc.emit_durable_store_import_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -830,10 +808,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-emission
     TESTS
         ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -841,10 +819,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-golden
     TESTS
         ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -870,10 +848,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.16 v0.16-durable-store-import-decision-emission
     TESTS
         ahflc.emit_durable_store_import_decision.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_decision.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_decision.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_decision.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_decision_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_decision_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_decision_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_decision_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -881,10 +859,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.16 v0.16-durable-store-import-decision-golden
     TESTS
         ahflc.emit_durable_store_import_decision.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_decision.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_decision.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_decision.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_decision_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_decision_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_decision_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_decision_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -892,10 +870,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.17 v0.17-durable-store-import-receipt-emission
     TESTS
         ahflc.emit_durable_store_import_receipt.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -903,10 +881,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.17 v0.17-durable-store-import-receipt-golden
     TESTS
         ahflc.emit_durable_store_import_receipt.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -914,7 +892,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-review-emission
     TESTS
         ahflc.emit_persistence_review.workflow_value_flow.with_package
-        ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -922,10 +900,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-golden
     TESTS
         ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
-        ahflc.emit_persistence_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_descriptor.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_persistence_descriptor.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_persistence_review.workflow_value_flow.with_package
-        ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -961,10 +939,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-emission
     TESTS
         ahflc.emit_durable_store_import_receipt_persistence_response.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_response.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_response_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -972,10 +950,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-golden
     TESTS
         ahflc.emit_durable_store_import_receipt_persistence_response.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_response.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_receipt_persistence_response_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_receipt_persistence_response_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1011,10 +989,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.20 v0.20-durable-store-import-adapter-execution-emission
     TESTS
         ahflc.emit_durable_store_import_adapter_execution.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_adapter_execution.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_adapter_execution.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_adapter_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_recovery_preview.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_recovery_preview.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_recovery_preview.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_recovery_preview.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1022,10 +1000,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.20 v0.20-durable-store-import-adapter-execution-golden
     TESTS
         ahflc.emit_durable_store_import_adapter_execution.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_adapter_execution.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_adapter_execution.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_adapter_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_recovery_preview.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_recovery_preview.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_recovery_preview.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_recovery_preview.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1066,10 +1044,10 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
         ahflc.emit_provider_artifact.manifest_requires_capability_mocks
-        ahflc.emit_durable_store_import_provider_write_attempt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_attempt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_recovery_handoff.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1077,10 +1055,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.21 v0.21-durable-store-import-provider-adapter-golden
     TESTS
         ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_write_attempt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_attempt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_recovery_handoff.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1123,10 +1101,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-emission
     TESTS
         ahflc.emit_durable_store_import_provider_driver_binding.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_driver_binding.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_driver_binding.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_driver_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_driver_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_driver_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1134,10 +1112,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-golden
     TESTS
         ahflc.emit_durable_store_import_provider_driver_binding.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_driver_binding.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_driver_binding.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_driver_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_driver_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_driver_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1178,10 +1156,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-emission
     TESTS
         ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_runtime_preflight.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_runtime_preflight.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1189,10 +1167,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-golden
     TESTS
         ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_runtime_preflight.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_runtime_preflight.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1233,10 +1211,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-emission
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_envelope.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_envelope.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_envelope.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1244,10 +1222,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-golden
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_envelope.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_envelope.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_envelope.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1288,10 +1266,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.25 v0.25-durable-store-import-provider-host-execution-emission
     TESTS
         ahflc.emit_durable_store_import_provider_host_execution.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_host_execution.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_host_execution.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_host_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_host_execution_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_host_execution_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_host_execution_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_host_execution_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1299,10 +1277,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.25 v0.25-durable-store-import-provider-host-execution-golden
     TESTS
         ahflc.emit_durable_store_import_provider_host_execution.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_host_execution.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_host_execution.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_host_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_host_execution_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_host_execution_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_host_execution_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_host_execution_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1334,10 +1312,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-emission
     TESTS
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1345,10 +1323,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-golden
     TESTS
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1385,13 +1363,13 @@ ahfl_label_tests(
     LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-emission
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_adapter_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1399,13 +1377,13 @@ ahfl_label_tests(
     LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-golden
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_adapter_request.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1428,10 +1406,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-emission
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1439,10 +1417,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-golden
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1471,13 +1449,13 @@ ahfl_label_tests(
     LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-emission
     TESTS
         ahflc.emit_durable_store_import_provider_config_load.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_load.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_load.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_load.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_config_snapshot.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_snapshot.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_config_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1485,13 +1463,13 @@ ahfl_label_tests(
     LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-golden
     TESTS
         ahflc.emit_durable_store_import_provider_config_load.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_load.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_load.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_load.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_config_snapshot.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_snapshot.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_config_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_config_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_config_readiness.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1513,9 +1491,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_secret_resolver_request.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_secret_resolver_response.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_secret_policy_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_secret_resolver_request.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_secret_resolver_response.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_secret_policy_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_secret_resolver_request.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_secret_resolver_response.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_secret_policy_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_secret_resolver_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_secret_resolver_response.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_secret_policy_review.workspace.workflow_value_flow.partial.with_package
@@ -1537,9 +1515,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_local_host_harness_request.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_local_host_harness_record.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_local_host_harness_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_host_harness_request.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_local_host_harness_record.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_local_host_harness_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_harness_request.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_harness_record.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_harness_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_harness_request.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_host_harness_record.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_host_harness_review.workspace.workflow_value_flow.partial.with_package
@@ -1558,8 +1536,8 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_durable_store_import_provider_sdk_payload_plan.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_sdk_payload_audit.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_payload_plan.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_sdk_payload_audit.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_payload_plan.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_payload_audit.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_payload_plan.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_payload_audit.workspace.workflow_value_flow.partial.with_package
 )
@@ -1578,9 +1556,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.workspace.workflow_value_flow.partial.with_package
@@ -1601,9 +1579,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.workspace.workflow_value_flow.partial.with_package
@@ -1620,7 +1598,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.35 v0.35-durable-store-import-provider-write-retry-golden
     TESTS
         ahflc.emit_durable_store_import_provider_write_retry_decision.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_write_retry_decision.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_retry_decision.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_retry_decision.workspace.workflow_value_flow.partial.with_package
 )
 
@@ -1637,8 +1615,8 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_durable_store_import_provider_write_commit_receipt.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_write_commit_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_write_commit_receipt.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_write_commit_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_receipt.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_commit_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_write_commit_review.workspace.workflow_value_flow.partial.with_package
 )
@@ -1657,9 +1635,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_write_recovery_plan.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_write_recovery_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_write_recovery_plan.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_write_recovery_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_plan.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_write_recovery_plan.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_write_recovery_review.workspace.workflow_value_flow.partial.with_package
@@ -1678,8 +1656,8 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_durable_store_import_provider_failure_taxonomy_report.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_failure_taxonomy_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_failure_taxonomy_report.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_failure_taxonomy_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_report.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_failure_taxonomy_report.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_failure_taxonomy_review.workspace.workflow_value_flow.partial.with_package
 )
@@ -1699,9 +1677,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_execution_audit_event.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_telemetry_summary.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_operator_review_event.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_execution_audit_event.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_telemetry_summary.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_operator_review_event.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_execution_audit_event.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_telemetry_summary.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_operator_review_event.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_execution_audit_event.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_telemetry_summary.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_operator_review_event.workspace.workflow_value_flow.partial.with_package
@@ -1722,9 +1700,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_compatibility_test_manifest.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_fixture_matrix.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_compatibility_report.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_compatibility_test_manifest.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_fixture_matrix.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_compatibility_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_test_manifest.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_fixture_matrix.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_report.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_compatibility_test_manifest.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_fixture_matrix.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_compatibility_report.workspace.workflow_value_flow.partial.with_package
@@ -1745,9 +1723,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_registry.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_selection_plan.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_capability_negotiation_review.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_registry.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_selection_plan.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_capability_negotiation_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_registry.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_selection_plan.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_capability_negotiation_review.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_registry.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_selection_plan.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_capability_negotiation_review.workspace.workflow_value_flow.partial.with_package
@@ -1768,9 +1746,9 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_production_readiness_evidence.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_review.workflow_value_flow.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_report.workflow_value_flow.with_package
-        ahflc.emit_durable_store_import_provider_production_readiness_evidence.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_production_readiness_review.project_manifest.workflow_value_flow.failed.with_package
-        ahflc.emit_durable_store_import_provider_production_readiness_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_evidence.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_review.manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_report.manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_evidence.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_review.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_report.workspace.workflow_value_flow.partial.with_package
@@ -2078,8 +2056,6 @@ ahfl_label_tests(
         ahflc.fmt.check_fail
         ahflc.fmt.formats_directory
         ahflc.fmt.check_directory_fail
-        ahflc.fmt.rejects_legacy_project_descriptor
-        ahflc.fmt.rejects_legacy_workspace_descriptor
         ahflc.fmt.formats_manifest
         ahflc.fmt.formats_package_graph_workspace
         ahfl.formatter.formatter_all

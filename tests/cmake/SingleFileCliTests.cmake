@@ -70,24 +70,6 @@ add_test(NAME ahflc.fmt.check_directory_fail
             -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
 )
 
-add_test(NAME ahflc.fmt.rejects_legacy_project_descriptor
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
-            "-DAHFLC_ARGS=fmt;--project;${AHFL_TESTS_DIR}/integration/check_ok/ahfl.project.json"
-            "-DEXPECTED_REGEX=fmt requires --manifest <ahfl\\.toml> or --workspace <ahfl\\.workspace\\.toml> --package <name>; legacy project/workspace descriptors are removed"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
-)
-
-add_test(NAME ahflc.fmt.rejects_legacy_workspace_descriptor
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ahfl.workspace.json"
-            "-DAHFLC_ARGS=fmt;--workspace;${AHFL_TESTS_DIR}/integration/ahfl.workspace.json;--project-name;check-ok"
-            "-DEXPECTED_REGEX=fmt requires --manifest <ahfl\\.toml> or --workspace <ahfl\\.workspace\\.toml> --package <name>; legacy project/workspace descriptors are removed"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
-)
-
 add_test(NAME ahflc.fmt.formats_manifest
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

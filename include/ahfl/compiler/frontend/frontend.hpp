@@ -14,8 +14,6 @@
 
 namespace ahfl {
 
-inline constexpr std::string_view kPackageAuthoringFormatVersion = "ahfl.package-authoring.v0.5";
-
 struct FrontendOptions {
     bool emit_parse_note{false};
     /// M4: Enable syntax desugaring pass. When true, built-in container
@@ -87,73 +85,6 @@ struct ProjectInput {
     std::unordered_map<std::string, std::string> source_overlays{};
 };
 
-struct ProjectDescriptor {
-    std::filesystem::path descriptor_path;
-    std::string format_version;
-    std::string name;
-    std::vector<std::filesystem::path> entry_files;
-    std::vector<std::filesystem::path> search_roots;
-};
-
-struct WorkspaceDescriptor {
-    std::filesystem::path descriptor_path;
-    std::string format_version;
-    std::string name;
-    std::vector<std::filesystem::path> projects;
-};
-
-enum class PackageAuthoringTargetKind {
-    Agent,
-    Workflow,
-};
-
-struct PackageAuthoringTarget {
-    PackageAuthoringTargetKind kind{PackageAuthoringTargetKind::Workflow};
-    std::string name;
-};
-
-struct PackageAuthoringCapabilityBinding {
-    std::string capability;
-    std::string binding_key;
-};
-
-struct PackageAuthoringDescriptor {
-    std::filesystem::path descriptor_path;
-    std::string format_version;
-    std::string package_name;
-    std::string package_version;
-    PackageAuthoringTarget entry;
-    std::vector<PackageAuthoringTarget> exports;
-    std::vector<PackageAuthoringCapabilityBinding> capability_bindings;
-};
-
-struct WorkspaceDescriptorParseResult {
-    std::optional<WorkspaceDescriptor> descriptor;
-    DiagnosticBag diagnostics;
-
-    [[nodiscard]] bool has_errors() const noexcept {
-        return diagnostics.has_error();
-    }
-};
-
-struct ProjectDescriptorParseResult {
-    std::optional<ProjectDescriptor> descriptor;
-    DiagnosticBag diagnostics;
-
-    [[nodiscard]] bool has_errors() const noexcept {
-        return diagnostics.has_error();
-    }
-};
-
-struct PackageAuthoringDescriptorParseResult {
-    std::optional<PackageAuthoringDescriptor> descriptor;
-    DiagnosticBag diagnostics;
-
-    [[nodiscard]] bool has_errors() const noexcept {
-        return diagnostics.has_error();
-    }
-};
-
 struct ProjectParseResult {
     SourceGraph graph;
     DiagnosticBag diagnostics;
@@ -172,15 +103,6 @@ class Frontend {
     // rather than ANTLR parse-tree nodes.
     [[nodiscard]] ParseResult parse_file(const std::filesystem::path &path) const;
     [[nodiscard]] ParseResult parse_text(std::string display_name, std::string text) const;
-    [[nodiscard]] ProjectDescriptorParseResult
-    load_project_descriptor(const std::filesystem::path &path) const;
-    [[nodiscard]] PackageAuthoringDescriptorParseResult
-    load_package_authoring_descriptor(const std::filesystem::path &path) const;
-    [[nodiscard]] WorkspaceDescriptorParseResult
-    load_workspace_descriptor(const std::filesystem::path &path) const;
-    [[nodiscard]] ProjectDescriptorParseResult
-    load_project_descriptor_from_workspace(const std::filesystem::path &workspace_path,
-                                           std::string_view project_name) const;
     [[nodiscard]] ProjectParseResult parse_project(const ProjectInput &input) const;
 
   private:

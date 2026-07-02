@@ -549,7 +549,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 
 1. [corelib-rfc.zh.md](../design/corelib-rfc.zh.md) 中关于 P6 默认 prelude 注入的状态记录必须改为历史实现记录，而不是新包体系的语言默认。
 2. CLI / LSP / test helper 中为用户便利设置的 `inject_prelude = true` 必须迁移到显式 import、test fixture helper 或后续单独 RFC；不能在 PackageGraph 入口继续作为默认语言语义。
-3. 需要无 import 使用 prelude 的测试必须改写为显式 `import std::prelude as prelude;` 或改成验证旧入口被拒绝的 migration negative test。
+3. 需要无 import 使用 prelude 的测试必须改写为显式 `import std::prelude as prelude;`，不能通过保留旧入口测试来维持隐式语义。
 
 迁移规则：
 
@@ -564,7 +564,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 | `ahfl.package.json.exports` | `[targets.<name>].exports[]` 的 `{ kind, name }` 项 |
 | `ahfl.package.json.capability_bindings` | `[[targets.<name>.capability_bindings]]` |
 
-不保留双入口。迁移 PR 必须删除旧 descriptor fixture 或把它们改造成 negative tests，证明旧入口会给出明确诊断。
+不保留双入口。迁移 PR 必须删除旧 descriptor fixture、CLI option 和 frontend loader API；旧入口不作为公开语法、测试 fixture 或工具层分支继续存在。
 
 ## Implementation Plan
 
@@ -577,9 +577,9 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 | 3. PackageGraph core | frontend loader boundary | 新增 PackageGraph builder、PackageId / TargetId 分配、dependency DAG、module root table、duplicate prefix diagnostics | PackageGraph unit tests；dependency source tests | `ProjectInput` 退为内部 loader 数据，不再作为公开工程模型 |
 | 4. Lockfile | resolver、JSON support | 新增 `ahfl.lock` reader/writer、canonical TOML checksum、drift checker、CI/release lock policy | Lockfile tests；checksum fixtures | drift 在 PackageGraph 阶段失败，不产生 warning-only path |
 | 5. Sysroot std | `std/`、stdlib tests、release packaging | 新增 `std/ahfl.toml`，固定 `PackageId(0)`，显式 builtin allowlist 和 `prelude.injection = "explicit"` | Stdlib tests；prelude migration tests | 删除基于 `std/prelude.ahfl` 的内建目录探测 |
-| 6. CLI migration | `ahflc` public entry | 新增 `--manifest`、`--workspace --package --target`、`dump package-graph`，迁移 `emit native-json` target 输入 | CLI integration tests | 公开 `--project` 和旧 runtime-facing `--package` 输入路径被删除或变成 migration negative tests |
+| 6. CLI migration | `ahflc` public entry | 新增 `--manifest`、`--workspace --package --target`、`dump package-graph`，迁移 `emit native-json` target 输入 | CLI integration tests | 公开 `--project` 和旧 runtime-facing `--package` 输入路径被删除 |
 | 7. Tooling migration | LSP、formatter、test harness | LSP / formatter / diagnostics / semantic tokens / hover 统一复用 PackageGraph builder | LSP / formatter focused tests；discovery precedence tests | 工具层不再重新推断 search roots 或 public/private module visibility |
-| 8. Fixture and docs migration | `tests/`、`examples/`、`docs/reference`、`docs/design`、README | 迁移 integration fixtures、golden commands 和工程配置示例 | `python3 scripts/check-rfc.py`；`ctest --preset test-dev --output-on-failure` | 旧 JSON descriptor fixture 删除或改为明确 negative tests |
+| 8. Fixture and docs migration | `tests/`、`examples/`、`docs/reference`、`docs/design`、README | 迁移 integration fixtures、golden commands 和工程配置示例 | `python3 scripts/check-rfc.py`；`ctest --preset test-dev --output-on-failure` | 旧 JSON descriptor fixture 删除 |
 
 全量验收命令：
 

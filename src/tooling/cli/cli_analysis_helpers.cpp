@@ -119,25 +119,6 @@ std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
     return lower_program_ir(parse_result.graph, resolve_result, type_check_result);
 }
 
-// ---------------------------------------------------------------------------
-// lower_package_metadata
-// ---------------------------------------------------------------------------
-
-namespace {
-
-[[nodiscard]] ahfl::handoff::ExecutableKind
-to_executable_kind(ahfl::PackageAuthoringTargetKind kind) {
-    switch (kind) {
-    case ahfl::PackageAuthoringTargetKind::Agent:
-        return ahfl::handoff::ExecutableKind::Agent;
-    case ahfl::PackageAuthoringTargetKind::Workflow:
-        return ahfl::handoff::ExecutableKind::Workflow;
-    }
-    return ahfl::handoff::ExecutableKind::Workflow;
-}
-
-} // namespace
-
 namespace {
 
 struct SmvSizeReport {
@@ -183,31 +164,6 @@ void print_smv_size_report(const SmvSizeReport &report, std::ostream &err) {
 }
 
 } // namespace
-
-ahfl::handoff::PackageMetadata
-lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
-    ahfl::handoff::PackageMetadata metadata;
-    metadata.identity = ahfl::handoff::PackageIdentity{
-        .format_version = std::string(ahfl::handoff::kFormatVersion),
-        .name = descriptor.package_name,
-        .version = descriptor.package_version,
-    };
-    metadata.entry_target = ahfl::handoff::ExecutableRef{
-        .kind = to_executable_kind(descriptor.entry.kind),
-        .canonical_name = descriptor.entry.name,
-    };
-    metadata.export_targets.reserve(descriptor.exports.size());
-    for (const auto &target : descriptor.exports) {
-        metadata.export_targets.push_back(ahfl::handoff::ExecutableRef{
-            .kind = to_executable_kind(target.kind),
-            .canonical_name = target.name,
-        });
-    }
-    for (const auto &binding : descriptor.capability_bindings) {
-        metadata.capability_binding_keys.emplace(binding.capability, binding.binding_key);
-    }
-    return metadata;
-}
 
 // ---------------------------------------------------------------------------
 // emit_core_backend (non-template overload)
@@ -384,39 +340,10 @@ void print_success_summary(const ahfl::SourceGraph &graph,
 // load_project_input
 // ---------------------------------------------------------------------------
 
-int load_project_input(const CommandLineOptions &options,
-                       const ahfl::Frontend &frontend,
-                       ahfl::ProjectInput &input,
-                       DiagnosticConsumer &consumer) {
+int load_project_input(const CommandLineOptions &options, ahfl::ProjectInput &input) {
     // CLI tool defaults to prelude injection for user convenience. Users who
     // want explicit-only imports can pass --no-prelude in the future.
     input.inject_prelude = true;
-
-    if (options.project_descriptor.has_value()) {
-        auto descriptor_result =
-            frontend.load_project_descriptor(std::string(*options.project_descriptor));
-        consumer.consume(descriptor_result.diagnostics);
-        if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-            return descriptor_result.has_errors() ? 1 : 0;
-        }
-
-        input.entry_files = descriptor_result.descriptor->entry_files;
-        input.search_roots = descriptor_result.descriptor->search_roots;
-        return -1;
-    }
-
-    if (options.workspace_descriptor.has_value()) {
-        auto descriptor_result = frontend.load_project_descriptor_from_workspace(
-            std::string(*options.workspace_descriptor), *options.project_name);
-        consumer.consume(descriptor_result.diagnostics);
-        if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-            return descriptor_result.has_errors() ? 1 : 0;
-        }
-
-        input.entry_files = descriptor_result.descriptor->entry_files;
-        input.search_roots = descriptor_result.descriptor->search_roots;
-        return -1;
-    }
 
     input.entry_files.push_back(std::string(options.positional.front()));
     input.search_roots.reserve(options.search_roots.size());

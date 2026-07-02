@@ -44,8 +44,8 @@ make_project_workflow_value_flow_metadata() {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -512,8 +512,8 @@ int run_validate_scheduler_snapshot_rejects_unsupported_source_replay_view_forma
 }
 
 int run_build_scheduler_snapshot_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -559,8 +559,8 @@ int run_build_scheduler_snapshot_project_workflow_value_flow(
 }
 
 int run_build_scheduler_snapshot_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -609,8 +609,8 @@ int run_build_scheduler_snapshot_failed_workflow(
 }
 
 int run_build_scheduler_snapshot_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -664,8 +664,8 @@ int run_build_scheduler_snapshot_partial_workflow(
 }
 
 int run_build_scheduler_snapshot_rejects_replay_workflow_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -705,8 +705,8 @@ int run_build_scheduler_snapshot_rejects_replay_workflow_mismatch(
 }
 
 int run_build_scheduler_decision_summary_completed(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -748,8 +748,8 @@ int run_build_scheduler_decision_summary_completed(
 }
 
 int run_build_scheduler_decision_summary_failed(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -793,8 +793,8 @@ int run_build_scheduler_decision_summary_failed(
 }
 
 int run_build_scheduler_decision_summary_partial(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -995,7 +995,7 @@ int run_validate_scheduler_decision_summary_rejects_runnable_terminal_reason() {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::cerr << "usage: ahfl_scheduler_snapshot_tests <command> [project_descriptor]\n";
+        std::cerr << "usage: ahfl_scheduler_snapshot_tests <command> [project_manifest_path]\n";
         return 1;
     }
 
@@ -1059,28 +1059,28 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const std::filesystem::path project_descriptor{argv[2]};
+    const std::filesystem::path project_manifest_path{argv[2]};
     if (command == "build-scheduler-snapshot-project-workflow-value-flow") {
-        return run_build_scheduler_snapshot_project_workflow_value_flow(project_descriptor);
+        return run_build_scheduler_snapshot_project_workflow_value_flow(project_manifest_path);
     }
     if (command == "build-scheduler-snapshot-failed-workflow") {
-        return run_build_scheduler_snapshot_failed_workflow(project_descriptor);
+        return run_build_scheduler_snapshot_failed_workflow(project_manifest_path);
     }
     if (command == "build-scheduler-snapshot-partial-workflow") {
-        return run_build_scheduler_snapshot_partial_workflow(project_descriptor);
+        return run_build_scheduler_snapshot_partial_workflow(project_manifest_path);
     }
     if (command == "build-scheduler-snapshot-rejects-replay-workflow-mismatch") {
         return run_build_scheduler_snapshot_rejects_replay_workflow_mismatch(
-            project_descriptor);
+            project_manifest_path);
     }
     if (command == "build-scheduler-decision-summary-completed") {
-        return run_build_scheduler_decision_summary_completed(project_descriptor);
+        return run_build_scheduler_decision_summary_completed(project_manifest_path);
     }
     if (command == "build-scheduler-decision-summary-failed") {
-        return run_build_scheduler_decision_summary_failed(project_descriptor);
+        return run_build_scheduler_decision_summary_failed(project_manifest_path);
     }
     if (command == "build-scheduler-decision-summary-partial") {
-        return run_build_scheduler_decision_summary_partial(project_descriptor);
+        return run_build_scheduler_decision_summary_partial(project_manifest_path);
     }
 
     std::cerr << "unknown ahfl_scheduler_snapshot_tests command: " << command << '\n';

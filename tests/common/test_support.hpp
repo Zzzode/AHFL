@@ -113,21 +113,39 @@ struct TestDispatchEntry {
     return 2;
 }
 
+[[nodiscard]] inline ProjectInput workflow_value_flow_project_input(
+    const std::filesystem::path &app_manifest_path) {
+    const auto app_root = std::filesystem::weakly_canonical(app_manifest_path).parent_path();
+    const auto fixture_root = app_root.parent_path();
+    const auto repo_root = fixture_root.parent_path().parent_path().parent_path();
+    ProjectInput input;
+    input.entry_files.push_back(app_root / "main.ahfl");
+    input.include_stdlib = false;
+    input.inject_prelude = false;
+    input.module_roots.push_back(ProjectInput::ModuleRoot{
+        .prefix = "std",
+        .root = repo_root / "std",
+        .exported_modules = {"prelude", "option"},
+    });
+    input.module_roots.push_back(ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = app_root,
+        .exported_modules = {"main"},
+    });
+    input.module_roots.push_back(ProjectInput::ModuleRoot{
+        .prefix = "lib",
+        .root = fixture_root / "lib",
+        .exported_modules = {"agents", "types"},
+    });
+    return input;
+}
+
 [[nodiscard]] inline std::optional<ir::Program>
-load_project_ir(const std::filesystem::path &project_descriptor) {
+load_project_ir(const std::filesystem::path &app_manifest_path) {
     const Frontend frontend;
 
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const auto project_result = frontend.parse_project(ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-        .inject_prelude = true,
-    });
+    const auto project_result =
+        frontend.parse_project(workflow_value_flow_project_input(app_manifest_path));
     if (project_result.has_errors()) {
         project_result.diagnostics.render(std::cout);
         return std::nullopt;

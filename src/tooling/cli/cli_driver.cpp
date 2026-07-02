@@ -324,13 +324,9 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
     return std::filesystem::path{std::string{value}}.extension().generic_string() == extension;
 }
 
-[[nodiscard]] bool is_legacy_json_descriptor_path(std::string_view value) {
-    return path_has_extension(value, ".json");
-}
-
-[[nodiscard]] bool is_toml_workspace_descriptor(const CommandLineOptions &options) {
-    return options.workspace_descriptor.has_value() &&
-           path_has_extension(*options.workspace_descriptor, ".toml");
+[[nodiscard]] bool is_toml_workspace_manifest_path(const CommandLineOptions &options) {
+    return options.workspace_manifest_path.has_value() &&
+           path_has_extension(*options.workspace_manifest_path, ".toml");
 }
 
 [[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
@@ -347,10 +343,10 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
 
 [[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
                                                 std::optional<CommandKind> command) {
-    return options.workspace_descriptor.has_value() &&
+    return options.workspace_manifest_path.has_value() &&
            (command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile ||
             (selected_action_supports_package_graph_input(options, command) &&
-             is_toml_workspace_descriptor(options)));
+             is_toml_workspace_manifest_path(options)));
 }
 
 [[nodiscard]] bool is_package_graph_descriptor_dump(std::optional<CommandKind> command) {
@@ -360,35 +356,24 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
 [[nodiscard]] bool command_can_discover_package_graph(const CommandLineOptions &options,
                                                       std::optional<CommandKind> command) {
     return command == CommandKind::Check && !options.manifest_path.has_value() &&
-           !options.workspace_descriptor.has_value() && !options.project_descriptor.has_value() &&
-           options.search_roots.empty() && options.positional.size() == 1;
+           !options.workspace_manifest_path.has_value() && options.search_roots.empty() &&
+           options.positional.size() == 1;
 }
 
-[[nodiscard]] bool package_option_is_workspace_selector(const CommandLineOptions &options,
-                                                        std::optional<CommandKind> command) {
-    return options.package_descriptor.has_value() && uses_package_graph_workspace(options, command);
+[[nodiscard]] bool workspace_package_is_selected(const CommandLineOptions &options,
+                                                 std::optional<CommandKind> command) {
+    return options.package_name.has_value() && uses_package_graph_workspace(options, command);
 }
 
 [[nodiscard]] std::optional<std::string_view>
 workspace_package_name(const CommandLineOptions &options, std::optional<CommandKind> command) {
     if (uses_package_graph_workspace(options, command)) {
-        if (options.package_descriptor.has_value()) {
-            return *options.package_descriptor;
+        if (options.package_name.has_value()) {
+            return *options.package_name;
         }
         return std::nullopt;
     }
-    if (options.package_descriptor.has_value()) {
-        return *options.package_descriptor;
-    }
-    if (options.project_name.has_value()) {
-        return *options.project_name;
-    }
     return std::nullopt;
-}
-
-[[nodiscard]] bool package_selector_looks_like_legacy_descriptor(std::string_view value) {
-    return value.ends_with(".json") || value.find('/') != std::string_view::npos ||
-           value.find('\\') != std::string_view::npos;
 }
 
 enum class DiscoveredPackageGraphKind {
@@ -620,6 +605,15 @@ package_graph_action_requires_handoff_metadata(const CommandLineOptions &options
 [[nodiscard]] ahfl::handoff::PackageMetadata
 package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNode &package,
                                            const ahfl::package_graph::TargetNode &target) {
+    auto entry_kind = ahfl::handoff::ExecutableKind::Workflow;
+    if (const auto export_entry =
+            std::find_if(target.exports.begin(), target.exports.end(), [&](const auto &item) {
+                return item.name == target.entry;
+            });
+        export_entry != target.exports.end() && export_entry->kind == "agent") {
+        entry_kind = ahfl::handoff::ExecutableKind::Agent;
+    }
+
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
         .format_version = std::string{ahfl::handoff::kFormatVersion},
@@ -627,7 +621,7 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
         .version = package.version,
     };
     metadata.entry_target = ahfl::handoff::ExecutableRef{
-        .kind = ahfl::handoff::ExecutableKind::Workflow,
+        .kind = entry_kind,
         .canonical_name = target.entry,
     };
     metadata.export_targets.reserve(target.exports.size());
@@ -1201,7 +1195,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     const bool package_graph_discovery =
         command_can_discover_package_graph(options_, effective_command_);
     const bool workspace_package_selector =
-        package_option_is_workspace_selector(options_, effective_command_);
+        workspace_package_is_selected(options_, effective_command_);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of "
                   << format_comma_or_commands(command_list(CommandListKind::Action)) << "\n";
@@ -1209,73 +1203,37 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.project_descriptor.has_value() && !options_.search_roots.empty()) {
-        std::cerr << "error: --project cannot be combined with --search-root\n";
+    if (options_.workspace_manifest_path.has_value() &&
+        !is_toml_workspace_manifest_path(options_)) {
+        std::cerr << "error: --workspace expects ahfl.workspace.toml\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_descriptor.has_value() && options_.project_descriptor.has_value()) {
-        std::cerr << "error: --workspace cannot be combined with --project\n";
+    if (options_.workspace_manifest_path.has_value() && !package_graph_workspace) {
+        std::cerr << "error: --workspace is only supported with check, fmt, emit native-json, "
+                     "package artifact commands, provider artifact commands, and dump "
+                     "package-graph/lockfile\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (effective_command_ == CommandKind::Check && options_.project_descriptor.has_value()) {
-        std::cerr << "error: check no longer accepts --project; use --manifest <ahfl.toml>\n";
+    if (options_.workspace_manifest_path.has_value() && !options_.search_roots.empty()) {
+        std::cerr << "error: --workspace cannot be combined with --search-root\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (effective_command_ == CommandKind::Check && options_.workspace_descriptor.has_value() &&
-        !is_toml_workspace_descriptor(options_)) {
-        std::cerr << "error: check --workspace expects ahfl.workspace.toml; legacy "
-                     "ahfl.workspace.json descriptors are removed; use ahfl.workspace.toml with "
-                     "--package <name>\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (effective_command_ == CommandKind::EmitNativeJson &&
-        options_.project_descriptor.has_value()) {
-        std::cerr << "error: emit native-json no longer accepts --project; use --manifest "
-                     "<ahfl.toml> --target <name>\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (effective_command_ == CommandKind::EmitNativeJson &&
-        options_.workspace_descriptor.has_value() && !is_toml_workspace_descriptor(options_)) {
-        std::cerr << "error: emit native-json --workspace expects ahfl.workspace.toml; legacy "
-                     "ahfl.workspace.json descriptors are removed; use ahfl.workspace.toml with "
-                     "--package <name> --target <name>\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (effective_command_ == CommandKind::EmitNativeJson &&
-        options_.package_descriptor.has_value() && !workspace_package_selector) {
-        std::cerr << "error: emit native-json no longer accepts legacy --package descriptors; "
-                     "move handoff metadata into [targets.<name>] and use --manifest "
-                     "<ahfl.toml> --target <name>\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (package_graph_descriptor_dump && options_.workspace_descriptor.has_value() &&
-        !is_toml_workspace_descriptor(options_)) {
-        std::cerr << "error: dump " << command_short_name(*effective_command_)
-                  << " --workspace expects ahfl.workspace.toml; legacy ahfl.workspace.json "
-                     "descriptors are removed; migrate workspace members into "
-                     "ahfl.workspace.toml\n";
+    if (options_.workspace_manifest_path.has_value() &&
+        !workspace_package_name(options_, effective_command_).has_value()) {
+        std::cerr << "error: --workspace requires --package <name>\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
     if (options_.manifest_path.has_value()) {
-        if (is_legacy_json_descriptor_path(*options_.manifest_path)) {
-            std::cerr << "error: --manifest expects ahfl.toml; legacy JSON descriptors are "
-                         "removed; migrate project/package metadata into ahfl.toml targets\n";
+        if (!path_has_extension(*options_.manifest_path, ".toml")) {
+            std::cerr << "error: --manifest expects ahfl.toml\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1287,16 +1245,14 @@ std::optional<ExitCode> CliDriver::validate_options() {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (options_.project_descriptor.has_value() || options_.workspace_descriptor.has_value() ||
-            !options_.search_roots.empty()) {
-            std::cerr << "error: --manifest cannot be combined with --project, --workspace, or "
-                         "--search-root\n";
+        if (options_.workspace_manifest_path.has_value() || !options_.search_roots.empty()) {
+            std::cerr << "error: --manifest cannot be combined with --workspace or --search-root\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (options_.package_descriptor.has_value()) {
-            std::cerr << "error: --manifest cannot be combined with legacy --package; use "
-                         "[targets.<name>] in ahfl.toml\n";
+        if (options_.package_name.has_value()) {
+            std::cerr << "error: --manifest cannot be combined with --package; use --target "
+                         "<name>\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1318,47 +1274,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_descriptor.has_value() && !options_.search_roots.empty()) {
-        std::cerr << "error: --workspace cannot be combined with --search-root\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (options_.project_name.has_value() && !options_.workspace_descriptor.has_value()) {
-        std::cerr << "error: --project-name requires --workspace\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (package_graph_workspace && options_.project_name.has_value()) {
-        std::cerr << "error: --project-name is a removed legacy workspace selector for "
-                     "ahfl.workspace.toml; use --package <name>\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (package_graph_workspace && options_.package_descriptor.has_value() &&
-        package_selector_looks_like_legacy_descriptor(*options_.package_descriptor)) {
-        std::cerr << "error: --package in ahfl.workspace.toml mode selects a package name; "
-                     "legacy ahfl.package.json descriptors are removed; move handoff metadata "
-                     "into [targets.<name>]\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
-    if (options_.workspace_descriptor.has_value() &&
-        !workspace_package_name(options_, effective_command_).has_value()) {
-        std::cerr << "error: --workspace requires --package <name>";
-        if (!package_graph_workspace) {
-            std::cerr << " or --project-name";
-        }
-        std::cerr << "\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
     if (package_graph_descriptor_dump) {
-        if (!options_.manifest_path.has_value() && !options_.workspace_descriptor.has_value()) {
+        if (!options_.manifest_path.has_value() && !options_.workspace_manifest_path.has_value()) {
             std::cerr << "error: dump " << command_short_name(*effective_command_)
                       << " requires --manifest or --workspace\n";
             print_usage(std::cerr);
@@ -1372,23 +1289,12 @@ std::optional<ExitCode> CliDriver::validate_options() {
         }
     }
 
-    const bool legacy_descriptor_input =
-        options_.project_descriptor.has_value() ||
-        (options_.workspace_descriptor.has_value() && !package_graph_workspace);
     const bool package_graph_input =
         (options_.manifest_path.has_value() && !package_graph_descriptor_dump) ||
         package_graph_workspace;
-    const bool structured_input = legacy_descriptor_input || package_graph_input;
     const bool manifest_input =
         options_.manifest_path.has_value() && !package_graph_descriptor_dump;
     if (effective_command_ == CommandKind::Format) {
-        if (legacy_descriptor_input) {
-            std::cerr << "error: fmt requires --manifest <ahfl.toml> or --workspace "
-                         "<ahfl.workspace.toml> --package <name>; legacy project/workspace "
-                         "descriptors are removed\n";
-            print_usage(std::cerr);
-            return ExitCode::UsageError;
-        }
         if (package_graph_input && !options_.positional.empty()) {
             std::cerr << "error: fmt accepts either positional files/directories or a "
                          "package manifest/workspace, not both\n";
@@ -1407,17 +1313,14 @@ std::optional<ExitCode> CliDriver::validate_options() {
         }
     } else if (!package_graph_descriptor_dump &&
                (manifest_input     ? !options_.positional.empty()
-                : structured_input ? !options_.positional.empty()
-                                   : options_.positional.size() != 1)) {
+                : package_graph_input ? !options_.positional.empty()
+                                      : options_.positional.size() != 1)) {
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.package_descriptor.has_value() && !workspace_package_selector &&
-        !selected_action_supports_package(selected_action)) {
-        std::cerr << "error: --package is only supported with "
-                  << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
-                  << "\n";
+    if (options_.package_name.has_value() && !workspace_package_selector) {
+        std::cerr << "error: --package is only supported with --workspace <ahfl.workspace.toml>\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -1613,16 +1516,16 @@ std::optional<ExitCode> CliDriver::validate_options() {
 std::optional<ExitCode> CliDriver::load_package_and_mocks() {
     const auto selected_action = selected_action_from_options(options_, effective_command_);
     const bool workspace_package_selector =
-        package_option_is_workspace_selector(options_, effective_command_);
+        workspace_package_is_selected(options_, effective_command_);
     const bool package_metadata_from_package_graph =
         (options_.manifest_path.has_value() || workspace_package_selector) &&
         selected_action_supports_package(selected_action);
     if (selected_action_requires_package(selected_action)) {
         const auto action_name = selected_action_name(selected_action);
-        if (!package_metadata_from_package_graph && !options_.package_descriptor.has_value()) {
+        if (!package_metadata_from_package_graph) {
             std::cerr << "error: " << action_name
                       << " requires --manifest <ahfl.toml> --target <name>, --workspace "
-                         "<ahfl.workspace.toml> --package <name> --target <name>, or --package\n";
+                         "<ahfl.workspace.toml> --package <name> --target <name>\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1652,17 +1555,6 @@ std::optional<ExitCode> CliDriver::load_package_and_mocks() {
         }
 
         capability_mock_set_ = std::move(*mock_parse_result.mock_set);
-    }
-
-    if (options_.package_descriptor.has_value() && !workspace_package_selector) {
-        auto package_result =
-            frontend_.load_package_authoring_descriptor(std::string(*options_.package_descriptor));
-        diag_consumer_->consume(package_result.diagnostics);
-        if (package_result.has_errors() || !package_result.descriptor.has_value()) {
-            return package_result.has_errors() ? ExitCode::CompileError : ExitCode::Success;
-        }
-
-        package_metadata_ = lower_package_metadata(*package_result.descriptor);
     }
 
     return std::nullopt;
@@ -1728,14 +1620,11 @@ ExitCode CliDriver::execute() {
         }
     }
 
-    const bool project_mode = options_.project_descriptor.has_value() ||
-                              options_.workspace_descriptor.has_value() ||
-                              !options_.search_roots.empty();
+    const bool project_mode = !options_.search_roots.empty();
 
     if (project_mode || is_action_enabled(options_, CommandKind::DumpProject)) {
         ahfl::ProjectInput input;
-        if (const auto load_status =
-                load_project_input(options_, frontend_, input, *diag_consumer_);
+        if (const auto load_status = load_project_input(options_, input);
             load_status >= 0) {
             return load_status == 0 ? ExitCode::Success : ExitCode::CompileError;
         }
@@ -1839,7 +1728,7 @@ ExitCode CliDriver::run_workspace_package() {
     }
 
     const auto workspace_manifest_path =
-        normalize_manifest_path(std::filesystem::path{std::string{*options_.workspace_descriptor}});
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.workspace_manifest_path}});
     const auto graph_result = ahfl::package_graph::build_package_graph_from_workspace(
         ahfl::package_graph::WorkspaceBuildInput{
             .workspace_manifest_path = workspace_manifest_path,
@@ -1911,7 +1800,7 @@ ExitCode CliDriver::dump_package_graph() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_descriptor.has_value()) {
+    if (options_.workspace_manifest_path.has_value()) {
         const auto package_name = workspace_package_name(options_, effective_command_);
         if (!package_name.has_value()) {
             std::cerr << "error: dump package-graph --workspace requires --package <name>\n";
@@ -1920,7 +1809,7 @@ ExitCode CliDriver::dump_package_graph() {
         const auto result = ahfl::package_graph::build_package_graph_from_workspace(
             ahfl::package_graph::WorkspaceBuildInput{
                 .workspace_manifest_path = normalize_manifest_path(
-                    std::filesystem::path{std::string{*options_.workspace_descriptor}}),
+                    std::filesystem::path{std::string{*options_.workspace_manifest_path}}),
                 .package_name = std::string{*package_name},
                 .sysroot_manifest_path = *sysroot_manifest,
             });
@@ -1955,7 +1844,7 @@ ExitCode CliDriver::dump_lockfile() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_descriptor.has_value()) {
+    if (options_.workspace_manifest_path.has_value()) {
         const auto package_name = workspace_package_name(options_, effective_command_);
         if (!package_name.has_value()) {
             std::cerr << "error: dump lockfile --workspace requires --package <name>\n";
@@ -1964,7 +1853,7 @@ ExitCode CliDriver::dump_lockfile() {
         const auto result = ahfl::package_graph::build_package_graph_from_workspace(
             ahfl::package_graph::WorkspaceBuildInput{
                 .workspace_manifest_path = normalize_manifest_path(
-                    std::filesystem::path{std::string{*options_.workspace_descriptor}}),
+                    std::filesystem::path{std::string{*options_.workspace_manifest_path}}),
                 .package_name = std::string{*package_name},
                 .sysroot_manifest_path = *sysroot_manifest,
             });
@@ -1976,7 +1865,7 @@ ExitCode CliDriver::dump_lockfile() {
         std::cout << ahfl::package_graph::serialize_lockfile(ahfl::package_graph::make_lockfile(
                          *result.graph,
                          normalize_manifest_path(
-                             std::filesystem::path{std::string{*options_.workspace_descriptor}})
+                             std::filesystem::path{std::string{*options_.workspace_manifest_path}})
                              .parent_path()))
                   << '\n';
         return ExitCode::Success;
@@ -2031,7 +1920,7 @@ ExitCode CliDriver::format_source_file() {
                 return ExitCode::UsageError;
             }
             const auto workspace_manifest_path = normalize_manifest_path(
-                std::filesystem::path{std::string{*options_.workspace_descriptor}});
+                std::filesystem::path{std::string{*options_.workspace_manifest_path}});
             graph_result = ahfl::package_graph::build_package_graph_from_workspace(
                 ahfl::package_graph::WorkspaceBuildInput{
                     .workspace_manifest_path = workspace_manifest_path,

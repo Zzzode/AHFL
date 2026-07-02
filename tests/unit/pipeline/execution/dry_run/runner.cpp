@@ -37,8 +37,8 @@ namespace {
     return metadata;
 }
 
-int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -107,8 +107,8 @@ int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &p
     return 0;
 }
 
-int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -243,8 +243,8 @@ int run_parse_capability_mock_set_rejects_duplicate_json_field(const std::filesy
     return 0;
 }
 
-int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -285,8 +285,8 @@ int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_
     return 0;
 }
 
-int run_local_dry_run_rejects_unused_mock(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+int run_local_dry_run_rejects_unused_mock(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -349,34 +349,34 @@ int main(int argc, char **argv) {
     }
 
     const std::string test_case = argv[1];
-    const std::filesystem::path project_descriptor = argv[2];
+    const std::filesystem::path project_manifest_path = argv[2];
 
     if (test_case == "local-dry-run-project-workflow-value-flow") {
-        return run_local_dry_run_project_workflow_value_flow(project_descriptor);
+        return run_local_dry_run_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "local-dry-run-rejects-missing-workflow") {
-        return run_local_dry_run_rejects_missing_workflow(project_descriptor);
+        return run_local_dry_run_rejects_missing_workflow(project_manifest_path);
     }
 
     if (test_case == "parse-capability-mock-set-ok") {
-        return run_parse_capability_mock_set_ok(project_descriptor);
+        return run_parse_capability_mock_set_ok(project_manifest_path);
     }
 
     if (test_case == "parse-capability-mock-set-rejects-duplicate-selector") {
-        return run_parse_capability_mock_set_rejects_duplicate_selector(project_descriptor);
+        return run_parse_capability_mock_set_rejects_duplicate_selector(project_manifest_path);
     }
 
     if (test_case == "parse-capability-mock-set-rejects-duplicate-json-field") {
-        return run_parse_capability_mock_set_rejects_duplicate_json_field(project_descriptor);
+        return run_parse_capability_mock_set_rejects_duplicate_json_field(project_manifest_path);
     }
 
     if (test_case == "local-dry-run-rejects-missing-mock") {
-        return run_local_dry_run_rejects_missing_mock(project_descriptor);
+        return run_local_dry_run_rejects_missing_mock(project_manifest_path);
     }
 
     if (test_case == "local-dry-run-rejects-unused-mock") {
-        return run_local_dry_run_rejects_unused_mock(project_descriptor);
+        return run_local_dry_run_rejects_unused_mock(project_manifest_path);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

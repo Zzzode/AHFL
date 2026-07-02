@@ -42,8 +42,8 @@ make_project_workflow_value_flow_metadata() {
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
-load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
+load_project_plan(const std::filesystem::path &project_manifest_path) {
+    const auto ir_program = ahfl::test_support::load_project_ir(project_manifest_path);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -138,8 +138,8 @@ build_replay_view_from_session(const ahfl::handoff::ExecutionPlan &plan,
 }
 
 [[nodiscard]] std::optional<ahfl::replay_view::ReplayView>
-build_valid_replay_view(const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+build_valid_replay_view(const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return std::nullopt;
     }
@@ -164,8 +164,8 @@ build_valid_replay_view(const std::filesystem::path &project_descriptor) {
 }
 
 int run_build_replay_view_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -226,8 +226,8 @@ int run_build_replay_view_project_workflow_value_flow(
 }
 
 int run_validate_replay_view_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
-    const auto replay = build_valid_replay_view(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto replay = build_valid_replay_view(project_manifest_path);
     if (!replay.has_value()) {
         return 1;
     }
@@ -242,8 +242,8 @@ int run_validate_replay_view_project_workflow_value_flow(
 }
 
 int run_build_replay_view_failed_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -276,8 +276,8 @@ int run_build_replay_view_failed_workflow(
 }
 
 int run_build_replay_view_partial_workflow(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -304,8 +304,8 @@ int run_build_replay_view_partial_workflow(
 }
 
 int run_validate_replay_view_rejects_missing_completed_progression(
-    const std::filesystem::path &project_descriptor) {
-    auto replay = build_valid_replay_view(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto replay = build_valid_replay_view(project_manifest_path);
     if (!replay.has_value()) {
         return 1;
     }
@@ -330,8 +330,8 @@ int run_validate_replay_view_rejects_missing_completed_progression(
 }
 
 int run_validate_replay_view_rejects_execution_order_index_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    auto replay = build_valid_replay_view(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    auto replay = build_valid_replay_view(project_manifest_path);
     if (!replay.has_value()) {
         return 1;
     }
@@ -356,8 +356,8 @@ int run_validate_replay_view_rejects_execution_order_index_mismatch(
 }
 
 int run_build_replay_view_rejects_invalid_execution_journal(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -392,8 +392,8 @@ int run_build_replay_view_rejects_invalid_execution_journal(
 }
 
 int run_build_replay_view_rejects_session_journal_mismatch(
-    const std::filesystem::path &project_descriptor) {
-    const auto plan = load_project_plan(project_descriptor);
+    const std::filesystem::path &project_manifest_path) {
+    const auto plan = load_project_plan(project_manifest_path);
     if (!plan.has_value()) {
         return 1;
     }
@@ -436,38 +436,38 @@ int main(int argc, char **argv) {
     }
 
     const std::string test_case = argv[1];
-    const std::filesystem::path project_descriptor = argv[2];
+    const std::filesystem::path project_manifest_path = argv[2];
 
     if (test_case == "build-replay-view-project-workflow-value-flow") {
-        return run_build_replay_view_project_workflow_value_flow(project_descriptor);
+        return run_build_replay_view_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "build-replay-view-failed-workflow") {
-        return run_build_replay_view_failed_workflow(project_descriptor);
+        return run_build_replay_view_failed_workflow(project_manifest_path);
     }
 
     if (test_case == "build-replay-view-partial-workflow") {
-        return run_build_replay_view_partial_workflow(project_descriptor);
+        return run_build_replay_view_partial_workflow(project_manifest_path);
     }
 
     if (test_case == "validate-replay-view-project-workflow-value-flow") {
-        return run_validate_replay_view_project_workflow_value_flow(project_descriptor);
+        return run_validate_replay_view_project_workflow_value_flow(project_manifest_path);
     }
 
     if (test_case == "validate-replay-view-rejects-missing-completed-progression") {
-        return run_validate_replay_view_rejects_missing_completed_progression(project_descriptor);
+        return run_validate_replay_view_rejects_missing_completed_progression(project_manifest_path);
     }
 
     if (test_case == "validate-replay-view-rejects-execution-order-index-mismatch") {
-        return run_validate_replay_view_rejects_execution_order_index_mismatch(project_descriptor);
+        return run_validate_replay_view_rejects_execution_order_index_mismatch(project_manifest_path);
     }
 
     if (test_case == "build-replay-view-rejects-invalid-execution-journal") {
-        return run_build_replay_view_rejects_invalid_execution_journal(project_descriptor);
+        return run_build_replay_view_rejects_invalid_execution_journal(project_manifest_path);
     }
 
     if (test_case == "build-replay-view-rejects-session-journal-mismatch") {
-        return run_build_replay_view_rejects_session_journal_mismatch(project_descriptor);
+        return run_build_replay_view_rejects_session_journal_mismatch(project_manifest_path);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

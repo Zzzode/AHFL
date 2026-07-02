@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[package]
+name = "workflow-value-flow-lib"
+version = "0.2.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "lib"
+root = "."
+
+[exports]
+modules = ["agents", "types"]
+
+[targets.lib]
+kind = "library"
+entry = "agents.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }

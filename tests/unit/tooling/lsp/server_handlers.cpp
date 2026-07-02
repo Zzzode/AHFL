@@ -473,20 +473,6 @@ std::string initialize_body(const std::filesystem::path &root) {
            AnalysisService::uri_from_path(root) + R"("}})";
 }
 
-std::string initialize_workspace_folders_body(const std::vector<std::filesystem::path> &roots) {
-    std::string body =
-        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[)";
-    for (std::size_t index = 0; index < roots.size(); ++index) {
-        if (index > 0) {
-            body += ",";
-        }
-        body += R"({"uri":")" + AnalysisService::uri_from_path(roots[index]) + R"(","name":"root)" +
-                std::to_string(index) + R"("})";
-    }
-    body += R"(]}})";
-    return body;
-}
-
 std::string diagnostics_output_for_source(const std::string &source) {
     const auto full_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
@@ -1075,105 +1061,6 @@ void test_watched_file_change_invalidates_project_source_graph() {
           "watchedFileChange.after_reanalyzes_changed_import");
 }
 
-void test_workspace_folder_change_ignores_legacy_json_descriptors() {
-    const auto root = make_temp_project("workspace_folder_legacy_descriptor_ignored");
-    const auto root_a = root / "workspace-a";
-    const auto root_b = root / "workspace-b";
-    const auto shared = root / "shared";
-    const auto main_path = shared / "app" / "main.ahfl";
-    const auto imports_a = root_a / "imports";
-    const auto imports_b = root_b / "imports";
-    const auto types_a_path = imports_a / "lib" / "types.ahfl";
-    const auto types_b_path = imports_b / "lib" / "types.ahfl";
-
-    const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
-                                    "\n"
-                                    "struct Use {\n"
-                                    "    payload: types::Msg;\n"
-                                    "}\n";
-    write_file(main_path, main_source);
-    write_file(types_a_path,
-               "module lib::types;\n"
-               "\n"
-               "struct Msg {\n"
-               "    value: String;\n"
-               "}\n");
-    write_file(types_b_path,
-               "module lib::types;\n"
-               "\n"
-               "struct Msg {\n"
-               "    value: Missing;\n"
-               "}\n");
-
-    const auto legacy_project_descriptor = [&](const std::filesystem::path &search_root) {
-        return "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-folder-switch\",\n"
-               "  \"search_roots\": [\"" +
-               escape_json_string(search_root.generic_string()) +
-               "\"],\n"
-               "  \"entry_sources\": [\"" +
-               escape_json_string(main_path.generic_string()) +
-               "\"]\n"
-               "}\n";
-    };
-    write_file(root_a / "project.json", legacy_project_descriptor(imports_a));
-    write_file(root_a / "ahfl.workspace.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
-               "  \"name\": \"workspace-a\",\n"
-               "  \"projects\": [\"project.json\"]\n"
-               "}\n");
-    write_file(root_b / "project.json", legacy_project_descriptor(imports_b));
-    write_file(root_b / "ahfl.workspace.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
-               "  \"name\": \"workspace-b\",\n"
-               "  \"projects\": [\"project.json\"]\n"
-               "}\n");
-
-    const auto main_uri = AnalysisService::uri_from_path(main_path);
-    const auto types_a_uri = AnalysisService::uri_from_path(types_a_path);
-    const auto types_b_uri = AnalysisService::uri_from_path(types_b_path);
-    const std::string before =
-        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})";
-    const std::string folder_change =
-        R"({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders","params":{"event":{"removed":[{"uri":")" +
-        AnalysisService::uri_from_path(root_a) +
-        R"(","name":"workspace-a"}],"added":[{"uri":")" +
-        AnalysisService::uri_from_path(root_b) + R"(","name":"workspace-b"}]}}})";
-    const std::string after =
-        R"({"jsonrpc":"2.0","id":3,"method":"workspace/diagnostic","params":{}})";
-
-    const auto output = run_lsp_message_steps({
-        LspMessageStep{.body = initialize_workspace_folders_body({root_a})},
-        LspMessageStep{.body = did_open_body(main_uri, 1, main_source)},
-        LspMessageStep{.body = before},
-        LspMessageStep{.body = folder_change},
-        LspMessageStep{.body = after},
-        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
-    });
-
-    const auto before_response = response_body_for_id(output, 2);
-    check(before_response.find(types_a_uri) == std::string::npos,
-          "workspaceFolderChange.before_ignores_legacy_descriptor");
-    check(before_response.find(types_b_uri) == std::string::npos,
-          "workspaceFolderChange.before_excludes_legacy_descriptor_target");
-    check(before_response.find("failed to resolve imported module 'lib::types'") !=
-              std::string::npos,
-          "workspaceFolderChange.before_reports_missing_legacy_import");
-
-    const auto after_response = response_body_for_id(output, 3);
-    check(after_response.find(types_a_uri) == std::string::npos,
-          "workspaceFolderChange.after_still_ignores_removed_legacy_descriptor");
-    check(after_response.find(types_b_uri) == std::string::npos,
-          "workspaceFolderChange.after_ignores_added_legacy_descriptor");
-    check(after_response.find("failed to resolve imported module 'lib::types'") !=
-              std::string::npos,
-          "workspaceFolderChange.after_reports_missing_legacy_import");
-}
-
 void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
     const auto parse_output = diagnostics_output_for_source("struct Broken {\n    value: ;\n}\n");
     check(parse_output.find("parse.diagnostic") != std::string::npos, "diagnostics.parse_code");
@@ -1414,61 +1301,6 @@ void test_project_diagnostics_refresh_dependent_open_documents() {
           "project.diagnostics_refresh.reports_dependent_unknown_type");
     check(diag_response.find("resolve.") != std::string::npos,
           "project.diagnostics_refresh.uses_resolve_diagnostic");
-}
-
-void test_legacy_workspace_descriptor_is_ignored_for_source() {
-    const auto root = make_temp_project("legacy_workspace_descriptor_ignored");
-    const auto main_path = root / "src" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.workspace.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
-               "  \"name\": \"lsp-workspace\",\n"
-               "  \"projects\": [\"project.json\"]\n"
-               "}\n");
-    write_file(root / "project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"workspace-project\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"src/main.ahfl\"]\n"
-               "}\n");
-    write_file(main_path,
-               "module app::main;\n"
-               "import lib::types as types;\n"
-               "\n"
-               "struct Use {\n"
-               "    payload: types::Msg;\n"
-               "}\n");
-    write_file(types_path,
-               "module lib::types;\n"
-               "\n"
-               "struct Msg {\n"
-               "    value: String;\n"
-               "}\n");
-
-    const auto main_uri = AnalysisService::uri_from_path(main_path);
-    const auto types_uri = AnalysisService::uri_from_path(types_path);
-    const auto output = run_lsp_messages({
-        initialize_body(root),
-        did_open_body(main_uri,
-                      1,
-                      "module app::main;\n"
-                      "import lib::types as types;\n"
-                      "\n"
-                      "struct Use {\n"
-                      "    payload: types::Msg;\n"
-                      "}\n"),
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
-            main_uri + R"("}}})",
-        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
-    });
-
-    const auto response = response_body_for_id(output, 2);
-    check(response.find(types_uri) == std::string::npos,
-          "legacy_workspace_descriptor.ignored_imported_source_uri");
-    check(response.find("resolve.") != std::string::npos,
-          "legacy_workspace_descriptor.ignored_reports_unresolved_import");
 }
 
 void test_package_graph_manifest_selects_module_roots_for_source() {
@@ -3361,13 +3193,11 @@ int main() {
     test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
-    test_workspace_folder_change_ignores_legacy_json_descriptors();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_open_document_overlay_drives_definition();
     test_project_diagnostics_refresh_dependent_open_documents();
-    test_legacy_workspace_descriptor_is_ignored_for_source();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
     test_descriptorless_workspace_infers_module_root_for_imports();

@@ -72,15 +72,13 @@ struct CommandLineOptions {
     std::optional<ProviderArtifactKind> selected_provider_artifact;
     bool dump_ast_requested{false};
     bool dump_types_requested{false};
-    std::optional<std::string_view> package_descriptor;
+    std::optional<std::string_view> package_name;
     std::optional<std::string_view> capability_mocks_descriptor;
     std::optional<std::string_view> tool_catalog_descriptor;
     std::optional<std::string_view> capability_bindings_descriptor;
-    std::optional<std::string_view> project_descriptor;
-    std::optional<std::string_view> workspace_descriptor;
+    std::optional<std::string_view> workspace_manifest_path;
     std::optional<std::string_view> manifest_path;
     std::optional<std::string_view> sysroot_path;
-    std::optional<std::string_view> project_name;
     std::optional<std::string_view> target_name;
     std::optional<std::string_view> workflow_name;
     std::optional<std::string_view> runtime_input_json;
