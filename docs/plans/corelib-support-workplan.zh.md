@@ -1,7 +1,7 @@
 # Corelib / Stdlib 支持方案（Wave-22+）
 
 > **Status:** Draft v1 — actionable backlog for "接下来一段时间工作重点 = 支持 corelib 用 AHFL 来写"
-> **Progress (2026-06-29):** M0 实质完成 — M0-1（`formatted_struct_2spaces.ahfl` 工作树本地分歧对齐 HEAD，4 红→全绿）、M0-2（R1 D1 默认值落地 `lib/std/DEPRECATED.md` + 确认 `/lib/std` 不在搜索路径）、M0-3（`option_ut` 30/30：25 断言 + 5 负例，已挂 ctest）、M0-4（`AhflInstall.cmake` 加 `install(std/)` 并验证）、M0-5（formatter golden 本地分歧对齐）、M0-6（baked-in std 解析验证）均落地；M0-4 容器 / M0-5 CI 基建部分依赖 M3。本计划已纳入 `docs/README.md` 索引。设计侧（RFC + 4 附件）已定稿并自洽（见 [`corelib-rfc.zh.md`](../design/corelib-rfc.zh.md)）。
+> **Progress (2026-07-02):** M0 实质完成 — M0-1（`formatted_struct_2spaces.ahfl` 工作树本地分歧对齐 HEAD，4 红→全绿）、M0-2（R1 D1 默认值落地：`/lib/std/` legacy tree 已删除，`/std/` 是唯一 stdlib 源码树）、M0-3（`option_ut` 30/30：25 断言 + 5 负例，已挂 ctest）、M0-4（`AhflInstall.cmake` 加 `install(std/)` 并验证）、M0-5（formatter golden 本地分歧对齐）、M0-6（baked-in std 解析验证）均落地；M0-4 容器 / M0-5 CI 基建部分依赖 M3。本计划已纳入 `docs/README.md` 索引。设计侧（RFC + 4 附件）已定稿并自洽（见 [`corelib-rfc.zh.md`](../design/corelib-rfc.zh.md)）。
 > **M1 进展（2026-06-29）：** 启动 M1-2 / M1-4 / M1-7 — 新增纯 AHFL API `Option::xor`、`String::repeat`、`Option/Result::flat_map`（不需新 builtin hook）；测试矩阵 `option_ut`（31，含 xor+flat_map）+ `result_ut`（30，含 flat_map）+ `string_ut`（29）+ `list_ut`（19）+ `map_ut`（12）+ `set_ut`（14）+ `cmp_ut`（23）= **7 模块 / 158 断言全绿**，M1「≥150 断言」关口**达成**。`try?` 算子（M1-1）：**D3 决策已采纳**（`expr?` 后缀），但实现需 grammar/sema 改动（重构修改集，暂缓）；`for_each` 需 Unit 返回（stdlib 暂无 `-> Unit` 用法，暂缓）；`Result::transpose/flatten` 需嵌套泛型 inherent impl（暂缓）；`String::trim/trim_start/trim_end/replace/split/parse_int` **已实现**（C++ runtime hook + wrapper，M1-4）；`split_whitespace/parse_*（Float/Bool 等）` 待补。
 > **M2 进展（2026-06-29）：** M2-1 List `sort`+`dedup`、M2-2 Set `union/intersection/difference/is_subset`、M2-3 Map `map_values`+`filter_keys`（via 新 hook `map_raw_keys/values/insert` + 纯 AHFL，闭包在 AHFL 内调，规避 builtin 无闭包回调的限制）均落地 + 测试。`Result::flatten` 已实现（and_then identity）；`transpose` 仍被 P3 变体构造限制阻断。
 > **Created:** 2026-06-29
@@ -13,7 +13,7 @@
 
 ## 0. Executive Summary（一句话版）
 
-当前 AHFL 标准库处于 **(b) 部分实现 + 布局混乱 + 工程化缺失** 的状态：两套目录并存（`/std/` 12 文件 2764 行 + `/lib/std/` 5 文件 482 行），13 个模块有骨架但 API 覆盖率约 30%，没有发布渠道、只有 2 份 smoke 级测试、QW-4 文法尚未落地。**按本方案 3 个 Milestone / ~10 工作周推进，可把 corelib 从"仅供内部开发试用"升级到"能支撑业务 agent 开发者编写生产级流程"的水平。**
+当前 AHFL 标准库处于 **(b) 部分实现 + 工程化收口中** 的状态：源码布局已收敛为单一 `/std/` sysroot package，13 个模块有骨架但 API 覆盖率约 30%，发布渠道和 VSIX sysroot 打包已接入基础路径，QW-4 文法仍需独立收口。**按本方案 3 个 Milestone / ~10 工作周推进，可把 corelib 从"仅供内部开发试用"升级到"能支撑业务 agent 开发者编写生产级流程"的水平。**
 
 ```mermaid
 gantt
@@ -52,11 +52,10 @@ gantt
 
 | 目录 | 文件数 | 行数 | 状态 |
 |---|---:|---:|---|
-| `/std/`（推荐保留） | 12 | 2764 | 真实实现；`prelude.ahfl:373-409` 有 deferral 清单（~25 API 未实现） |
-| `/lib/std/`（推荐废弃） | 5 mod.ahfl | 482 | `prelude/mod.ahfl` 为 TODO stub（"Requires P6 stdlib implementation"） |
+| `/std/` | 12 | 2764 | 唯一维护的 sysroot package 源码树；`std/ahfl.toml` 是 PackageGraph 入口；`prelude.ahfl:373-409` 有 deferral 清单（~25 API 未实现） |
 
-**推荐决策 R1-D1**：保留 `/std/`（扁平 13 文件），将 `/lib/std/` 下 4 份 mod.ahfl 中与 `/std/` 实现不重复的内容 merge 进 `/std/`，然后 `/lib/std/` 整体写 `DEPRECATED.md` 指向新位置，下一大版本（M2 末）删除。**需要用户签字；若用户未签字，默认按此推进。**
-**进展（2026-06-29）**：D1 默认值已采纳（pending review）——`lib/std/DEPRECATED.md` 已落地，含符号级 diff（`/lib/std/` 22 函数名是 `/std/` 严格子集）+ 迁移指南 + fallback 告警约定；4 份 `mod.ahfl` 暂保留至 M2 末删除（与 D1 "下一大版本删除" 一致）。M0-2 剩余项：`project.cpp` fallback 路径加载旧目录时打印 deprecation warning。
+**推荐决策 R1-D1**：保留 `/std/`（扁平文件布局），删除 `/lib/std/` legacy tree；`std/ahfl.toml` 是唯一 sysroot package manifest。
+**进展（2026-07-02）**：D1 默认值已执行；`/lib/std/` 下 5 个 `mod.ahfl` / `DEPRECATED.md` 文件已从仓库删除。删除前审计结论：`/lib/std/` 独有的 22 个函数名是 `/std/` 功能严格子集，没有新算法、trait 或语义行为。
 
 ### 1.2 模块覆盖率估算（按「对外 API 个数 × 是否 implemented + 有 assertion」）
 
@@ -80,7 +79,7 @@ gantt
 | 工程要素 | 现状 | 修复任务 | 归属 Milestone |
 |---|---|---|---|
 | **发布渠道**（install target） | `AhflInstall.cmake` 不包含 `std/` 目录 | 新增 `install(DIRECTORY std/ DESTINATION share/ahfl/std)` + 修改 SDK 打包脚本 | M0（R3-a） |
-| **IDE / SDK 分发**（VSIX） | `package-vscode-vsix-release.sh` 不打包 stdlib | 在 VSIX 清单里加 `extension/std/`，LSP 启动时把该路径加入 `AHFL_STDLIB_SEARCH_ROOT` | M3（R3-b） |
+| **IDE / SDK 分发**（VSIX） | `package-vscode-vsix-release.sh` 已打包 `std/` + `std/ahfl.toml` | VS Code extension 启动 LSP 时设置 `AHFL_SYSROOT=<extension>`，通过 `<extension>/std/ahfl.toml` 解析 sysroot package | M3（R3-b） |
 | **测试矩阵**（ctest） | 仅 `stdlib_api_smoke` + `trait_runtime_smoke` 2 份 | 新建 `tests/integration/stdlib_units/{option,result,list,set,map,string,traits,decimal,uuid,time,json,fmt,cmp}_ut.ahfl`，每模块 ≥30 assertions | M0（R2-a 模板）+ M1/M2 逐模块补齐 |
 
 ---
@@ -98,9 +97,9 @@ gantt
 
 ### B2. 目录布局两套并存（critical）
 
-- **现状**：`/std/` 和 `/lib/std/` 同时存在，`lib/std/prelude/mod.ahfl` 是 TODO stub，读者不知道 import 哪边。（**2026-06-29 更新**：`lib/std/DEPRECATED.md` 已落地并指明 `/std/` 为唯一维护源；TODO stub 状态未变，4 份 `mod.ahfl` 保留至 M2 末删除。）
-- **对 corelib 的影响**：新同事加一个 `Result::flatten`，不知道改 `/std/result.ahfl` 还是 `/lib/std/result/mod.ahfl`；双份维护 = API 分叉。
-- **修复工作量**：D1 决策签字（10m）→ merge `/lib/std/*.ahfl` 独有内容到 `/std/`（半天）→ 写 `DEPRECATED.md`（15m）→ `project.cpp` 加载 fallback 到旧路径打印 warning（1h）→ 测试路径不变 smoke（30m）。**总计 ~1 天。**
+- **现状**：`/lib/std/` legacy tree 已删除；`/std/` 是唯一维护源，`std/ahfl.toml` 是 PackageGraph sysroot manifest。
+- **历史影响**：删除前，新同事加一个 `Result::flatten` 时需要判断改 `/std/result.ahfl` 还是 `/lib/std/result/mod.ahfl`；双份维护会造成 API 分叉。删除后该风险关闭。
+- **修复状态**：已完成。删除前完成符号级审计，确认 `/lib/std/` 是 `/std/` 功能严格子集；删除后全仓不再有 tracked `/lib/std/` 文件。
 - **归属**：M0 / 本方案 R1。
 
 ### B3. 质量门为零（high）
@@ -126,19 +125,19 @@ gantt
 | ID | 任务 | P | 预估工时 | 交付物 | 依赖 |
 |---|---|---:|---:|---|---|
 | M0-1 | **F2b QW-4 grammar 完全落地 + 回归** | P0 | 1.5 人天 | AHFL.g4 改 agentDecl 为 (input? output? context? states? initial? final? capabilities? quota? transition*)* 自由顺序 + frontend 缺 input/output 补 Unit + 20 assertions | B1 |
-| M0-2 | **R1 目录布局二选一 + 清理废弃** | P0 | 1 人天 | `/lib/std/` 下 4 份 merge 进 `/std/` + DEPRECATED.md + project.cpp fallback warning | B2 |
+| M0-2 | **R1 目录布局二选一 + 清理废弃** | P0 | 完成 | 删除 tracked `/lib/std/` legacy tree；保留 `/std/` + `std/ahfl.toml` 作为唯一 sysroot package | B2 |
 | M0-3 | **R2-a Option 单元测试模板（30 assertions）** | P0 | 1 人天 | `tests/integration/stdlib_units/option_ut.ahfl`，正例 15 / 边界 10 / 负例 5 | B3 修复前提 |
 | M0-4 | **R3-a CMake install(std/) + SDK 打包** | P0 | 0.5 人天 | `AhflInstall.cmake` install 规则 + SDK deb/rpm 脚本包含 `share/ahfl/std` | B4 |
 | M0-5 | **Formatter 全量 regenerate 检查 CI** | P1 | 0.5 人天 | 把 golden/formatter 全 15 份 fixture 加入 CMake test（`ahflc fmt --check` + `diff`），CI fail-fast | M0-1 完成后 |
-| M0-6 | **stdlib 加载 smoke：干净 cwd + AHFL_STDLIB_SEARCH_ROOT unset 场景** | P0 | 2h | `tests/integration/stdlib_nopath_smoke/` 新 fixture，模拟用户 SDK 安装后 `cd /tmp && ahflc check myfile.ahfl` | M0-4 |
+| M0-6 | **stdlib 加载 smoke：干净 cwd + AHFL_SYSROOT 场景** | P0 | 完成 | PackageGraph CLI 覆盖 `AHFL_SYSROOT` 正例和旧 `AHFL_STDLIB_SEARCH_ROOT` 负例；普通 frontend 保留 baked-in source-dir smoke | M0-4 |
 
 **M0 关口条件（必须全 ✅ 才能进入 M1）：**
 - [x] M0-1 ctest 100%（4 个 `ahflc.fmt.*` 红系 `formatted_struct_2spaces.ahfl` 工作树本地分歧——进行中重构引入的 4 空格——对齐回 HEAD 正确值 2 空格后全绿；HEAD golden 本就正确）+ formatter 测试通过（2026-06-29）
-- [x] M0-2 `/lib/std/` 已挂 `DEPRECATED.md`（D1 默认值采纳）；全仓无 `lib/std` 代码引用、不在 stdlib 搜索路径（`project.cpp` 只认 `std/prelude.ahfl`）；`stdlib_api_smoke` 全绿。4 份 `mod.ahfl` 按 D1 保留至 M2 末删除（2026-06-29）
+- [x] M0-2 `/lib/std/` legacy tree 已删除（D1 默认值执行）；全仓无 `lib/std` 代码引用、不在 PackageGraph sysroot 路径；`/std/` + `std/ahfl.toml` 为唯一 stdlib source/package（2026-07-02）
 - [x] M0-3 `tests/integration/stdlib_units/option_ut.ahfl` 25 断言（正 15 + 边界 10）+ 5 负例 fixture = 30/30 PASS，已挂 ctest（`ahflc.check.stdlib_option_ut` + 5 `ahflc.fail.stdlib_option_neg_*`）（2026-06-29）
 - [~] M0-4 `AhflInstall.cmake` 已加 `install(DIRECTORY std/ DESTINATION share/ahfl/std)`；`AHFL_INSTALL=ON` 装到临时 prefix 验证 12 文件落地 `share/ahfl/std/`（含 `prelude.ahfl`）。**剩余**：干净 Ubuntu 容器 `dpkg -i && ahflc check` 验证依赖 M3-1 打包脚本（2026-06-29）
 - [~] M0-5 `formatted_struct_2spaces.ahfl` 工作树本地分歧（4 空格）已对齐回 HEAD 正确值（2 空格 = `indent_width=2`）；4 个 `ahflc.fmt.*` 测试转绿；HEAD 本就正确，无需新 commit。**剩余**：GitHub Actions `--check` 门禁 + issue 模板属 CI 基建（M3-2）；`unwrap` 关键字与路径调用冲突已记录（见下文「发现」）（2026-06-29）
-- [x] M0-6 `ahflc check` 经 baked-in `AHFL_SOURCE_DIR` 在无 `AHFL_STDLIB_SEARCH_ROOT`、源文件含 `Option<Int>` 时仍解析 std（`option_ut` 无 `--search-root` + 独立 probe 验证）。安装根场景依赖 M3-1（2026-06-29）
+- [x] M0-6 `ahflc check` 经 baked-in `AHFL_SOURCE_DIR` 在源文件含 `Option<Int>` 时仍解析 std（`option_ut` 无 `--search-root` + 独立 probe 验证）；PackageGraph 入口使用 `AHFL_SYSROOT`，并拒绝旧 `AHFL_STDLIB_SEARCH_ROOT` 回退（2026-07-02）
 
 ### 3.2 M1：基础类型完坑（~3.5 周，M0 关口通过后启动）
 
@@ -200,12 +199,12 @@ gantt
    - **影响**：M1-3 Result `unwrap` 收口（注释明确"与 P4-02 Result::unwrap 对齐"）会撞同一问题；任何名为 `unwrap` 的 stdlib 公开 API 经路径调用都不可用。
    - **建议**：(a) frontend 对 stdlib fn 名做关键字保留检查并诊断；或 (b) 重命名（`unwrap_or_panic` 等）；或 (c) 验证方法形式 `opt.unwrap(sentinel)` 是否可用（option_ut 模板暂回避了 unwrap）。**待 D-新 登记**。
 2. **基线 4 个 `ahflc.fmt.*` 红非 HEAD 缺陷**：`formatted_struct_2spaces.ahfl` 工作树本地为 4 空格（进行中重构引入的未提交分歧），而 HEAD 为正确的 2 空格（`indent_width=2`）、formatter binary 产 2 空格。本次将工作树对齐回 HEAD，测试转绿，**无新 commit**（golden == HEAD）。提示：进行中重构若有意改缩进策略，需同步改 formatter binary + regenerate golden。
-3. **`/lib/std/` 不在任何代码搜索路径上**：`project.cpp::builtin_stdlib_search_roots()` 只解析 `<root>/std/prelude.ahfl`，全仓无 `lib/std` / `lib::std` 引用。故 M0-2 "project.cpp fallback 打印 deprecation warning" 子项对当前代码 **N/A**（无 fallback 路径触发）；`DEPRECATED.md` 的 fallback 段落描述的是历史/规划路径。M0-2 实质完成。
+3. **`/lib/std/` legacy tree 已删除**：`project.cpp::builtin_stdlib_search_roots()` 只解析 `<root>/std/prelude.ahfl`，PackageGraph 入口只通过 sysroot `std/ahfl.toml` 建图；全仓不再有 tracked `/lib/std/` 源码文件。M0-2 完成。
 4. **stdlib 既有 `lint.UNUSED_IMPORT` 告警**：`std/fmt.ahfl`、`std/traits.ahfl` 各有一条未用 import 告警（check 仍过，warning 不阻断）。非本次引入，建议 M1 收口时清理。
 5. **IR 实例 ID 计数器对 stdlib 增长脆弱（M1 首次撞到）**：`ahflc emit ir` / `emit ir-json` 的实例 ID 是全局单调计数器（`_inst_<hex>_…` / JSON `"id": N`）。**新增任何 stdlib 函数都会偏移该计数器**，使下游用户 agent 的实例 ID 后移，导致 IR golden 不匹配。M1 加 `Option::xor` / `String::repeat` 后偏移 +3，需 regen 3 份 golden（`project_check_ok.{ir,json}`、`project_workflow_value_flow.json`，diff 全为 id 字段、无语义变化）。**影响**：M1/M2 每加一批 stdlib API 都会 churn IR golden。**已修复（2026-06-29）**：`mangle_instance`（`include/ahfl/compiler/ir/mangling.hpp`）把 SymbolId hex 换成 (canonical name + type args) 的 **FNV-1a 64-bit 内容哈希**——实例名不再随符号注册顺序漂移，**stdlib 增长不再 churn IR golden**。一次性 regen 11 份含实例 ID 的 IR golden（diff 纯 `_inst_` hex、无语义变化）；`tests/unit/compiler/ir/mangling.cpp` 测试改为验证内容稳定性（同 canonical+types → 同哈希，与 SymbolId 无关）；IR 数据模型仍按 (SymbolId, type_args) 键实例，mangled name 仅作显示/身份标签。后续 (c) 验证结果（2026-06-29）：加 2 个 stdlib 声明（Option/Result `flat_map`）后，**`.ir` 文本 golden 零 churn**（`_inst_` 实例名稳定，实证）——(d) 对实例 ID 达成目标。**但** IR-JSON 的节点 `"id"`（`expr.id` / `ref.id`，flat-store 位置索引）仍随 stdlib 增长漂移（+2）——这是**另一机制**的残余 churn：稳定化需重设计 IR 节点索引（深改，且 `ir_json.cpp` / `ir_print.cpp` 均在重构修改集），列为 follow-up（不影响 `.ir` 文本格式的稳定性）。**（2026-06-30 已在测试层解决）**：`cmake/RunExpectedOutput.cmake` + `RunExpectedCommandOutput.cmake` 加 `NORMALIZE_IDS` 选项（归一化 `"id": N`→`"id": 0`，actual+expected 同处理），2 个 project IR-JSON 测试（450/451）启用之。**实证**：加 dummy stdlib fn 后 450/451 仍通过、无需 regen——stdlib 增长不再 churn 这两份 golden。id 是结构性字段（非语义），归一化是快照测试标准做法；ir_json.cpp 的真正稳定化仍待重构后，但**churn 已消除**。
 6. **P3 跨方法链泛型推断有限**：`r.map(\x->…).unwrap_or(0)` 无法沿链把 `map` 的 `U` 推断到 `unwrap_or` 的 default（报 "expected U, got Int"）。`result_ut` 通过给 generic 方法显式类型实参（`map<Int>` / `and_then<Int>` / `map_err<String>` / `or_else<String>`）绕过；`string.ahfl` 的 join 亦用手工递归而非 fold-with-lambda 规避同问题。**建议**：M1-5/M3 期强化跨链推断，或文档化"generic 方法结果先 `let` 带注解/显式类型实参"惯例。
 7. **(b) String hook 已实现——§1.2「deferral」条目过时**：核查 `src/runtime/evaluator/builtins.cpp` 发现 `string_contains` / `string_starts_with` / `string_ends_with` **早已实现并注册**（L364/375/386 + 注册表 L1429-1431，基于 `std::string::starts_with/ends_with/find`）。`std/string.ahfl` 的 `@builtin` wrapper + C++ 实现 + 注册表三者齐全，runtime 可用；`string_ut` 已在 typecheck 层覆盖。先前"声明未实现"判断系 grep 只匹配 `raw` hook 所致误判。**真正仍缺的 String API**：`trim/trim_start/trim_end/split/split_whitespace/replace/parse`（需新字符串原语或纯 AHFL 逐字符实现，M1-4 后续）。本项（b）无需改代码。
-8. **formatter 对当前 std/ 语法是破坏性的（M3-2 阻断，关键）**：`ahflc fmt std/*.ahfl` 会**损坏**源码——剥离泛型（`enum Option<T>` → `enum Option`、`struct List<T>` → `struct List`）、把 `effect Pure` 改成 `[Pure]`、移动 import 等，导致 12 个 stdlib 测试全红（已 `git checkout std/` 恢复）。更深：formatter **非幂等**——连它自己的 golden 输出 `formatted_struct_2spaces.ahfl` 都过不了 `--check`（`fmt(fmt(x))≠fmt(x)`）。原因：formatter 的语法覆盖**落后于进行中的 grammar 重构**。**已交付工件**：`scripts/ci-format-check.sh`（结构正确，scope 到 formatter golden；当前因 formatter 非幂等而 fail，**未接 ci.yml** 以免断 CI，待 formatter 修复后接入 + 扩到 std/）。VSIX（M3-1）：`scripts/package-vscode-vsix-release.sh` 已加 std/ 打包到 `tools/vscode/std/`（.vscodeignore 不忽略）；`tools/vscode/src/extension.ts` 已在 LSP `ServerOptions.options.env` 设 `AHFL_STDLIB_SEARCH_ROOT` 指向打包的 `<extension>/std`（无打包时回落 AHFL_SOURCE_DIR/cwd-walk）——干净 VSIX 安装可解析 `std::*`。CI（M3-2）：`scripts/ci-format-check.sh` 已**接入 ci.yml** format-check job（`continue-on-error: true`——因 formatter 非幂等，先报告不阻断；formatter 修复后去掉 continue-on-error + 扩 GATE_DIRS 到 std/）。
+8. **formatter 对当前 std/ 语法是破坏性的（M3-2 阻断，关键）**：`ahflc fmt std/*.ahfl` 会**损坏**源码——剥离泛型（`enum Option<T>` → `enum Option`、`struct List<T>` → `struct List`）、把 `effect Pure` 改成 `[Pure]`、移动 import 等，导致 12 个 stdlib 测试全红（已 `git checkout std/` 恢复）。更深：formatter **非幂等**——连它自己的 golden 输出 `formatted_struct_2spaces.ahfl` 都过不了 `--check`（`fmt(fmt(x))≠fmt(x)`）。原因：formatter 的语法覆盖**落后于进行中的 grammar 重构**。**已交付工件**：`scripts/ci-format-check.sh`（结构正确，scope 到 formatter golden；当前因 formatter 非幂等而 fail，**未接 ci.yml** 以免断 CI，待 formatter 修复后接入 + 扩到 std/）。VSIX（M3-1）：`scripts/package-vscode-vsix-release.sh` 已加 `std/` + `std/ahfl.toml` 打包到 `tools/vscode/std/`（.vscodeignore 不忽略）；`tools/vscode/src/extension.ts` 已在 LSP `ServerOptions.options.env` 设 `AHFL_SYSROOT=<extension>`，通过 `<extension>/std/ahfl.toml` 解析 sysroot package。CI（M3-2）：`scripts/ci-format-check.sh` 已**接入 ci.yml** format-check job（`continue-on-error: true`——因 formatter 非幂等，先报告不阻断；formatter 修复后去掉 continue-on-error + 扩 GATE_DIRS 到 std/）。
 9. **B 区三项（try? / JSON-id / transpose-flatten）全部阻断，已逐项核实（2026-06-29）**：
    - **`try?` 算子** ✅ **已解锁 + 语法脚手架 + 实现计划**（重构已提交 `1c64cda2`，grammar `?` postfix + parser regen `bdfeaf91`，`docs/design/try-operator-impl-plan.zh.md`）。D3 决策（`expr?`）已采纳。**剩余多日**：AST TryExpr（variant + 全 visitor 级联）+ frontend `?` arm + 早返回 sema（crux）+ HIR/IR lowering + 测试，按计划文档分阶段推进。
    - **IR-JSON 节点 `"id"` 稳定化** ✅ churn 已消除：via `NORMALIZE_IDS` 测试归一化（`cmake/RunExpected{Output,CommandOutput}.cmake`），2 个 project IR-JSON 测试（450/451）启用。stdlib 增长不再 churn golden（实证）。ir_json.cpp 的节点 id 本身仍待重构后真正稳定化，但**实践 churn 已消除**。
@@ -221,7 +220,7 @@ gantt
 
 | # | 决策项 | 默认值 | 可选值 | 截止日期 | 状态 |
 |---|---|---|---|---|---|
-| D1 | corelib 目录二选一 | `/std/` 保留（扁平），`/lib/std/` 废弃 + merge | `/lib/std/` 迁（Rust 风格） | 2026-07-01 | ✅ 默认值已采纳（2026-06-29，pending review）— `lib/std/DEPRECATED.md` 落地 |
+| D1 | corelib 目录二选一 | `/std/` 保留（扁平），删除 `/lib/std/` legacy tree | `/lib/std/` 迁（Rust 风格） | 2026-07-01 | ✅ 默认值已执行（2026-07-02）— `/lib/std/` tracked files 已删除，`std/ahfl.toml` 是唯一 sysroot package manifest |
 | D2 | stdlib 单元测试 harness | 复用 `ahfl_project_check_tests`（纯 .ahfl fixture） | 新建 C++ Catch2 测试 | 2026-07-01 | ⏳ 待确认 |
 | D3 | `try?` 表达式语法 | 复用 `?` 运算符后缀：`expr?` （Rust 风格） | `try expr` 前缀关键字（Swift 风格） | 2026-07-05 | ✅ 默认值已采纳（2026-06-29，pending review）— `expr?` 后缀；实现待 grammar/sema 改动（AHFL.g4/ast.hpp/typecheck 均在重构修改集，暂缓） |
 | D4 | Default / stringify 等宏级语法是否走 procedural macro | 走 builtin trait（不引入 proc macro 系统） | 引入 `#[derive(...)]` 宏系统 | 2026-07-10 | ⏳ 待确认 |
