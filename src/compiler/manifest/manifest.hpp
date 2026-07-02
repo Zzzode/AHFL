@@ -35,6 +35,11 @@ struct HandoffExportManifest {
     SourceRange range{};
 };
 
+struct ExportedModuleManifest {
+    std::string module_path;
+    SourceRange range{};
+};
+
 struct TargetManifest {
     std::string name;
     std::string kind;
@@ -52,7 +57,7 @@ struct PackageManifest {
     std::string package_kind;
     std::string module_prefix;
     std::string module_root;
-    std::vector<std::string> exported_modules;
+    std::vector<ExportedModuleManifest> exported_modules;
     std::optional<std::string> prelude_module;
     std::optional<std::string> prelude_injection;
     std::vector<std::string> compiler_intrinsics_allow;

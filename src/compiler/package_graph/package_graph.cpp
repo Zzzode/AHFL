@@ -79,7 +79,10 @@ make_target(PackageId package, std::size_t index, const manifest::TargetManifest
     node.module_root = module_root_for(input);
     node.manifest_path = input.manifest_path.lexically_normal();
     node.checksum = input.checksum;
-    node.exported_modules = input.manifest.exported_modules;
+    node.exported_modules.reserve(input.manifest.exported_modules.size());
+    for (const auto &exported : input.manifest.exported_modules) {
+        node.exported_modules.push_back(exported.module_path);
+    }
     node.compiler_intrinsics_allow = input.manifest.compiler_intrinsics_allow;
     node.targets.reserve(input.manifest.targets.size());
     for (std::size_t i = 0; i < input.manifest.targets.size(); ++i) {
@@ -429,19 +432,22 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
 
     const auto module_root = module_root_for(*indexed.input);
     std::unordered_set<std::string> seen;
-    for (const auto &exported : indexed.input->manifest.exported_modules) {
+    for (const auto &exported_module : indexed.input->manifest.exported_modules) {
+        const auto &exported = exported_module.module_path;
         const std::filesystem::path module_path{exported};
         if (!seen.insert(module_path.generic_string()).second) {
             add_error(diagnostics,
                       "package '" + indexed.input->manifest.package_name +
-                          "' exports duplicate module '" + exported + "'");
+                          "' exports duplicate module '" + exported + "'",
+                      exported_module.range);
             continue;
         }
 
         if (path_has_escape_or_invalid_part(module_path)) {
             add_error(diagnostics,
                       "package '" + indexed.input->manifest.package_name + "' export module '" +
-                          exported + "' must be a relative module path inside module root");
+                          exported + "' must be a relative module path inside module root",
+                      exported_module.range);
             continue;
         }
 
@@ -456,7 +462,8 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
             add_error(diagnostics,
                       "package '" + indexed.input->manifest.package_name + "' export module '" +
                           exported +
-                          "' is ambiguous: both single-file and directory-module layouts exist");
+                          "' is ambiguous: both single-file and directory-module layouts exist",
+                      exported_module.range);
             continue;
         }
 
@@ -464,7 +471,8 @@ void validate_exported_modules(const IndexedInput &indexed, std::vector<Diagnost
             add_error(diagnostics,
                       "package '" + indexed.input->manifest.package_name + "' export module '" +
                           exported + "' does not exist under module root '" +
-                          module_root.generic_string() + "'");
+                          module_root.generic_string() + "'",
+                      exported_module.range);
         }
     }
 }
@@ -608,8 +616,8 @@ BuildResult build_package_graph(const BuildInput &input) {
                 return std::nullopt;
             }
 
-            const auto dependency_manifest = normalize_manifest_path(
-                from.input->package_root / *dependency.path / "ahfl.toml");
+            const auto dependency_manifest =
+                normalize_manifest_path(from.input->package_root / *dependency.path / "ahfl.toml");
             if (normalize_manifest_path(target->manifest_path) != dependency_manifest) {
                 add_error(result.diagnostics,
                           "path dependency '" + dependency.key +

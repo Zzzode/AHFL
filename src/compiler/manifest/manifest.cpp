@@ -190,6 +190,52 @@ read_string_array(const Value &table,
     return values;
 }
 
+[[nodiscard]] std::vector<ExportedModuleManifest>
+read_exported_modules(const Value &table,
+                      std::string_view key,
+                      std::string_view display,
+                      bool required,
+                      std::vector<ManifestDiagnostic> &diagnostics) {
+    const auto *entry = find_entry(table, key);
+    if (entry == nullptr) {
+        if (required) {
+            add_diag(diagnostics,
+                     kRequired,
+                     "manifest is missing required field '" + std::string(display) + "'",
+                     table.range);
+        }
+        return {};
+    }
+    if (entry->value->kind != ValueKind::Array) {
+        add_diag(diagnostics,
+                 kType,
+                 "manifest field '" + std::string(display) + "' must be an array",
+                 entry->value_range);
+        return {};
+    }
+
+    std::vector<ExportedModuleManifest> values;
+    values.reserve(entry->value->array_items.size());
+    for (const auto &item : entry->value->array_items) {
+        if (item->kind != ValueKind::String) {
+            add_diag(diagnostics,
+                     kType,
+                     "manifest field '" + std::string(display) + "' must contain only strings",
+                     item->range);
+            continue;
+        }
+        if (item->string_value.empty()) {
+            reject_empty_string_array_item(display, item->range, diagnostics);
+            continue;
+        }
+        values.push_back(ExportedModuleManifest{
+            .module_path = item->string_value,
+            .range = item->range,
+        });
+    }
+    return values;
+}
+
 [[nodiscard]] bool is_lower_ascii_alpha(char value) noexcept {
     return value >= 'a' && value <= 'z';
 }
@@ -396,10 +442,9 @@ void validate_relative_path(std::string_view value,
     const std::filesystem::path path{std::string{value}};
     const auto normalized = path.lexically_normal();
     const bool escapes_root =
-        normalized == ".." ||
-        std::any_of(normalized.begin(), normalized.end(), [](const auto &part) {
-            return part == "..";
-        });
+        normalized == ".." || std::any_of(normalized.begin(),
+                                          normalized.end(),
+                                          [](const auto &part) { return part == ".."; });
     if (value.empty() || path.is_absolute() || escapes_root) {
         add_diag(diagnostics,
                  kPathEscape,
@@ -786,7 +831,7 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
             result.diagnostics, kType, "manifest field 'exports' must be a table", exports->range);
     } else {
         reject_unknown_fields(*exports, {"modules"}, "exports.", result.diagnostics);
-        manifest.exported_modules = read_string_array(
+        manifest.exported_modules = read_exported_modules(
             *exports,
             "modules",
             "exports.modules",
@@ -909,12 +954,11 @@ ManifestResult<WorkspaceManifest> parse_workspace_manifest(std::string_view inpu
             std::unordered_set<std::string> normalized_members;
             for (const auto &item : members_entry->value->array_items) {
                 if (item->kind == ValueKind::String && !item->string_value.empty()) {
-                    validate_relative_path(item->string_value,
-                                           "workspace.members",
-                                           item->range,
-                                           result.diagnostics);
-                    const auto normalized =
-                        std::filesystem::path{item->string_value}.lexically_normal().generic_string();
+                    validate_relative_path(
+                        item->string_value, "workspace.members", item->range, result.diagnostics);
+                    const auto normalized = std::filesystem::path{item->string_value}
+                                                .lexically_normal()
+                                                .generic_string();
                     if (!normalized_members.insert(normalized).second) {
                         add_diag(result.diagnostics,
                                  kInvalidValue,

@@ -66,6 +66,19 @@ void append_string_array(std::ostream &out,
     out << "]\n";
 }
 
+void append_exported_modules_array(std::ostream &out,
+                                   std::string_view key,
+                                   const std::vector<ExportedModuleManifest> &values) {
+    out << key << " = [";
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            out << ", ";
+        }
+        append_basic_string(out, values[index].module_path);
+    }
+    out << "]\n";
+}
+
 void append_handoff_export_array(std::ostream &out,
                                  std::string_view key,
                                  const std::vector<HandoffExportManifest> &values) {
@@ -152,7 +165,7 @@ std::string canonicalize_package_manifest(const PackageManifest &manifest) {
 
     if (!manifest.exported_modules.empty()) {
         out << "\n[exports]\n";
-        append_string_array(out, "modules", manifest.exported_modules);
+        append_exported_modules_array(out, "modules", manifest.exported_modules);
     }
 
     if (manifest.prelude_module.has_value() || manifest.prelude_injection.has_value()) {

@@ -148,6 +148,10 @@ std = { source = "sysroot" }
     return has_diagnostic(result.diagnostics, needle);
 }
 
+[[nodiscard]] std::string_view slice(std::string_view input, ahfl::SourceRange range) {
+    return input.substr(range.begin_offset, range.end_offset - range.begin_offset);
+}
+
 [[nodiscard]] ahfl::package_graph::PackageGraph graph_with_workspace_dependency() {
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),
@@ -161,8 +165,11 @@ std = { source = "sysroot" }
     return std::move(*result.graph);
 }
 
-[[nodiscard]] ahfl::package_graph::BuildResult build_manifest_graph_with_exports(
-    std::string_view exported_modules, bool write_main, bool write_ambiguous_lib) {
+[[nodiscard]] ahfl::package_graph::BuildResult
+build_manifest_graph_with_exports(std::string_view exported_modules,
+                                  bool write_main,
+                                  bool write_ambiguous_lib,
+                                  std::string *written_manifest = nullptr) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /
                           ("ahfl-package-graph-export-validation-" + std::to_string(stamp));
@@ -238,6 +245,9 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 [dependencies]
 std = { source = "sysroot" }
 )TOML";
+    if (written_manifest != nullptr) {
+        *written_manifest = manifest;
+    }
     REQUIRE(write_text_file(package_dir / "ahfl.toml", manifest));
 
     auto result = ahfl::package_graph::build_package_graph_from_manifests(
@@ -535,10 +545,17 @@ entry = "src/lib.ahfl"
 
 TEST_CASE("Manifest PackageGraph loader rejects invalid exported modules") {
     SUBCASE("missing exported module") {
-        auto result = build_manifest_graph_with_exports("[\"missing\"]", false, false);
+        std::string manifest;
+        auto result = build_manifest_graph_with_exports("[\"missing\"]", false, false, &manifest);
 
         REQUIRE(result.has_errors());
-        CHECK(has_diagnostic(result.diagnostics, "export module 'missing' does not exist"));
+        const auto found = std::find_if(
+            result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+                return diagnostic.message.find("export module 'missing' does not exist") !=
+                       std::string::npos;
+            });
+        REQUIRE(found != result.diagnostics.end());
+        CHECK(slice(manifest, found->range) == "\"missing\"");
     }
 
     SUBCASE("duplicate exported module") {
@@ -666,7 +683,8 @@ entry = "src/lib.ahfl"
                          "'audit-core'"));
 }
 
-TEST_CASE("Workspace PackageGraph loader resolves normalized path member dependencies and sysroot defaults") {
+TEST_CASE("Workspace PackageGraph loader resolves normalized path member dependencies and sysroot "
+          "defaults") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /
                           ("ahfl-package-graph-workspace-loader-" + std::to_string(stamp));

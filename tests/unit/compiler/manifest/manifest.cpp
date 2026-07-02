@@ -167,9 +167,10 @@ TEST_CASE("Package manifest schema accepts repository sysroot std manifest") {
     CHECK(result.manifest->module_root == ".");
     REQUIRE(result.manifest->prelude_injection.has_value());
     CHECK(*result.manifest->prelude_injection == "explicit");
-    CHECK(std::find(result.manifest->exported_modules.begin(),
-                    result.manifest->exported_modules.end(),
-                    "option") != result.manifest->exported_modules.end());
+    CHECK(std::find_if(result.manifest->exported_modules.begin(),
+                       result.manifest->exported_modules.end(),
+                       [](const auto &module) { return module.module_path == "option"; }) !=
+          result.manifest->exported_modules.end());
     CHECK(std::find(result.manifest->compiler_intrinsics_allow.begin(),
                     result.manifest->compiler_intrinsics_allow.end(),
                     "option_*") != result.manifest->compiler_intrinsics_allow.end());
@@ -393,12 +394,10 @@ audit-core = { source = "path", path = "packages/audit-core", version = "0.1" }
 
     const auto result = ahfl::manifest::parse_package_manifest(input);
     REQUIRE(result.has_errors());
-    const auto found = std::find_if(result.diagnostics.begin(),
-                                    result.diagnostics.end(),
-                                    [](const auto &diagnostic) {
-                                        return diagnostic.message ==
-                                               "dependency.version must be an exact semantic version";
-                                    });
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+            return diagnostic.message == "dependency.version must be an exact semantic version";
+        });
     REQUIRE(found != result.diagnostics.end());
     constexpr std::string_view invalid_version = "\"0.1\"";
     const auto invalid_version_offset = input.find(invalid_version);
@@ -934,11 +933,10 @@ version = 1
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
-    const auto found = std::find_if(result.diagnostics.begin(),
-                                    result.diagnostics.end(),
-                                    [](const auto &diagnostic) {
-                                        return diagnostic.code == "E::manifest_path_escape";
-    });
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+            return diagnostic.code == "E::manifest_path_escape";
+        });
     REQUIRE(found != result.diagnostics.end());
     constexpr std::string_view invalid_member = "\"../outside\"";
     const auto invalid_member_offset = input.find(invalid_member);
@@ -977,11 +975,10 @@ version = 1
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
-    const auto found = std::find_if(result.diagnostics.begin(),
-                                    result.diagnostics.end(),
-                                    [](const auto &diagnostic) {
-                                        return diagnostic.code == "E::manifest_path_escape";
-    });
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+            return diagnostic.code == "E::manifest_path_escape";
+        });
     REQUIRE(found != result.diagnostics.end());
     constexpr std::string_view invalid_member = "\"packages/../../outside\"";
     const auto invalid_member_offset = input.find(invalid_member);
@@ -1002,12 +999,10 @@ version = 1
 
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
-    const auto found = std::find_if(result.diagnostics.begin(),
-                                    result.diagnostics.end(),
-                                    [](const auto &diagnostic) {
-                                        return diagnostic.message.find("duplicate member paths") !=
-                                               std::string::npos;
-    });
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+            return diagnostic.message.find("duplicate member paths") != std::string::npos;
+        });
     REQUIRE(found != result.diagnostics.end());
     constexpr std::string_view duplicate_member = "\"packages/refund-audit\"";
     const auto duplicate_member_offset =
