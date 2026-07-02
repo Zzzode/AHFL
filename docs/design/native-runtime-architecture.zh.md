@@ -16,7 +16,7 @@ Native runtime architecture 的目标不是在 compiler 仓库里实现完整生
 
 当前设计坚持四条边界：
 
-1. `ahfl.package.json` 是 package authoring 输入，`emit-native-json` / handoff package 是 compiler 输出；二者不能混成一个 descriptor。
+1. `ahfl.toml` 中的 handoff target 是 package authoring 输入，`emit native-json` / handoff package 是 compiler 输出；二者不能混成一个 descriptor。
 2. artifact chain 是事实来源；review summary、CLI 文本和 audit report 只能是 projection。
 3. 每个下游 artifact 只能依赖它声明的直接上游 source artifact，不能重新解析 source 或私自反推上游状态。
 4. 真实 connector、secret、distributed worker、durable queue、object store 和 recovery daemon 不属于当前 compiler-native artifact contract。
@@ -25,7 +25,7 @@ Native runtime architecture 的目标不是在 compiler 仓库里实现完整生
 
 ```mermaid
 flowchart LR
-    Project[Project and package descriptors] --> Package[Native handoff package]
+    HandoffTarget[PackageGraph handoff target] --> Package[Native handoff package]
     Package --> Planner[Execution planner bootstrap]
     Planner --> Plan[ExecutionPlan]
     Plan --> DryRun[DryRunTrace]
@@ -47,7 +47,7 @@ flowchart LR
 
 | Artifact | 事实来源职责 | 非职责 |
 | --- | --- | --- |
-| Package authoring descriptor | 描述 package identity、entry/export target、capability binding alias | deployment secret、runtime endpoint、connector SDK config |
+| Package manifest handoff target | 描述 package identity、entry/export target、capability binding alias | deployment secret、runtime endpoint、connector SDK config |
 | Native handoff package | 冻结 compiler 输出给 native/runtime 的 package、graph、capability surface 与 policy/contract 摘要 | 完整 AST、resolver/typechecker 内部对象、真实 runtime 状态 |
 | Execution planner bootstrap | 读取 handoff package 并投影最小 planner 输入 | 生产 scheduler、retry、timeout、parallel execution |
 | ExecutionPlan | 冻结 workflow node、dependency、input expression 与 source package 关系 | agent state machine interpreter、真实 connector invocation |
@@ -64,11 +64,11 @@ flowchart LR
 
 Durable store import 之后的 provider pipeline 已经有独立设计入口：[durable-store-import-architecture.zh.md](./durable-store-import-architecture.zh.md)。
 
-## Package Authoring 边界
+## Handoff Target Authoring 边界
 
-`ahfl.package.json` 当前只承诺 package authoring 语义：
+`ahfl.toml` 中的 `handoff` target 当前只承诺 package authoring 语义：
 
-1. package identity 与 project identity 分离。
+1. package identity 来自 `[package]`，target identity 来自 `[targets.<name>]`。
 2. entry/export target 指向 package 暴露给 native/runtime 的入口。
 3. capability binding alias 是 package metadata，不是 deployment secret。
 4. descriptor 结构错误、metadata reference 错误和 metadata consistency 错误必须分层诊断。

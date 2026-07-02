@@ -68,7 +68,8 @@
 
 ```
 ahflc emit-provider-artifact provider/release-evidence-archive-manifest \
-  --package <ahfl.package.json> \
+  --manifest <ahfl.toml> \
+  --target <handoff-target> \
   --capability-mocks <mocks.json> \
   --input-fixture <fixture> \
   [--workflow <canonical>] \

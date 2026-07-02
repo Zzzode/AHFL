@@ -43,7 +43,7 @@ flowchart TD
 
 | 能力 | 当前事实来源 |
 |------|--------------|
-| diagnostics | parse / resolve / typecheck / validate diagnostics with versioned publish、`textDocument/diagnostic` full report 和 `workspace/diagnostic` full report；open/change/close 后刷新全部已打开文档，`workspace/didChangeWatchedFiles` 后失效 analysis cache，`workspace/didChangeWorkspaceFolders` 后更新 workspace roots，覆盖未保存跨文件依赖变化、未打开 imported source 修改和 project descriptor 切换 |
+| diagnostics | parse / resolve / typecheck / validate diagnostics with versioned publish、`textDocument/diagnostic` full report 和 `workspace/diagnostic` full report；open/change/close 后刷新全部已打开文档，`workspace/didChangeWatchedFiles` 后失效 analysis cache，`workspace/didChangeWorkspaceFolders` 后更新 workspace roots，覆盖未保存跨文件依赖变化、未打开 imported source 修改和 PackageGraph context 切换 |
 | hover | `HoverTargetIndex` + `HoverService` + `HoverRenderer` |
 | completion | keyword / type / member / enum / state / workflow context |
 | definition / references / rename | resolver references and declaration ranges |
@@ -186,7 +186,7 @@ AHFL hover 面向 DSL 作者，而不是 compiler 调试者。默认输出规则
 
 | 源码位置 | Hover 内容 |
 |----------|------------|
-| `module lib::agents` 的每个段 | module 名、source 文件、project descriptor 摘要 |
+| `module lib::agents` 的每个段 | module 名、source 文件、PackageGraph / manifest 摘要 |
 | `import lib::types as types` 的路径段 | imported module、目标 source、导出 symbol 摘要 |
 | import alias `types` | alias 到 target module |
 | `struct` / `enum` / `type` / `const` / `capability` / `predicate` / `agent` / `workflow` 名 | declaration signature、kind、必要时 canonical name |

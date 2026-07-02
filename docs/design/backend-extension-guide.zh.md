@@ -247,7 +247,7 @@ flowchart TD
 
 当前最小模板要求：
 
-1. 不回退读取 AST、raw source、project descriptor 或 `ahfl.package.json`
+1. 不回退读取 AST、raw source 或独立 descriptor
 2. 优先复用 `handoff::build_package_reader_summary(...)`
 3. 优先复用 `handoff::build_execution_planner_bootstrap(...)`
 4. 若扩 authoring 输入，必须同步更新 authoring compatibility 文档
@@ -316,7 +316,7 @@ flowchart TD
 
 当前最小模板要求：
 
-1. 不回退读取 AST、raw source、project descriptor 或 authoring descriptor
+1. 不回退读取 AST、raw source 或独立 authoring descriptor
 2. planner / runner / trace 应优先复用 `build_execution_plan(...)`
 3. runner / trace 应优先复用 `validate_execution_plan(...)`
 4. 新增 mock 输入字段时，必须同步更新 mock parser、compatibility 文档与 `tests/dry_run/`

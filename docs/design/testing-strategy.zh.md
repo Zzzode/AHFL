@@ -131,7 +131,7 @@ ctest --preset test-dev --output-on-failure -L 'reference-consumer'
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
 - [ir-backend-architecture.zh.md](./ir-backend-architecture.zh.md)
 - [formal-backend.zh.md](./formal-backend.zh.md)
-- [project-descriptor-architecture.zh.md](./project-descriptor-architecture.zh.md)
+- [project-usage.zh.md](../reference/project-usage.zh.md)
 - [backend-capability-matrix.zh.md](../reference/backend-capability-matrix.zh.md)
 
 ### 目标
@@ -454,7 +454,7 @@ CI 也显式执行这些切片，然后再继续跑全量 `ctest --preset test-d
 
 - 一个 `tests/handoff/*.cpp` 对象模型或 compatibility 测试
 - 一个 `tests/native/*.native.json` golden
-- 若存在 project-aware 差异，再补 `--project` / `--workspace` 路径 golden
+- 若存在 package-aware 差异，再补 `--manifest` / `--workspace --package` 路径 golden
 - 同步补 `package-model`、`package-emission` 或 `package-compat` 标签
 
 ### 选择测试形态的判断标准

@@ -396,7 +396,7 @@ frontend 当前通过一组 helper 统一处理位置：
 2. `include/ahfl/compiler/frontend/frontend.hpp`
 3. `src/compiler/syntax/frontend/frontend.cpp` 中的 helper 与 `ProgramBuilder`
 4. `src/compiler/syntax/frontend/frontend.cpp` 中的 `AstPrinter`
-5. `src/compiler/syntax/frontend/project.cpp` 中的 project descriptor / source graph 装载路径
+5. `src/compiler/syntax/frontend/project.cpp` 中的 PackageGraph / source graph 装载边界
 
 阅读重点：
 
