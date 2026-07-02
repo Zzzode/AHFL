@@ -913,6 +913,13 @@ EvalResult builtin_wall_clock_now(const std::vector<Value> &args, const EvalCont
     return EvalResult{make_timestamp(ms), {}};
 }
 
+/// timestamp_epoch() -> Timestamp
+EvalResult builtin_timestamp_epoch(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (!args.empty())
+        return arg_count_error(0, args.size());
+    return EvalResult{make_timestamp(0), {}};
+}
+
 /// timestamp_add(t: Timestamp, d: Duration) -> Timestamp
 EvalResult builtin_timestamp_add(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 2)
@@ -1843,6 +1850,7 @@ void BuiltinTable::populate() {
 
     // —— Time ——
     insert("wall_clock_now", builtin_wall_clock_now);
+    insert("time_epoch", builtin_timestamp_epoch);
     insert("timestamp_add", builtin_timestamp_add);
     insert("time_now", builtin_wall_clock_now);
     insert("time_add", builtin_timestamp_add);

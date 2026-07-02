@@ -633,6 +633,15 @@ void test_std_builtin_hooks() {
     auto *timestamp = std::get_if<TimestampValue>(&time_result.value.node);
     check(timestamp != nullptr && timestamp->unix_ms == 3000, "std.time_add.value");
 
+    auto time_epoch = make_expr(CallExpr{
+        "time_epoch",
+        {},
+    });
+    auto epoch_result = eval_expr(time_epoch, ctx);
+    check(!epoch_result.has_errors(), "std.time_epoch.no_error");
+    auto *epoch = std::get_if<TimestampValue>(&epoch_result.value.node);
+    check(epoch != nullptr && epoch->unix_ms == 0, "std.time_epoch.value");
+
     auto uuid_value = make_uuid("550e8400-e29b-41d4-a716-446655440000");
     check(uuid_value.has_value(), "std.uuid.seed_valid");
     if (uuid_value.has_value()) {

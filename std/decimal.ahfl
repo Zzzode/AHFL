@@ -168,6 +168,24 @@ fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
     return decimal_raw_cmp(a, b);
 }
 
+fn min(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+    if compare(a, b) == cmp::Ordering::Greater {
+        return b;
+    }
+    return a;
+}
+
+fn max(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+    if compare(a, b) == cmp::Ordering::Less {
+        return b;
+    }
+    return a;
+}
+
+fn clamp(value: JDecimal, lo: JDecimal, hi: JDecimal) -> JDecimal effect Pure decreases 0 {
+    return min(max(value, lo), hi);
+}
+
 // ===========================================================================
 // Inherent impl — the bodies trait dispatch locates for Eq / Ord / Hash /
 // Display (API §5 trait matrix). Method names + arities match those declared

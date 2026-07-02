@@ -275,6 +275,35 @@ fn get_or<K, V>(self: Map<K, V>, key: K, default: V) -> V effect Pure decreases 
     return collections::map_get_or<K, V>(self, key, default);
 }
 
+fn set_empty<T>() -> Set<T> effect Pure decreases 0 {
+    return collections::set_empty<T>();
+}
+
+fn set_singleton<T>(x: T) -> Set<T> effect Pure decreases 0 {
+    return collections::set_singleton<T>(x);
+}
+
+fn map_empty<K, V>() -> Map<K, V> effect Pure decreases 0 {
+    return collections::map_empty<K, V>();
+}
+
+fn map_singleton<K, V>(key: K, value: V) -> Map<K, V> effect Pure decreases 0 {
+    return collections::map_singleton<K, V>(key, value);
+}
+
+fn map_from_entries<K, V>(
+    k0: K,
+    v0: V,
+    k1: K,
+    v1: V,
+    k2: K,
+    v2: V,
+    k3: K,
+    v3: V
+) -> Map<K, V> effect Pure decreases 0 {
+    return collections::map_from_entries<K, V>(k0, v0, k1, v1, k2, v2, k3, v3);
+}
+
 // ===========================================================================
 // §9.1.2  FUNCTIONS — string
 //

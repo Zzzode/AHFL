@@ -2,6 +2,7 @@ module stdlib_units::uuid_ut;
 
 import std::uuid as uuid;
 import std::option as option;
+import std::string as string;
 
 // P6 Group A-2: std::uuid unit tests.
 // Covers: UUID parse (good + bad inputs) / to_string roundtrip / equality /
@@ -54,13 +55,13 @@ fn uuid_ut() -> Int effect Pure decreases 0 {
 
     // (12, 13) length of to_string output is exactly 32 chars.
     assert(option::unwrap_or<Int>(
-        option::map<UUID, Int>(r1, \u: UUID -> uuid::to_string(u).raw_length()), 0) == 32);
+        option::map<UUID, Int>(r1, \u: UUID -> string::length(uuid::to_string(u))), 0) == 32);
     assert(option::unwrap_or<Int>(
-        option::map<UUID, Int>(r2, \u: UUID -> uuid::to_string(u).raw_length()), 0) == 32);
+        option::map<UUID, Int>(r2, \u: UUID -> string::length(uuid::to_string(u))), 0) == 32);
 
     // (14) The 32-char invariant also holds for s3 (all-zero boundary).
     assert(option::unwrap_or<Int>(
-        option::map<UUID, Int>(r3, \u: UUID -> uuid::to_string(u).raw_length()), 1) == 32);
+        option::map<UUID, Int>(r3, \u: UUID -> string::length(uuid::to_string(u))), 1) == 32);
 
     // ===== 4 equality / distinction (via roundtrip string identity) =====
     // Two different 32-hex strings produce UUIDs whose to_string outputs
@@ -95,7 +96,7 @@ fn uuid_ut() -> Int effect Pure decreases 0 {
            == option::unwrap_or<String>(via_inherent, ""));
     // (20) both paths produce 32-char strings (impl surface sanity).
     assert(option::unwrap_or<Int>(
-        option::map<String, Int>(via_module, \s: String -> s.raw_length()), 99) == 32);
+        option::map<String, Int>(via_module, \s: String -> string::length(s)), 99) == 32);
 
     // Note: `uuid::new_v4()` is intentionally NOT asserted (it returns a
     // Nondet UUID and the effect system forbids its use in Pure assertion

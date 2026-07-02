@@ -4,6 +4,9 @@ module std::time;
 @builtin("time_now")
 fn time_now() -> Timestamp effect Nondet;
 
+@builtin("time_epoch")
+fn time_epoch() -> Timestamp effect Pure;
+
 @builtin("time_add")
 fn time_add(t: Timestamp, delta: Duration) -> Timestamp effect Pure;
 
@@ -37,6 +40,10 @@ impl Timestamp {
 
 fn now() -> Timestamp effect Nondet {
     return time_now();
+}
+
+fn epoch() -> Timestamp effect Pure decreases 0 {
+    return time_epoch();
 }
 
 fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {

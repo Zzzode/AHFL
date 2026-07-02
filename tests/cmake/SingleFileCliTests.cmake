@@ -929,8 +929,7 @@ set_tests_properties(p5_smv_golden_lock.negative_diag PROPERTIES
 
 # ---------------------------------------------------------------------------
 # stdlib unit-test matrix (corelib-support-workplan M0-3 / blocker B3).
-# option_ut is the template for the other 11 stdlib modules: 25 assertions
-# (15 positive + 10 boundary) over the Option<T> API surface. The five
+# Positive fixtures cover every tracked stdlib_units/*_ut.ahfl module. The five
 # option_neg_* fixtures are the negative-path counterpart.
 # ---------------------------------------------------------------------------
 ahfl_add_check_test(
@@ -994,6 +993,51 @@ ahfl_add_check_test(
 set_tests_properties(ahflc.check.stdlib_cmp_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;cmp"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_time_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/time_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_time_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;time"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_uuid_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/uuid_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_uuid_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;uuid"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_json_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/json_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_json_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;json"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_decimal_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/decimal_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_decimal_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;decimal"
+)
+
+ahfl_add_check_test(
+    ahflc.check.stdlib_prelude_ut
+    "${AHFL_TESTS_DIR}/integration/stdlib_units/prelude_ut.ahfl"
+)
+set_tests_properties(ahflc.check.stdlib_prelude_ut PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked"
+    LABELS "stdlib;unit;prelude"
 )
 
 ahfl_add_check_fail_test(

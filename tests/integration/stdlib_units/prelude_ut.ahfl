@@ -1,20 +1,17 @@
 module stdlib_units::prelude_ut;
 
+import std::prelude;
+
 // ===========================================================================
-// B-12 P6 prelude 默认注入验收 (Wave-23 Group B 收尾)
+// B-12 P6 prelude 显式导入验收 (Wave-23 Group B 收尾)
 //
-// 整个文件不包含任何 `import std::*` 语句。所有符号均通过 project.cpp
-// L1261 `should_inject_prelude()` 自动注入 `std::prelude` 的隐式
-// ImportBinding 解析，再由 resolver.cpp L1091 `lookup_prelude_symbol()`
-// 回退机制提供 bare-name 解析。
+// 本文件显式 `import std::prelude;`。所有裸名符号均通过普通 package
+// source graph 装载 prelude 后，再由 resolver 的 prelude fallback 提供
+// bare-name 解析。public CLI / PackageGraph 入口不得依赖隐式 prelude 注入。
 //
 // 设计说明：
-//   • #![no_prelude] escape 语法（inner-crate-attribute `#![...]`）今天
-//     AHFL 语法树未支持（AST 层没有 InnerAttr/ModuleAttr 节点），所以
-//     仅能走 ProjectInput.inject_prelude=false 的 C++ 路径切换。对 B-12
-//     而言这等价于用户层面的 `#![no_prelude]`（两者都由同一个
-//     should_inject_prelude 函数决定），故满足 §9.1.2 的 "escape" 要求。
-//     #![no_prelude] 语法的 AST/grammar 扩展在 PHASE B 完成。
+//   • RFC 0005 后 prelude injection 是显式配置边界，不再作为用户语言
+//     默认语义。这个 fixture 覆盖 public CLI 可见的显式入口。
 //
 // Scope：7 家族 40 assertions
 //   (A) TYPES 类型别名       6 (Option/Result/List/Set/Map/Ordering)

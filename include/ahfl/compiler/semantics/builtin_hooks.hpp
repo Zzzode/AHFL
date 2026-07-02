@@ -46,6 +46,7 @@ inline constexpr std::array kKnownBuiltinHooks{
     std::string_view{"string_parse_int"},
     std::string_view{"string_split_whitespace"},
     std::string_view{"string_parse_float"},
+    std::string_view{"time_epoch"},
     std::string_view{"time_now"},
     std::string_view{"time_add"},
     std::string_view{"time_sub"},
