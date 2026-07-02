@@ -3,7 +3,6 @@ module std::traits;
 import std::cmp as cmp;
 import std::option as option;
 import std::collections as collections;
-import std::string as string;
 
 // ===========================================================================
 // JsonValue ADT — declared FIRST because P3 trait signatures do not support

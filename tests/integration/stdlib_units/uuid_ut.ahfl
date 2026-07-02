@@ -1,0 +1,113 @@
+module stdlib_units::uuid_ut;
+
+import std::uuid as uuid;
+import std::option as option;
+
+// P6 Group A-2: std::uuid unit tests.
+// Covers: UUID parse (good + bad inputs) / to_string roundtrip / equality /
+// Pure-safe semantics. `new_v4()` is Nondet so we only exercise it through
+// non-asserting structural wrappers (no direct assertion on its output since
+// it's Nondet within a Pure body — we call it once inside a separate Nondet
+// helper to validate the type-checker accepts the effect signature).
+//
+// Target: 20 assertions.  8 parse + 6 format + 4 equality + 2 symmetry = 20.
+
+// ---- Pure helper: run all assertions so the harness has a single entry.
+fn uuid_ut() -> Int effect Pure decreases 0 {
+    // ===== 8 parse: well-formed 32-hex strings (lowercase) =====
+    // Canonical v4 UUIDs produced by uuid_new_v4() are 32 lowercase hex chars
+    // with version=4 at position 12 and variant ∈ {8,9,a,b} at position 16.
+    // The parser accepts any 32-hex-char spelling (not strict v4).
+    let s1: String = "0123456789abcdef0123456789abcdef";
+    let s2: String = "ffffffffffffffffffffffffffffffff";
+    let s3: String = "00000000000000000000000000000000";
+    let s4: String = "aabbaabbaabbaabbaabbaabbaabbaabb";
+    // (1,2,3,4) all four parse to Some(UUID).
+    assert(option::is_some<UUID>(uuid::parse(s1)));
+    assert(option::is_some<UUID>(uuid::parse(s2)));
+    assert(option::is_some<UUID>(uuid::parse(s3)));
+    assert(option::is_some<UUID>(uuid::parse(s4)));
+
+    // (5,6,7,8) bad inputs → None.
+    assert(option::is_none<UUID>(uuid::parse("")));              // empty
+    assert(option::is_none<UUID>(uuid::parse("hello")));         // too short
+    // uppercase rejected (builtin_uuid_from_string is strict lowercase)
+    assert(option::is_none<UUID>(uuid::parse("0123456789ABCDEF0123456789ABCDEF")));
+    // 31 chars — wrong length
+    assert(option::is_none<UUID>(uuid::parse("0123456789abcdef0123456789abcde")));
+
+    // ===== 6 format: parse then to_string roundtrip =====
+    // The UUID runtime (value.hpp:102) stores a canonical 32-char lowercase
+    // hex; parse(s)→to_string() returns the same spelling for valid inputs.
+    let r1: option::Option<UUID> = uuid::parse(s1);
+    let r2: option::Option<UUID> = uuid::parse(s2);
+    let r3: option::Option<UUID> = uuid::parse(s3);
+
+    // (9,10,11) roundtrip through and_then(parse ∘ to_string) stays Some —
+    // i.e. the formatted output is itself a valid 32-hex string.
+    assert(option::is_some<UUID>(
+        option::and_then<UUID, UUID>(r1, \u: UUID -> uuid::parse(uuid::to_string(u)))));
+    assert(option::is_some<UUID>(
+        option::and_then<UUID, UUID>(r2, \u: UUID -> uuid::parse(uuid::to_string(u)))));
+    assert(option::is_some<UUID>(
+        option::and_then<UUID, UUID>(r3, \u: UUID -> uuid::parse(uuid::to_string(u)))));
+
+    // (12, 13) length of to_string output is exactly 32 chars.
+    assert(option::unwrap_or<Int>(
+        option::map<UUID, Int>(r1, \u: UUID -> uuid::to_string(u).raw_length()), 0) == 32);
+    assert(option::unwrap_or<Int>(
+        option::map<UUID, Int>(r2, \u: UUID -> uuid::to_string(u).raw_length()), 0) == 32);
+
+    // (14) The 32-char invariant also holds for s3 (all-zero boundary).
+    assert(option::unwrap_or<Int>(
+        option::map<UUID, Int>(r3, \u: UUID -> uuid::to_string(u).raw_length()), 1) == 32);
+
+    // ===== 4 equality / distinction (via roundtrip string identity) =====
+    // Two different 32-hex strings produce UUIDs whose to_string outputs
+    // differ. We can't compare UUID values directly (no UUID == UUID yet)
+    // but we can assert the parsed outputs, when re-formatted, are equal
+    // to the inputs they came from — s1 != s2 so the roundtrips differ.
+    let round1: option::Option<String> =
+        option::map<UUID, String>(r1, \u: UUID -> uuid::to_string(u));
+    let round2: option::Option<String> =
+        option::map<UUID, String>(r2, \u: UUID -> uuid::to_string(u));
+    // (15, 16) each roundtrip matches its original source spelling.
+    assert(option::unwrap_or<String>(round1, "") == s1);
+    assert(option::unwrap_or<String>(round2, "") == s2);
+    // (17) s1 != s2 so the formatted outputs differ.
+    assert(option::unwrap_or<String>(round1, "")
+           != option::unwrap_or<String>(round2, ""));
+    // (18) s1, s2, s3 all parse successfully (combined sanity check).
+    assert(option::is_some<UUID>(r1) and option::is_some<UUID>(r2)
+           and option::is_some<UUID>(r3));
+
+    // ===== 2 module-level vs inherent impl symmetry =====
+    // Module-level `to_string(self: UUID)` and inherent `UUID::to_string`
+    // resolve to the same callee. We check by calling both forms through
+    // Option::map on identical inputs and asserting string equality.
+    let r4: option::Option<UUID> = uuid::parse(s4);
+    let via_module: option::Option<String> =
+        option::map<UUID, String>(r4, \u: UUID -> uuid::to_string(u));
+    let via_inherent: option::Option<String> =
+        option::map<UUID, String>(r4, \u: UUID -> u.to_string());
+    // (19) both paths produce the same formatting.
+    assert(option::unwrap_or<String>(via_module, "")
+           == option::unwrap_or<String>(via_inherent, ""));
+    // (20) both paths produce 32-char strings (impl surface sanity).
+    assert(option::unwrap_or<Int>(
+        option::map<String, Int>(via_module, \s: String -> s.raw_length()), 99) == 32);
+
+    // Note: `uuid::new_v4()` is intentionally NOT asserted (it returns a
+    // Nondet UUID and the effect system forbids its use in Pure assertion
+    // conditions). Its declaration-signature is checked separately by the
+    // type-checker in a dedicated Nondet helper (see below).
+    return 0;
+}
+
+// Effect-signature smoke: the compiler accepts new_v4() as Nondet. Callers
+// that want to use the returned UUID for something other than Pure assertions
+// can write wrappers like this one.
+fn uuid_new_v4_smoke() -> String effect Nondet decreases 0 {
+    let u: UUID = uuid::new_v4();
+    return u.to_string();
+}

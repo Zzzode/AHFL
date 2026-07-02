@@ -1,122 +1,122 @@
 opt_program source_version=ahfl.ir.v1
-skipped_temporal scope=contract::ir::expr_temporal::ExprAgent::clause::1 kind=called reason="temporal atom is not a pure expression fragment" source=[1398,1412)
-skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[2262,2274)
-skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[2289,2303)
-skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::liveness::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[2331,2351)
-function flow::ir::expr_temporal::ExprAgent::Init args=3 return=unresolved source=[1479,2003) {
+skipped_temporal scope=contract::ir::expr_temporal::ExprAgent::clause::1 kind=called reason="temporal atom is not a pure expression fragment" source=[1509,1523)
+skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[2373,2385)
+skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[2400,2414)
+skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::liveness::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[2442,2462)
+function flow::ir::expr_temporal::ExprAgent::Init args=3 return=unresolved source=[1590,2114) {
   locals:
-    %0 input type=struct(ir::expr_temporal::Request) source=[1525,1530)
+    %0 input type=struct(ir::expr_temporal::Request) source=[1636,1641)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=struct(ir::expr_temporal::Response) source=[1512,1531)
-    %4 reply type=struct(ir::expr_temporal::Response) source=[1500,1532)
-    %5 _tmp1 temp type=struct(ir::expr_temporal::Response) source=[1549,1644)
-    %6 _tmp2 temp type=string(String) source=[1548,1650)
-    %7 _tmp3 temp type=bool(Bool) source=[1548,1672)
-    %8 _tmp4 temp type=bool(Bool) source=[1548,1672)
-    %9 _tmp5 temp type=struct(std::collections::List<Int>)<int(Int)> source=[1687,1699)
-    %10 _tmp6 temp type=int(Int) source=[1687,1701)
-    %11 _tmp7 temp type=int(Int) source=[1687,1706)
-    %12 _tmp8 temp type=bool(Bool) source=[1686,1711)
-    %13 _tmp9 temp type=string(String) source=[1722,1732)
-    %14 _tmp10 temp type=bool(Bool) source=[1716,1733)
-    %15 _tmp11 temp type=bool(Bool) source=[1686,1733)
-    %16 _tmp12 temp type=bool(Bool) source=[1686,1733)
-    %17 _tmp13 temp type=string(String) source=[1759,1769)
-    %18 ctx.note type=string(String) source=[1748,1770)
-    %19 _tmp14 temp type=string(String) source=[1783,1793)
-    %20 _tmp15 temp type=string(String) source=[1868,1900)
-    %21 _tmp16 temp type=struct(ir::expr_temporal::Response) source=[1835,1957)
-    %22 _tmp17 temp type=string(String) source=[1834,1963)
-    %23 _tmp18 temp type=string(String) source=[1977,1987)
+    %3 _tmp0 temp type=struct(ir::expr_temporal::Response) source=[1623,1642)
+    %4 reply type=struct(ir::expr_temporal::Response) source=[1611,1643)
+    %5 _tmp1 temp type=struct(ir::expr_temporal::Response) source=[1660,1755)
+    %6 _tmp2 temp type=string(String) source=[1659,1761)
+    %7 _tmp3 temp type=bool(Bool) source=[1659,1783)
+    %8 _tmp4 temp type=bool(Bool) source=[1659,1783)
+    %9 _tmp5 temp type=struct(std::collections::List<Int>)<int(Int)> source=[1798,1810)
+    %10 _tmp6 temp type=int(Int) source=[1798,1812)
+    %11 _tmp7 temp type=int(Int) source=[1798,1817)
+    %12 _tmp8 temp type=bool(Bool) source=[1797,1822)
+    %13 _tmp9 temp type=string(String) source=[1833,1843)
+    %14 _tmp10 temp type=bool(Bool) source=[1827,1844)
+    %15 _tmp11 temp type=bool(Bool) source=[1797,1844)
+    %16 _tmp12 temp type=bool(Bool) source=[1797,1844)
+    %17 _tmp13 temp type=string(String) source=[1870,1880)
+    %18 ctx.note type=string(String) source=[1859,1881)
+    %19 _tmp14 temp type=string(String) source=[1894,1904)
+    %20 _tmp15 temp type=string(String) source=[1979,2011)
+    %21 _tmp16 temp type=struct(ir::expr_temporal::Response) source=[1946,2068)
+    %22 _tmp17 temp type=string(String) source=[1945,2074)
+    %23 _tmp18 temp type=string(String) source=[2088,2098)
   blocks:
   bb0 entry:
-    stmt assign %3 = call callee=ir::expr_temporal::Decide operands=[local(%0)] type=struct(ir::expr_temporal::Response) source=[1512,1531)
-    stmt assign %5 = aggregate operands=[constant("ir::expr_temporal::DEFAULT_NOTE"), constant("ir::expr_temporal::Status::Pending")] type=struct(ir::expr_temporal::Response) source=[1549,1644)
-    stmt assign %6 = field field=note operands=[local(%5)] type=string(String) source=[1548,1650)
-    stmt assign %7 = binary op=eq operands=[local(%6), constant("ir::expr_temporal::DEFAULT_NOTE")] type=bool(Bool) source=[1548,1672)
-    term assert cond=%7 resume=bb1 source=[1541,1673)
+    stmt assign %3 = call callee=ir::expr_temporal::Decide operands=[local(%0)] type=struct(ir::expr_temporal::Response) source=[1623,1642)
+    stmt assign %5 = aggregate operands=[constant("ir::expr_temporal::DEFAULT_NOTE"), constant("ir::expr_temporal::Status::Pending")] type=struct(ir::expr_temporal::Response) source=[1660,1755)
+    stmt assign %6 = field field=note operands=[local(%5)] type=string(String) source=[1659,1761)
+    stmt assign %7 = binary op=eq operands=[local(%6), constant("ir::expr_temporal::DEFAULT_NOTE")] type=bool(Bool) source=[1659,1783)
+    term assert cond=%7 resume=bb1 source=[1652,1784)
   bb1 after.assert:
-    stmt assign %9 = field field=values operands=[local(%0)] type=struct(std::collections::List<Int>)<int(Int)> source=[1687,1699)
-    stmt assign %10 = call callee=list_raw_get operands=[local(%9), constant(0)] type=int(Int) source=[1687,1701)
-    stmt assign %11 = binary op=add operands=[local(%10), constant(1)] type=int(Int) source=[1687,1706)
-    stmt assign %12 = binary op=gt operands=[local(%11), constant(2)] type=bool(Bool) source=[1686,1711)
-    stmt assign %13 = field field=note operands=[local(%3)] type=string(String) source=[1722,1732)
-    stmt assign %14 = call callee=ir::expr_temporal::ready operands=[local(%13)] type=bool(Bool) source=[1716,1733)
-    stmt assign %15 = binary op=and operands=[local(%12), local(%14)] type=bool(Bool) source=[1686,1733)
-    term switch_bool cond=%15 then=bb2 else=bb3 source=[1683,1997)
+    stmt assign %9 = field field=values operands=[local(%0)] type=struct(std::collections::List<Int>)<int(Int)> source=[1798,1810)
+    stmt assign %10 = call callee=list_raw_get operands=[local(%9), constant(0)] type=int(Int) source=[1798,1812)
+    stmt assign %11 = binary op=add operands=[local(%10), constant(1)] type=int(Int) source=[1798,1817)
+    stmt assign %12 = binary op=gt operands=[local(%11), constant(2)] type=bool(Bool) source=[1797,1822)
+    stmt assign %13 = field field=note operands=[local(%3)] type=string(String) source=[1833,1843)
+    stmt assign %14 = call callee=ir::expr_temporal::ready operands=[local(%13)] type=bool(Bool) source=[1827,1844)
+    stmt assign %15 = binary op=and operands=[local(%12), local(%14)] type=bool(Bool) source=[1797,1844)
+    term switch_bool cond=%15 then=bb2 else=bb3 source=[1794,2108)
   bb2 if.then:
-    stmt assign %19 = use operands=[constant("Done")] type=string(String) source=[1783,1793)
-    term return value=%19 source=[1783,1793)
+    stmt assign %19 = use operands=[constant("Done")] type=string(String) source=[1894,1904)
+    term return value=%19 source=[1894,1904)
   bb3 if.else:
-    stmt assign %23 = use operands=[constant("Done")] type=string(String) source=[1977,1987)
-    term return value=%23 source=[1977,1987)
+    stmt assign %23 = use operands=[constant("Done")] type=string(String) source=[2088,2098)
+    term return value=%23 source=[2088,2098)
   bb4 if.merge:
-    term return source=[1479,2003)
+    term return source=[1590,2114)
   bb5 after.goto:
-    term goto target=bb4 source=[1683,1997)
+    term goto target=bb4 source=[1794,2108)
   bb6 after.goto:
-    term goto target=bb4 source=[1683,1997)
+    term goto target=bb4 source=[1794,2108)
 }
-function flow::ir::expr_temporal::ExprAgent::Done args=3 return=unresolved source=[2009,2130) {
+function flow::ir::expr_temporal::ExprAgent::Done args=3 return=unresolved source=[2120,2241) {
   locals:
     %0 input type=struct(ir::expr_temporal::Request)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=string(String) source=[2066,2074)
-    %4 _tmp1 temp type=struct(ir::expr_temporal::Response) source=[2037,2123)
-    %5 _tmp2 temp type=struct(ir::expr_temporal::Response) source=[2030,2124)
+    %3 _tmp0 temp type=string(String) source=[2177,2185)
+    %4 _tmp1 temp type=struct(ir::expr_temporal::Response) source=[2148,2234)
+    %5 _tmp2 temp type=struct(ir::expr_temporal::Response) source=[2141,2235)
   blocks:
   bb0 entry:
-    stmt assign %3 = field field=note operands=[local(%1)] type=string(String) source=[2066,2074)
-    stmt assign %4 = aggregate operands=[local(%3), constant("ir::expr_temporal::Status::Approved")] type=struct(ir::expr_temporal::Response) source=[2037,2123)
-    term return value=%4 source=[2030,2124)
+    stmt assign %3 = field field=note operands=[local(%1)] type=string(String) source=[2177,2185)
+    stmt assign %4 = aggregate operands=[local(%3), constant("ir::expr_temporal::Status::Approved")] type=struct(ir::expr_temporal::Response) source=[2148,2234)
+    term return value=%4 source=[2141,2235)
   bb1 after.return:
-    term return source=[2009,2130)
+    term return source=[2120,2241)
 }
-function contract::ir::expr_temporal::ExprAgent::clause::0 args=3 return=bool(Bool) source=[1333,1370) {
+function contract::ir::expr_temporal::ExprAgent::clause::0 args=3 return=bool(Bool) source=[1444,1481) {
   locals:
     %0 input type=struct(ir::expr_temporal::Request)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1349,1360)
-    %4 _tmp1 temp type=string(String) source=[1349,1367)
-    %5 _tmp2 temp type=bool(Bool) source=[1343,1369)
+    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1460,1471)
+    %4 _tmp1 temp type=string(String) source=[1460,1478)
+    %5 _tmp2 temp type=bool(Bool) source=[1454,1480)
   blocks:
   bb0 entry:
-    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1349,1360)
-    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1349,1367)
-    stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1343,1369)
-    term return value=%5 source=[1343,1369)
+    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1460,1471)
+    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1460,1478)
+    stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1454,1480)
+    term return value=%5 source=[1454,1480)
 }
-function contract::ir::expr_temporal::ExprAgent::clause::1::embedded::0 args=3 return=bool(Bool) source=[1416,1442) {
+function contract::ir::expr_temporal::ExprAgent::clause::1::embedded::0 args=3 return=bool(Bool) source=[1527,1553) {
   locals:
     %0 input type=struct(ir::expr_temporal::Request)
     %1 ctx type=struct(ir::expr_temporal::Context)
     %2 output type=struct(ir::expr_temporal::Response)
-    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1422,1433)
-    %4 _tmp1 temp type=string(String) source=[1422,1440)
-    %5 _tmp2 temp type=bool(Bool) source=[1416,1442)
+    %3 _tmp0 temp type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1533,1544)
+    %4 _tmp1 temp type=string(String) source=[1533,1551)
+    %5 _tmp2 temp type=bool(Bool) source=[1527,1553)
   blocks:
   bb0 entry:
-    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1422,1433)
-    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1422,1440)
-    stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1416,1442)
-    term return value=%5 source=[1416,1442)
+    stmt assign %3 = field field=attrs operands=[local(%0)] type=struct(std::collections::Map<String, String>)<string(String), string(String)> source=[1533,1544)
+    stmt assign %4 = call callee=map_raw_get operands=[local(%3), constant("\"seed\"")] type=string(String) source=[1533,1551)
+    stmt assign %5 = call callee=ir::expr_temporal::ready operands=[local(%4)] type=bool(Bool) source=[1527,1553)
+    term return value=%5 source=[1527,1553)
 }
-function workflow::ir::expr_temporal::ExprWorkflow::node::run::input args=2 return=struct(ir::expr_temporal::Request) source=[2204,2237) {
+function workflow::ir::expr_temporal::ExprWorkflow::node::run::input args=2 return=struct(ir::expr_temporal::Request) source=[2315,2348) {
   locals:
-    %0 input type=struct(ir::expr_temporal::Request) source=[2230,2235)
+    %0 input type=struct(ir::expr_temporal::Request) source=[2341,2346)
     %1 run type=struct(ir::expr_temporal::Response)
   blocks:
   bb0 entry:
-    term return value=%0 source=[2230,2235)
+    term return value=%0 source=[2341,2346)
 }
-function workflow::ir::expr_temporal::ExprWorkflow::return args=2 return=struct(ir::expr_temporal::Response) source=[2365,2368) {
+function workflow::ir::expr_temporal::ExprWorkflow::return args=2 return=struct(ir::expr_temporal::Response) source=[2476,2479) {
   locals:
     %0 input type=struct(ir::expr_temporal::Request)
-    %1 run type=struct(ir::expr_temporal::Response) source=[2365,2368)
+    %1 run type=struct(ir::expr_temporal::Response) source=[2476,2479)
   blocks:
   bb0 entry:
-    term return value=%1 source=[2365,2368)
+    term return value=%1 source=[2476,2479)
 }

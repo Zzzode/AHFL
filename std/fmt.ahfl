@@ -3,7 +3,6 @@ module std::fmt;
 import std::collections as collections;
 import std::option as option;
 import std::string as string;
-import std::traits as traits;
 
 // Local aliases — P3 resolution does not always accept qualified names in
 // generics / function return types so we alias to the unqualified form.

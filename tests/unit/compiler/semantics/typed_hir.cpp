@@ -127,6 +127,7 @@ struct TypedHIRFixture {
         const auto parse = selected_frontend.parse_project(ahfl::ProjectInput{
             .entry_files = entry_files,
             .search_roots = {root, std::filesystem::path{"std"}},
+            .inject_prelude = true,
         });
         if (parse.has_errors()) {
             std::ostringstream ss;
@@ -178,6 +179,7 @@ struct TypedHIRFixture {
         const auto parse = frontend.parse_project(ahfl::ProjectInput{
             .entry_files = entry_files,
             .search_roots = {root, std::filesystem::path{"std"}},
+            .inject_prelude = true,
         });
         if (parse.has_errors()) {
             std::ostringstream ss;
@@ -387,6 +389,7 @@ run_project_caller(const ahfl::Frontend &frontend,
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = entry_files,
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     if (parse.has_errors()) {
         for (const auto &d : parse.diagnostics.entries()) {
@@ -3721,6 +3724,7 @@ flow for Worker {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_parity");
@@ -3839,6 +3843,7 @@ flow for Worker {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_children");
@@ -4136,6 +4141,7 @@ fn t1() -> Bool effect Pure decreases 0 {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
@@ -4175,6 +4181,7 @@ fn t2() -> String effect Pure decreases 0 {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
@@ -4216,6 +4223,7 @@ fn t3() -> Int effect Pure decreases 0 {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
@@ -4257,6 +4265,7 @@ fn t4() -> Int effect Pure decreases 0 {
     const auto parse = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;

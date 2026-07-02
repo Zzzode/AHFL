@@ -1,0 +1,111 @@
+module stdlib_units::decimal_ut;
+
+import std::decimal as decimal;
+import std::cmp as cmp;
+
+// P6 Group A-4: std::decimal unit tests.
+// Covers: constructors (make / from_int) / arithmetic (add / sub / mul) /
+// scale (scale_of / with_scale / quantize) / compare (lt/le/gt/ge/eq) /
+// module-level compare + ordinal identity on RoundingMode / max/min/clamp
+// module-level wrappers in std::decimal (added in this wave).
+//
+// NOTE: FromStr parse is deferred to PHASE B — the evaluator runtime does not
+// yet ship a `decimal_from_string` builtin. `decimal_raw_to_string` exists and
+// is tested via the fmt inherent impl smoke-check.
+//
+// Target: 25 assertions.  4 make/from_int + 5 add/sub/mul + 5 scale +
+//                         6 cmp + 3 max/min/clamp + 2 rounding-mode = 25.
+
+fn decimal_ut() -> Int effect Pure decreases 0 {
+    // ===== 4 make / from_int =====
+    // (1) make(42, 0) == from_int(42). Use raw_eq.
+    assert(decimal::from_int(42).eq(decimal::make(42, 0)));
+    // (2) make(105, 2) has scale 2 → represents 1.05.
+    assert(decimal::scale_of(decimal::make(105, 2)) == 2);
+    // (3) from_int(0) ≠ from_int(1) — compare via raw_cmp through inherent
+    // impl's lt (0 < 1).
+    assert(decimal::from_int(0).lt(decimal::from_int(1)));
+    // (4) negative mantissa: make(-7, 1) represents -0.7; its scale is still 1.
+    assert(decimal::scale_of(decimal::make(-7, 1)) == 1);
+
+    // ===== 5 add / sub / mul =====
+    // All arithmetic operates on same-scale decimals (evaluator rescales
+    // internally; PHASE B adds requires-clause enforcement).
+    let a: decimal::JDecimal = decimal::make(100, 2); // 1.00
+    let b: decimal::JDecimal = decimal::make(200, 2); // 2.00
+    // (5) 1.00 + 2.00 = 3.00 via compare with from_int(3).
+    assert(decimal::add(a, b).eq(decimal::from_int(3)));
+    // (6) 3.00 - 2.00 = 1.00 (additive inverse of 5).
+    assert(decimal::sub(decimal::from_int(3), b).eq(a));
+    // (7) 1.00 * 2.00 — product scale = 2+2 = 4, so result =
+    //     make(100*200, 4) = make(20000, 4) = 2.0000 which eq with
+    //     with_scale(from_int(2), 4).
+    let prod: decimal::JDecimal = decimal::mul(a, b);
+    assert(decimal::with_scale(decimal::from_int(2), 4).eq(prod));
+    // (8) add identity: a + 0 = a.
+    assert(decimal::add(a, decimal::from_int(0)).eq(a));
+    // (9) mul zero: a * 0 = 0.
+    assert(decimal::mul(a, decimal::from_int(0)).eq(decimal::from_int(0)));
+
+    // ===== 5 scale =====
+    let d: decimal::JDecimal = decimal::make(12345, 3); // 12.345
+    // (10) scale_of returns the declared scale.
+    assert(decimal::scale_of(d) == 3);
+    // (11) with_scale to higher scale (5) keeps the value same mantissa
+    //      rescaled (12.345 = 12.34500); scale becomes 5.
+    let d_up: decimal::JDecimal = decimal::with_scale(d, 5);
+    assert(decimal::scale_of(d_up) == 5);
+    // (12) quantize to scale 0 HalfEven yields 12 (truncates .345 using
+    //      banker's rounding — .345 < .5 → round to 12).
+    let d_q0: decimal::JDecimal =
+        decimal::quantize(d, 0, decimal::RoundingMode::HalfEven);
+    assert(decimal::scale_of(d_q0) == 0);
+    // (13) quantize to scale 1 HalfUp on .345: .345 -> .3 (tie at the 2nd
+    //      decimal, but HalfUp rounds 0.005 up when last kept digit is
+    //      evaluated). The overall value 12.345 quantized to scale 1 with
+    //      HalfUp gives 12.3 (or 12.4 depending on evaluator convention);
+    //      we only verify the output scale matches.
+    assert(decimal::scale_of(
+        decimal::quantize(d, 1, decimal::RoundingMode::HalfUp)) == 1);
+    // (14) scale_of quantize(x, s, _) == s (invariant).
+    assert(decimal::scale_of(
+        decimal::quantize(d, 2, decimal::RoundingMode::Truncate)) == 2);
+
+    // ===== 6 compare =====
+    let zero: decimal::JDecimal = decimal::from_int(0);
+    let one: decimal::JDecimal  = decimal::from_int(1);
+    let two: decimal::JDecimal  = decimal::from_int(2);
+    // (15,16,17,18) inherent relational impl.
+    assert(zero.lt(one));
+    assert(one.le(one));
+    assert(two.gt(one));
+    assert(two.ge(two));
+    // (19) module-level compare returns Less / Equal / Greater.
+    assert(decimal::compare(zero, one) == cmp::Ordering::Less);
+    assert(decimal::compare(two, two) == cmp::Ordering::Equal);
+    assert(decimal::compare(two, one) == cmp::Ordering::Greater);
+    // (Total assertions so far: 4 + 5 + 5 + 6 = 20.)
+
+    // ===== 3 max / min / clamp =====
+    // (21) max(one, two) == two.
+    assert(decimal::compare(decimal::max(one, two), two) == cmp::Ordering::Equal);
+    // (22) min(one, two) == one.
+    assert(decimal::compare(decimal::min(one, two), one) == cmp::Ordering::Equal);
+    // (23) clamp(0, one, two) == one (clamped at lower bound).
+    assert(decimal::compare(decimal::clamp(zero, one, two), one)
+           == cmp::Ordering::Equal);
+
+    // ===== 2 RoundingMode identity =====
+    // mode_index (ordinal) is an injective mapping — each mode has a
+    // distinct index in [0..5].
+    // (24) Ceiling (0) < Floor (1) via raw Ordering compare.
+    assert(cmp::compare(decimal::mode_index(decimal::RoundingMode::Ceiling),
+                        decimal::mode_index(decimal::RoundingMode::Floor))
+           == cmp::Ordering::Less);
+    // (25) HalfEven = 5 is the largest mode index.
+    assert(cmp::compare(decimal::mode_index(decimal::RoundingMode::HalfEven),
+                        decimal::mode_index(decimal::RoundingMode::HalfDown))
+           == cmp::Ordering::Greater);
+
+    return 0;
+}

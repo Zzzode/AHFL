@@ -2,17 +2,17 @@
 -- This lowering preserves validated state-machine, flow, and workflow structure.
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP contract_formal_decreases_length_self_WorkerAgent_0_atom_0 => observation contract formal::decreases_length_self::WorkerAgent[0] @ formal/decreases_length_self.ahfl:935-958
--- AHFL_MAP agent__formal_decreases_length_self_WorkerAgent__state => agent formal::decreases_length_self::WorkerAgent state @ formal/decreases_length_self.ahfl:658-902
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state => workflow formal::decreases_length_self::WorkerWorkflow node run state @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase => workflow formal::decreases_length_self::WorkerWorkflow node run lifecycle phase @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested => workflow formal::decreases_length_self::WorkerWorkflow node run environment failure request @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__started => workflow formal::decreases_length_self::WorkerWorkflow node run has started @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running => workflow formal::decreases_length_self::WorkerWorkflow node run is running @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed => workflow formal::decreases_length_self::WorkerWorkflow node run completed @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failed => workflow formal::decreases_length_self::WorkerWorkflow node run failed @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovering => workflow formal::decreases_length_self::WorkerWorkflow node run recovering @ formal/decreases_length_self.ahfl:1227-1256
--- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovered => workflow formal::decreases_length_self::WorkerWorkflow node run recovered @ formal/decreases_length_self.ahfl:1227-1256
+-- AHFL_MAP contract_formal_decreases_length_self_WorkerAgent_0_atom_0 => observation contract formal::decreases_length_self::WorkerAgent[0] @ formal/decreases_length_self.ahfl:997-1020
+-- AHFL_MAP agent__formal_decreases_length_self_WorkerAgent__state => agent formal::decreases_length_self::WorkerAgent state @ formal/decreases_length_self.ahfl:720-964
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state => workflow formal::decreases_length_self::WorkerWorkflow node run state @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__phase => workflow formal::decreases_length_self::WorkerWorkflow node run lifecycle phase @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested => workflow formal::decreases_length_self::WorkerWorkflow node run environment failure request @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__started => workflow formal::decreases_length_self::WorkerWorkflow node run has started @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running => workflow formal::decreases_length_self::WorkerWorkflow node run is running @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed => workflow formal::decreases_length_self::WorkerWorkflow node run completed @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failed => workflow formal::decreases_length_self::WorkerWorkflow node run failed @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovering => workflow formal::decreases_length_self::WorkerWorkflow node run recovering @ formal/decreases_length_self.ahfl:1289-1318
+-- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovered => workflow formal::decreases_length_self::WorkerWorkflow node run recovered @ formal/decreases_length_self.ahfl:1289-1318
 MODULE main
 VAR
   agent__formal_decreases_length_self_WorkerAgent__state : {Init, Process, Done};

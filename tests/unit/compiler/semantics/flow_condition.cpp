@@ -189,6 +189,7 @@ struct ProjectTypeCheckResult {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         std::ostringstream ss;

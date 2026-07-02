@@ -1,6 +1,6 @@
 module typecheck::variance;
 import typecheck::variance as self;
-import std::option;
+import std::option as option;
 
-const WideOptional: Optional<String> = Option::None;
-const RejectedOptional: Optional<String(2, 8)> = self::WideOptional;
+const WideOptional: option::Option<String> = option::Option::None;
+const RejectedOptional: option::Option<String(2, 8)> = self::WideOptional;

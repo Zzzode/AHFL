@@ -1,25 +1,27 @@
 module ir::expr_temporal;
 import ir::expr_temporal as self;
+import std::collections as collections;
+import std::option as option;
 
 const DEFAULT_NOTE: String = "seed";
 
 struct Request {
-    values: List<Int>;
-    attrs: Map<String, String>;
+    values: collections::List<Int>;
+    attrs: collections::Map<String, String>;
 }
 
 struct Context {
     note: String = self::DEFAULT_NOTE;
-    numbers: List<Int> = std::collections::list_from_array<Int>(1, 2, 3);
-    labels: Set<String> = std::collections::set_from_array<String>("alpha", "beta");
-    lookup: Map<String, String> = std::collections::map_from_entries<String, String>("seed", self::DEFAULT_NOTE);
-    first_value: Int = std::collections::list_from_array<Int>(1, 2, 3)[0];
-    mapped_value: String = std::collections::map_from_entries<String, String>("seed", self::DEFAULT_NOTE)["seed"];
+    numbers: collections::List<Int> = collections::list_from_array<Int>(1, 2, 3);
+    labels: collections::Set<String> = collections::set_from_array<String>("alpha", "beta");
+    lookup: collections::Map<String, String> = collections::map_from_entries<String, String>("seed", self::DEFAULT_NOTE);
+    first_value: Int = collections::list_from_array<Int>(1, 2, 3)[0];
+    mapped_value: String = collections::map_from_entries<String, String>("seed", self::DEFAULT_NOTE)["seed"];
     reply: Response = Response {
         note: self::DEFAULT_NOTE,
         result: Status::Pending,
     };
-    maybe_note: Optional<String> = std::option::Option::Some(self::DEFAULT_NOTE);
+    maybe_note: option::Option<String> = option::Option::Some(self::DEFAULT_NOTE);
 }
 
 struct Response {

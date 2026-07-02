@@ -12,6 +12,12 @@ module ir::expr_temporal
 import ir::expr_temporal as self
 
 @provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
+import std::collections as collections
+
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
+import std::option as option
+
+@provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 const ir::expr_temporal::DEFAULT_NOTE: String = "seed"
 
 @provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)

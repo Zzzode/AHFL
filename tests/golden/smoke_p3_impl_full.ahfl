@@ -1,0 +1,70 @@
+module smoke_p3_impl_full;
+
+// ===========================================================================
+// Wave-23 B-1 rewrite (was: local impl Eq/Ord/Hash/Display for Int).
+//
+// See smoke_p3_impl_trait.ahfl for the COHERENCE_CONFLICT rationale.
+// This golden now exercises the *stdlib* impls across five traits on Int,
+// then extends to Bool / Float / String as a smoke test for B-4 Priority 2.2.
+//
+// Target: ~24 assertions.  Covers: Eq (2), Ord compare/lt/le/gt/ge/max/min/
+// clamp (8), compare three-way result (3), Hash (1), Display/Debug fmt (4),
+// then cross-primitive: Bool Eq/Ord (3), Float Eq/Ord (2), String Eq/Ord (2).
+// ===========================================================================
+
+import std::traits as traits;
+import std::cmp as cmp;
+import std::option as option;
+import std::collections as collections;
+import std::fmt as fmt;
+
+fn main() -> Int effect Pure decreases 0 {
+    let a: Int = 42;
+
+    // ===== Int: Eq dispatch (2) =====
+    assert(a.eq(42) == true);
+    assert(a.ne(100) == true);
+
+    // ===== Int: Ord dispatch (8) =====
+    assert(a.lt(50) == true);
+    assert(a.le(42) == true);
+    assert(a.gt(10) == true);
+    assert(a.ge(42) == true);
+    assert(a.max(55) == 55);
+    assert(a.min(17) == 17);
+    assert(a.clamp(0, 10) == 10);
+    assert(a.clamp(0, 100) == 42);
+
+    // ===== Int: three-way compare via Ord::compare (3) =====
+    assert(a.compare(42) == cmp::Ordering::Equal);
+    assert(a.compare(50) == cmp::Ordering::Less);
+    assert(a.compare(10) == cmp::Ordering::Greater);
+
+    // ===== Int: Hash (1) =====
+    let h: Int = a.hash();
+    assert(h != 0);
+
+    // ===== Int: Display / Debug (4) =====
+    let s: String = a.fmt();
+    assert(s.length() > 0);
+    assert(s.eq("42"));
+    let d: String = a.debug();
+    assert(d.eq(s));
+    assert((-7).debug().eq("-7"));
+
+    // ===== Bool: Eq + Ord (3) =====
+    assert(true.eq(true) == true);
+    assert(true.gt(false) == true);
+    assert(false.clamp(false, true) == false);
+
+    // ===== Float: Eq + Ord (2) =====
+    assert((3.14).lt(3.15) == true);
+    assert((2.71).eq(2.71) == true);
+
+    // ===== String: Eq + Ord (2) =====
+    assert("hello".lt("world") == true);
+    assert("alpha".ne("beta") == true);
+
+    // Total: 2 + 8 + 3 + 1 + 4 + 3 + 2 + 2 = 25 assertions.
+    return 0;
+}

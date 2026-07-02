@@ -154,6 +154,7 @@ void dump_diagnostics(std::string_view label, const DiagBag &bag) {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -180,6 +181,7 @@ typecheck_project_module_source(std::string_view module_name,
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {source_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -2565,6 +2567,7 @@ flow for HirAgent {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root, std::filesystem::path{"std"}},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 

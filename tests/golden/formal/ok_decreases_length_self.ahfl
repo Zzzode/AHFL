@@ -1,5 +1,7 @@
 module formal::decreases_length_self;
 
+import std::collections as collections;
+
 struct Item {
     id: Int;
 }
@@ -11,12 +13,12 @@ struct Item {
 // exercise the bounded-rank branch, the Context itself exposes a `length`
 // Int field directly.
 struct Context {
-    items: List<Item> = std::collections::list_from_array<Item>();
+    items: collections::List<Item> = collections::list_from_array<Item>();
     length: Int = 0;
 }
 
 struct Request {
-    items: List<Item>;
+    items: collections::List<Item>;
 }
 
 struct Response {

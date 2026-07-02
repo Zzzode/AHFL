@@ -1,0 +1,35 @@
+module smoke_p3_impl_minimal;
+
+// ===========================================================================
+// Wave-23 B-1 rewrite (was: local `impl traits::Eq for Bool`).
+//
+// As of P3 Priority 2.2 the stdlib ships `impl Eq / Ord / Hash / Display /
+// Debug for {Bool, Int, Float, String}` inside std::cmp.ahfl and std::fmt.ahfl.
+// Shipping our own copy here would trigger typecheck.COHERENCE_CONFLICT, so
+// the golden now exercises the *stdlib-provided* impl via trait dispatch.
+//
+// Regression contract: the assertions below must still pass after the
+// rewrite, proving that the trait impl is reachable from user code without
+// any explicit import beyond `import std::traits as traits;` (needed only so
+// the trait name itself is in scope — users who only call `.eq(other)` do
+// not even need that import, because the trait dispatch table is populated
+// globally).
+// ===========================================================================
+
+import std::traits as traits;
+import std::cmp as cmp;
+import std::option as option;
+import std::collections as collections;
+
+fn main() -> Int effect Pure decreases 0 {
+    let a: Bool = true;
+    // (1) trait method dispatch on Bool — provided by std/cmp.ahfl impl.
+    assert(a.eq(true) == true);
+    // (2) ne — provided by same impl (default-ne forwarding: ne => not eq).
+    assert(a.ne(false) == true);
+    // (3) structural roundtrip: false.eq(true) == false.
+    assert(Bool::false.eq(true) == false);
+    // (4) Ord also lands: true < false == false (true > false via int-cmp).
+    assert(a.gt(false) == true);
+    return 0;
+}

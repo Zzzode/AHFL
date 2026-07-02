@@ -15,6 +15,9 @@ formal_observations {
 module refund::audit
 
 @provenance(module=refund::audit, source=refund/audit.ahfl)
+import std::option as option
+
+@provenance(module=refund::audit, source=refund/audit.ahfl)
 struct refund::audit::RefundRequest {
   field order_id: String
   field user_id: String

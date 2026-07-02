@@ -790,6 +790,7 @@ flow for IndexAgent {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -877,6 +878,7 @@ flow for LiteralAgent {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -976,6 +978,7 @@ flow for OptionAgent {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 
@@ -1074,6 +1077,7 @@ flow for HigherOrderAgent {
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {main_path},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     REQUIRE_FALSE(parse_result.has_errors());
 

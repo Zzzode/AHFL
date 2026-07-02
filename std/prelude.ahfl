@@ -3,10 +3,9 @@ module std::prelude;
 // ===========================================================================
 // P6a-01: prelude §9.1 full export.
 //
-// std::prelude is auto-injected by the resolver (see
-// lookup_prelude_symbol in resolver.cpp). Users do NOT write
-// `import std::prelude`. Any type, constructor, function, or trait declared
-// in this module is therefore available as a bare name in every user module.
+// std::prelude is opt-in — users must explicitly `import std::prelude`
+// (or set inject_prelude=true in ProjectInput for tooling/tests).
+// No symbols are auto-injected into user module scopes by default.
 //
 // Because AHFL P3 does not support same-module function overloading (a bare
 // name like `map` can only map to ONE SymbolId in the Functions namespace),

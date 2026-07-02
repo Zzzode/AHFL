@@ -1,0 +1,123 @@
+module stdlib_units::time_ut;
+
+import std::time as time;
+
+// P6 Group A-1: std::time unit tests.
+// Covers: Timestamp add/sub/duration_between module-level wrappers, inherent
+// impl symmetry, Pure-safe duration identities. Duration numeric API
+// (add/sub/compare/zero at the Duration level) is deferred to PHASE B — the
+// Duration runtime representation uses a string spelling (value.hpp:50) and
+// needs a dedicated arithmetic evaluator pass (separate commit).
+//
+// Pure-safe strategy: use `time::epoch()` (Timestamp at Unix epoch, 0 ms) as a
+// deterministic reference anchor. All identities are stated over explicit
+// Duration literals (1s, 2s, 5s, 100ms, 5m, 24h). `time::time_now()` is NEVER
+// called so the test body retains `effect Pure`.
+//
+// Target: 24 assertions. 8 anchor + 8 symmetry + 8 boundary = 24.
+
+fn time_ut() -> Int effect Pure decreases 0 {
+    // ---- reference anchor: Unix epoch ----
+    let t0: Timestamp = time::epoch();
+
+    // ===== 8 anchor identities =====
+    // (1) Adding then subtracting the same Duration is a left inverse of add.
+    assert(time::sub(time::add(t0, 1s), 1s) == t0);
+
+    // (2) Subtracting then adding is also a left inverse.
+    assert(time::add(time::sub(t0, 1s), 1s) == t0);
+
+    // (3) Associativity of successive add calls: add(add(t0,1s),2s) == add(t0,3s).
+    assert(time::add(time::add(t0, 1s), 2s) == time::add(t0, 3s));
+
+    // (4) Roundtrip with duration_between: span over two deterministic
+    //     endpoints has length (right - left).
+    let left: Timestamp = time::add(t0, 1s);
+    let right: Timestamp = time::add(t0, 5s);
+    let span: Duration = time::duration_between(left, right);
+    assert(time::add(left, span) == right);
+
+    // (5) Subtract-back: right - span == left.
+    assert(time::sub(right, span) == left);
+
+    // (6) Reflexive span is 0: duration_between(x, x) acts as 0ms when added.
+    let self_span: Duration = time::duration_between(left, left);
+    assert(time::add(left, self_span) == left);
+
+    // (7) Span independence over equal literal durations.
+    let s1: Duration = time::duration_between(t0, time::add(t0, 2s));
+    let s2: Duration = time::duration_between(left, time::add(left, 2s));
+    assert(time::add(left, s2) == time::add(left, 2s));
+
+    // (8) Duration-between over three ordered points:
+    //       span(a,b) then span(b,c) sequentially = span(a,c) in one step
+    //     in the sense that add(add(a, span_ab), span_bc) = add(a, span_ac) = c.
+    let a: Timestamp = time::add(t0, 1s);
+    let b: Timestamp = time::add(t0, 3s);
+    let c: Timestamp = time::add(t0, 5s);
+    let span_ab: Duration = time::duration_between(a, b);
+    let span_bc: Duration = time::duration_between(b, c);
+    assert(time::add(time::add(a, span_ab), span_bc) == c);
+
+    // ===== 8 symmetry / structural =====
+
+    // (9) time::add is deterministic for same args (Pure idempotence).
+    assert(time::add(t0, 1s) == time::add(t0, 1s));
+
+    // (10) time::sub is deterministic for same args.
+    assert(time::sub(time::add(t0, 5s), 2s) == time::sub(time::add(t0, 5s), 2s));
+
+    // (11) duration_between is deterministic for same args.
+    assert(time::duration_between(a, c) == time::duration_between(a, c));
+
+    // (12) Cancel-then-shift: add(sub(add(t0,5s),5s),3s) == add(t0,3s).
+    assert(time::add(time::sub(time::add(t0, 5s), 5s), 3s) == time::add(t0, 3s));
+
+    // (13) One-step span(a,c) matches three-step.
+    let span_ac: Duration = time::duration_between(a, c);
+    assert(time::add(a, span_ac) == c);
+
+    // (14) 100ms literal roundtrip through add/sub.
+    assert(time::sub(time::add(t0, 100ms), 100ms) == t0);
+
+    // (15) 5s literal is consistent across occurrences.
+    assert(time::add(t0, 5s) == time::add(t0, 5s));
+
+    // (16) Non-equal durations → non-equal shifted anchors (add(t0,1s) != add(t0,2s)).
+    assert(time::add(t0, 1s) != time::add(t0, 2s));
+
+    // ===== 8 boundary / edge =====
+
+    // (17) 5 minutes (300 s) literal roundtrip via add/sub.
+    assert(time::sub(time::add(t0, 5m), 5m) == t0);
+
+    // (18) 24 hours (1 day) roundtrip — long-span Pure identity.
+    assert(time::sub(time::add(t0, 24h), 24h) == t0);
+
+    // (19) Nested associativity: 1s + 2s + 5s = 8s (evaluator parses ms
+    //      arithmetically per duration_to_millis).
+    assert(time::add(time::add(time::add(t0, 1s), 2s), 5s) == time::add(t0, 8s));
+
+    // (20) Epoch minus-then-plus: sub(t0, 100ms) + 100ms == t0.
+    assert(time::add(time::sub(t0, 100ms), 100ms) == t0);
+
+    // (21) Different durations on different anchors:
+    //      let t2 = t0 + 1s; assert t0+1s != t2+2s (= t0+3s).
+    let t2: Timestamp = time::add(t0, 1s);
+    assert(time::add(t0, 1s) != time::add(t2, 2s));
+
+    // (22) Span semantics match add semantics over shifted-then-span:
+    //      let d = duration_between(t0, t0+1s) in (t0+1s) + d == t0 + 2s.
+    let d_1s: Duration = time::duration_between(t0, time::add(t0, 1s));
+    assert(time::add(time::add(t0, 1s), d_1s) == time::add(t0, 2s));
+
+    // (23) Sub-then-add over a 5-minute span equals add-then-sub.
+    assert(time::sub(time::add(t0, 5m), 5m) == time::add(time::sub(t0, 5m), 5m));
+
+    // (24) Associativity over three unequal durations: 1s + 100ms + 2s = 3100ms
+    //      (evaluator converts duration literals to ms then adds).
+    assert(time::add(time::add(time::add(t0, 1s), 100ms), 2s)
+           == time::add(t0, 3100ms));
+
+    return 0;
+}
