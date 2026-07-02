@@ -453,6 +453,13 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
             target_entry.has_value()) {
             target.entry = *target_entry;
         }
+        const auto *target_exports = find_value(*entry.value, "exports");
+        if (target_exports != nullptr && contains({"library", "test"}, target.kind)) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "targets.exports are only allowed on handoff targets",
+                     target_exports->range);
+        }
         target.exports = read_handoff_exports(
             *entry.value, "exports", "targets.exports", target.kind == "handoff", diagnostics);
 
