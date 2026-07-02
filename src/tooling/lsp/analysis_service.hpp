@@ -34,7 +34,7 @@ struct LspAnalysisSnapshot {
     std::uint64_t content_hash{0};
     std::uint64_t workspace_revision{0};
     bool project_aware{false};
-    std::optional<std::filesystem::path> project_descriptor;
+    std::optional<std::filesystem::path> package_graph_manifest;
 
     std::unique_ptr<ParseResult> parse_result;
     std::unique_ptr<ProjectParseResult> project_result;
@@ -72,8 +72,6 @@ class AnalysisService {
 
   private:
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot> build_snapshot(const std::string &uri);
-    [[nodiscard]] std::optional<std::filesystem::path>
-    find_project_descriptor(const std::filesystem::path &source_path) const;
     [[nodiscard]] std::vector<std::filesystem::path>
     infer_descriptorless_search_roots(const std::filesystem::path &source_path,
                                       const ParseResult &parse_result) const;

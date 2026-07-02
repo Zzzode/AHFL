@@ -824,25 +824,19 @@ void test_text_document_diagnostic_previous_result_id_unchanged() {
 
 void test_workspace_diagnostic_includes_result_ids() {
     const auto root = make_temp_project("workspace_diagnostic_result_ids");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-workspace-result-ids\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-workspace-result-ids", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
     write_file(main_path, main_source);
     write_file(types_path,
-               "module lib::types;\n"
+               "module app::types;\n"
                "\n"
                "struct Msg {\n"
                "    value: Missing;\n"
@@ -871,23 +865,17 @@ void test_workspace_diagnostic_includes_result_ids() {
 
 void test_workspace_diagnostic_previous_result_ids_filter() {
     const auto root = make_temp_project("workspace_diagnostic_prev_ids");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-workspace-prev-ids\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-workspace-prev-ids", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
-    const std::string types_source = "module lib::types;\n"
+    const std::string types_source = "module app::types;\n"
                                      "\n"
                                      "struct Msg {\n"
                                      "    value: String;\n"
@@ -963,7 +951,7 @@ void test_workspace_diagnostic_previous_result_ids_filter() {
 
     // Third pass: change types source, send both previousResultIds
     // Only types should appear in the response
-    const std::string changed_types_source = "module lib::types;\n"
+    const std::string changed_types_source = "module app::types;\n"
                                               "\n"
                                               "struct Msg {\n"
                                               "    value: Int;\n"
@@ -985,25 +973,19 @@ void test_workspace_diagnostic_previous_result_ids_filter() {
 
 void test_workspace_diagnostic_reports_unopened_project_sources() {
     const auto root = make_temp_project("workspace_diagnostic_project_sources");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-workspace-diagnostics\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-workspace-diagnostics", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
     write_file(main_path, main_source);
     write_file(types_path,
-               "module lib::types;\n"
+               "module app::types;\n"
                "\n"
                "struct Msg {\n"
                "    value: Missing;\n"
@@ -1033,28 +1015,22 @@ void test_workspace_diagnostic_reports_unopened_project_sources() {
 
 void test_watched_file_change_invalidates_project_source_graph() {
     const auto root = make_temp_project("watched_file_source_graph");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-watched-source-graph\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-watched-source-graph", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
-    const std::string valid_types_source = "module lib::types;\n"
+    const std::string valid_types_source = "module app::types;\n"
                                            "\n"
                                            "struct Msg {\n"
                                            "    value: String;\n"
                                            "}\n";
-    const std::string broken_types_source = "module lib::types;\n"
+    const std::string broken_types_source = "module app::types;\n"
                                             "\n"
                                             "struct Msg {\n"
                                             "    value: Missing;\n"
@@ -1099,8 +1075,8 @@ void test_watched_file_change_invalidates_project_source_graph() {
           "watchedFileChange.after_reanalyzes_changed_import");
 }
 
-void test_workspace_folder_change_switches_project_descriptor() {
-    const auto root = make_temp_project("workspace_folder_descriptor_switch");
+void test_workspace_folder_change_ignores_legacy_json_descriptors() {
+    const auto root = make_temp_project("workspace_folder_legacy_descriptor_ignored");
     const auto root_a = root / "workspace-a";
     const auto root_b = root / "workspace-b";
     const auto shared = root / "shared";
@@ -1130,7 +1106,7 @@ void test_workspace_folder_change_switches_project_descriptor() {
                "    value: Missing;\n"
                "}\n");
 
-    const auto project_descriptor = [&](const std::filesystem::path &search_root) {
+    const auto legacy_project_descriptor = [&](const std::filesystem::path &search_root) {
         return "{\n"
                "  \"format_version\": \"ahfl.project.v0.3\",\n"
                "  \"name\": \"lsp-folder-switch\",\n"
@@ -1142,14 +1118,14 @@ void test_workspace_folder_change_switches_project_descriptor() {
                "\"]\n"
                "}\n";
     };
-    write_file(root_a / "project.json", project_descriptor(imports_a));
+    write_file(root_a / "project.json", legacy_project_descriptor(imports_a));
     write_file(root_a / "ahfl.workspace.json",
                "{\n"
                "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
                "  \"name\": \"workspace-a\",\n"
                "  \"projects\": [\"project.json\"]\n"
                "}\n");
-    write_file(root_b / "project.json", project_descriptor(imports_b));
+    write_file(root_b / "project.json", legacy_project_descriptor(imports_b));
     write_file(root_b / "ahfl.workspace.json",
                "{\n"
                "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
@@ -1180,18 +1156,22 @@ void test_workspace_folder_change_switches_project_descriptor() {
     });
 
     const auto before_response = response_body_for_id(output, 2);
-    check(before_response.find(types_a_uri) != std::string::npos,
-          "workspaceFolderChange.before_uses_original_descriptor");
+    check(before_response.find(types_a_uri) == std::string::npos,
+          "workspaceFolderChange.before_ignores_legacy_descriptor");
     check(before_response.find(types_b_uri) == std::string::npos,
-          "workspaceFolderChange.before_excludes_new_descriptor");
-    check(before_response.find("resolve.") == std::string::npos,
-          "workspaceFolderChange.before_has_no_resolve_diagnostic");
+          "workspaceFolderChange.before_excludes_legacy_descriptor_target");
+    check(before_response.find("failed to resolve imported module 'lib::types'") !=
+              std::string::npos,
+          "workspaceFolderChange.before_reports_missing_legacy_import");
 
     const auto after_response = response_body_for_id(output, 3);
-    check(after_response.find(types_b_uri) != std::string::npos,
-          "workspaceFolderChange.after_uses_new_descriptor");
-    check(after_response.find("resolve.") != std::string::npos,
-          "workspaceFolderChange.after_reports_new_descriptor_diagnostic");
+    check(after_response.find(types_a_uri) == std::string::npos,
+          "workspaceFolderChange.after_still_ignores_removed_legacy_descriptor");
+    check(after_response.find(types_b_uri) == std::string::npos,
+          "workspaceFolderChange.after_ignores_added_legacy_descriptor");
+    check(after_response.find("failed to resolve imported module 'lib::types'") !=
+              std::string::npos,
+          "workspaceFolderChange.after_reports_missing_legacy_import");
 }
 
 void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
@@ -1251,24 +1231,18 @@ void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
 
 void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto root = make_temp_project("project_cross_file");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-project\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-project", "app", "\"main\", \"types\"");
     write_file(main_path,
                "module app::main;\n"
-               "import lib::types as types;\n"
+               "import app::types as types;\n"
                "\n"
                "struct Use {\n"
                "    payload: types::Msg;\n"
                "}\n");
     write_file(types_path,
-               "module lib::types;\n"
+               "module app::types;\n"
                "\n"
                "struct Msg {\n"
                "    value: String;\n"
@@ -1280,7 +1254,7 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const std::string open_main = did_open_body(main_uri,
                                                 1,
                                                 "module app::main;\n"
-                                                "import lib::types as types;\n"
+                                                "import app::types as types;\n"
                                                 "\n"
                                                 "struct Use {\n"
                                                 "    payload: types::Msg;\n"
@@ -1307,23 +1281,17 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
 
 void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
     const auto root = make_temp_project("project_workspace_symbol_dedup");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-project-dedup\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-project-dedup", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
-    const std::string types_source = "module lib::types;\n"
+    const std::string types_source = "module app::types;\n"
                                      "\n"
                                      "struct Msg {\n"
                                      "    value: String;\n"
@@ -1352,24 +1320,18 @@ void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
 
 void test_project_open_document_overlay_drives_definition() {
     const auto root = make_temp_project("project_overlay");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-overlay\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-overlay", "app", "\"main\", \"types\"");
     write_file(main_path,
                "module app::main;\n"
-               "import lib::types as types;\n"
+               "import app::types as types;\n"
                "\n"
                "struct Use {\n"
                "    payload: types::Msg;\n"
                "}\n");
     write_file(types_path,
-               "module lib::types;\n"
+               "module app::types;\n"
                "\n"
                "struct Msg {\n"
                "    value: String;\n"
@@ -1378,12 +1340,12 @@ void test_project_open_document_overlay_drives_definition() {
     const auto main_uri = AnalysisService::uri_from_path(main_path);
     const auto types_uri = AnalysisService::uri_from_path(types_path);
     const std::string main_overlay = "module app::main;\n"
-                                     "import lib::types as types;\n"
+                                     "import app::types as types;\n"
                                      "\n"
                                      "struct Use {\n"
                                      "    payload: types::Draft;\n"
                                      "}\n";
-    const std::string types_overlay = "module lib::types;\n"
+    const std::string types_overlay = "module app::types;\n"
                                       "\n"
                                       "struct Draft {\n"
                                       "    value: String;\n"
@@ -1407,28 +1369,22 @@ void test_project_open_document_overlay_drives_definition() {
 
 void test_project_diagnostics_refresh_dependent_open_documents() {
     const auto root = make_temp_project("project_diagnostics_refresh");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-diagnostics-refresh\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-diagnostics-refresh", "app", "\"main\", \"types\"");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::types as types;\n"
+                                    "import app::types as types;\n"
                                     "\n"
                                     "struct Use {\n"
                                     "    payload: types::Msg;\n"
                                     "}\n";
-    const std::string types_source = "module lib::types;\n"
+    const std::string types_source = "module app::types;\n"
                                      "\n"
                                      "struct Msg {\n"
                                      "    value: String;\n"
                                      "}\n";
-    const std::string changed_types_source = "module lib::types;\n"
+    const std::string changed_types_source = "module app::types;\n"
                                              "\n"
                                              "struct Draft {\n"
                                              "    value: String;\n"
@@ -1460,8 +1416,8 @@ void test_project_diagnostics_refresh_dependent_open_documents() {
           "project.diagnostics_refresh.uses_resolve_diagnostic");
 }
 
-void test_workspace_descriptor_selects_project_for_source() {
-    const auto root = make_temp_project("workspace_descriptor");
+void test_legacy_workspace_descriptor_is_ignored_for_source() {
+    const auto root = make_temp_project("legacy_workspace_descriptor_ignored");
     const auto main_path = root / "src" / "main.ahfl";
     const auto types_path = root / "lib" / "types.ahfl";
     write_file(root / "ahfl.workspace.json",
@@ -1493,9 +1449,6 @@ void test_workspace_descriptor_selects_project_for_source() {
 
     const auto main_uri = AnalysisService::uri_from_path(main_path);
     const auto types_uri = AnalysisService::uri_from_path(types_path);
-    const std::string definition =
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":")" +
-        main_uri + R"("},"position":{"line":4,"character":22}}})";
     const auto output = run_lsp_messages({
         initialize_body(root),
         did_open_body(main_uri,
@@ -1506,12 +1459,16 @@ void test_workspace_descriptor_selects_project_for_source() {
                       "struct Use {\n"
                       "    payload: types::Msg;\n"
                       "}\n"),
-        definition,
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            main_uri + R"("}}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
 
-    check(output.find(types_uri) != std::string::npos,
-          "workspace_descriptor.definition_targets_project_source");
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(types_uri) == std::string::npos,
+          "legacy_workspace_descriptor.ignored_imported_source_uri");
+    check(response.find("resolve.") != std::string::npos,
+          "legacy_workspace_descriptor.ignored_reports_unresolved_import");
 }
 
 void test_package_graph_manifest_selects_module_roots_for_source() {
@@ -2612,28 +2569,22 @@ void test_code_action_qf_duplicate_struct_related_navigation() {
     // Build a two-module project that produces DUPLICATE_STRUCT_NAME
     // with relatedInformation pointing to the other module.
     const auto root = make_temp_project("lsp_qf_duplicate_struct");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto a_path = root / "lib" / "a.ahfl";
-    const auto b_path = root / "lib" / "b.ahfl";
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto a_path = root / "src" / "a.ahfl";
+    const auto b_path = root / "src" / "b.ahfl";
 
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-qf-dup\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    write_package_manifest(root, "lsp-qf-dup", "app", "\"main\", \"a\", \"b\"");
     const std::string main_source = "module app::main;\n"
-                                    "import lib::a as a;\n"
-                                    "import lib::b as b;\n"
+                                    "import app::a as a;\n"
+                                    "import app::b as b;\n"
                                     "\n"
                                     "const x: a::Record = a::Record { id: 1 };\n";
-    const std::string a_source = "module lib::a;\n"
+    const std::string a_source = "module app::a;\n"
                                  "\n"
                                  "struct Record {\n"
                                  "    id: Int;\n"
                                  "}\n";
-    const std::string b_source = "module lib::b;\n"
+    const std::string b_source = "module app::b;\n"
                                  "\n"
                                  "struct Record {\n"
                                  "    id: String;\n"
@@ -2911,30 +2862,24 @@ void test_code_action_qf_unused_import_text_edit() {
     // Multi-module project fixture so resolver runs the full lint pass
     // (stdlib imports resolve cleanly, enabling UNUSED_IMPORT detection).
     const auto root = make_temp_project("lsp_qf_unused_import");
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-qf-unused\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    write_package_manifest(root, "lsp-qf-unused", "app", "\"main\", \"unused\"");
 
     // Use a self-contained (no stdlib) unused import so resolver always
     // succeeds regardless of stdlib availability on the test machine.
-    write_file(root / "lib" / "unused.ahfl",
-               "module lib::unused;\n\n"
+    write_file(root / "src" / "unused.ahfl",
+               "module app::unused;\n\n"
                "struct UnusedStruct { value: Int; }\n");
 
     const std::string main_source = "module app::main;\n"
-                                    "import lib::unused as col;\n"
+                                    "import app::unused as col;\n"
                                     "\n"
                                     "struct Foo {\n"
                                     "    value: String;\n"
                                     "}\n";
-    write_file(root / "app" / "main.ahfl", main_source);
+    write_file(root / "src" / "main.ahfl", main_source);
 
     const std::string uri =
-        AnalysisService::uri_from_path(root / "app" / "main.ahfl");
+        AnalysisService::uri_from_path(root / "src" / "main.ahfl");
 
     const std::string code_action_params =
         R"({"textDocument":{"uri":")" + uri +
@@ -3237,30 +3182,24 @@ void test_code_action_qf_agent_capabilities() {
 
 void test_diagnostic_related_information_surfaces_for_multi_module_mismatch() {
     const auto root = make_temp_project("lsp_diag_related_info");
-    const auto main_path = root / "app" / "main.ahfl";
-    const auto a_path = root / "lib" / "a.ahfl";
-    const auto b_path = root / "lib" / "b.ahfl";
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto a_path = root / "src" / "a.ahfl";
+    const auto b_path = root / "src" / "b.ahfl";
 
-    write_file(root / "ahfl.project.json",
-               "{\n"
-               "  \"format_version\": \"ahfl.project.v0.3\",\n"
-               "  \"name\": \"lsp-diag-related\",\n"
-               "  \"search_roots\": [\".\"],\n"
-               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
-               "}\n");
+    write_package_manifest(root, "lsp-diag-related", "app", "\"main\", \"a\", \"b\"");
     const std::string main_source = "module app::main;\n"
-                                    "import lib::a as a;\n"
-                                    "import lib::b as b;\n"
+                                    "import app::a as a;\n"
+                                    "import app::b as b;\n"
                                     "\n"
                                     "const Mixed: a::Record = b::Record { id: \"hello\" };\n";
-    const std::string a_source = "module lib::a;\n"
-                                 "import lib::a as self;\n"
+    const std::string a_source = "module app::a;\n"
+                                 "import app::a as self;\n"
                                  "\n"
                                  "struct Record {\n"
                                  "    id: Int;\n"
                                  "}\n";
-    const std::string b_source = "module lib::b;\n"
-                                 "import lib::b as self;\n"
+    const std::string b_source = "module app::b;\n"
+                                 "import app::b as self;\n"
                                  "\n"
                                  "struct Record {\n"
                                  "    id: String;\n"
@@ -3422,13 +3361,13 @@ int main() {
     test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
-    test_workspace_folder_change_switches_project_descriptor();
+    test_workspace_folder_change_ignores_legacy_json_descriptors();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_open_document_overlay_drives_definition();
     test_project_diagnostics_refresh_dependent_open_documents();
-    test_workspace_descriptor_selects_project_for_source();
+    test_legacy_workspace_descriptor_is_ignored_for_source();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
     test_descriptorless_workspace_infers_module_root_for_imports();

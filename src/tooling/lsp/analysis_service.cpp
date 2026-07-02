@@ -109,30 +109,6 @@ namespace {
     return prefix_it == prefix.end();
 }
 
-[[nodiscard]] bool descriptor_contains_source(const ProjectDescriptor &descriptor,
-                                              const std::filesystem::path &source_path) {
-    const auto normalized_source =
-        std::filesystem::path(AnalysisService::normalized_path_key(source_path));
-    const auto project_root = std::filesystem::path(
-        AnalysisService::normalized_path_key(descriptor.descriptor_path.parent_path()));
-    if (path_has_prefix(project_root, normalized_source)) {
-        return true;
-    }
-    for (const auto &entry : descriptor.entry_files) {
-        if (std::filesystem::path(AnalysisService::normalized_path_key(entry)) ==
-            normalized_source) {
-            return true;
-        }
-    }
-    for (const auto &root : descriptor.search_roots) {
-        if (path_has_prefix(std::filesystem::path(AnalysisService::normalized_path_key(root)),
-                            normalized_source)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 [[nodiscard]] bool read_plain_file(const std::filesystem::path &path, std::string &content) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -331,13 +307,76 @@ build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
     };
 }
 
+[[nodiscard]] const package_graph::PackageNode *
+root_package_for_lsp(const package_graph::PackageGraph &graph) {
+    const auto found =
+        std::find_if(graph.packages.begin(), graph.packages.end(), [](const auto &package) {
+            return package.source == package_graph::PackageSourceKind::Root;
+        });
+    return found == graph.packages.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::filesystem::path module_path_from_target_symbol(std::string_view entry,
+                                                                   std::string_view module_prefix) {
+    std::vector<std::string_view> segments;
+    std::size_t start = 0;
+    while (start < entry.size()) {
+        const auto separator = entry.find("::", start);
+        if (separator == std::string_view::npos) {
+            segments.push_back(entry.substr(start));
+            break;
+        }
+        segments.push_back(entry.substr(start, separator - start));
+        start = separator + 2;
+    }
+    if (segments.size() < 2 || segments.front() != module_prefix) {
+        return {};
+    }
+
+    std::filesystem::path relative;
+    for (std::size_t index = 1; index + 1 < segments.size(); ++index) {
+        relative /= std::string(segments[index]);
+    }
+    if (relative.empty()) {
+        return {};
+    }
+    relative += ".ahfl";
+    return relative;
+}
+
+[[nodiscard]] std::filesystem::path lsp_target_entry_file(const package_graph::PackageNode &package,
+                                                          const std::filesystem::path &fallback) {
+    if (package.targets.empty() || package.targets.front().entry.empty()) {
+        return fallback;
+    }
+
+    const auto &entry = package.targets.front().entry;
+    if (entry.ends_with(".ahfl") || entry.find('/') != std::string::npos ||
+        entry.find('\\') != std::string::npos) {
+        return std::filesystem::path(
+            AnalysisService::normalized_path_key(package.package_root / entry));
+    }
+
+    const auto relative_module = module_path_from_target_symbol(entry, package.module_prefix);
+    if (!relative_module.empty()) {
+        return std::filesystem::path(
+            AnalysisService::normalized_path_key(package.module_root / relative_module));
+    }
+
+    return fallback;
+}
+
 [[nodiscard]] ProjectInput
 project_input_from_package_graph(const package_graph::PackageGraph &graph,
-                                 const std::filesystem::path &entry_file,
+                                 const std::filesystem::path &requested_file,
                                  std::unordered_map<std::string, std::string> overlays) {
     ProjectInput input;
-    input.entry_files.push_back(
-        std::filesystem::path(AnalysisService::normalized_path_key(entry_file)));
+    const auto *root_package = root_package_for_lsp(graph);
+    const auto fallback_entry =
+        std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
+    input.entry_files.push_back(root_package == nullptr ? fallback_entry
+                                                        : lsp_target_entry_file(*root_package,
+                                                                                fallback_entry));
     input.include_stdlib = false;
     input.inject_prelude = false;
     input.source_overlays = std::move(overlays);
@@ -651,8 +690,6 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
     snapshot->workspace_revision = store_.workspace_revision();
 
     const auto document_path = path_from_uri(uri);
-    const auto project_descriptor =
-        document_path.has_value() ? find_project_descriptor(*document_path) : std::nullopt;
 
     Frontend frontend;
     Resolver resolver;
@@ -664,59 +701,11 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
             build_lsp_package_graph_for_source(*document_path, workspace_roots_);
         if (package_graph_input.has_value()) {
             snapshot->project_aware = true;
-            snapshot->project_descriptor = package_graph_input->manifest_path;
+            snapshot->package_graph_manifest = package_graph_input->manifest_path;
 
             auto project_input = project_input_from_package_graph(
                 package_graph_input->graph, *document_path, open_document_overlays());
             auto project_result = frontend.parse_project(project_input);
-            snapshot->project_result =
-                std::make_unique<ProjectParseResult>(std::move(project_result));
-
-            for (const auto &source : snapshot->project_result->graph.sources) {
-                index_source(*snapshot,
-                             LspSourceSnapshot{
-                                 .uri = uri_from_path(source.path),
-                                 .path = source.path,
-                                 .source = &source.source,
-                                 .program = source.program.get(),
-                                 .source_id = source.id,
-                             });
-            }
-
-            if (!snapshot->project_result->has_errors()) {
-                snapshot->resolve_result = resolver.resolve(snapshot->project_result->graph);
-                if (!snapshot->resolve_result.has_errors()) {
-                    auto type_result = type_checker.check(snapshot->project_result->graph,
-                                                          snapshot->resolve_result);
-                    snapshot->type_check_result =
-                        std::make_unique<TypeCheckResult>(std::move(type_result));
-                    if (!snapshot->type_check_result->has_errors()) {
-                        auto validation_result = validator.validate(snapshot->project_result->graph,
-                                                                    snapshot->resolve_result,
-                                                                    *snapshot->type_check_result);
-                        snapshot->validation_result =
-                            std::make_unique<ValidationResult>(std::move(validation_result));
-                    }
-                }
-            }
-
-            build_hover_indices(*snapshot);
-            return snapshot;
-        }
-    }
-
-    if (project_descriptor.has_value()) {
-        auto descriptor_result = frontend.load_project_descriptor(*project_descriptor);
-        if (!descriptor_result.has_errors() && descriptor_result.descriptor.has_value()) {
-            snapshot->project_aware = true;
-            snapshot->project_descriptor = *project_descriptor;
-
-            auto project_result = frontend.parse_project(ProjectInput{
-                .entry_files = descriptor_result.descriptor->entry_files,
-                .search_roots = descriptor_result.descriptor->search_roots,
-                .inject_prelude = true,
-                .source_overlays = open_document_overlays(),
-            });
             snapshot->project_result =
                 std::make_unique<ProjectParseResult>(std::move(project_result));
 
@@ -831,58 +820,6 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
 
     build_hover_indices(*snapshot);
     return snapshot;
-}
-
-std::optional<std::filesystem::path>
-AnalysisService::find_project_descriptor(const std::filesystem::path &source_path) const {
-    std::vector<std::filesystem::path> starts;
-    if (!source_path.empty()) {
-        starts.push_back(source_path.has_filename() ? source_path.parent_path() : source_path);
-    }
-    for (const auto &root : workspace_roots_) {
-        starts.push_back(root);
-    }
-
-    for (auto start : starts) {
-        if (start.empty()) {
-            continue;
-        }
-        start = std::filesystem::path(normalized_path_key(start));
-        while (!start.empty()) {
-            const auto descriptor = start / "ahfl.project.json";
-            std::error_code error;
-            if (std::filesystem::is_regular_file(descriptor, error)) {
-                return std::filesystem::path(normalized_path_key(descriptor));
-            }
-
-            const auto workspace_descriptor = start / "ahfl.workspace.json";
-            if (std::filesystem::is_regular_file(workspace_descriptor, error)) {
-                Frontend frontend;
-                auto workspace_result = frontend.load_workspace_descriptor(workspace_descriptor);
-                if (!workspace_result.has_errors() && workspace_result.descriptor.has_value()) {
-                    for (const auto &project_path : workspace_result.descriptor->projects) {
-                        auto project_result = frontend.load_project_descriptor(project_path);
-                        if (project_result.has_errors() || !project_result.descriptor.has_value()) {
-                            continue;
-                        }
-
-                        if (descriptor_contains_source(*project_result.descriptor, source_path)) {
-                            return std::filesystem::path(
-                                normalized_path_key(project_result.descriptor->descriptor_path));
-                        }
-                    }
-                }
-            }
-
-            const auto parent = start.parent_path();
-            if (parent == start || parent.empty()) {
-                break;
-            }
-            start = parent;
-        }
-    }
-
-    return std::nullopt;
 }
 
 std::vector<std::filesystem::path>
