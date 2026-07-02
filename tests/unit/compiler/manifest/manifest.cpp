@@ -366,6 +366,41 @@ std = { source = "sysroot" }
                       "targets.entry must be a canonical AHFL symbol name for handoff targets"));
 }
 
+TEST_CASE("Package manifest schema rejects prelude on non-standard-library packages") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics, "prelude is only allowed for standard-library packages"));
+}
+
 TEST_CASE("Package manifest schema rejects unknown fields") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 

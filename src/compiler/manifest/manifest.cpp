@@ -690,6 +690,12 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
                          "prelude.injection must be explicit",
                          entry->value_range);
             }
+            if (manifest.package_kind != "standard-library") {
+                add_diag(result.diagnostics,
+                         kInvalidValue,
+                         "prelude is only allowed for standard-library packages",
+                         prelude->range);
+            }
         }
     }
 
