@@ -374,6 +374,12 @@ void validate_relative_path(std::string_view value,
         if (spec.key != "std") {
             add_diag(diagnostics, kPackageGraph, "sysroot dependency key must be 'std'", range);
         }
+        if (spec.path.has_value() || spec.version.has_value()) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "sysroot dependency must not declare path or version",
+                     range);
+        }
     } else if (spec.source == "path") {
         if (!spec.path.has_value()) {
             add_diag(
