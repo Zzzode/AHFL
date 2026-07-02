@@ -31,42 +31,31 @@
 4. Review / projection artifact 不能私造状态机；machine-facing artifact 是下游稳定依赖的第一事实来源。
 5. 仓库当前不维护 immature 语义的向前兼容；breaking change 要通过文档、测试和 commit footer 显式标出。
 
-## 先跑通的八条路径
+## 先跑通的基础路径
 
-建议先在本地确认八条典型路径都可运行：
+建议先在本地确认 PackageGraph、native handoff 和 store-import 相关测试都可运行：
 
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc ahfl_store_import_tests
-./build/dev/src/tooling/cli/ahflc emit-store-import-descriptor \
-  --package tests/ir/ok_workflow_value_flow.package.json \
-  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.basic \
-  --run-id run-001 \
-  tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/tooling/cli/ahflc emit-store-import-review \
-  --package tests/ir/ok_workflow_value_flow.package.json \
-  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.basic \
-  --run-id run-001 \
-  tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/tooling/cli/ahflc emit-store-import-descriptor \
-  --project tests/project/workflow_value_flow/ahfl.project.json \
-  --package tests/project/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/dry_run/project_workflow_value_flow.fail.mocks.json \
-  --input-fixture fixture.request.failed \
-  --run-id run-failed-001
-./build/dev/src/tooling/cli/ahflc emit-store-import-review \
-  --workspace tests/project/handoff.workspace.json \
-  --project-name workflow-value-flow \
-  --package tests/project/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
-  --input-fixture fixture.request.partial \
-  --run-id run-partial-001
+./build/dev/src/tooling/cli/ahflc check \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
+./build/dev/src/tooling/cli/ahflc dump package-graph \
+  --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml \
+  --package refund-audit \
+  --sysroot .
+./build/dev/src/tooling/cli/ahflc emit native-json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ctest --preset test-dev --output-on-failure -L 'store-import-(descriptor-model|descriptor-bootstrap|review-model)'
 ctest --preset test-dev --output-on-failure -L 'store-import-(emission|golden)'
 ctest --preset test-dev --output-on-failure -L 'store-import-.*'
 ```
+
+Store-import CLI artifact 尚未完成 PackageGraph manifest 输入接入时，不要在贡献指南里新增旧 JSON descriptor 示例；用 CTest label 覆盖现有内部路径，等对应 artifact 接入 manifest 后再补公开命令。
 
 ## 按改动类型找入口
 

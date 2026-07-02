@@ -47,8 +47,8 @@ flowchart TB
 1. 写 `.ahfl`：定义数据结构、capability、agent、contract、flow、workflow。
 2. 运行 `ahflc check`：确认源码可以解析、命名解析、类型检查和验证。
 3. 运行 `ahflc dump` 或 `ahflc emit summary`：确认编译器看到的结构符合预期。
-4. 对稳定项目添加 `ahfl.project.json` 和 `ahfl.package.json`。
-5. 运行 `ahflc emit package-review` 和 `ahflc emit execution-plan`：确认 package 与 workflow DAG。
+4. 对稳定项目添加 `ahfl.toml`，多 package 工程添加 `ahfl.workspace.toml`。
+5. 运行 `ahflc dump package-graph` 和 `ahflc emit native-json --manifest ... --target ...`：确认 package、target 与 handoff surface。
 6. 用 mock capability 运行 `ahflc emit dry-run-trace`、journal、replay、audit。
 7. 用 `ahflc validate`、`ahflc verify` 和 provider evidence 命令进入发布门禁。
 8. 准备 LLM Provider 配置后，用 `ahflc run` 执行真实 workflow。
@@ -64,10 +64,10 @@ flowchart TB
 | 行为契约 | 在执行前声明前置、后置、不变量和禁止行为 | `contract for` | [建模指南](./user-guide-authoring.zh.md) |
 | Workflow DAG | 编排多个 Agent 节点和依赖关系 | `workflow`、`node`、`after`、`return` | [建模指南](./user-guide-authoring.zh.md) |
 | 单文件编译 | 快速检查一个 `.ahfl` 文件 | `ahflc check <file.ahfl>` | [CLI 工作流](./user-guide-cli.zh.md) |
-| 多文件项目 | 稳定组织入口源码、搜索根和 workspace | `ahfl.project.json`、`ahfl.workspace.json` | [CLI 工作流](./user-guide-cli.zh.md) |
+| 多文件项目 | 稳定组织 package、target、依赖、module root 和 workspace | `ahfl.toml`、`ahfl.workspace.toml` | [CLI 工作流](./user-guide-cli.zh.md) |
 | 结构诊断 | 查看 AST、类型环境和 source graph | `ahflc dump ast|types|project` | [CLI 工作流](./user-guide-cli.zh.md) |
 | Artifact 发射 | 输出 IR、native JSON、execution plan、summary 等 | `ahflc emit <artifact>` | [CLI 工作流](./user-guide-cli.zh.md) |
-| Package authoring | 声明包身份、入口、导出目标和 capability binding | `ahfl.package.json` | [执行与包指南](./user-guide-execution.zh.md) |
+| Package authoring | 声明包身份、入口、导出目标和 capability binding | `ahfl.toml` handoff target | [执行与包指南](./user-guide-execution.zh.md) |
 | Mock dry run | 在无真实 Provider 时演练 workflow 执行顺序和 capability 结果 | `ahflc emit dry-run-trace` | [执行与包指南](./user-guide-execution.zh.md) |
 | Runtime run | 使用 OpenAI-compatible LLM Provider 执行 workflow | `ahflc run --workflow ... --input ...` | [执行与包指南](./user-guide-execution.zh.md) |
 | Assurance gate | 检查 capability effect、幂等、回执、审批和补偿事实 | `ahflc validate` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
@@ -113,7 +113,7 @@ cmake --build --preset build-dev
 |------|------|
 | [user-guide-authoring.zh.md](./user-guide-authoring.zh.md) | 如何写 `.ahfl` 源码，包括类型、capability、agent、contract、flow 和 workflow |
 | [user-guide-cli.zh.md](./user-guide-cli.zh.md) | 当前 CLI 命令、输入模式、常用 artifact 和诊断方法 |
-| [user-guide-execution.zh.md](./user-guide-execution.zh.md) | Project / package authoring、dry run、runtime artifact、真实 LLM 执行 |
+| [user-guide-execution.zh.md](./user-guide-execution.zh.md) | Package manifest、handoff target、dry run、runtime artifact、真实 LLM 执行 |
 | [user-guide-assurance.zh.md](./user-guide-assurance.zh.md) | Assurance、formal verification、durable-store、Provider 生产证据链 |
 
 ## 与其他文档的关系

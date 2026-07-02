@@ -273,10 +273,10 @@ workflow ValueFlowWorkflow {
 | `lib/types.ahfl` | 公共 `struct`、`enum`、`type` |
 | `lib/agents.ahfl` | Agent、capability、flow |
 | `app/main.ahfl` | workflow 入口 |
-| `ahfl.project.json` | entry source 和 search roots |
-| `ahfl.package.json` | 包身份、入口、导出和 capability binding |
+| `ahfl.toml` | package 身份、module root、target、导出和依赖 |
+| `ahfl.workspace.toml` | 多 package workspace member 和 resolver 策略 |
 
-项目输入和 package authoring 的具体命令见 [CLI 工作流](./user-guide-cli.zh.md) 与 [执行与包指南](./user-guide-execution.zh.md)。
+Package manifest 和 handoff target 的具体命令见 [CLI 工作流](./user-guide-cli.zh.md) 与 [执行与包指南](./user-guide-execution.zh.md)。
 
 ## 校验建模结果
 
@@ -292,10 +292,13 @@ workflow ValueFlowWorkflow {
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc check \
-  --project tests/integration/workflow_value_flow/ahfl.project.json
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 
-./build/dev/src/tooling/cli/ahflc dump project \
-  --project tests/integration/workflow_value_flow/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc dump package-graph \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --sysroot .
 ```
 
 如果 `check` 失败，先处理 parse、resolve、typecheck 和 validate 诊断；不要跳过静态检查直接进入 package、dry run 或 provider evidence。

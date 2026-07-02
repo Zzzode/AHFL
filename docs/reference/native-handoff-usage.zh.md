@@ -14,13 +14,13 @@
 | 合并后保留的信息 |
 |------------------|
 | handoff package 的目标、metadata 边界、consumer 类型、本地验证建议。 |
-| package authoring 输入、`emit-package-review` 调试面、reference consumer helper 接入路径。 |
+| handoff target authoring 输入、native package 输出边界、reference consumer helper 接入路径。 |
 
 ## 当前口径摘要
 
 1. native handoff 的稳定入口是 `handoff::Package`，不是 AST、raw source 或 raw descriptor。
-2. package authoring 通过 `ahfl.package.json` 输入，再 lower 到 `handoff::PackageMetadata` / `handoff::Package`。
-3. `emit-native-json --package` 用于发射 package；`emit-package-review --package` 用于 authoring review。
+2. package authoring 通过 `ahfl.toml` 中的 `handoff` target 输入，再 lower 到 `handoff::PackageMetadata` / `handoff::Package`。
+3. `emit native-json --manifest <ahfl.toml> --target <name>` 用于发射 native handoff package。
 4. reference consumer helper 只消费 handoff package，并做 entry/export target、binding key、workflow dependency 的最小一致性检查。
 5. scheduler、retry、timeout、deployment、connector 语义不属于 handoff usage 承诺。
 
@@ -30,7 +30,7 @@
 
 ```mermaid
 flowchart TD
-    PackageJson["ahfl.package.json"] --> Metadata["handoff::PackageMetadata"]
+    HandoffTarget["ahfl.toml handoff target"] --> Metadata["handoff::PackageMetadata"]
     Metadata --> Package["handoff::Package"]
     Package --> ReaderSummary["Package Reader Summary"]
     ReaderSummary --> PlannerBootstrap["Execution Planner Bootstrap"]
@@ -38,30 +38,25 @@ flowchart TD
 
 对应到仓库实现：
 
-1. `ahflc emit-native-json --package ...`
-2. `ahflc emit-package-review --package ...`
-3. `handoff::build_package_reader_summary(...)`
-4. `handoff::build_execution_planner_bootstrap(...)`
-5. `handoff::build_entry_execution_planner_bootstrap(...)`
+1. `ahflc emit native-json --manifest ... --target ...`
+2. `handoff::build_package_reader_summary(...)`
+3. `handoff::build_execution_planner_bootstrap(...)`
+4. `handoff::build_entry_execution_planner_bootstrap(...)`
 
 ## CLI 用法
 
 ### 发射 native package
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit-native-json \
-  --project tests/project/workflow_value_flow/ahfl.project.json \
-  --package tests/project/workflow_value_flow/ahfl.package.json
+./build/dev/src/tooling/cli/ahflc emit native-json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ```
 
 ### 发射 package review
 
-```bash
-./build/dev/src/tooling/cli/ahflc emit-package-review \
-  --workspace tests/project/handoff.workspace.json \
-  --project-name workflow-value-flow \
-  --package tests/project/workflow_value_flow/ahfl.display.package.json
-```
+`package-review` 接入 PackageGraph 前，不发布旧 JSON descriptor 命令示例。需要检查 reader 行为时，优先消费 `emit native-json --manifest ... --target ...` 产生的 native handoff package，并通过 C++ helper 或对应 CTest label 验证 reader summary。
 
 ## C++ helper 用法
 
@@ -76,7 +71,7 @@ flowchart TD
 helper 当前保证：
 
 1. 只消费 `handoff::Package`
-2. 不回退读取 AST、raw source、project descriptor 或 `ahfl.package.json`
+2. 不回退读取 AST、raw source、project descriptor 或独立 package descriptor
 3. 会对 entry/export target、binding key、workflow dependency 与 workflow target 类型做最小一致性检查
 4. 不承诺 scheduler、retry、timeout、deployment 或 connector 语义
 

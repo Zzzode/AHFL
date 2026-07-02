@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart TB
-    Project[Project input] --> Check[check]
+    PackageInput[PackageGraph input] --> Check[check]
     Check --> Native[native-json]
     Native --> Package[package-review]
     Package --> Plan[execution-plan]
@@ -23,93 +23,78 @@ flowchart TB
 
 这条链路的核心思想是：下游 artifact 消费上游 machine artifact，不回头扫描源码或解析 CLI 文本输出。
 
-## Project descriptor
+## Package manifest 与 handoff target
 
-`ahfl.project.json` 描述编译入口和搜索根：
+AHFL 的公开工程配置入口是 `ahfl.toml`。Package 身份、module root、target、导出和依赖属于同一份 manifest；多 package 工程由 `ahfl.workspace.toml` 选择 member package。
 
-```json
-{
-  "format_version": "ahfl.project",
-  "name": "workflow-value-flow",
-  "search_roots": ["."],
-  "entry_sources": ["app/main.ahfl"]
-}
+最小 handoff target：
+
+```toml
+manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = ["refund_audit::main::RefundAuditWorkflow"]
+
+[dependencies]
+std = { source = "sysroot" }
 ```
 
-检查项目：
+检查 package：
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc check \
-  --project tests/integration/workflow_value_flow/ahfl.project.json
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ```
 
-查看 source graph：
+查看 PackageGraph：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc dump project \
-  --project tests/integration/workflow_value_flow/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc dump package-graph \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --sysroot .
 ```
 
-## Package authoring descriptor
-
-`ahfl.package.json` 描述包身份、入口、导出目标和 capability binding：
-
-```json
-{
-  "format_version": "ahfl.package-authoring",
-  "package": {
-    "name": "workflow-value-flow"
-  },
-  "entry": {
-    "kind": "workflow",
-    "name": "app::main::ValueFlowWorkflow"
-  },
-  "exports": [
-    {
-      "kind": "workflow",
-      "name": "app::main::ValueFlowWorkflow"
-    },
-    {
-      "kind": "agent",
-      "name": "lib::agents::AliasAgent"
-    }
-  ],
-  "capability_bindings": [
-    {
-      "capability": "lib::agents::Echo",
-      "binding_key": "runtime.echo"
-    }
-  ]
-}
-```
-
-检查 package reader 和 execution planner：
+发射 native handoff package：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit package-review \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json
+./build/dev/src/tooling/cli/ahflc emit native-json \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
 ```
 
 Package authoring 的常见错误：
 
 | 错误 | 含义 |
 |------|------|
-| unknown entry target | `entry.name` 没有解析到 workflow 或 agent |
-| wrong executable kind | `kind` 与实际目标类型不一致 |
-| unknown capability | `capability_bindings` 引用了不存在的 capability |
+| unknown target entry | `targets.<name>.entry` 没有解析到 workflow 或 agent |
+| wrong target kind | `targets.<name>.kind` 与 artifact 所需入口类型不一致 |
+| unknown capability | target capability binding 引用了不存在的 capability |
 | duplicate binding | 同一 capability 绑定重复或冲突 |
-| invalid format version | descriptor 版本不是当前 parser 支持的格式 |
+| invalid manifest | manifest 字段、类型、路径或 dependency 规则不满足 schema |
 
 ## Execution plan
 
 `execution-plan` 是 runtime、dry run、journal、replay、audit 等工件的核心输入：
 
-```bash
-./build/dev/src/tooling/cli/ahflc emit execution-plan \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json
-```
+当前公开 PackageGraph 命令面已经覆盖 `check`、`dump package-graph`、`dump lockfile`、`fmt` 和 `emit native-json`。`package-review`、`execution-plan`、dry run、journal、replay、audit、checkpoint、persistence、export 和 store pipeline artifact 接入 PackageGraph 前，本文不再发布旧 JSON descriptor 命令示例；这些 artifact 必须继续以 native handoff package 和上游 machine artifact 为事实来源，不能把旧 descriptor 当新的工程配置入口。
 
 你应该在 execution plan 中检查：
 
@@ -138,16 +123,7 @@ Mock 文件示例：
 }
 ```
 
-执行 dry run：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit dry-run-trace \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.ok \
-  --run-id docs-guide-run
-```
+PackageGraph 模式接入 `dry-run-trace` 前，本指南只描述 mock 文件 schema 和 trace 审查点，不发布旧 descriptor 命令示例。
 
 Dry-run trace 应重点看：
 
@@ -175,24 +151,13 @@ Dry-run trace 应重点看：
 | `persistence-descriptor` | 需要描述持久化边界 |
 | `export-manifest` | 需要导出可移交包 |
 
-这些 artifact 的命令形态一致：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit audit-report \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.ok \
-  --run-id docs-guide-run
-```
-
-将 `audit-report` 换成上表任一 artifact 即可生成对应输出。
+PackageGraph 模式接入这些 artifact 前，不应通过旧 JSON descriptor 作为工程配置入口。需要排查 artifact 链时，优先从 `emit native-json --manifest ... --target ...` 生成的 native handoff package 和现有 CTest golden 入手。
 
 ## 真实 LLM 执行
 
 `ahflc run` 使用 OpenAI-compatible LLM Provider 执行 workflow。它需要：
 
-1. 已通过 `check` 的源码或 project。
+1. 已通过 `check` 的源码或 package。
 2. `--workflow <canonical-name>`。
 3. `--input '<json>'`。
 4. LLM 配置文件，默认 `~/.ahfl/llm_config.json`，也可用 `--llm-config <path>` 指定。
@@ -335,7 +300,7 @@ Provider 会记录 secret-free token budget 事件，覆盖 `prompt_accepted`、
   --tool-catalog ./tool-catalog.json \
   --capability-bindings ./runtime-bindings.json \
   --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --project tests/integration/workflow_value_flow/ahfl.project.json
+  <input.ahfl>
 ```
 
 `run` 会在以下场景拒绝执行：
@@ -372,10 +337,8 @@ Provider 会记录 secret-free token budget 事件，覆盖 `prompt_accepted`、
 ## 推荐落地顺序
 
 1. 单文件 `check` 和 `emit summary`。
-2. 拆成 project，并用 `dump project` 确认 source graph。
-3. 添加 package authoring，用 `emit package-review` 确认入口和导出。
-4. 生成 `execution-plan`，确认 DAG。
-5. 用 mock 数据跑 `dry-run-trace`。
-6. 生成 journal、replay、audit、checkpoint、persistence、export。
-7. 进入 [保障与生产证据指南](./user-guide-assurance.zh.md) 的 assurance、formal、store 和 provider 门禁。
-8. 配置 LLM Provider 后再执行 `ahflc run`。
+2. 拆成 package，并用 `dump package-graph` 确认 package、target、dependency 和 sysroot。
+3. 添加 handoff target，用 `emit native-json --manifest ... --target ...` 确认入口和导出。
+4. 等 runtime-adjacent artifact 接入 PackageGraph 后，再把 execution plan、dry run、journal、replay、audit、checkpoint、persistence 和 export 纳入同一条 manifest-driven 链路。
+5. 进入 [保障与生产证据指南](./user-guide-assurance.zh.md) 的 assurance、formal、store 和 provider 门禁。
+6. 配置 LLM Provider 后再执行 `ahflc run`。

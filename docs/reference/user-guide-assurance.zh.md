@@ -147,27 +147,7 @@ flowchart TB
     Receipt --> ReceiptPersistence[store/receipt-persistence-response]
 ```
 
-生成 request：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit store/request \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.ok \
-  --run-id docs-guide-run
-```
-
-继续生成下游 artifact：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit store/decision \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.ok \
-  --run-id docs-guide-run
-```
+Store pipeline artifact 接入 PackageGraph manifest 输入前，本指南不发布旧 JSON descriptor 命令示例。需要验证 store 链路时，使用 `ctest --preset test-dev --output-on-failure -L 'store-import-.*'` 覆盖当前内部路径；公开 CLI 示例应等 artifact 接受 `ahfl.toml` handoff target 后再补。
 
 Store pipeline 输出应满足：
 
@@ -178,16 +158,7 @@ Store pipeline 输出应满足：
 
 ## Provider readiness evidence
 
-Provider evidence 面向生产评审，不是普通业务用户的默认入口。当前 CLI 使用内部诊断入口：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit-provider-artifact provider/production-readiness-report \
-  --project tests/integration/workflow_value_flow/ahfl.project.json \
-  --package tests/integration/workflow_value_flow/ahfl.package.json \
-  --capability-mocks tests/golden/dry_run/project_workflow_value_flow.mocks.json \
-  --input-fixture fixture.request.ok \
-  --run-id docs-guide-run
-```
+Provider evidence 面向生产评审，不是普通业务用户的默认入口。Provider diagnostic artifact 当前仍是内部诊断面；在它接入 PackageGraph 前，不应把旧 JSON descriptor 写成公开使用路径。
 
 推荐优先查看的 public provider artifact：
 
