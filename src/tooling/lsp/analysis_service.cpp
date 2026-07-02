@@ -165,13 +165,6 @@ find_lsp_sysroot_manifest(const std::vector<std::filesystem::path> &workspace_ro
         }
     }
 
-    if (const char *env_root = std::getenv("AHFL_STDLIB_SEARCH_ROOT");
-        env_root != nullptr && *env_root != '\0') {
-        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
-            return manifest;
-        }
-    }
-
     for (const auto &root : workspace_roots) {
         if (auto manifest = find_sysroot_manifest_from_directory(root); manifest.has_value()) {
             return manifest;

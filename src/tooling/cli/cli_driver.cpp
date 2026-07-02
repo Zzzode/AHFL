@@ -164,13 +164,6 @@ sysroot_manifest_from_options(const CommandLineOptions &options) {
         }
     }
 
-    if (const char *env_root = std::getenv("AHFL_STDLIB_SEARCH_ROOT");
-        env_root != nullptr && *env_root != '\0') {
-        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
-            return manifest;
-        }
-    }
-
     std::error_code error;
     auto current = std::filesystem::current_path(error);
     if (error) {
