@@ -15,7 +15,7 @@
 2. 多 package 工程必须由 `ahfl.workspace.toml` 枚举成员；workspace 不会隐式包含未声明的子目录。
 3. `std` 是 sysroot package；选中的 sysroot 必须包含 `std/ahfl.toml`。
 4. PackageGraph 是工具层稳定接口；工具不应各自推断 search roots、target metadata 或 stdlib 位置。
-5. Native handoff package 由 manifest target metadata 驱动，不再需要单独的 runtime-facing package descriptor。
+5. Native handoff package 由 manifest target metadata 驱动，不再需要单独的 runtime-facing JSON 配置文件。
 
 ## 术语
 

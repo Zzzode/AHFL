@@ -1025,49 +1025,49 @@ int main(int argc, char **argv) {
     }
     if (command == "build-checkpoint-record-project-workflow-value-flow") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_record_project_workflow_value_flow(argv[2]);
     }
     if (command == "build-checkpoint-record-failed-workflow") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_record_failed_workflow(argv[2]);
     }
     if (command == "build-checkpoint-record-partial-workflow") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_record_partial_workflow(argv[2]);
     }
     if (command == "build-checkpoint-record-rejects-snapshot-workflow-mismatch") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_record_rejects_snapshot_workflow_mismatch(argv[2]);
     }
     if (command == "build-checkpoint-review-completed") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_review_completed(argv[2]);
     }
     if (command == "build-checkpoint-review-failed") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_review_failed(argv[2]);
     }
     if (command == "build-checkpoint-review-partial") {
         if (argc < 3) {
-            std::cout << "expected project descriptor path\n";
+            std::cout << "expected package manifest path\n";
             return 1;
         }
         return build_checkpoint_review_partial(argv[2]);

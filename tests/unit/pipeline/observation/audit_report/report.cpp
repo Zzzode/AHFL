@@ -596,7 +596,7 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-audit-report-project-workflow-value-flow") {
         if (!project_manifest_path.has_value()) {
-            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            std::cerr << "missing package manifest for audit bootstrap case\n";
             return 2;
         }
         return run_build_audit_report_project_workflow_value_flow(*project_manifest_path);
@@ -604,7 +604,7 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-audit-report-failed-workflow") {
         if (!project_manifest_path.has_value()) {
-            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            std::cerr << "missing package manifest for audit bootstrap case\n";
             return 2;
         }
         return run_build_audit_report_failed_workflow(*project_manifest_path);
@@ -612,7 +612,7 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-audit-report-partial-workflow") {
         if (!project_manifest_path.has_value()) {
-            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            std::cerr << "missing package manifest for audit bootstrap case\n";
             return 2;
         }
         return run_build_audit_report_partial_workflow(*project_manifest_path);
@@ -620,7 +620,7 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-audit-report-rejects-trace-workflow-mismatch") {
         if (!project_manifest_path.has_value()) {
-            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            std::cerr << "missing package manifest for audit bootstrap case\n";
             return 2;
         }
         return run_build_audit_report_rejects_trace_workflow_mismatch(*project_manifest_path);
@@ -628,7 +628,7 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-audit-report-rejects-trace-execution-order-mismatch") {
         if (!project_manifest_path.has_value()) {
-            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            std::cerr << "missing package manifest for audit bootstrap case\n";
             return 2;
         }
         return run_build_audit_report_rejects_trace_execution_order_mismatch(*project_manifest_path);

@@ -63,7 +63,7 @@ flowchart TD
   --sysroot .
 ```
 
-`package-review` 读取同一个 PackageGraph handoff target metadata；它不再需要独立 package descriptor。
+`package-review` 读取同一个 PackageGraph handoff target metadata；它不再需要独立 runtime-facing JSON 配置文件。
 
 ## C++ helper 用法
 

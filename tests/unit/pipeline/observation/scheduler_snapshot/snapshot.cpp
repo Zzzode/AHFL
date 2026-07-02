@@ -1055,7 +1055,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 3) {
-        std::cerr << "missing project descriptor for scheduler snapshot bootstrap command\n";
+        std::cerr << "missing package manifest for scheduler snapshot bootstrap command\n";
         return 1;
     }
 

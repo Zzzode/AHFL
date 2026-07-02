@@ -2379,6 +2379,15 @@ add_test(NAME ahflc.check.manifest_requires_toml_extension
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.manifest_rejects_legacy_project_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.project.json"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.project.json\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--manifest expects ahfl\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.manifest_basic
     COMMAND $<TARGET_FILE:ahflc> emit native-json
             --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
@@ -2493,6 +2502,15 @@ add_test(NAME ahflc.check.workspace_basic
 )
 set_tests_properties(ahflc.check.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.workspace_rejects_legacy_workspace_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.json"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.json\;--package\;refund-audit\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--workspace expects ahfl\\.workspace\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.emit_native_json.workspace_basic

@@ -1015,7 +1015,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 3) {
-        std::cerr << "expected project descriptor path\n";
+        std::cerr << "expected package manifest path\n";
         return 1;
     }
 
