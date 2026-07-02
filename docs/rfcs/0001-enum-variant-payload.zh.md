@@ -440,9 +440,9 @@ enum E {
 
 | # | 标准 / Criterion | 目标值 / Target | 度量方式 / Measurement |
 |---|---|---|---|
-| A1 | **ctest 全量通过** | Alpha 末 ≥ 现有基线 + 新增 40/40 green；Stable 末 ≥ 基线 + 新增 80/80 green 且总体 100% | `ctest -j --output-on-failure` 报告，与 `wave-17 979/979` 基线对比 (`docs/plans/wave-17-integration-final-report.md` 终态) |
+| A1 | **ctest 全量通过** | Alpha 末 ≥ 现有基线 + 新增 40/40 green；Stable 末 ≥ 基线 + 新增 80/80 green 且总体 100% | `ctest -j --output-on-failure` 报告，与 `wave-17 979/979` 基线对比 (`docs/plans/wave-17-integration-report.zh.md` 终态) |
 | A2 | **Mutation testing score** | Alpha 末 ≥ 85%；Stable 末 ≥ 92% | `mutation.yaml` 针对 `syntax/*enum*`、`semantics/*variant*`、`typecheck_expr.cpp:pattern_variant` 路径的 mutation 跑批，覆盖率由现有工具链（misfortune）输出。 |
-| A3 | **Fuzzer 稳定性** | 自 Alpha 合入起，语法 fuzzer (`docs/fuzz/` 目录) 连续 **14 天** 零 crash；每日种子数 ≥ 1e6 | CI nightly fuzz job（已存在）输出；任何 ASan/UBSan/assert failure 立即回滚到上一 green commit。 |
+| A3 | **Fuzzer 稳定性** | 自 Alpha 合入起，语法 fuzzer (`tests/fuzz/` 目录) 连续 **14 天** 零 crash；每日种子数 ≥ 1e6 | CI nightly fuzz job（已存在）输出；任何 ASan/UBSan/assert failure 立即回滚到上一 green commit。 |
 | A4 | **Diagnostic 稳定性** | 新增 12 个 golden 反例文件（见下表），每次 PR 字节级匹配；Stable 阶段诊断码语义不改变（breaking change to diagnostics requires new RFC bump） | `tests/golden/` 目录下 `DIFF.md5` 校验，与 formatter roundtrip 组合。 |
 | A5 | **Fixer 有效性** | `ahflc fix --mode structify` 对 stdlib 与 wave-1 测试仓库能零冲突应用，且修复后工程 ctest 100% 通过 | CI pipeline: checkout → apply fix → ctest → diff stdlib 规范预期文件（`tests/fix-expected/`）。 |
 | A6 | **性能回归** | 开启 `enum-variant-named-fields=stable` 后，全量 ctest 的总 CPU 时间相对基线不超过 **+3%**；内存峰值不超过 **+2%** | 性能基准仓库 `benches/compile_perf/` 的 CI 报告，三次运行取中位数。 |

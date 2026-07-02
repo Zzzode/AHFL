@@ -6,7 +6,7 @@
 > **M2 进展（2026-06-29）：** M2-1 List `sort`+`dedup`、M2-2 Set `union/intersection/difference/is_subset`、M2-3 Map `map_values`+`filter_keys`（via 新 hook `map_raw_keys/values/insert` + 纯 AHFL，闭包在 AHFL 内调，规避 builtin 无闭包回调的限制）均落地 + 测试。`Result::flatten` 已实现（and_then identity）；`transpose` 仍被 P3 变体构造限制阻断。
 > **Created:** 2026-06-29
 > **Baseline commit:** develop/wave-21-top
-> **Audit source:** `docs/int/wave-21-integration-final-report.md` + `stdlib/` 只读盘点（2026-06-29）
+> **Audit source:** `docs/plans/wave-21-integration-report.zh.md` + `stdlib/` 只读盘点（2026-06-29）
 > **Cross-ref:** [[wave21-full-delivery]] / PB-01 V1.3 (`docs/plans/phaseb-gap-analysis.zh.md`) / `corelib-completion-plan.zh.md`
 
 ---
@@ -178,9 +178,9 @@ gantt
 |---|---|---:|---:|---|---|
 | M3-1 | **R3-b VSIX 带 stdlib + LSP 搜索扩展目录** | P0 | 2 天 | VSIX 打包脚本 + `project.cpp` 扩展目录搜索 + VS Code LSP settings.json 验证 | M0-4 |
 | M3-2 | **Formatter golden 全量 regenerate + CI 门禁**：把全 15+ fixture 与新增 stdlib fixture 全部 `ahflc fmt` 落地，CI 中 `--check` 失败自动打 reformat PR | P1 | 3 天 | `scripts/ci-format-check.sh` + GitHub Action | M0-5 |
-| M3-3 | **Coverage report 交付物**：API 实现率 + assertion 密度两张表 + Mermaid 甘特图完成率 | P1 | 2 天 | `docs/int/corelib-m2-coverage-report.md`（双语头 + 两张 Mermaid 图） | M2-6 |
+| M3-3 | **Coverage report 交付物**：API 实现率 + assertion 密度两张表 + Mermaid 甘特图完成率 | P1 | 2 天 | `docs/plans/corelib-m2-coverage-report.zh.md`（双语头 + 两张 Mermaid 图） | M2-6 |
 | M3-4 | **CI 门禁升级**：`stdlib/` 变更触发 `ctest -R stdlib_ -j8` + mutation 靶机在 20% 最常改 API 上跑 mutation score ≥ 80% | P1 | 2 天 | GitHub Actions workflow + score report | M2-6 |
-| M3-5 | **stdlib 用户文档（用户视角 cookbook）**：30 个常见场景 cookbook（Option 和 Result 5 / List 5 / Map 3 / Set 3 / String 5 / Time/UUID 3 / JSON 3 / Trait 3） | P2 | 4 天 | `docs/cookbook/stdlib-cookbook.md`（双语 + 可运行 snippet） | M1/M2 完成 |
+| M3-5 | **stdlib 用户文档（用户视角 cookbook）**：30 个常见场景 cookbook（Option 和 Result 5 / List 5 / Map 3 / Set 3 / String 5 / Time/UUID 3 / JSON 3 / Trait 3） | P2 | 4 天 | `docs/reference/stdlib-cookbook.zh.md`（双语 + 可运行 snippet） | M1/M2 完成 |
 
 **M3 关口条件（= 工程化 Done 标志）：**
 - [ ] M3-1 VSIX 安装后，全新用户打开 `.ahfl` 文件 `let x: Option<Int> = ...;` 不报 unknown type
@@ -251,7 +251,7 @@ gantt
 
 - **不引入 GAT / HKT / existential types**：这些是 P3 级类型系统扩展，PB-01 gap analysis 已登记为 Phase B 非目标。
 - **不做 stdlib ABI 稳定**：AHFL 目前无 ABI 稳定承诺；API 签名变更按 semver pre-1.0 处理（破变写 changelog + bump minor）。
-- **不做标准库文档站**（单独的 HTML render / docusaurus）：先在 `docs/cookbook/` 下写 markdown，后续接入 doc generator（Wave-23+ 跟踪项）。
+- **不做标准库文档站**（单独的 HTML render / docusaurus）：先在 `docs/reference/` 下写 markdown，后续接入 doc generator（Wave-23+ 跟踪项）。
 - **不做 FFI / 外部 C 库 binding**：FFI 属于 P3，与 corelib 独立。
 
 ---
@@ -263,8 +263,8 @@ gantt
 | `docs/plans/phaseb-gap-analysis.zh.md` | PB-01 h-3.8.2 (Sema/ConstSema), h-3.8.7 (QE 门禁) | §1.2 / §3.2 / §3.4 |
 | `docs/plans/corelib-completion-plan.zh.md` | "API 实现率 80%" 目标 | §2 B3 / §3.2 / §3.3 |
 | `docs/plans/issue-backlog-global-gaps.zh.md` | Gap #12 (stdlib 发布渠道缺失) | §2 B4 / §3.4 |
-| `docs/plans/_p3_std_impl_blockers.zh.md` | 所有 Trait / coherence 阻断 | §5.1 R2 / §4 D4 |
-| `docs/int/wave-21-integration-final-report.md` | Wave-22 推荐 F1-F6 + corelib 支持 | §4 D3 / §3.1 M0-1 |
+| `docs/plans/p3-std-impl-blockers.zh.md` | 所有 Trait / coherence 阻断 | §5.1 R2 / §4 D4 |
+| `docs/plans/wave-21-integration-report.zh.md` | Wave-22 推荐 F1-F6 + corelib 支持 | §4 D3 / §3.1 M0-1 |
 
 ---
 

@@ -27,7 +27,7 @@ docs/<class>/<topic>.<lang>.md
 
 Rules:
 
-1. `<class>` must be one of `spec`, `design`, `plan`, or `reference`.
+1. `<class>` must be one of `spec`, `design`, `plans`, or `reference`.
 2. `<topic>` must be a short kebab-case noun phrase.
 3. `<topic>` must not repeat the document class word.
 4. Do not add document-version suffixes to filenames.
@@ -74,7 +74,9 @@ Avoid:
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
 - [durable-store-import-architecture.zh.md](./design/durable-store-import-architecture.zh.md)
 - [formal-backend.zh.md](./design/formal-backend.zh.md)
+- [formal-subset.zh.md](./design/formal-subset.zh.md)
 - [frontend-lowering-architecture.zh.md](./design/frontend-lowering-architecture.zh.md)
+- [incremental-cache.zh.md](./design/incremental-cache.zh.md)
 - [ir-backend-architecture.zh.md](./design/ir-backend-architecture.zh.md)
 - [lsp-hover-architecture.zh.md](./design/lsp-hover-architecture.zh.md)
 - [module-loading.zh.md](./design/module-loading.zh.md)
@@ -95,15 +97,27 @@ Avoid:
 - [corelib-completion-plan.zh.md](./plans/corelib-completion-plan.zh.md)
 - [corelib-support-workplan.zh.md](./plans/corelib-support-workplan.zh.md)
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
+- [p3-std-impl-blockers.zh.md](./plans/p3-std-impl-blockers.zh.md)
 - [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
+- [trait-self-blocker.en.md](./plans/trait-self-blocker.en.md)
+- [wave-15-integration-report.zh.md](./plans/wave-15-integration-report.zh.md)
+- [wave-16-integration-report.zh.md](./plans/wave-16-integration-report.zh.md)
+- [wave-17-integration-report.zh.md](./plans/wave-17-integration-report.zh.md)
+- [wave-18-integration-report.zh.md](./plans/wave-18-integration-report.zh.md)
+- [wave-19-integration-report.zh.md](./plans/wave-19-integration-report.zh.md)
+- [wave-20-integration-report.zh.md](./plans/wave-20-integration-report.zh.md)
+- [wave-21-integration-report.zh.md](./plans/wave-21-integration-report.zh.md)
 
 ### Reference
 
 - [backend-capability-matrix.zh.md](./reference/backend-capability-matrix.zh.md)
 - [cli-commands.zh.md](./reference/cli-commands.zh.md)
 - [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
+- [developer-docs.zh.md](./reference/developer-docs.zh.md)
 - [durable-store-import-reference.zh.md](./reference/durable-store-import-reference.zh.md)
+- [error-codes.zh.md](./reference/error-codes.zh.md)
+- [fuzz-corpus-location.zh.md](./reference/fuzz-corpus-location.zh.md)
 - [ir-format.zh.md](./reference/ir-format.zh.md)
 - [lsp-vscode-extension.zh.md](./reference/lsp-vscode-extension.zh.md)
 - [migration-policy.zh.md](./reference/migration-policy.zh.md)
@@ -111,6 +125,7 @@ Avoid:
 - [native-runtime-artifacts.zh.md](./reference/native-runtime-artifacts.zh.md)
 - [project-usage.zh.md](./reference/project-usage.zh.md)
 - [rfc-process.zh.md](./reference/rfc-process.zh.md)
+- [stdlib-cookbook.zh.md](./reference/stdlib-cookbook.zh.md)
 - [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md)
 - [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md)
 - [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md)

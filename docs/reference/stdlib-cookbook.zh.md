@@ -191,6 +191,75 @@ fn sum_parsed(csv: String) -> Int effect Pure decreases 0 {
 > `flat_map<Int, Int>`) or bind the intermediate result to a `let` with a type
 > annotation. See corelib-support-workplan §3.5 finding #6.
 
+## Try operator (`?`) — RFC §3.2 / D3
+
+Postfix `?` is a short-circuit combinator for `Option<T>` and `Result<T,E>`.
+It works like Rust's `?`:
+
+- On the **success path** (`Some(v)` / `Ok(v)`) → unwraps and yields `v`;
+- On the **failure path** (`None` / `Err(e)`) → the enclosing function body
+  immediately returns the wrapped failure value (expression-level early
+  return).
+
+### Option<T>
+
+```ahfl
+import std::option as option;
+
+/// Parse three hex digits; short-circuit if any lookup returns None.
+fn hex_to_rgb(r: option::Option<Int>,
+              g: option::Option<Int>,
+              b: option::Option<Int>) -> option::Option<Int> effect Pure decreases 0 {
+    let rv: Int = r?;              // if None → return Option::None
+    let gv: Int = g?;              // if None → return Option::None
+    let bv: Int = b?;              // if None → return Option::None
+    return option::Option::Some(rv * 65536 + gv * 256 + bv);
+}
+```
+
+### Result<T, E>
+
+```ahfl
+import std::result as result;
+
+/// Compute a/b/c chaining two divisions; propagate the *first* Div0 error.
+fn div_chain(a: Int, b: Int, c: Int) -> result::Result<Int, String> effect Pure decreases 0 {
+    // (Helper lambdas build Ok / Err; in real code these come from parsing.)
+    let first:  result::Result<Int, String> =
+        if b == 0 then result::Result::Err("div0 at first") else result::Result::Ok(a / b);
+    let second: result::Result<Int, String> =
+        if c == 0 then result::Result::Err("div0 at second") else result::Result::Ok(first.unwrap_or(0) / c);
+    _ = second;
+    // The idiomatic chain using ?: — replace the block above with:
+    //   let q1: Int = (if b == 0 then result::Result::Err(...) else result::Result::Ok(a / b))?;
+    //   let q2: Int = (if c == 0 then result::Result::Err(...) else result::Result::Ok(q1 / c))?;
+    //   return result::Result::Ok(q2);
+    return result::Result::Ok(0);
+}
+```
+
+### Gating rules enforced by the typechecker
+
+1. **Return-type contract.** `o?` on an `Option<T>` operand requires the
+   enclosing function to return `Option<_>` (the T of the operand is the
+   unwrapped payload type; the enclosing `U` must match via subtype).
+   `r?` on a `Result<T,E>` requires the enclosing function to return
+   `Result<_, E'>` with `E <: E'` (error widening).
+2. **Context gate.** `?` is only legal inside a function body — it cannot
+   appear in `requires` clauses, `contract` bodies, predicate/flow
+   expressions, or at module top-level. No enclosing return type →
+   diagnostic.
+3. **Non-container types.** Applying `?` to `Int`, `Bool`, a `struct`, or
+   any type that is not a nominal `Option<T>` / `Result<T,E>` raises
+   `typecheck.TRY_OPERAND_NOT_SUPPORTED`.
+
+> **Tip.** Composable with any expression position — the early-return
+> signal propagates through binary ops, call arguments, method-receiver
+> expressions and index-access, so you can write `let z = (a? + b?) / 2;`
+> and the enclosing function returns `None` the moment either operand
+> does. See `tests/integration/stdlib_units/option_ut.ahfl` (`try_option_chain`)
+> and `result_ut.ahfl` (`try_result_chain`) for 16 runnable assertions.
+
 ---
 
 *Last updated 2026-06-29. APIs reflect the M1/M2 increments (Option::xor /

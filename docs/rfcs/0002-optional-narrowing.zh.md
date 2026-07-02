@@ -369,7 +369,7 @@ ahfl fix --narrowing-migration <files...>
 1. **单元测试覆盖率**：Alpha 阶段结束时，`tests/compiler/sema/narrowing/` 目录下 **≥ 120/120** 条 assertion 通过（含正例 + 负例 + 跨作用域失效 + 赋值 invalidation 四类），**`ctest -R narrowing` 通过率 100%**。
 2. **Golden CLI 回归**：Beta 阶段结束时，`tests/golden/e1/` 下 **≥ 35/35** 个 golden case 通过；同时整个仓库的端到端回归 **ctest 总通过率 ≥ 980/980**（与 wave-17 基线对齐），**零新增失败**。
 3. **Mutation 测试分数**：针对 `TernaryNarrowingEnv` + `VariantConstnessWitness` 两处核心模块，`mutationpp` / `mull` 风格 mutation score **≥ 92%**（kill ratio 92/100 mutants killed）。
-4. **Fuzzer 稳定性**：`docs/fuzz/` 目录下 grammar-aware fuzzer 针对 if-let + match 组合输入**连续运行 7 天零 crash**、零 sanitizer 报告（ASAN + UBSAN）；单轮 fuzzing corpus 最小 **50k** 样本。
+4. **Fuzzer 稳定性**：`tests/fuzz/` 目录下 grammar-aware fuzzer 针对 if-let + match 组合输入**连续运行 7 天零 crash**、零 sanitizer 报告（ASAN + UBSAN）；单轮 fuzzing corpus 最小 **50k** 样本。
 5. **性能回归**：在不启用 narrowing feature 的编译路径上，`tests/benchmarks/typecheck-throughput.ahfl`（~10k LOC）编译耗时**相对 baseline 回归 ≤ 2%**（CI 上 20 次采样均值比较，p < 0.05）。
 
 ---
