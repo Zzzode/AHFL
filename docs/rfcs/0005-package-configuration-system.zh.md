@@ -360,7 +360,7 @@ Package dependency graph 必须是有向无环图。任何 package cycle 都是 
     }
   ],
   "edges": [
-    { "from": 1, "dependency": "std", "to": 0 }
+    { "from": 1, "dependency": "std", "to": 0, "source": "sysroot" }
   ]
 }
 ```

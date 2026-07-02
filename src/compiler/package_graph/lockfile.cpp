@@ -155,6 +155,7 @@ resolve_lockfile_manifest_path(std::string_view manifest,
     value->set("from", json::JsonValue::make_int(static_cast<std::int64_t>(edge.from.value)));
     value->set("dependency", json::JsonValue::make_string(edge.dependency));
     value->set("to", json::JsonValue::make_int(static_cast<std::int64_t>(edge.to.value)));
+    value->set("source", json::JsonValue::make_string(edge.source));
     return value;
 }
 
@@ -306,19 +307,27 @@ void reject_unknown_fields(const json::JsonValue &object,
     if (!require_object(value, "edges[]", diagnostics)) {
         return std::nullopt;
     }
-    reject_unknown_fields(value, {"from", "dependency", "to"}, "edges[]", diagnostics);
+    reject_unknown_fields(value, {"from", "dependency", "to", "source"}, "edges[]", diagnostics);
 
     const auto from = read_package_id(value, "from", diagnostics);
     const auto dependency = read_string(value, "dependency", diagnostics);
     const auto to = read_package_id(value, "to", diagnostics);
-    if (!from.has_value() || !dependency.has_value() || !to.has_value()) {
+    const auto source = read_string(value, "source", diagnostics);
+    if (!from.has_value() || !dependency.has_value() || !to.has_value() || !source.has_value()) {
         return std::nullopt;
+    }
+    if (!is_lockfile_source(*source)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'source' must be 'sysroot', 'path', or 'workspace'",
+                  range_of(*value.get("source")));
     }
 
     return LockfileEdge{
         .from = *from,
         .dependency = *dependency,
         .to = *to,
+        .source = *source,
     };
 }
 
@@ -345,6 +354,37 @@ void compare_package_field(std::vector<Diagnostic> &diagnostics,
               "lockfile package id " + package_id_text(id) + " field '" + std::string{field} +
                   "' is '" + std::string{actual} + "' but resolver produced '" +
                   std::string{expected} + "'");
+}
+
+void compare_edge_field(std::vector<Diagnostic> &diagnostics,
+                        PackageId from,
+                        std::string_view dependency,
+                        PackageId to,
+                        std::string_view field,
+                        std::string_view actual,
+                        std::string_view expected) {
+    if (actual == expected) {
+        return;
+    }
+    add_error(diagnostics,
+              std::string{kPackageGraph},
+              "lockfile dependency edge " + edge_text(from, dependency, to) + " field '" +
+                  std::string{field} + "' is '" + std::string{actual} +
+                  "' but resolver produced '" + std::string{expected} + "'");
+}
+
+[[nodiscard]] const LockfileEdge *find_lockfile_edge(const Lockfile &lockfile,
+                                                     PackageId from,
+                                                     std::string_view dependency,
+                                                     PackageId to) {
+    const auto found =
+        std::find_if(lockfile.edges.begin(), lockfile.edges.end(), [&](const auto &edge) {
+            return edge.from == from && edge.dependency == dependency && edge.to == to;
+        });
+    if (found == lockfile.edges.end()) {
+        return nullptr;
+    }
+    return &*found;
 }
 
 [[nodiscard]] std::set<std::string> edge_keys_for_graph(const PackageGraph &graph) {
@@ -390,6 +430,7 @@ Lockfile make_lockfile(const PackageGraph &graph,
             .from = edge.from,
             .dependency = edge.dependency_key,
             .to = edge.to,
+            .source = edge.source,
         });
     }
 
@@ -608,12 +649,22 @@ check_lockfile_drift(const PackageGraph &graph,
     const auto graph_edges = edge_keys_for_graph(graph);
     const auto lockfile_edges = edge_keys_for_lockfile(lockfile);
     for (const auto &edge : graph.dependencies) {
-        if (!lockfile_edges.contains(edge_key(edge.from, edge.dependency_key, edge.to))) {
+        const auto *lockfile_edge =
+            find_lockfile_edge(lockfile, edge.from, edge.dependency_key, edge.to);
+        if (lockfile_edge == nullptr) {
             add_error(diagnostics,
                       std::string{kPackageGraph},
                       "lockfile is missing dependency edge " +
                           edge_text(edge.from, edge.dependency_key, edge.to));
+            continue;
         }
+        compare_edge_field(diagnostics,
+                           edge.from,
+                           edge.dependency_key,
+                           edge.to,
+                           "source",
+                           lockfile_edge->source,
+                           edge.source);
     }
     for (const auto &edge : lockfile.edges) {
         if (!graph_edges.contains(edge_key(edge.from, edge.dependency, edge.to))) {

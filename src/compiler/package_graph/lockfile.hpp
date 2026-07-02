@@ -23,6 +23,7 @@ struct LockfileEdge {
     PackageId from;
     std::string dependency;
     PackageId to;
+    std::string source;
 };
 
 struct Lockfile {

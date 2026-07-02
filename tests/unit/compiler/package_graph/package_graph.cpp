@@ -1059,6 +1059,9 @@ TEST_CASE("Lockfile serializes and parses PackageGraph identity") {
     CHECK(lockfile.edges[0].from.value == 1);
     CHECK(lockfile.edges[0].dependency == "std");
     CHECK(lockfile.edges[0].to.value == 0);
+    CHECK(lockfile.edges[0].source == "sysroot");
+    CHECK(lockfile.edges[1].dependency == "audit-core");
+    CHECK(lockfile.edges[1].source == "workspace");
 
     const auto encoded = ahfl::package_graph::serialize_lockfile(lockfile);
     auto parsed = ahfl::package_graph::parse_lockfile_json(encoded);
@@ -1110,6 +1113,18 @@ TEST_CASE("Lockfile drift rejects dependency edge mismatch") {
     REQUIRE_FALSE(diagnostics.empty());
     CHECK(has_diagnostic(diagnostics, "missing dependency edge 1 --std--> 0"));
     CHECK(has_diagnostic(diagnostics, "unused dependency edge 1 --std--> 1"));
+}
+
+TEST_CASE("Lockfile drift rejects dependency source mismatch") {
+    const auto graph = graph_with_workspace_dependency();
+    auto lockfile = ahfl::package_graph::make_lockfile(graph);
+    lockfile.edges[1].source = "path";
+
+    const auto diagnostics = ahfl::package_graph::check_lockfile_drift(graph, lockfile);
+
+    REQUIRE_FALSE(diagnostics.empty());
+    CHECK(has_diagnostic(diagnostics, "dependency edge 1 --audit-core--> 2 field 'source'"));
+    CHECK(has_diagnostic(diagnostics, "resolver produced 'workspace'"));
 }
 
 TEST_CASE("Lockfile drift rejects PackageId assignment drift") {
