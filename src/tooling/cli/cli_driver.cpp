@@ -363,7 +363,13 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
 
 [[nodiscard]] std::optional<std::string_view>
 workspace_package_name(const CommandLineOptions &options, std::optional<CommandKind> command) {
-    if (package_option_is_workspace_selector(options, command)) {
+    if (uses_package_graph_workspace(options, command)) {
+        if (options.package_descriptor.has_value()) {
+            return *options.package_descriptor;
+        }
+        return std::nullopt;
+    }
+    if (options.package_descriptor.has_value()) {
         return *options.package_descriptor;
     }
     if (options.project_name.has_value()) {
@@ -1249,9 +1255,9 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (package_graph_workspace && options_.project_name.has_value() &&
-        options_.package_descriptor.has_value()) {
-        std::cerr << "error: --workspace accepts either --package or --project-name, not both\n";
+    if (package_graph_workspace && options_.project_name.has_value()) {
+        std::cerr << "error: --project-name is a removed legacy workspace selector for "
+                     "ahfl.workspace.toml; use --package <name>\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }

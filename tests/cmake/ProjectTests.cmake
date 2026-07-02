@@ -2409,6 +2409,15 @@ set_tests_properties(ahflc.dump_package_graph.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "\"source\":\"workspace\""
 )
 
+add_test(NAME ahflc.dump_package_graph.workspace_rejects_project_name
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=dump\;package-graph\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--project-name\;refund-audit\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--project-name is a removed legacy workspace selector for ahfl\\.workspace\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_lockfile.workspace_basic
     COMMAND $<TARGET_FILE:ahflc> dump lockfile
             --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
@@ -2428,6 +2437,15 @@ add_test(NAME ahflc.check.workspace_basic
 )
 set_tests_properties(ahflc.check.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.workspace_rejects_project_name
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--project-name\;refund-audit\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--project-name is a removed legacy workspace selector for ahfl\\.workspace\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.emit_native_json.workspace_basic
