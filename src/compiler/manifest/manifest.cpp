@@ -281,6 +281,18 @@ void validate_module_prefix(std::string_view value,
     }
 }
 
+void validate_canonical_symbol_name(std::string_view value,
+                                    std::string_view display,
+                                    SourceRange range,
+                                    std::vector<ManifestDiagnostic> &diagnostics) {
+    if (!matches_regex(value, "^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+$")) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 std::string(display) + " must be a canonical AHFL symbol name for handoff targets",
+                 range);
+    }
+}
+
 void validate_semver(std::string_view value,
                      std::string_view display,
                      SourceRange range,
@@ -452,6 +464,15 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
                 read_required_string(*entry.value, "entry", "targets.entry", diagnostics);
             target_entry.has_value()) {
             target.entry = *target_entry;
+            const auto *entry_field = find_entry(*entry.value, "entry");
+            const auto entry_range =
+                entry_field == nullptr ? entry.value_range : entry_field->value_range;
+            if (contains({"library", "test"}, target.kind)) {
+                validate_relative_path(target.entry, "targets.entry", entry_range, diagnostics);
+            } else if (target.kind == "handoff") {
+                validate_canonical_symbol_name(
+                    target.entry, "targets.entry", entry_range, diagnostics);
+            }
         }
         const auto *target_exports = find_value(*entry.value, "exports");
         if (target_exports != nullptr && contains({"library", "test"}, target.kind)) {
