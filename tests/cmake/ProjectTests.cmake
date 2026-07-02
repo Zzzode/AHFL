@@ -2386,6 +2386,20 @@ set_tests_properties(ahflc.check.manifest_uses_ahfl_sysroot_env PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.manifest_sysroot_option_overrides_env
+    COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
+            ${CMAKE_COMMAND} -E env
+            --unset=AHFL_STDLIB_SEARCH_ROOT
+            "AHFL_SYSROOT=${CMAKE_BINARY_DIR}/missing-sysroot"
+            $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.manifest_sysroot_option_overrides_env PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
+)
+
 add_test(NAME ahflc.check.manifest_rejects_stdlib_search_root_env
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=${CMAKE_COMMAND}"

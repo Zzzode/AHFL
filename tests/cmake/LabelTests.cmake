@@ -4,6 +4,7 @@ ahfl_label_tests(
         ahflc.dump_package_graph.workspace_basic
         ahflc.check.discover_nested_package_uses_nearest_manifest
         ahflc.check.discover_nested_package_rejects_parent_target
+        ahflc.check.manifest_sysroot_option_overrides_env
         ahflc.check.manifest_requires_canonical_filename
         ahflc.check.manifest_rejects_noncanonical_toml_filename
         ahflc.check.workspace_rejects_noncanonical_toml_filename
