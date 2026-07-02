@@ -762,15 +762,6 @@ contains_manifest_backed_stdlib_root(const std::vector<std::filesystem::path> &r
 [[nodiscard]] std::vector<std::filesystem::path> builtin_stdlib_search_roots() {
     std::vector<std::filesystem::path> roots;
 
-    // Explicit env var takes precedence and suppresses fallbacks to avoid
-    // "ambiguous across search roots" when the bundled std/ shadows a
-    // source-tree std/ (e.g. VSIX extension running inside the AHFL repo).
-    if (const char *env_root = std::getenv("AHFL_STDLIB_SEARCH_ROOT");
-        env_root != nullptr && *env_root != '\0') {
-        append_unique_normalized_path(roots, std::filesystem::path(env_root));
-        return roots;
-    }
-
 #ifdef AHFL_SOURCE_DIR
     append_unique_normalized_path(roots, std::filesystem::path(AHFL_SOURCE_DIR));
 #endif

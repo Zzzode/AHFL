@@ -5,6 +5,15 @@ add_test(NAME ahfl.frontend.project.ok_basic
             "${AHFL_TESTS_DIR}/integration/ok"
 )
 
+add_test(NAME ahfl.frontend.project.ignores_legacy_stdlib_search_root_env
+    COMMAND ${CMAKE_COMMAND} -E env
+            "AHFL_STDLIB_SEARCH_ROOT=${CMAKE_BINARY_DIR}/missing-legacy-stdlib-root"
+            $<TARGET_FILE:ahfl_project_parse_tests>
+            ok-basic
+            "${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+            "${AHFL_TESTS_DIR}/integration/ok"
+)
+
 add_test(NAME ahfl.frontend.project.fail_missing
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
             fail-missing

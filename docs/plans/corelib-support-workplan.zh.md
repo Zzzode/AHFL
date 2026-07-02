@@ -129,7 +129,7 @@ gantt
 | M0-3 | **R2-a Option 单元测试模板（30 assertions）** | P0 | 1 人天 | `tests/integration/stdlib_units/option_ut.ahfl`，正例 15 / 边界 10 / 负例 5 | B3 修复前提 |
 | M0-4 | **R3-a CMake install(std/) + SDK 打包** | P0 | 0.5 人天 | `AhflInstall.cmake` install 规则 + SDK deb/rpm 脚本包含 `share/ahfl/std` | B4 |
 | M0-5 | **Formatter 全量 regenerate 检查 CI** | P1 | 0.5 人天 | 把 golden/formatter 全 15 份 fixture 加入 CMake test（`ahflc fmt --check` + `diff`），CI fail-fast | M0-1 完成后 |
-| M0-6 | **stdlib 加载 smoke：干净 cwd + AHFL_SYSROOT 场景** | P0 | 完成 | PackageGraph CLI 覆盖 `AHFL_SYSROOT` 正例和旧 `AHFL_STDLIB_SEARCH_ROOT` 负例；普通 frontend 保留 baked-in source-dir smoke | M0-4 |
+| M0-6 | **stdlib 加载 smoke：干净 cwd + AHFL_SYSROOT 场景** | P0 | 完成 | PackageGraph CLI 覆盖 `AHFL_SYSROOT` 正例和旧 `AHFL_STDLIB_SEARCH_ROOT` 负例；普通 frontend 覆盖忽略旧 env + baked-in source-dir smoke | M0-4 |
 
 **M0 关口条件（必须全 ✅ 才能进入 M1）：**
 - [x] M0-1 ctest 100%（4 个 `ahflc.fmt.*` 红系 `formatted_struct_2spaces.ahfl` 工作树本地分歧——进行中重构引入的 4 空格——对齐回 HEAD 正确值 2 空格后全绿；HEAD golden 本就正确）+ formatter 测试通过（2026-06-29）
@@ -137,7 +137,7 @@ gantt
 - [x] M0-3 `tests/integration/stdlib_units/option_ut.ahfl` 25 断言（正 15 + 边界 10）+ 5 负例 fixture = 30/30 PASS，已挂 ctest（`ahflc.check.stdlib_option_ut` + 5 `ahflc.fail.stdlib_option_neg_*`）（2026-06-29）
 - [~] M0-4 `AhflInstall.cmake` 已加 `install(DIRECTORY std/ DESTINATION share/ahfl/std)`；`AHFL_INSTALL=ON` 装到临时 prefix 验证 12 文件落地 `share/ahfl/std/`（含 `prelude.ahfl`）。**剩余**：干净 Ubuntu 容器 `dpkg -i && ahflc check` 验证依赖 M3-1 打包脚本（2026-06-29）
 - [~] M0-5 `formatted_struct_2spaces.ahfl` 工作树本地分歧（4 空格）已对齐回 HEAD 正确值（2 空格 = `indent_width=2`）；4 个 `ahflc.fmt.*` 测试转绿；HEAD 本就正确，无需新 commit。**剩余**：GitHub Actions `--check` 门禁 + issue 模板属 CI 基建（M3-2）；`unwrap` 关键字与路径调用冲突已记录（见下文「发现」）（2026-06-29）
-- [x] M0-6 `ahflc check` 经 baked-in `AHFL_SOURCE_DIR` 在源文件含 `Option<Int>` 时仍解析 std（`option_ut` 无 `--search-root` + 独立 probe 验证）；PackageGraph 入口使用 `AHFL_SYSROOT`，并拒绝旧 `AHFL_STDLIB_SEARCH_ROOT` 回退（2026-07-02）
+- [x] M0-6 `ahflc check` 经 baked-in `AHFL_SOURCE_DIR` 在源文件含 `Option<Int>` 时仍解析 std（`option_ut` 无 `--search-root` + 独立 probe 验证）；PackageGraph 入口使用 `AHFL_SYSROOT`，并拒绝旧 `AHFL_STDLIB_SEARCH_ROOT` 回退；普通 frontend 同样忽略旧 env（2026-07-02）
 
 ### 3.2 M1：基础类型完坑（~3.5 周，M0 关口通过后启动）
 
@@ -199,7 +199,7 @@ gantt
    - **影响**：M1-3 Result `unwrap` 收口（注释明确"与 P4-02 Result::unwrap 对齐"）会撞同一问题；任何名为 `unwrap` 的 stdlib 公开 API 经路径调用都不可用。
    - **建议**：(a) frontend 对 stdlib fn 名做关键字保留检查并诊断；或 (b) 重命名（`unwrap_or_panic` 等）；或 (c) 验证方法形式 `opt.unwrap(sentinel)` 是否可用（option_ut 模板暂回避了 unwrap）。**待 D-新 登记**。
 2. **基线 4 个 `ahflc.fmt.*` 红非 HEAD 缺陷**：`formatted_struct_2spaces.ahfl` 工作树本地为 4 空格（进行中重构引入的未提交分歧），而 HEAD 为正确的 2 空格（`indent_width=2`）、formatter binary 产 2 空格。本次将工作树对齐回 HEAD，测试转绿，**无新 commit**（golden == HEAD）。提示：进行中重构若有意改缩进策略，需同步改 formatter binary + regenerate golden。
-3. **`/lib/std/` legacy tree 已删除**：`project.cpp::builtin_stdlib_search_roots()` 只解析 `<root>/std/prelude.ahfl`，PackageGraph 入口只通过 sysroot `std/ahfl.toml` 建图；全仓不再有 tracked `/lib/std/` 源码文件。M0-2 完成。
+3. **`/lib/std/` legacy tree 已删除**：`project.cpp::builtin_stdlib_search_roots()` 不再读取旧 `AHFL_STDLIB_SEARCH_ROOT`，只使用编译期 source dir 和向上发现到的 `std/ahfl.toml`；PackageGraph 入口只通过 sysroot `std/ahfl.toml` 建图；全仓不再有 tracked `/lib/std/` 源码文件。M0-2 完成。
 4. **stdlib 既有 `lint.UNUSED_IMPORT` 告警**：`std/fmt.ahfl`、`std/traits.ahfl` 各有一条未用 import 告警（check 仍过，warning 不阻断）。非本次引入，建议 M1 收口时清理。
 5. **IR 实例 ID 计数器对 stdlib 增长脆弱（M1 首次撞到）**：`ahflc emit ir` / `emit ir-json` 的实例 ID 是全局单调计数器（`_inst_<hex>_…` / JSON `"id": N`）。**新增任何 stdlib 函数都会偏移该计数器**，使下游用户 agent 的实例 ID 后移，导致 IR golden 不匹配。M1 加 `Option::xor` / `String::repeat` 后偏移 +3，需 regen 3 份 golden（`project_check_ok.{ir,json}`、`project_workflow_value_flow.json`，diff 全为 id 字段、无语义变化）。**影响**：M1/M2 每加一批 stdlib API 都会 churn IR golden。**已修复（2026-06-29）**：`mangle_instance`（`include/ahfl/compiler/ir/mangling.hpp`）把 SymbolId hex 换成 (canonical name + type args) 的 **FNV-1a 64-bit 内容哈希**——实例名不再随符号注册顺序漂移，**stdlib 增长不再 churn IR golden**。一次性 regen 11 份含实例 ID 的 IR golden（diff 纯 `_inst_` hex、无语义变化）；`tests/unit/compiler/ir/mangling.cpp` 测试改为验证内容稳定性（同 canonical+types → 同哈希，与 SymbolId 无关）；IR 数据模型仍按 (SymbolId, type_args) 键实例，mangled name 仅作显示/身份标签。后续 (c) 验证结果（2026-06-29）：加 2 个 stdlib 声明（Option/Result `flat_map`）后，**`.ir` 文本 golden 零 churn**（`_inst_` 实例名稳定，实证）——(d) 对实例 ID 达成目标。**但** IR-JSON 的节点 `"id"`（`expr.id` / `ref.id`，flat-store 位置索引）仍随 stdlib 增长漂移（+2）——这是**另一机制**的残余 churn：稳定化需重设计 IR 节点索引（深改，且 `ir_json.cpp` / `ir_print.cpp` 均在重构修改集），列为 follow-up（不影响 `.ir` 文本格式的稳定性）。**（2026-06-30 已在测试层解决）**：`cmake/RunExpectedOutput.cmake` + `RunExpectedCommandOutput.cmake` 加 `NORMALIZE_IDS` 选项（归一化 `"id": N`→`"id": 0`，actual+expected 同处理），2 个 project IR-JSON 测试（450/451）启用之。**实证**：加 dummy stdlib fn 后 450/451 仍通过、无需 regen——stdlib 增长不再 churn 这两份 golden。id 是结构性字段（非语义），归一化是快照测试标准做法；ir_json.cpp 的真正稳定化仍待重构后，但**churn 已消除**。
 6. **P3 跨方法链泛型推断有限**：`r.map(\x->…).unwrap_or(0)` 无法沿链把 `map` 的 `U` 推断到 `unwrap_or` 的 default（报 "expected U, got Int"）。`result_ut` 通过给 generic 方法显式类型实参（`map<Int>` / `and_then<Int>` / `map_err<String>` / `or_else<String>`）绕过；`string.ahfl` 的 join 亦用手工递归而非 fold-with-lambda 规避同问题。**建议**：M1-5/M3 期强化跨链推断，或文档化"generic 方法结果先 `let` 带注解/显式类型实参"惯例。
