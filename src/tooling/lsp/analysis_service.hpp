@@ -72,9 +72,6 @@ class AnalysisService {
 
   private:
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot> build_snapshot(const std::string &uri);
-    [[nodiscard]] std::vector<std::filesystem::path>
-    infer_descriptorless_search_roots(const std::filesystem::path &source_path,
-                                      const ParseResult &parse_result) const;
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
 
     const DocumentStore &store_;

@@ -96,20 +96,6 @@ namespace {
     };
 }
 
-[[nodiscard]] bool path_has_prefix(const std::filesystem::path &prefix,
-                                   const std::filesystem::path &candidate) {
-    auto prefix_it = prefix.begin();
-    auto candidate_it = candidate.begin();
-    while (prefix_it != prefix.end() && candidate_it != candidate.end()) {
-        if (*prefix_it != *candidate_it) {
-            return false;
-        }
-        ++prefix_it;
-        ++candidate_it;
-    }
-    return prefix_it == prefix.end();
-}
-
 [[nodiscard]] bool read_plain_file(const std::filesystem::path &path, std::string &content) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -463,41 +449,6 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     return input;
 }
 
-[[nodiscard]] std::optional<std::string> single_module_name(const ast::Program &program) {
-    std::optional<std::string> result;
-    for (const auto &declaration : program.declarations) {
-        if (!declaration || declaration->kind != ast::NodeKind::ModuleDecl) {
-            continue;
-        }
-
-        const auto &module = static_cast<const ast::ModuleDecl &>(*declaration);
-        if (!module.name) {
-            return std::nullopt;
-        }
-        if (result.has_value()) {
-            return std::nullopt;
-        }
-        result = module.name->spelling();
-    }
-    return result;
-}
-
-[[nodiscard]] std::filesystem::path module_path(std::string_view module_name) {
-    std::filesystem::path relative;
-    std::size_t start = 0;
-    while (start < module_name.size()) {
-        const auto separator = module_name.find("::", start);
-        if (separator == std::string_view::npos) {
-            relative /= std::string(module_name.substr(start));
-            break;
-        }
-        relative /= std::string(module_name.substr(start, separator - start));
-        start = separator + 2;
-    }
-    relative += ".ahfl";
-    return relative;
-}
-
 [[nodiscard]] DiagnosticSeverity to_lsp_severity(ahfl::DiagnosticSeverity severity) {
     switch (severity) {
     case ahfl::DiagnosticSeverity::Error:
@@ -815,55 +766,6 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
     }
 
     auto parse_result = frontend.parse_text(document->uri, document->text);
-    if (document_path.has_value() && parse_result.program && !parse_result.has_errors()) {
-        const auto module_name = single_module_name(*parse_result.program);
-        const auto is_std_source =
-            module_name.has_value() && (*module_name == "std" || module_name->starts_with("std::"));
-        const auto inferred_roots = infer_descriptorless_search_roots(*document_path, parse_result);
-        if (!inferred_roots.empty()) {
-            auto project_result = frontend.parse_project(ProjectInput{
-                .entry_files = {std::filesystem::path(normalized_path_key(*document_path))},
-                .search_roots = inferred_roots,
-                .include_stdlib = !is_std_source,
-                .source_overlays = open_document_overlays(),
-            });
-            snapshot->project_aware = true;
-            snapshot->project_result =
-                std::make_unique<ProjectParseResult>(std::move(project_result));
-
-            for (const auto &source : snapshot->project_result->graph.sources) {
-                index_source(*snapshot,
-                             LspSourceSnapshot{
-                                 .uri = uri_from_path(source.path),
-                                 .path = source.path,
-                                 .source = &source.source,
-                                 .program = source.program.get(),
-                                 .source_id = source.id,
-                             });
-            }
-
-            if (!snapshot->project_result->has_errors()) {
-                snapshot->resolve_result = resolver.resolve(snapshot->project_result->graph);
-                if (!snapshot->resolve_result.has_errors()) {
-                    auto type_result = type_checker.check(snapshot->project_result->graph,
-                                                          snapshot->resolve_result);
-                    snapshot->type_check_result =
-                        std::make_unique<TypeCheckResult>(std::move(type_result));
-                    if (!snapshot->type_check_result->has_errors()) {
-                        auto validation_result = validator.validate(snapshot->project_result->graph,
-                                                                    snapshot->resolve_result,
-                                                                    *snapshot->type_check_result);
-                        snapshot->validation_result =
-                            std::make_unique<ValidationResult>(std::move(validation_result));
-                    }
-                }
-            }
-
-            build_hover_indices(*snapshot);
-            return snapshot;
-        }
-    }
-
     snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
     index_source(*snapshot,
                  LspSourceSnapshot{
@@ -891,50 +793,6 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
 
     build_hover_indices(*snapshot);
     return snapshot;
-}
-
-std::vector<std::filesystem::path>
-AnalysisService::infer_descriptorless_search_roots(const std::filesystem::path &source_path,
-                                                   const ParseResult &parse_result) const {
-    if (!parse_result.program) {
-        return {};
-    }
-
-    const auto module_name = single_module_name(*parse_result.program);
-    if (!module_name.has_value() || module_name->empty()) {
-        return {};
-    }
-
-    const auto normalized_source = std::filesystem::path(normalized_path_key(source_path));
-    auto relative = module_path(*module_name).lexically_normal();
-    auto candidate = normalized_source;
-    std::vector<std::filesystem::path> module_parts;
-    for (const auto &part : relative) {
-        module_parts.push_back(part);
-    }
-    if (module_parts.empty()) {
-        return {};
-    }
-
-    for (auto it = module_parts.rbegin(); it != module_parts.rend(); ++it) {
-        if (!candidate.has_filename() || candidate.filename() != *it) {
-            return {};
-        }
-        candidate = candidate.parent_path();
-    }
-
-    std::vector<std::filesystem::path> roots;
-    const auto inferred_root = std::filesystem::path(normalized_path_key(candidate));
-    roots.push_back(inferred_root);
-
-    for (const auto &workspace_root : workspace_roots_) {
-        if (path_has_prefix(workspace_root, normalized_source) &&
-            std::find(roots.begin(), roots.end(), workspace_root) == roots.end()) {
-            roots.push_back(workspace_root);
-        }
-    }
-
-    return roots;
 }
 
 std::unordered_map<std::string, std::string> AnalysisService::open_document_overlays() const {

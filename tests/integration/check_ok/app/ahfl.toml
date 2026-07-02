@@ -1,0 +1,22 @@
+manifest_version = 1
+
+[package]
+name = "check-ok-app"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "app"
+root = "."
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "app::main::MainWorkflow"
+exports = [{ kind = "workflow", name = "app::main::MainWorkflow" }]
+
+[dependencies]
+lib = { source = "workspace" }

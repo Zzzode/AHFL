@@ -1414,11 +1414,21 @@ void test_package_graph_workspace_selects_member_dependency_source() {
           "package_graph_workspace.definition_targets_workspace_dependency_source");
 }
 
-void test_descriptorless_workspace_infers_module_root_for_imports() {
-    const auto root = make_temp_project("descriptorless_workspace");
-    const auto app_path = root / "app" / "main.ahfl";
-    const auto agents_path = root / "lib" / "agents.ahfl";
-    const auto types_path = root / "lib" / "types.ahfl";
+void test_package_graph_workspace_preserves_cross_package_hover() {
+    const auto root = make_temp_project("package_graph_workspace_hover");
+    const auto app_root = root / "packages" / "app";
+    const auto lib_root = root / "packages" / "lib";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto agents_path = lib_root / "src" / "agents.ahfl";
+    const auto types_path = lib_root / "src" / "types.ahfl";
+    write_workspace_manifest(root, "\"packages/app\", \"packages/lib\"");
+    write_package_manifest(app_root,
+                           "lsp-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nlib = { source = \"workspace\" }\n");
+    write_package_manifest(lib_root, "lib", "lib", "\"agents\", \"types\"", "src/agents.ahfl");
     const std::string app_source = "module app::main;\n"
                                    "import lib::types as types;\n"
                                    "import lib::agents as agents;\n"
@@ -1478,9 +1488,9 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
     });
 
     check(output.find("unknown type 'types::RequestAlias'") == std::string::npos,
-          "descriptorless_workspace.no_unknown_imported_alias_diagnostic");
+          "package_graph_workspace.no_unknown_imported_alias_diagnostic");
     check(output.find(types_uri) != std::string::npos,
-          "descriptorless_workspace.definition_targets_imported_source");
+          "package_graph_workspace.definition_targets_imported_source");
 
     const std::string input_hover =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":")" +
@@ -1492,11 +1502,11 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     check(input_hover_output.find("lib::agents::AliasAgent") == std::string::npos,
-          "descriptorless_workspace.input_label_hover_does_not_select_agent");
+          "package_graph_workspace.input_label_hover_does_not_select_agent");
     check(input_hover_output.find("input: lib::types::Request") != std::string::npos,
-          "descriptorless_workspace.input_label_hover_shows_resolved_type");
+          "package_graph_workspace.input_label_hover_shows_resolved_type");
     check(input_hover_output.find("- Declared as: `types::RequestAlias`") != std::string::npos,
-          "descriptorless_workspace.input_label_hover_shows_declared_alias");
+          "package_graph_workspace.input_label_hover_shows_declared_alias");
 
     const std::string agent_name_hover =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":")" +
@@ -1508,7 +1518,7 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     check(agent_name_hover_output.find("lib::agents::AliasAgent") != std::string::npos,
-          "descriptorless_workspace.agent_name_hover_selects_agent");
+          "package_graph_workspace.agent_name_hover_selects_agent");
 
     const auto alias_position = position_of(agents_source, "RequestAlias");
     const auto alias_hover_output = run_lsp_messages({
@@ -1519,9 +1529,9 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
     });
     check(alias_hover_output.find("type lib::types::RequestAlias = lib::types::Request") !=
               std::string::npos,
-          "descriptorless_workspace.alias_hover_shows_alias_signature");
+          "package_graph_workspace.alias_hover_shows_alias_signature");
     check(alias_hover_output.find("- Declared as: `Request`") != std::string::npos,
-          "descriptorless_workspace.alias_hover_shows_declared_target");
+          "package_graph_workspace.alias_hover_shows_declared_target");
 
     const auto transition_position = position_of(agents_source, "transition");
     const auto transition_hover_output = run_lsp_messages({
@@ -1531,9 +1541,9 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     check(transition_hover_output.find("transition Init -> Done") != std::string::npos,
-          "descriptorless_workspace.transition_label_hover_signature");
+          "package_graph_workspace.transition_label_hover_signature");
     check(transition_hover_output.find("Transition of `AliasAgent`") != std::string::npos,
-          "descriptorless_workspace.transition_label_hover_headline");
+          "package_graph_workspace.transition_label_hover_headline");
 
     const auto liveness_hover_output = run_lsp_messages({
         initialize_body(root),
@@ -1543,49 +1553,9 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
     });
     check(liveness_hover_output.find("liveness: eventually completed(run, Missing)") !=
               std::string::npos,
-          "descriptorless_workspace.liveness_hover_signature");
+          "package_graph_workspace.liveness_hover_signature");
     check(liveness_hover_output.find("workflow liveness property") != std::string::npos,
-          "descriptorless_workspace.liveness_hover_headline");
-}
-
-void test_descriptorless_std_file_does_not_add_overlapping_workspace_root() {
-    const auto root = make_temp_project("descriptorless_std_workspace");
-    const auto collections_path = root / "std" / "collections.ahfl";
-    const auto option_path = root / "std" / "option.ahfl";
-    const std::string collections_source = "module std::collections;\n"
-                                           "import std::option as option;\n"
-                                           "\n"
-                                           "struct List<T> {}\n";
-    write_file(collections_path, collections_source);
-    write_file(option_path,
-               "module std::option;\n"
-               "\n"
-               "enum Option<T> { Some(T), None, }\n");
-
-    const auto collections_uri = AnalysisService::uri_from_path(collections_path);
-    DocumentStore store;
-    store.open(TextDocumentItem{
-        .uri = collections_uri,
-        .language_id = "ahfl",
-        .version = 1,
-        .text = collections_source,
-    });
-
-    AnalysisService analysis(store);
-    analysis.set_workspace_roots({root});
-
-    const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
-    check(snapshot != nullptr, "descriptorless_std.snapshot_exists");
-    if (snapshot == nullptr) {
-        return;
-    }
-
-    const auto diagnostics = snapshot->diagnostics_for_uri(collections_uri);
-    const auto has_ambiguous_import =
-        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
-            return diagnostic.message.find("ambiguous across search roots") != std::string::npos;
-        });
-    check(!has_ambiguous_import, "descriptorless_std.no_ambiguous_import");
+          "package_graph_workspace.liveness_hover_headline");
 }
 
 void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
@@ -1640,9 +1610,10 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
     check(!has_ambiguous_import, "sysroot_std.no_ambiguous_import");
 }
 
-void test_descriptorless_workspace_does_not_inject_prelude() {
-    const auto root = make_temp_project("descriptorless_explicit_prelude");
-    const auto source_path = root / "app" / "main.ahfl";
+void test_package_graph_manifest_does_not_inject_prelude() {
+    const auto root = make_temp_project("package_graph_explicit_prelude");
+    const auto source_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-explicit-prelude", "app", "\"main\"");
     const std::string source = "module app::main;\n"
                                "\n"
                                "fn uses_prelude() -> Int effect Pure decreases 0 {\n"
@@ -1664,7 +1635,7 @@ void test_descriptorless_workspace_does_not_inject_prelude() {
     analysis.set_workspace_roots({root});
 
     const auto *snapshot = analysis.snapshot_for_uri(uri);
-    check(snapshot != nullptr, "descriptorless_explicit_prelude.snapshot_exists");
+    check(snapshot != nullptr, "package_graph_explicit_prelude.snapshot_exists");
     if (snapshot == nullptr) {
         return;
     }
@@ -1674,7 +1645,7 @@ void test_descriptorless_workspace_does_not_inject_prelude() {
         std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
             return diagnostic.message.find("unknown callable 'some'") != std::string::npos;
         });
-    check(has_unknown_some, "descriptorless_explicit_prelude.some_is_not_implicit");
+    check(has_unknown_some, "package_graph_explicit_prelude.some_is_not_implicit");
 }
 
 void test_hover_renderer_detail_levels() {
@@ -3314,10 +3285,9 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
-    test_descriptorless_workspace_infers_module_root_for_imports();
-    test_descriptorless_std_file_does_not_add_overlapping_workspace_root();
+    test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
-    test_descriptorless_workspace_does_not_inject_prelude();
+    test_package_graph_manifest_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
     test_hover_respects_client_markup_and_debug_options();
