@@ -626,7 +626,7 @@ exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow"
 
 [dependencies]
 std = { source = "sysroot" }
-audit_alias = { source = "path", path = "packages/audit-core", version = "0.1.0" }
+audit-alias = { source = "path", path = "packages/audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
                             R"TOML(manifest_version = 1
@@ -658,7 +658,7 @@ entry = "src/lib.ahfl"
 
     REQUIRE(result.has_errors());
     CHECK(has_diagnostic(result.diagnostics,
-                         "path dependency key 'audit_alias' must match package name "
+                         "path dependency key 'audit-alias' must match package name "
                          "'audit-core'"));
 }
 

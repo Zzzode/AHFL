@@ -331,6 +331,8 @@ void validate_relative_path(std::string_view value,
 
     if (key.empty()) {
         add_diag(diagnostics, kInvalidValue, "dependency key must not be empty", key_range);
+    } else {
+        validate_kebab(key, "dependency key", key_range, diagnostics);
     }
 
     if (value.kind != ValueKind::InlineTable && value.kind != ValueKind::Table) {
