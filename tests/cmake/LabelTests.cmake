@@ -70,8 +70,8 @@ ahfl_label_tests(
         ahflc.emit_native_json.expr_temporal
         ahflc.emit_native_json.workflow_value_flow
         ahflc.emit_native_json.project.workflow_value_flow
-        ahflc.emit_native_json.project_manifest.workflow_value_flow
-        ahflc.emit_native_json.workspace.workflow_value_flow
+        ahflc.emit_native_json.manifest_basic
+        ahflc.emit_native_json.workspace_basic
 )
 
 ahfl_label_tests(
@@ -93,9 +93,9 @@ ahfl_label_tests(
 ahfl_label_tests(
     LABELS ahfl-v0.5 v0.5-package-authoring-emission
     TESTS
-        ahflc.emit_native_json.workflow_value_flow.with_package
-        ahflc.emit_native_json.project_manifest.workflow_value_flow.with_package
-        ahflc.emit_native_json.workspace.workflow_value_flow.with_package
+        ahflc.emit_native_json.rejects_legacy_package_descriptor
+        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_package
+        ahflc.emit_native_json.rejects_legacy_workspace_descriptor_with_package
         ahflc.check.project_manifest.rejects_legacy_descriptor_with_package
 )
 
@@ -106,8 +106,8 @@ ahfl_label_tests(
         ahfl.handoff.package.validate_rejects_wrong_kind
         ahfl.handoff.package.validate_rejects_duplicate_normalized_targets
         ahfl.handoff.package.validate_rejects_unknown_capability
-        ahflc.emit_native_json.project_manifest.workflow_value_flow.with_display_package
-        ahflc.emit_native_json.project_manifest.workflow_value_flow.fail_unknown_package_capability
+        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_display_package
+        ahflc.emit_native_json.rejects_legacy_project_descriptor_with_bad_package
 )
 
 ahfl_label_tests(

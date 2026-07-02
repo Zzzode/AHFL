@@ -1227,6 +1227,32 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
+    if (effective_command_ == CommandKind::EmitNativeJson &&
+        options_.project_descriptor.has_value()) {
+        std::cerr << "error: emit native-json no longer accepts --project; use --manifest "
+                     "<ahfl.toml> --target <name>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::EmitNativeJson &&
+        options_.workspace_descriptor.has_value() && !is_toml_workspace_descriptor(options_)) {
+        std::cerr << "error: emit native-json --workspace expects ahfl.workspace.toml; legacy "
+                     "ahfl.workspace.json descriptors are removed; use ahfl.workspace.toml with "
+                     "--package <name> --target <name>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::EmitNativeJson &&
+        options_.package_descriptor.has_value() && !workspace_package_selector) {
+        std::cerr << "error: emit native-json no longer accepts legacy --package descriptors; "
+                     "move handoff metadata into [targets.<name>] and use --manifest "
+                     "<ahfl.toml> --target <name>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
     if (package_graph_descriptor_dump && options_.workspace_descriptor.has_value() &&
         !is_toml_workspace_descriptor(options_)) {
         std::cerr << "error: dump " << command_short_name(*effective_command_)

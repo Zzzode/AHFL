@@ -2673,28 +2673,40 @@ add_test(NAME ahflc.emit_native_json.project.workflow_value_flow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow
+add_test(NAME ahflc.emit_native_json.rejects_legacy_project_descriptor
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit native-json --project ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--project\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
+            "-DEXPECTED_REGEX=emit native-json no longer accepts --project; use --manifest <ahfl\\.toml> --target <name>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.with_package
+add_test(NAME ahflc.emit_native_json.rejects_legacy_project_descriptor_with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit native-json --project ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.with_package.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--project\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_REGEX=emit native-json no longer accepts --project; use --manifest <ahfl\\.toml> --target <name>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.with_display_package
+add_test(NAME ahflc.emit_native_json.rejects_legacy_project_descriptor_with_display_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit native-json --project ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.display.package.json"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.with_package.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--project\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.display.package.json"
+            "-DEXPECTED_REGEX=emit native-json no longer accepts --project; use --manifest <ahfl\\.toml> --target <name>"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.emit_native_json.rejects_legacy_package_descriptor
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/app/main.ahfl"
+            "-DEXPECTED_REGEX=emit native-json no longer accepts legacy --package descriptors; move handoff metadata into \\[targets\\.<name>\\]"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
@@ -3377,20 +3389,22 @@ add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.f
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.workspace.workflow_value_flow
+add_test(NAME ahflc.emit_native_json.rejects_legacy_workspace_descriptor
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit native-json --workspace ${AHFL_TESTS_DIR}/integration/handoff.workspace.json --project-name workflow-value-flow"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/handoff.workspace.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--workspace\;${AHFL_TESTS_DIR}/integration/handoff.workspace.json\;--project-name\;workflow-value-flow"
+            "-DEXPECTED_REGEX=emit native-json --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.workspace.workflow_value_flow.with_package
+add_test(NAME ahflc.emit_native_json.rejects_legacy_workspace_descriptor_with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit native-json --workspace ${AHFL_TESTS_DIR}/integration/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.with_package.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/handoff.workspace.json"
+            "-DAHFLC_ARGS=emit\;native-json\;--workspace\;${AHFL_TESTS_DIR}/integration/handoff.workspace.json\;--project-name\;workflow-value-flow\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_REGEX=emit native-json --workspace expects ahfl\\.workspace\\.toml; legacy ahfl\\.workspace\\.json descriptors are removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.emit_package_review.workspace.workflow_value_flow.with_package
@@ -3893,12 +3907,12 @@ add_test(NAME ahflc.check.project_manifest.rejects_legacy_descriptor_with_packag
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.fail_unknown_package_capability
+add_test(NAME ahflc.emit_native_json.rejects_legacy_project_descriptor_with_bad_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
             "-DAHFLC_ARGS=emit\;native-json\;--project\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.bad_capability.package.json"
-            "-DEXPECTED_REGEX=unknown package authoring capability 'MissingCapability'"
+            "-DEXPECTED_REGEX=emit native-json no longer accepts --project; use --manifest <ahfl\\.toml> --target <name>"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
