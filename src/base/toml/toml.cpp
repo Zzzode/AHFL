@@ -44,6 +44,164 @@ namespace {
     return value;
 }
 
+[[nodiscard]] bool is_digit(char ch) noexcept {
+    return ch >= '0' && ch <= '9';
+}
+
+[[nodiscard]] std::optional<int>
+parse_fixed_digits(std::string_view text, std::size_t offset, std::size_t count) {
+    if (offset + count > text.size()) {
+        return std::nullopt;
+    }
+
+    int value = 0;
+    for (std::size_t i = 0; i < count; ++i) {
+        const char ch = text[offset + i];
+        if (!is_digit(ch)) {
+            return std::nullopt;
+        }
+        value = value * 10 + (ch - '0');
+    }
+    return value;
+}
+
+[[nodiscard]] bool is_leap_year(int year) noexcept {
+    return (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+}
+
+[[nodiscard]] int days_in_month(int year, int month) noexcept {
+    switch (month) {
+    case 1:
+    case 3:
+    case 5:
+    case 7:
+    case 8:
+    case 10:
+    case 12:
+        return 31;
+    case 4:
+    case 6:
+    case 9:
+    case 11:
+        return 30;
+    case 2:
+        return is_leap_year(year) ? 29 : 28;
+    default:
+        return 0;
+    }
+}
+
+[[nodiscard]] bool parse_date(std::string_view token, std::size_t &offset) {
+    const auto year = parse_fixed_digits(token, offset, 4);
+    if (!year.has_value() || offset + 10 > token.size() || token[offset + 4] != '-' ||
+        token[offset + 7] != '-') {
+        return false;
+    }
+
+    const auto month = parse_fixed_digits(token, offset + 5, 2);
+    const auto day = parse_fixed_digits(token, offset + 8, 2);
+    if (!month.has_value() || !day.has_value()) {
+        return false;
+    }
+
+    const auto max_day = days_in_month(*year, *month);
+    if (max_day == 0 || *day < 1 || *day > max_day) {
+        return false;
+    }
+
+    offset += 10;
+    return true;
+}
+
+[[nodiscard]] bool parse_fraction(std::string_view token, std::size_t &offset) {
+    if (offset >= token.size() || token[offset] != '.') {
+        return true;
+    }
+
+    ++offset;
+    const auto begin = offset;
+    while (offset < token.size() && is_digit(token[offset])) {
+        ++offset;
+    }
+    return offset > begin;
+}
+
+[[nodiscard]] bool parse_time(std::string_view token, std::size_t &offset) {
+    const auto hour = parse_fixed_digits(token, offset, 2);
+    if (!hour.has_value() || offset + 8 > token.size() || token[offset + 2] != ':' ||
+        token[offset + 5] != ':') {
+        return false;
+    }
+
+    const auto minute = parse_fixed_digits(token, offset + 3, 2);
+    const auto second = parse_fixed_digits(token, offset + 6, 2);
+    if (!minute.has_value() || !second.has_value() || *hour > 23 || *minute > 59 || *second > 59) {
+        return false;
+    }
+
+    offset += 8;
+    return parse_fraction(token, offset);
+}
+
+[[nodiscard]] bool parse_offset(std::string_view token, std::size_t &offset) {
+    if (offset >= token.size()) {
+        return false;
+    }
+    if (token[offset] == 'Z') {
+        ++offset;
+        return true;
+    }
+    if (token[offset] != '+' && token[offset] != '-') {
+        return false;
+    }
+
+    ++offset;
+    const auto hour = parse_fixed_digits(token, offset, 2);
+    if (!hour.has_value() || offset + 5 > token.size() || token[offset + 2] != ':') {
+        return false;
+    }
+    const auto minute = parse_fixed_digits(token, offset + 3, 2);
+    if (!minute.has_value() || *hour > 23 || *minute > 59) {
+        return false;
+    }
+    offset += 5;
+    return true;
+}
+
+[[nodiscard]] bool is_valid_datetime_token(std::string_view token) {
+    std::size_t offset = 0;
+    if (parse_date(token, offset)) {
+        if (offset == token.size()) {
+            return true;
+        }
+        if (token[offset] != 'T' && token[offset] != 't' && token[offset] != ' ') {
+            return false;
+        }
+        ++offset;
+        if (!parse_time(token, offset)) {
+            return false;
+        }
+        if (offset == token.size()) {
+            return true;
+        }
+        return parse_offset(token, offset) && offset == token.size();
+    }
+
+    offset = 0;
+    return parse_time(token, offset) && offset == token.size();
+}
+
+[[nodiscard]] bool is_datetime_candidate_token(std::string_view token) noexcept {
+    return !token.empty() && is_digit(token.front()) &&
+           (token.find('-') != std::string_view::npos || token.find(':') != std::string_view::npos);
+}
+
+[[nodiscard]] bool begins_with_local_time(std::string_view input, std::size_t offset) noexcept {
+    return offset + 8 <= input.size() && is_digit(input[offset]) && is_digit(input[offset + 1]) &&
+           input[offset + 2] == ':' && is_digit(input[offset + 3]) && is_digit(input[offset + 4]) &&
+           input[offset + 5] == ':' && is_digit(input[offset + 6]) && is_digit(input[offset + 7]);
+}
+
 [[nodiscard]] Entry *find_entry_in(Value &table, std::string_view key) {
     for (auto &entry : table.table_fields) {
         if (entry.key == key) {
@@ -516,12 +674,7 @@ class Parser {
         }
 
         const auto token_begin = pos_;
-        while (!at_end() && !is_space(peek()) && !is_newline(peek()) && peek() != '#' &&
-               peek() != ',' && peek() != ']' && peek() != '}') {
-            ++pos_;
-        }
-
-        const auto token = input_.substr(token_begin, pos_ - token_begin);
+        const auto token = read_bare_token(token_begin);
         if (token == "true" || token == "false") {
             auto value = make_value(ValueKind::Boolean,
                                     SourceRange{.begin_offset = token_begin, .end_offset = pos_});
@@ -530,6 +683,12 @@ class Parser {
         }
 
         if (looks_like_datetime(token)) {
+            if (!is_valid_datetime_token(token)) {
+                add_error("toml.invalid_datetime",
+                          "invalid TOML datetime",
+                          SourceRange{.begin_offset = token_begin, .end_offset = pos_});
+                return nullptr;
+            }
             auto value = make_value(ValueKind::DateTime,
                                     SourceRange{.begin_offset = token_begin, .end_offset = pos_});
             value->string_value = std::string{token};
@@ -540,8 +699,27 @@ class Parser {
     }
 
     [[nodiscard]] bool looks_like_datetime(std::string_view token) const noexcept {
-        return token.find('-') != std::string_view::npos ||
-               token.find(':') != std::string_view::npos;
+        return is_datetime_candidate_token(token);
+    }
+
+    [[nodiscard]] bool is_bare_token_terminator(char ch) const noexcept {
+        return is_space(ch) || is_newline(ch) || ch == '#' || ch == ',' || ch == ']' || ch == '}';
+    }
+
+    [[nodiscard]] std::string_view read_bare_token(std::size_t token_begin) {
+        while (!at_end() && !is_bare_token_terminator(peek())) {
+            ++pos_;
+        }
+
+        if (pos_ < input_.size() && input_[pos_] == ' ' &&
+            begins_with_local_time(input_, pos_ + 1)) {
+            ++pos_;
+            while (!at_end() && !is_bare_token_terminator(peek())) {
+                ++pos_;
+            }
+        }
+
+        return input_.substr(token_begin, pos_ - token_begin);
     }
 
     [[nodiscard]] std::unique_ptr<Value> parse_number_token(std::string_view token,

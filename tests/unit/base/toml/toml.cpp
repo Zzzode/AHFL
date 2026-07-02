@@ -3,12 +3,19 @@
 
 #include "base/toml/toml.hpp"
 
+#include <algorithm>
 #include <string_view>
 
 namespace {
 
 [[nodiscard]] std::string_view slice(std::string_view input, ahfl::SourceRange range) {
     return input.substr(range.begin_offset, range.end_offset - range.begin_offset);
+}
+
+[[nodiscard]] bool has_diagnostic(const ahfl::toml::Document &document, std::string_view code) {
+    return std::any_of(document.diagnostics.begin(),
+                       document.diagnostics.end(),
+                       [&](const auto &diag) { return diag.code == code; });
 }
 
 } // namespace
@@ -78,6 +85,24 @@ inline = { source = "path", path = "../core", version = "0.1.0" }
     CHECK(result.document.find({"inline"})->kind == ahfl::toml::ValueKind::InlineTable);
 }
 
+TEST_CASE("TOML parser accepts TOML 1.0 datetime forms") {
+    constexpr std::string_view input = R"TOML(local_date = 2026-07-02
+local_time = 10:11:12.345
+local_datetime = 2026-07-02 10:11:12
+offset_utc = 2026-07-02T10:11:12Z
+offset_tz = 2026-07-02T10:11:12+08:00
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE_FALSE(result.has_errors());
+
+    CHECK(result.document.find({"local_date"})->kind == ahfl::toml::ValueKind::DateTime);
+    CHECK(result.document.find({"local_time"})->kind == ahfl::toml::ValueKind::DateTime);
+    CHECK(result.document.find({"local_datetime"})->kind == ahfl::toml::ValueKind::DateTime);
+    CHECK(result.document.find({"offset_utc"})->kind == ahfl::toml::ValueKind::DateTime);
+    CHECK(result.document.find({"offset_tz"})->kind == ahfl::toml::ValueKind::DateTime);
+}
+
 TEST_CASE("TOML parser accepts array of tables") {
     constexpr std::string_view input = R"TOML([targets.workflow]
 kind = "handoff"
@@ -118,4 +143,39 @@ TEST_CASE("TOML parser rejects invalid escapes as syntax diagnostics") {
     auto result = ahfl::toml::parse(input);
     REQUIRE(result.has_errors());
     CHECK(result.document.diagnostics.front().code == "toml.invalid_escape");
+}
+
+TEST_CASE("TOML parser rejects malformed datetimes but keeps parsing following keys") {
+    constexpr std::string_view input = R"TOML(bad_date = 2026-13-40
+next = 1
+bad_time = 25:61:61
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic(result.document, "toml.invalid_datetime"));
+
+    const auto *next = result.document.find({"next"});
+    REQUIRE(next != nullptr);
+    CHECK(next->kind == ahfl::toml::ValueKind::Integer);
+    CHECK(next->integer_value == 1);
+}
+
+TEST_CASE("TOML parser accepts TOML 1.0 mixed-type arrays") {
+    constexpr std::string_view input = R"TOML(ok = [1, 2, 3]
+mixed = [1, "two"]
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *ok = result.document.find({"ok"});
+    REQUIRE(ok != nullptr);
+    CHECK(ok->array_items.size() == 3);
+
+    const auto *mixed = result.document.find({"mixed"});
+    REQUIRE(mixed != nullptr);
+    REQUIRE(mixed->array_items.size() == 2);
+    CHECK(mixed->array_items[0]->kind == ahfl::toml::ValueKind::Integer);
+    CHECK(mixed->array_items[1]->kind == ahfl::toml::ValueKind::String);
 }

@@ -207,7 +207,7 @@ Parser 分成两层：
 Conformance 测试矩阵：
 
 1. TOML 1.0 positive fixtures：覆盖 string escaping、multi-line strings、numeric bases、float edge values、datetime、dotted keys、inline tables、array of tables 和 nested tables。
-2. TOML 1.0 negative fixtures：覆盖 invalid escape、unterminated string、duplicate keys、invalid dotted key、mixed array element rules、malformed table header 和 inline table closure。
+2. TOML 1.0 negative fixtures：覆盖 invalid escape、unterminated string、duplicate keys、invalid dotted key、malformed datetime、malformed table header 和 inline table closure。TOML 1.0 允许 mixed-type array，AHFL manifest schema 层不得把它降级成自定义 TOML 子集。
 3. Source-range fixtures：断言 key、value、table header、array item 和 duplicate declaration diagnostic 均落在精确字段上。
 4. Manifest schema fixtures：断言 TOML 合法但 manifest schema 不接受的字段和值进入 `E::manifest_*`，而不是 `E::manifest_syntax`。
 5. Lockfile checksum fixtures：断言 canonical TOML 表示、换行规范化、路径排序和 hash 输入稳定。
