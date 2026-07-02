@@ -26,6 +26,10 @@ namespace {
     });
 }
 
+[[nodiscard]] std::string_view slice(std::string_view input, ahfl::SourceRange range) {
+    return input.substr(range.begin_offset, range.end_offset - range.begin_offset);
+}
+
 } // namespace
 
 TEST_CASE("Package manifest schema accepts RFC 0005 minimal package") {
@@ -291,6 +295,41 @@ audit_core = { source = "path", path = "packages/audit-core", version = "0.1.0" 
     REQUIRE(result.has_errors());
     CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
     CHECK(has_message(result.diagnostics, "dependency key must be kebab-case"));
+}
+
+TEST_CASE("Package manifest schema reports dependency source range on the value") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+registry-core = { source = "registry" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    const auto found = std::find_if(
+        result.diagnostics.begin(), result.diagnostics.end(), [](const auto &diagnostic) {
+            return diagnostic.message == "unsupported dependency source 'registry'";
+        });
+    REQUIRE(found != result.diagnostics.end());
+    CHECK(slice(input, found->range) == "\"registry\"");
 }
 
 TEST_CASE("Package manifest schema rejects absolute path dependencies") {
@@ -584,6 +623,19 @@ std = { source = "sysroot", path = "../std", version = "0.1.0" }
     REQUIRE(result.has_errors());
     CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
     CHECK(has_message(result.diagnostics, "sysroot dependency must not declare path or version"));
+    const auto has_path_key_range = std::any_of(
+        result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &diagnostic) {
+            return diagnostic.message == "sysroot dependency must not "
+                                         "declare path or version" &&
+                   slice(input, diagnostic.range) == "path";
+        });
+    const auto has_version_key_range = std::any_of(
+        result.diagnostics.begin(), result.diagnostics.end(), [&](const auto &diagnostic) {
+            return diagnostic.message == "sysroot dependency must not declare path or version" &&
+                   slice(input, diagnostic.range) == "version";
+        });
+    CHECK(has_path_key_range);
+    CHECK(has_version_key_range);
 }
 
 TEST_CASE("Package manifest schema validates target entry shapes") {

@@ -477,15 +477,25 @@ void validate_dependency_path(std::string_view value,
         }
     }
 
+    const auto *source_entry = find_entry(value, "source");
+    const auto *path_entry = find_entry(value, "path");
+    const auto *version_entry = find_entry(value, "version");
+
     if (spec.source == "sysroot") {
         if (spec.key != "std") {
-            add_diag(diagnostics, kPackageGraph, "sysroot dependency key must be 'std'", range);
+            add_diag(diagnostics, kPackageGraph, "sysroot dependency key must be 'std'", key_range);
         }
-        if (spec.path.has_value() || spec.version.has_value()) {
+        if (path_entry != nullptr) {
             add_diag(diagnostics,
                      kInvalidValue,
                      "sysroot dependency must not declare path or version",
-                     range);
+                     path_entry->key_range);
+        }
+        if (version_entry != nullptr) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "sysroot dependency must not declare path or version",
+                     version_entry->key_range);
         }
     } else if (spec.source == "path") {
         if (!spec.path.has_value()) {
@@ -493,17 +503,23 @@ void validate_dependency_path(std::string_view value,
                 diagnostics, kRequired, "path dependency is missing required field 'path'", range);
         }
     } else if (spec.source == "workspace") {
-        if (spec.path.has_value() || spec.version.has_value()) {
+        if (path_entry != nullptr) {
             add_diag(diagnostics,
                      kInvalidValue,
                      "workspace dependency must not declare path or version",
-                     range);
+                     path_entry->key_range);
+        }
+        if (version_entry != nullptr) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "workspace dependency must not declare path or version",
+                     version_entry->key_range);
         }
     } else if (!spec.source.empty()) {
         add_diag(diagnostics,
                  kInvalidValue,
                  "unsupported dependency source '" + spec.source + "'",
-                 range);
+                 source_entry == nullptr ? range : source_entry->value_range);
     }
 
     return spec;
