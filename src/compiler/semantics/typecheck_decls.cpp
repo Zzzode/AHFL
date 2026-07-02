@@ -32,6 +32,19 @@ namespace {
     return module_name == "std" || module_name.starts_with("std::");
 }
 
+[[nodiscard]] bool matches_builtin_allow_pattern(std::string_view pattern,
+                                                 std::string_view hook) noexcept {
+    if (pattern == hook) {
+        return true;
+    }
+    if (!pattern.ends_with('*')) {
+        return false;
+    }
+
+    pattern.remove_suffix(1);
+    return hook.starts_with(pattern);
+}
+
 // Build a WhereClauseInfo from an AST-owned WhereClauseSyntax. Per-task, this
 // is pure plumbing: we copy out the raw bound spellings so downstream code can
 // read them without an AST back-pointer, plus we retain the raw syntax pointer
@@ -957,6 +970,44 @@ void TypeCheckPass::build_workflow_types() {
     }
 }
 
+bool TypeCheckPass::builtin_hook_allowed_by_current_source(std::string_view hook) const {
+    if (current_source_ == nullptr ||
+        !current_source_->compiler_intrinsics_allow.has_value()) {
+        return true;
+    }
+
+    const auto &allowlist = *current_source_->compiler_intrinsics_allow;
+    return std::any_of(allowlist.begin(), allowlist.end(), [&](const auto &pattern) {
+        return matches_builtin_allow_pattern(pattern, hook);
+    });
+}
+
+void TypeCheckPass::validate_builtin_attribute(std::string_view hook,
+                                               bool has_effect_clause,
+                                               SourceRange range) {
+    if (!is_std_module(current_module_name_)) {
+        typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
+                             messages::typecheck::InvalidBuiltinAttribute.format_with(),
+                             range);
+    }
+    if (!has_effect_clause) {
+        typecheck_error_here(error_codes::typecheck::MissingBuiltinEffect,
+                             messages::typecheck::MissingBuiltinEffect.format_with(),
+                             range);
+    }
+    if (!is_known_builtin_hook(hook)) {
+        typecheck_error_here(error_codes::typecheck::UnknownBuiltinHook,
+                             messages::typecheck::UnknownBuiltinHook.format_with(hook),
+                             range);
+        return;
+    }
+    if (!builtin_hook_allowed_by_current_source(hook)) {
+        typecheck_error_here(error_codes::typecheck::BuiltinHookNotAllowed,
+                             messages::typecheck::BuiltinHookNotAllowed.format_with(hook),
+                             range);
+    }
+}
+
 void TypeCheckPass::build_fn_types() {
     // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): resolve each fn's signature into a
     // FnTypeInfo registered under its Function symbol id. The body is NOT
@@ -993,22 +1044,9 @@ void TypeCheckPass::build_fn_types() {
             };
 
             if (decl.get().builtin_name.has_value()) {
-                if (!is_std_module(current_module_name_)) {
-                    typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
-                                         messages::typecheck::InvalidBuiltinAttribute.format_with(),
-                                         decl.get().range);
-                }
-                if (!decl.get().effect_clause) {
-                    typecheck_error_here(error_codes::typecheck::MissingBuiltinEffect,
-                                         messages::typecheck::MissingBuiltinEffect.format_with(),
-                                         decl.get().range);
-                }
-                if (!is_known_builtin_hook(*decl.get().builtin_name)) {
-                    typecheck_error_here(error_codes::typecheck::UnknownBuiltinHook,
-                                         messages::typecheck::UnknownBuiltinHook.format_with(
-                                             *decl.get().builtin_name),
-                                         decl.get().range);
-                }
+                validate_builtin_attribute(*decl.get().builtin_name,
+                                           static_cast<bool>(decl.get().effect_clause),
+                                           decl.get().range);
             }
 
             for (const auto &type_param : decl.get().type_params) {
@@ -1527,22 +1565,9 @@ void TypeCheckPass::build_impl_types() {
                                          method->range);
                 }
                 if (method->builtin_name.has_value()) {
-                    if (!is_std_module(current_module_name_)) {
-                        typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
-                                             messages::typecheck::InvalidBuiltinAttribute.format_with(),
-                                             method->range);
-                    }
-                    if (!method->effect_clause) {
-                        typecheck_error_here(error_codes::typecheck::MissingBuiltinEffect,
-                                             messages::typecheck::MissingBuiltinEffect.format_with(),
-                                             method->range);
-                    }
-                    if (!is_known_builtin_hook(*method->builtin_name)) {
-                        typecheck_error_here(error_codes::typecheck::UnknownBuiltinHook,
-                                             messages::typecheck::UnknownBuiltinHook.format_with(
-                                                 *method->builtin_name),
-                                             method->range);
-                    }
+                    validate_builtin_attribute(*method->builtin_name,
+                                               static_cast<bool>(method->effect_clause),
+                                               method->range);
                 }
                 for (const auto &param : method->params) {
                     // P3 (RFC §1.4 inherent impl method semantics): the first

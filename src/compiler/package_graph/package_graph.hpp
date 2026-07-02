@@ -97,6 +97,7 @@ struct PackageNode {
     std::filesystem::path manifest_path;
     std::string checksum;
     std::vector<std::string> exported_modules;
+    std::vector<std::string> compiler_intrinsics_allow;
     std::vector<TargetNode> targets;
 };
 

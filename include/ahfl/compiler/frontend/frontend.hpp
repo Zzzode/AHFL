@@ -41,6 +41,7 @@ struct SourceUnit {
     std::filesystem::path path;
     std::string module_name;
     SourceRange module_range;
+    std::optional<std::vector<std::string>> compiler_intrinsics_allow;
     SourceFile source;
     Owned<ast::Program> program;
     std::vector<ImportRequest> imports;
@@ -65,6 +66,7 @@ struct ProjectInput {
         std::filesystem::path root;
         std::vector<std::string> exported_modules;
         std::vector<std::string> dependency_prefixes;
+        std::optional<std::vector<std::string>> compiler_intrinsics_allow;
     };
 
     std::vector<std::filesystem::path> entry_files{};

@@ -2389,6 +2389,59 @@ fn smoke() -> Int {
     }
 }
 
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "PackageGraph std compiler_intrinsics allowlist gates builtin hooks") {
+    const auto root = make_temp_project("stdlib_builtin_manifest_allowlist_project");
+    const auto std_root = root / "std";
+    const auto source_path = std_root / "bad.ahfl";
+
+    write_file(source_path,
+               R"AHFL(
+module std::bad;
+
+@builtin("string_raw_length")
+fn raw_length(value: String) -> Int effect Pure;
+)AHFL");
+
+    const auto check_with_allowlist = [&](std::vector<std::string> allowlist) {
+        const auto parse = frontend.parse_project(ahfl::ProjectInput{
+            .entry_files = {source_path},
+            .module_roots =
+                {
+                    ahfl::ProjectInput::ModuleRoot{
+                        .prefix = "std",
+                        .root = std_root,
+                        .exported_modules = {"bad"},
+                        .compiler_intrinsics_allow = std::move(allowlist),
+                    },
+                },
+            .include_stdlib = false,
+            .inject_prelude = false,
+        });
+        REQUIRE_FALSE(parse.has_errors());
+
+        ahfl::Resolver resolver;
+        const auto resolve = resolver.resolve(parse.graph);
+        REQUIRE_FALSE(resolve.has_errors());
+
+        ahfl::TypeChecker checker;
+        return checker.check(parse.graph, resolve);
+    };
+
+    const auto rejected = check_with_allowlist({"option_*"});
+    REQUIRE(rejected.has_errors());
+    CHECK(std::any_of(rejected.diagnostics.entries().begin(),
+                      rejected.diagnostics.entries().end(),
+                      [](const auto &entry) {
+                          return entry.code.has_value() &&
+                                 *entry.code == "typecheck.BUILTIN_HOOK_NOT_ALLOWED" &&
+                                 entry.message.find("string_raw_length") != std::string::npos;
+                      }));
+
+    const auto accepted = check_with_allowlist({"string_*"});
+    CHECK_FALSE(accepted.has_errors());
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr dependency cycles report structured diagnostics") {
     const std::string source = R"AHFL(
 module typed::const_cycle;

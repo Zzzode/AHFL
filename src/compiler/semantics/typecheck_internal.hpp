@@ -475,6 +475,10 @@ class TypeCheckPass final {
     // when not found (shouldn't happen in well-formed inputs).
     [[nodiscard]] std::uint32_t
     find_block_index_by_range(const ast::BlockSyntax &block) const noexcept;
+    [[nodiscard]] bool builtin_hook_allowed_by_current_source(std::string_view hook) const;
+    void validate_builtin_attribute(std::string_view hook,
+                                    bool has_effect_clause,
+                                    SourceRange range);
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
         &type_alias_decls_;

@@ -402,6 +402,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .root = package.module_root,
             .exported_modules = package.exported_modules,
             .dependency_prefixes = dependency_prefixes_for_package(graph, package.id),
+            .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
     }
     return input;

@@ -253,6 +253,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidBuiltinAttribut
     "INVALID_BUILTIN_ATTRIBUTE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownBuiltinHook{
     "UNKNOWN_BUILTIN_HOOK"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> BuiltinHookNotAllowed{
+    "BUILTIN_HOOK_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingBuiltinEffect{
     "MISSING_BUILTIN_EFFECT"};
 // P3 (RFC §3.2.2 / type-system §2): trait resolution + coherence diagnostics.
@@ -533,6 +535,8 @@ inline constexpr MessageTemplate FnDeclNotYetSupported{
     "'fn' declarations are not yet type-checked (function support is in progress)"};
 inline constexpr MessageTemplate InvalidBuiltinAttribute{"@builtin is only allowed in std modules"};
 inline constexpr MessageTemplate UnknownBuiltinHook{"unknown @builtin hook '{}'"};
+inline constexpr MessageTemplate BuiltinHookNotAllowed{
+    "@builtin hook '{}' is not allowed by compiler_intrinsics.allow"};
 inline constexpr MessageTemplate MissingBuiltinEffect{
     "@builtin functions must declare an explicit effect clause"};
 inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};

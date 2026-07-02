@@ -80,6 +80,7 @@ make_target(PackageId package, std::size_t index, const manifest::TargetManifest
     node.manifest_path = input.manifest_path.lexically_normal();
     node.checksum = input.checksum;
     node.exported_modules = input.manifest.exported_modules;
+    node.compiler_intrinsics_allow = input.manifest.compiler_intrinsics_allow;
     node.targets.reserve(input.manifest.targets.size());
     for (std::size_t i = 0; i < input.manifest.targets.size(); ++i) {
         node.targets.push_back(make_target(id, i, input.manifest.targets[i]));

@@ -185,6 +185,7 @@ effective_module_roots(const ProjectInput &input) {
                 .root = normalized,
                 .exported_modules = root.exported_modules,
                 .dependency_prefixes = root.dependency_prefixes,
+                .compiler_intrinsics_allow = root.compiler_intrinsics_allow,
             });
         }
     }
@@ -500,6 +501,7 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                     }
                 } else {
                     const auto source_id = SourceId{next_source_id++};
+                    const auto *module_root = find_module_root(module_name, module_roots);
                     path_to_source.emplace(path_key, source_id);
                     result.graph.module_to_source.emplace(module_name, source_id);
                     result.graph.sources.push_back(SourceUnit{
@@ -507,6 +509,9 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                         .path = path,
                         .module_name = module_name,
                         .module_range = imports.modules.front().second,
+                        .compiler_intrinsics_allow =
+                            module_root == nullptr ? std::nullopt
+                                                   : module_root->compiler_intrinsics_allow,
                         .source = std::move(parse_result.source),
                         .program = std::move(parse_result.program),
                         .imports = imports.imports,

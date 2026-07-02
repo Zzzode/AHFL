@@ -613,6 +613,10 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
             .exported_modules =
                 package != nullptr ? package->exported_modules : std::vector<std::string>{},
             .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
+            .compiler_intrinsics_allow =
+                package == nullptr ? std::nullopt
+                                   : std::optional<std::vector<std::string>>{
+                                         package->compiler_intrinsics_allow},
         });
     }
     return input;
