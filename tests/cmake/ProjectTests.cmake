@@ -2498,6 +2498,25 @@ set_tests_properties(ahflc.check.discover_manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.discover_nested_package_uses_nearest_manifest
+    COMMAND $<TARGET_FILE:ahflc> check
+            "${AHFL_TESTS_DIR}/integration/package_graph_nested/nested/src/main.ahfl"
+            --target child
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.discover_nested_package_uses_nearest_manifest PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked [0-9]+ source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.discover_nested_package_rejects_parent_target
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_nested/nested/src/main.ahfl"
+            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/package_graph_nested/nested/src/main.ahfl\;--target\;parent\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=package 'child-package' does not contain target 'parent'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.manifest_lockfile_drift_rejected
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

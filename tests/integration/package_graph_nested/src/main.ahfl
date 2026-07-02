@@ -1,0 +1,17 @@
+module parent_pkg::main;
+
+struct ParentInput {
+    subject: String;
+}
+
+struct ParentOutput {
+    accepted: Bool;
+}
+
+workflow ParentWorkflow {
+    input: ParentInput;
+    output: ParentOutput;
+    return: ParentOutput {
+        accepted: true,
+    };
+}

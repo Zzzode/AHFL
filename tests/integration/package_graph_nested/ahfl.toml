@@ -1,0 +1,22 @@
+manifest_version = 1
+
+[package]
+name = "parent-package"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "parent_pkg"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.parent]
+kind = "handoff"
+entry = "parent_pkg::main::ParentWorkflow"
+exports = [{ kind = "workflow", name = "parent_pkg::main::ParentWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }

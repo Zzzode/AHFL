@@ -1,0 +1,23 @@
+module child_pkg::main;
+
+import std::option as option;
+
+struct ChildInput {
+    subject: String;
+}
+
+struct ChildOutput {
+    accepted: Bool;
+}
+
+struct ChildEnvelope {
+    maybe_score: option::Option<Int>;
+}
+
+workflow ChildWorkflow {
+    input: ChildInput;
+    output: ChildOutput;
+    return: ChildOutput {
+        accepted: true,
+    };
+}
