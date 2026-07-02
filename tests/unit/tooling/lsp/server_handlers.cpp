@@ -407,6 +407,55 @@ std::filesystem::path make_temp_project(std::string_view name) {
     return root;
 }
 
+void write_package_manifest(const std::filesystem::path &package_root,
+                            std::string_view package_name,
+                            std::string_view module_prefix,
+                            std::string_view exported_modules = "\"main\"",
+                            std::string_view target_entry = "src/main.ahfl",
+                            std::string_view dependencies = {}) {
+    write_file(package_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"" +
+                   std::string(package_name) +
+                   "\"\n"
+                   "version = \"0.1.0\"\n"
+                   "edition = \"2026\"\n"
+                   "kind = \"library\"\n"
+                   "\n"
+                   "[module]\n"
+                   "prefix = \"" +
+                   std::string(module_prefix) +
+                   "\"\n"
+                   "root = \"src\"\n"
+                   "\n"
+                   "[exports]\n"
+                   "modules = [" +
+                   std::string(exported_modules) +
+                   "]\n"
+                   "\n"
+                   "[targets.lib]\n"
+                   "kind = \"library\"\n"
+                   "entry = \"" +
+                   std::string(target_entry) + "\"\n" + std::string(dependencies));
+}
+
+void write_workspace_manifest(const std::filesystem::path &workspace_root,
+                              std::string_view members) {
+    write_file(workspace_root / "ahfl.workspace.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[workspace]\n"
+               "name = \"lsp-workspace\"\n"
+               "members = [" +
+                   std::string(members) +
+                   "]\n"
+                   "\n"
+                   "[resolver]\n"
+                   "version = 1\n");
+}
+
 std::string did_open_body(const std::string &uri, int version, const std::string &text) {
     return R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":")" +
            uri + R"(","languageId":"ahfl","version":)" + std::to_string(version) + R"(,"text":")" +
@@ -1463,6 +1512,92 @@ void test_workspace_descriptor_selects_project_for_source() {
 
     check(output.find(types_uri) != std::string::npos,
           "workspace_descriptor.definition_targets_project_source");
+}
+
+void test_package_graph_manifest_selects_module_roots_for_source() {
+    const auto root = make_temp_project("package_graph_manifest");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-app", "app", "\"main\", \"types\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto msg_position = position_of(main_source, "Msg");
+    const auto definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":)" + std::to_string(msg_position.line) +
+        R"(,"character":)" + std::to_string(msg_position.character) + R"(}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        definition,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find(types_uri) != std::string::npos,
+          "package_graph_manifest.definition_targets_imported_source");
+}
+
+void test_package_graph_workspace_selects_member_dependency_source() {
+    const auto root = make_temp_project("package_graph_workspace");
+    const auto app_root = root / "packages" / "app";
+    const auto shared_root = root / "packages" / "shared-types";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    const auto lib_path = shared_root / "src" / "lib.ahfl";
+
+    write_workspace_manifest(root, "\"packages/app\", \"packages/shared-types\"");
+    write_package_manifest(app_root,
+                           "lsp-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nshared-types = { source = \"workspace\" }\n");
+    write_package_manifest(shared_root, "shared-types", "shared_types", "\"lib\"", "src/lib.ahfl");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import shared_types::lib as shared;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: shared::Msg;\n"
+                                    "}\n";
+    const std::string lib_source = "module shared_types::lib;\n"
+                                   "\n"
+                                   "struct Msg {\n"
+                                   "    value: String;\n"
+                                   "}\n";
+    write_file(main_path, main_source);
+    write_file(lib_path, lib_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto lib_uri = AnalysisService::uri_from_path(lib_path);
+    const auto msg_position = position_of(main_source, "Msg");
+    const auto definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":)" + std::to_string(msg_position.line) +
+        R"(,"character":)" + std::to_string(msg_position.character) + R"(}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        definition,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find(lib_uri) != std::string::npos,
+          "package_graph_workspace.definition_targets_workspace_dependency_source");
 }
 
 void test_descriptorless_workspace_infers_module_root_for_imports() {
@@ -3294,6 +3429,8 @@ int main() {
     test_project_open_document_overlay_drives_definition();
     test_project_diagnostics_refresh_dependent_open_documents();
     test_workspace_descriptor_selects_project_for_source();
+    test_package_graph_manifest_selects_module_roots_for_source();
+    test_package_graph_workspace_selects_member_dependency_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
     test_descriptorless_std_file_does_not_add_overlapping_workspace_root();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
