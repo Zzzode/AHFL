@@ -1,0 +1,5 @@
+module audit_core::lib::internal;
+
+struct InternalPolicy {
+    value: String;
+}

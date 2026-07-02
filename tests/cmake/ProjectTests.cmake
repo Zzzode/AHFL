@@ -2536,6 +2536,15 @@ add_test(NAME ahflc.check.workspace_private_import_rejected
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.workspace_parent_export_private_child_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;refund-audit\;--target\;bad-private-child\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=imported module 'audit_core::lib::internal' is private to package prefix 'audit_core'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.project.ok_cross_file
     COMMAND $<TARGET_FILE:ahflc> check
             --search-root "${AHFL_TESTS_DIR}/integration/check_ok"

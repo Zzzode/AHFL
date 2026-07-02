@@ -23,5 +23,10 @@ kind = "handoff"
 entry = "refund_audit::private_import::BadPrivateImportWorkflow"
 exports = [{ kind = "workflow", name = "refund_audit::private_import::BadPrivateImportWorkflow" }]
 
+[targets.bad-private-child]
+kind = "handoff"
+entry = "refund_audit::private_child_import::BadPrivateChildImportWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::private_child_import::BadPrivateChildImportWorkflow" }]
+
 [dependencies]
 audit-core = { source = "workspace" }
