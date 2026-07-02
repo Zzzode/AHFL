@@ -205,6 +205,8 @@ std = { source = "sysroot" }
 | `dump package-graph` | 是 | 是 | 否 | 是 |
 | `dump lockfile` | 是 | 是 | 否 | 是 |
 | `emit native-json` | 是 | 是 | 是 | 是 |
+| package artifact commands | 是 | 是 | 是 | 是 |
+| provider diagnostic artifacts | 是 | 是 | 是 | 是 |
 
 ## 常见失败
 

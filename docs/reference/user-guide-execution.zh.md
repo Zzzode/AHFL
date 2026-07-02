@@ -94,7 +94,7 @@ Package authoring 的常见错误：
 
 `execution-plan` 是 runtime、dry run、journal、replay、audit 等工件的核心输入：
 
-当前公开 PackageGraph 命令面已经覆盖 `check`、`dump package-graph`、`dump lockfile`、`fmt` 和 `emit native-json`。`package-review`、`execution-plan`、dry run、journal、replay、audit、checkpoint、persistence、export 和 store pipeline artifact 接入 PackageGraph 前，本文不再发布旧 JSON descriptor 命令示例；这些 artifact 必须继续以 native handoff package 和上游 machine artifact 为事实来源，不能把旧 descriptor 当新的工程配置入口。
+当前公开 PackageGraph 命令面已经覆盖 `check`、`dump package-graph`、`dump lockfile`、`fmt`、`emit native-json`、`package-review`、`execution-plan`、dry run、journal、replay、audit、checkpoint、persistence、export 和 store pipeline artifact。工程入口统一使用 `--manifest <ahfl.toml> --target <name>`，或 `--workspace <ahfl.workspace.toml> --package <name> --target <name>`。
 
 你应该在 execution plan 中检查：
 
@@ -123,7 +123,7 @@ Mock 文件示例：
 }
 ```
 
-PackageGraph 模式接入 `dry-run-trace` 前，本指南只描述 mock 文件 schema 和 trace 审查点，不发布旧 descriptor 命令示例。
+`dry-run-trace` 使用 PackageGraph handoff target 和 mock 文件共同生成 trace；不要通过旧 JSON descriptor 作为工程配置入口。
 
 Dry-run trace 应重点看：
 
@@ -151,7 +151,7 @@ Dry-run trace 应重点看：
 | `persistence-descriptor` | 需要描述持久化边界 |
 | `export-manifest` | 需要导出可移交包 |
 
-PackageGraph 模式接入这些 artifact 前，不应通过旧 JSON descriptor 作为工程配置入口。需要排查 artifact 链时，优先从 `emit native-json --manifest ... --target ...` 生成的 native handoff package 和现有 CTest golden 入手。
+这些 artifact 使用 PackageGraph handoff target 作为工程入口。需要排查 artifact 链时，优先从 `emit native-json --manifest ... --target ...`、`emit package-review --manifest ... --target ...` 和对应 CTest label 入手。
 
 ## 真实 LLM 执行
 

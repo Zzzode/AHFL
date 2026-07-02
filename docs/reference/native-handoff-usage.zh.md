@@ -56,7 +56,14 @@ flowchart TD
 
 ### 发射 package review
 
-`package-review` 接入 PackageGraph 前，不发布旧 JSON descriptor 命令示例。需要检查 reader 行为时，优先消费 `emit native-json --manifest ... --target ...` 产生的 native handoff package，并通过 C++ helper 或对应 CTest label 验证 reader summary。
+```bash
+./build/dev/src/tooling/cli/ahflc emit package-review \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --target workflow \
+  --sysroot .
+```
+
+`package-review` 读取同一个 PackageGraph handoff target metadata；它不再需要独立 package descriptor。
 
 ## C++ helper 用法
 

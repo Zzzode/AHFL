@@ -601,7 +601,7 @@ ctest --preset test-dev --output-on-failure
 5. PackageGraph unit tests：sysroot std、single package、workspace members、duplicate package name、duplicate module prefix、dependency cycle。
 6. Module visibility tests：public module import、private module rejection、same-package private import、directory module export、parent export does not expose child module、re-export rejection。
 7. Module resolution integration tests：`std::option`、用户 package prefix、目录模块 `mod.ahfl`、missing module diagnostic。
-8. CLI tests：`check --manifest`、`check --workspace --package --target`、`emit native-json --target`、`dump package-graph`。
+8. CLI tests：`check --manifest`、`check --workspace --package --target`、`emit native-json --target`、`emit package-review --target`、`emit execution-plan --target`、provider artifact target 输入、`dump package-graph`。
 9. Discovery precedence tests：explicit manifest/workspace、nested package、workspace membership、sysroot override。
 10. Stdlib tests：`std/ahfl.toml` 被 release package、dev build、LSP 和 ctest 同时消费。
 11. Prelude migration tests：旧 implicit prelude fixture 失败并给出迁移诊断；显式 prelude import fixture 通过。

@@ -158,7 +158,7 @@ Store pipeline 输出应满足：
 
 ## Provider readiness evidence
 
-Provider evidence 面向生产评审，不是普通业务用户的默认入口。Provider diagnostic artifact 当前仍是内部诊断面；在它接入 PackageGraph 前，不应把旧 JSON descriptor 写成公开使用路径。
+Provider evidence 面向生产评审，不是普通业务用户的默认入口。Provider diagnostic artifact 当前仍是内部诊断面；需要诊断时使用 `emit-provider-artifact provider/<artifact>` 搭配 PackageGraph handoff target 输入，不应把旧 JSON descriptor 写成公开使用路径。
 
 推荐优先查看的 public provider artifact：
 

@@ -306,11 +306,11 @@ Store pipeline 使用 `store/...` artifact id：
 | `store/adapter-execution` | Adapter execution projection |
 | `store/recovery-preview` | Recovery preview |
 
-这些 artifact 当前仍是单文件 / raw source 命令面；PackageGraph manifest 支持只覆盖 `check`、`fmt`、`emit native-json` 和 `dump package-graph/lockfile`。在 store artifact 接入 PackageGraph 之前，本文不提供 package-aware 示例。
+这些 artifact 已接入 PackageGraph package workflow。使用 `--manifest <ahfl.toml> --target <name>`，或 `--workspace <ahfl.workspace.toml> --package <name> --target <name>` 选择 handoff target；需要模拟运行时还必须提供 `--capability-mocks`、`--input-fixture` 和 `--run-id`。
 
 ## Provider diagnostic artifact
 
-Provider artifact 不走 `ahflc emit provider/...` 用户命令面。需要诊断 Provider pipeline 时，先查看隐藏命令面；这些内部 artifact 尚未进入 PackageGraph package workflow。
+Provider artifact 不走 `ahflc emit provider/...` 用户命令面。需要诊断 Provider pipeline 时，使用内部入口 `ahflc emit-provider-artifact provider/<artifact>`；该入口已使用同一套 PackageGraph handoff target 输入。
 
 查看内部 artifact：
 
