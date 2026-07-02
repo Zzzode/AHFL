@@ -75,6 +75,7 @@ struct TargetNode {
     std::string kind;
     std::string entry;
     std::vector<std::string> exports;
+    std::vector<manifest::CapabilityBindingManifest> capability_bindings;
 };
 
 struct DependencyEdge {

@@ -63,6 +63,7 @@ make_target(PackageId package, std::size_t index, const manifest::TargetManifest
         .kind = manifest.kind,
         .entry = manifest.entry,
         .exports = manifest.exports,
+        .capability_bindings = manifest.capability_bindings,
     };
 }
 

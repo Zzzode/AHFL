@@ -25,6 +25,14 @@ make_string_array(const std::vector<std::string> &values) {
     value->set("kind", json::JsonValue::make_string(target.kind));
     value->set("entry", json::JsonValue::make_string(target.entry));
     value->set("exports", make_string_array(target.exports));
+    auto capability_bindings = json::JsonValue::make_array();
+    for (const auto &binding : target.capability_bindings) {
+        auto item = json::JsonValue::make_object();
+        item->set("capability", json::JsonValue::make_string(binding.capability));
+        item->set("binding_key", json::JsonValue::make_string(binding.binding_key));
+        capability_bindings->push(std::move(item));
+    }
+    value->set("capability_bindings", std::move(capability_bindings));
     return value;
 }
 

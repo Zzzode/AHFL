@@ -2352,6 +2352,25 @@ set_tests_properties(ahflc.check.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.emit_native_json.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> emit native-json
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.emit_native_json.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"name\": \"refund-audit\""
+)
+
+add_test(NAME ahflc.emit_native_json.manifest_rejects_legacy_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            "-DAHFLC_ARGS=emit\;native-json\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--target\;workflow\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--manifest cannot be combined with legacy --package"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.discover_manifest_basic
     COMMAND $<TARGET_FILE:ahflc> check
             "${AHFL_TESTS_DIR}/integration/package_graph_manifest/src/main.ahfl"
@@ -2409,6 +2428,17 @@ add_test(NAME ahflc.check.workspace_basic
 )
 set_tests_properties(ahflc.check.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.emit_native_json.workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> emit native-json
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.emit_native_json.workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"entry_target\": \\{"
 )
 
 add_test(NAME ahflc.check.discover_workspace_basic

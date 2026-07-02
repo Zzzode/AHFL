@@ -332,11 +332,16 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
            std::filesystem::path{std::string{*options.workspace_descriptor}}.extension() == ".toml";
 }
 
+[[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
+    return command == CommandKind::Check || command == CommandKind::EmitNativeJson;
+}
+
 [[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
                                                 std::optional<CommandKind> command) {
     return options.workspace_descriptor.has_value() &&
            (command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile ||
-            (command == CommandKind::Check && is_toml_workspace_descriptor(options)));
+            (command_supports_package_graph_input(command) &&
+             is_toml_workspace_descriptor(options)));
 }
 
 [[nodiscard]] bool is_package_graph_descriptor_dump(std::optional<CommandKind> command) {
@@ -584,6 +589,37 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
         });
     }
     return input;
+}
+
+[[nodiscard]] bool
+package_graph_command_requires_handoff_metadata(std::optional<CommandKind> command) noexcept {
+    return command == CommandKind::EmitNativeJson;
+}
+
+[[nodiscard]] ahfl::handoff::PackageMetadata
+package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNode &package,
+                                           const ahfl::package_graph::TargetNode &target) {
+    ahfl::handoff::PackageMetadata metadata;
+    metadata.identity = ahfl::handoff::PackageIdentity{
+        .format_version = std::string{ahfl::handoff::kFormatVersion},
+        .name = package.name,
+        .version = package.version,
+    };
+    metadata.entry_target = ahfl::handoff::ExecutableRef{
+        .kind = ahfl::handoff::ExecutableKind::Workflow,
+        .canonical_name = target.entry,
+    };
+    metadata.export_targets.reserve(target.exports.size());
+    for (const auto &export_target : target.exports) {
+        metadata.export_targets.push_back(ahfl::handoff::ExecutableRef{
+            .kind = ahfl::handoff::ExecutableKind::Workflow,
+            .canonical_name = export_target,
+        });
+    }
+    for (const auto &binding : target.capability_bindings) {
+        metadata.capability_binding_keys.emplace(binding.capability, binding.binding_key);
+    }
+    return metadata;
 }
 
 void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
@@ -1164,9 +1200,10 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.manifest_path.has_value()) {
-        if (effective_command_ != CommandKind::Check && !package_graph_descriptor_dump) {
-            std::cerr << "error: --manifest is currently only supported with check and dump "
-                         "package-graph/lockfile\n";
+        if (!command_supports_package_graph_input(effective_command_) &&
+            !package_graph_descriptor_dump) {
+            std::cerr << "error: --manifest is currently only supported with check, emit "
+                         "native-json, and dump package-graph/lockfile\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1174,6 +1211,12 @@ std::optional<ExitCode> CliDriver::validate_options() {
             !options_.search_roots.empty()) {
             std::cerr << "error: --manifest cannot be combined with --project, --workspace, or "
                          "--search-root\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.package_descriptor.has_value()) {
+            std::cerr << "error: --manifest cannot be combined with legacy --package; use "
+                         "[targets.<name>] in ahfl.toml\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1719,6 +1762,14 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
     const auto *target = select_target(*package, options_, std::cerr);
     if (target == nullptr) {
         return ExitCode::UsageError;
+    }
+    if (package_graph_command_requires_handoff_metadata(effective_command_)) {
+        if (target->kind != "handoff") {
+            std::cerr << "error: target '" << target->name << "' has kind '" << target->kind
+                      << "'; emit native-json requires a handoff target\n";
+            return ExitCode::UsageError;
+        }
+        package_metadata_ = package_metadata_from_package_graph_target(*package, *target);
     }
 
     const auto entry_module = module_name_from_entry(target->entry);
