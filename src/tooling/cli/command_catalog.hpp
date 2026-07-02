@@ -19,6 +19,8 @@ enum class CommandKind {
     DumpAst,
     DumpTypes,
     DumpProject,
+    DumpPackageGraph,
+    DumpLockfile,
     EmitIr,
     EmitIrJson,
     EmitOptIr,
@@ -76,7 +78,10 @@ struct CommandLineOptions {
     std::optional<std::string_view> capability_bindings_descriptor;
     std::optional<std::string_view> project_descriptor;
     std::optional<std::string_view> workspace_descriptor;
+    std::optional<std::string_view> manifest_path;
+    std::optional<std::string_view> sysroot_path;
     std::optional<std::string_view> project_name;
+    std::optional<std::string_view> target_name;
     std::optional<std::string_view> workflow_name;
     std::optional<std::string_view> runtime_input_json;
     std::optional<std::string_view> llm_config_descriptor;

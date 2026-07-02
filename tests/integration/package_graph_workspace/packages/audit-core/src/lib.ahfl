@@ -1,0 +1,12 @@
+module audit_core::lib;
+
+import audit_core::internal as internal;
+
+struct AuditRequest {
+    subject: String;
+    metadata: internal::InternalTag;
+}
+
+struct AuditDecision {
+    accepted: Bool;
+}

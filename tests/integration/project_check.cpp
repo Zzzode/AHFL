@@ -61,6 +61,7 @@ int run_ok_cross_file(const std::filesystem::path &entry, const std::filesystem:
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -97,6 +98,7 @@ int run_fail_node_input(const std::filesystem::path &entry, const std::filesyste
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -133,6 +135,7 @@ int run_fail_completed_state(const std::filesystem::path &entry,
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -177,6 +180,7 @@ int run_ok_expression_type_isolated(const std::filesystem::path &entry,
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -231,6 +235,7 @@ int run_ok_stdlib_runtime_api(const std::filesystem::path &entry,
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -304,6 +309,7 @@ int run_ok_trait_runtime_dispatch(const std::filesystem::path &entry,
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);

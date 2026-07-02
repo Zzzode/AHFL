@@ -12,6 +12,9 @@
 #include "compiler/ir/opt/opt_passes.hpp"
 #include "compiler/ir/opt/opt_print.hpp"
 #include "compiler/ir/opt/opt_verify.hpp"
+#include "compiler/manifest/manifest.hpp"
+#include "compiler/package_graph/lockfile.hpp"
+#include "compiler/package_graph/package_graph.hpp"
 #include "compiler/passes/pass_manager.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/cli_analysis_helpers.hpp"
@@ -119,9 +122,468 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
 }
 
 [[nodiscard]] bool has_module_declaration(const ahfl::ast::Program &program) noexcept {
-    return std::any_of(program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
-        return decl && decl->kind == ahfl::ast::NodeKind::ModuleDecl;
-    });
+    return std::any_of(
+        program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
+            return decl && decl->kind == ahfl::ast::NodeKind::ModuleDecl;
+        });
+}
+
+[[nodiscard]] std::filesystem::path normalize_manifest_path(const std::filesystem::path &path) {
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    const auto candidate = error ? path.lexically_normal() : absolute.lexically_normal();
+    const auto canonical = std::filesystem::weakly_canonical(candidate, error);
+    return (error ? candidate : canonical).lexically_normal();
+}
+
+[[nodiscard]] std::optional<std::filesystem::path>
+find_sysroot_manifest_from_directory(const std::filesystem::path &start) {
+    std::error_code error;
+    const auto candidate = normalize_manifest_path(start / "std" / "ahfl.toml");
+    if (std::filesystem::exists(candidate, error) && !error) {
+        return candidate;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<std::filesystem::path>
+sysroot_manifest_from_options(const CommandLineOptions &options) {
+    if (options.sysroot_path.has_value()) {
+        const auto raw = std::filesystem::path{std::string{*options.sysroot_path}};
+        const auto normalized = normalize_manifest_path(raw);
+        if (normalized.filename() == "ahfl.toml") {
+            return normalized;
+        }
+        return normalize_manifest_path(normalized / "std" / "ahfl.toml");
+    }
+
+    if (const char *env_root = std::getenv("AHFL_SYSROOT");
+        env_root != nullptr && *env_root != '\0') {
+        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
+            return manifest;
+        }
+    }
+
+    if (const char *env_root = std::getenv("AHFL_STDLIB_SEARCH_ROOT");
+        env_root != nullptr && *env_root != '\0') {
+        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
+            return manifest;
+        }
+    }
+
+    std::error_code error;
+    auto current = std::filesystem::current_path(error);
+    if (error) {
+        return std::nullopt;
+    }
+    current = normalize_manifest_path(current);
+    while (!current.empty()) {
+        if (auto manifest = find_sysroot_manifest_from_directory(current); manifest.has_value()) {
+            return manifest;
+        }
+        const auto parent = current.parent_path();
+        if (parent == current) {
+            break;
+        }
+        current = parent;
+    }
+
+    return std::nullopt;
+}
+
+void print_package_graph_diagnostics(
+    const std::vector<ahfl::package_graph::Diagnostic> &diagnostics, std::ostream &err) {
+    for (const auto &diagnostic : diagnostics) {
+        err << "error";
+        if (!diagnostic.code.empty()) {
+            err << " [" << diagnostic.code << "]";
+        }
+        err << ": " << diagnostic.message << '\n';
+    }
+}
+
+[[nodiscard]] bool
+read_plain_file(const std::filesystem::path &path, std::string &content, std::ostream &err) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        err << "error: failed to open " << path.generic_string() << '\n';
+        return false;
+    }
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    content = buffer.str();
+    return true;
+}
+
+[[nodiscard]] std::optional<ExitCode>
+check_lockfile_if_present(const ahfl::package_graph::PackageGraph &graph,
+                          const std::filesystem::path &descriptor_directory,
+                          std::ostream &err) {
+    const auto lockfile_path = normalize_manifest_path(descriptor_directory / "ahfl.lock");
+    std::error_code error;
+    if (!std::filesystem::exists(lockfile_path, error)) {
+        if (error) {
+            err << "error: failed to inspect lockfile " << lockfile_path.generic_string() << '\n';
+            return ExitCode::CompileError;
+        }
+        return std::nullopt;
+    }
+    if (!std::filesystem::is_regular_file(lockfile_path, error) || error) {
+        err << "error: lockfile must be a regular file: " << lockfile_path.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+
+    std::string content;
+    if (!read_plain_file(lockfile_path, content, err)) {
+        return ExitCode::CompileError;
+    }
+
+    auto parsed = ahfl::package_graph::parse_lockfile_json(content);
+    if (parsed.has_errors() || !parsed.lockfile.has_value()) {
+        print_package_graph_diagnostics(parsed.diagnostics, err);
+        return ExitCode::CompileError;
+    }
+
+    const auto drift =
+        ahfl::package_graph::check_lockfile_drift(graph, *parsed.lockfile, descriptor_directory);
+    if (!drift.empty()) {
+        print_package_graph_diagnostics(drift, err);
+        return ExitCode::CompileError;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool module_has_prefix(std::string_view module_name, std::string_view prefix) {
+    return module_name == prefix ||
+           (module_name.size() > prefix.size() && module_name.starts_with(prefix) &&
+            module_name.substr(prefix.size(), 2) == "::");
+}
+
+[[nodiscard]] std::filesystem::path module_relative_path(std::string_view module_name) {
+    std::filesystem::path relative;
+    std::size_t start = 0;
+    while (start < module_name.size()) {
+        const auto separator = module_name.find("::", start);
+        if (separator == std::string_view::npos) {
+            relative /= std::string(module_name.substr(start));
+            break;
+        }
+        relative /= std::string(module_name.substr(start, separator - start));
+        start = separator + 2;
+    }
+    relative += ".ahfl";
+    return relative;
+}
+
+[[nodiscard]] std::filesystem::path module_relative_path_after_prefix(std::string_view module_name,
+                                                                      std::string_view prefix) {
+    if (module_name == prefix) {
+        return std::filesystem::path{"mod.ahfl"};
+    }
+    return module_relative_path(module_name.substr(prefix.size() + 2));
+}
+
+[[nodiscard]] std::optional<std::string> module_name_from_entry(std::string_view entry) {
+    const auto separator = entry.rfind("::");
+    if (separator == std::string_view::npos || separator == 0) {
+        return std::nullopt;
+    }
+    return std::string(entry.substr(0, separator));
+}
+
+[[nodiscard]] std::optional<std::filesystem::path>
+resolve_module_file_from_graph(const ahfl::package_graph::PackageGraph &graph,
+                               std::string_view module_name) {
+    std::vector<std::filesystem::path> candidates;
+    for (const auto &root : graph.module_roots) {
+        if (!module_has_prefix(module_name, root.prefix)) {
+            continue;
+        }
+
+        const auto relative = module_relative_path_after_prefix(module_name, root.prefix);
+        std::error_code error;
+        const auto single_file = normalize_manifest_path(root.root / relative);
+        if (std::filesystem::exists(single_file, error) && !error) {
+            candidates.push_back(single_file);
+            continue;
+        }
+
+        const auto directory_module = normalize_manifest_path(root.root / relative.parent_path() /
+                                                              relative.stem() / "mod.ahfl");
+        if (std::filesystem::exists(directory_module, error) && !error) {
+            candidates.push_back(directory_module);
+        }
+    }
+
+    if (candidates.size() != 1) {
+        return std::nullopt;
+    }
+    return candidates.front();
+}
+
+[[nodiscard]] const ahfl::package_graph::PackageNode *
+root_package(const ahfl::package_graph::PackageGraph &graph) {
+    return graph.find_package(ahfl::package_graph::PackageId{1});
+}
+
+[[nodiscard]] bool is_toml_workspace_descriptor(const CommandLineOptions &options) {
+    return options.workspace_descriptor.has_value() &&
+           std::filesystem::path{std::string{*options.workspace_descriptor}}.extension() == ".toml";
+}
+
+[[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
+                                                std::optional<CommandKind> command) {
+    return options.workspace_descriptor.has_value() &&
+           (command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile ||
+            (command == CommandKind::Check && is_toml_workspace_descriptor(options)));
+}
+
+[[nodiscard]] bool is_package_graph_descriptor_dump(std::optional<CommandKind> command) {
+    return command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile;
+}
+
+[[nodiscard]] bool command_can_discover_package_graph(const CommandLineOptions &options,
+                                                      std::optional<CommandKind> command) {
+    return command == CommandKind::Check && !options.manifest_path.has_value() &&
+           !options.workspace_descriptor.has_value() && !options.project_descriptor.has_value() &&
+           options.search_roots.empty() && options.positional.size() == 1;
+}
+
+[[nodiscard]] bool package_option_is_workspace_selector(const CommandLineOptions &options,
+                                                        std::optional<CommandKind> command) {
+    return options.package_descriptor.has_value() && uses_package_graph_workspace(options, command);
+}
+
+[[nodiscard]] std::optional<std::string_view>
+workspace_package_name(const CommandLineOptions &options, std::optional<CommandKind> command) {
+    if (package_option_is_workspace_selector(options, command)) {
+        return *options.package_descriptor;
+    }
+    if (options.project_name.has_value()) {
+        return *options.project_name;
+    }
+    return std::nullopt;
+}
+
+enum class DiscoveredPackageGraphKind {
+    Manifest,
+    Workspace,
+};
+
+struct PackageGraphInvocation {
+    ahfl::package_graph::PackageGraph graph;
+    std::filesystem::path lockfile_directory;
+    DiscoveredPackageGraphKind kind{DiscoveredPackageGraphKind::Manifest};
+};
+
+struct PackageGraphDiscoveryResult {
+    std::optional<PackageGraphInvocation> invocation;
+    std::optional<ExitCode> exit_code;
+};
+
+[[nodiscard]] std::optional<std::filesystem::path>
+find_nearest_named_file(const std::filesystem::path &start, std::string_view filename) {
+    std::error_code error;
+    auto current = normalize_manifest_path(start);
+    if (std::filesystem::is_regular_file(current, error) && !error) {
+        current = current.parent_path();
+    }
+    error.clear();
+
+    while (!current.empty()) {
+        const auto candidate = normalize_manifest_path(current / std::string{filename});
+        if (std::filesystem::is_regular_file(candidate, error) && !error) {
+            return candidate;
+        }
+        error.clear();
+
+        const auto parent = current.parent_path();
+        if (parent == current) {
+            break;
+        }
+        current = parent;
+    }
+    return std::nullopt;
+}
+
+void print_manifest_diagnostics(const std::vector<ahfl::manifest::ManifestDiagnostic> &diagnostics,
+                                std::ostream &err) {
+    for (const auto &diagnostic : diagnostics) {
+        err << "error";
+        if (!diagnostic.code.empty()) {
+            err << " [" << diagnostic.code << "]";
+        }
+        err << ": " << diagnostic.message << '\n';
+    }
+}
+
+[[nodiscard]] std::optional<ahfl::manifest::WorkspaceManifest>
+load_workspace_manifest_for_discovery(const std::filesystem::path &workspace_manifest_path,
+                                      std::ostream &err) {
+    std::string content;
+    if (!read_plain_file(workspace_manifest_path, content, err)) {
+        return std::nullopt;
+    }
+
+    auto result = ahfl::manifest::parse_workspace_manifest(content);
+    if (result.has_errors() || !result.manifest.has_value()) {
+        print_manifest_diagnostics(result.diagnostics, err);
+        return std::nullopt;
+    }
+    return std::move(*result.manifest);
+}
+
+[[nodiscard]] std::optional<ahfl::manifest::PackageManifest>
+load_package_manifest_for_discovery(const std::filesystem::path &package_manifest_path,
+                                    std::ostream &err) {
+    std::string content;
+    if (!read_plain_file(package_manifest_path, content, err)) {
+        return std::nullopt;
+    }
+
+    auto result = ahfl::manifest::parse_package_manifest(content);
+    if (result.has_errors() || !result.manifest.has_value()) {
+        print_manifest_diagnostics(result.diagnostics, err);
+        return std::nullopt;
+    }
+    return std::move(*result.manifest);
+}
+
+[[nodiscard]] bool
+workspace_contains_package_manifest(const ahfl::manifest::WorkspaceManifest &workspace,
+                                    const std::filesystem::path &workspace_manifest_path,
+                                    const std::filesystem::path &package_manifest_path) {
+    const auto workspace_root = normalize_manifest_path(workspace_manifest_path.parent_path());
+    const auto package_manifest = normalize_manifest_path(package_manifest_path);
+    for (const auto &member : workspace.members) {
+        const auto member_manifest = normalize_manifest_path(workspace_root / member / "ahfl.toml");
+        if (member_manifest == package_manifest) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] PackageGraphDiscoveryResult discover_package_graph_for_input(
+    const CommandLineOptions &options, std::optional<CommandKind> command, std::ostream &err) {
+    PackageGraphDiscoveryResult discovery;
+    if (!command_can_discover_package_graph(options, command)) {
+        return discovery;
+    }
+
+    const auto input_path =
+        normalize_manifest_path(std::filesystem::path{std::string{options.positional.front()}});
+    const auto manifest_path = find_nearest_named_file(input_path, "ahfl.toml");
+    if (!manifest_path.has_value()) {
+        return discovery;
+    }
+
+    const auto sysroot_manifest = sysroot_manifest_from_options(options);
+    if (!sysroot_manifest.has_value()) {
+        err << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        discovery.exit_code = ExitCode::UsageError;
+        return discovery;
+    }
+
+    auto package_manifest = load_package_manifest_for_discovery(*manifest_path, err);
+    if (!package_manifest.has_value()) {
+        discovery.exit_code = ExitCode::CompileError;
+        return discovery;
+    }
+
+    const auto workspace_path =
+        find_nearest_named_file(manifest_path->parent_path(), "ahfl.workspace.toml");
+    if (workspace_path.has_value()) {
+        auto workspace = load_workspace_manifest_for_discovery(*workspace_path, err);
+        if (!workspace.has_value()) {
+            discovery.exit_code = ExitCode::CompileError;
+            return discovery;
+        }
+        if (workspace_contains_package_manifest(*workspace, *workspace_path, *manifest_path)) {
+            auto workspace_result = ahfl::package_graph::build_package_graph_from_workspace(
+                ahfl::package_graph::WorkspaceBuildInput{
+                    .workspace_manifest_path = *workspace_path,
+                    .package_name = package_manifest->package_name,
+                    .sysroot_manifest_path = *sysroot_manifest,
+                });
+            if (workspace_result.has_errors() || !workspace_result.graph.has_value()) {
+                print_package_graph_diagnostics(workspace_result.diagnostics, err);
+                discovery.exit_code = ExitCode::CompileError;
+                return discovery;
+            }
+            discovery.invocation = PackageGraphInvocation{
+                .graph = std::move(*workspace_result.graph),
+                .lockfile_directory = workspace_path->parent_path(),
+                .kind = DiscoveredPackageGraphKind::Workspace,
+            };
+            return discovery;
+        }
+    }
+
+    auto manifest_result = ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = *manifest_path,
+            .sysroot_manifest_path = *sysroot_manifest,
+        });
+    if (manifest_result.has_errors() || !manifest_result.graph.has_value()) {
+        print_package_graph_diagnostics(manifest_result.diagnostics, err);
+        discovery.exit_code = ExitCode::CompileError;
+        return discovery;
+    }
+
+    discovery.invocation = PackageGraphInvocation{
+        .graph = std::move(*manifest_result.graph),
+        .lockfile_directory = manifest_path->parent_path(),
+        .kind = DiscoveredPackageGraphKind::Manifest,
+    };
+    return discovery;
+}
+
+[[nodiscard]] const ahfl::package_graph::TargetNode *
+select_target(const ahfl::package_graph::PackageNode &package,
+              const CommandLineOptions &options,
+              std::ostream &err) {
+    if (options.target_name.has_value()) {
+        const auto name = std::string_view{*options.target_name};
+        const auto found = std::find_if(package.targets.begin(),
+                                        package.targets.end(),
+                                        [&](const auto &target) { return target.name == name; });
+        if (found == package.targets.end()) {
+            err << "error: package '" << package.name << "' does not contain target '" << name
+                << "'\n";
+            return nullptr;
+        }
+        return &*found;
+    }
+
+    if (package.targets.size() == 1) {
+        return &package.targets.front();
+    }
+
+    err << "error: package '" << package.name << "' contains " << package.targets.size()
+        << " targets; pass --target <name>\n";
+    return nullptr;
+}
+
+[[nodiscard]] ahfl::ProjectInput
+project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
+                                 std::filesystem::path entry_file) {
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(std::move(entry_file));
+    input.include_stdlib = false;
+    input.inject_prelude = false;
+    input.module_roots.reserve(graph.module_roots.size());
+    for (const auto &root : graph.module_roots) {
+        const auto *package = graph.find_package(root.package);
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = root.prefix,
+            .root = root.root,
+            .exported_modules =
+                package != nullptr ? package->exported_modules : std::vector<std::string>{},
+        });
+    }
+    return input;
 }
 
 void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
@@ -676,6 +1138,12 @@ std::optional<ExitCode> CliDriver::parse_command_line(std::span<const std::strin
 std::optional<ExitCode> CliDriver::validate_options() {
     const auto action_count = count_enabled_actions(options_);
     const auto selected_action = selected_action_from_options(options_, effective_command_);
+    const bool package_graph_workspace = uses_package_graph_workspace(options_, effective_command_);
+    const bool package_graph_descriptor_dump = is_package_graph_descriptor_dump(effective_command_);
+    const bool package_graph_discovery =
+        command_can_discover_package_graph(options_, effective_command_);
+    const bool workspace_package_selector =
+        package_option_is_workspace_selector(options_, effective_command_);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of "
                   << format_comma_or_commands(command_list(CommandListKind::Action)) << "\n";
@@ -695,6 +1163,36 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
+    if (options_.manifest_path.has_value()) {
+        if (effective_command_ != CommandKind::Check && !package_graph_descriptor_dump) {
+            std::cerr << "error: --manifest is currently only supported with check and dump "
+                         "package-graph/lockfile\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.project_descriptor.has_value() || options_.workspace_descriptor.has_value() ||
+            !options_.search_roots.empty()) {
+            std::cerr << "error: --manifest cannot be combined with --project, --workspace, or "
+                         "--search-root\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+    }
+
+    if (options_.target_name.has_value() && !options_.manifest_path.has_value() &&
+        !options_.workspace_descriptor.has_value() && !package_graph_discovery) {
+        std::cerr << "error: --target requires --manifest or --workspace\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.sysroot_path.has_value() && !options_.manifest_path.has_value() &&
+        !options_.workspace_descriptor.has_value() && !package_graph_discovery) {
+        std::cerr << "error: --sysroot requires --manifest or --workspace\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
     if (options_.workspace_descriptor.has_value() && !options_.search_roots.empty()) {
         std::cerr << "error: --workspace cannot be combined with --search-root\n";
         print_usage(std::cerr);
@@ -707,14 +1205,43 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_descriptor.has_value() && !options_.project_name.has_value()) {
-        std::cerr << "error: --workspace requires --project-name\n";
+    if (package_graph_workspace && options_.project_name.has_value() &&
+        options_.package_descriptor.has_value()) {
+        std::cerr << "error: --workspace accepts either --package or --project-name, not both\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
+    if (options_.workspace_descriptor.has_value() &&
+        !workspace_package_name(options_, effective_command_).has_value()) {
+        std::cerr << "error: --workspace requires --package <name>";
+        if (!package_graph_workspace) {
+            std::cerr << " or --project-name";
+        }
+        std::cerr << "\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (package_graph_descriptor_dump) {
+        if (!options_.manifest_path.has_value() && !options_.workspace_descriptor.has_value()) {
+            std::cerr << "error: dump " << command_short_name(*effective_command_)
+                      << " requires --manifest or --workspace\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.positional.empty()) {
+            std::cerr << "error: dump " << command_short_name(*effective_command_)
+                      << " does not accept positional input files\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+    }
+
     const bool descriptor_input =
         options_.project_descriptor.has_value() || options_.workspace_descriptor.has_value();
+    const bool manifest_input =
+        options_.manifest_path.has_value() && !package_graph_descriptor_dump;
     if (effective_command_ == CommandKind::Format) {
         if (descriptor_input && !options_.positional.empty()) {
             std::cerr << "error: fmt accepts either positional files/directories or a "
@@ -732,12 +1259,15 @@ std::optional<ExitCode> CliDriver::validate_options() {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-    } else if (descriptor_input ? !options_.positional.empty() : options_.positional.size() != 1) {
+    } else if (!package_graph_descriptor_dump &&
+               (manifest_input     ? !options_.positional.empty()
+                : descriptor_input ? !options_.positional.empty()
+                                   : options_.positional.size() != 1)) {
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.package_descriptor.has_value() &&
+    if (options_.package_descriptor.has_value() && !workspace_package_selector &&
         !selected_action_supports_package(selected_action)) {
         std::cerr << "error: --package is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
@@ -883,7 +1413,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.time_passes_requested &&
         (effective_command_ == CommandKind::Format || effective_command_ == CommandKind::DumpAst ||
-         effective_command_ == CommandKind::DumpProject)) {
+         effective_command_ == CommandKind::DumpProject || package_graph_descriptor_dump)) {
         std::cerr << "error: --time-passes is only supported with commands that run "
                      "optimization passes\n";
         print_usage(std::cerr);
@@ -936,6 +1466,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
 std::optional<ExitCode> CliDriver::load_package_and_mocks() {
     const auto selected_action = selected_action_from_options(options_, effective_command_);
+    const bool workspace_package_selector =
+        package_option_is_workspace_selector(options_, effective_command_);
     if (selected_action_requires_package(selected_action)) {
         const auto action_name = selected_action_name(selected_action);
         if (!options_.package_descriptor.has_value()) {
@@ -971,7 +1503,7 @@ std::optional<ExitCode> CliDriver::load_package_and_mocks() {
         capability_mock_set_ = std::move(*mock_parse_result.mock_set);
     }
 
-    if (options_.package_descriptor.has_value()) {
+    if (options_.package_descriptor.has_value() && !workspace_package_selector) {
         auto package_result =
             frontend_.load_package_authoring_descriptor(std::string(*options_.package_descriptor));
         diag_consumer_->consume(package_result.diagnostics);
@@ -1005,6 +1537,44 @@ ExitCode CliDriver::run_observed() {
 ExitCode CliDriver::execute() {
     if (effective_command_ == CommandKind::Format) {
         return format_source_file();
+    }
+
+    if (effective_command_ == CommandKind::DumpPackageGraph) {
+        return dump_package_graph();
+    }
+
+    if (effective_command_ == CommandKind::DumpLockfile) {
+        return dump_lockfile();
+    }
+
+    if (options_.manifest_path.has_value()) {
+        return run_manifest_package();
+    }
+
+    if (uses_package_graph_workspace(options_, effective_command_)) {
+        return run_workspace_package();
+    }
+
+    if (command_can_discover_package_graph(options_, effective_command_)) {
+        auto discovery = discover_package_graph_for_input(options_, effective_command_, std::cerr);
+        if (discovery.exit_code.has_value()) {
+            return *discovery.exit_code;
+        }
+        if (discovery.invocation.has_value()) {
+            if (auto lock_status =
+                    check_lockfile_if_present(discovery.invocation->graph,
+                                              discovery.invocation->lockfile_directory,
+                                              std::cerr);
+                lock_status.has_value()) {
+                return *lock_status;
+            }
+            return run_package_graph_package(discovery.invocation->graph);
+        }
+        if (options_.target_name.has_value() || options_.sysroot_path.has_value()) {
+            std::cerr << "error: failed to discover ahfl.toml from input file; pass --manifest or "
+                         "--workspace\n";
+            return ExitCode::UsageError;
+        }
     }
 
     const bool project_mode = options_.project_descriptor.has_value() ||
@@ -1060,6 +1630,7 @@ ExitCode CliDriver::execute() {
     }
 
     ahfl::ProjectInput input;
+    input.inject_prelude = true;
     input.entry_files.push_back(std::string(options_.positional.front()));
     input.search_roots.reserve(options_.search_roots.size());
     for (const auto search_root : options_.search_roots) {
@@ -1073,6 +1644,203 @@ ExitCode CliDriver::execute() {
     }
 
     return run_analysis(project_result.graph, std::nullopt);
+}
+
+ExitCode CliDriver::run_manifest_package() {
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
+    if (!sysroot_manifest.has_value()) {
+        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto root_manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    const auto graph_result = ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = root_manifest_path,
+            .sysroot_manifest_path = *sysroot_manifest,
+        });
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+
+    if (auto lock_status = check_lockfile_if_present(
+            *graph_result.graph, root_manifest_path.parent_path(), std::cerr);
+        lock_status.has_value()) {
+        return *lock_status;
+    }
+
+    return run_package_graph_package(*graph_result.graph);
+}
+
+ExitCode CliDriver::run_workspace_package() {
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
+    if (!sysroot_manifest.has_value()) {
+        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto package_name = workspace_package_name(options_, effective_command_);
+    if (!package_name.has_value()) {
+        std::cerr << "error: --workspace requires --package <name>\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto workspace_manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.workspace_descriptor}});
+    const auto graph_result = ahfl::package_graph::build_package_graph_from_workspace(
+        ahfl::package_graph::WorkspaceBuildInput{
+            .workspace_manifest_path = workspace_manifest_path,
+            .package_name = std::string{*package_name},
+            .sysroot_manifest_path = *sysroot_manifest,
+        });
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+
+    if (auto lock_status = check_lockfile_if_present(
+            *graph_result.graph, workspace_manifest_path.parent_path(), std::cerr);
+        lock_status.has_value()) {
+        return *lock_status;
+    }
+
+    return run_package_graph_package(*graph_result.graph);
+}
+
+ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::PackageGraph &graph) {
+    const auto *package = root_package(graph);
+    if (package == nullptr) {
+        std::cerr << "error: PackageGraph is missing root package\n";
+        return ExitCode::CompileError;
+    }
+
+    const auto *target = select_target(*package, options_, std::cerr);
+    if (target == nullptr) {
+        return ExitCode::UsageError;
+    }
+
+    const auto entry_module = module_name_from_entry(target->entry);
+    if (!entry_module.has_value()) {
+        std::cerr << "error: target '" << target->name << "' entry '" << target->entry
+                  << "' must be a canonical symbol name\n";
+        return ExitCode::CompileError;
+    }
+
+    const auto entry_file = resolve_module_file_from_graph(graph, *entry_module);
+    if (!entry_file.has_value()) {
+        std::cerr << "error: failed to resolve target '" << target->name << "' entry module '"
+                  << *entry_module << "' from PackageGraph module roots\n";
+        return ExitCode::CompileError;
+    }
+
+    auto input = project_input_from_package_graph(graph, *entry_file);
+    auto project_result = frontend_.parse_project(input);
+    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
+    if (project_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    return run_analysis(project_result.graph, std::nullopt);
+}
+
+ExitCode CliDriver::dump_package_graph() {
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
+    if (!sysroot_manifest.has_value()) {
+        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        return ExitCode::UsageError;
+    }
+
+    if (options_.workspace_descriptor.has_value()) {
+        const auto package_name = workspace_package_name(options_, effective_command_);
+        if (!package_name.has_value()) {
+            std::cerr << "error: dump package-graph --workspace requires --package <name>\n";
+            return ExitCode::UsageError;
+        }
+        const auto result = ahfl::package_graph::build_package_graph_from_workspace(
+            ahfl::package_graph::WorkspaceBuildInput{
+                .workspace_manifest_path = normalize_manifest_path(
+                    std::filesystem::path{std::string{*options_.workspace_descriptor}}),
+                .package_name = std::string{*package_name},
+                .sysroot_manifest_path = *sysroot_manifest,
+            });
+        if (result.has_errors() || !result.graph.has_value()) {
+            print_package_graph_diagnostics(result.diagnostics, std::cerr);
+            return ExitCode::CompileError;
+        }
+
+        std::cout << ahfl::package_graph::serialize_package_graph_json(*result.graph) << '\n';
+        return ExitCode::Success;
+    }
+
+    const auto result = ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = normalize_manifest_path(
+                std::filesystem::path{std::string{*options_.manifest_path}}),
+            .sysroot_manifest_path = *sysroot_manifest,
+        });
+    if (result.has_errors() || !result.graph.has_value()) {
+        print_package_graph_diagnostics(result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+
+    std::cout << ahfl::package_graph::serialize_package_graph_json(*result.graph) << '\n';
+    return ExitCode::Success;
+}
+
+ExitCode CliDriver::dump_lockfile() {
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
+    if (!sysroot_manifest.has_value()) {
+        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        return ExitCode::UsageError;
+    }
+
+    if (options_.workspace_descriptor.has_value()) {
+        const auto package_name = workspace_package_name(options_, effective_command_);
+        if (!package_name.has_value()) {
+            std::cerr << "error: dump lockfile --workspace requires --package <name>\n";
+            return ExitCode::UsageError;
+        }
+        const auto result = ahfl::package_graph::build_package_graph_from_workspace(
+            ahfl::package_graph::WorkspaceBuildInput{
+                .workspace_manifest_path = normalize_manifest_path(
+                    std::filesystem::path{std::string{*options_.workspace_descriptor}}),
+                .package_name = std::string{*package_name},
+                .sysroot_manifest_path = *sysroot_manifest,
+            });
+        if (result.has_errors() || !result.graph.has_value()) {
+            print_package_graph_diagnostics(result.diagnostics, std::cerr);
+            return ExitCode::CompileError;
+        }
+
+        std::cout << ahfl::package_graph::serialize_lockfile(ahfl::package_graph::make_lockfile(
+                         *result.graph,
+                         normalize_manifest_path(
+                             std::filesystem::path{std::string{*options_.workspace_descriptor}})
+                             .parent_path()))
+                  << '\n';
+        return ExitCode::Success;
+    }
+
+    const auto result = ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = normalize_manifest_path(
+                std::filesystem::path{std::string{*options_.manifest_path}}),
+            .sysroot_manifest_path = *sysroot_manifest,
+        });
+    if (result.has_errors() || !result.graph.has_value()) {
+        print_package_graph_diagnostics(result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+
+    std::cout << ahfl::package_graph::serialize_lockfile(ahfl::package_graph::make_lockfile(
+                     *result.graph,
+                     normalize_manifest_path(
+                         std::filesystem::path{std::string{*options_.manifest_path}})
+                         .parent_path()))
+              << '\n';
+    return ExitCode::Success;
 }
 
 ExitCode CliDriver::format_source_file() {

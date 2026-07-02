@@ -15,6 +15,10 @@
 #include <span>
 #include <string_view>
 
+namespace ahfl::package_graph {
+struct PackageGraph;
+}
+
 namespace ahfl::cli {
 
 struct MemoryReportSnapshot {
@@ -52,6 +56,14 @@ class CliDriver final {
     [[nodiscard]] ExitCode run_observed();
 
     [[nodiscard]] ExitCode execute();
+
+    [[nodiscard]] ExitCode dump_package_graph();
+    [[nodiscard]] ExitCode dump_lockfile();
+
+    [[nodiscard]] ExitCode run_manifest_package();
+    [[nodiscard]] ExitCode run_workspace_package();
+    [[nodiscard]] ExitCode
+    run_package_graph_package(const ahfl::package_graph::PackageGraph &graph);
 
     [[nodiscard]] ExitCode format_source_file();
 

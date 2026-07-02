@@ -1,0 +1,9 @@
+module audit_core::lib;
+
+struct AuditRequest {
+    subject: String;
+}
+
+struct AuditDecision {
+    accepted: Bool;
+}

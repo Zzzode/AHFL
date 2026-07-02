@@ -52,7 +52,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  run                 Execute a workflow with configured LLM capabilities\n"
         << "  fmt                 Format files/directories in place, or check with --check\n"
         << "  emit <artifact>     Emit a build artifact (see list below)\n"
-        << "  dump <target>       Diagnostic dump (ast, types, project)\n"
+        << "  dump <target>       Diagnostic dump (ast, types, project, package-graph, lockfile)\n"
         << "  verify              Formal verification via NuSMV/nuXmv\n"
         << "  validate            Assurance validation checks\n"
         << "\n"
@@ -104,14 +104,18 @@ void print_usage(std::ostream &out, bool show_internal) {
     }
 
     // Dump targets
-    out << "\n  Dump targets: ast, types, project\n";
+    out << "\n  Dump targets: ast, types, project, package-graph, lockfile\n";
 
     // Options grouped by scope
     out << "\nInput Options:\n"
-        << "  --package <path>            Package descriptor\n"
+        << "  --package <path|name>       Package descriptor; workspace package name with "
+           "--workspace\n"
         << "  --project <path>            Project descriptor\n"
         << "  --workspace <path>          Workspace descriptor\n"
+        << "  --manifest <path>           AHFL package manifest\n"
+        << "  --sysroot <path>            AHFL sysroot containing std/ahfl.toml\n"
         << "  --project-name <name>       Target project in workspace\n"
+        << "  --target <name>             Target name within an AHFL package manifest\n"
         << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n"
         << "  --search-root <dir>         Additional source search path (repeatable)\n";
 

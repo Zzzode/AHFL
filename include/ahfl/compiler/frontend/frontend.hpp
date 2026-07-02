@@ -62,13 +62,24 @@ struct SourceGraph {
 };
 
 struct ProjectInput {
+    struct ModuleRoot {
+        std::string prefix;
+        std::filesystem::path root;
+        std::vector<std::string> exported_modules;
+    };
+
     std::vector<std::filesystem::path> entry_files{};
     std::vector<std::filesystem::path> search_roots{};
+    std::vector<ModuleRoot> module_roots{};
     // P6: project-aware parses include the repository stdlib by default and
     // inject std::prelude for non-std source units. Tests and specialized
     // tools may disable these while exercising raw source-graph behavior.
+    //
+    // NOTE (2026-07): inject_prelude defaults to false — users must
+    // explicitly `import std::...` modules. Stdlib is still discoverable
+    // via include_stdlib=true, but no symbols are auto-injected into scope.
     bool include_stdlib{true};
-    bool inject_prelude{true};
+    bool inject_prelude{false};
     std::vector<std::filesystem::path> stdlib_search_roots{};
     // Normalized absolute path string -> unsaved document text. LSP and other
     // project-aware tooling use this to overlay open editor buffers while

@@ -2324,6 +2324,112 @@ set_tests_properties(ahflc.dump_project.ok_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "source_graph \\(1 entry, 2 sources, 1 import\\)"
 )
 
+add_test(NAME ahflc.dump_package_graph.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> dump package-graph
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.dump_package_graph.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"name\":\"audit-core\""
+)
+
+add_test(NAME ahflc.dump_lockfile.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> dump lockfile
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.dump_lockfile.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"manifest\":\"ahfl.toml\""
+)
+
+add_test(NAME ahflc.check.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.discover_manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> check
+            "${AHFL_TESTS_DIR}/integration/package_graph_manifest/src/main.ahfl"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.discover_manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.manifest_lockfile_drift_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest_lock_drift/ahfl.toml"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest_lock_drift/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=field 'checksum'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.discover_manifest_lockfile_drift_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest_lock_drift/src/main.ahfl"
+            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/package_graph_manifest_lock_drift/src/main.ahfl\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=field 'checksum'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.dump_package_graph.workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> dump package-graph
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.dump_package_graph.workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"source\":\"workspace\""
+)
+
+add_test(NAME ahflc.dump_lockfile.workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> dump lockfile
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.dump_lockfile.workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"manifest\":\"packages/refund-audit/ahfl.toml\""
+)
+
+add_test(NAME ahflc.check.workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> check
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.discover_workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> check
+            "${AHFL_TESTS_DIR}/integration/package_graph_workspace/packages/refund-audit/src/main.ahfl"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.discover_workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.workspace_private_import_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;refund-audit\;--target\;bad-private\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=imported module 'audit_core::internal' is private to package prefix 'audit_core'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.project.ok_cross_file
     COMMAND $<TARGET_FILE:ahflc> check
             --search-root "${AHFL_TESTS_DIR}/integration/check_ok"
@@ -3968,6 +4074,18 @@ add_test(NAME ahfl.json.value_all
     COMMAND $<TARGET_FILE:ahfl_base_json_value_tests>
 )
 
+add_test(NAME ahfl.toml.syntax_all
+    COMMAND $<TARGET_FILE:ahfl_base_toml_tests>
+)
+
+add_test(NAME ahfl.manifest.schema_all
+    COMMAND $<TARGET_FILE:ahfl_compiler_manifest_tests>
+)
+
+add_test(NAME ahfl.package_graph.core_all
+    COMMAND $<TARGET_FILE:ahfl_compiler_package_graph_tests>
+)
+
 add_test(NAME ahfl.runtime.value_json_all
     COMMAND $<TARGET_FILE:ahfl_value_json_tests>
 )
@@ -4116,6 +4234,10 @@ add_test(NAME ahfl.frontend.if_let_syntax_poc_all
 
 add_test(NAME ahfl.support.thread_pool_all
     COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
+)
+
+add_test(NAME ahfl.support.sha256_all
+    COMMAND $<TARGET_FILE:ahfl_sha256_tests>
 )
 
 add_test(NAME ahfl.support.version_all

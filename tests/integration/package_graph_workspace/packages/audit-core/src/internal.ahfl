@@ -1,0 +1,5 @@
+module audit_core::internal;
+
+struct InternalTag {
+    value: String;
+}

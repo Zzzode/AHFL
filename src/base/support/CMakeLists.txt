@@ -3,6 +3,7 @@ add_library(ahfl_base_support STATIC
     diagnostic_serialization.cpp
     http.cpp
     process.cpp
+    sha256.cpp
     thread_pool.cpp
     timer.cpp
     version.cpp

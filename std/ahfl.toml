@@ -1,0 +1,45 @@
+manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = [
+  "prelude",
+  "option",
+  "result",
+  "string",
+  "collections",
+  "cmp",
+  "fmt",
+  "decimal",
+  "json",
+  "time",
+  "uuid",
+  "traits",
+]
+
+[compiler_intrinsics]
+allow = [
+  "option_*",
+  "result_*",
+  "list_*",
+  "set_*",
+  "map_*",
+  "string_*",
+  "decimal_*",
+  "json_*",
+  "time_*",
+  "uuid_*",
+]

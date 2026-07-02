@@ -478,6 +478,9 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "project") ==
               ahfl::cli::CommandKind::DumpProject,
           "resolve: dump project");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "lockfile") ==
+              ahfl::cli::CommandKind::DumpLockfile,
+          "resolve: dump lockfile");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Verify, "formal") ==
               ahfl::cli::CommandKind::VerifyFormal,
           "resolve: verify formal");
@@ -506,6 +509,8 @@ int main() {
           "short_name: EmitStoreImportDescriptor -> store-import-descriptor");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::DumpAst) == "ast",
           "short_name: DumpAst -> ast");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::DumpLockfile) == "lockfile",
+          "short_name: DumpLockfile -> lockfile");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::VerifyFormal) == "formal",
           "short_name: VerifyFormal -> formal");
 

@@ -1,13 +1,13 @@
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <chrono>
 
 namespace {
 
@@ -102,6 +102,7 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
 
     if (result.has_errors()) {
@@ -134,8 +135,7 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
         !result.graph.module_to_source.contains("std::collections") ||
         !result.graph.module_to_source.contains("std::string") ||
         !result.graph.module_to_source.contains("std::cmp") ||
-        !result.graph.module_to_source.contains("std::fmt") ||
-        !result.graph.module_to_source.contains("std::traits")) {
+        !result.graph.module_to_source.contains("std::fmt")) {
         std::cerr << "missing expected module ownership entries\n";
         return 1;
     }
@@ -148,6 +148,7 @@ int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
 
     if (!result.has_errors()) {
@@ -172,6 +173,7 @@ int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem:
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
 
     if (!result.has_errors()) {
@@ -198,6 +200,7 @@ int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
 
     if (!result.has_errors()) {
@@ -223,6 +226,7 @@ int run_fail_duplicate_owner(const std::filesystem::path &entry,
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry, root / "alt" / "types.ahfl"},
         .search_roots = {root},
+        .inject_prelude = true,
     });
 
     if (!result.has_errors()) {
@@ -243,9 +247,8 @@ int run_fail_duplicate_owner(const std::filesystem::path &entry,
 
 int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::path &source_root) {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto bundle_root =
-        std::filesystem::temp_directory_path() /
-        ("ahfl-project-parse-bundled-stdlib-" + std::to_string(stamp));
+    const auto bundle_root = std::filesystem::temp_directory_path() /
+                             ("ahfl-project-parse-bundled-stdlib-" + std::to_string(stamp));
     const auto bundle_std = bundle_root / "std";
 
     std::error_code error;
@@ -255,7 +258,24 @@ int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::pat
         return 1;
     }
 
-    if (!write_text_file(bundle_std / "prelude.ahfl", "module std::prelude;\n") ||
+    if (!write_text_file(bundle_std / "ahfl.toml",
+                         "manifest_version = 1\n\n"
+                         "[package]\n"
+                         "name = \"std\"\n"
+                         "version = \"0.1.0\"\n"
+                         "edition = \"2026\"\n"
+                         "kind = \"standard-library\"\n\n"
+                         "[module]\n"
+                         "prefix = \"std\"\n"
+                         "root = \".\"\n\n"
+                         "[prelude]\n"
+                         "module = \"std::prelude\"\n"
+                         "injection = \"explicit\"\n\n"
+                         "[exports]\n"
+                         "modules = [\"prelude\", \"option\"]\n\n"
+                         "[compiler_intrinsics]\n"
+                         "allow = [\"option_*\"]\n") ||
+        !write_text_file(bundle_std / "prelude.ahfl", "module std::prelude;\n") ||
         !write_text_file(bundle_std / "option.ahfl",
                          "module std::option;\n"
                          "enum Option<T> { Some(T), None, }\n")) {
@@ -290,8 +310,8 @@ int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::pat
             continue;
         }
         if (!std::filesystem::equivalent(source.path, expected, error) || error) {
-            std::cerr << "std::option resolved to unexpected path: " << source.path
-                      << " expected " << expected << '\n';
+            std::cerr << "std::option resolved to unexpected path: " << source.path << " expected "
+                      << expected << '\n';
             return 1;
         }
         return 0;

@@ -27,6 +27,7 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -60,6 +61,7 @@ int run_ok_duplicate_locals(const std::filesystem::path &entry, const std::files
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
@@ -89,6 +91,7 @@ int run_fail_unknown_type(const std::filesystem::path &entry, const std::filesys
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
         .search_roots = {root},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);

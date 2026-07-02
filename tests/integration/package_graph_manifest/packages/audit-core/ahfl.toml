@@ -1,0 +1,18 @@
+manifest_version = 1
+
+[package]
+name = "audit-core"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "audit_core"
+root = "src"
+
+[exports]
+modules = ["lib"]
+
+[targets.lib]
+kind = "library"
+entry = "src/lib.ahfl"

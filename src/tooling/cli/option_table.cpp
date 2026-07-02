@@ -36,8 +36,20 @@ void set_workspace(CommandLineOptions &opts, std::optional<std::string_view> val
     opts.workspace_descriptor = val;
 }
 
+void set_manifest(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.manifest_path = val;
+}
+
+void set_sysroot(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.sysroot_path = val;
+}
+
 void set_project_name(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.project_name = val;
+}
+
+void set_target_name(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.target_name = val;
 }
 
 void set_workflow(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -181,12 +193,30 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_workspace,
      "Path to workspace descriptor",
      "a descriptor path"},
+    {"--manifest",
+     "",
+     OptionArgKind::RequiredValue,
+     set_manifest,
+     "Path to AHFL package manifest",
+     "an ahfl.toml path"},
+    {"--sysroot",
+     "",
+     OptionArgKind::RequiredValue,
+     set_sysroot,
+     "Path to AHFL sysroot containing std/ahfl.toml",
+     "a sysroot path"},
     {"--project-name",
      "",
      OptionArgKind::RequiredValue,
      set_project_name,
      "Project name within workspace",
      "a project name"},
+    {"--target",
+     "",
+     OptionArgKind::RequiredValue,
+     set_target_name,
+     "Target name within an AHFL package manifest",
+     "a target name"},
     {"--workflow",
      "",
      OptionArgKind::RequiredValue,

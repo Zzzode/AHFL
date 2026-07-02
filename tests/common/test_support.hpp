@@ -126,6 +126,7 @@ load_project_ir(const std::filesystem::path &project_descriptor) {
     const auto project_result = frontend.parse_project(ProjectInput{
         .entry_files = descriptor_result.descriptor->entry_files,
         .search_roots = descriptor_result.descriptor->search_roots,
+        .inject_prelude = true,
     });
     if (project_result.has_errors()) {
         project_result.diagnostics.render(std::cout);

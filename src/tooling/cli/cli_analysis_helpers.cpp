@@ -87,6 +87,7 @@ std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
     const Frontend frontend;
     const auto parse_result = frontend.parse_project(ProjectInput{
         .entry_files = {file_path},
+        .inject_prelude = true,
     });
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(diagnostics);
@@ -387,6 +388,10 @@ int load_project_input(const CommandLineOptions &options,
                        const ahfl::Frontend &frontend,
                        ahfl::ProjectInput &input,
                        DiagnosticConsumer &consumer) {
+    // CLI tool defaults to prelude injection for user convenience. Users who
+    // want explicit-only imports can pass --no-prelude in the future.
+    input.inject_prelude = true;
+
     if (options.project_descriptor.has_value()) {
         auto descriptor_result =
             frontend.load_project_descriptor(std::string(*options.project_descriptor));

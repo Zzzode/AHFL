@@ -1,0 +1,25 @@
+module refund_audit::main;
+
+import audit_core::lib as core;
+import std::option as option;
+
+struct RefundAuditInput {
+    order_id: String;
+}
+
+struct RefundAuditOutput {
+    accepted: Bool;
+}
+
+struct WorkspaceEnvelope {
+    request: core::AuditRequest;
+    maybe_score: option::Option<Int>;
+}
+
+workflow RefundAuditWorkflow {
+    input: RefundAuditInput;
+    output: RefundAuditOutput;
+    return: RefundAuditOutput {
+        accepted: true,
+    };
+}

@@ -1,0 +1,14 @@
+manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = [
+  "packages/refund-audit",
+  "packages/audit-core",
+]
+
+[resolver]
+version = 1
+
+[dependencies]
+std = { source = "sysroot" }

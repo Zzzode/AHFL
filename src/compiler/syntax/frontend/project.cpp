@@ -733,16 +733,30 @@ bool append_descriptor_paths(PathContainerT &out,
     return relative;
 }
 
-[[nodiscard]] bool has_std_prelude(const std::filesystem::path &search_root) {
-    std::error_code error;
-    const auto prelude_path = normalize_path(search_root / "std" / "prelude.ahfl");
-    return std::filesystem::exists(prelude_path, error) && !error;
+[[nodiscard]] bool module_has_prefix(std::string_view module_name, std::string_view prefix) {
+    return module_name == prefix ||
+           (module_name.size() > prefix.size() && module_name.starts_with(prefix) &&
+            module_name.substr(prefix.size(), 2) == "::");
 }
 
-[[nodiscard]] bool contains_flat_stdlib_root(const std::vector<std::filesystem::path> &roots) {
-    return std::any_of(roots.begin(), roots.end(), [](const auto &root) {
-        return has_std_prelude(root);
-    });
+[[nodiscard]] std::filesystem::path
+module_relative_path_after_prefix(std::string_view module_name, std::string_view prefix) {
+    if (module_name == prefix) {
+        return std::filesystem::path{"mod.ahfl"};
+    }
+    return module_relative_path(module_name.substr(prefix.size() + 2));
+}
+
+[[nodiscard]] bool has_std_manifest(const std::filesystem::path &search_root) {
+    std::error_code error;
+    const auto manifest_path = normalize_path(search_root / "std" / "ahfl.toml");
+    return std::filesystem::exists(manifest_path, error) && !error;
+}
+
+[[nodiscard]] bool
+contains_manifest_backed_stdlib_root(const std::vector<std::filesystem::path> &roots) {
+    return std::any_of(
+        roots.begin(), roots.end(), [](const auto &root) { return has_std_manifest(root); });
 }
 
 [[nodiscard]] std::vector<std::filesystem::path> builtin_stdlib_search_roots() {
@@ -766,7 +780,7 @@ bool append_descriptor_paths(PathContainerT &out,
     if (!error) {
         current = normalize_path(current);
         while (!current.empty()) {
-            if (has_std_prelude(current)) {
+            if (has_std_manifest(current)) {
                 append_unique_normalized_path(roots, current);
                 break;
             }
@@ -796,7 +810,7 @@ bool append_descriptor_paths(PathContainerT &out,
         }
     }
 
-    if (input.include_stdlib && !contains_flat_stdlib_root(roots)) {
+    if (input.include_stdlib && !contains_manifest_backed_stdlib_root(roots)) {
         for (const auto &root : input.stdlib_search_roots) {
             append_unique_normalized_path(roots, root);
         }
@@ -806,6 +820,87 @@ bool append_descriptor_paths(PathContainerT &out,
     }
 
     return roots;
+}
+
+[[nodiscard]] std::vector<ProjectInput::ModuleRoot>
+effective_module_roots(const ProjectInput &input) {
+    std::vector<ProjectInput::ModuleRoot> roots;
+    roots.reserve(input.module_roots.size());
+    for (const auto &root : input.module_roots) {
+        const auto normalized = normalize_path(root.root);
+        const auto exists = std::find_if(roots.begin(), roots.end(), [&](const auto &existing) {
+            return existing.prefix == root.prefix && existing.root == normalized;
+        });
+        if (exists == roots.end()) {
+            roots.push_back(ProjectInput::ModuleRoot{
+                .prefix = root.prefix,
+                .root = normalized,
+                .exported_modules = root.exported_modules,
+            });
+        }
+    }
+    return roots;
+}
+
+[[nodiscard]] const ProjectInput::ModuleRoot *
+find_module_root(std::string_view module_name,
+                 const std::vector<ProjectInput::ModuleRoot> &module_roots) {
+    const ProjectInput::ModuleRoot *best = nullptr;
+    for (const auto &root : module_roots) {
+        if (!module_has_prefix(module_name, root.prefix)) {
+            continue;
+        }
+        if (best == nullptr || root.prefix.size() > best->prefix.size()) {
+            best = &root;
+        }
+    }
+    return best;
+}
+
+[[nodiscard]] std::string exported_module_key(std::string_view module_name,
+                                              std::string_view prefix) {
+    const auto relative = module_relative_path_after_prefix(module_name, prefix);
+    if (relative == "mod.ahfl") {
+        return {};
+    }
+    auto without_extension = relative;
+    without_extension.replace_extension();
+    return without_extension.generic_string();
+}
+
+[[nodiscard]] bool module_is_exported(std::string_view module_name,
+                                      const ProjectInput::ModuleRoot &root) {
+    const auto key = exported_module_key(module_name, root.prefix);
+    return std::find(root.exported_modules.begin(), root.exported_modules.end(), key) !=
+           root.exported_modules.end();
+}
+
+[[nodiscard]] bool enforce_import_visibility(std::string_view importer_module,
+                                             const ImportRequest &import_request,
+                                             const std::vector<ProjectInput::ModuleRoot> &roots,
+                                             DiagnosticBag &diagnostics,
+                                             const SourceFile &source) {
+    if (roots.empty()) {
+        return true;
+    }
+
+    const auto *importer_root = find_module_root(importer_module, roots);
+    const auto *imported_root = find_module_root(import_request.module_name, roots);
+    if (importer_root == nullptr || imported_root == nullptr || importer_root == imported_root) {
+        return true;
+    }
+
+    if (module_is_exported(import_request.module_name, *imported_root)) {
+        return true;
+    }
+
+    diagnostics.error()
+        .message("imported module '" + import_request.module_name +
+                 "' is private to package prefix '" + imported_root->prefix + "'")
+        .range(import_request.range)
+        .source(source)
+        .emit();
+    return false;
 }
 
 [[nodiscard]] bool is_std_module(std::string_view module_name) {
@@ -819,30 +914,57 @@ bool append_descriptor_paths(PathContainerT &out,
 [[nodiscard]] std::optional<std::filesystem::path>
 resolve_import_path(std::string_view module_name,
                     const std::vector<std::filesystem::path> &search_roots,
+                    const std::vector<ProjectInput::ModuleRoot> &module_roots,
                     DiagnosticBag &diagnostics,
                     MaybeCRef<SourceFile> source = std::nullopt,
                     std::optional<SourceRange> range = std::nullopt) {
-    const auto relative = module_relative_path(module_name);
-
     std::vector<std::filesystem::path> candidates;
-    for (const auto &root : search_roots) {
-        std::error_code error;
-        // Try single-file layout: root/path/to/module.ahfl
-        const auto candidate = normalize_path(root / relative);
-        if (std::filesystem::exists(candidate, error) && !error) {
-            if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end()) {
-                candidates.push_back(candidate);
+    if (!module_roots.empty()) {
+        for (const auto &root : module_roots) {
+            if (!module_has_prefix(module_name, root.prefix)) {
+                continue;
             }
-            continue;
+            const auto relative = module_relative_path_after_prefix(module_name, root.prefix);
+            std::error_code error;
+            const auto candidate = normalize_path(root.root / relative);
+            if (std::filesystem::exists(candidate, error) && !error) {
+                if (std::find(candidates.begin(), candidates.end(), candidate) ==
+                    candidates.end()) {
+                    candidates.push_back(candidate);
+                }
+                continue;
+            }
+            const auto dir_candidate =
+                normalize_path(root.root / relative.parent_path() / relative.stem() / "mod.ahfl");
+            if (std::filesystem::exists(dir_candidate, error) && !error) {
+                if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
+                    candidates.end()) {
+                    candidates.push_back(dir_candidate);
+                }
+            }
         }
-        // Try directory-module layout: root/path/to/module/mod.ahfl
-        // (Rust-style: directory with mod.ahfl as the entry point)
-        const auto dir_candidate =
-            normalize_path(root / relative.parent_path() / relative.stem() / "mod.ahfl");
-        if (std::filesystem::exists(dir_candidate, error) && !error) {
-            if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
-                candidates.end()) {
-                candidates.push_back(dir_candidate);
+    } else {
+        const auto relative = module_relative_path(module_name);
+        for (const auto &root : search_roots) {
+            std::error_code error;
+            // Try single-file layout: root/path/to/module.ahfl
+            const auto candidate = normalize_path(root / relative);
+            if (std::filesystem::exists(candidate, error) && !error) {
+                if (std::find(candidates.begin(), candidates.end(), candidate) ==
+                    candidates.end()) {
+                    candidates.push_back(candidate);
+                }
+                continue;
+            }
+            // Try directory-module layout: root/path/to/module/mod.ahfl
+            // (Rust-style: directory with mod.ahfl as the entry point)
+            const auto dir_candidate =
+                normalize_path(root / relative.parent_path() / relative.stem() / "mod.ahfl");
+            if (std::filesystem::exists(dir_candidate, error) && !error) {
+                if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
+                    candidates.end()) {
+                    candidates.push_back(dir_candidate);
+                }
             }
         }
     }
@@ -1145,8 +1267,11 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
     }
 
     const auto search_roots = effective_search_roots(input);
-    if (search_roots.empty()) {
-        result.diagnostics.error().message("project input did not yield any search roots").emit();
+    const auto module_roots = effective_module_roots(input);
+    if (search_roots.empty() && module_roots.empty()) {
+        result.diagnostics.error()
+            .message("project input did not yield any module or search roots")
+            .emit();
         return result;
     }
 
@@ -1284,9 +1409,17 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                             });
                             continue;
                         }
+                        if (!enforce_import_visibility(source_unit.module_name,
+                                                       import_request,
+                                                       module_roots,
+                                                       result.diagnostics,
+                                                       source_unit.source)) {
+                            continue;
+                        }
                         const auto imported_path =
                             resolve_import_path(import_request.module_name,
                                                 search_roots,
+                                                module_roots,
                                                 result.diagnostics,
                                                 std::cref(source_unit.source),
                                                 import_request.range);
@@ -1366,8 +1499,7 @@ void dump_project_outline(const SourceGraph &graph, std::ostream &out) {
         std::count_if(graph.import_edges.begin(), graph.import_edges.end(), visible_import);
 
     out << "source_graph (" << graph.entry_sources.size() << " entry, " << source_count
-        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s")
-        << ")\n";
+        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s") << ")\n";
 
     for (const auto &source : graph.sources) {
         if (!visible_source(source)) {

@@ -382,6 +382,40 @@ target_link_libraries(ahfl_base_json_value_tests
 )
 ahfl_apply_project_warnings(ahfl_base_json_value_tests)
 
+add_executable(ahfl_base_toml_tests
+    unit/base/toml/toml.cpp
+)
+target_link_libraries(ahfl_base_toml_tests
+    PRIVATE
+        ahfl_base_toml
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_base_toml_tests)
+
+add_executable(ahfl_compiler_manifest_tests
+    unit/compiler/manifest/manifest.cpp
+)
+target_link_libraries(ahfl_compiler_manifest_tests
+    PRIVATE
+        ahfl_compiler_manifest
+        doctest
+)
+target_compile_definitions(ahfl_compiler_manifest_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+ahfl_apply_project_warnings(ahfl_compiler_manifest_tests)
+
+add_executable(ahfl_compiler_package_graph_tests
+    unit/compiler/package_graph/package_graph.cpp
+)
+target_link_libraries(ahfl_compiler_package_graph_tests
+    PRIVATE
+        ahfl_compiler_package_graph
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_compiler_package_graph_tests)
+
 add_executable(ahfl_base_diagnostic_serialization_tests
     unit/base/support/diagnostic_serialization.cpp
 )
@@ -794,6 +828,16 @@ target_link_libraries(ahfl_thread_pool_tests
 )
 ahfl_apply_project_warnings(ahfl_thread_pool_tests)
 
+add_executable(ahfl_sha256_tests
+    unit/base/support/sha256.cpp
+)
+target_link_libraries(ahfl_sha256_tests
+    PRIVATE
+        ahfl_base_support
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_sha256_tests)
+
 add_executable(ahfl_version_tests
     unit/base/support/version.cpp
 )
@@ -1040,10 +1084,14 @@ foreach(_tgt
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests
+    ahfl_base_toml_tests
+    ahfl_compiler_manifest_tests
+    ahfl_compiler_package_graph_tests
     ahfl_base_diagnostic_serialization_tests
     ahfl_base_decreases_diagnostics_tests
     ahfl_base_trait_impl_diagnostics_tests
     ahfl_base_diagnostics_code_smoke_tests
+    ahfl_sha256_tests
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests

@@ -1,0 +1,21 @@
+module refund_audit::private_import;
+
+import audit_core::internal as internal;
+
+struct RefundAuditInput {
+    order_id: String;
+}
+
+struct RefundAuditOutput {
+    tag: internal::InternalTag;
+}
+
+workflow BadPrivateImportWorkflow {
+    input: RefundAuditInput;
+    output: RefundAuditOutput;
+    return: RefundAuditOutput {
+        tag: internal::InternalTag {
+            value: input.order_id,
+        },
+    };
+}

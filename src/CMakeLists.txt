@@ -8,6 +8,9 @@ ahfl_enable_cxx23(ahfl_base_public)
 
 add_subdirectory(base/support)
 add_subdirectory(base/json)
+add_subdirectory(base/toml)
+add_subdirectory(compiler/manifest)
+add_subdirectory(compiler/package_graph)
 add_subdirectory(compiler/syntax/parser)
 add_subdirectory(compiler/syntax/frontend)
 add_subdirectory(compiler/semantics)
@@ -46,6 +49,8 @@ target_link_libraries(ahfl_compiler_core
         ahfl_compiler_semantics
         ahfl_compiler_ir
         ahfl_compiler_assurance
+        ahfl_compiler_manifest
+        ahfl_compiler_package_graph
         ahfl_compiler_backends
         ahfl_base_json
         ahfl_compiler_passes

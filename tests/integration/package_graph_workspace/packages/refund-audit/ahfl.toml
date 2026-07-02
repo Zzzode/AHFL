@@ -1,0 +1,27 @@
+manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = ["refund_audit::main::RefundAuditWorkflow"]
+
+[targets.bad-private]
+kind = "handoff"
+entry = "refund_audit::private_import::BadPrivateImportWorkflow"
+exports = ["refund_audit::private_import::BadPrivateImportWorkflow"]
+
+[dependencies]
+audit-core = { source = "workspace" }
