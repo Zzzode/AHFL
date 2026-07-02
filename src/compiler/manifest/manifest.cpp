@@ -3,6 +3,7 @@
 #include "base/toml/toml.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <regex>
 #include <string_view>
 #include <unordered_set>
@@ -265,7 +266,10 @@ void validate_relative_path(std::string_view value,
                             std::string_view display,
                             SourceRange range,
                             std::vector<ManifestDiagnostic> &diagnostics) {
-    if (value.empty() || value.starts_with("/") || value.find("..") != std::string_view::npos) {
+    const std::filesystem::path path{std::string{value}};
+    const bool has_parent_escape =
+        std::any_of(path.begin(), path.end(), [](const auto &part) { return part == ".."; });
+    if (value.empty() || path.is_absolute() || has_parent_escape) {
         add_diag(diagnostics,
                  kPathEscape,
                  "manifest field '" + std::string(display) + "' must not escape package root",

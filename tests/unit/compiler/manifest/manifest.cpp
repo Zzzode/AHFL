@@ -216,6 +216,33 @@ entry = "src/lib.ahfl"
     CHECK(has_code(result.diagnostics, "E::manifest_unknown_field"));
 }
 
+TEST_CASE("Manifest path validation treats parent traversal as a path component") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "refund_audit"
+root = "src/a..b"
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "src/a..b/lib.ahfl"
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    CHECK(result.manifest->module_root == "src/a..b");
+}
+
 TEST_CASE("Workspace manifest schema accepts members and sysroot default") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
@@ -282,4 +309,22 @@ version = 1
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
     CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+}
+
+TEST_CASE("Workspace manifest schema allows dots inside member path names") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/a..b"]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    REQUIRE(result.manifest->members.size() == 1);
+    CHECK(result.manifest->members.front() == "packages/a..b");
 }
