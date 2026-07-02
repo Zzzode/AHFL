@@ -40,6 +40,24 @@ void add_diag(std::vector<ManifestDiagnostic> &diagnostics,
     });
 }
 
+void reject_empty_string(std::string_view display,
+                         SourceRange range,
+                         std::vector<ManifestDiagnostic> &diagnostics) {
+    add_diag(diagnostics,
+             kInvalidValue,
+             "manifest field '" + std::string(display) + "' must not be empty",
+             range);
+}
+
+void reject_empty_string_array_item(std::string_view display,
+                                    SourceRange range,
+                                    std::vector<ManifestDiagnostic> &diagnostics) {
+    add_diag(diagnostics,
+             kInvalidValue,
+             "manifest field '" + std::string(display) + "' must not contain empty strings",
+             range);
+}
+
 void copy_toml_diagnostics(const toml::Document &document,
                            std::vector<ManifestDiagnostic> &diagnostics) {
     for (const auto &diag : document.diagnostics) {
@@ -93,6 +111,10 @@ read_required_string(const Value &table,
                  kType,
                  "manifest field '" + std::string(display) + "' must be a string",
                  entry->value_range);
+        return std::nullopt;
+    }
+    if (entry->value->string_value.empty()) {
+        reject_empty_string(display, entry->value_range, diagnostics);
         return std::nullopt;
     }
     return entry->value->string_value;
@@ -154,6 +176,10 @@ read_string_array(const Value &table,
                      item->range);
             continue;
         }
+        if (item->string_value.empty()) {
+            reject_empty_string_array_item(display, item->range, diagnostics);
+            continue;
+        }
         values.push_back(item->string_value);
     }
     return values;
@@ -187,6 +213,10 @@ read_handoff_exports(const Value &table,
     exports.reserve(entry->value->array_items.size());
     for (const auto &item : entry->value->array_items) {
         if (item->kind == ValueKind::String) {
+            if (item->string_value.empty()) {
+                reject_empty_string_array_item(display, item->range, diagnostics);
+                continue;
+            }
             exports.push_back(HandoffExportManifest{
                 .kind = "workflow",
                 .name = item->string_value,
@@ -279,11 +309,16 @@ void validate_relative_path(std::string_view value,
 
 [[nodiscard]] DependencySpec read_dependency(std::string_view key,
                                              const Value &value,
+                                             SourceRange key_range,
                                              SourceRange range,
                                              std::vector<ManifestDiagnostic> &diagnostics) {
     DependencySpec spec;
     spec.key = std::string{key};
     spec.range = range;
+
+    if (key.empty()) {
+        add_diag(diagnostics, kInvalidValue, "dependency key must not be empty", key_range);
+    }
 
     if (value.kind != ValueKind::InlineTable && value.kind != ValueKind::Table) {
         add_diag(diagnostics,
@@ -300,18 +335,25 @@ void validate_relative_path(std::string_view value,
         source.has_value()) {
         spec.source = *source;
     }
-    if (const auto *path = find_value(value, "path"); path != nullptr) {
-        if (path->kind == ValueKind::String) {
-            spec.path = path->string_value;
+    if (const auto *path = find_entry(value, "path"); path != nullptr) {
+        if (path->value->kind == ValueKind::String) {
+            spec.path = path->value->string_value;
+            if (spec.path->empty()) {
+                reject_empty_string("dependencies.path", path->value_range, diagnostics);
+            }
         } else {
-            add_diag(diagnostics, kType, "dependency path must be a string", path->range);
+            add_diag(diagnostics, kType, "dependency path must be a string", path->value->range);
         }
     }
-    if (const auto *version = find_value(value, "version"); version != nullptr) {
-        if (version->kind == ValueKind::String) {
-            spec.version = version->string_value;
+    if (const auto *version = find_entry(value, "version"); version != nullptr) {
+        if (version->value->kind == ValueKind::String) {
+            spec.version = version->value->string_value;
+            if (spec.version->empty()) {
+                reject_empty_string("dependencies.version", version->value_range, diagnostics);
+            }
         } else {
-            add_diag(diagnostics, kType, "dependency version must be a string", version->range);
+            add_diag(
+                diagnostics, kType, "dependency version must be a string", version->value->range);
         }
     }
 
@@ -338,7 +380,7 @@ void validate_relative_path(std::string_view value,
                  range);
     }
 
-    if (spec.version.has_value()) {
+    if (spec.version.has_value() && !spec.version->empty()) {
         validate_semver(*spec.version, "dependency.version", range, diagnostics);
     }
 
@@ -357,8 +399,8 @@ read_dependencies(const Value &root, std::vector<ManifestDiagnostic> &diagnostic
         return dependencies;
     }
     for (const auto &entry : deps->table_fields) {
-        dependencies.push_back(
-            read_dependency(entry.key, *entry.value, entry.value_range, diagnostics));
+        dependencies.push_back(read_dependency(
+            entry.key, *entry.value, entry.key_range, entry.value_range, diagnostics));
     }
     return dependencies;
 }
@@ -391,6 +433,9 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
         TargetManifest target;
         target.name = entry.key;
         target.range = entry.value_range;
+        if (target.name.empty()) {
+            add_diag(diagnostics, kInvalidValue, "target name must not be empty", entry.key_range);
+        }
         std::string normalized = target.name;
         std::replace(normalized.begin(), normalized.end(), '-', '_');
         if (!normalized_names.insert(normalized).second) {

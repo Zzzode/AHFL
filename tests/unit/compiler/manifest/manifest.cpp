@@ -19,6 +19,13 @@ namespace {
     });
 }
 
+[[nodiscard]] bool has_message(const std::vector<ahfl::manifest::ManifestDiagnostic> &diagnostics,
+                               std::string_view needle) {
+    return std::any_of(diagnostics.begin(), diagnostics.end(), [needle](const auto &diag) {
+        return diag.message.find(needle) != std::string::npos;
+    });
+}
+
 } // namespace
 
 TEST_CASE("Package manifest schema accepts RFC 0005 minimal package") {
@@ -216,6 +223,43 @@ entry = "src/lib.ahfl"
     CHECK(has_code(result.diagnostics, "E::manifest_unknown_field"));
 }
 
+TEST_CASE("Package manifest schema rejects empty string fields") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = ""
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main", ""]
+
+[targets.""]
+kind = "library"
+entry = ""
+
+[dependencies]
+audit-core = { source = "path", path = "", version = "" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics, "manifest field 'package.name' must not be empty"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'exports.modules' must not contain empty strings"));
+    CHECK(has_message(result.diagnostics, "target name must not be empty"));
+    CHECK(has_message(result.diagnostics, "manifest field 'targets.entry' must not be empty"));
+    CHECK(has_message(result.diagnostics, "manifest field 'dependencies.path' must not be empty"));
+    CHECK(
+        has_message(result.diagnostics, "manifest field 'dependencies.version' must not be empty"));
+}
+
 TEST_CASE("Manifest path validation treats parent traversal as a path component") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
@@ -309,6 +353,25 @@ version = 1
     const auto result = ahfl::manifest::parse_workspace_manifest(input);
     REQUIRE(result.has_errors());
     CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+}
+
+TEST_CASE("Workspace manifest schema rejects empty string fields") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[workspace]
+name = ""
+members = ["packages/refund-audit", ""]
+
+[resolver]
+version = 1
+)TOML";
+
+    const auto result = ahfl::manifest::parse_workspace_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics, "manifest field 'workspace.name' must not be empty"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'workspace.members' must not contain empty strings"));
 }
 
 TEST_CASE("Workspace manifest schema allows dots inside member path names") {
