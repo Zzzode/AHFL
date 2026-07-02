@@ -190,6 +190,73 @@ read_string_array(const Value &table,
     return values;
 }
 
+[[nodiscard]] bool is_lower_ascii_alpha(char value) noexcept {
+    return value >= 'a' && value <= 'z';
+}
+
+[[nodiscard]] bool is_ascii_digit(char value) noexcept {
+    return value >= '0' && value <= '9';
+}
+
+[[nodiscard]] bool is_builtin_allow_pattern(std::string_view value) noexcept {
+    if (value.empty() || !is_lower_ascii_alpha(value.front())) {
+        return false;
+    }
+    for (std::size_t index = 1; index < value.size(); ++index) {
+        const char item = value[index];
+        if (item == '*') {
+            return index + 1 == value.size();
+        }
+        if (!is_lower_ascii_alpha(item) && !is_ascii_digit(item) && item != '_') {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] std::vector<std::string>
+read_compiler_intrinsics_allow(const Value &table, std::vector<ManifestDiagnostic> &diagnostics) {
+    constexpr std::string_view key = "allow";
+    constexpr std::string_view display = "compiler_intrinsics.allow";
+    const auto *entry = find_entry(table, key);
+    if (entry == nullptr) {
+        return {};
+    }
+    if (entry->value->kind != ValueKind::Array) {
+        add_diag(diagnostics,
+                 kType,
+                 "manifest field 'compiler_intrinsics.allow' must be an array",
+                 entry->value_range);
+        return {};
+    }
+
+    std::vector<std::string> values;
+    values.reserve(entry->value->array_items.size());
+    for (const auto &item : entry->value->array_items) {
+        if (item->kind != ValueKind::String) {
+            add_diag(diagnostics,
+                     kType,
+                     "manifest field 'compiler_intrinsics.allow' must contain only strings",
+                     item->range);
+            continue;
+        }
+        if (item->string_value.empty()) {
+            reject_empty_string_array_item(display, item->range, diagnostics);
+            continue;
+        }
+        if (!is_builtin_allow_pattern(item->string_value)) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "manifest field 'compiler_intrinsics.allow' items must be builtin hook names "
+                     "or trailing-* prefix patterns",
+                     item->range);
+            continue;
+        }
+        values.push_back(item->string_value);
+    }
+    return values;
+}
+
 [[nodiscard]] std::vector<HandoffExportManifest>
 read_handoff_exports(const Value &table,
                      std::string_view key,
@@ -747,8 +814,8 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
         } else {
             reject_unknown_fields(
                 *intrinsics, {"allow"}, "compiler_intrinsics.", result.diagnostics);
-            manifest.compiler_intrinsics_allow = read_string_array(
-                *intrinsics, "allow", "compiler_intrinsics.allow", false, result.diagnostics);
+            manifest.compiler_intrinsics_allow =
+                read_compiler_intrinsics_allow(*intrinsics, result.diagnostics);
             if (manifest.package_kind != "standard-library") {
                 add_diag(result.diagnostics,
                          kInvalidValue,

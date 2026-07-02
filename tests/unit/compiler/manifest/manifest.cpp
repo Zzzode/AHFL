@@ -594,6 +594,38 @@ std = { source = "sysroot" }
     CHECK(has_message(result.diagnostics, "prelude is only allowed for standard-library packages"));
 }
 
+TEST_CASE("Package manifest schema rejects invalid compiler intrinsic allow patterns") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = ["prelude", "option"]
+
+[compiler_intrinsics]
+allow = ["option_*", "*", "string-raw", "time_**", "Bad"]
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'compiler_intrinsics.allow' items must be builtin hook "
+                      "names or trailing-* prefix patterns"));
+}
+
 TEST_CASE("Package manifest schema rejects unknown fields") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
