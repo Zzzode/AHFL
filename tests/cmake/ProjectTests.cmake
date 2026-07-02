@@ -2585,7 +2585,7 @@ add_test(NAME ahflc.check.workspace_requires_target_for_multi_target_package
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;refund-audit\;--sysroot\;${PROJECT_SOURCE_DIR}"
-            "-DEXPECTED_REGEX=package 'refund-audit' contains 3 targets; pass --target <name>"
+            "-DEXPECTED_REGEX=package 'refund-audit' contains 4 targets; pass --target <name>"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
