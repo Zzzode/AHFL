@@ -816,7 +816,9 @@ capability BadQuery(id: String) -> Result<T, NetworkError>;   // NetworkError �
 
 ### 9.1 prelude 导出清单（冻结）
 
-`std::prelude` 是默认注入的模块，对标 Rust `std::prelude`、Swift 默认 import。当前版本（v1）冻结导出下列符号。
+`std::prelude` 是标准库显式预置模块。当前公开 PackageGraph 入口不隐式注入
+prelude；用户需要显式 `import std::prelude;` 或使用全限定 std 名称。当前版本
+（v1）冻结导出下列符号。
 
 #### 9.1.1 类型与构造子
 
@@ -865,7 +867,7 @@ Iterable, Foldable, Functor
 
 | 模块 | 不在 prelude 的原因 |
 | --- | --- |
-| `std::time` | wall-clock 引入 `Nondet`，默认导入会污染纯表达式默认假设 |
+| `std::time` | wall-clock 引入 `Nondet`，自动导入会污染纯表达式默认假设 |
 | `std::uuid` | UUID 生成引入 `Nondet`，同上 |
 | `std::json` | `JsonValue` 与领域无关，避免命名污染 |
 | `std::decimal` | `Decimal` 已是 spec 原生 primitive type，但其方法（`add`/`scale_of`）非通用，按需导入 |
@@ -886,17 +888,21 @@ prelude 是 **language stability boundary**（语言稳定性边界），与 spe
 | 删除 prelude 符号 | major（破坏性） | 仅在 major 版本允许 | deprecated 至少 1 个 major 周期后再删 |
 | 改变 prelude 符号的签名（参数/返回类型/effect） | major | 仅在 major 版本允许 | 同上 |
 | 改变 prelude 符号的语义（保持签名） | patch（向后兼容） | 允许，但需 release notes | 通过 contract 兼容性测试守住 |
-| 改变 prelude 默认导入清单（仅新增，不冲突） | minor | 允许 | — |
+| 改变 prelude 导出清单（仅新增，不冲突） | minor | 允许 | — |
 
 #### 9.2.2 名字冲突解析
 
-当 prelude 符号与用户模块 local 符号同名时，按 [module-resolution-rules.zh.md](./module-resolution-rules.zh.md) §"lookup 顺序"的优先级：**当前 module local > 原始 canonical > alias 展开**。具体到 prelude：
+当用户显式导入 prelude 且 prelude 符号与用户模块 local 符号同名时，按
+[module-resolution-rules.zh.md](./module-resolution-rules.zh.md) §"lookup 顺序"的优先级：
+**当前 module local > 原始 canonical > alias 展开**。具体到 prelude：
 
 1. 用户模块若声明了同名符号（如自定义 `map`），其 local declaration 优先
-2. prelude 符号相当于"零开销默认 import"，但**任何显式 local 声明都遮蔽它**
+2. prelude 符号不会自动进入 public PackageGraph 编译单元；显式 import 后仍受普通
+   local shadowing 规则约束
 3. 用户若想强制使用 prelude 版本，写全限定名 `std::collections::map`
 
-这与 Rust prelude 行为一致：用户 `use std::collections::HashMap;` 之后 local `HashMap` 遮蔽 prelude 中的 `Vec`/`String` 等；Rust 还允许 `pub use` 重导出。
+这保留了 Rust / Haskell prelude 的稳定清单经验，但 AHFL 当前选择显式导入，避免
+早期语言阶段把 std 符号集变成隐式全局依赖。
 
 #### 9.2.3 版本演化与下游兼容
 
@@ -924,11 +930,13 @@ graph LR
 | 语言 | prelude 策略 | AHFL 借鉴 |
 | --- | --- | --- |
 | **Rust** | `std::prelude` 每个 edition 冻结，跨 edition 才允许新增；删除走 edition gate | 冻结清单 + edition（major 版本）边界 |
-| **Swift** | `Swift` 模块默认 import，符号集稳定；删除极其罕见 | 默认导入 + 极度保守的删除策略 |
-| **Haskell** | `Prelude` 由 report 冻结，扩展走 `Prelude2021` 等显式 opt-in | 冻结清单 + 通过新模块而非原地扩展演进 |
+| **Swift** | `Swift` 模块默认 import，符号集稳定；删除极其罕见 | 极度保守的删除策略 |
+| **Haskell** | `Prelude` 由 report 冻结，扩展走 `Prelude2021` 等显式 opt-in | 冻结清单 + 显式模块演进 |
 | **Lean** | `Init` 模块默认 import，按 Lean 版本演进 | 单根模块树 + 版本绑定 |
 
-AHFL 取 Rust edition + Haskell 显式模块演进折中：**prelude 清单冻结在 v1**，新增通过 minor 版本，删除/重命名通过 major 版本（deprecated alias 过渡）。
+AHFL 取 Rust edition + Haskell 显式模块演进折中：**prelude 清单冻结在 v1**，
+当前 public PackageGraph 入口显式导入；新增通过 minor 版本，删除/重命名通过
+major 版本（deprecated alias 过渡）。
 
 ---
 
@@ -1061,50 +1069,74 @@ enum JsonErrorKind {
 
 ---
 
-## 11. 模块分发与默认导入
+## 11. 模块分发与 prelude
 
-### 11.1 源码 std search root
+### 11.1 sysroot std package
 
-stdlib 源码以**单一权威根**分发。借鉴 Rust sysroot（`rustlib`）与 Swift 标准 library 源码树，AHFL 的 std 源码位于仓库内 `std/` 目录（与 `include/` / `src/` / `grammar/` 同级），编译器在以下位置按序查找：
+stdlib 源码以**单一权威 sysroot package** 分发。AHFL 的 std 源码位于仓库内
+`std/` 目录（与 `include/` / `src/` / `grammar/` 同级），并由 `std/ahfl.toml`
+描述。公开工程入口必须通过 PackageGraph 选择 sysroot：
 
 ```mermaid
 flowchart TD
-    P["编译器接收 ahfl 源文件"]
-    L1["1. 项目本地 std override<br/>(AHFL_STD_ROOT 环境变量 /<br/> project.ahfl 的 std-root 字段)"]
-    L2["2. 仓库内权威 std/ 目录<br/>(随编译器发布)"]
-    L3["3. 报 E::std_module_not_found"]
-    P --> L1
-    L1 -->|命中| OK["解析成功"]
-    L1 -->|未命中| L2
-    L2 -->|命中| OK
-    L2 -->|未命中| L3
+    CLI["CLI / LSP / formatter"]
+    Opt["--sysroot <path>"]
+    Env["AHFL_SYSROOT"]
+    Builtin["compiled-in sysroot"]
+    Manifest["<sysroot>/std/ahfl.toml"]
+    Graph["PackageGraph"]
+    Loader["frontend loader"]
+    Error["diagnostic: failed to locate sysroot std/ahfl.toml"]
+
+    CLI --> Opt
+    CLI --> Env
+    CLI --> Builtin
+    Opt --> Manifest
+    Env --> Manifest
+    Builtin --> Manifest
+    Manifest -->|exists and validates| Graph
+    Manifest -->|missing / invalid| Error
+    Graph --> Loader
 ```
 
-模块路径到文件路径映射沿用 [module-resolution-rules.zh.md](./module-resolution-rules.zh.md) 的约定：
+`std/ahfl.toml` 的 sysroot 契约：
 
-```text
-std::collections              -> std/collections.ahfl
-std::collections::hash_map    -> std/collections/hash_map.ahfl   (子模块)
-std::prelude                  -> std/prelude.ahfl
-```
+1. `[package].name = "std"`。
+2. `[package].kind = "standard-library"`。
+3. `[module].prefix = "std"`。
+4. `[module].root = "."`。
+5. `[prelude].module = "std::prelude"`。
+6. `[prelude].injection = "explicit"`。
+7. `[compiler_intrinsics].allow` 必须声明 std 内部可用的 builtin hook 前缀。
 
-`AHFL_STD_ROOT` 主要用于：工具链测试、自定义 std 分支、编译器自举场景。普通项目不应覆盖，违反 warn `W::std_root_overridden`。
+模块路径到文件路径映射沿用 [module-loading.zh.md](./module-loading.zh.md) 的
+PackageGraph module root 规则：
 
-### 11.2 prelude 默认导入注入
+- `std::collections` -> `std/collections.ahfl`
+- `std::collections::hash_map` -> `std/collections/hash_map.ahfl`
+- `std::prelude` -> `std/prelude.ahfl`
 
-prelude 默认导入由编译器在**每个 source unit 的 resolver 阶段之前**自动注入一条隐式 `import`，等价于在源文件头部追加：
+`AHFL_STD_ROOT` 和 `AHFL_STDLIB_SEARCH_ROOT` 不再是公开入口。普通项目只通过
+`--sysroot`、`AHFL_SYSROOT` 或编译期默认 sysroot 选择 std。
+
+### 11.2 prelude 显式入口
+
+当前 public PackageGraph 入口采用显式 prelude。用户若需要 prelude 符号，应在源文件中写：
 
 ```ahfl
 import std::prelude;
 ```
 
-注入规则：
+规则：
 
-1. **每个 source unit 注入一次**，注入发生在 `module` 声明（若有）之后、第一个顶层声明之前
-2. **注入不引入 alias**（沿用 module-resolution-rules.zh.md §"不带 alias 的 import"），所有 prelude 符号通过 canonical 名 `std::prelude::xxx` 解析；prelude 模块内部对每个符号做 `pub use std::option::Option;` 之类的重导出，使其在 canonical lookup 中可见
-3. **用户可以用 `#![no_prelude]` 属性关闭注入**（对标 Rust `#![no_std]`），此时所有 std 符号需显式 `import`
-4. **局部遮蔽优先**：用户模块的 local 声明遮蔽 prelude 符号（见 §9.2.2）
-5. **不影响 source graph 依赖计数**：prelude 是隐式依赖，但依赖解析仍按显式 `import` 计算（避免每个文件都"依赖"prelude 而污染增量编译）
+1. prelude 不自动进入 public PackageGraph 编译单元。
+2. 显式 `import std::prelude;` 是普通 SourceGraph 依赖，参与 package dependency
+   和 module visibility 规则。
+3. 不带 alias 的 `import std::prelude;` 不向本地作用域注入简写名字；resolver 的
+   prelude bare-name fallback 只有在 prelude source unit 已经被装载时才生效。
+4. 局部遮蔽优先：用户模块的 local 声明遮蔽 prelude 符号（见 §9.2.2）。
+5. C++ 层 `ProjectInput.inject_prelude` 只保留给内部测试和后续语法实验；它不是当前
+   package manifest 语义。
 
 ### 11.3 std 模块依赖图（无环）
 
@@ -1165,10 +1197,10 @@ graph TD
 
 1. P5 完成容器库化后，stdlib 各模块按本文签名实现
 2. `std/` 目录建立，每个模块一个 `.ahfl` 文件
-3. 编译器注入 prelude 隐式 import（resolver 阶段）
-4. search root 解析按 §11.1 落地
+3. `std/ahfl.toml` 作为 sysroot package manifest 落地
+4. PackageGraph sysroot 解析按 §11.1 落地
 5. SMV 编码按 §4.5 表格落地
-6. prelude 稳定性按 §9.2 落地（CI 加入 contract 兼容测试）
+6. prelude 显式入口与稳定性按 §9.2 / §11.2 落地（CI 加入 contract 兼容测试）
 
 ---
 
@@ -1184,10 +1216,10 @@ graph TD
 | `E::try_return_type_mismatch` | `?` 表达式类型与外层 fn 返回类型的 Err/None 不兼容 | error |
 | `E::effect_not_pure` | 非 `Pure` 函数进入可验证子集位置（沿用 RFC §3.4） | error |
 | `E::nondet_in_invariant` | `now`/`uuid_new` 等 Nondet 函数进入 invariant（沿用 RFC §5） | error |
-| `E::std_module_not_found` | std 模块在 search root 中找不到 | error |
+| `E::std_module_not_found` | std 模块在 sysroot PackageGraph module root 中找不到 | error |
 | `E::std_cyclic_dependency` | std 模块间检测到循环依赖 | error |
 | `W::prelude_deprecated` | 使用了 deprecated prelude alias | warning |
-| `W::std_root_overridden` | `AHFL_STD_ROOT` 覆盖了仓库内 std | warning |
+| `W::std_root_overridden` | 预留：非默认 sysroot 覆盖了编译期 std | warning |
 
 ---
 

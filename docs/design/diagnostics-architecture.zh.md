@@ -333,7 +333,7 @@ AHFL 当前已经在 project-aware frontend 和 resolver 中大量使用 `note` 
 
 - CLI / project input 级配置错误
 - 缺少 entry files
-- 无 search roots
+- PackageGraph / module root table 不成立
 
 ### 何时用 `error_in_source(...)`
 

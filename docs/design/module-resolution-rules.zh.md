@@ -330,14 +330,15 @@ module resolution 错误通常应附着到：
 即使这篇文档叫 module resolution，resolver 仍然不该：
 
 1. 读取文件系统
-2. 决定 search root
+2. 决定 PackageGraph、sysroot 或 module root
 3. 决定 module -> path 映射
-4. 决定某个 type alias 最终展开成什么语义类型
-5. 决定某个 temporal atom 在 contract/workflow 中是否合法
+4. 决定 package dependency 或 exported module visibility
+5. 决定某个 type alias 最终展开成什么语义类型
+6. 决定某个 temporal atom 在 contract/workflow 中是否合法
 
 这些分别属于：
 
-1. frontend loader
+1. PackageGraph builder / frontend loader
 2. typecheck
 3. validate
 

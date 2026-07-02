@@ -315,17 +315,20 @@ frontend 当前通过一组 helper 统一处理位置：
 `parse_project(...)` 在 frontend 内部完成：
 
 1. entry file 校验
-2. search root 归一化
+2. PackageGraph 下发的 module root table 归一化
 3. module -> path 解析
-4. 递归装载 imported source
-5. 生成 `SourceUnit` / `ImportEdge` / `SourceGraph`
-6. 汇总 diagnostics
+4. package dependency / exported module visibility 检查
+5. 递归装载 imported source
+6. 生成 `SourceUnit` / `ImportEdge` / `SourceGraph`
+7. 汇总 diagnostics
 
 这里最关键的设计点是：
 
 - project-aware 仍然是 frontend 责任
 
-因为它本质上属于“稳定输入模型构建”，而不是语义判定。
+因为 SourceGraph 构建本质上属于“稳定输入模型构建”，而不是语义判定。
+公开工程入口的 PackageGraph 构建发生在 frontend 之前，frontend 不再自行发现
+workspace、sysroot 或 package dependency。
 
 ## collect_program_imports 的作用
 
