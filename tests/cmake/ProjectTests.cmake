@@ -2608,6 +2608,15 @@ add_test(NAME ahflc.check.workspace_parent_export_private_child_rejected
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.workspace_member_import_requires_dependency
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;no-deps-app\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=package prefix 'no_deps_app' does not depend on package prefix 'audit_core'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.project.ok_cross_file
     COMMAND $<TARGET_FILE:ahflc> check
             --search-root "${AHFL_TESTS_DIR}/integration/check_ok"

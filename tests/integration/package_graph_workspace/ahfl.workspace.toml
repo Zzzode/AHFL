@@ -5,6 +5,7 @@ name = "commerce-workflows"
 members = [
   "packages/refund-audit",
   "packages/audit-core",
+  "packages/no-deps-app",
 ]
 
 [resolver]

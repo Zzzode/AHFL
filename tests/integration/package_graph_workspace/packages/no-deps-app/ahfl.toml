@@ -1,0 +1,19 @@
+manifest_version = 1
+
+[package]
+name = "no-deps-app"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "no_deps_app"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "no_deps_app::main::NoDepsWorkflow"
+exports = [{ kind = "workflow", name = "no_deps_app::main::NoDepsWorkflow" }]

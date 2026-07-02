@@ -1,0 +1,19 @@
+module no_deps_app::main;
+
+import audit_core::lib as core;
+
+struct NoDepsInput {
+    subject: core::AuditRequest;
+}
+
+struct NoDepsOutput {
+    accepted: Bool;
+}
+
+workflow NoDepsWorkflow {
+    input: NoDepsInput;
+    output: NoDepsOutput;
+    return: NoDepsOutput {
+        accepted: true,
+    };
+}
