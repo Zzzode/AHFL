@@ -315,6 +315,36 @@ resolve_module_file_from_graph(const ahfl::package_graph::PackageGraph &graph,
     return candidates.front();
 }
 
+[[nodiscard]] std::optional<std::filesystem::path>
+entry_file_from_package_graph_target(const ahfl::package_graph::PackageGraph &graph,
+                                     const ahfl::package_graph::PackageNode &package,
+                                     const ahfl::package_graph::TargetNode &target,
+                                     std::ostream &err) {
+    if (target.kind == "library" || target.kind == "test") {
+        return normalize_manifest_path(package.package_root / target.entry);
+    }
+
+    if (target.kind == "handoff") {
+        const auto entry_module = module_name_from_entry(target.entry);
+        if (!entry_module.has_value()) {
+            err << "error: target '" << target.name << "' entry '" << target.entry
+                << "' must be a canonical symbol name\n";
+            return std::nullopt;
+        }
+
+        const auto entry_file = resolve_module_file_from_graph(graph, *entry_module);
+        if (!entry_file.has_value()) {
+            err << "error: failed to resolve target '" << target.name << "' entry module '"
+                << *entry_module << "' from PackageGraph module roots\n";
+            return std::nullopt;
+        }
+        return entry_file;
+    }
+
+    err << "error: target '" << target.name << "' has unsupported kind '" << target.kind << "'\n";
+    return std::nullopt;
+}
+
 [[nodiscard]] std::vector<std::string>
 dependency_prefixes_for_package(const ahfl::package_graph::PackageGraph &graph,
                                 ahfl::package_graph::PackageId package_id) {
@@ -1795,17 +1825,9 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
         package_metadata_ = package_metadata_from_package_graph_target(*package, *target);
     }
 
-    const auto entry_module = module_name_from_entry(target->entry);
-    if (!entry_module.has_value()) {
-        std::cerr << "error: target '" << target->name << "' entry '" << target->entry
-                  << "' must be a canonical symbol name\n";
-        return ExitCode::CompileError;
-    }
-
-    const auto entry_file = resolve_module_file_from_graph(graph, *entry_module);
+    const auto entry_file =
+        entry_file_from_package_graph_target(graph, *package, *target, std::cerr);
     if (!entry_file.has_value()) {
-        std::cerr << "error: failed to resolve target '" << target->name << "' entry module '"
-                  << *entry_module << "' from PackageGraph module roots\n";
         return ExitCode::CompileError;
     }
 

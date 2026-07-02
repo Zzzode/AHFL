@@ -2338,6 +2338,16 @@ set_tests_properties(ahflc.check.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.manifest_library_target
+    COMMAND $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target lib
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.manifest_library_target PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
+)
+
 add_test(NAME ahflc.check.manifest_uses_ahfl_sysroot_env
     COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
             ${CMAKE_COMMAND} -E env

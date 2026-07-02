@@ -13,6 +13,10 @@ root = "src"
 [exports]
 modules = ["main"]
 
+[targets.lib]
+kind = "library"
+entry = "src/main.ahfl"
+
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
