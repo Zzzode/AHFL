@@ -98,7 +98,7 @@
 
 待办：
 
-- [x] 将 `AnalysisService` 升级为 project-aware snapshot/cache：snapshot 记录 document revision、content hash、workspace revision、project descriptor 与 open buffer overlay。
+- [x] 将 `AnalysisService` 升级为 package-aware snapshot/cache：snapshot 记录 document revision、content hash、workspace revision、PackageGraph context 与 open buffer overlay。
 - [x] 以 `TypedProgram` + Resolver symbol/reference data 作为常规 LSP 主状态；Semantic IR 按需 lower，Opt IR 不进入常规 LSP state。
 - [x] open/change/close 后刷新全部已打开文档 diagnostics，覆盖跨文件依赖被未保存 overlay 改坏的 IDE 场景。
 - [x] 实现 `textDocument/prepareRename`，并在 initialize capability 中声明 `prepareProvider`，覆盖声明、引用和不可重命名位置。
@@ -106,12 +106,12 @@
 - [x] 实现 `textDocument/diagnostic` full report 与 `diagnosticProvider` capability，覆盖 broken source pull diagnostics 和修复后空报告。
 - [x] 实现 `workspace/diagnostic` full report 与 `workspaceDiagnostics` capability，覆盖未打开 project source 的 resolver diagnostic。
 - [x] 支持 `workspace/didChangeWatchedFiles` 后失效 LSP analysis cache，覆盖未打开 imported source 修改后的重新分析。
-- [x] 支持 `workspace/didChangeWorkspaceFolders` 后更新 workspace roots 并重新选择 project descriptor，覆盖跨 workspace folder descriptor 切换。
+- [x] 支持 `workspace/didChangeWorkspaceFolders` 后更新 workspace roots 并重新选择 PackageGraph context，覆盖跨 workspace folder manifest 切换。
 - [x] 补 VS Code extension packaging baseline：client 激活、TextMate grammar、snippet、基础 CodeLens、内置 release `ahfl-lsp` platform VSIX 打包脚本、CI VSIX artifact workflow、Marketplace package inventory gate、platform VSIX install smoke、hover/completion/rename/watched-files extension test、Problems diagnostics transcript 与 diagnostics publish/recovery extension test。
 - [ ] 为 hover/completion/signatureHelp 使用 Typed HIR 和 condition facts，而不是只依赖轻量文本/符号启发。
 - [ ] 继续补齐 workspace diagnostics：source graph 级细粒度增量失效。
 - [ ] 补 VS Code 真实 IDE 体验闭环：workspace folder extension 序列、更深真实编辑序列和真实 Marketplace 发布演练；当前本地 `vsce` 不提供 `publish --dry-run`，已用 package inventory gate 覆盖离线发布包清单预检。
-- [ ] 增加真实编辑序列测试：open/change/save/close 组合回归、更多 project descriptor 负例与复杂 broken source recovery。
+- [ ] 增加真实编辑序列测试：open/change/save/close 组合回归、更多 manifest / PackageGraph 负例与复杂 broken source recovery。
 
 验收证据：
 

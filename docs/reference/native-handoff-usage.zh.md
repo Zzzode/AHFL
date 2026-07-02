@@ -71,7 +71,7 @@ flowchart TD
 helper 当前保证：
 
 1. 只消费 `handoff::Package`
-2. 不回退读取 AST、raw source、project descriptor 或独立 package descriptor
+2. 不回退读取 AST、raw source 或独立工程/包 descriptor
 3. 会对 entry/export target、binding key、workflow dependency 与 workflow target 类型做最小一致性检查
 4. 不承诺 scheduler、retry、timeout、deployment 或 connector 语义
 
