@@ -96,6 +96,9 @@ ahfl_label_tests(
         ahflc.emit_native_json.rejects_legacy_package_descriptor
         ahflc.emit_native_json.rejects_legacy_project_descriptor_with_package
         ahflc.emit_native_json.rejects_legacy_workspace_descriptor_with_package
+        ahflc.emit_package_review.manifest_basic
+        ahflc.emit_package_review.workspace_basic
+        ahflc.emit_execution_plan.manifest_basic
         ahflc.check.project_manifest.rejects_legacy_descriptor_with_package
 )
 
@@ -114,8 +117,10 @@ ahfl_label_tests(
     LABELS ahfl-v0.5 v0.5-package-review
     TESTS
         ahflc.emit_package_review.workflow_value_flow.with_package
+        ahflc.emit_package_review.manifest_basic
         ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
         ahflc.emit_package_review.project_manifest.workflow_value_flow.with_display_package
+        ahflc.emit_package_review.workspace_basic
         ahflc.emit_package_review.workspace.workflow_value_flow.with_package
 )
 
@@ -128,8 +133,10 @@ ahfl_label_tests(
         ahfl.handoff.package.execution_planner_bootstrap.fail_agent_entry
         ahfl.handoff.package.execution_planner_bootstrap.fail_missing_dependency
         ahflc.emit_package_review.workflow_value_flow.with_package
+        ahflc.emit_package_review.manifest_basic
         ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
         ahflc.emit_package_review.project_manifest.workflow_value_flow.with_display_package
+        ahflc.emit_package_review.workspace_basic
         ahflc.emit_package_review.workspace.workflow_value_flow.with_package
 )
 
@@ -144,6 +151,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.6 v0.6-execution-plan-emission
     TESTS
         ahflc.emit_execution_plan.workflow_value_flow.with_package
+        ahflc.emit_execution_plan.manifest_basic
         ahflc.emit_execution_plan.project_manifest.workflow_value_flow.with_package
         ahflc.emit_execution_plan.workspace.workflow_value_flow.with_package
 )
@@ -178,6 +186,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.6 v0.6-dry-run-trace
     TESTS
         ahflc.emit_dry_run_trace.workflow_value_flow.with_package
+        ahflc.emit_dry_run_trace.manifest_requires_capability_mocks
         ahflc.emit_dry_run_trace.project_manifest.workflow_value_flow.with_package
         ahflc.emit_dry_run_trace.workspace.workflow_value_flow.with_package
 )
@@ -1056,6 +1065,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.21 v0.21-durable-store-import-provider-adapter-emission
     TESTS
         ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
+        ahflc.emit_provider_artifact.manifest_requires_capability_mocks
         ahflc.emit_durable_store_import_provider_write_attempt.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_write_attempt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package

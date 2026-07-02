@@ -2402,6 +2402,44 @@ set_tests_properties(ahflc.emit_native_json.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "\"name\": \"refund-audit\""
 )
 
+add_test(NAME ahflc.emit_package_review.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> emit package-review
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.emit_package_review.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "identity refund-audit@0\\.1\\.0"
+)
+
+add_test(NAME ahflc.emit_execution_plan.manifest_basic
+    COMMAND $<TARGET_FILE:ahflc> emit execution-plan
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.emit_execution_plan.manifest_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "refund_audit::main::RefundAuditWorkflow"
+)
+
+add_test(NAME ahflc.emit_dry_run_trace.manifest_requires_capability_mocks
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            "-DAHFLC_ARGS=emit\;dry-run-trace\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=emit-dry-run-trace requires --capability-mocks"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.emit_provider_artifact.manifest_requires_capability_mocks
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            "-DAHFLC_ARGS=emit-provider-artifact\;provider/write-attempt\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=emit-provider-artifact provider/write-attempt requires --capability-mocks"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.manifest_rejects_legacy_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -2533,6 +2571,17 @@ add_test(NAME ahflc.emit_native_json.workspace_basic
 )
 set_tests_properties(ahflc.emit_native_json.workspace_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "\"entry_target\": \\{"
+)
+
+add_test(NAME ahflc.emit_package_review.workspace_basic
+    COMMAND $<TARGET_FILE:ahflc> emit package-review
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.emit_package_review.workspace_basic PROPERTIES
+    PASS_REGULAR_EXPRESSION "identity refund-audit@0\\.1\\.0"
 )
 
 add_test(NAME ahflc.check.discover_workspace_basic

@@ -335,14 +335,21 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
 
 [[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
     return command == CommandKind::Check || command == CommandKind::Format ||
-           command == CommandKind::EmitNativeJson;
+           (command.has_value() && is_package_supported_command(*command));
+}
+
+[[nodiscard]] bool
+selected_action_supports_package_graph_input(const CommandLineOptions &options,
+                                             std::optional<CommandKind> command) {
+    return command_supports_package_graph_input(command) ||
+           options.selected_provider_artifact.has_value();
 }
 
 [[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
                                                 std::optional<CommandKind> command) {
     return options.workspace_descriptor.has_value() &&
            (command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile ||
-            (command_supports_package_graph_input(command) &&
+            (selected_action_supports_package_graph_input(options, command) &&
              is_toml_workspace_descriptor(options)));
 }
 
@@ -605,8 +612,9 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
 }
 
 [[nodiscard]] bool
-package_graph_command_requires_handoff_metadata(std::optional<CommandKind> command) noexcept {
-    return command == CommandKind::EmitNativeJson;
+package_graph_action_requires_handoff_metadata(const CommandLineOptions &options,
+                                               std::optional<CommandKind> command) {
+    return selected_action_supports_package(selected_action_from_options(options, command));
 }
 
 [[nodiscard]] ahfl::handoff::PackageMetadata
@@ -1270,10 +1278,11 @@ std::optional<ExitCode> CliDriver::validate_options() {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (!command_supports_package_graph_input(effective_command_) &&
+        if (!selected_action_supports_package_graph_input(options_, effective_command_) &&
             !package_graph_descriptor_dump) {
             std::cerr << "error: --manifest is currently only supported with check, fmt, emit "
-                         "native-json, and dump package-graph/lockfile\n";
+                         "native-json, package artifact commands, provider artifact commands, "
+                         "and dump package-graph/lockfile\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1604,10 +1613,15 @@ std::optional<ExitCode> CliDriver::load_package_and_mocks() {
     const auto selected_action = selected_action_from_options(options_, effective_command_);
     const bool workspace_package_selector =
         package_option_is_workspace_selector(options_, effective_command_);
+    const bool package_metadata_from_package_graph =
+        (options_.manifest_path.has_value() || workspace_package_selector) &&
+        selected_action_supports_package(selected_action);
     if (selected_action_requires_package(selected_action)) {
         const auto action_name = selected_action_name(selected_action);
-        if (!options_.package_descriptor.has_value()) {
-            std::cerr << "error: " << action_name << " requires --package\n";
+        if (!package_metadata_from_package_graph && !options_.package_descriptor.has_value()) {
+            std::cerr << "error: " << action_name
+                      << " requires --manifest <ahfl.toml> --target <name>, --workspace "
+                         "<ahfl.workspace.toml> --package <name> --target <name>, or --package\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1856,10 +1870,10 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
     if (target == nullptr) {
         return ExitCode::UsageError;
     }
-    if (package_graph_command_requires_handoff_metadata(effective_command_)) {
+    if (package_graph_action_requires_handoff_metadata(options_, effective_command_)) {
         if (target->kind != "handoff") {
             std::cerr << "error: target '" << target->name << "' has kind '" << target->kind
-                      << "'; emit native-json requires a handoff target\n";
+                      << "'; package artifact commands require a handoff target\n";
             return ExitCode::UsageError;
         }
         package_metadata_ = package_metadata_from_package_graph_target(*package, *target);
