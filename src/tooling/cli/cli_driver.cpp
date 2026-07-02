@@ -370,13 +370,13 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
     return graph.find_package(ahfl::package_graph::PackageId{1});
 }
 
-[[nodiscard]] bool path_has_extension(std::string_view value, std::string_view extension) {
-    return std::filesystem::path{std::string{value}}.extension().generic_string() == extension;
+[[nodiscard]] bool path_has_filename(std::string_view value, std::string_view filename) {
+    return std::filesystem::path{std::string{value}}.filename().generic_string() == filename;
 }
 
-[[nodiscard]] bool is_toml_workspace_manifest_path(const CommandLineOptions &options) {
+[[nodiscard]] bool is_workspace_manifest_path(const CommandLineOptions &options) {
     return options.workspace_manifest_path.has_value() &&
-           path_has_extension(*options.workspace_manifest_path, ".toml");
+           path_has_filename(*options.workspace_manifest_path, "ahfl.workspace.toml");
 }
 
 [[nodiscard]] bool command_supports_package_graph_input(std::optional<CommandKind> command) {
@@ -396,7 +396,7 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
     return options.workspace_manifest_path.has_value() &&
            (command == CommandKind::DumpPackageGraph || command == CommandKind::DumpLockfile ||
             (selected_action_supports_package_graph_input(options, command) &&
-             is_toml_workspace_manifest_path(options)));
+             is_workspace_manifest_path(options)));
 }
 
 [[nodiscard]] bool is_package_graph_descriptor_dump(std::optional<CommandKind> command) {
@@ -1260,7 +1260,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.workspace_manifest_path.has_value() &&
-        !is_toml_workspace_manifest_path(options_)) {
+        !is_workspace_manifest_path(options_)) {
         std::cerr << "error: --workspace expects ahfl.workspace.toml\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -1288,7 +1288,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.manifest_path.has_value()) {
-        if (!path_has_extension(*options_.manifest_path, ".toml")) {
+        if (!path_has_filename(*options_.manifest_path, "ahfl.toml")) {
             std::cerr << "error: --manifest expects ahfl.toml\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;

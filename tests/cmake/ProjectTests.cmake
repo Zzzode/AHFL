@@ -2379,11 +2379,20 @@ add_test(NAME ahflc.check.manifest_rejects_stdlib_search_root_env
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.manifest_requires_toml_extension
+add_test(NAME ahflc.check.manifest_requires_canonical_filename
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
             "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--manifest expects ahfl\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.manifest_rejects_noncanonical_toml_filename
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/package.toml"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/package.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
             "-DEXPECTED_REGEX=--manifest expects ahfl\\.toml"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
@@ -2527,6 +2536,15 @@ add_test(NAME ahflc.check.workspace_rejects_legacy_workspace_json
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.json"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.json\;--package\;refund-audit\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--workspace expects ahfl\\.workspace\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.workspace_rejects_noncanonical_toml_filename
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/workspace.toml\;--package\;refund-audit\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
             "-DEXPECTED_REGEX=--workspace expects ahfl\\.workspace\\.toml"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
