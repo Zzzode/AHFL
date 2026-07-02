@@ -467,6 +467,9 @@ void validate_dependency_path(std::string_view value,
             spec.version = version->value->string_value;
             if (spec.version->empty()) {
                 reject_empty_string("dependencies.version", version->value_range, diagnostics);
+            } else {
+                validate_semver(
+                    *spec.version, "dependency.version", version->value_range, diagnostics);
             }
         } else {
             add_diag(
@@ -501,10 +504,6 @@ void validate_dependency_path(std::string_view value,
                  kInvalidValue,
                  "unsupported dependency source '" + spec.source + "'",
                  range);
-    }
-
-    if (spec.version.has_value() && !spec.version->empty()) {
-        validate_semver(*spec.version, "dependency.version", range, diagnostics);
     }
 
     return spec;

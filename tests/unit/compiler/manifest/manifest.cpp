@@ -326,6 +326,47 @@ audit-core = { source = "path", path = "/tmp/audit-core", version = "0.1.0" }
                       "manifest field 'dependencies.path' must be relative to manifest directory"));
 }
 
+TEST_CASE("Package manifest schema reports dependency version range on the value") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+audit-core = { source = "path", path = "packages/audit-core", version = "0.1" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    const auto found = std::find_if(result.diagnostics.begin(),
+                                    result.diagnostics.end(),
+                                    [](const auto &diagnostic) {
+                                        return diagnostic.message ==
+                                               "dependency.version must be an exact semantic version";
+                                    });
+    REQUIRE(found != result.diagnostics.end());
+    constexpr std::string_view invalid_version = "\"0.1\"";
+    const auto invalid_version_offset = input.find(invalid_version);
+    CHECK(found->range.begin_offset == invalid_version_offset);
+    CHECK(found->range.end_offset == invalid_version_offset + invalid_version.size());
+}
+
 TEST_CASE("Package manifest schema allows relative parent path dependencies") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 
