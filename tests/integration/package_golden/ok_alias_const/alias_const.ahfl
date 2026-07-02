@@ -1,0 +1,58 @@
+module ir::alias_const;
+import ir::alias_const as self;
+
+const DEFAULT_STATUS: String = "pending";
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = self::DEFAULT_STATUS;
+}
+
+struct Response {
+    value: String;
+}
+
+type RequestAlias = self::Request;
+
+capability Echo(request: RequestAlias) -> Response;
+predicate non_empty(value: String) -> Bool;
+
+agent EchoAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+contract for self::EchoAgent {
+    requires: non_empty(input.value);
+    ensures: non_empty(output.value);
+}
+
+flow for self::EchoAgent {
+    state Init {
+        let reply = self::Echo(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}
+
+workflow EchoWorkflow {
+    input: Request;
+    output: Response;
+    node run: self::EchoAgent(input);
+    return: run;
+}

@@ -1,0 +1,29 @@
+manifest_version = 1
+
+[package]
+name = "alias-const"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "ir"
+root = "."
+
+[exports]
+modules = ["alias_const"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "ir::alias_const::EchoWorkflow"
+exports = [
+  { kind = "workflow", name = "ir::alias_const::EchoWorkflow" },
+  { kind = "agent", name = "ir::alias_const::EchoAgent" },
+]
+
+[[targets.workflow.capability_bindings]]
+capability = "ir::alias_const::Echo"
+binding_key = "runtime.echo"
+
+[dependencies]
+std = { source = "sysroot" }

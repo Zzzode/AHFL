@@ -36,20 +36,20 @@ function(ahfl_add_output_test name subcommand source_file expected_file)
     )
 endfunction()
 
-# Register a single golden test for a with_package subcommand.
+# Register a single golden test for a package-manifest subcommand.
 # Options:
-#   PACKAGE_ONLY  — only pass --package (no mocks/fixture/run-id)
+#   PACKAGE_ONLY  — no mocks/fixture/run-id
 #   FIXTURE       — input fixture name (default: fixture.request.basic)
 #   RUN_ID        — run identifier (default: run-001)
 #   MOCKS_STEM    — stem for the .mocks.json file (default: source_stem)
 function(ahfl_add_package_output_test name subcommand source_stem expected_file)
     cmake_parse_arguments(ARG "PACKAGE_ONLY" "FIXTURE;RUN_ID;MOCKS_STEM" "" ${ARGN})
 
-    set(source_file "${AHFL_TESTS_DIR}/golden/ir/${source_stem}.ahfl")
-    set(package_file "${AHFL_TESTS_DIR}/golden/ir/${source_stem}.package.json")
+    set(manifest_file "${AHFL_TESTS_DIR}/integration/package_golden/${source_stem}/ahfl.toml")
+    set(package_args "--manifest ${manifest_file} --target workflow --sysroot ${PROJECT_SOURCE_DIR}")
 
     if(ARG_PACKAGE_ONLY)
-        set(args "${subcommand} --package ${package_file} ${source_file}")
+        set(args "${subcommand} ${package_args}")
     else()
         if(NOT ARG_FIXTURE)
             set(ARG_FIXTURE "fixture.request.basic")
@@ -61,7 +61,7 @@ function(ahfl_add_package_output_test name subcommand source_stem expected_file)
             set(ARG_MOCKS_STEM "${source_stem}")
         endif()
         set(mocks_file "${AHFL_TESTS_DIR}/golden/dry_run/${ARG_MOCKS_STEM}.mocks.json")
-        set(args "${subcommand} --package ${package_file} --capability-mocks ${mocks_file} --input-fixture ${ARG_FIXTURE} --run-id ${ARG_RUN_ID} ${source_file}")
+        set(args "${subcommand} ${package_args} --capability-mocks ${mocks_file} --input-fixture ${ARG_FIXTURE} --run-id ${ARG_RUN_ID}")
     endif()
 
     add_test(NAME ${name}
@@ -73,11 +73,11 @@ function(ahfl_add_package_output_test name subcommand source_stem expected_file)
     )
 endfunction()
 
-# Auto-discover and register all with_package golden tests.
+# Auto-discover and register all package golden tests.
 # Scans tests/golden/ for files containing ".with_package." and registers
 # each as a test, deriving the subcommand from the artifact suffix.
 function(ahfl_discover_package_golden_tests)
-    # Subcommands that only need --package (no mocks/fixture/run-id)
+    # Subcommands that only need package metadata (no mocks/fixture/run-id)
     set(_package_only_subcommands
         "emit native-json"
         "emit package-review"
@@ -147,8 +147,8 @@ function(ahfl_discover_package_golden_tests)
             set(mocks_stem "${CMAKE_MATCH_1}.fail")
         endif()
 
-        # Skip if source file does not exist.
-        if(NOT EXISTS "${AHFL_TESTS_DIR}/golden/ir/${source_stem}.ahfl")
+        # Skip if the package fixture manifest does not exist.
+        if(NOT EXISTS "${AHFL_TESTS_DIR}/integration/package_golden/${source_stem}/ahfl.toml")
             continue()
         endif()
 

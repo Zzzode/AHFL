@@ -600,11 +600,24 @@ BuildResult build_package_graph(const BuildInput &input) {
             return std::nullopt;
         }
 
-        if (dependency.source == "path" && target->source != PackageSourceKind::Path) {
-            add_error(result.diagnostics,
-                      "path dependency '" + dependency.key + "' does not resolve to a path package",
-                      dependency.range);
-            return std::nullopt;
+        if (dependency.source == "path") {
+            if (!dependency.path.has_value()) {
+                add_error(result.diagnostics,
+                          "path dependency '" + dependency.key + "' is missing path",
+                          dependency.range);
+                return std::nullopt;
+            }
+
+            const auto dependency_manifest = normalize_manifest_path(
+                from.input->package_root / *dependency.path / "ahfl.toml");
+            if (normalize_manifest_path(target->manifest_path) != dependency_manifest) {
+                add_error(result.diagnostics,
+                          "path dependency '" + dependency.key +
+                              "' does not resolve to declared path package '" +
+                              dependency_manifest.generic_string() + "'",
+                          dependency.range);
+                return std::nullopt;
+            }
         }
 
         if (dependency.version.has_value() && *dependency.version != target->version) {

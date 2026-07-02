@@ -335,7 +335,7 @@ TEST_CASE("PackageGraph resolves explicit workspace dependencies only") {
     CHECK(result.graph->dependencies[1].to.value == 2);
 }
 
-TEST_CASE("PackageGraph rejects path dependencies resolving to workspace packages") {
+TEST_CASE("PackageGraph resolves path dependencies to workspace packages by manifest path") {
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),
         .root_package = app_input(
@@ -344,8 +344,12 @@ TEST_CASE("PackageGraph rejects path dependencies resolving to workspace package
             "audit-core", "audit_core", PackageSourceKind::Workspace)},
     });
 
-    REQUIRE(result.has_errors());
-    CHECK(has_error(result, "path dependency 'audit-core' does not resolve to a path package"));
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.graph.has_value());
+    REQUIRE(result.graph->dependencies.size() == 2);
+    CHECK(result.graph->dependencies[1].dependency_key == "audit-core");
+    CHECK(result.graph->dependencies[1].from.value == 1);
+    CHECK(result.graph->dependencies[1].to.value == 2);
 }
 
 TEST_CASE("PackageGraph rejects duplicate module prefix before resolver") {
@@ -662,7 +666,7 @@ entry = "src/lib.ahfl"
                          "'audit-core'"));
 }
 
-TEST_CASE("Workspace PackageGraph loader resolves members and sysroot defaults") {
+TEST_CASE("Workspace PackageGraph loader resolves path member dependencies and sysroot defaults") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /
                           ("ahfl-package-graph-workspace-loader-" + std::to_string(stamp));
@@ -746,7 +750,7 @@ entry = "refund_audit::main::RefundAuditWorkflow"
 exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [dependencies]
-audit-core = { source = "workspace" }
+audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }
 )TOML"));
     REQUIRE(write_text_file(dependency_dir / "ahfl.toml",
                             R"TOML(manifest_version = 1
