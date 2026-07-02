@@ -18,6 +18,18 @@ env:
   CMAKE_BUILD_PARALLEL_LEVEL: 3
 
 jobs:
+  rfc-check:
+    name: RFC Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check RFC registry
+        run: python3 scripts/check-rfc.py
+
   format-check:
     name: Format Check
     runs-on: ubuntu-24.04

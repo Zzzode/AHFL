@@ -84,6 +84,7 @@ Avoid:
 - [project-descriptor-architecture.zh.md](./design/project-descriptor-architecture.zh.md)
 - [release-evidence-archive.zh.md](./design/release-evidence-archive.zh.md)
 - [repository-layout.zh.md](./design/repository-layout.zh.md)
+- [rfc-system.zh.md](./design/rfc-system.zh.md)
 - [semantics-architecture.zh.md](./design/semantics-architecture.zh.md)
 - [source-graph.zh.md](./design/source-graph.zh.md)
 - [spec-restructure.zh.md](./design/spec-restructure.zh.md)
@@ -109,11 +110,23 @@ Avoid:
 - [native-handoff-usage.zh.md](./reference/native-handoff-usage.zh.md)
 - [native-runtime-artifacts.zh.md](./reference/native-runtime-artifacts.zh.md)
 - [project-usage.zh.md](./reference/project-usage.zh.md)
+- [rfc-process.zh.md](./reference/rfc-process.zh.md)
 - [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md)
 - [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md)
 - [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md)
 - [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md)
 - [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md)
+
+### RFC Registry
+
+- [README.md](./rfcs/README.md)
+- [index.yml](./rfcs/index.yml)
+- [0000-template.zh.md](./rfcs/0000-template.zh.md)
+- [0001-enum-variant-payload.zh.md](./rfcs/0001-enum-variant-payload.zh.md)
+- [0002-optional-narrowing.zh.md](./rfcs/0002-optional-narrowing.zh.md)
+- [0003-match-exhaustiveness-diagnostics.zh.md](./rfcs/0003-match-exhaustiveness-diagnostics.zh.md)
+- [0004-native-grpc-transport.zh.md](./rfcs/0004-native-grpc-transport.zh.md)
+- [0005-package-configuration-system.zh.md](./rfcs/0005-package-configuration-system.zh.md)
 
 ## Governance
 

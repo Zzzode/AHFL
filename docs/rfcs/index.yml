@@ -1,0 +1,33 @@
+schema: 1
+updated: "2026-07-02"
+rfcs:
+  - rfc: "0001"
+    title: "Enum Variant Payload Forms"
+    status: "draft"
+    file: "0001-enum-variant-payload.zh.md"
+    area: ["language", "compiler"]
+    stability: "stable-language"
+  - rfc: "0002"
+    title: "Optional Narrowing in Pattern Matching"
+    status: "draft"
+    file: "0002-optional-narrowing.zh.md"
+    area: ["language", "compiler"]
+    stability: "stable-language"
+  - rfc: "0003"
+    title: "Match Exhaustiveness Diagnostics"
+    status: "draft"
+    file: "0003-match-exhaustiveness-diagnostics.zh.md"
+    area: ["language", "compiler", "tooling"]
+    stability: "developer-facing"
+  - rfc: "0004"
+    title: "Native gRPC Transport"
+    status: "draft"
+    file: "0004-native-grpc-transport.zh.md"
+    area: ["runtime"]
+    stability: "experimental"
+  - rfc: "0005"
+    title: "Package Configuration System"
+    status: "review"
+    file: "0005-package-configuration-system.zh.md"
+    area: ["compiler", "stdlib", "runtime", "ir", "tooling", "process"]
+    stability: "developer-facing"
