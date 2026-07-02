@@ -293,6 +293,72 @@ audit_core = { source = "path", path = "packages/audit-core", version = "0.1.0" 
     CHECK(has_message(result.diagnostics, "dependency key must be kebab-case"));
 }
 
+TEST_CASE("Package manifest schema rejects absolute path dependencies") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+audit-core = { source = "path", path = "/tmp/audit-core", version = "0.1.0" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_path_escape"));
+    CHECK(has_message(result.diagnostics,
+                      "manifest field 'dependencies.path' must be relative to manifest directory"));
+}
+
+TEST_CASE("Package manifest schema allows relative parent path dependencies") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+audit-core = { source = "path", path = "../audit-core", version = "0.1.0" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    REQUIRE(result.manifest->dependencies.size() == 2);
+    CHECK(result.manifest->dependencies[1].path == "../audit-core");
+}
+
 TEST_CASE("Package manifest schema rejects string handoff exports") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 

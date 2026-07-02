@@ -331,6 +331,18 @@ void validate_relative_path(std::string_view value,
     }
 }
 
+void validate_dependency_path(std::string_view value,
+                              SourceRange range,
+                              std::vector<ManifestDiagnostic> &diagnostics) {
+    const std::filesystem::path path{std::string{value}};
+    if (path.is_absolute()) {
+        add_diag(diagnostics,
+                 kPathEscape,
+                 "manifest field 'dependencies.path' must be relative to manifest directory",
+                 range);
+    }
+}
+
 [[nodiscard]] DependencySpec read_dependency(std::string_view key,
                                              const Value &value,
                                              SourceRange key_range,
@@ -366,6 +378,8 @@ void validate_relative_path(std::string_view value,
             spec.path = path->value->string_value;
             if (spec.path->empty()) {
                 reject_empty_string("dependencies.path", path->value_range, diagnostics);
+            } else {
+                validate_dependency_path(*spec.path, path->value_range, diagnostics);
             }
         } else {
             add_diag(diagnostics, kType, "dependency path must be a string", path->value->range);
