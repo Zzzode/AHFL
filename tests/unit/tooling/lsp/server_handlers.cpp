@@ -1414,6 +1414,69 @@ void test_package_graph_workspace_selects_member_dependency_source() {
           "package_graph_workspace.definition_targets_workspace_dependency_source");
 }
 
+void test_package_graph_workspace_rejects_private_dependency_module() {
+    const auto root = make_temp_project("package_graph_workspace_private_module");
+    const auto app_root = root / "packages" / "app";
+    const auto lib_root = root / "packages" / "lib";
+    const auto std_root = root / "std";
+    const auto app_path = app_root / "src" / "main.ahfl";
+
+    write_std_manifest(std_root);
+    write_file(std_root / "collections.ahfl", "module std::collections;\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(std_root / "option.ahfl", "module std::option;\n");
+    write_workspace_manifest(root, "\"packages/app\", \"packages/lib\"");
+    write_package_manifest(app_root,
+                           "lsp-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nlib = { source = \"workspace\" }\n");
+    write_package_manifest(lib_root, "lib", "lib", "\"public\"", "src/public.ahfl");
+
+    const std::string app_source = "module app::main;\n"
+                                   "import lib::internal as internal;\n"
+                                   "\n"
+                                   "struct Use {\n"
+                                   "    payload: internal::Secret;\n"
+                                   "}\n";
+    write_file(app_path, app_source);
+    write_file(lib_root / "src" / "public.ahfl", "module lib::public;\n");
+    write_file(lib_root / "src" / "internal.ahfl",
+               "module lib::internal;\n"
+               "struct Secret {\n"
+               "    value: String;\n"
+               "}\n");
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = app_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = app_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_roots({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(app_uri);
+    check(snapshot != nullptr, "package_graph_workspace_private_module.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+    check(snapshot->project_aware, "package_graph_workspace_private_module.project_aware");
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(app_uri);
+    const auto has_private_import =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find(
+                       "imported module 'lib::internal' is private to package prefix 'lib'") !=
+                   std::string::npos;
+        });
+    check(has_private_import, "package_graph_workspace_private_module.private_import_diagnostic");
+}
+
 void test_package_graph_workspace_preserves_cross_package_hover() {
     const auto root = make_temp_project("package_graph_workspace_hover");
     const auto app_root = root / "packages" / "app";
@@ -3285,6 +3348,7 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
+    test_package_graph_workspace_rejects_private_dependency_module();
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_package_graph_manifest_does_not_inject_prelude();
