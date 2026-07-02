@@ -8,8 +8,8 @@ import std::time as time;
 import std::uuid as uuid;
 
 fn smoke(
-    maybe: Option<Int>,
-    outcome: Result<Int, String>,
+    maybe: option::Option<Int>,
+    outcome: results::Result<Int, String>,
     xs: collections::List<Int>,
     numbers: Set<Int>,
     lookup: Map<String, Int>,
@@ -18,7 +18,7 @@ fn smoke(
     delta: Duration,
     id: UUID
 ) -> Int {
-    let none_int: Option<Int> = option::Option::None;
+    let none_int: option::Option<Int> = option::Option::None;
     let mapped = option::map<Int, Int>(maybe, \x: Int -> x + 1);
     let chained = option::and_then<Int, Int>(mapped, \x: Int -> option::Option::Some(x + 2));
     let recovered = option::or_else<Int>(none_int, \ -> option::Option::Some(7));
@@ -101,12 +101,12 @@ fn runtime_collections_score() -> Int effect Pure decreases 0 {
 }
 
 fn runtime_option_result_score() -> Int effect Pure decreases 0 {
-    let maybe: Option<Int> = option::Option::Some(3);
+    let maybe: option::Option<Int> = option::Option::Some(3);
     let mapped = option::map<Int, Int>(maybe, \x: Int -> runtime_bump(x));
     let filtered = option::filter<Int>(mapped, \x: Int -> x > 5);
     let option_score = option::unwrap_or_else<Int>(filtered, \ -> 0);
 
-    let outcome: Result<Int, String> = results::Result::Ok(4);
+    let outcome: results::Result<Int, String> = results::Result::Ok(4);
     let result_mapped = results::map<Int, Int, String>(
         outcome,
         \x: Int -> runtime_bump(x)

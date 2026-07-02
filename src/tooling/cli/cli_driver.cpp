@@ -1726,7 +1726,6 @@ ExitCode CliDriver::execute() {
     }
 
     ahfl::ProjectInput input;
-    input.inject_prelude = true;
     input.entry_files.push_back(std::string(options_.positional.front()));
     input.search_roots.reserve(options_.search_roots.size());
     for (const auto search_root : options_.search_roots) {

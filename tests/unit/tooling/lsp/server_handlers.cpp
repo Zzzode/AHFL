@@ -1563,6 +1563,43 @@ void test_descriptorless_std_file_does_not_add_overlapping_workspace_root() {
     check(!has_ambiguous_import, "descriptorless_std.no_ambiguous_import");
 }
 
+void test_descriptorless_workspace_does_not_inject_prelude() {
+    const auto root = make_temp_project("descriptorless_explicit_prelude");
+    const auto source_path = root / "app" / "main.ahfl";
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn uses_prelude() -> Int effect Pure decreases 0 {\n"
+                               "    let value = some<Int>(1);\n"
+                               "    return 0;\n"
+                               "}\n";
+    write_file(source_path, source);
+
+    const auto uri = AnalysisService::uri_from_path(source_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_roots({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    check(snapshot != nullptr, "descriptorless_explicit_prelude.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(uri);
+    const auto has_unknown_some =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown callable 'some'") != std::string::npos;
+        });
+    check(has_unknown_some, "descriptorless_explicit_prelude.some_is_not_implicit");
+}
+
 void test_hover_renderer_detail_levels() {
     HoverPayload payload;
     payload.signature = "states: [Init, Done]";
@@ -3202,6 +3239,7 @@ int main() {
     test_package_graph_workspace_selects_member_dependency_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
     test_descriptorless_std_file_does_not_add_overlapping_workspace_root();
+    test_descriptorless_workspace_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
     test_hover_respects_client_markup_and_debug_options();

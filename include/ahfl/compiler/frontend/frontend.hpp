@@ -72,13 +72,10 @@ struct ProjectInput {
     std::vector<std::filesystem::path> entry_files{};
     std::vector<std::filesystem::path> search_roots{};
     std::vector<ModuleRoot> module_roots{};
-    // P6: project-aware parses include the repository stdlib by default and
-    // inject std::prelude for non-std source units. Tests and specialized
-    // tools may disable these while exercising raw source-graph behavior.
-    //
-    // NOTE (2026-07): inject_prelude defaults to false — users must
-    // explicitly `import std::...` modules. Stdlib is still discoverable
-    // via include_stdlib=true, but no symbols are auto-injected into scope.
+    // Project-aware parses can include the repository stdlib by default.
+    // Prelude symbols are opt-in: users must explicitly import std modules,
+    // and tests that exercise the old implicit behavior must set
+    // inject_prelude=true deliberately.
     bool include_stdlib{true};
     bool inject_prelude{false};
     std::vector<std::filesystem::path> stdlib_search_roots{};

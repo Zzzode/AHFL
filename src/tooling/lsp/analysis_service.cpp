@@ -770,7 +770,6 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
                 .entry_files = {std::filesystem::path(normalized_path_key(*document_path))},
                 .search_roots = inferred_roots,
                 .include_stdlib = !is_std_source,
-                .inject_prelude = true,
                 .source_overlays = open_document_overlays(),
             });
             snapshot->project_aware = true;

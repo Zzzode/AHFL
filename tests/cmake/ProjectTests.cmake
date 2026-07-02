@@ -2563,6 +2563,15 @@ set_tests_properties(ahflc.check.stdlib_api_smoke PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
+add_test(NAME ahflc.check.project_implicit_prelude_rejected
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/prelude_explicit/implicit_prelude.ahfl"
+            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/prelude_explicit/implicit_prelude.ahfl\;--search-root\;${AHFL_TESTS_DIR}/integration/prelude_explicit"
+            "-DEXPECTED_REGEX=unknown callable 'some'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_types.project.ok_cross_file
     COMMAND $<TARGET_FILE:ahflc> dump types
             --search-root "${AHFL_TESTS_DIR}/integration/check_ok"
