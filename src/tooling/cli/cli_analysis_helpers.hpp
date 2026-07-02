@@ -87,9 +87,6 @@ void print_success_summary(const ahfl::SourceGraph &graph,
                            const ahfl::TypeCheckResult &type_check_result,
                            std::ostream &out);
 
-[[nodiscard]] int load_project_input(const CommandLineOptions &options,
-                                     ahfl::ProjectInput &input);
-
 // ---------------------------------------------------------------------------
 // Render diagnostics (template — inline)
 // ---------------------------------------------------------------------------

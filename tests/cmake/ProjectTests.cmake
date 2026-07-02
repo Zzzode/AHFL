@@ -4,6 +4,11 @@ set(AHFL_WORKFLOW_VALUE_FLOW_MANIFEST_ARGS "--manifest ${AHFL_WORKFLOW_VALUE_FLO
 set(AHFL_WORKFLOW_VALUE_FLOW_AGENT_ENTRY_ARGS "--manifest ${AHFL_WORKFLOW_VALUE_FLOW_MANIFEST} --target agent-entry --sysroot ${PROJECT_SOURCE_DIR}")
 set(AHFL_WORKFLOW_VALUE_FLOW_BAD_CAPABILITY_ARGS "--manifest ${AHFL_WORKFLOW_VALUE_FLOW_MANIFEST} --target bad-capability --sysroot ${PROJECT_SOURCE_DIR}")
 set(AHFL_WORKFLOW_VALUE_FLOW_WORKSPACE_ARGS "--workspace ${AHFL_WORKFLOW_VALUE_FLOW_WORKSPACE} --package workflow-value-flow --target workflow --sysroot ${PROJECT_SOURCE_DIR}")
+set(AHFL_CHECK_OK_WORKSPACE "${AHFL_TESTS_DIR}/integration/check_ok/ahfl.workspace.toml")
+set(AHFL_CHECK_OK_WORKSPACE_ARGS --workspace "${AHFL_CHECK_OK_WORKSPACE}" --package check-ok-app --target workflow --sysroot "${PROJECT_SOURCE_DIR}")
+set(AHFL_CHECK_FAIL_INPUT_WORKSPACE "${AHFL_TESTS_DIR}/integration/check_fail_input/ahfl.workspace.toml")
+set(AHFL_STDLIB_API_SMOKE_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/ahfl.toml")
+set(AHFL_STDLIB_API_SMOKE_ARGS --manifest "${AHFL_STDLIB_API_SMOKE_MANIFEST}" --target lib --sysroot "${PROJECT_SOURCE_DIR}")
 
 add_test(NAME ahfl.frontend.project.ok_basic
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
@@ -2301,13 +2306,22 @@ add_test(NAME ahfl.handoff.package_compat.escape_control_characters
             escape-control-characters
 )
 
-add_test(NAME ahflc.dump_project.ok_basic
-    COMMAND $<TARGET_FILE:ahflc> dump project
-            --search-root "${AHFL_TESTS_DIR}/integration/ok"
-            "${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+add_test(NAME ahflc.check.search_root_removed
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+            "-DAHFLC_ARGS=check\;--search-root\;${AHFL_TESTS_DIR}/integration/ok\;${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+            "-DEXPECTED_REGEX=--search-root has been removed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
-set_tests_properties(ahflc.dump_project.ok_basic PROPERTIES
-    PASS_REGULAR_EXPRESSION "source_graph \\(1 entry, 2 sources, 1 import\\)"
+
+add_test(NAME ahflc.dump_project.removed
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+            "-DAHFLC_ARGS=dump\;project\;${AHFL_TESTS_DIR}/integration/ok/app/main.ahfl"
+            "-DEXPECTED_REGEX=unknown artifact 'project' for action 'dump'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 add_test(NAME ahflc.dump_package_graph.manifest_basic
@@ -2617,19 +2631,17 @@ add_test(NAME ahflc.check.workspace_member_import_requires_dependency
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.project.ok_cross_file
+add_test(NAME ahflc.check.workspace.check_ok_cross_file
     COMMAND $<TARGET_FILE:ahflc> check
-            --search-root "${AHFL_TESTS_DIR}/integration/check_ok"
-            "${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
+            ${AHFL_CHECK_OK_WORKSPACE_ARGS}
 )
-set_tests_properties(ahflc.check.project.ok_cross_file PROPERTIES
+set_tests_properties(ahflc.check.workspace.check_ok_cross_file PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
 )
 
 add_test(NAME ahflc.check.stdlib_api_smoke
     COMMAND $<TARGET_FILE:ahflc> check
-            --search-root "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke"
-            "${AHFL_TESTS_DIR}/integration/stdlib_api_smoke/app/main.ahfl"
+            ${AHFL_STDLIB_API_SMOKE_ARGS}
 )
 set_tests_properties(ahflc.check.stdlib_api_smoke PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
@@ -2639,75 +2651,9 @@ add_test(NAME ahflc.check.project_implicit_prelude_rejected
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/prelude_explicit/implicit_prelude.ahfl"
-            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/prelude_explicit/implicit_prelude.ahfl\;--search-root\;${AHFL_TESTS_DIR}/integration/prelude_explicit"
+            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/prelude_explicit/implicit_prelude.ahfl"
             "-DEXPECTED_REGEX=unknown callable 'some'"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
-)
-
-add_test(NAME ahflc.dump_types.project.ok_cross_file
-    COMMAND $<TARGET_FILE:ahflc> dump types
-            --search-root "${AHFL_TESTS_DIR}/integration/check_ok"
-            "${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-)
-set_tests_properties(ahflc.dump_types.project.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "workflow app::main::MainWorkflow"
-)
-
-add_test(NAME ahflc.dump_project.search_root.ok_cross_file
-    COMMAND $<TARGET_FILE:ahflc> dump project
-            --search-root "${AHFL_TESTS_DIR}/integration/check_ok"
-            "${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-)
-set_tests_properties(ahflc.dump_project.search_root.ok_cross_file PROPERTIES
-    PASS_REGULAR_EXPRESSION "source_graph \\(1 entry, 3 sources, 3 imports\\)"
-)
-
-add_test(NAME ahflc.dump_ast.search_root.ok_cross_file
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=dump ast --search-root ${AHFL_TESTS_DIR}/integration/check_ok ${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/integration/project_check_ok.ast"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_ir.project.ok_cross_file
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DSUBCOMMAND=emit ir"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-            "-DAHFLC_ARGS=--search-root ${AHFL_TESTS_DIR}/integration/check_ok"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/ir/project_check_ok.ir"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_ir_json.project.ok_cross_file
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DSUBCOMMAND=emit ir-json"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-            "-DAHFLC_ARGS=--search-root ${AHFL_TESTS_DIR}/integration/check_ok"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/ir/project_check_ok.json"
-            "-DNORMALIZE_IDS=1"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_ir_json.search_root.workflow_value_flow
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit ir-json --search-root ${AHFL_TESTS_DIR}/integration/workflow_value_flow ${AHFL_TESTS_DIR}/integration/workflow_value_flow/app/main.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/ir/project_workflow_value_flow.json"
-            "-DNORMALIZE_IDS=1"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_native_json.project.workflow_value_flow
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DSUBCOMMAND=emit native-json"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/workflow_value_flow/app/main.ahfl"
-            "-DAHFLC_ARGS=--search-root ${AHFL_TESTS_DIR}/integration/workflow_value_flow"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/native/project_workflow_value_flow.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
 add_test(NAME ahflc.emit_native_json.package_requires_workspace
@@ -3819,22 +3765,12 @@ add_test(NAME ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
-add_test(NAME ahflc.emit_summary.search_root.workflow_value_flow
+add_test(NAME ahflc.emit_summary.manifest.workflow_value_flow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit summary --search-root ${AHFL_TESTS_DIR}/integration/workflow_value_flow ${AHFL_TESTS_DIR}/integration/workflow_value_flow/app/main.ahfl"
+            "-DAHFLC_ARGS=emit summary ${AHFL_WORKFLOW_VALUE_FLOW_MANIFEST_ARGS}"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/summary/project_workflow_value_flow.summary"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_smv.project.ok_cross_file
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DSUBCOMMAND=emit smv"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_ok/app/main.ahfl"
-            "-DAHFLC_ARGS=--search-root ${AHFL_TESTS_DIR}/integration/check_ok"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formal/project_check_ok.smv"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
 add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
@@ -3846,11 +3782,11 @@ add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
 )
 
-add_test(NAME ahflc.check.project.fail_node_input
+add_test(NAME ahflc.check.workspace.fail_node_input
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_fail_input/app/main.ahfl"
-            "-DAHFLC_ARGS=check\;--search-root\;${AHFL_TESTS_DIR}/integration/check_fail_input\;${AHFL_TESTS_DIR}/integration/check_fail_input/app/main.ahfl"
+            "-DINPUT_FILE=${AHFL_CHECK_FAIL_INPUT_WORKSPACE}"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_CHECK_FAIL_INPUT_WORKSPACE}\;--package\;check-fail-input-app\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
             "-DEXPECTED_REGEX=exact schema mismatch in workflow node input"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )

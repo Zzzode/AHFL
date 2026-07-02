@@ -262,7 +262,7 @@ golden 比较采用完整文本相等，而不是局部 regex。这表示：
 
 ### project-aware 测试为何单独建模
 
-project-aware 能力当前不只是“给单文件命令加个 `--search-root`”，它引入了新的对象边界：
+project-aware 能力不是“给单文件命令加搜索路径”，它引入了新的对象边界：
 
 - `ProjectInput`
 - `ProjectParseResult`
@@ -275,7 +275,7 @@ project-aware 能力当前不只是“给单文件命令加个 `--search-root`�
 - `tests/project/<case>/...`
 - `tests/project/project_*.cpp`
 
-以及若干 CLI project 模式测试。
+以及若干 manifest / workspace CLI 测试。
 
 这样做的原因是：
 
@@ -292,21 +292,21 @@ project-aware 能力当前不只是“给单文件命令加个 `--search-root`�
 - `project-model`
   - manifest / workspace 的 descriptor 驱动入口、正例与负例。
 - `project-debug`
-  - project-aware `dump-project` 与 `dump-ast` 调试面。
+  - `dump package-graph` 与 `dump lockfile` 调试面。
 - `semantics`
-  - project-aware `check` 在 search-root / manifest / workspace 路径上的语义回归。
+  - project-aware `check` 在 manifest / workspace 路径上的语义回归。
 - `ir`
   - flow summary 与 workflow value summary 的 textual/JSON IR 回归。
 - `backend`
   - `emit-summary` 参考 backend 和 `emit-smv` 的受限消费边界。
 - `compat`
-  - 早期 `--search-root` 兼容入口仍需保持可见的 regression。
+  - 已删除公开入口的负向迁移 regression。
 
 这组标签的目标不是替代全量测试，而是让维护者可以明确回答三个问题：
 
 1. 新边界是否有单独的回归入口。
 2. 某次失败属于 project model / debug / semantics / IR / backend 的哪一层。
-3. `--search-root` 兼容入口是否仍与 manifest / PackageGraph 路径一起保持可见。
+3. 已删除入口是否仍被明确拒绝，而不是被静默兼容。
 
 本地可直接执行：
 
@@ -336,7 +336,7 @@ CI 也显式执行这些切片，然后再继续跑全量 `ctest --preset test-d
 适合的测试形态：
 
 - `tests/project/project_parse.cpp`
-- `ahflc dump-project`
+- `ahflc dump package-graph`
 
 #### Resolver / 单文件语义
 

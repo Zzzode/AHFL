@@ -54,7 +54,7 @@ project-aware 模式下，frontend 还额外负责：
 - `Frontend::parse_text(...)`
 - `Frontend::parse_project(...)`
 - `dump_program_outline(...)`
-- `dump_project_outline(...)`
+- `dump_source_graph_ast_outline(...)`
 
 其中最重要的约束是：
 
@@ -348,15 +348,15 @@ frontend 当前通过一组 helper 统一处理位置：
 
 这也是为什么：
 
-1. `dump-ast` 虽然现在可输出 project-aware 视图，但它仍然只是对多个单文件 AST 的分组展示。
-2. project-aware 模式下的 `dump-project` 继续只负责 source graph 装载视图，而不是 AST 细节。
+1. `dump-ast` 只输出 AST outline，不承担 PackageGraph / dependency graph 诊断。
+2. source graph AST outline 是 frontend 内部调试边界，不是公开工程配置入口。
 
 当前调试输出边界分得很明确：
 
 1. `dump-ast`
-   - 看单文件 AST，或按 source/module 分组的 project-aware AST
-2. `dump-project`
-   - 看 source graph 装载结果
+   - 看单文件 AST
+2. `dump package-graph`
+   - 看 package、target、dependency 和 module root 解析结果
 3. `emit-ir`
    - 看 validate 后稳定 IR
 

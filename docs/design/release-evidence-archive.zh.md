@@ -73,9 +73,7 @@ ahflc emit-provider-artifact provider/release-evidence-archive-manifest \
   --capability-mocks <mocks.json> \
   --input-fixture <fixture> \
   [--workflow <canonical>] \
-  [--run-id <id>] \
-  [--search-root <dir>]... \
-  <input.ahfl>
+  [--run-id <id>]
 ```
 
 ## 约束

@@ -23,7 +23,7 @@
 
 1. `ahflc` 是主要编译、验证、artifact 与 runtime CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
 2. package-aware 输入优先使用 `--manifest <ahfl.toml>`，workspace 输入使用 `--workspace <ahfl.workspace.toml> --package <name>`。
-3. 单文件 `<input.ahfl>` 和 `--search-root` 仍可用于草稿、smoke 和低层调试，但不再是工程配置模型。
+3. 单文件 `<input.ahfl>` 只用于草稿、smoke 和低层调试；多文件或工程化输入必须使用 manifest/workspace。
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
 5. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
 6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
@@ -40,7 +40,6 @@
     --manifest <ahfl.toml> [--target <name>]
   | --workspace <ahfl.workspace.toml> --package <name> [--target <name>]
   | <input.ahfl>
-  | [--search-root <dir>]... <input.ahfl>
 ```
 
 核心命令：
@@ -53,7 +52,6 @@ ahflc fmt [--check] --manifest <ahfl.toml>
 ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>
 ahflc dump-ast <input-mode>
 ahflc dump-types <input-mode>
-ahflc dump-project <input-mode>
 ahflc dump package-graph --manifest <ahfl.toml>
 ahflc dump package-graph --workspace <ahfl.workspace.toml> --package <name>
 ahflc emit-ir <input-mode>
@@ -96,7 +94,6 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--package` | `<name>` | 与 `--workspace` 配合选择 workspace package |
 | `--target` | `<name>` | 选择 manifest target；多 target package 必须显式传入 |
 | `--sysroot` | `<path>` | AHFL sysroot；目录下必须包含 `std/ahfl.toml` |
-| `--search-root` | `<dir>` | 额外搜索根目录 (可重复) |
 | `--capability-mocks` | `<mocks.json>` | deterministic capability mock 输入；`run` 中作为 LLM function tools source |
 | `--tool-catalog` | `<tools.json>` | 仅 `run`：deterministic runtime tool catalog 输入，作为 LLM function tools source |
 | `--capability-bindings` | `<bindings.json>` | 仅 `run`：HTTP/gRPC JSON transcoding runtime capability binding 输入 |
@@ -126,6 +123,10 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--metrics-export` | `<metrics.jsonl>` | 将 CLI duration / exit_code metrics 以 JSONL 写入文件，不改变 stdout artifact |
 | `--structured-log` | `<log.jsonl>` | 将 CLI command completion 结构化日志以 JSONL 写入文件，不改变 stdout artifact |
 | `--memory-report` | `<memory.json>` | 将 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件，不改变 stdout artifact |
+
+## 已移除入口
+
+`--search-root` 和 `dump project` 不再是公开 CLI。多文件编译、调试 source graph 或检查依赖关系时，使用 `--manifest <ahfl.toml>` 或 `--workspace <ahfl.workspace.toml> --package <name>`；source graph / dependency 诊断使用 `dump package-graph`。
 
 ## Formatter
 

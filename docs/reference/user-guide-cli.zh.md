@@ -66,7 +66,6 @@ ahfl-incremental [--help] <changed.ahfl>...
 | 模式 | 适用场景 | 示例 |
 |------|----------|------|
 | 单文件 | 快速试验、最小复现 | `ahflc check examples/refund_audit_core_v0_1.ahfl` |
-| `--search-root` | 单文件入口加自定义 import 搜索根；仅用于最小复现或低层测试 | `ahflc check --search-root tests/integration/workflow_value_flow tests/integration/workflow_value_flow/app/main.ahfl` |
 | `--manifest` | 单 package 工程入口 | `ahflc check --manifest tests/integration/package_graph_manifest/ahfl.toml --target workflow --sysroot .` |
 | `--workspace --package` | 多 package workspace 入口 | `ahflc check --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --target workflow --sysroot .` |
 
@@ -91,7 +90,7 @@ modules = ["main"]
 [targets.workflow]
 kind = "handoff"
 entry = "refund_audit::main::RefundAuditWorkflow"
-exports = ["refund_audit::main::RefundAuditWorkflow"]
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
 
 [dependencies]
 std = { source = "sysroot" }
@@ -125,7 +124,6 @@ std = { source = "sysroot" }
 | `--package <name>` | 从 workspace 中选择 package |
 | `--target <name>` | 选择 manifest 中的 target |
 | `--sysroot <path>` | 指向包含 `std/ahfl.toml` 的 AHFL sysroot |
-| `--search-root <dir>` | 增加 import 搜索根，可重复 |
 | `--capability-mocks <path>` | 为 dry run / runtime artifact 提供 mock capability 输入；在 `run` 中作为 LLM tool source |
 | `--tool-catalog <path>` | 仅 `run`：提供 deterministic runtime tool catalog，并作为 LLM function tools source |
 | `--input-fixture <fixture>` | 选择 runtime fixture request |
@@ -147,6 +145,8 @@ std = { source = "sysroot" }
 | `--structured-log <path>` | 将 CLI command completion 结构化日志写入 JSONL 文件 |
 | `--memory-report <path>` | 将 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件 |
 | `-h` / `--help` | 查看帮助 |
+
+`--search-root` 和 `dump project` 已从公开 CLI 删除。跨文件工程、标准库解析和 source graph 诊断应通过 `ahfl.toml` / `ahfl.workspace.toml` 进入 PackageGraph；图结构检查使用 `ahflc dump package-graph`。
 
 ## Formatter
 

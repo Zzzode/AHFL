@@ -3,8 +3,8 @@
 Runnable recipes for the AHFL standard library (`std::*`). Every snippet uses
 only APIs that are implemented and unit-tested (`tests/integration/stdlib_units/
 *_ut.ahfl`). Copy a snippet into a `.ahfl` source and `ahflc check` it; the
-`std::*` modules resolve via the built-in stdlib search root, so no
-`--search-root` is needed.
+`std::*` modules resolve through the sysroot `std/ahfl.toml` package in
+PackageGraph inputs, so no custom import root option is needed.
 
 Coverage maps to the corelib-support-workplan module matrix: Option / Result /
 String / List / Set / Map / cmp.

@@ -226,7 +226,7 @@ frontend 里当前大致有三类错误来源：
 例如：
 
 - `entry_files` 为空
-- `search_roots` 为空
+- `module_roots` 为空
 
 这种情况下没有自然的 source owner，应使用：
 

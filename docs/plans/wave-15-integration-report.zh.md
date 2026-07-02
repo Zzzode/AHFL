@@ -191,7 +191,7 @@ P5 分项细化（对照 `corelib-container-migration.zh.md` 的 P5.0–P5.11）
 | P5.x | 子项 | 状态 | 验证 |
 |------|------|------|------|
 | P5.0 | SMV golden 锁锁定 | ✅ | golden_lock.py 5/5 + negative self-test |
-| P5.1 | stdlib nominal 容器声明（List/Set/Map/Option） | ✅（前置）| parse_project search_roots=std |
+| P5.1 | stdlib nominal 容器声明（List/Set/Map/Option） | ✅（前置）| PackageGraph sysroot std |
 | P5.2 | `TypeKind` 中移除 4 种旧特例 | ✅（前置）| typed_hir 快照类型已全部 nominal |
 | P5.3 | 语法糖 desugar → CallExpr | ✅（前置）| `list_from_array / set_from_array / map_from_entries` |
 | P5.4 | `std_container_type_view` 容器识别 | ✅ **本 wave 增强** EnumVariantT 分支 | effects Case 3 通过 |

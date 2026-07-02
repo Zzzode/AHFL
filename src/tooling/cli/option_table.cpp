@@ -84,10 +84,6 @@ void set_formal_model_out(CommandLineOptions &opts, std::optional<std::string_vi
     opts.formal_model_out = val;
 }
 
-void set_search_root(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.search_roots.push_back(*val);
-}
-
 void set_dump_ast(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.dump_ast_requested = true;
 }
@@ -264,12 +260,6 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_bmc_boundary_invariants,
      "Automatically add reachability boundary invariants per state (true/false)",
      "true|false"},
-    {"--search-root",
-     "",
-     OptionArgKind::RepeatableValue,
-     set_search_root,
-     "Additional search root directory",
-     "a directory path"},
     {"--dump-ast", "", OptionArgKind::Flag, set_dump_ast, "Dump AST outline", ""},
     {"--dump-types", "", OptionArgKind::Flag, set_dump_types, "Dump type environment", ""},
     {"--explain", "", OptionArgKind::Flag, set_explain, "Enable structured explanations", ""},
@@ -379,6 +369,10 @@ struct SplitOptionResult {
                                        std::size_t index) {
     return index + 1 < arguments.size() && !arguments[index + 1].empty() &&
            arguments[index + 1].front() != '-';
+}
+
+[[nodiscard]] bool is_removed_legacy_option(std::string_view argument) {
+    return argument == "--search-root" || argument.starts_with("--search-root=");
 }
 
 [[nodiscard]] ParseResult usage_error(std::string_view message) {
@@ -529,6 +523,12 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
 
         // Unknown option (starts with '-').
         if (!argument.empty() && argument.front() == '-') {
+            if (is_removed_legacy_option(argument)) {
+                std::cerr << "error: --search-root has been removed; use --manifest <ahfl.toml> "
+                             "or --workspace <ahfl.workspace.toml> --package <name>\n";
+                print_usage(std::cerr);
+                return ParseResult{true, 2};
+            }
             std::cerr << "error: unknown option '" << argument << "'\n";
             print_usage(std::cerr);
             return ParseResult{true, 2};

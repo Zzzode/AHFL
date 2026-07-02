@@ -226,8 +226,8 @@ int main() {
           "emit-execution-plan remains package-aware");
     check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitRuntimeSession),
           "runtime session remains package-aware");
-    check(!ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitSmv),
-          "emit-smv is not package-aware");
+    check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitSmv),
+          "emit-smv is package-aware");
     check(!ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::RunWorkflow),
           "run does not require package metadata");
     check(durable_store_emit_commands_have_artifact_printers(),
@@ -475,9 +475,8 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "types") ==
               ahfl::cli::CommandKind::DumpTypes,
           "resolve: dump types");
-    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "project") ==
-              ahfl::cli::CommandKind::DumpProject,
-          "resolve: dump project");
+    check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "project").has_value(),
+          "resolve: dump project is removed");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "lockfile") ==
               ahfl::cli::CommandKind::DumpLockfile,
           "resolve: dump lockfile");

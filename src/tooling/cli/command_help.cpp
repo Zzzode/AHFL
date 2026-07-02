@@ -106,7 +106,7 @@ void print_usage(std::ostream &out, bool show_internal) {
     }
 
     // Dump targets
-    out << "\n  Dump targets: ast, types, project, package-graph, lockfile\n";
+    out << "\n  Dump targets: ast, types, package-graph, lockfile\n";
 
     // Options grouped by scope
     out << "\nInput Options:\n"
@@ -115,8 +115,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  --package <name>            Workspace package name with --workspace\n"
         << "  --sysroot <path>            AHFL sysroot containing std/ahfl.toml\n"
         << "  --target <name>             Target name within an AHFL package manifest\n"
-        << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n"
-        << "  --search-root <dir>         Additional source search path (repeatable)\n";
+        << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n";
 
     out << "\nRuntime Options:\n"
         << "  --workflow <canonical>      Target workflow (multi-workflow packages)\n"

@@ -1,7 +1,7 @@
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-project-model
     TESTS
-        ahflc.dump_project.search_root.ok_cross_file
+        ahflc.dump_package_graph.workspace_basic
         ahflc.check.manifest_requires_canonical_filename
         ahflc.check.manifest_rejects_noncanonical_toml_filename
         ahflc.check.workspace_rejects_noncanonical_toml_filename
@@ -10,15 +10,15 @@ ahfl_label_tests(
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-project-debug
     TESTS
-        ahflc.dump_project.search_root.ok_cross_file
-        ahflc.dump_ast.search_root.ok_cross_file
+        ahflc.dump_package_graph.manifest_basic
+        ahflc.dump_lockfile.manifest_basic
 )
 
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-semantics
     TESTS
-        ahflc.check.project.ok_cross_file
-        ahflc.check.project.fail_node_input
+        ahflc.check.workspace.check_ok_cross_file
+        ahflc.check.workspace.fail_node_input
         ahflc.check.manifest_basic
         ahflc.check.workspace_basic
         ahfl.check.project.ok_expression_type_isolated
@@ -29,7 +29,6 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_ir.workflow_value_flow
         ahflc.emit_ir_json.workflow_value_flow
-        ahflc.emit_ir_json.search_root.workflow_value_flow
         ahfl.check.project.ok_expression_type_isolated
         ahfl.handoff.package_compat.escape_control_characters
 )
@@ -38,17 +37,16 @@ ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-backend
     TESTS
         ahflc.emit_summary.workflow_value_flow
-        ahflc.emit_summary.search_root.workflow_value_flow
-        ahflc.emit_smv.project.ok_cross_file
+        ahflc.emit_summary.manifest.workflow_value_flow
+        ahflc.emit_smv.decreases.ok_decreases_length_self
 )
 
 ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-compat
     TESTS
-        ahflc.check.project.ok_cross_file
-        ahflc.emit_ir.project.ok_cross_file
-        ahflc.emit_ir_json.project.ok_cross_file
-        ahflc.emit_smv.project.ok_cross_file
+        ahflc.check.search_root_removed
+        ahflc.dump_project.removed
+        ahflc.check.manifest_rejects_legacy_project_json
 )
 
 ahfl_label_tests(
@@ -63,7 +61,6 @@ ahfl_label_tests(
     TESTS
         ahflc.emit_native_json.expr_temporal
         ahflc.emit_native_json.workflow_value_flow
-        ahflc.emit_native_json.project.workflow_value_flow
         ahflc.emit_native_json.manifest_basic
         ahflc.emit_native_json.workspace_basic
 )

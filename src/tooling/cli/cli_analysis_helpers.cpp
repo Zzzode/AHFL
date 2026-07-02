@@ -304,7 +304,7 @@ void dump_ast_outline(const ahfl::ast::Program &program, std::ostream &out) {
 }
 
 void dump_ast_outline(const ahfl::SourceGraph &graph, std::ostream &out) {
-    ahfl::dump_project_ast_outline(graph, out);
+    ahfl::dump_source_graph_ast_outline(graph, out);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,20 +333,6 @@ void print_success_summary(const ahfl::SourceGraph &graph,
         << type_check_result.environment.structs().size() +
                type_check_result.environment.enums().size()
         << " named type(s)\n";
-}
-
-// ---------------------------------------------------------------------------
-// load_project_input
-// ---------------------------------------------------------------------------
-
-int load_project_input(const CommandLineOptions &options, ahfl::ProjectInput &input) {
-    input.entry_files.push_back(std::string(options.positional.front()));
-    input.search_roots.reserve(options.search_roots.size());
-    for (const auto search_root : options.search_roots) {
-        input.search_roots.push_back(std::string(search_root));
-    }
-
-    return -1;
 }
 
 } // namespace ahfl::cli

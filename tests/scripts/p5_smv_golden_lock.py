@@ -36,7 +36,7 @@ EXIT_NEGATIVE_CASE_UNEXPECTED = 3
 @dataclass(frozen=True)
 class Case:
     name: str            # stable identifier, used in diff hints
-    source: Path         # input .ahfl
+    source: Optional[Path]  # input .ahfl; package cases pass no positional source
     expected: Path       # reference .smv
     extra_args: Tuple[str, ...] = ()
 
@@ -52,8 +52,14 @@ def rel(path: Path, root: Path) -> str:
         return str(path)
 
 
-def run_ahflc(ahflc: str, source: Path, extra_args: Iterable[str]) -> Tuple[int, str, str]:
-    cmd = [ahflc, "emit", "smv", *extra_args, str(source)]
+def run_ahflc(
+    ahflc: str,
+    source: Optional[Path],
+    extra_args: Iterable[str],
+) -> Tuple[int, str, str]:
+    cmd = [ahflc, "emit", "smv", *extra_args]
+    if source is not None:
+        cmd.append(str(source))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -73,7 +79,7 @@ def unified_diff(expected_text: str, actual_text: str,
 
 def check_case(ahflc: str, case: Case, repo_root: Path,
                failures: List[str]) -> None:
-    if not case.source.is_file():
+    if case.source is not None and not case.source.is_file():
         failures.append(f"[{case.name}] missing source: {case.source}")
         return
     if not case.expected.is_file():
@@ -82,9 +88,10 @@ def check_case(ahflc: str, case: Case, repo_root: Path,
 
     rc, stdout, stderr = run_ahflc(ahflc, case.source, case.extra_args)
     if rc != 0:
+        source_label = rel(case.source, repo_root) if case.source is not None else "<package>"
         failures.append(
             f"[{case.name}] ahflc emit smv exited {rc}\n"
-            f"  source : {rel(case.source, repo_root)}\n"
+            f"  source : {source_label}\n"
             f"  stderr : {stderr.rstrip()}"
         )
         return
@@ -110,9 +117,10 @@ def check_case(ahflc: str, case: Case, repo_root: Path,
     diff_cmd = f"diff -u {case.expected} {actual_tmp}"
     udiff = unified_diff(expected_text, actual_text,
                          expected_rel, f"<actual:{case.name}>")
+    source_label = rel(case.source, repo_root) if case.source is not None else "<package>"
     failures.append(
         f"[{case.name}] golden mismatch\n"
-        f"  source   : {rel(case.source, repo_root)}\n"
+        f"  source   : {source_label}\n"
         f"  expected : {expected_rel}\n"
         f"  actual   : {actual_tmp}\n"
         f"  diff cmd : {diff_cmd}\n"
@@ -124,7 +132,7 @@ def check_case(ahflc: str, case: Case, repo_root: Path,
 # Case definitions
 # ---------------------------------------------------------------------------
 
-def build_cases(tests_dir: Path) -> List[Case]:
+def build_cases(tests_dir: Path, repo_root: Path) -> List[Case]:
     formal = tests_dir / "golden" / "formal"
     ir = tests_dir / "golden" / "ir"
     return [
@@ -150,9 +158,18 @@ def build_cases(tests_dir: Path) -> List[Case]:
         ),
         Case(
             name="project_check_ok",
-            source=tests_dir / "integration" / "check_ok" / "app" / "main.ahfl",
+            source=None,
             expected=formal / "project_check_ok.smv",
-            extra_args=("--search-root", str(tests_dir / "integration" / "check_ok")),
+            extra_args=(
+                "--workspace",
+                str(tests_dir / "integration" / "check_ok" / "ahfl.workspace.toml"),
+                "--package",
+                "check-ok-app",
+                "--target",
+                "workflow",
+                "--sysroot",
+                str(repo_root),
+            ),
         ),
     ]
 
@@ -252,7 +269,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return run_negative_self_test(ahflc, tests_dir, repo_root,
                                       echo_markers=True)
 
-    cases = build_cases(tests_dir)
+    cases = build_cases(tests_dir, repo_root)
     failures: List[str] = []
 
     for case in cases:

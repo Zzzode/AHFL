@@ -1113,7 +1113,7 @@ void dump_program_outline(const ast::Program &program, std::ostream &out) {
     printer.print(program);
 }
 
-void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
+void dump_source_graph_ast_outline(const SourceGraph &graph, std::ostream &out) {
     const auto visible_source = [](const SourceUnit &source) {
         return !is_std_module_name(source.module_name);
     };

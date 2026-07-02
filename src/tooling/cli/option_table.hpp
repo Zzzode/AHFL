@@ -13,7 +13,7 @@ namespace ahfl::cli {
 enum class OptionArgKind {
     Flag,            // --dump-ast (no argument)
     RequiredValue,   // --manifest <path>
-    RepeatableValue, // --search-root <dir> (can appear multiple times)
+    RepeatableValue, // e.g. repeatable diagnostic / runtime inputs
 };
 
 using OptionSetter = void (*)(CommandLineOptions &options, std::optional<std::string_view> value);

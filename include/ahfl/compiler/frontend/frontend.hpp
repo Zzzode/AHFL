@@ -113,8 +113,7 @@ class Frontend {
 };
 
 void dump_program_outline(const ast::Program &program, std::ostream &out);
-void dump_project_outline(const SourceGraph &graph, std::ostream &out);
-void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out);
+void dump_source_graph_ast_outline(const SourceGraph &graph, std::ostream &out);
 
 // ----------------------------------------------------------------------------
 // DecreasesClauseSyntax – standalone, three-phase handlers (R-09: NOT dispatched

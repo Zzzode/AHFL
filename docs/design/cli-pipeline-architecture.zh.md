@@ -52,11 +52,12 @@ CLI 不应负责：
 
 - `dump_ast`
 - `dump_types`
-- `dump_project`
-- `emit_ir`
-- `emit_ir_json`
-- `emit_smv`
-- `search_roots`
+- `manifest_path`
+- `workspace_manifest_path`
+- `package_name`
+- `target_name`
+- `selected_command`
+- `selected_provider_artifact`
 - `positional`
 
 这说明当前 CLI 采用的是：
@@ -89,7 +90,6 @@ CLI 当前通过 `action_count` 强制：
 
 - `dump-ast`
 - `dump-types`
-- `dump-project`
 - `emit-ir`
 - `emit-ir-json`
 - `emit-smv`
@@ -100,35 +100,39 @@ CLI 当前通过 `action_count` 强制：
 
 这条设计让 `check` 成为默认主链，而各种 dump/emission 是它的分支观察窗口。
 
-## 模式分叉：单文件 vs project-aware
+## 模式分叉：单文件 vs PackageGraph
 
 当前最重要的运行时分叉条件是：
 
 ```text
-project_mode = !search_roots.empty()
+package_graph_input = manifest_path || workspace_manifest_path || discovered ahfl.toml
 ```
 
-这意味着 CLI 当前并没有一个单独的 `project` 子命令；project-aware 模式是由：
+这意味着 CLI 不再通过临时搜索路径隐式开启工程模式。工程化输入只能来自：
 
-- `--search-root`
+- `--manifest <ahfl.toml>`
+- `--workspace <ahfl.workspace.toml> --package <name>`
+- `check <input.ahfl>` 附近可发现的 `ahfl.toml` / `ahfl.workspace.toml`
 
-显式开启的。
+`ProjectInput` 仍可作为 frontend loader 的内部输入，但不是 CLI 公开工程模型。
 
 ### project-aware 约束
 
 当前 CLI 约束是：
 
-1. `dump-ast` 在 project-aware 模式下仍停在 frontend/lowering 边界。
-2. `dump-ast` 的 project-aware 输出必须按 `source -> module -> program` 分组，而不是伪装成单一合并 AST。
-3. `dump-project` 仍只负责 source graph 视图，不与 AST 视图重叠。
+1. `dump package-graph` 停在 PackageGraph / dependency graph 边界。
+2. `dump ast` 只输出单文件 AST outline，不承担跨 package graph 调试。
+3. 跨 source graph 的真实编译链路由 PackageGraph 降成内部 `ProjectInput` 后进入 frontend。
 
-## project-aware 主链
+## PackageGraph 主链
 
-当 `dump_project` 为真或 `project_mode` 为真时，CLI 当前采用如下链路：
+当输入来自 manifest / workspace 时，CLI 当前采用如下链路：
 
 ```mermaid
 flowchart TD
-    ProjectInput["ProjectInput"] --> ParseProject["Frontend::parse_project"]
+    Manifest["ahfl.toml / ahfl.workspace.toml"] --> PackageGraph["PackageGraph"]
+    PackageGraph --> ProjectInput["internal ProjectInput"]
+    ProjectInput --> ParseProject["Frontend::parse_project"]
     ParseProject --> ResolveGraph["Resolver::resolve(graph)"]
     ResolveGraph --> TypecheckGraph["TypeChecker::check(graph, ...)"]
     TypecheckGraph --> ValidateGraph["Validator::validate(graph, ...)"]
@@ -137,13 +141,13 @@ flowchart TD
 
 这条主链有几个刻意设计：
 
-1. `dump-project` 在 parse_project 之后立即返回。
+1. `dump package-graph` 在 PackageGraph 构建之后立即返回。
 2. 其余命令共享同一条 resolve/typecheck/validate 主链。
 3. backend emission 全都建立在 validate 成功之后。
 
 ### diagnostics 的推进顺序
 
-project-aware 模式当前按阶段顺序 render：
+PackageGraph 编译链路当前按阶段顺序 render：
 
 1. `project_result.diagnostics`
 2. `resolve_result.diagnostics`
@@ -267,21 +271,20 @@ project-aware 模式输出：
 3. Package pipeline：先扩展 artifact helper / printer，再接入 `dispatch_package_command(...)`；durable-store import printer 放在 `artifacts.hpp` / `artifacts.cpp` seam。
 4. 再在 CLI 中加入 action flag、usage 文本、golden 与标签。
 
-### 新增 project-aware 选项
+### 新增 PackageGraph 选项
 
 先判断：
 
 1. 这是 frontend 输入模型的一部分，还是 CLI 仅用于显示的参数。
-2. 若属于装载规则，应优先进入 `ProjectInput`，而不是停留在 CLI 局部变量。
+2. 若属于装载规则，应优先进入 manifest / workspace schema 或 PackageGraph builder，而不是停留在 CLI 局部变量。
 
 ## 当前架构的限制
 
 当前 CLI 仍有几个明确限制：
 
 1. action 选择仍是 flag 聚合，不是可组合的多动作模型。
-2. `dump-ast` 虽已支持 project-aware，但仍不是跨阶段复合调试报告。
-3. project-aware 模式由 `--search-root` 隐式触发，而不是单独 mode 对象。
-4. diagnostics 主要按阶段即时 render，尚未引入统一的跨阶段报告对象。
+2. `dump ast` 仍不是跨阶段复合调试报告。
+3. diagnostics 主要按阶段即时 render，尚未引入统一的跨阶段报告对象。
 
 这些限制本身不是 bug，但意味着后续扩展时应谨慎：
 
@@ -302,7 +305,7 @@ project-aware 模式输出：
 阅读重点：
 
 1. 先看 `CommandLineOptions` 和 `parse_command_line(...)`。
-2. 再看 `run_cli(...)` 中 project-aware 与单文件分支。
+2. 再看 `CliDriver::execute(...)` 中 PackageGraph 与单文件分支。
 3. 最后看 backend 发射和 summary 输出点。
 
 ## 对后续实现的约束
@@ -310,7 +313,7 @@ project-aware 模式输出：
 后续继续扩展 CLI 时，应保持以下原则：
 
 1. CLI 继续作为 orchestration 层，而不是语义实现层。
-2. 单文件与 project-aware 共用同一条语义主链，只在 frontend 输入模型处显式分叉。
+2. 单文件与 PackageGraph 输入共用同一条语义主链，只在 frontend 输入模型处显式分叉。
 3. backend 统一经 driver 分发，不在 CLI 中复制 emission 逻辑。
-4. `dump-ast`、`dump-project`、`emit-*` 各自对应明确边界，不要让它们语义重叠。
+4. `dump-ast`、`dump package-graph`、`emit-*` 各自对应明确边界，不要让它们语义重叠。
 5. 若某个新功能需要 CLI 直接理解 AST/IR 细节，先反查是否缺少一个更合适的公共边界。

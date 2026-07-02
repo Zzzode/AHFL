@@ -475,7 +475,7 @@ ahflc emit native-json --manifest ahfl.toml --target workflow
 ahflc dump package-graph --manifest ahfl.toml
 ```
 
-`--search-root` 只能保留为 compiler developer 的低层调试入口，并且不得作为文档推荐路径。
+`--search-root` 不再保留为公开 CLI。需要低层 loader 覆盖时，compiler developer 测试只能直接构造内部 `ProjectInput`；用户、文档、LSP 和命令行入口必须通过 `ahfl.toml` / `ahfl.workspace.toml` 进入 PackageGraph。
 
 LSP 从 workspace root 向上发现 `ahfl.workspace.toml` 或 `ahfl.toml`，通过同一 PackageGraph builder 获取 module roots、target 和 std sysroot。Formatter、diagnostics、semantic tokens 和 hover 不再各自重新推断 search roots。
 

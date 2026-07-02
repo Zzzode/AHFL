@@ -18,7 +18,6 @@ enum class CommandKind {
     Format,
     DumpAst,
     DumpTypes,
-    DumpProject,
     DumpPackageGraph,
     DumpLockfile,
     EmitIr,
@@ -102,7 +101,6 @@ struct CommandLineOptions {
     std::optional<std::string_view> memory_report_path;
     bool show_internal_artifacts{false};
     bool format_check_requested{false};
-    std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
 };
 

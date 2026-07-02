@@ -137,7 +137,7 @@ gantt
 - [x] M0-3 `tests/integration/stdlib_units/option_ut.ahfl` 25 断言（正 15 + 边界 10）+ 5 负例 fixture = 30/30 PASS，已挂 ctest（`ahflc.check.stdlib_option_ut` + 5 `ahflc.fail.stdlib_option_neg_*`）（2026-06-29）
 - [~] M0-4 `AhflInstall.cmake` 已加 `install(DIRECTORY std/ DESTINATION share/ahfl/std)`；`AHFL_INSTALL=ON` 装到临时 prefix 验证 12 文件落地 `share/ahfl/std/`（含 `prelude.ahfl`）。**剩余**：干净 Ubuntu 容器 `dpkg -i && ahflc check` 验证依赖 M3-1 打包脚本（2026-06-29）
 - [~] M0-5 `formatted_struct_2spaces.ahfl` 工作树本地分歧（4 空格）已对齐回 HEAD 正确值（2 空格 = `indent_width=2`）；4 个 `ahflc.fmt.*` 测试转绿；HEAD 本就正确，无需新 commit。**剩余**：GitHub Actions `--check` 门禁 + issue 模板属 CI 基建（M3-2）；`unwrap` 关键字与路径调用冲突已记录（见下文「发现」）（2026-06-29）
-- [x] M0-6 `ahflc check` 经 baked-in `AHFL_SOURCE_DIR` 在源文件含 `Option<Int>` 时仍解析 std（`option_ut` 无 `--search-root` + 独立 probe 验证）；PackageGraph 入口使用 `AHFL_SYSROOT`，并拒绝旧 `AHFL_STDLIB_SEARCH_ROOT` 回退；普通 frontend 同样忽略旧 env（2026-07-02）
+- [x] M0-6 `ahflc check` 经 PackageGraph sysroot 在源文件含 `Option<Int>` 时解析 std（`option_ut` + 独立 probe 验证）；PackageGraph 入口使用 `AHFL_SYSROOT`，并拒绝旧 `AHFL_STDLIB_SEARCH_ROOT` 回退；普通 frontend 同样忽略旧 env（2026-07-02）
 
 ### 3.2 M1：基础类型完坑（~3.5 周，M0 关口通过后启动）
 

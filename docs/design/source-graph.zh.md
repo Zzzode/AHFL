@@ -118,7 +118,7 @@ struct SourceGraph {
 
 struct ProjectInput {
     std::vector<std::filesystem::path> entry_files;
-    std::vector<std::filesystem::path> search_roots;
+    std::vector<ModuleRoot> module_roots;
 };
 
 struct ProjectParseResult {
@@ -145,7 +145,7 @@ struct ProjectParseResult {
 1. 保留现有单文件入口，作为兼容 wrapper
 2. 新增 project-aware 入口，例如 `parse_project(ProjectInput)`
 3. 由 `parse_file(path)` 在兼容模式下返回单文件结果
-4. 由 project-aware CLI 使用 `parse_project(...)`
+4. 由 PackageGraph builder 降成内部 `ProjectInput` 后使用 `parse_project(...)`
 
 重要约束：
 
@@ -180,7 +180,7 @@ struct ProjectParseResult {
 对 CLI 的约束是：
 
 1. `src/tooling/cli/ahflc.cpp` 继续只负责参数分发和驱动流水线
-2. CLI 可以新增 project-aware 参数，例如 entry file 与 search root
+2. CLI 不直接暴露 source graph 装载参数；新增工程输入应进入 manifest / workspace schema
 3. CLI 不应直接承担 module lookup 和 source graph 构建逻辑
 
 换句话说，source graph 是 frontend 边界，不是 CLI 边界。

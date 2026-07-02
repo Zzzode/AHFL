@@ -406,8 +406,7 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
 [[nodiscard]] bool command_can_discover_package_graph(const CommandLineOptions &options,
                                                       std::optional<CommandKind> command) {
     return command == CommandKind::Check && !options.manifest_path.has_value() &&
-           !options.workspace_manifest_path.has_value() && options.search_roots.empty() &&
-           options.positional.size() == 1;
+           !options.workspace_manifest_path.has_value() && options.positional.size() == 1;
 }
 
 [[nodiscard]] bool workspace_package_is_selected(const CommandLineOptions &options,
@@ -1274,12 +1273,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workspace_manifest_path.has_value() && !options_.search_roots.empty()) {
-        std::cerr << "error: --workspace cannot be combined with --search-root\n";
-        print_usage(std::cerr);
-        return ExitCode::UsageError;
-    }
-
     if (options_.workspace_manifest_path.has_value() &&
         !workspace_package_name(options_, effective_command_).has_value()) {
         std::cerr << "error: --workspace requires --package <name>\n";
@@ -1301,8 +1294,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
-        if (options_.workspace_manifest_path.has_value() || !options_.search_roots.empty()) {
-            std::cerr << "error: --manifest cannot be combined with --workspace or --search-root\n";
+        if (options_.workspace_manifest_path.has_value()) {
+            std::cerr << "error: --manifest cannot be combined with --workspace\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1358,12 +1351,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
             return ExitCode::UsageError;
         }
         if (!package_graph_input && options_.positional.empty()) {
-            print_usage(std::cerr);
-            return ExitCode::UsageError;
-        }
-        if (!options_.search_roots.empty()) {
-            std::cerr << "error: --search-root is not supported with fmt; pass directories or "
-                         "use --manifest or --workspace --package\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -1518,7 +1505,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.time_passes_requested &&
         (effective_command_ == CommandKind::Format || effective_command_ == CommandKind::DumpAst ||
-         effective_command_ == CommandKind::DumpProject || package_graph_descriptor_dump)) {
+         package_graph_descriptor_dump)) {
         std::cerr << "error: --time-passes is only supported with commands that run "
                      "optimization passes\n";
         print_usage(std::cerr);
@@ -1676,34 +1663,6 @@ ExitCode CliDriver::execute() {
         }
     }
 
-    const bool project_mode = !options_.search_roots.empty();
-
-    if (project_mode || is_action_enabled(options_, CommandKind::DumpProject)) {
-        ahfl::ProjectInput input;
-        if (const auto load_status = load_project_input(options_, input);
-            load_status >= 0) {
-            return load_status == 0 ? ExitCode::Success : ExitCode::CompileError;
-        }
-
-        auto project_result = frontend_.parse_project(input);
-        render_diagnostics(*diag_consumer_, project_result, std::nullopt);
-        if (project_result.has_errors()) {
-            return ExitCode::CompileError;
-        }
-
-        if (effective_command_ == CommandKind::DumpProject) {
-            ahfl::dump_project_outline(project_result.graph, std::cout);
-            return ExitCode::Success;
-        }
-
-        if (effective_command_ == CommandKind::DumpAst) {
-            dump_ast_outline(project_result.graph, std::cout);
-            return ExitCode::Success;
-        }
-
-        return run_analysis(project_result.graph, std::nullopt);
-    }
-
     if (effective_command_ == CommandKind::DumpAst) {
         auto parse_result = frontend_.parse_file(std::string(options_.positional.front()));
         render_diagnostics(*diag_consumer_, parse_result, std::cref(parse_result.source));
@@ -1727,10 +1686,6 @@ ExitCode CliDriver::execute() {
 
     ahfl::ProjectInput input;
     input.entry_files.push_back(std::string(options_.positional.front()));
-    input.search_roots.reserve(options_.search_roots.size());
-    for (const auto search_root : options_.search_roots) {
-        input.search_roots.push_back(std::string(search_root));
-    }
 
     auto project_result = frontend_.parse_project(input);
     render_diagnostics(*diag_consumer_, project_result, std::nullopt);
