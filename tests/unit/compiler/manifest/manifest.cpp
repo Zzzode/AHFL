@@ -324,6 +324,39 @@ std = { source = "sysroot" }
     CHECK(has_message(result.diagnostics, "manifest field 'targets.exports' items must be tables"));
 }
 
+TEST_CASE("Package manifest schema rejects non-canonical handoff export names") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "src/workflow.ahfl" }]
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_code(result.diagnostics, "E::manifest_invalid_value"));
+    CHECK(has_message(
+        result.diagnostics,
+        "targets.exports.name must be a canonical AHFL symbol name for handoff targets"));
+}
+
 TEST_CASE("Package manifest schema rejects exports on non-handoff targets") {
     constexpr std::string_view input = R"TOML(manifest_version = 1
 

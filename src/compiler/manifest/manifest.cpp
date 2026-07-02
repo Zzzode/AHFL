@@ -79,6 +79,11 @@ void copy_toml_diagnostics(const toml::Document &document,
     return entry == nullptr ? nullptr : entry->value.get();
 }
 
+void validate_canonical_symbol_name(std::string_view value,
+                                    std::string_view display,
+                                    SourceRange range,
+                                    std::vector<ManifestDiagnostic> &diagnostics);
+
 void reject_unknown_fields(const Value &table,
                            std::initializer_list<std::string_view> allowed,
                            std::string_view context,
@@ -230,6 +235,12 @@ read_handoff_exports(const Value &table,
         if (auto name = read_required_string(*item, "name", "targets.exports.name", diagnostics);
             name.has_value()) {
             export_item.name = *name;
+            const auto *name_entry = find_entry(*item, "name");
+            validate_canonical_symbol_name(*name,
+                                           "targets.exports.name",
+                                           name_entry == nullptr ? item->range
+                                                                 : name_entry->value_range,
+                                           diagnostics);
         }
         if (!contains({"workflow", "agent"}, export_item.kind) && !export_item.kind.empty()) {
             add_diag(diagnostics,
