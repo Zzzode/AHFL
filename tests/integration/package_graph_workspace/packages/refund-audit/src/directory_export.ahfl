@@ -1,0 +1,19 @@
+module refund_audit::directory_export;
+
+import audit_core::api as api;
+
+struct DirectoryExportInput {
+    subject: api::AuditApiRequest;
+}
+
+struct DirectoryExportOutput {
+    accepted: Bool;
+}
+
+workflow DirectoryExportWorkflow {
+    input: DirectoryExportInput;
+    output: DirectoryExportOutput;
+    return: DirectoryExportOutput {
+        accepted: true,
+    };
+}

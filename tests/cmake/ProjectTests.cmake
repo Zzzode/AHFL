@@ -2643,6 +2643,17 @@ add_test(NAME ahflc.check.workspace_parent_export_private_child_rejected
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.workspace_directory_module_export
+    COMMAND $<TARGET_FILE:ahflc> check
+            --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            --package refund-audit
+            --target directory-export
+            --sysroot "${PROJECT_SOURCE_DIR}"
+)
+set_tests_properties(ahflc.check.workspace_directory_module_export PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked [0-9]+ source\\(s\\)"
+)
+
 add_test(NAME ahflc.check.workspace_member_import_requires_dependency
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

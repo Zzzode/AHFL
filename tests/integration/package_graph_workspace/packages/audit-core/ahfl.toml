@@ -11,7 +11,7 @@ prefix = "audit_core"
 root = "src"
 
 [exports]
-modules = ["lib"]
+modules = ["lib", "api"]
 
 [targets.lib]
 kind = "library"

@@ -23,6 +23,7 @@ ahfl_label_tests(
         ahflc.check.workspace.fail_node_input
         ahflc.check.manifest_basic
         ahflc.check.workspace_basic
+        ahflc.check.workspace_directory_module_export
         ahfl.check.project.ok_expression_type_isolated
 )
 
