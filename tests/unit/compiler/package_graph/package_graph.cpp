@@ -738,6 +738,116 @@ entry = "src/lib.ahfl"
     CHECK(has_diagnostic(result.diagnostics, "conflicts with package dependency declaration"));
 }
 
+TEST_CASE("Workspace PackageGraph loader rejects nested member packages") {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root_dir = std::filesystem::temp_directory_path() /
+                          ("ahfl-package-graph-workspace-nested-" + std::to_string(stamp));
+    const auto sysroot_dir = root_dir / "sysroot" / "std";
+    const auto workspace_dir = root_dir / "workspace";
+    const auto parent_dir = workspace_dir / "packages" / "parent";
+    const auto child_dir = parent_dir / "nested-child";
+
+    std::error_code error;
+    std::filesystem::remove_all(root_dir, error);
+    REQUIRE(std::filesystem::create_directories(sysroot_dir, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directories(parent_dir / "src", error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directories(child_dir / "src", error));
+    REQUIRE_FALSE(error);
+
+    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = ["prelude", "option"]
+
+[compiler_intrinsics]
+allow = ["option_*"]
+)TOML"));
+    REQUIRE(write_text_file(workspace_dir / "ahfl.workspace.toml",
+                            R"TOML(manifest_version = 1
+
+[workspace]
+name = "commerce-workflows"
+members = ["packages/parent", "packages/parent/nested-child"]
+
+[resolver]
+version = 1
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML"));
+    REQUIRE(write_text_file(parent_dir / "src" / "lib.ahfl", "module parent::lib;\n"));
+    REQUIRE(write_text_file(parent_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "parent"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "parent"
+root = "src"
+
+[exports]
+modules = ["lib"]
+
+[targets.lib]
+kind = "library"
+entry = "src/lib.ahfl"
+)TOML"));
+    REQUIRE(write_text_file(child_dir / "src" / "lib.ahfl", "module nested_child::lib;\n"));
+    REQUIRE(write_text_file(child_dir / "ahfl.toml",
+                            R"TOML(manifest_version = 1
+
+[package]
+name = "nested-child"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "nested_child"
+root = "src"
+
+[exports]
+modules = ["lib"]
+
+[targets.lib]
+kind = "library"
+entry = "src/lib.ahfl"
+)TOML"));
+
+    auto result = ahfl::package_graph::build_package_graph_from_workspace(
+        ahfl::package_graph::WorkspaceBuildInput{
+            .workspace_manifest_path = workspace_dir / "ahfl.workspace.toml",
+            .package_name = "parent",
+            .sysroot_manifest_path = sysroot_dir / "ahfl.toml",
+        });
+    std::filesystem::remove_all(root_dir, error);
+
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic(result.diagnostics, "contains member package 'nested-child'"));
+    CHECK(has_diagnostic(result.diagnostics, "nested workspace members must be split"));
+}
+
 TEST_CASE("Lockfile serializes and parses PackageGraph identity") {
     const auto graph = graph_with_workspace_dependency();
 

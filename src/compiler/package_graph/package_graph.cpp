@@ -135,6 +135,18 @@ struct IndexedInput {
     return path.filename();
 }
 
+[[nodiscard]] bool is_strict_descendant_path(const std::filesystem::path &child,
+                                             const std::filesystem::path &ancestor) {
+    auto child_part = child.begin();
+    for (auto ancestor_part = ancestor.begin(); ancestor_part != ancestor.end(); ++ancestor_part) {
+        if (child_part == child.end() || *child_part != *ancestor_part) {
+            return false;
+        }
+        ++child_part;
+    }
+    return child_part != child.end();
+}
+
 void append_checksum_record(std::string &payload,
                             std::string_view kind,
                             const std::filesystem::path &logical_path,
@@ -333,6 +345,26 @@ void apply_workspace_defaults(PackageInput &package,
 
         if (workspace_dependency.key == "std" && workspace_dependency.source == "sysroot") {
             package.manifest.dependencies.push_back(workspace_dependency);
+        }
+    }
+}
+
+void validate_nested_workspace_members(const std::vector<PackageInput> &members,
+                                       std::vector<Diagnostic> &diagnostics) {
+    for (std::size_t outer = 0; outer < members.size(); ++outer) {
+        for (std::size_t inner = 0; inner < members.size(); ++inner) {
+            if (outer == inner) {
+                continue;
+            }
+            if (!is_strict_descendant_path(members[inner].package_root,
+                                           members[outer].package_root)) {
+                continue;
+            }
+
+            add_error(diagnostics,
+                      "workspace member package '" + members[outer].manifest.package_name +
+                          "' contains member package '" + members[inner].manifest.package_name +
+                          "'; nested workspace members must be split into sibling packages");
         }
     }
 }
@@ -699,6 +731,7 @@ BuildResult build_package_graph_from_workspace(const WorkspaceBuildInput &input)
         members.push_back(std::move(*package));
     }
 
+    validate_nested_workspace_members(members, result.diagnostics);
     if (result.has_errors()) {
         return result;
     }
