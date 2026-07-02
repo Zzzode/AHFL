@@ -48,6 +48,54 @@ namespace {
     return ch >= '0' && ch <= '9';
 }
 
+[[nodiscard]] bool is_hex_digit(char ch) noexcept {
+    return is_digit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+}
+
+[[nodiscard]] bool is_digit_for_base(char ch, int base) noexcept {
+    switch (base) {
+    case 2:
+        return ch == '0' || ch == '1';
+    case 8:
+        return ch >= '0' && ch <= '7';
+    case 10:
+        return is_digit(ch);
+    case 16:
+        return is_hex_digit(ch);
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] bool is_valid_underscored_digits(std::string_view text, int base) noexcept {
+    if (text.empty() || text.front() == '_' || text.back() == '_') {
+        return false;
+    }
+
+    bool previous_was_digit = false;
+    for (std::size_t index = 0; index < text.size(); ++index) {
+        const char ch = text[index];
+        if (ch == '_') {
+            if (!previous_was_digit || index + 1 == text.size() ||
+                !is_digit_for_base(text[index + 1], base)) {
+                return false;
+            }
+            previous_was_digit = false;
+            continue;
+        }
+        if (!is_digit_for_base(ch, base)) {
+            return false;
+        }
+        previous_was_digit = true;
+    }
+    return true;
+}
+
+[[nodiscard]] bool decimal_digits_have_valid_leading_zero(std::string_view text) {
+    const auto normalized = remove_underscores(text);
+    return normalized.size() <= 1 || normalized.front() != '0';
+}
+
 [[nodiscard]] std::optional<int>
 parse_fixed_digits(std::string_view text, std::size_t offset, std::size_t count) {
     if (offset + count > text.size()) {
@@ -194,6 +242,117 @@ parse_fixed_digits(std::string_view text, std::size_t offset, std::size_t count)
 [[nodiscard]] bool is_datetime_candidate_token(std::string_view token) noexcept {
     return !token.empty() && is_digit(token.front()) &&
            (token.find('-') != std::string_view::npos || token.find(':') != std::string_view::npos);
+}
+
+[[nodiscard]] std::size_t skip_number_sign(std::string_view token) noexcept {
+    return (!token.empty() && (token.front() == '+' || token.front() == '-')) ? 1 : 0;
+}
+
+[[nodiscard]] bool is_special_float_token(std::string_view token) noexcept {
+    return token == "inf" || token == "+inf" || token == "-inf" || token == "nan" ||
+           token == "+nan" || token == "-nan";
+}
+
+[[nodiscard]] bool has_integer_base_prefix(std::string_view token, std::size_t offset) noexcept {
+    return token.substr(offset, 2) == "0x" || token.substr(offset, 2) == "0o" ||
+           token.substr(offset, 2) == "0b";
+}
+
+[[nodiscard]] bool is_float_candidate_token(std::string_view token) noexcept {
+    if (is_special_float_token(token)) {
+        return true;
+    }
+
+    const std::size_t offset = skip_number_sign(token);
+    if (offset >= token.size() || has_integer_base_prefix(token, offset)) {
+        return false;
+    }
+
+    return token.find('.', offset) != std::string_view::npos ||
+           token.find('e', offset) != std::string_view::npos ||
+           token.find('E', offset) != std::string_view::npos;
+}
+
+[[nodiscard]] bool is_valid_integer_token(std::string_view token) {
+    std::size_t offset = skip_number_sign(token);
+    const bool has_sign = offset != 0;
+    if (offset >= token.size()) {
+        return false;
+    }
+
+    int base = 10;
+    if (token.substr(offset, 2) == "0x") {
+        if (has_sign) {
+            return false;
+        }
+        base = 16;
+        offset += 2;
+    } else if (token.substr(offset, 2) == "0o") {
+        if (has_sign) {
+            return false;
+        }
+        base = 8;
+        offset += 2;
+    } else if (token.substr(offset, 2) == "0b") {
+        if (has_sign) {
+            return false;
+        }
+        base = 2;
+        offset += 2;
+    }
+
+    const auto digits = token.substr(offset);
+    if (!is_valid_underscored_digits(digits, base)) {
+        return false;
+    }
+    return base != 10 || decimal_digits_have_valid_leading_zero(digits);
+}
+
+[[nodiscard]] bool is_valid_decimal_component(std::string_view token, bool enforce_leading_zero) {
+    return is_valid_underscored_digits(token, 10) &&
+           (!enforce_leading_zero || decimal_digits_have_valid_leading_zero(token));
+}
+
+[[nodiscard]] bool is_valid_float_token(std::string_view token) {
+    if (is_special_float_token(token)) {
+        return true;
+    }
+
+    std::size_t mantissa_begin = skip_number_sign(token);
+    if (mantissa_begin >= token.size()) {
+        return false;
+    }
+
+    const auto exponent_pos = token.find_first_of("eE", mantissa_begin);
+    const auto mantissa =
+        token.substr(mantissa_begin,
+                     exponent_pos == std::string_view::npos ? std::string_view::npos
+                                                            : exponent_pos - mantissa_begin);
+    if (mantissa.empty()) {
+        return false;
+    }
+
+    if (exponent_pos != std::string_view::npos) {
+        const auto exponent = token.substr(exponent_pos + 1);
+        const std::size_t exponent_digits_begin = skip_number_sign(exponent);
+        if (exponent_digits_begin >= exponent.size() ||
+            !is_valid_decimal_component(exponent.substr(exponent_digits_begin), false)) {
+            return false;
+        }
+    }
+
+    const auto dot_pos = mantissa.find('.');
+    if (dot_pos == std::string_view::npos) {
+        return exponent_pos != std::string_view::npos && is_valid_decimal_component(mantissa, true);
+    }
+    if (mantissa.find('.', dot_pos + 1) != std::string_view::npos) {
+        return false;
+    }
+
+    const auto integer = mantissa.substr(0, dot_pos);
+    const auto fractional = mantissa.substr(dot_pos + 1);
+    return is_valid_decimal_component(integer, true) &&
+           is_valid_decimal_component(fractional, false);
 }
 
 [[nodiscard]] bool begins_with_local_time(std::string_view input, std::size_t offset) noexcept {
@@ -732,12 +891,15 @@ class Parser {
         }
 
         const auto normalized = remove_underscores(token);
-        const bool is_float = normalized.find('.') != std::string::npos ||
-                              normalized.find('e') != std::string::npos ||
-                              normalized.find('E') != std::string::npos || normalized == "inf" ||
-                              normalized == "+inf" || normalized == "-inf" || normalized == "nan" ||
-                              normalized == "+nan" || normalized == "-nan";
+        const bool is_float = is_float_candidate_token(token);
         if (is_float) {
+            if (!is_valid_float_token(token)) {
+                add_error("toml.invalid_number",
+                          "invalid TOML float",
+                          SourceRange{.begin_offset = token_begin, .end_offset = pos_});
+                return nullptr;
+            }
+
             std::istringstream stream(normalized);
             stream.imbue(std::locale::classic());
             stream.unsetf(std::ios_base::skipws);
@@ -761,6 +923,13 @@ class Parser {
                                     SourceRange{.begin_offset = token_begin, .end_offset = pos_});
             value->float_value = parsed;
             return value;
+        }
+
+        if (!is_valid_integer_token(token)) {
+            add_error("toml.invalid_number",
+                      "invalid TOML integer",
+                      SourceRange{.begin_offset = token_begin, .end_offset = pos_});
+            return nullptr;
         }
 
         int base = 10;

@@ -58,9 +58,13 @@ modules = ["main", "agents"]
 
 TEST_CASE("TOML parser accepts RFC-required value forms") {
     constexpr std::string_view input = R"TOML(dec = 42
+underscored = 1_000_000
 hex = 0x2A
+hex_e = 0xDEADBEEF
+oct = 0o755
 bin = 0b101010
 flt = 1.5e2
+flt_exp = 6.022_140e+23
 flag = true
 when = 2026-07-02T10:11:12Z
 literal = 'raw\path'
@@ -75,14 +79,50 @@ inline = { source = "path", path = "../core", version = "0.1.0" }
 
     REQUIRE(result.document.find({"hex"}) != nullptr);
     CHECK(result.document.find({"hex"})->integer_value == 42);
+    REQUIRE(result.document.find({"hex_e"}) != nullptr);
+    CHECK(result.document.find({"hex_e"})->integer_value == 3735928559);
+    REQUIRE(result.document.find({"oct"}) != nullptr);
+    CHECK(result.document.find({"oct"})->integer_value == 493);
     REQUIRE(result.document.find({"bin"}) != nullptr);
     CHECK(result.document.find({"bin"})->integer_value == 42);
     REQUIRE(result.document.find({"flt"}) != nullptr);
     CHECK(result.document.find({"flt"})->kind == ahfl::toml::ValueKind::Float);
+    REQUIRE(result.document.find({"flt_exp"}) != nullptr);
+    CHECK(result.document.find({"flt_exp"})->kind == ahfl::toml::ValueKind::Float);
     REQUIRE(result.document.find({"when"}) != nullptr);
     CHECK(result.document.find({"when"})->kind == ahfl::toml::ValueKind::DateTime);
     REQUIRE(result.document.find({"inline"}) != nullptr);
     CHECK(result.document.find({"inline"})->kind == ahfl::toml::ValueKind::InlineTable);
+}
+
+TEST_CASE("TOML parser rejects invalid TOML numeric forms") {
+    constexpr std::string_view input = R"TOML(leading_zero = 0123
+double_underscore = 1__2
+trailing_underscore = 12_
+prefixed_missing_digits = 0x
+prefixed_bad_underscore = 0b_1010
+prefixed_negative = -0x1
+prefixed_positive = +0b1
+bad_octal_digit = 0o8
+float_leading_zero = 01.2
+float_bad_fraction = 1._2
+next = 1
+)TOML";
+
+    auto result = ahfl::toml::parse(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic(result.document, "toml.invalid_number"));
+
+    const auto invalid_numbers =
+        std::count_if(result.document.diagnostics.begin(),
+                      result.document.diagnostics.end(),
+                      [](const auto &diag) { return diag.code == "toml.invalid_number"; });
+    CHECK(invalid_numbers == 10);
+
+    const auto *next = result.document.find({"next"});
+    REQUIRE(next != nullptr);
+    CHECK(next->kind == ahfl::toml::ValueKind::Integer);
+    CHECK(next->integer_value == 1);
 }
 
 TEST_CASE("TOML parser accepts TOML 1.0 datetime forms") {
