@@ -343,6 +343,20 @@ TEST_CASE("PackageGraph rejects user package named std") {
     CHECK(has_error(result, "user package cannot be named 'std'"));
 }
 
+TEST_CASE("PackageGraph rejects user standard-library packages") {
+    auto root = library_input("fake-std", "fake_std", PackageSourceKind::Root);
+    root.manifest.package_kind = "standard-library";
+
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = std::move(root),
+    });
+
+    REQUIRE(result.has_errors());
+    CHECK(has_error(result,
+                    "user package 'fake-std' cannot declare package.kind 'standard-library'"));
+}
+
 TEST_CASE("Manifest PackageGraph loader resolves path dependencies") {
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto root_dir = std::filesystem::temp_directory_path() /

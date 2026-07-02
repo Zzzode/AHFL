@@ -619,6 +619,11 @@ BuildResult build_package_graph(const BuildInput &input) {
         if (is_user_package(package.source) && package.name == "std") {
             add_error(result.diagnostics, "user package cannot be named 'std'");
         }
+        if (is_user_package(package.source) && package.kind == "standard-library") {
+            add_error(result.diagnostics,
+                      "user package '" + package.name +
+                          "' cannot declare package.kind 'standard-library'");
+        }
     }
 
     std::vector<int> state(graph.packages.size(), 0);
