@@ -51,18 +51,18 @@ function(assert_formatter_tree_unchanged ROOT_DIR)
     assert_file_matches("${SOURCE_FILE}" "${ROOT_DIR}/src/nested/b.ahfl")
 endfunction()
 
-function(write_formatter_package_manifest PACKAGE_ROOT)
+function(write_formatter_package_manifest_named PACKAGE_ROOT PACKAGE_NAME MODULE_PREFIX)
     file(WRITE "${PACKAGE_ROOT}/ahfl.toml"
 "manifest_version = 1
 
 [package]
-name = \"fmt-package\"
+name = \"${PACKAGE_NAME}\"
 version = \"0.1.0\"
 edition = \"2026\"
 kind = \"library\"
 
 [module]
-prefix = \"fmt_package\"
+prefix = \"${MODULE_PREFIX}\"
 root = \"src\"
 
 [exports]
@@ -77,13 +77,17 @@ std = { source = \"sysroot\" }
 ")
 endfunction()
 
-function(write_formatter_workspace_manifest ROOT_DIR)
+function(write_formatter_package_manifest PACKAGE_ROOT)
+    write_formatter_package_manifest_named("${PACKAGE_ROOT}" "fmt-package" "fmt_package")
+endfunction()
+
+function(write_formatter_workspace_manifest ROOT_DIR MEMBERS)
     file(WRITE "${ROOT_DIR}/ahfl.workspace.toml"
 "manifest_version = 1
 
 [workspace]
 name = \"fmt-workspace\"
-members = [\"packages/fmt-package\"]
+members = [${MEMBERS}]
 
 [resolver]
 version = 1
@@ -206,9 +210,12 @@ elseif(MODE STREQUAL "format-manifest")
 elseif(MODE STREQUAL "format-workspace-manifest")
     require_sysroot_dir()
     set(package_root "${WORK_DIR}/packages/fmt-package")
+    set(other_package_root "${WORK_DIR}/packages/other-package")
     seed_formatter_tree("${package_root}")
+    seed_formatter_tree("${other_package_root}")
     write_formatter_package_manifest("${package_root}")
-    write_formatter_workspace_manifest("${WORK_DIR}")
+    write_formatter_package_manifest_named("${other_package_root}" "other-package" "other_package")
+    write_formatter_workspace_manifest("${WORK_DIR}" "\"packages/fmt-package\", \"packages/other-package\"")
     execute_process(
         COMMAND "${AHFLC}" fmt --workspace "${WORK_DIR}/ahfl.workspace.toml" --package fmt-package --sysroot "${SYSROOT_DIR}"
         RESULT_VARIABLE ahflc_result
@@ -224,6 +231,7 @@ elseif(MODE STREQUAL "format-workspace-manifest")
         message(FATAL_ERROR "expected package graph workspace fmt summary\n${ahflc_output}")
     endif()
     assert_formatter_tree_matches_expected("${package_root}")
+    assert_formatter_tree_unchanged("${other_package_root}")
 else()
     message(FATAL_ERROR "unknown formatter CLI test mode: ${MODE}")
 endif()
