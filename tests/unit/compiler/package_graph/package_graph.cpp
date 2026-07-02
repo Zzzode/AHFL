@@ -374,6 +374,18 @@ TEST_CASE("PackageGraph rejects duplicate module prefix before resolver") {
     CHECK(has_error(result, "duplicate module prefix"));
 }
 
+TEST_CASE("PackageGraph rejects duplicate package names before resolver") {
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = app_input(),
+        .workspace_packages = {library_input(
+            "refund-audit", "audit_core", PackageSourceKind::Workspace)},
+    });
+
+    REQUIRE(result.has_errors());
+    CHECK(has_error(result, "duplicate package name 'refund-audit'"));
+}
+
 TEST_CASE("PackageGraph rejects missing dependencies") {
     auto result = ahfl::package_graph::build_package_graph(BuildInput{
         .sysroot_std = std_input(),
@@ -382,6 +394,19 @@ TEST_CASE("PackageGraph rejects missing dependencies") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "missing dependency package 'audit-core'"));
+}
+
+TEST_CASE("PackageGraph rejects exact dependency version mismatches") {
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = app_input(
+            "audit-core = { source = \"path\", path = \"../audit-core\", version = \"0.2.0\" }\n"),
+        .workspace_packages = {library_input(
+            "audit-core", "audit_core", PackageSourceKind::Workspace)},
+    });
+
+    REQUIRE(result.has_errors());
+    CHECK(has_error(result, "dependency 'audit-core' requires version 0.2.0 but resolved 0.1.0"));
 }
 
 TEST_CASE("PackageGraph rejects dependency cycles") {
