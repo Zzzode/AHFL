@@ -96,6 +96,7 @@ Avoid:
 - [corelib-completion-plan.zh.md](./plans/corelib-completion-plan.zh.md)
 - [corelib-support-workplan.zh.md](./plans/corelib-support-workplan.zh.md)
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
+- [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
 
 ### Reference

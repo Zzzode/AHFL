@@ -91,7 +91,7 @@ Keep the RFC in draft until owner review resolves the interaction with RFC 0003.
 > shadowing. Semantic shape becomes first-class (you cannot pass a tuple-variant value where a
 > struct-variant pattern is expected even if field types are isomorphic). The design explicitly
 > defers enum-level generics, anonymous struct literals, and exhaustive-match lint to separate
-> RFCs (PB-01, RFC 0002). Implementation is blocked on this RFC merging (`docs/plans/phaseb-gap-analysis-v1.md:128`).
+> RFCs (PB-01, RFC 0002). Implementation is blocked on this RFC merging (`docs/plans/phaseb-gap-analysis.zh.md:128`).
 >
 > **中文摘要**: 本 RFC 将 AHFL 枚举 variant 的 payload 统一为两种显式形式——tuple-variant
 > `Name(T1, T2)` 与 struct-variant `Name { f1: T1, f2: T2 }`——取代遗留的含混写法。
@@ -99,7 +99,7 @@ Keep the RFC in draft until owner review resolves the interaction with RFC 0003.
 > 与遗留括号类型间的歧义，并在 enum 作用域内保留 variant 标识符以防止 struct 名 shadow。
 > 语义形状成为一等公民（即使字段类型同构，也不能在期望 struct-variant 模式的地方传入
 > tuple-variant 值）。设计明确将 enum 级泛型、匿名 struct literal、穷尽性检查 lint
-> 推迟到各自的独立 RFC（PB-01、RFC 0002）。实现需等本 RFC 合并后方可启动（`docs/plans/phaseb-gap-analysis-v1.md:128`）。
+> 推迟到各自的独立 RFC（PB-01、RFC 0002）。实现需等本 RFC 合并后方可启动（`docs/plans/phaseb-gap-analysis.zh.md:128`）。
 
 ---
 
@@ -118,7 +118,7 @@ Keep the RFC in draft until owner review resolves the interaction with RFC 0003.
 | **Author** | LLM-orchestrated |
 | **Shepherds** | TBD |
 | **PR** | TBD |
-| **Implementation Issue** | TBD (per `phaseb-gap-analysis-v1.md:128-129`) |
+| **Implementation Issue** | TBD (per `phaseb-gap-analysis.zh.md:128-129`) |
 | **Depends On** | NONE (RFC 0002 is parallel, not blocking; PB-01 Generics is downstream) |
 
 ---
@@ -139,7 +139,7 @@ enumVariant: IDENT ('(' typeList ')')?;
 2. **无命名载荷**：用户无法在 variant 上表达 `HttpResponse { status: Int, body: Bytes, headers: Map }` 这种自文档化的字段集，只能退而写成元组并用注释标注序号。
 3. **模式匹配约束**：当前 `variantPattern`（`AHFL.g4:494-496`）只支持位置解构 `Some(x)`，用户在多字段 variant 中必须记住字段顺序，无法按名绑定（Rust/Swift/TypeScript 均已支持）。
 
-AHFL Core-3 的 PB-01 基线（`docs/plans/phaseb-gap-analysis-v1.md:29`）已将本项列为 **P1 / M7**，并在 wave-16 集成报告的 Blocked 清单中登记为 **"无 RFC；需 core steering 组签核 enum variant 语义 spec"**（`docs/plans/wave-16-integration-report.zh.md:164`）。本 RFC 的目的即填补该设计空白，解除对应 BLOCKED 状态。
+AHFL Core-3 的 PB-01 基线（`docs/plans/phaseb-gap-analysis.zh.md:29`）已将本项列为 **P1 / M7**，并在 wave-16 集成报告的 Blocked 清单中登记为 **"无 RFC；需 core steering 组签核 enum variant 语义 spec"**（`docs/plans/wave-16-integration-report.zh.md:164`）。本 RFC 的目的即填补该设计空白，解除对应 BLOCKED 状态。
 
 ### 2.2 Scope / 适用范围
 
@@ -378,8 +378,8 @@ enum E {
 ## 5. Non-Goals / 明确不做的事项
 
 1. **不引入匿名 struct literal**：`{ x: 1, y: 2 }` 不能作为独立表达式存在（必须绑定到命名的 struct-variant 构造器）。匿名 struct 类型属于 struct RFC 扩展，不在本 RFC 范围。
-2. **不做 enum 级泛型细化**：`<T>` 形参的 enum 保持现状，不引入 GATs、where-clause、variant-level 泛型参数。完整泛型设计交由 **PB-01 Generics**（`docs/plans/phaseb-gap-analysis-v1.md:142` OUT-OF-SCOPE）。
-3. **不做 exhaustive match lint / non-exhaustive attribute**：match 穷尽性检查、missing arm 提示、`#[non_exhaustive]` 标记由 **RFC 0003** 独立负责（`docs/plans/phaseb-gap-analysis-v1.md:137`）。本 RFC 仅保证 variant 解构的形状/字段类型检查。
+2. **不做 enum 级泛型细化**：`<T>` 形参的 enum 保持现状，不引入 GATs、where-clause、variant-level 泛型参数。完整泛型设计交由 **PB-01 Generics**（`docs/plans/phaseb-gap-analysis.zh.md:142` OUT-OF-SCOPE）。
+3. **不做 exhaustive match lint / non-exhaustive attribute**：match 穷尽性检查、missing arm 提示、`#[non_exhaustive]` 标记由 **RFC 0003** 独立负责（`docs/plans/phaseb-gap-analysis.zh.md:137`）。本 RFC 仅保证 variant 解构的形状/字段类型检查。
 4. **不做 variant-level methods / impl blocks on enum**：`impl Option<T> { fn unwrap() -> T { ... } }` 属于 Core-4 impl-block 设计，不在本 RFC 处理。
 5. **不改变 enum 的内存布局/FFI ABI**：AHFL 当前 enum 的 tagged-union 表示保持不变；struct-variant 与 tuple-variant 的 payload 在布局上等价（字段顺序依声明序）。本 RFC 不引入 `#[repr(C)]` 或自定义 discriminant。
 6. **不做 variant 引用重命名**：`use MyEnum::*` 或 `use MyEnum::Var as V` 的 import-alias 规则保持现状，本 RFC 不扩展。
@@ -489,7 +489,7 @@ enum E {
 2. **现有 variant pattern 文法** — `grammar/AHFL.g4:488-496`（variantPattern 与 patternList，本 RFC 扩展目标）。
 3. **现有 AST enum variant 验证** — `src/compiler/syntax/frontend/ast.cpp:753-769`（validate_node 中 EnumVariantDeclSyntax payload 遍历，需增加 kind discriminant 校验）。
 4. **现有 match/narrowing 入口** — `src/compiler/semantics/typecheck_expr.cpp:609-611`（`apply_flow_narrowing`，struct-variant pattern 类型检查将在此链路上增加 variant-kind 判定）。
-5. **PB-01 Gap Analysis 条目** — `docs/plans/phaseb-gap-analysis-v1.md:124-129`（本 RFC 即 §3.d 的 BLOCKED 解除前置条件；验收标准来源）。
+5. **PB-01 Gap Analysis 条目** — `docs/plans/phaseb-gap-analysis.zh.md:124-129`（本 RFC 即 §3.d 的 BLOCKED 解除前置条件；验收标准来源）。
 6. **Wave-16 Blocked 清单登记** — `docs/plans/wave-16-integration-report.zh.md:160-167`，具体行 **164**。
 7. **ADT match 现有单测基线** — `tests/unit/compiler/semantics/adt_match.cpp:17-28`（P1b 顶层注释，本 RFC A1 新增的 40/80 断言将以本文件为入口扩充）。
 

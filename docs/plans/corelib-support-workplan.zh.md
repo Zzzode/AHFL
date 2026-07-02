@@ -7,7 +7,7 @@
 > **Created:** 2026-06-29
 > **Baseline commit:** develop/wave-21-top
 > **Audit source:** `docs/int/wave-21-integration-final-report.md` + `stdlib/` 只读盘点（2026-06-29）
-> **Cross-ref:** [[wave21-full-delivery]] / PB-01 V1.3 (`docs/plans/phaseb-gap-analysis-v1.md`) / `corelib-completion-plan.zh.md`
+> **Cross-ref:** [[wave21-full-delivery]] / PB-01 V1.3 (`docs/plans/phaseb-gap-analysis.zh.md`) / `corelib-completion-plan.zh.md`
 
 ---
 
@@ -261,7 +261,7 @@ gantt
 
 | 文档 | 关联条目 | 本文档对应章节 |
 |---|---|---|
-| `docs/plans/phaseb-gap-analysis-v1.md` | PB-01 h-3.8.2 (Sema/ConstSema), h-3.8.7 (QE 门禁) | §1.2 / §3.2 / §3.4 |
+| `docs/plans/phaseb-gap-analysis.zh.md` | PB-01 h-3.8.2 (Sema/ConstSema), h-3.8.7 (QE 门禁) | §1.2 / §3.2 / §3.4 |
 | `docs/plans/corelib-completion-plan.zh.md` | "API 实现率 80%" 目标 | §2 B3 / §3.2 / §3.3 |
 | `docs/plans/issue-backlog-global-gaps.zh.md` | Gap #12 (stdlib 发布渠道缺失) | §2 B4 / §3.4 |
 | `docs/plans/_p3_std_impl_blockers.zh.md` | 所有 Trait / coherence 阻断 | §5.1 R2 / §4 D4 |
