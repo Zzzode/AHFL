@@ -2418,6 +2418,15 @@ add_test(NAME ahflc.dump_package_graph.workspace_rejects_project_name
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.dump_package_graph.workspace_rejects_legacy_package_descriptor
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=dump\;package-graph\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--package in ahfl\\.workspace\\.toml mode selects a package name"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_lockfile.workspace_basic
     COMMAND $<TARGET_FILE:ahflc> dump lockfile
             --workspace "${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
@@ -2445,6 +2454,15 @@ add_test(NAME ahflc.check.workspace_rejects_project_name
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
             "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--project-name\;refund-audit\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
             "-DEXPECTED_REGEX=--project-name is a removed legacy workspace selector for ahfl\\.workspace\\.toml"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.workspace_rejects_legacy_package_descriptor
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml"
+            "-DAHFLC_ARGS=check\;--workspace\;${AHFL_TESTS_DIR}/integration/package_graph_workspace/ahfl.workspace.toml\;--package\;${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.package.json\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}"
+            "-DEXPECTED_REGEX=--package in ahfl\\.workspace\\.toml mode selects a package name"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 

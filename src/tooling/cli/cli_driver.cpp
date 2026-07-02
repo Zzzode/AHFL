@@ -378,6 +378,11 @@ workspace_package_name(const CommandLineOptions &options, std::optional<CommandK
     return std::nullopt;
 }
 
+[[nodiscard]] bool package_selector_looks_like_legacy_descriptor(std::string_view value) {
+    return value.ends_with(".json") || value.find('/') != std::string_view::npos ||
+           value.find('\\') != std::string_view::npos;
+}
+
 enum class DiscoveredPackageGraphKind {
     Manifest,
     Workspace,
@@ -1258,6 +1263,15 @@ std::optional<ExitCode> CliDriver::validate_options() {
     if (package_graph_workspace && options_.project_name.has_value()) {
         std::cerr << "error: --project-name is a removed legacy workspace selector for "
                      "ahfl.workspace.toml; use --package <name>\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (package_graph_workspace && options_.package_descriptor.has_value() &&
+        package_selector_looks_like_legacy_descriptor(*options_.package_descriptor)) {
+        std::cerr << "error: --package in ahfl.workspace.toml mode selects a package name; "
+                     "legacy ahfl.package.json descriptors are removed; move handoff metadata "
+                     "into [targets.<name>]\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
