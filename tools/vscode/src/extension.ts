@@ -2,6 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions, State } from 'vscode-languageclient/node';
+import {
+    toolchainOptionsFromConfiguration,
+    workspaceConfigurationFromRequest,
+    type ToolchainWorkspaceLike,
+} from './toolchain';
 
 let client: LanguageClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -15,26 +20,6 @@ interface AhflHoverOptions {
     showSource: boolean;
     maxFacts: number;
     markupKind: string;
-}
-
-interface AhflToolchainProfile {
-    workspaceFolder: string;
-    sysroot: string;
-}
-
-interface AhflToolchainOptions {
-    defaultSysroot?: string;
-    bundledSysroot: string;
-    profiles: AhflToolchainProfile[];
-}
-
-interface WorkspaceConfigurationItem {
-    scopeUri?: string | null;
-    section?: string | null;
-}
-
-interface WorkspaceConfigurationParams {
-    items: WorkspaceConfigurationItem[];
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -114,7 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
                 settings: {
                     ahfl: {
                         hover: hoverOptionsFromConfiguration(config),
-                        toolchain: toolchainOptionsFromConfiguration(context),
+                        toolchain: vscodeToolchainOptions(context),
                     },
                 },
             });
@@ -184,7 +169,7 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
         initializationOptions: {
             ahfl: {
                 hover: hoverOptionsFromConfiguration(config),
-                toolchain: toolchainOptionsFromConfiguration(context),
+                toolchain: vscodeToolchainOptions(context),
             },
         },
         middleware: {
@@ -192,7 +177,11 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
                 configuration: async (params, token, next) => {
                     const nextResult = await Promise.resolve(next(params, token));
                     const defaultConfiguration = Array.isArray(nextResult) ? nextResult : [];
-                    return workspaceConfigurationFromRequest(params, defaultConfiguration);
+                    return workspaceConfigurationFromRequest(
+                        vscodeToolchainWorkspace(),
+                        params,
+                        defaultConfiguration
+                    );
                 },
             },
         },
@@ -215,89 +204,24 @@ function hoverOptionsFromConfiguration(config: vscode.WorkspaceConfiguration): A
     };
 }
 
-function toolchainOptionsFromConfiguration(context: vscode.ExtensionContext): AhflToolchainOptions {
-    const folders = vscode.workspace.workspaceFolders ?? [];
-    const profiles: AhflToolchainProfile[] = [];
-
-    for (const folder of folders) {
-        const folderConfig = vscode.workspace.getConfiguration('ahfl', folder.uri);
-        const sysroot = resolveSysrootSetting(
-            folderConfig.get<string>('toolchain.sysroot', ''),
-            folder
-        );
-        if (sysroot.length > 0) {
-            profiles.push({
-                workspaceFolder: folder.uri.toString(),
-                sysroot,
-            });
-        }
-    }
-
-    const config = vscode.workspace.getConfiguration('ahfl');
-    const defaultFolder = folders.length > 0 ? folders[0] : undefined;
-    const configuredDefault = resolveSysrootSetting(
-        config.get<string>('toolchain.sysroot', ''),
-        defaultFolder
-    );
-
-    const options: AhflToolchainOptions = {
-        bundledSysroot: context.extensionUri.fsPath,
-        profiles,
-    };
-    if (configuredDefault.length > 0) {
-        options.defaultSysroot = configuredDefault;
-    }
-    return options;
+function vscodeToolchainOptions(context: vscode.ExtensionContext) {
+    return toolchainOptionsFromConfiguration(vscodeToolchainWorkspace(), context.extensionUri.fsPath);
 }
 
-function workspaceConfigurationFromRequest(
-    params: WorkspaceConfigurationParams,
-    defaultConfiguration: unknown[]
-): unknown[] {
-    return params.items.map((item, index) => {
-        if (item.section === 'ahfl.toolchain') {
-            return toolchainConfigurationForScope(item.scopeUri ?? undefined);
-        }
-        return defaultConfiguration[index] ?? null;
-    });
-}
-
-function toolchainConfigurationForScope(scopeUri: string | undefined): { sysroot: string } {
-    const resource = uriFromScope(scopeUri);
-    const folder = resource ? vscode.workspace.getWorkspaceFolder(resource) : undefined;
-    const config = vscode.workspace.getConfiguration('ahfl', resource);
-    const sysroot = resolveSysrootSetting(config.get<string>('toolchain.sysroot', ''), folder);
-
+function vscodeToolchainWorkspace(): ToolchainWorkspaceLike {
     return {
-        sysroot: sysroot.length > 0 ? sysroot : '',
+        workspaceFolders: vscode.workspace.workspaceFolders,
+        getConfiguration: (section, scope) =>
+            vscode.workspace.getConfiguration(section, scope as vscode.Uri | undefined),
+        getWorkspaceFolder: (resource) => vscode.workspace.getWorkspaceFolder(resource as vscode.Uri),
+        parseUri: (value) => {
+            try {
+                return vscode.Uri.parse(value);
+            } catch (_err) {
+                return undefined;
+            }
+        },
     };
-}
-
-function uriFromScope(scopeUri: string | undefined): vscode.Uri | undefined {
-    if (!scopeUri) {
-        return undefined;
-    }
-    try {
-        return vscode.Uri.parse(scopeUri);
-    } catch (_err) {
-        return undefined;
-    }
-}
-
-function resolveSysrootSetting(value: string | undefined, folder: vscode.WorkspaceFolder | undefined): string {
-    const trimmed = (value ?? '').trim();
-    if (trimmed.length === 0) {
-        return '';
-    }
-
-    const workspaceRoot = folder?.uri.scheme === 'file' ? folder.uri.fsPath : '';
-    const expanded = workspaceRoot.length > 0
-        ? trimmed.replace(/\$\{workspaceFolder\}/g, workspaceRoot)
-        : trimmed;
-    if (path.isAbsolute(expanded) || workspaceRoot.length === 0) {
-        return expanded;
-    }
-    return path.resolve(workspaceRoot, expanded);
 }
 
 async function restartLanguageClient(context: vscode.ExtensionContext): Promise<void> {

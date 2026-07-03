@@ -154,6 +154,7 @@
     "watch": "esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --outfile=out/extension.js --sourcemap --watch",
     "test:extension": "pnpm run compile && node ./test/runTest.js",
     "test:problems-transcript": "pnpm run compile && node ./test/problemsTranscript.js",
+    "test:toolchain-config": "node ./test/toolchainConfig.js",
     "test:package-inventory": "pnpm run compile && node ./test/packageInventory.js",
     "test:vsix-install": "node ./test/installSmoke.js",
     "test:hover": "pnpm run test:extension",
