@@ -313,6 +313,16 @@ project_discovery_diagnostic(const package_graph::Diagnostic &diagnostic,
     result.range = source.source == nullptr
                        ? Range{}
                        : to_lsp_range(*source.source, fallback_range(*source.source));
+    for (const auto &related : diagnostic.related) {
+        if (related.path.empty()) {
+            continue;
+        }
+        LspDiagnostic::RelatedInformation info;
+        info.location.uri = AnalysisService::uri_from_path(related.path);
+        info.location.range = Range{};
+        info.message = related.message;
+        result.related_information.push_back(std::move(info));
+    }
     return result;
 }
 

@@ -38,9 +38,16 @@ enum class PackageSourceKind {
 };
 
 struct Diagnostic {
+    struct Related {
+        std::filesystem::path path;
+        std::string message;
+        SourceRange range{};
+    };
+
     std::string code;
     std::string message;
     SourceRange range{};
+    std::vector<Related> related;
 };
 
 struct PackageInput {

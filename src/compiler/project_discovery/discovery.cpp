@@ -20,11 +20,13 @@ constexpr std::string_view kToolchainIncompatible = "E::toolchain_incompatible";
 void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
                          std::string_view code,
                          std::string message,
-                         SourceRange range = {}) {
+                         SourceRange range = {},
+                         std::vector<package_graph::Diagnostic::Related> related = {}) {
     diagnostics.push_back(package_graph::Diagnostic{
         .code = std::string{code},
         .message = std::move(message),
         .range = range,
+        .related = std::move(related),
     });
 }
 
@@ -32,6 +34,14 @@ void add_error(std::vector<package_graph::Diagnostic> &diagnostics,
                std::string message,
                SourceRange range = {}) {
     add_error_with_code(diagnostics, kProjectDiscovery, std::move(message), range);
+}
+
+[[nodiscard]] package_graph::Diagnostic::Related
+related_path(std::filesystem::path path, std::string message) {
+    return package_graph::Diagnostic::Related{
+        .path = normalize_project_path(std::move(path)),
+        .message = std::move(message),
+    };
 }
 
 void append_manifest_diagnostics(std::vector<package_graph::Diagnostic> &target,
@@ -343,7 +353,15 @@ void reject_cross_profile_package_graph(ProjectDiscoveryResult &discovery,
                 normalize_project_path(package_selection->profile.std_manifest).generic_string() +
                 "' but active document uses sysroot '" +
                 normalize_project_path(active_selection.profile.std_manifest).generic_string() +
-                "'");
+                "'",
+            {},
+            {
+                related_path(package.manifest_path, "package manifest in the crossed graph"),
+                related_path(package_selection->profile.std_manifest,
+                             "sysroot selected for that package manifest"),
+                related_path(active_selection.profile.std_manifest,
+                             "active sysroot selected for the current document"),
+            });
         discovery.context.reset();
         return;
     }
@@ -546,7 +564,15 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
                 std::string{toolchain_origin_name(active_selection->profile.origin)} +
                 "', std manifest is '" +
                 normalize_project_path(active_selection->profile.std_manifest).generic_string() +
-                "'");
+                "'",
+            {},
+            {
+                related_path(active_selection->profile.std_manifest,
+                             "active std manifest from profile origin '" +
+                                 std::string{
+                                     toolchain_origin_name(active_selection->profile.origin)} +
+                                 "'"),
+            });
         return discovery;
     }
 
@@ -567,7 +593,17 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
                             kToolchainSysrootMismatch,
                             "this standard-library package is not the active AHFL sysroot; "
                             "active std manifest is '" +
-                                normalized_sysroot_manifest.generic_string() + "'");
+                                normalized_sysroot_manifest.generic_string() + "'",
+                            {},
+                            {
+                                related_path(normalized_package_manifest,
+                                             "opened standard-library package manifest"),
+                                related_path(normalized_sysroot_manifest,
+                                             "active std manifest from profile origin '" +
+                                                 std::string{toolchain_origin_name(
+                                                     active_selection->profile.origin)} +
+                                                 "'"),
+                            });
         return discovery;
     }
 

@@ -600,6 +600,16 @@ void add_toolchain_profile_ambiguity(project_discovery::ToolchainProfileSet &pro
                    "' has multiple AHFL sysroots: '" + existing_std_manifest.generic_string() +
                    "' and '" + new_std_manifest.generic_string() + "'",
         .range = {},
+        .related = {
+            package_graph::Diagnostic::Related{
+                .path = existing_std_manifest,
+                .message = "existing sysroot profile for this workspace folder",
+            },
+            package_graph::Diagnostic::Related{
+                .path = new_std_manifest,
+                .message = "conflicting sysroot profile for this workspace folder",
+            },
+        },
     });
 }
 

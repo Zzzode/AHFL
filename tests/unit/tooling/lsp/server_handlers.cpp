@@ -2101,6 +2101,45 @@ void test_lsp_default_sysroot_precedes_bundled_fallback() {
           "default_sysroot_precedes_bundled.mismatch");
 }
 
+void test_lsp_bundled_sysroot_mismatch_reports_related_information() {
+    const auto root = make_temp_project("bundled_sysroot_mismatch_related");
+    const auto bundled_root = make_temp_project("bundled_sysroot_mismatch_related_alt");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+    write_minimal_std_package(bundled_root / "std", "bundled");
+
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    const auto output = run_lsp_messages({
+        initialize_body_with_bundled_sysroot(std_root, bundled_root),
+        did_open_body(json_uri, 1, json_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find("E::toolchain_sysroot_mismatch") != std::string::npos,
+          "bundled_sysroot_mismatch_related.mismatch");
+    check(output.find("\"relatedInformation\"") != std::string::npos,
+          "bundled_sysroot_mismatch_related.related_information");
+    check(output.find("opened standard-library package manifest") != std::string::npos,
+          "bundled_sysroot_mismatch_related.opened_manifest_note");
+    check(output.find("active std manifest from profile origin 'bundled-extension'") !=
+              std::string::npos,
+          "bundled_sysroot_mismatch_related.origin_note");
+    check(output.find(AnalysisService::uri_from_path(std_root / "ahfl.toml")) !=
+              std::string::npos,
+          "bundled_sysroot_mismatch_related.opened_manifest_uri");
+    check(output.find(AnalysisService::uri_from_path(bundled_root / "std" / "ahfl.toml")) !=
+              std::string::npos,
+          "bundled_sysroot_mismatch_related.active_manifest_uri");
+}
+
 void test_lsp_legacy_initialization_sysroot_option_is_ignored() {
     const auto root = make_temp_project("legacy_sysroot_initialization_option");
     const auto std_root = root / "std";
@@ -4233,6 +4272,7 @@ int main() {
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
     test_lsp_bundled_sysroot_initialization_option_selects_fallback();
     test_lsp_default_sysroot_precedes_bundled_fallback();
+    test_lsp_bundled_sysroot_mismatch_reports_related_information();
     test_lsp_legacy_initialization_sysroot_option_is_ignored();
     test_lsp_noncanonical_toolchain_sysroot_initialization_option_is_ignored();
     test_did_change_configuration_requests_resource_toolchain_profile();
