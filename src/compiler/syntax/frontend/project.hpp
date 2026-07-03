@@ -23,9 +23,7 @@ struct ProjectInput {
     std::vector<std::filesystem::path> entry_files{};
     std::vector<std::filesystem::path> search_roots{};
     std::vector<ModuleRoot> module_roots{};
-    bool include_stdlib{true};
     bool inject_prelude{false};
-    std::vector<std::filesystem::path> stdlib_search_roots{};
     std::unordered_map<std::string, std::string> source_overlays{};
     bool enforce_package_dependencies{false};
 };

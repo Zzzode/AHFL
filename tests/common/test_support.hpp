@@ -121,7 +121,6 @@ workflow_value_flow_project_input(const std::filesystem::path &app_manifest_path
     const auto repo_root = fixture_root.parent_path().parent_path().parent_path();
     ProjectInput input;
     input.entry_files.push_back(app_root / "main.ahfl");
-    input.include_stdlib = false;
     input.inject_prelude = false;
     input.module_roots.push_back(ProjectInput::ModuleRoot{
         .prefix = "std",

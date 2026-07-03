@@ -5,7 +5,8 @@ target_link_libraries(ahfl_project_parse_tests
     PRIVATE
         ahfl_compiler_syntax
 )
-target_include_directories(ahfl_project_parse_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_project_parse_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                                            ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_project_parse_tests)
 
 add_executable(ahfl_project_resolve_tests
@@ -15,7 +16,8 @@ target_link_libraries(ahfl_project_resolve_tests
     PRIVATE
         ahfl_compiler_semantics
 )
-target_include_directories(ahfl_project_resolve_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_project_resolve_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                                              ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_project_resolve_tests)
 
 add_executable(ahfl_project_check_tests
@@ -26,7 +28,8 @@ target_link_libraries(ahfl_project_check_tests
         ahfl_compiler_ir
         ahfl_runtime_evaluator
 )
-target_include_directories(ahfl_project_check_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_project_check_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                                            ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_project_check_tests)
 
 add_executable(ahfl_compiler_ir_tests

@@ -206,7 +206,6 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     input.entry_files.push_back(root_package == nullptr
                                     ? fallback_entry
                                     : lsp_target_entry_file(*root_package, fallback_entry));
-    input.include_stdlib = false;
     input.inject_prelude = false;
     input.source_overlays = std::move(overlays);
     input.enforce_package_dependencies = true;

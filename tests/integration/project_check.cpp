@@ -5,6 +5,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
@@ -20,6 +21,8 @@
 #include <variant>
 
 namespace {
+
+using ahfl::test_support::project_input_with_repo_std;
 
 void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     diagnostics.render(std::cout);
@@ -59,12 +62,8 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 
 int run_ok_cross_file(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -97,12 +96,8 @@ int run_ok_cross_file(const std::filesystem::path &entry, const std::filesystem:
 
 int run_fail_node_input(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -135,12 +130,8 @@ int run_fail_node_input(const std::filesystem::path &entry, const std::filesyste
 int run_fail_completed_state(const std::filesystem::path &entry,
                              const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -181,12 +172,8 @@ int run_fail_completed_state(const std::filesystem::path &entry,
 int run_ok_expression_type_isolated(const std::filesystem::path &entry,
                                     const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -237,12 +224,8 @@ int run_ok_expression_type_isolated(const std::filesystem::path &entry,
 int run_ok_stdlib_runtime_api(const std::filesystem::path &entry,
                               const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -312,12 +295,8 @@ int run_ok_stdlib_runtime_api(const std::filesystem::path &entry,
 int run_ok_trait_runtime_dispatch(const std::filesystem::path &entry,
                                   const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;

@@ -708,7 +708,6 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
                                  std::vector<std::filesystem::path> entry_files) {
     ahfl::ProjectInput input;
     input.entry_files = std::move(entry_files);
-    input.include_stdlib = false;
     input.inject_prelude = false;
     input.enforce_package_dependencies = true;
     input.module_roots.reserve(graph.module_roots.size());
@@ -1784,7 +1783,6 @@ ExitCode CliDriver::execute() {
 
     ahfl::ProjectInput input;
     input.entry_files.push_back(std::string(options_.positional.front()));
-    input.include_stdlib = false;
     input.inject_prelude = false;
 
     auto project_result = ahfl::parse_project(frontend_, input);
@@ -1863,9 +1861,8 @@ ExitCode CliDriver::run_workspace_package() {
     return run_package_graph_package(*graph_result.graph);
 }
 
-ExitCode
-CliDriver::run_source_sysroot_check(const ahfl::package_graph::PackageGraph &graph,
-                                    const ahfl::package_graph::PackageNode &package) {
+ExitCode CliDriver::run_source_sysroot_check(const ahfl::package_graph::PackageGraph &graph,
+                                             const ahfl::package_graph::PackageNode &package) {
     std::vector<std::filesystem::path> entry_files;
 
     if (options_.target_name.has_value()) {
@@ -1883,8 +1880,8 @@ CliDriver::run_source_sysroot_check(const ahfl::package_graph::PackageGraph &gra
         entry_files.push_back(
             normalize_manifest_path(std::filesystem::path{std::string{options_.positional[0]}}));
     } else {
-        auto files =
-            collect_ahfl_source_files_in_directory(package.module_root, "source sysroot", std::cerr);
+        auto files = collect_ahfl_source_files_in_directory(
+            package.module_root, "source sysroot", std::cerr);
         if (!files.has_value()) {
             return ExitCode::CompileError;
         }

@@ -1642,7 +1642,6 @@ resolve_multi_module(std::string_view project_tag,
                                 // (and L3 unused-import detection) work against a clean graph
                                 // containing only the modules under test. Without this the stdlib
                                 // dominates reference counts and produces unactionable noise.
-                                .include_stdlib = false,
                                 .inject_prelude = false,
                             });
     {

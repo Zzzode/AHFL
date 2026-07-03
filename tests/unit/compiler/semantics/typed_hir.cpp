@@ -2575,7 +2575,6 @@ fn raw_length(value: String) -> Int effect Pure;
                                                 .compiler_intrinsics_allow = std::move(allowlist),
                                             },
                                         },
-                                    .include_stdlib = false,
                                     .inject_prelude = false,
                                 });
         REQUIRE_FALSE(parse.has_errors());

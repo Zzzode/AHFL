@@ -1,5 +1,6 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <filesystem>
@@ -8,6 +9,8 @@
 #include <string>
 
 namespace {
+
+using ahfl::test_support::project_input_with_repo_std;
 
 void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     diagnostics.render(std::cout);
@@ -25,12 +28,8 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -60,12 +59,8 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 
 int run_ok_duplicate_locals(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -91,12 +86,8 @@ int run_ok_duplicate_locals(const std::filesystem::path &entry, const std::files
 
 int run_fail_unknown_type(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {entry},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result =
+        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;

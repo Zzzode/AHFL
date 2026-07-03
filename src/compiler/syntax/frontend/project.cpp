@@ -104,49 +104,9 @@ void append_unique_normalized_path(std::vector<std::filesystem::path> &paths,
     return module_relative_path(module_name.substr(prefix.size() + 2));
 }
 
-[[nodiscard]] bool has_std_manifest(const std::filesystem::path &search_root) {
-    std::error_code error;
-    const auto manifest_path = normalize_path(search_root / "std" / "ahfl.toml");
-    return std::filesystem::exists(manifest_path, error) && !error;
-}
-
-[[nodiscard]] bool
-contains_manifest_backed_stdlib_root(const std::vector<std::filesystem::path> &roots) {
-    return std::any_of(
-        roots.begin(), roots.end(), [](const auto &root) { return has_std_manifest(root); });
-}
-
-[[nodiscard]] std::vector<std::filesystem::path> builtin_stdlib_search_roots() {
-    std::vector<std::filesystem::path> roots;
-
-#ifdef AHFL_SOURCE_DIR
-    append_unique_normalized_path(roots, std::filesystem::path(AHFL_SOURCE_DIR));
-#endif
-
-    std::error_code error;
-    auto current = std::filesystem::current_path(error);
-    if (!error) {
-        current = normalize_path(current);
-        while (!current.empty()) {
-            if (has_std_manifest(current)) {
-                append_unique_normalized_path(roots, current);
-                break;
-            }
-            const auto parent = current.parent_path();
-            if (parent == current) {
-                break;
-            }
-            current = parent;
-        }
-    }
-
-    return roots;
-}
-
 [[nodiscard]] std::vector<std::filesystem::path> effective_search_roots(const ProjectInput &input) {
     std::vector<std::filesystem::path> roots;
-    roots.reserve(input.search_roots.size() + input.entry_files.size() +
-                  input.stdlib_search_roots.size() + 2);
+    roots.reserve(input.search_roots.size() + input.entry_files.size());
 
     for (const auto &root : input.search_roots) {
         append_unique_normalized_path(roots, root);
@@ -155,15 +115,6 @@ contains_manifest_backed_stdlib_root(const std::vector<std::filesystem::path> &r
     if (roots.empty()) {
         for (const auto &entry_file : input.entry_files) {
             append_unique_normalized_path(roots, normalize_path(entry_file).parent_path());
-        }
-    }
-
-    if (input.include_stdlib && !contains_manifest_backed_stdlib_root(roots)) {
-        for (const auto &root : input.stdlib_search_roots) {
-            append_unique_normalized_path(roots, root);
-        }
-        for (const auto &root : builtin_stdlib_search_roots()) {
-            append_unique_normalized_path(roots, root);
         }
     }
 
@@ -282,7 +233,7 @@ find_module_root(std::string_view module_name,
 }
 
 [[nodiscard]] bool should_inject_prelude(const ProjectInput &input, std::string_view module_name) {
-    return input.include_stdlib && input.inject_prelude && !is_std_module(module_name);
+    return input.inject_prelude && !is_std_module(module_name);
 }
 
 [[nodiscard]] std::optional<std::filesystem::path>

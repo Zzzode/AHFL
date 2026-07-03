@@ -62,10 +62,11 @@ add_test(NAME ahfl.frontend.project.package_dependency_gates_imports
             "${CMAKE_BINARY_DIR}/package_dependency_gates_imports"
 )
 
-add_test(NAME ahfl.frontend.project.ok_project_stdlib_root_wins_over_bundled_copy
-    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
-            ok-project-stdlib-root-wins-over-bundled-copy
-            "${PROJECT_SOURCE_DIR}"
+add_test(NAME ahfl.frontend.project.std_import_requires_explicit_module_root
+    COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}"
+            $<TARGET_FILE:ahfl_project_parse_tests>
+            std-import-requires-explicit-module-root
+            "${CMAKE_BINARY_DIR}/std_import_requires_explicit_module_root"
 )
 
 add_test(NAME ahfl.support.diagnostics.metadata_smoke

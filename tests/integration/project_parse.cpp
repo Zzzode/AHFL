@@ -1,8 +1,8 @@
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,6 +14,8 @@
 #include <vector>
 
 namespace {
+
+using ahfl::test_support::project_input_with_repo_std;
 
 void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     diagnostics.render(std::cout);
@@ -103,12 +105,7 @@ int run_source_file_position_smoke() {
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {entry},
-                                                .search_roots = {root},
-                                                .inject_prelude = true,
-                                            });
+    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
 
     if (result.has_errors()) {
         print_diagnostics(result.diagnostics);
@@ -150,12 +147,7 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 
 int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {entry},
-                                                .search_roots = {root},
-                                                .inject_prelude = true,
-                                            });
+    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -176,12 +168,7 @@ int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::
 
 int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {entry},
-                                                .search_roots = {root},
-                                                .inject_prelude = true,
-                                            });
+    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -204,12 +191,7 @@ int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem:
 
 int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {entry},
-                                                .search_roots = {root},
-                                                .inject_prelude = true,
-                                            });
+    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -231,12 +213,9 @@ int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem
 int run_fail_duplicate_owner(const std::filesystem::path &entry,
                              const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {entry, root / "alt" / "types.ahfl"},
-                                                .search_roots = {root},
-                                                .inject_prelude = true,
-                                            });
+    auto input = project_input_with_repo_std(entry, root);
+    input.entry_files.push_back(root / "alt" / "types.ahfl");
+    const auto result = ahfl::parse_project(frontend, input);
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -254,82 +233,41 @@ int run_fail_duplicate_owner(const std::filesystem::path &entry,
     return 0;
 }
 
-int run_ok_project_stdlib_root_wins_over_bundled_copy(const std::filesystem::path &source_root) {
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto bundle_root = std::filesystem::temp_directory_path() /
-                             ("ahfl-project-parse-bundled-stdlib-" + std::to_string(stamp));
-    const auto bundle_std = bundle_root / "std";
-
+int run_std_import_requires_explicit_module_root(const std::filesystem::path &workspace_root) {
     std::error_code error;
-    std::filesystem::remove_all(bundle_root, error);
-    if (!std::filesystem::create_directories(bundle_std, error) || error) {
-        std::cerr << "failed to create bundled stdlib fixture: " << bundle_std << '\n';
+    std::filesystem::remove_all(workspace_root, error);
+    if (!std::filesystem::create_directories(workspace_root / "app", error) || error) {
+        std::cerr << "failed to create std import fixture: " << workspace_root << '\n';
         return 1;
     }
 
-    if (!write_text_file(bundle_std / "ahfl.toml",
-                         "manifest_version = 1\n\n"
-                         "[package]\n"
-                         "name = \"std\"\n"
-                         "version = \"0.1.0\"\n"
-                         "edition = \"2026\"\n"
-                         "kind = \"standard-library\"\n\n"
-                         "[module]\n"
-                         "prefix = \"std\"\n"
-                         "root = \".\"\n\n"
-                         "[prelude]\n"
-                         "module = \"std::prelude\"\n"
-                         "injection = \"explicit\"\n\n"
-                         "[exports]\n"
-                         "modules = [\"prelude\", \"option\"]\n\n"
-                         "[compiler_intrinsics]\n"
-                         "allow = [\"option_*\"]\n") ||
-        !write_text_file(bundle_std / "prelude.ahfl", "module std::prelude;\n") ||
-        !write_text_file(bundle_std / "option.ahfl",
-                         "module std::option;\n"
-                         "enum Option<T> { Some(T), None, }\n")) {
-        std::cerr << "failed to write bundled stdlib fixture\n";
-        std::filesystem::remove_all(bundle_root, error);
+    const auto entry = workspace_root / "app" / "main.ahfl";
+    if (!write_text_file(entry,
+                         "module app::main;\n"
+                         "import std::option as option;\n"
+                         "struct UsesStd { value: option::Option<Int>; }\n")) {
+        std::cerr << "failed to write std import fixture\n";
+        std::filesystem::remove_all(workspace_root, error);
         return 1;
     }
 
     const ahfl::Frontend frontend;
-    const auto result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {source_root / "std" / "collections.ahfl"},
-                                .search_roots = {source_root},
-                                .stdlib_search_roots = {bundle_root},
-                            });
+    const auto result = ahfl::parse_project(frontend,
+                                            ahfl::ProjectInput{
+                                                .entry_files = {entry},
+                                                .search_roots = {workspace_root},
+                                            });
 
-    std::filesystem::remove_all(bundle_root, error);
+    std::filesystem::remove_all(workspace_root, error);
 
-    if (result.has_errors()) {
+    if (!result.has_errors() ||
+        !contains_message(result.diagnostics, "failed to resolve imported module 'std::option'")) {
         print_diagnostics(result.diagnostics);
+        std::cerr << "expected std import to require an explicit module root\n";
         return 1;
     }
 
-    const auto option_source = result.graph.module_to_source.find("std::option");
-    if (option_source == result.graph.module_to_source.end()) {
-        std::cerr << "missing std::option module owner\n";
-        return 1;
-    }
-
-    const auto expected = source_root / "std" / "option.ahfl";
-    for (const auto &source : result.graph.sources) {
-        if (source.id != option_source->second) {
-            continue;
-        }
-        if (!std::filesystem::equivalent(source.path, expected, error) || error) {
-            std::cerr << "std::option resolved to unexpected path: " << source.path << " expected "
-                      << expected << '\n';
-            return 1;
-        }
-        return 0;
-    }
-
-    std::cerr << "std::option source id did not map to a loaded source\n";
-    return 1;
+    return 0;
 }
 
 int run_package_dependency_gates_imports(const std::filesystem::path &workspace_root) {
@@ -356,7 +294,6 @@ int run_package_dependency_gates_imports(const std::filesystem::path &workspace_
     const auto make_input = [&](std::vector<std::string> app_dependencies) {
         ahfl::ProjectInput input;
         input.entry_files.push_back(app_main);
-        input.include_stdlib = false;
         input.inject_prelude = false;
         input.enforce_package_dependencies = true;
         input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
@@ -431,8 +368,8 @@ int main(int argc, char **argv) {
         return run_fail_duplicate_owner(entry, root);
     }
 
-    if (test_case == "ok-project-stdlib-root-wins-over-bundled-copy") {
-        return run_ok_project_stdlib_root_wins_over_bundled_copy(entry);
+    if (test_case == "std-import-requires-explicit-module-root") {
+        return run_std_import_requires_explicit_module_root(entry);
     }
 
     if (test_case == "package-dependency-gates-imports") {
