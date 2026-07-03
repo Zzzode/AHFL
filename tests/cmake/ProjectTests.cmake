@@ -2317,6 +2317,16 @@ add_test(NAME ahflc.check.search_root_removed
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.check.single_file_std_import_requires_manifest_sysroot
+    COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
+            ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/single_file_std_import/main.ahfl"
+            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/single_file_std_import/main.ahfl"
+            "-DEXPECTED_REGEX=failed to resolve imported module 'std::option'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.dump_project.removed
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

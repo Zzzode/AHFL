@@ -89,6 +89,8 @@ std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
     const auto parse_result = ahfl::parse_project(frontend,
                                                   ProjectInput{
                                                       .entry_files = {file_path},
+                                                      .include_stdlib = false,
+                                                      .inject_prelude = false,
                                                   });
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(diagnostics);

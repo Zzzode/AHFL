@@ -1748,6 +1748,8 @@ ExitCode CliDriver::execute() {
 
     ahfl::ProjectInput input;
     input.entry_files.push_back(std::string(options_.positional.front()));
+    input.include_stdlib = false;
+    input.inject_prelude = false;
 
     auto project_result = ahfl::parse_project(frontend_, input);
     render_diagnostics(*diag_consumer_, project_result, std::nullopt);

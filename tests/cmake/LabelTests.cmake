@@ -49,6 +49,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-compat
     TESTS
         ahflc.check.search_root_removed
+        ahflc.check.single_file_std_import_requires_manifest_sysroot
         ahflc.dump_project.removed
         ahflc.check.manifest_rejects_legacy_project_json
 )

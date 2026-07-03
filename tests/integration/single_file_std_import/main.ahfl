@@ -1,0 +1,7 @@
+module single_file_std_import::main;
+
+import std::option as option;
+
+struct UseStd {
+    value: option::Option<Int>;
+}
