@@ -1,0 +1,4 @@
+module std::collections;
+
+struct List<T> {}
+struct Map<K, V> {}

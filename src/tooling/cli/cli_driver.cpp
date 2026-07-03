@@ -377,6 +377,15 @@ root_package(const ahfl::package_graph::PackageGraph &graph) {
     return graph.find_package(ahfl::package_graph::PackageId{1});
 }
 
+[[nodiscard]] const ahfl::package_graph::PackageNode *
+sysroot_package(const ahfl::package_graph::PackageGraph &graph) {
+    const auto *package = graph.find_package(ahfl::package_graph::PackageId{0});
+    if (package == nullptr || package->source != ahfl::package_graph::PackageSourceKind::Sysroot) {
+        return nullptr;
+    }
+    return package;
+}
+
 [[nodiscard]] bool path_has_filename(std::string_view value, std::string_view filename) {
     return std::filesystem::path{std::string{value}}.filename().generic_string() == filename;
 }
@@ -696,9 +705,9 @@ select_target(const ahfl::package_graph::PackageNode &package,
 
 [[nodiscard]] ahfl::ProjectInput
 project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
-                                 std::filesystem::path entry_file) {
+                                 std::vector<std::filesystem::path> entry_files) {
     ahfl::ProjectInput input;
-    input.entry_files.push_back(std::move(entry_file));
+    input.entry_files = std::move(entry_files);
     input.include_stdlib = false;
     input.inject_prelude = false;
     input.enforce_package_dependencies = true;
@@ -718,6 +727,14 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
         });
     }
     return input;
+}
+
+[[nodiscard]] ahfl::ProjectInput
+project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
+                                 std::filesystem::path entry_file) {
+    std::vector<std::filesystem::path> entry_files;
+    entry_files.push_back(std::move(entry_file));
+    return project_input_from_package_graph(graph, std::move(entry_files));
 }
 
 [[nodiscard]] bool
@@ -957,6 +974,37 @@ struct FormatterFileResult {
     return path.extension() == ".ahfl";
 }
 
+[[nodiscard]] std::optional<std::vector<std::filesystem::path>>
+collect_ahfl_source_files_in_directory(const std::filesystem::path &directory,
+                                       std::string_view purpose,
+                                       std::ostream &err) {
+    std::vector<std::filesystem::path> files;
+    std::error_code ec;
+    try {
+        for (const auto &entry : std::filesystem::recursive_directory_iterator(
+                 directory, std::filesystem::directory_options::skip_permission_denied)) {
+            if (!entry.is_regular_file(ec) || ec) {
+                ec.clear();
+                continue;
+            }
+            if (is_ahfl_source_path(entry.path())) {
+                files.push_back(entry.path());
+            }
+        }
+    } catch (const std::filesystem::filesystem_error &ex) {
+        err << "error: failed to scan " << purpose << " directory " << directory.string() << ": "
+            << ex.what() << '\n';
+        return std::nullopt;
+    }
+
+    std::sort(files.begin(),
+              files.end(),
+              [](const std::filesystem::path &lhs, const std::filesystem::path &rhs) {
+                  return lhs.generic_string() < rhs.generic_string();
+              });
+    return files;
+}
+
 [[nodiscard]] std::string formatter_path_identity(const std::filesystem::path &path) {
     std::error_code ec;
     auto normalized = std::filesystem::weakly_canonical(path, ec);
@@ -1004,31 +1052,13 @@ void collect_formatter_input_path(FormatterInputCollection &collection,
 
     collection.batch_source = true;
 
-    std::vector<std::filesystem::path> directory_files;
-    try {
-        for (const auto &entry : std::filesystem::recursive_directory_iterator(
-                 path, std::filesystem::directory_options::skip_permission_denied)) {
-            if (!entry.is_regular_file(ec) || ec) {
-                ec.clear();
-                continue;
-            }
-            if (is_ahfl_source_path(entry.path())) {
-                directory_files.push_back(entry.path());
-            }
-        }
-    } catch (const std::filesystem::filesystem_error &ex) {
-        err << "error: failed to scan formatter directory " << path.string() << ": " << ex.what()
-            << '\n';
+    auto directory_files = collect_ahfl_source_files_in_directory(path, "formatter", err);
+    if (!directory_files.has_value()) {
         ++collection.invalid_inputs;
         return;
     }
 
-    std::sort(directory_files.begin(),
-              directory_files.end(),
-              [](const std::filesystem::path &lhs, const std::filesystem::path &rhs) {
-                  return lhs.generic_string() < rhs.generic_string();
-              });
-    for (const auto &file : directory_files) {
+    for (const auto &file : *directory_files) {
         append_unique_formatter_file(collection, file);
     }
 }
@@ -1833,9 +1863,56 @@ ExitCode CliDriver::run_workspace_package() {
     return run_package_graph_package(*graph_result.graph);
 }
 
+ExitCode
+CliDriver::run_source_sysroot_check(const ahfl::package_graph::PackageGraph &graph,
+                                    const ahfl::package_graph::PackageNode &package) {
+    std::vector<std::filesystem::path> entry_files;
+
+    if (options_.target_name.has_value()) {
+        const auto *target = select_target(package, options_, std::cerr);
+        if (target == nullptr) {
+            return ExitCode::UsageError;
+        }
+        const auto entry_file =
+            entry_file_from_package_graph_target(graph, package, *target, std::cerr);
+        if (!entry_file.has_value()) {
+            return ExitCode::CompileError;
+        }
+        entry_files.push_back(*entry_file);
+    } else if (!options_.manifest_path.has_value() && !options_.positional.empty()) {
+        entry_files.push_back(
+            normalize_manifest_path(std::filesystem::path{std::string{options_.positional[0]}}));
+    } else {
+        auto files =
+            collect_ahfl_source_files_in_directory(package.module_root, "source sysroot", std::cerr);
+        if (!files.has_value()) {
+            return ExitCode::CompileError;
+        }
+        if (files->empty()) {
+            std::cerr << "error: source sysroot package contains no .ahfl files\n";
+            return ExitCode::CompileError;
+        }
+        entry_files = std::move(*files);
+    }
+
+    auto input = project_input_from_package_graph(graph, std::move(entry_files));
+    auto project_result = ahfl::parse_project(frontend_, input);
+    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
+    if (project_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    return run_analysis(project_result.graph, std::nullopt);
+}
+
 ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::PackageGraph &graph) {
     const auto *package = root_package(graph);
     if (package == nullptr) {
+        if (effective_command_ == CommandKind::Check) {
+            if (const auto *active_sysroot = sysroot_package(graph); active_sysroot != nullptr) {
+                return run_source_sysroot_check(graph, *active_sysroot);
+            }
+        }
         std::cerr << "error: PackageGraph is missing root package\n";
         return ExitCode::CompileError;
     }

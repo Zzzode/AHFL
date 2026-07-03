@@ -17,6 +17,7 @@
 
 namespace ahfl::package_graph {
 struct PackageGraph;
+struct PackageNode;
 }
 
 namespace ahfl::cli {
@@ -64,6 +65,9 @@ class CliDriver final {
     [[nodiscard]] ExitCode run_workspace_package();
     [[nodiscard]] ExitCode
     run_package_graph_package(const ahfl::package_graph::PackageGraph &graph);
+    [[nodiscard]] ExitCode
+    run_source_sysroot_check(const ahfl::package_graph::PackageGraph &graph,
+                             const ahfl::package_graph::PackageNode &package);
 
     [[nodiscard]] ExitCode format_source_file();
 
