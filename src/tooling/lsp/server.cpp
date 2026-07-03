@@ -680,23 +680,33 @@ void parse_toolchain_profiles_array(project_discovery::ToolchainProfileSet &prof
 }
 
 [[nodiscard]] project_discovery::ToolchainProfileSet
-toolchain_profiles_from_json(const json::JsonValue &toolchain,
-                             project_discovery::ToolchainProfileOrigin origin) {
+toolchain_profiles_from_initialization_json(const json::JsonValue &toolchain) {
     project_discovery::ToolchainProfileSet profiles;
-    if (const auto *sysroot = toolchain.get("sysroot"); sysroot != nullptr) {
-        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
-            append_toolchain_profile(
-                profiles, std::filesystem::path(std::string(*value)), origin, std::nullopt);
-        }
-    }
     if (const auto *sysroot = toolchain.get("defaultSysroot"); sysroot != nullptr) {
         if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
-            append_toolchain_profile(
-                profiles, std::filesystem::path(std::string(*value)), origin, std::nullopt);
+            append_toolchain_profile(profiles,
+                                     std::filesystem::path(std::string(*value)),
+                                     project_discovery::ToolchainProfileOrigin::LspInitialization,
+                                     std::nullopt);
         }
     }
     if (const auto *items = toolchain.get("profiles"); items != nullptr) {
-        parse_toolchain_profiles_array(profiles, *items, origin);
+        parse_toolchain_profiles_array(
+            profiles, *items, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    }
+    return profiles;
+}
+
+[[nodiscard]] project_discovery::ToolchainProfileSet
+toolchain_profiles_from_configuration_json(const json::JsonValue &toolchain) {
+    project_discovery::ToolchainProfileSet profiles;
+    if (const auto *sysroot = toolchain.get("sysroot"); sysroot != nullptr) {
+        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
+            append_toolchain_profile(profiles,
+                                     std::filesystem::path(std::string(*value)),
+                                     project_discovery::ToolchainProfileOrigin::LspConfiguration,
+                                     std::nullopt);
+        }
     }
     return profiles;
 }
@@ -795,8 +805,7 @@ toolchain_profiles_from_initialize(const json::JsonValue *params) {
     if (toolchain == nullptr || !toolchain->is_object()) {
         return profiles;
     }
-    return toolchain_profiles_from_json(
-        *toolchain, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    return toolchain_profiles_from_initialization_json(*toolchain);
 }
 
 [[nodiscard]] std::optional<project_discovery::ToolchainProfileSet>
@@ -813,8 +822,7 @@ toolchain_profiles_from_configuration(const json::JsonValue &params) {
     if (toolchain == nullptr || !toolchain->is_object()) {
         return std::nullopt;
     }
-    return toolchain_profiles_from_json(
-        *toolchain, project_discovery::ToolchainProfileOrigin::LspConfiguration);
+    return toolchain_profiles_from_configuration_json(*toolchain);
 }
 
 void apply_hover_options_from_configuration(HoverRenderOptions &options,
