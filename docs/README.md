@@ -142,6 +142,7 @@ Avoid:
 - [0003-match-exhaustiveness-diagnostics.zh.md](./rfcs/0003-match-exhaustiveness-diagnostics.zh.md)
 - [0004-native-grpc-transport.zh.md](./rfcs/0004-native-grpc-transport.zh.md)
 - [0005-package-configuration-system.zh.md](./rfcs/0005-package-configuration-system.zh.md)
+- [0006-corelib-development-sysroot.zh.md](./rfcs/0006-corelib-development-sysroot.zh.md)
 
 ## Governance
 

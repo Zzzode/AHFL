@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-02"
+updated: "2026-07-03"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -30,4 +30,10 @@ rfcs:
     status: "review"
     file: "0005-package-configuration-system.zh.md"
     area: ["compiler", "stdlib", "runtime", "ir", "tooling", "process"]
+    stability: "developer-facing"
+  - rfc: "0006"
+    title: "Corelib Development Sysroot"
+    status: "implementing"
+    file: "0006-corelib-development-sysroot.zh.md"
+    area: ["compiler", "stdlib", "tooling", "process"]
     stability: "developer-facing"
