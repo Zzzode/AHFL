@@ -15,6 +15,7 @@ constexpr std::string_view kToolchainSysrootInvalid = "E::toolchain_sysroot_inva
 constexpr std::string_view kToolchainSysrootMissing = "E::toolchain_sysroot_missing";
 constexpr std::string_view kToolchainSysrootMismatch = "E::toolchain_sysroot_mismatch";
 constexpr std::string_view kToolchainProfileAmbiguous = "E::toolchain_profile_ambiguous";
+constexpr std::string_view kToolchainIncompatible = "E::toolchain_incompatible";
 
 void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
                          std::string_view code,
@@ -138,6 +139,22 @@ void append_discovery_diagnostics(std::vector<package_graph::Diagnostic> &target
 [[nodiscard]] bool declares_std_identity(const manifest::PackageManifest &manifest) {
     return manifest.package_name == "std" || manifest.package_kind == "standard-library" ||
            manifest.module_prefix == "std";
+}
+
+[[nodiscard]] std::string_view toolchain_origin_name(ToolchainProfileOrigin origin) noexcept {
+    switch (origin) {
+    case ToolchainProfileOrigin::CliFlag:
+        return "cli-flag";
+    case ToolchainProfileOrigin::Environment:
+        return "environment";
+    case ToolchainProfileOrigin::CompileDefault:
+        return "compile-default";
+    case ToolchainProfileOrigin::LspConfiguration:
+        return "lsp-configuration";
+    case ToolchainProfileOrigin::LspInitialization:
+        return "lsp-initialization";
+    }
+    return "unknown";
 }
 
 [[nodiscard]] std::optional<ToolchainProfileSelection>
@@ -515,6 +532,19 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
                             kToolchainSysrootMissing,
                             "failed to locate sysroot std/ahfl.toml; configure "
                             "ahfl.toolchain.sysroot or pass --sysroot <path>");
+        return discovery;
+    }
+    if (active_selection->profile.server_compatibility ==
+        ToolchainServerCompatibility::Incompatible) {
+        add_error_with_code(
+            discovery.diagnostics,
+            kToolchainIncompatible,
+            "active AHFL sysroot is incompatible with this language server; "
+            "profile origin is '" +
+                std::string{toolchain_origin_name(active_selection->profile.origin)} +
+                "', std manifest is '" +
+                normalize_project_path(active_selection->profile.std_manifest).generic_string() +
+                "'");
         return discovery;
     }
 

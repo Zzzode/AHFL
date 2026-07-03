@@ -2256,6 +2256,64 @@ void test_project_graph_error_does_not_fall_back_to_single_file_semantics() {
     check(!has_unknown_type, "project_error_no_fallback.no_single_file_unknown_type");
 }
 
+void test_incompatible_toolchain_profile_stops_project_analysis() {
+    const auto root = make_temp_project("incompatible_toolchain_profile");
+    const auto std_root = root / "std";
+    const auto main_path = root / "src" / "main.ahfl";
+    write_minimal_std_package(std_root, "incompatible");
+    write_package_manifest(root, "incompatible-toolchain", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Use {\n"
+                               "    payload: Missing;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    auto profile_result = project_discovery::toolchain_profile_from_sysroot_input(
+        root, project_discovery::ToolchainProfileOrigin::LspConfiguration);
+    check(profile_result.profile.has_value(), "incompatible_toolchain.profile_exists");
+    project_discovery::ToolchainProfileSet profiles;
+    profiles.diagnostics = std::move(profile_result.diagnostics);
+    if (profile_result.profile.has_value()) {
+        profile_result.profile->server_compatibility =
+            project_discovery::ToolchainServerCompatibility::Incompatible;
+        profiles.default_profile = std::move(profile_result.profile);
+    }
+
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    analysis.set_toolchain_profiles(std::move(profiles));
+
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    check(snapshot != nullptr, "incompatible_toolchain.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(uri);
+    const auto has_incompatible =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.code == "E::toolchain_incompatible" &&
+                   diagnostic.message.find("lsp-configuration") != std::string::npos;
+        });
+    const auto has_missing_type =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown type 'Missing'") != std::string::npos;
+        });
+    check(has_incompatible, "incompatible_toolchain.diagnostic");
+    check(!has_missing_type, "incompatible_toolchain.stops_typecheck");
+}
+
 void test_toolchain_profile_records_std_identity_checksum() {
     const auto root = make_temp_project("toolchain_profile_std_identity");
     const auto std_root = root / "std";
@@ -4069,6 +4127,7 @@ int main() {
     test_workspace_manifest_does_not_capture_unlisted_nested_package();
     test_lsp_project_discovery_ignores_process_cwd_sysroot_probe();
     test_project_graph_error_does_not_fall_back_to_single_file_semantics();
+    test_incompatible_toolchain_profile_stops_project_analysis();
     test_toolchain_profile_records_std_identity_checksum();
     test_analysis_snapshot_cache_key_records_toolchain_identity();
     test_package_graph_manifest_does_not_inject_prelude();
