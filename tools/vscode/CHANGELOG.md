@@ -2,6 +2,12 @@
 
 All notable changes to the AHFL VS Code extension will be documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Resolve resource-scoped `ahfl.toolchain.sysroot` through `workspace/configuration`, including `${workspaceFolder}` expansion and relative path normalization before sending sysroot profiles to the LSP server.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added

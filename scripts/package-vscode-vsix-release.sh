@@ -55,9 +55,9 @@ mkdir -p "$SERVER_DIR"
 cp "$RELEASE_LSP" "$SERVER_BINARY"
 chmod 755 "$SERVER_BINARY"
 
-# Bundle the sysroot std package so the extension ships std/ahfl.toml together
-# with the corelib sources. The extension launcher points AHFL_SYSROOT at the
-# VSIX root, so the LSP resolves std through <extension>/std/ahfl.toml.
+# Bundle the sysroot std package so the extension can send the VSIX root as the
+# canonical initialization fallback when no resource-scoped ahfl.toolchain.sysroot
+# setting is configured.
 STDLIB_DIR="tools/vscode/std"
 rm -rf "$STDLIB_DIR"
 mkdir -p "$STDLIB_DIR"

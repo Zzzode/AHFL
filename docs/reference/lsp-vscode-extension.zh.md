@@ -4,7 +4,7 @@
 |------|------|
 | 文档类型 | reference |
 | 适用范围 | `tools/vscode` VS Code extension scaffold |
-| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test，workspace folder extension 序列仍需扩展验证 |
+| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test；toolchain sysroot 通过 `workspace/configuration` 按 resource scope 拉取，workspace folder extension 序列仍需扩展验证 |
 
 ---
 
@@ -62,6 +62,26 @@ code --extensionDevelopmentPath="$(pwd)" /Users/bytedance/Develop/AHFL
 
 打开任意 `.ahfl` 文件后，扩展会按 `ahfl.serverPath` 启动 language server。
 
+### Corelib 开发 sysroot 配置
+
+开发 AHFL 仓库自身或修改 `std/` 时，workspace 必须显式把当前 checkout 作为 sysroot：
+
+```json
+{
+  "ahfl.toolchain.sysroot": "${workspaceFolder}"
+}
+```
+
+该设置是 resource-scoped。扩展会在初始化时发送
+`initializationOptions.ahfl.toolchain.defaultSysroot` / `profiles[]`，并在
+server 发起 `workspace/configuration` 请求时返回展开后的
+`ahfl.toolchain.sysroot`。`${workspaceFolder}` 和相对路径由扩展按对应
+workspace folder 展开，server 只接收规范化后的工具链根或空字符串。
+
+配置为空字符串表示“没有显式 resource 配置”。这种情况下，platform VSIX
+使用随扩展打包的 `<extension>/std/ahfl.toml` 作为 bundled sysroot fallback；
+扩展不得通过 server process environment 注入 `AHFL_SYSROOT`。
+
 ## 四、本地打包 VSIX
 
 面向用户的 VSIX 应通过仓库根目录脚本生成：
@@ -75,7 +95,8 @@ scripts/package-vscode-vsix-release.sh
 1. 在需要时配置 `cmake --preset release`。
 2. 运行 `cmake --build --preset build-release --target ahfl-lsp`。
 3. 把 release `ahfl-lsp` staging 到 `tools/vscode/server/ahfl-lsp`。
-4. 使用当前平台对应的 VS Code target 打包 VSIX。
+4. 把 `std/ahfl.toml` 和 corelib `.ahfl` 源码 staging 到 `tools/vscode/std/`。
+5. 使用当前平台对应的 VS Code target 打包 VSIX。
 
 输出文件：
 
@@ -96,6 +117,10 @@ cd tools/vscode
 pnpm run test:package-inventory
 pnpm run test:vsix-install
 ```
+
+`test:package-inventory` 必须确认 VSIX 清单包含内置 `server/ahfl-lsp` 和
+bundled `std/ahfl.toml`。缺少 bundled std 会导致未配置
+`ahfl.toolchain.sysroot` 的普通用户工程无法获得默认标准库。
 
 如果只调试客户端扩展，可以从 `tools/vscode` 生成 client-only VSIX：
 

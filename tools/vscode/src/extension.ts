@@ -27,6 +27,15 @@ interface AhflToolchainOptions {
     profiles: AhflToolchainProfile[];
 }
 
+interface WorkspaceConfigurationItem {
+    scopeUri?: string | null;
+    section?: string | null;
+}
+
+interface WorkspaceConfigurationParams {
+    items: WorkspaceConfigurationItem[];
+}
+
 export function activate(context: vscode.ExtensionContext) {
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -177,6 +186,15 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
                 toolchain: toolchainOptionsFromConfiguration(context),
             },
         },
+        middleware: {
+            workspace: {
+                configuration: async (params, token, next) => {
+                    const nextResult = await Promise.resolve(next(params, token));
+                    const defaultConfiguration = Array.isArray(nextResult) ? nextResult : [];
+                    return workspaceConfigurationFromRequest(params, defaultConfiguration);
+                },
+            },
+        },
     };
 
     return new LanguageClient(
@@ -226,6 +244,40 @@ function toolchainOptionsFromConfiguration(context: vscode.ExtensionContext): Ah
             configuredDefault.length > 0 ? configuredDefault : context.extensionUri.fsPath,
         profiles,
     };
+}
+
+function workspaceConfigurationFromRequest(
+    params: WorkspaceConfigurationParams,
+    defaultConfiguration: unknown[]
+): unknown[] {
+    return params.items.map((item, index) => {
+        if (item.section === 'ahfl.toolchain') {
+            return toolchainConfigurationForScope(item.scopeUri ?? undefined);
+        }
+        return defaultConfiguration[index] ?? null;
+    });
+}
+
+function toolchainConfigurationForScope(scopeUri: string | undefined): { sysroot: string } {
+    const resource = uriFromScope(scopeUri);
+    const folder = resource ? vscode.workspace.getWorkspaceFolder(resource) : undefined;
+    const config = vscode.workspace.getConfiguration('ahfl', resource);
+    const sysroot = resolveSysrootSetting(config.get<string>('toolchain.sysroot', ''), folder);
+
+    return {
+        sysroot: sysroot.length > 0 ? sysroot : '',
+    };
+}
+
+function uriFromScope(scopeUri: string | undefined): vscode.Uri | undefined {
+    if (!scopeUri) {
+        return undefined;
+    }
+    try {
+        return vscode.Uri.parse(scopeUri);
+    } catch (_err) {
+        return undefined;
+    }
 }
 
 function resolveSysrootSetting(value: string | undefined, folder: vscode.WorkspaceFolder | undefined): string {

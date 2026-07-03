@@ -44,6 +44,8 @@ function main() {
     'language-configuration.json',
     'out/extension.js',
     serverBinary,
+    'std/ahfl.toml',
+    'std/prelude.ahfl',
     'syntaxes/ahfl.tmLanguage.json',
     'snippets/ahfl.json',
   ];
