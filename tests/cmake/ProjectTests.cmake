@@ -2402,6 +2402,15 @@ set_tests_properties(ahflc.check.source_sysroot_positional_file PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.dump_package_graph.source_sysroot_manifest
+    COMMAND $<TARGET_FILE:ahflc> dump package-graph
+            --manifest "${AHFL_TESTS_DIR}/integration/source_sysroot_cli/std/ahfl.toml"
+            --sysroot "${AHFL_TESTS_DIR}/integration/source_sysroot_cli"
+)
+set_tests_properties(ahflc.dump_package_graph.source_sysroot_manifest PROPERTIES
+    PASS_REGULAR_EXPRESSION "\"packages\":\\[\\{\"id\":0,\"name\":\"std\".*\"source\":\"sysroot\".*\"dependencies\":\\[\\].*\"module_roots\":\\[\\{\"prefix\":\"std\",\"package\":0"
+)
+
 add_test(NAME ahflc.check.manifest_rejects_std_directory_sysroot_input
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
