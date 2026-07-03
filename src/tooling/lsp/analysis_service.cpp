@@ -396,8 +396,8 @@ void AnalysisService::set_workspace_folders(std::vector<std::filesystem::path> r
     invalidate_all();
 }
 
-void AnalysisService::set_sysroot_path(std::optional<std::filesystem::path> path) {
-    sysroot_path_ = std::move(path);
+void AnalysisService::set_toolchain_profiles(project_discovery::ToolchainProfileSet profiles) {
+    toolchain_profiles_ = std::move(profiles);
     invalidate_all();
 }
 
@@ -516,7 +516,7 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
             project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
                 .document_path = *document_path,
                 .workspace_boundaries = std::move(workspace_boundaries),
-                .explicit_sysroot_path = sysroot_path_,
+                .toolchains = toolchain_profiles_,
             });
         if (project_context.context.has_value()) {
             snapshot->project_aware = true;

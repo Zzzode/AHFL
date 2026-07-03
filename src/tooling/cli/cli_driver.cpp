@@ -16,6 +16,7 @@
 #include "compiler/package_graph/lockfile.hpp"
 #include "compiler/package_graph/package_graph.hpp"
 #include "compiler/passes/pass_manager.hpp"
+#include "compiler/project_discovery/discovery.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/cli_analysis_helpers.hpp"
@@ -137,52 +138,57 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
     return (error ? candidate : canonical).lexically_normal();
 }
 
-[[nodiscard]] std::optional<std::filesystem::path>
-find_sysroot_manifest_from_directory(const std::filesystem::path &start) {
-    std::error_code error;
-    const auto candidate = normalize_manifest_path(start / "std" / "ahfl.toml");
-    if (std::filesystem::exists(candidate, error) && !error) {
-        return candidate;
+struct SysrootManifestSelection {
+    std::optional<std::filesystem::path> manifest;
+    bool had_error{false};
+};
+
+void print_toolchain_diagnostics(const std::vector<ahfl::package_graph::Diagnostic> &diagnostics,
+                                 std::ostream &err) {
+    for (const auto &diagnostic : diagnostics) {
+        err << "error";
+        if (!diagnostic.code.empty()) {
+            err << " [" << diagnostic.code << "]";
+        }
+        err << ": " << diagnostic.message << '\n';
     }
-    return std::nullopt;
 }
 
-[[nodiscard]] std::optional<std::filesystem::path>
-sysroot_manifest_from_options(const CommandLineOptions &options) {
+[[nodiscard]] SysrootManifestSelection
+sysroot_manifest_from_options(const CommandLineOptions &options, std::ostream &err) {
     if (options.sysroot_path.has_value()) {
-        const auto raw = std::filesystem::path{std::string{*options.sysroot_path}};
-        const auto normalized = normalize_manifest_path(raw);
-        if (normalized.filename() == "ahfl.toml") {
-            return normalized;
+        auto result = ahfl::project_discovery::toolchain_profile_from_sysroot_input(
+            std::filesystem::path{std::string{*options.sysroot_path}},
+            ahfl::project_discovery::ToolchainProfileOrigin::CliFlag);
+        if (result.has_errors()) {
+            print_toolchain_diagnostics(result.diagnostics, err);
+            return SysrootManifestSelection{.had_error = true};
         }
-        return normalize_manifest_path(normalized / "std" / "ahfl.toml");
+        if (result.profile.has_value()) {
+            return SysrootManifestSelection{.manifest = result.profile->std_manifest};
+        }
+        return SysrootManifestSelection{};
     }
 
     if (const char *env_root = std::getenv("AHFL_SYSROOT");
         env_root != nullptr && *env_root != '\0') {
-        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
-            return manifest;
+        auto result = ahfl::project_discovery::toolchain_profile_from_sysroot_input(
+            std::filesystem::path{env_root},
+            ahfl::project_discovery::ToolchainProfileOrigin::Environment);
+        if (result.has_errors()) {
+            print_toolchain_diagnostics(result.diagnostics, err);
+            return SysrootManifestSelection{.had_error = true};
+        }
+        if (result.profile.has_value()) {
+            return SysrootManifestSelection{.manifest = result.profile->std_manifest};
         }
     }
 
-    std::error_code error;
-    auto current = std::filesystem::current_path(error);
-    if (error) {
-        return std::nullopt;
+    if (auto profile = ahfl::project_discovery::default_toolchain_profile_from_compile_default();
+        profile.has_value()) {
+        return SysrootManifestSelection{.manifest = profile->std_manifest};
     }
-    current = normalize_manifest_path(current);
-    while (!current.empty()) {
-        if (auto manifest = find_sysroot_manifest_from_directory(current); manifest.has_value()) {
-            return manifest;
-        }
-        const auto parent = current.parent_path();
-        if (parent == current) {
-            break;
-        }
-        current = parent;
-    }
-
-    return std::nullopt;
+    return SysrootManifestSelection{};
 }
 
 void print_package_graph_diagnostics(
@@ -510,6 +516,58 @@ load_package_manifest_for_discovery(const std::filesystem::path &package_manifes
     return std::move(*result.manifest);
 }
 
+[[nodiscard]] bool declares_std_identity(const ahfl::manifest::PackageManifest &manifest) {
+    return manifest.package_name == "std" || manifest.package_kind == "standard-library" ||
+           manifest.module_prefix == "std";
+}
+
+[[nodiscard]] bool
+reject_mismatched_std_manifest(const std::filesystem::path &package_manifest_path,
+                               const std::filesystem::path &sysroot_manifest_path,
+                               const ahfl::manifest::PackageManifest &package_manifest,
+                               std::ostream &err) {
+    if (normalize_manifest_path(package_manifest_path) ==
+        normalize_manifest_path(sysroot_manifest_path)) {
+        return false;
+    }
+    if (!declares_std_identity(package_manifest)) {
+        return false;
+    }
+    err << "error [E::toolchain_sysroot_mismatch]: this standard-library package is not the "
+           "active AHFL sysroot; active std manifest is "
+        << normalize_manifest_path(sysroot_manifest_path).generic_string() << '\n';
+    return true;
+}
+
+[[nodiscard]] bool
+reject_mismatched_std_manifest(const std::filesystem::path &package_manifest_path,
+                               const std::filesystem::path &sysroot_manifest_path,
+                               std::ostream &err) {
+    auto manifest = load_package_manifest_for_discovery(package_manifest_path, err);
+    if (!manifest.has_value()) {
+        return false;
+    }
+    return reject_mismatched_std_manifest(
+        package_manifest_path, sysroot_manifest_path, *manifest, err);
+}
+
+[[nodiscard]] ahfl::package_graph::BuildResult
+build_manifest_or_sysroot_package_graph(const std::filesystem::path &root_manifest_path,
+                                        const std::filesystem::path &sysroot_manifest_path) {
+    if (normalize_manifest_path(root_manifest_path) ==
+        normalize_manifest_path(sysroot_manifest_path)) {
+        return ahfl::package_graph::build_package_graph_from_sysroot(
+            ahfl::package_graph::SysrootBuildInput{
+                .sysroot_manifest_path = sysroot_manifest_path,
+            });
+    }
+    return ahfl::package_graph::build_package_graph_from_manifests(
+        ahfl::package_graph::ManifestBuildInput{
+            .root_manifest_path = root_manifest_path,
+            .sysroot_manifest_path = sysroot_manifest_path,
+        });
+}
+
 [[nodiscard]] bool
 workspace_contains_package_manifest(const ahfl::manifest::WorkspaceManifest &workspace,
                                     const std::filesystem::path &workspace_manifest_path,
@@ -539,15 +597,22 @@ workspace_contains_package_manifest(const ahfl::manifest::WorkspaceManifest &wor
         return discovery;
     }
 
-    const auto sysroot_manifest = sysroot_manifest_from_options(options);
-    if (!sysroot_manifest.has_value()) {
-        err << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+    const auto sysroot_manifest = sysroot_manifest_from_options(options, err);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            err << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
         discovery.exit_code = ExitCode::UsageError;
         return discovery;
     }
 
     auto package_manifest = load_package_manifest_for_discovery(*manifest_path, err);
     if (!package_manifest.has_value()) {
+        discovery.exit_code = ExitCode::CompileError;
+        return discovery;
+    }
+    if (reject_mismatched_std_manifest(
+            *manifest_path, *sysroot_manifest.manifest, *package_manifest, err)) {
         discovery.exit_code = ExitCode::CompileError;
         return discovery;
     }
@@ -565,7 +630,7 @@ workspace_contains_package_manifest(const ahfl::manifest::WorkspaceManifest &wor
                 ahfl::package_graph::WorkspaceBuildInput{
                     .workspace_manifest_path = *workspace_path,
                     .package_name = package_manifest->package_name,
-                    .sysroot_manifest_path = *sysroot_manifest,
+                    .sysroot_manifest_path = *sysroot_manifest.manifest,
                 });
             if (workspace_result.has_errors() || !workspace_result.graph.has_value()) {
                 print_package_graph_diagnostics(workspace_result.diagnostics, err);
@@ -581,11 +646,8 @@ workspace_contains_package_manifest(const ahfl::manifest::WorkspaceManifest &wor
         }
     }
 
-    auto manifest_result = ahfl::package_graph::build_package_graph_from_manifests(
-        ahfl::package_graph::ManifestBuildInput{
-            .root_manifest_path = *manifest_path,
-            .sysroot_manifest_path = *sysroot_manifest,
-        });
+    auto manifest_result =
+        build_manifest_or_sysroot_package_graph(*manifest_path, *sysroot_manifest.manifest);
     if (manifest_result.has_errors() || !manifest_result.graph.has_value()) {
         print_package_graph_diagnostics(manifest_result.diagnostics, err);
         discovery.exit_code = ExitCode::CompileError;
@@ -1697,19 +1759,21 @@ ExitCode CliDriver::execute() {
 }
 
 ExitCode CliDriver::run_manifest_package() {
-    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
-    if (!sysroot_manifest.has_value()) {
-        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
         return ExitCode::UsageError;
     }
 
     const auto root_manifest_path =
         normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
-    const auto graph_result = ahfl::package_graph::build_package_graph_from_manifests(
-        ahfl::package_graph::ManifestBuildInput{
-            .root_manifest_path = root_manifest_path,
-            .sysroot_manifest_path = *sysroot_manifest,
-        });
+    if (reject_mismatched_std_manifest(root_manifest_path, *sysroot_manifest.manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    const auto graph_result =
+        build_manifest_or_sysroot_package_graph(root_manifest_path, *sysroot_manifest.manifest);
     if (graph_result.has_errors() || !graph_result.graph.has_value()) {
         print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
         return ExitCode::CompileError;
@@ -1725,9 +1789,11 @@ ExitCode CliDriver::run_manifest_package() {
 }
 
 ExitCode CliDriver::run_workspace_package() {
-    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
-    if (!sysroot_manifest.has_value()) {
-        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
         return ExitCode::UsageError;
     }
 
@@ -1743,7 +1809,7 @@ ExitCode CliDriver::run_workspace_package() {
         ahfl::package_graph::WorkspaceBuildInput{
             .workspace_manifest_path = workspace_manifest_path,
             .package_name = std::string{*package_name},
-            .sysroot_manifest_path = *sysroot_manifest,
+            .sysroot_manifest_path = *sysroot_manifest.manifest,
         });
     if (graph_result.has_errors() || !graph_result.graph.has_value()) {
         print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
@@ -1796,9 +1862,11 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
 }
 
 ExitCode CliDriver::dump_package_graph() {
-    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
-    if (!sysroot_manifest.has_value()) {
-        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
         return ExitCode::UsageError;
     }
 
@@ -1813,7 +1881,7 @@ ExitCode CliDriver::dump_package_graph() {
                 .workspace_manifest_path = normalize_manifest_path(
                     std::filesystem::path{std::string{*options_.workspace_manifest_path}}),
                 .package_name = std::string{*package_name},
-                .sysroot_manifest_path = *sysroot_manifest,
+                .sysroot_manifest_path = *sysroot_manifest.manifest,
             });
         if (result.has_errors() || !result.graph.has_value()) {
             print_package_graph_diagnostics(result.diagnostics, std::cerr);
@@ -1824,12 +1892,13 @@ ExitCode CliDriver::dump_package_graph() {
         return ExitCode::Success;
     }
 
-    const auto result = ahfl::package_graph::build_package_graph_from_manifests(
-        ahfl::package_graph::ManifestBuildInput{
-            .root_manifest_path = normalize_manifest_path(
-                std::filesystem::path{std::string{*options_.manifest_path}}),
-            .sysroot_manifest_path = *sysroot_manifest,
-        });
+    const auto root_manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    if (reject_mismatched_std_manifest(root_manifest_path, *sysroot_manifest.manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    const auto result =
+        build_manifest_or_sysroot_package_graph(root_manifest_path, *sysroot_manifest.manifest);
     if (result.has_errors() || !result.graph.has_value()) {
         print_package_graph_diagnostics(result.diagnostics, std::cerr);
         return ExitCode::CompileError;
@@ -1840,9 +1909,11 @@ ExitCode CliDriver::dump_package_graph() {
 }
 
 ExitCode CliDriver::dump_lockfile() {
-    const auto sysroot_manifest = sysroot_manifest_from_options(options_);
-    if (!sysroot_manifest.has_value()) {
-        std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
         return ExitCode::UsageError;
     }
 
@@ -1857,7 +1928,7 @@ ExitCode CliDriver::dump_lockfile() {
                 .workspace_manifest_path = normalize_manifest_path(
                     std::filesystem::path{std::string{*options_.workspace_manifest_path}}),
                 .package_name = std::string{*package_name},
-                .sysroot_manifest_path = *sysroot_manifest,
+                .sysroot_manifest_path = *sysroot_manifest.manifest,
             });
         if (result.has_errors() || !result.graph.has_value()) {
             print_package_graph_diagnostics(result.diagnostics, std::cerr);
@@ -1873,12 +1944,13 @@ ExitCode CliDriver::dump_lockfile() {
         return ExitCode::Success;
     }
 
-    const auto result = ahfl::package_graph::build_package_graph_from_manifests(
-        ahfl::package_graph::ManifestBuildInput{
-            .root_manifest_path = normalize_manifest_path(
-                std::filesystem::path{std::string{*options_.manifest_path}}),
-            .sysroot_manifest_path = *sysroot_manifest,
-        });
+    const auto root_manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    if (reject_mismatched_std_manifest(root_manifest_path, *sysroot_manifest.manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    const auto result =
+        build_manifest_or_sysroot_package_graph(root_manifest_path, *sysroot_manifest.manifest);
     if (result.has_errors() || !result.graph.has_value()) {
         print_package_graph_diagnostics(result.diagnostics, std::cerr);
         return ExitCode::CompileError;
@@ -1898,9 +1970,12 @@ ExitCode CliDriver::format_source_file() {
     const bool package_graph_workspace = uses_package_graph_workspace(options_, effective_command_);
 
     if (options_.manifest_path.has_value() || package_graph_workspace) {
-        const auto sysroot_manifest = sysroot_manifest_from_options(options_);
-        if (!sysroot_manifest.has_value()) {
-            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+        if (!sysroot_manifest.manifest.has_value()) {
+            if (!sysroot_manifest.had_error) {
+                std::cerr
+                    << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+            }
             return ExitCode::UsageError;
         }
 
@@ -1909,11 +1984,12 @@ ExitCode CliDriver::format_source_file() {
         if (options_.manifest_path.has_value()) {
             const auto root_manifest_path = normalize_manifest_path(
                 std::filesystem::path{std::string{*options_.manifest_path}});
-            graph_result = ahfl::package_graph::build_package_graph_from_manifests(
-                ahfl::package_graph::ManifestBuildInput{
-                    .root_manifest_path = root_manifest_path,
-                    .sysroot_manifest_path = *sysroot_manifest,
-                });
+            if (reject_mismatched_std_manifest(
+                    root_manifest_path, *sysroot_manifest.manifest, std::cerr)) {
+                return ExitCode::CompileError;
+            }
+            graph_result = build_manifest_or_sysroot_package_graph(root_manifest_path,
+                                                                   *sysroot_manifest.manifest);
             lockfile_directory = root_manifest_path.parent_path();
         } else {
             const auto package_name = workspace_package_name(options_, effective_command_);
@@ -1927,7 +2003,7 @@ ExitCode CliDriver::format_source_file() {
                 ahfl::package_graph::WorkspaceBuildInput{
                     .workspace_manifest_path = workspace_manifest_path,
                     .package_name = std::string{*package_name},
-                    .sysroot_manifest_path = *sysroot_manifest,
+                    .sysroot_manifest_path = *sysroot_manifest.manifest,
                 });
             lockfile_directory = workspace_manifest_path.parent_path();
         }

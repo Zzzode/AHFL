@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/semantics/declaration_info.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
+#include "compiler/project_discovery/discovery.hpp"
 #include "tooling/formatter/formatter.hpp"
 #include "tooling/lsp/code_action.hpp"
 #include "tooling/lsp/code_lens.hpp"
@@ -581,33 +582,175 @@ workspace_folders_from_initialize(const json::JsonValue *params) {
     return roots;
 }
 
-[[nodiscard]] std::optional<std::filesystem::path>
-sysroot_path_from_initialize(const json::JsonValue *params) {
+void append_toolchain_diagnostics(project_discovery::ToolchainProfileSet &profiles,
+                                  std::vector<package_graph::Diagnostic> diagnostics) {
+    profiles.diagnostics.reserve(profiles.diagnostics.size() + diagnostics.size());
+    for (auto &diagnostic : diagnostics) {
+        profiles.diagnostics.push_back(std::move(diagnostic));
+    }
+}
+
+void add_toolchain_profile_ambiguity(project_discovery::ToolchainProfileSet &profiles,
+                                     const std::filesystem::path &workspace_root,
+                                     const std::filesystem::path &existing_std_manifest,
+                                     const std::filesystem::path &new_std_manifest) {
+    profiles.diagnostics.push_back(package_graph::Diagnostic{
+        .code = "E::toolchain_profile_ambiguous",
+        .message = "workspace folder '" + workspace_root.generic_string() +
+                   "' has multiple AHFL sysroots: '" + existing_std_manifest.generic_string() +
+                   "' and '" + new_std_manifest.generic_string() + "'",
+        .range = {},
+    });
+}
+
+void append_toolchain_profile(project_discovery::ToolchainProfileSet &profiles,
+                              std::filesystem::path sysroot,
+                              project_discovery::ToolchainProfileOrigin origin,
+                              std::optional<std::filesystem::path> workspace_root) {
+    auto result =
+        project_discovery::toolchain_profile_from_sysroot_input(std::move(sysroot), origin);
+    append_toolchain_diagnostics(profiles, std::move(result.diagnostics));
+    if (!result.profile.has_value()) {
+        return;
+    }
+
+    if (workspace_root.has_value()) {
+        const auto normalized_root = project_discovery::normalize_project_path(*workspace_root);
+        for (const auto &existing : profiles.workspace_profiles) {
+            if (project_discovery::normalize_project_path(existing.workspace_root) !=
+                normalized_root) {
+                continue;
+            }
+            if (project_discovery::normalize_project_path(existing.profile.std_manifest) !=
+                project_discovery::normalize_project_path(result.profile->std_manifest)) {
+                add_toolchain_profile_ambiguity(profiles,
+                                                normalized_root,
+                                                existing.profile.std_manifest,
+                                                result.profile->std_manifest);
+            }
+            return;
+        }
+        profiles.workspace_profiles.push_back(project_discovery::WorkspaceToolchainProfile{
+            .workspace_root = normalized_root,
+            .profile = std::move(*result.profile),
+        });
+        return;
+    }
+
+    profiles.default_profile = std::move(result.profile);
+}
+
+void parse_toolchain_profiles_array(project_discovery::ToolchainProfileSet &profiles,
+                                    const json::JsonValue &items,
+                                    project_discovery::ToolchainProfileOrigin origin) {
+    if (!items.is_array()) {
+        return;
+    }
+    for (const auto &item : items.array_items) {
+        if (item == nullptr || !item->is_object()) {
+            continue;
+        }
+        const auto *workspace_value = item->get("workspaceFolder");
+        const auto *sysroot_value = item->get("sysroot");
+        if (workspace_value == nullptr || sysroot_value == nullptr) {
+            continue;
+        }
+        const auto workspace_uri = workspace_value->as_string();
+        const auto sysroot = sysroot_value->as_string();
+        if (!workspace_uri.has_value() || !sysroot.has_value() || sysroot->empty()) {
+            continue;
+        }
+        auto workspace_root = AnalysisService::path_from_uri(*workspace_uri);
+        if (!workspace_root.has_value()) {
+            profiles.diagnostics.push_back(package_graph::Diagnostic{
+                .code = "E::toolchain_profile_ambiguous",
+                .message = "toolchain profile workspaceFolder must be a file URI: '" +
+                           std::string(*workspace_uri) + "'",
+                .range = {},
+            });
+            continue;
+        }
+        append_toolchain_profile(profiles,
+                                 std::filesystem::path(std::string(*sysroot)),
+                                 origin,
+                                 std::move(workspace_root));
+    }
+}
+
+[[nodiscard]] project_discovery::ToolchainProfileSet
+toolchain_profiles_from_json(const json::JsonValue &toolchain,
+                             project_discovery::ToolchainProfileOrigin origin) {
+    project_discovery::ToolchainProfileSet profiles;
+    if (const auto *sysroot = toolchain.get("sysroot"); sysroot != nullptr) {
+        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
+            append_toolchain_profile(
+                profiles, std::filesystem::path(std::string(*value)), origin, std::nullopt);
+        }
+    }
+    if (const auto *sysroot = toolchain.get("defaultSysroot"); sysroot != nullptr) {
+        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
+            append_toolchain_profile(
+                profiles, std::filesystem::path(std::string(*value)), origin, std::nullopt);
+        }
+    }
+    if (const auto *items = toolchain.get("profiles"); items != nullptr) {
+        parse_toolchain_profiles_array(profiles, *items, origin);
+    }
+    return profiles;
+}
+
+[[nodiscard]] project_discovery::ToolchainProfileSet
+toolchain_profiles_from_initialize(const json::JsonValue *params) {
+    project_discovery::ToolchainProfileSet profiles;
     if (params == nullptr) {
-        return std::nullopt;
+        return profiles;
     }
     const auto *init_options = params->get("initializationOptions");
     if (init_options == nullptr || !init_options->is_object()) {
-        return std::nullopt;
-    }
-    if (const auto *sysroot = init_options->get("sysroot"); sysroot != nullptr) {
-        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
-            return std::filesystem::path(std::string(*value));
-        }
+        return profiles;
     }
     const auto *ahfl = init_options->get("ahfl");
     if (ahfl == nullptr || !ahfl->is_object()) {
+        return profiles;
+    }
+    const auto *toolchain = ahfl->get("toolchain");
+    if (toolchain == nullptr || !toolchain->is_object()) {
+        return profiles;
+    }
+    return toolchain_profiles_from_json(
+        *toolchain, project_discovery::ToolchainProfileOrigin::LspInitialization);
+}
+
+[[nodiscard]] std::optional<project_discovery::ToolchainProfileSet>
+toolchain_profiles_from_configuration(const json::JsonValue &params) {
+    const auto *settings = params.get("settings");
+    if (settings == nullptr || !settings->is_object()) {
         return std::nullopt;
     }
-    const auto *sysroot = ahfl->get("sysroot");
-    if (sysroot == nullptr) {
+    const auto *ahfl = settings->get("ahfl");
+    if (ahfl == nullptr || !ahfl->is_object()) {
         return std::nullopt;
     }
-    const auto value = sysroot->as_string();
-    if (!value.has_value() || value->empty()) {
+    const auto *toolchain = ahfl->get("toolchain");
+    if (toolchain == nullptr || !toolchain->is_object()) {
         return std::nullopt;
     }
-    return std::filesystem::path(std::string(*value));
+    return toolchain_profiles_from_json(
+        *toolchain, project_discovery::ToolchainProfileOrigin::LspConfiguration);
+}
+
+void apply_hover_options_from_configuration(HoverRenderOptions &options,
+                                            const json::JsonValue &params) {
+    const auto *settings = params.get("settings");
+    const auto *ahfl =
+        settings != nullptr && settings->is_object() ? settings->get("ahfl") : nullptr;
+    const auto *hover = ahfl != nullptr && ahfl->is_object() ? ahfl->get("hover") : nullptr;
+    if (hover == nullptr || !hover->is_object()) {
+        return;
+    }
+    apply_hover_detail_level(options, *hover);
+    apply_hover_markup_kind(options, *hover);
+    apply_hover_scalar_options(options, *hover);
 }
 
 void append_workspace_folder_roots(std::vector<std::filesystem::path> &roots,
@@ -1186,6 +1329,10 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
         if (notif.params) {
             handle_did_close(*notif.params);
         }
+    } else if (notif.method == "workspace/didChangeConfiguration") {
+        if (notif.params) {
+            handle_did_change_configuration(*notif.params);
+        }
     } else if (notif.method == "workspace/didChangeWorkspaceFolders") {
         if (notif.params) {
             handle_workspace_folders_changed(*notif.params);
@@ -1203,7 +1350,7 @@ void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
     workspace_folders_ = workspace_folders_from_initialize(req.params.get());
     analysis_.set_workspace_folders(workspace_folders_);
-    analysis_.set_sysroot_path(sysroot_path_from_initialize(req.params.get()));
+    analysis_.set_toolchain_profiles(toolchain_profiles_from_initialize(req.params.get()));
     hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
@@ -1287,6 +1434,16 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
     const auto id = parse_text_document_identifier(*td);
     store_.close(id.uri);
     analysis_.invalidate_all();
+    send_diagnostic_refresh();
+}
+
+void LspServer::handle_did_change_configuration(const json::JsonValue &params) {
+    apply_hover_options_from_configuration(hover_options_, params);
+    const auto profiles = toolchain_profiles_from_configuration(params);
+    if (!profiles.has_value()) {
+        return;
+    }
+    analysis_.set_toolchain_profiles(std::move(*profiles));
     send_diagnostic_refresh();
 }
 

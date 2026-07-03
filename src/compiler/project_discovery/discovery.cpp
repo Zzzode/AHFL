@@ -3,7 +3,6 @@
 #include "compiler/manifest/manifest.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string_view>
@@ -12,15 +11,25 @@ namespace ahfl::project_discovery {
 namespace {
 
 constexpr std::string_view kProjectDiscovery = "E::project_discovery";
+constexpr std::string_view kToolchainSysrootInvalid = "E::toolchain_sysroot_invalid";
+constexpr std::string_view kToolchainSysrootMissing = "E::toolchain_sysroot_missing";
+constexpr std::string_view kToolchainSysrootMismatch = "E::toolchain_sysroot_mismatch";
+
+void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
+                         std::string_view code,
+                         std::string message,
+                         SourceRange range = {}) {
+    diagnostics.push_back(package_graph::Diagnostic{
+        .code = std::string{code},
+        .message = std::move(message),
+        .range = range,
+    });
+}
 
 void add_error(std::vector<package_graph::Diagnostic> &diagnostics,
                std::string message,
                SourceRange range = {}) {
-    diagnostics.push_back(package_graph::Diagnostic{
-        .code = std::string{kProjectDiscovery},
-        .message = std::move(message),
-        .range = range,
-    });
+    add_error_with_code(diagnostics, kProjectDiscovery, std::move(message), range);
 }
 
 void append_manifest_diagnostics(std::vector<package_graph::Diagnostic> &target,
@@ -117,20 +126,44 @@ find_nearest_named_file_bounded(const std::filesystem::path &start,
     return std::nullopt;
 }
 
-[[nodiscard]] std::filesystem::path sysroot_manifest_from_path(const std::filesystem::path &path) {
-    const auto normalized = normalize_project_path(path);
-    if (normalized.filename() == "ahfl.toml") {
-        return normalized;
+void append_discovery_diagnostics(std::vector<package_graph::Diagnostic> &target,
+                                  const std::vector<package_graph::Diagnostic> &source) {
+    target.reserve(target.size() + source.size());
+    for (const auto &diagnostic : source) {
+        target.push_back(diagnostic);
     }
-    return normalize_project_path(normalized / "std" / "ahfl.toml");
 }
 
-[[nodiscard]] std::optional<std::filesystem::path>
-sysroot_manifest_for_discovery(const ProjectDiscoveryInput &input) {
-    if (input.explicit_sysroot_path.has_value()) {
-        return sysroot_manifest_from_path(*input.explicit_sysroot_path);
+[[nodiscard]] bool declares_std_identity(const manifest::PackageManifest &manifest) {
+    return manifest.package_name == "std" || manifest.package_kind == "standard-library" ||
+           manifest.module_prefix == "std";
+}
+
+[[nodiscard]] std::optional<ToolchainProfile>
+select_toolchain_profile(const ProjectDiscoveryInput &input,
+                         const std::filesystem::path &document_path) {
+    const WorkspaceToolchainProfile *best = nullptr;
+    for (const auto &candidate : input.toolchains.workspace_profiles) {
+        if (candidate.workspace_root.empty()) {
+            continue;
+        }
+        const auto normalized_root = normalize_project_path(candidate.workspace_root);
+        if (!path_is_equal_or_descendant(document_path, normalized_root)) {
+            continue;
+        }
+        if (best == nullptr ||
+            normalized_root.generic_string().size() >
+                normalize_project_path(best->workspace_root).generic_string().size()) {
+            best = &candidate;
+        }
     }
-    return default_sysroot_manifest_from_environment();
+    if (best != nullptr) {
+        return best->profile;
+    }
+    if (input.toolchains.default_profile.has_value()) {
+        return input.toolchains.default_profile;
+    }
+    return default_toolchain_profile_from_compile_default();
 }
 
 [[nodiscard]] std::optional<manifest::PackageManifest>
@@ -280,16 +313,58 @@ std::filesystem::path normalize_project_path(const std::filesystem::path &path) 
     return (error ? candidate : canonical).lexically_normal();
 }
 
-std::optional<std::filesystem::path> default_sysroot_manifest_from_environment() {
-    if (const char *env_root = std::getenv("AHFL_SYSROOT");
-        env_root != nullptr && *env_root != '\0') {
-        return sysroot_manifest_from_path(env_root);
+ToolchainProfileResult toolchain_profile_from_sysroot_input(const std::filesystem::path &path,
+                                                            ToolchainProfileOrigin origin) {
+    ToolchainProfileResult result;
+    if (path.empty()) {
+        add_error_with_code(
+            result.diagnostics, kToolchainSysrootInvalid, "sysroot path must not be empty");
+        return result;
     }
 
+    const auto normalized = normalize_project_path(path);
+    if (normalized.filename() == "ahfl.toml") {
+        if (normalized.parent_path().filename() != "std") {
+            add_error_with_code(
+                result.diagnostics,
+                kToolchainSysrootInvalid,
+                "sysroot manifest input must be '<toolchain-root>/std/ahfl.toml', got '" +
+                    normalized.generic_string() + "'");
+            return result;
+        }
+        result.profile = ToolchainProfile{
+            .sysroot_root = normalize_project_path(normalized.parent_path().parent_path()),
+            .std_manifest = normalized,
+            .origin = origin,
+        };
+        return result;
+    }
+
+    if (normalized.filename() == "std") {
+        add_error_with_code(result.diagnostics,
+                            kToolchainSysrootInvalid,
+                            "sysroot input must be the toolchain root or std/ahfl.toml; got std "
+                            "directory '" +
+                                normalized.generic_string() + "'");
+        return result;
+    }
+
+    result.profile = ToolchainProfile{
+        .sysroot_root = normalized,
+        .std_manifest = normalize_project_path(normalized / "std" / "ahfl.toml"),
+        .origin = origin,
+    };
+    return result;
+}
+
+std::optional<ToolchainProfile> default_toolchain_profile_from_compile_default() {
 #ifdef AHFL_DEFAULT_SYSROOT
     constexpr std::string_view kDefaultSysroot = AHFL_DEFAULT_SYSROOT;
     if constexpr (!kDefaultSysroot.empty()) {
-        return sysroot_manifest_from_path(std::filesystem::path{std::string{kDefaultSysroot}});
+        auto result = toolchain_profile_from_sysroot_input(
+            std::filesystem::path{std::string{kDefaultSysroot}},
+            ToolchainProfileOrigin::CompileDefault);
+        return std::move(result.profile);
     }
 #endif
 
@@ -313,16 +388,22 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
     }
     discovery.project_manifest_found = true;
 
-    const auto sysroot_manifest = sysroot_manifest_for_discovery(input);
-    if (!sysroot_manifest.has_value()) {
-        add_error(discovery.diagnostics,
-                  "failed to locate sysroot std/ahfl.toml; configure ahfl.sysroot or "
-                  "AHFL_SYSROOT");
+    if (!input.toolchains.diagnostics.empty()) {
+        append_discovery_diagnostics(discovery.diagnostics, input.toolchains.diagnostics);
+        return discovery;
+    }
+
+    const auto active_profile = select_toolchain_profile(input, document_path);
+    if (!active_profile.has_value()) {
+        add_error_with_code(discovery.diagnostics,
+                            kToolchainSysrootMissing,
+                            "failed to locate sysroot std/ahfl.toml; configure "
+                            "ahfl.toolchain.sysroot or pass --sysroot <path>");
         return discovery;
     }
 
     const auto normalized_package_manifest = normalize_project_path(*package_manifest_path);
-    const auto normalized_sysroot_manifest = normalize_project_path(*sysroot_manifest);
+    const auto normalized_sysroot_manifest = normalize_project_path(active_profile->std_manifest);
     if (normalized_package_manifest == normalized_sysroot_manifest) {
         return build_sysroot_context(normalized_sysroot_manifest);
     }
@@ -330,6 +411,14 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
     auto package_manifest =
         load_package_manifest(normalized_package_manifest, discovery.diagnostics);
     if (!package_manifest.has_value()) {
+        return discovery;
+    }
+    if (declares_std_identity(*package_manifest)) {
+        add_error_with_code(discovery.diagnostics,
+                            kToolchainSysrootMismatch,
+                            "this standard-library package is not the active AHFL sysroot; "
+                            "active std manifest is '" +
+                                normalized_sysroot_manifest.generic_string() + "'");
         return discovery;
     }
 

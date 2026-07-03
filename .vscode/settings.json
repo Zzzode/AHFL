@@ -1,0 +1,6 @@
+{
+  "ahfl.toolchain.sysroot": "${workspaceFolder}",
+  "files.watcherExclude": {
+    "**/target": true
+  }
+}

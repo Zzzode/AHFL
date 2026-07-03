@@ -97,6 +97,12 @@
           "default": [],
           "description": "Additional arguments passed to the AHFL language server."
         },
+        "ahfl.toolchain.sysroot": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "AHFL toolchain root. Use a directory containing std/ahfl.toml or std/ahfl.toml itself. Leave empty to use the extension bundled sysroot fallback."
+        },
         "ahfl.hover.detailLevel": {
           "type": "string",
           "enum": [

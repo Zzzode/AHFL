@@ -13,6 +13,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/project_discovery/discovery.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
@@ -62,7 +63,7 @@ class AnalysisService {
     explicit AnalysisService(const DocumentStore &store);
 
     void set_workspace_folders(std::vector<std::filesystem::path> roots);
-    void set_sysroot_path(std::optional<std::filesystem::path> path);
+    void set_toolchain_profiles(project_discovery::ToolchainProfileSet profiles);
     void invalidate_all();
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
@@ -79,7 +80,7 @@ class AnalysisService {
 
     const DocumentStore &store_;
     std::vector<std::filesystem::path> workspace_folders_;
-    std::optional<std::filesystem::path> sysroot_path_;
+    project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
     std::size_t analysis_runs_{0};
 };

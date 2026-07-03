@@ -2354,6 +2354,34 @@ set_tests_properties(ahflc.check.manifest_basic PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
+add_test(NAME ahflc.check.manifest_accepts_sysroot_manifest_input
+    COMMAND $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+            --sysroot "${PROJECT_SOURCE_DIR}/std/ahfl.toml"
+)
+set_tests_properties(ahflc.check.manifest_accepts_sysroot_manifest_input PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
+)
+
+add_test(NAME ahflc.check.manifest_rejects_std_directory_sysroot_input
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            "-DAHFLC_ARGS=check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--target\;workflow\;--sysroot\;${PROJECT_SOURCE_DIR}/std"
+            "-DEXPECTED_REGEX=E::toolchain_sysroot_invalid"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.dump_package_graph.reports_sysroot_mismatch_for_corelib_manifest
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${PROJECT_SOURCE_DIR}/std/ahfl.toml"
+            "-DAHFLC_ARGS=dump\;package-graph\;--manifest\;${PROJECT_SOURCE_DIR}/std/ahfl.toml\;--sysroot\;${AHFL_TESTS_DIR}/integration/package_graph_manifest"
+            "-DEXPECTED_REGEX=E::toolchain_sysroot_mismatch"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 add_test(NAME ahflc.check.manifest_library_target
     COMMAND $<TARGET_FILE:ahflc> check
             --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
@@ -2400,13 +2428,17 @@ set_tests_properties(ahflc.check.manifest_sysroot_option_overrides_env PROPERTIE
     PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
-add_test(NAME ahflc.check.manifest_rejects_stdlib_search_root_env
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=${CMAKE_COMMAND}"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
-            "-DAHFLC_ARGS=-E\;chdir\;${PROJECT_SOURCE_DIR}/..\;${CMAKE_COMMAND}\;-E\;env\;--unset=AHFL_SYSROOT\;AHFL_STDLIB_SEARCH_ROOT=${PROJECT_SOURCE_DIR}\;$<TARGET_FILE:ahflc>\;check\;--manifest\;${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml\;--target\;workflow"
-            "-DEXPECTED_REGEX=failed to locate sysroot std/ahfl\\.toml"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+add_test(NAME ahflc.check.manifest_ignores_stdlib_search_root_env
+    COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
+            ${CMAKE_COMMAND} -E env
+            --unset=AHFL_SYSROOT
+            "AHFL_STDLIB_SEARCH_ROOT=${PROJECT_SOURCE_DIR}"
+            $<TARGET_FILE:ahflc> check
+            --manifest "${AHFL_TESTS_DIR}/integration/package_graph_manifest/ahfl.toml"
+            --target workflow
+)
+set_tests_properties(ahflc.check.manifest_ignores_stdlib_search_root_env PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
 add_test(NAME ahflc.check.manifest_requires_canonical_filename

@@ -1,7 +1,9 @@
 build/
 compile_commands.json
 .cache
-.vscode
+.vscode/*
+!.vscode/
+!.vscode/settings.json
 .agents/
 .claude/
 grammar/.antlr/

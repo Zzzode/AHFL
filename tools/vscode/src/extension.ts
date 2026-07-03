@@ -10,6 +10,23 @@ let diagnosticChangeListener: vscode.Disposable | undefined;
 let activeEditorChangeListener: vscode.Disposable | undefined;
 let clientStateChangeListener: vscode.Disposable | undefined;
 
+interface AhflHoverOptions {
+    detailLevel: string;
+    showSource: boolean;
+    maxFacts: number;
+    markupKind: string;
+}
+
+interface AhflToolchainProfile {
+    workspaceFolder: string;
+    sysroot: string;
+}
+
+interface AhflToolchainOptions {
+    defaultSysroot: string;
+    profiles: AhflToolchainProfile[];
+}
+
 export function activate(context: vscode.ExtensionContext) {
     // Create status bar item
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -86,12 +103,8 @@ export function activate(context: vscode.ExtensionContext) {
             client.sendNotification('workspace/didChangeConfiguration', {
                 settings: {
                     ahfl: {
-                        hover: {
-                            detailLevel: config.get<string>('hover.detailLevel', 'standard'),
-                            showSource: config.get<boolean>('hover.showSource', false),
-                            maxFacts: config.get<number>('hover.maxFacts', 3),
-                            markupKind: config.get<string>('hover.markupKind', 'auto'),
-                        },
+                        hover: hoverOptionsFromConfiguration(config),
+                        toolchain: toolchainOptionsFromConfiguration(context),
                     },
                 },
             });
@@ -149,9 +162,6 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
         options: {
             env: {
                 ...process.env,
-                // Prefer the sysroot bundled inside the extension so a clean VSIX
-                // install resolves std through <extension>/std/ahfl.toml.
-                AHFL_SYSROOT: context.extensionUri.fsPath,
             },
         },
     };
@@ -162,11 +172,9 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.ahfl'),
         },
         initializationOptions: {
-            hover: {
-                detailLevel: config.get<string>('hover.detailLevel', 'standard'),
-                showSource: config.get<boolean>('hover.showSource', false),
-                maxFacts: config.get<number>('hover.maxFacts', 3),
-                markupKind: config.get<string>('hover.markupKind', 'auto'),
+            ahfl: {
+                hover: hoverOptionsFromConfiguration(config),
+                toolchain: toolchainOptionsFromConfiguration(context),
             },
         },
     };
@@ -177,6 +185,63 @@ function createClient(context: vscode.ExtensionContext): LanguageClient {
         serverOptions,
         clientOptions
     );
+}
+
+function hoverOptionsFromConfiguration(config: vscode.WorkspaceConfiguration): AhflHoverOptions {
+    return {
+        detailLevel: config.get<string>('hover.detailLevel', 'standard'),
+        showSource: config.get<boolean>('hover.showSource', false),
+        maxFacts: config.get<number>('hover.maxFacts', 3),
+        markupKind: config.get<string>('hover.markupKind', 'auto'),
+    };
+}
+
+function toolchainOptionsFromConfiguration(context: vscode.ExtensionContext): AhflToolchainOptions {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const profiles: AhflToolchainProfile[] = [];
+
+    for (const folder of folders) {
+        const folderConfig = vscode.workspace.getConfiguration('ahfl', folder.uri);
+        const sysroot = resolveSysrootSetting(
+            folderConfig.get<string>('toolchain.sysroot', ''),
+            folder
+        );
+        if (sysroot.length > 0) {
+            profiles.push({
+                workspaceFolder: folder.uri.toString(),
+                sysroot,
+            });
+        }
+    }
+
+    const config = vscode.workspace.getConfiguration('ahfl');
+    const defaultFolder = folders.length > 0 ? folders[0] : undefined;
+    const configuredDefault = resolveSysrootSetting(
+        config.get<string>('toolchain.sysroot', ''),
+        defaultFolder
+    );
+
+    return {
+        defaultSysroot:
+            configuredDefault.length > 0 ? configuredDefault : context.extensionUri.fsPath,
+        profiles,
+    };
+}
+
+function resolveSysrootSetting(value: string | undefined, folder: vscode.WorkspaceFolder | undefined): string {
+    const trimmed = (value ?? '').trim();
+    if (trimmed.length === 0) {
+        return '';
+    }
+
+    const workspaceRoot = folder?.uri.scheme === 'file' ? folder.uri.fsPath : '';
+    const expanded = workspaceRoot.length > 0
+        ? trimmed.replace(/\$\{workspaceFolder\}/g, workspaceRoot)
+        : trimmed;
+    if (path.isAbsolute(expanded) || workspaceRoot.length === 0) {
+        return expanded;
+    }
+    return path.resolve(workspaceRoot, expanded);
 }
 
 async function restartLanguageClient(context: vscode.ExtensionContext): Promise<void> {
