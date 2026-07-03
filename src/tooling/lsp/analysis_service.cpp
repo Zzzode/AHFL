@@ -68,6 +68,29 @@ namespace {
     return encoded;
 }
 
+[[nodiscard]] bool path_is_equal_or_descendant(const std::filesystem::path &path,
+                                               const std::filesystem::path &ancestor) {
+    auto path_part = path.begin();
+    for (auto ancestor_part = ancestor.begin(); ancestor_part != ancestor.end(); ++ancestor_part) {
+        if (path_part == path.end() || *path_part != *ancestor_part) {
+            return false;
+        }
+        ++path_part;
+    }
+    return true;
+}
+
+[[nodiscard]] std::string_view
+toolchain_scope_name(project_discovery::ToolchainProfileScope scope) noexcept {
+    switch (scope) {
+    case project_discovery::ToolchainProfileScope::GlobalDefault:
+        return "global-default";
+    case project_discovery::ToolchainProfileScope::WorkspaceFolder:
+        return "workspace-folder-uri";
+    }
+    return "global-default";
+}
+
 [[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
     const auto pos = source.locate(offset);
     return Position{
@@ -414,16 +437,18 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     }
 
     const auto workspace_revision = store_.workspace_revision();
+    const auto toolchain_cache_key = toolchain_cache_key_for_uri(uri);
     if (const auto existing = cache_.find(uri); existing != cache_.end()) {
         const auto &snapshot = *existing->second;
         if (snapshot.document_version == document->version &&
             snapshot.document_revision == *revision && snapshot.content_hash == *hash &&
-            snapshot.workspace_revision == workspace_revision) {
+            snapshot.workspace_revision == workspace_revision &&
+            snapshot.toolchain_cache_key == toolchain_cache_key) {
             return existing->second.get();
         }
     }
 
-    auto snapshot = build_snapshot(uri);
+    auto snapshot = build_snapshot(uri, toolchain_cache_key);
     if (!snapshot) {
         return nullptr;
     }
@@ -484,7 +509,54 @@ std::string AnalysisService::normalized_path_key(const std::filesystem::path &pa
     return candidate.generic_string();
 }
 
-std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::string &uri) {
+std::optional<LspToolchainCacheKey>
+AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
+    const auto document_path = path_from_uri(uri);
+    if (!document_path.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto normalized_document = std::filesystem::path(normalized_path_key(*document_path));
+
+    std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
+    workspace_boundaries.reserve(workspace_folders_.size());
+    std::optional<std::filesystem::path> workspace_root;
+    for (const auto &root : workspace_folders_) {
+        const auto normalized_root = std::filesystem::path(normalized_path_key(root));
+        workspace_boundaries.push_back(
+            project_discovery::WorkspaceBoundary{.root = normalized_root});
+        if (path_is_equal_or_descendant(normalized_document, normalized_root) &&
+            (!workspace_root.has_value() ||
+             normalized_root.generic_string().size() > workspace_root->generic_string().size())) {
+            workspace_root = normalized_root;
+        }
+    }
+
+    const auto package_manifest = project_discovery::find_package_manifest_for_document(
+        normalized_document, workspace_boundaries);
+    if (!package_manifest.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto selection = project_discovery::select_toolchain_profile_for_document(
+        toolchain_profiles_, normalized_document);
+    if (!selection.has_value()) {
+        return std::nullopt;
+    }
+
+    return LspToolchainCacheKey{
+        .workspace_folder_uri =
+            workspace_root.has_value() ? uri_from_path(*workspace_root) : std::string{},
+        .root_manifest = normalized_path_key(*package_manifest),
+        .std_manifest = normalized_path_key(selection->profile.std_manifest),
+        .std_identity = selection->profile.std_identity,
+        .scope = std::string{toolchain_scope_name(selection->profile.scope)},
+    };
+}
+
+std::unique_ptr<LspAnalysisSnapshot>
+AnalysisService::build_snapshot(const std::string &uri,
+                                std::optional<LspToolchainCacheKey> toolchain_cache_key) {
     const auto *document = store_.get(uri);
     const auto revision = store_.revision(uri);
     const auto hash = store_.content_hash(uri);
@@ -498,6 +570,7 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
     snapshot->document_revision = *revision;
     snapshot->content_hash = *hash;
     snapshot->workspace_revision = store_.workspace_revision();
+    snapshot->toolchain_cache_key = std::move(toolchain_cache_key);
 
     const auto document_path = path_from_uri(uri);
 

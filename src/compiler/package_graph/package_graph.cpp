@@ -182,7 +182,7 @@ void append_checksum_record(std::string &payload,
 }
 
 [[nodiscard]] std::optional<std::string>
-compute_package_checksum(const PackageInput &input, std::vector<Diagnostic> &diagnostics) {
+compute_package_checksum_impl(const PackageInput &input, std::vector<Diagnostic> &diagnostics) {
     std::string payload;
     payload.append("ahfl.package.checksum.v1");
     payload.push_back('\0');
@@ -503,6 +503,11 @@ void validate_sysroot_std_contract(const PackageInput &sysroot_std,
 }
 
 } // namespace
+
+std::optional<std::string> compute_package_checksum(const PackageInput &input,
+                                                    std::vector<Diagnostic> &diagnostics) {
+    return compute_package_checksum_impl(input, diagnostics);
+}
 
 const PackageNode *PackageGraph::find_package(PackageId id) const {
     if (id.value >= packages.size()) {

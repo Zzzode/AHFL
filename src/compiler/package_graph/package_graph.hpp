@@ -133,6 +133,8 @@ struct BuildResult {
 [[nodiscard]] BuildResult build_package_graph_from_manifests(const ManifestBuildInput &input);
 [[nodiscard]] BuildResult build_package_graph_from_workspace(const WorkspaceBuildInput &input);
 [[nodiscard]] BuildResult build_package_graph_from_sysroot(const SysrootBuildInput &input);
+[[nodiscard]] std::optional<std::string>
+compute_package_checksum(const PackageInput &input, std::vector<Diagnostic> &diagnostics);
 [[nodiscard]] std::string serialize_package_graph_json(const PackageGraph &graph);
 [[nodiscard]] std::string_view source_kind_name(PackageSourceKind kind) noexcept;
 

@@ -29,12 +29,24 @@ struct LspSourceSnapshot {
     std::optional<SourceId> source_id{};
 };
 
+struct LspToolchainCacheKey {
+    std::string workspace_folder_uri;
+    std::string root_manifest;
+    std::string std_manifest;
+    std::string std_identity;
+    std::string scope;
+
+    [[nodiscard]] friend bool operator==(const LspToolchainCacheKey &lhs,
+                                         const LspToolchainCacheKey &rhs) = default;
+};
+
 struct LspAnalysisSnapshot {
     std::string requested_uri;
     int document_version{0};
     std::uint64_t document_revision{0};
     std::uint64_t content_hash{0};
     std::uint64_t workspace_revision{0};
+    std::optional<LspToolchainCacheKey> toolchain_cache_key;
     bool project_aware{false};
     std::optional<std::filesystem::path> package_graph_manifest;
     std::vector<LspDiagnostic> project_diagnostics;
@@ -75,7 +87,10 @@ class AnalysisService {
     [[nodiscard]] static std::string normalized_path_key(const std::filesystem::path &path);
 
   private:
-    [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot> build_snapshot(const std::string &uri);
+    [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
+    build_snapshot(const std::string &uri, std::optional<LspToolchainCacheKey> toolchain_cache_key);
+    [[nodiscard]] std::optional<LspToolchainCacheKey>
+    toolchain_cache_key_for_uri(const std::string &uri) const;
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
 
     const DocumentStore &store_;

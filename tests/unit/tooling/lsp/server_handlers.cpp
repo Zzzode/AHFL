@@ -555,6 +555,23 @@ void write_std_manifest(const std::filesystem::path &sysroot_std_root) {
                "allow = [\"option\"]\n");
 }
 
+void write_minimal_std_package(const std::filesystem::path &sysroot_std_root,
+                               std::string_view marker) {
+    write_std_manifest(sysroot_std_root);
+    write_file(sysroot_std_root / "option.ahfl",
+               "module std::option;\n"
+               "\n"
+               "enum Option<T> { Some(T), None, }\n");
+    write_file(sysroot_std_root / "collections.ahfl",
+               "module std::collections;\n"
+               "\n"
+               "struct List<T> {}\n");
+    write_file(sysroot_std_root / "prelude.ahfl",
+               "module std::prelude;\n"
+               "// " +
+                   std::string(marker) + "\n");
+}
+
 std::string did_open_body(const std::string &uri, int version, const std::string &text) {
     return R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":")" +
            uri + R"(","languageId":"ahfl","version":)" + std::to_string(version) + R"(,"text":")" +
@@ -597,6 +614,23 @@ toolchain_profile_set_for_sysroot(const std::filesystem::path &sysroot) {
     profiles.diagnostics = std::move(result.diagnostics);
     if (result.profile.has_value()) {
         profiles.default_profile = std::move(result.profile);
+    }
+    return profiles;
+}
+
+project_discovery::ToolchainProfileSet
+workspace_toolchain_profile_set_for_sysroot(const std::filesystem::path &workspace_root,
+                                            const std::filesystem::path &sysroot) {
+    project_discovery::ToolchainProfileSet profiles;
+    auto result = project_discovery::toolchain_profile_from_sysroot_input(
+        sysroot, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    profiles.diagnostics = std::move(result.diagnostics);
+    if (result.profile.has_value()) {
+        result.profile->scope = project_discovery::ToolchainProfileScope::WorkspaceFolder;
+        profiles.workspace_profiles.push_back(project_discovery::WorkspaceToolchainProfile{
+            .workspace_root = workspace_root,
+            .profile = std::move(*result.profile),
+        });
     }
     return profiles;
 }
@@ -2072,7 +2106,8 @@ void test_project_graph_error_does_not_fall_back_to_single_file_semantics() {
         std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
             return diagnostic.message.find("failed to open sysroot std manifest") !=
                        std::string::npos ||
-                   diagnostic.message.find("failed to open sysroot std") != std::string::npos;
+                   diagnostic.message.find("failed to open sysroot std") != std::string::npos ||
+                   diagnostic.code == "E::toolchain_sysroot_missing";
         });
     const auto has_unknown_type =
         std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
@@ -2080,6 +2115,116 @@ void test_project_graph_error_does_not_fall_back_to_single_file_semantics() {
         });
     check(has_sysroot_error, "project_error_no_fallback.sysroot_diagnostic");
     check(!has_unknown_type, "project_error_no_fallback.no_single_file_unknown_type");
+}
+
+void test_toolchain_profile_records_std_identity_checksum() {
+    const auto root = make_temp_project("toolchain_profile_std_identity");
+    const auto std_root = root / "std";
+    write_minimal_std_package(std_root, "identity-a");
+
+    auto from_root = project_discovery::toolchain_profile_from_sysroot_input(
+        root, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    auto from_manifest = project_discovery::toolchain_profile_from_sysroot_input(
+        std_root / "ahfl.toml", project_discovery::ToolchainProfileOrigin::LspInitialization);
+
+    check(!from_root.has_errors(), "toolchain_identity.root_has_no_errors");
+    check(!from_manifest.has_errors(), "toolchain_identity.manifest_has_no_errors");
+    check(from_root.profile.has_value(), "toolchain_identity.root_profile_exists");
+    check(from_manifest.profile.has_value(), "toolchain_identity.manifest_profile_exists");
+    if (!from_root.profile.has_value() || !from_manifest.profile.has_value()) {
+        return;
+    }
+
+    check(from_root.profile->std_identity.starts_with("sha256:"),
+          "toolchain_identity.checksum_prefix");
+    check(from_root.profile->std_identity.size() == 71, "toolchain_identity.checksum_length");
+    check(from_root.profile->std_identity == from_manifest.profile->std_identity,
+          "toolchain_identity.root_and_manifest_match");
+
+    write_minimal_std_package(std_root, "identity-b");
+    auto changed = project_discovery::toolchain_profile_from_sysroot_input(
+        root, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    check(changed.profile.has_value(), "toolchain_identity.changed_profile_exists");
+    if (changed.profile.has_value()) {
+        check(changed.profile->std_identity != from_root.profile->std_identity,
+              "toolchain_identity.source_change_updates_checksum");
+    }
+}
+
+void test_analysis_snapshot_cache_key_records_toolchain_identity() {
+    const auto root = make_temp_project("analysis_toolchain_cache_key");
+    const auto app_root = root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    const auto sysroot_a = root / "sysroot-a";
+    const auto sysroot_b = root / "sysroot-b";
+    write_minimal_std_package(sysroot_a / "std", "cache-a");
+    write_minimal_std_package(sysroot_b / "std", "cache-b");
+    write_package_manifest(app_root, "cache-key-app", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    auto profile_a = project_discovery::toolchain_profile_from_sysroot_input(
+        sysroot_a, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    auto profile_b = project_discovery::toolchain_profile_from_sysroot_input(
+        sysroot_b, project_discovery::ToolchainProfileOrigin::LspInitialization);
+    check(profile_a.profile.has_value(), "analysis_toolchain_cache_key.profile_a_exists");
+    check(profile_b.profile.has_value(), "analysis_toolchain_cache_key.profile_b_exists");
+    if (!profile_a.profile.has_value() || !profile_b.profile.has_value()) {
+        return;
+    }
+
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot_a));
+
+    const auto *first = analysis.snapshot_for_uri(uri);
+    const auto *second = analysis.snapshot_for_uri(uri);
+    check(first != nullptr, "analysis_toolchain_cache_key.first_exists");
+    check(first == second, "analysis_toolchain_cache_key.reuses_same_key");
+    check(analysis.analysis_runs() == 1, "analysis_toolchain_cache_key.single_run");
+    if (first == nullptr || !first->toolchain_cache_key.has_value()) {
+        check(false, "analysis_toolchain_cache_key.key_exists");
+        return;
+    }
+
+    check(first->toolchain_cache_key->workspace_folder_uri == AnalysisService::uri_from_path(root),
+          "analysis_toolchain_cache_key.workspace_uri");
+    check(first->toolchain_cache_key->root_manifest ==
+              AnalysisService::normalized_path_key(app_root / "ahfl.toml"),
+          "analysis_toolchain_cache_key.root_manifest");
+    check(first->toolchain_cache_key->std_manifest ==
+              AnalysisService::normalized_path_key(sysroot_a / "std" / "ahfl.toml"),
+          "analysis_toolchain_cache_key.std_manifest");
+    check(first->toolchain_cache_key->std_identity == profile_a.profile->std_identity,
+          "analysis_toolchain_cache_key.std_identity");
+    check(first->toolchain_cache_key->scope == "workspace-folder-uri",
+          "analysis_toolchain_cache_key.scope");
+
+    analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot_b));
+    const auto *third = analysis.snapshot_for_uri(uri);
+    check(third != nullptr, "analysis_toolchain_cache_key.third_exists");
+    check(analysis.analysis_runs() == 2, "analysis_toolchain_cache_key.rebuilds_after_profile");
+    if (third != nullptr && third->toolchain_cache_key.has_value()) {
+        check(third->toolchain_cache_key->std_manifest ==
+                  AnalysisService::normalized_path_key(sysroot_b / "std" / "ahfl.toml"),
+              "analysis_toolchain_cache_key.updated_std_manifest");
+        check(third->toolchain_cache_key->std_identity == profile_b.profile->std_identity,
+              "analysis_toolchain_cache_key.updated_std_identity");
+    }
 }
 
 void test_package_graph_manifest_does_not_inject_prelude() {
@@ -3783,6 +3928,8 @@ int main() {
     test_workspace_manifest_does_not_capture_unlisted_nested_package();
     test_lsp_project_discovery_ignores_process_cwd_sysroot_probe();
     test_project_graph_error_does_not_fall_back_to_single_file_semantics();
+    test_toolchain_profile_records_std_identity_checksum();
+    test_analysis_snapshot_cache_key_records_toolchain_identity();
     test_package_graph_manifest_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();

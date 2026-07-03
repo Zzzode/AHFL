@@ -26,10 +26,24 @@ enum class ToolchainProfileOrigin {
     LspInitialization,
 };
 
+enum class ToolchainProfileScope {
+    GlobalDefault,
+    WorkspaceFolder,
+};
+
+enum class ToolchainServerCompatibility {
+    SameBuild,
+    Compatible,
+    Incompatible,
+};
+
 struct ToolchainProfile {
     std::filesystem::path sysroot_root;
     std::filesystem::path std_manifest;
     ToolchainProfileOrigin origin{ToolchainProfileOrigin::CompileDefault};
+    ToolchainProfileScope scope{ToolchainProfileScope::GlobalDefault};
+    std::string std_identity;
+    ToolchainServerCompatibility server_compatibility{ToolchainServerCompatibility::SameBuild};
 };
 
 struct WorkspaceToolchainProfile {
@@ -50,6 +64,11 @@ struct ToolchainProfileResult {
     [[nodiscard]] bool has_errors() const noexcept {
         return !diagnostics.empty();
     }
+};
+
+struct ToolchainProfileSelection {
+    ToolchainProfile profile;
+    std::optional<std::filesystem::path> workspace_root;
 };
 
 struct ProjectDiscoveryInput {
@@ -81,6 +100,12 @@ struct ProjectDiscoveryResult {
 
 [[nodiscard]] ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &input);
 [[nodiscard]] std::filesystem::path normalize_project_path(const std::filesystem::path &path);
+[[nodiscard]] std::optional<std::filesystem::path>
+find_package_manifest_for_document(const std::filesystem::path &document_path,
+                                   const std::vector<WorkspaceBoundary> &workspace_boundaries);
+[[nodiscard]] std::optional<ToolchainProfileSelection>
+select_toolchain_profile_for_document(const ToolchainProfileSet &toolchains,
+                                      const std::filesystem::path &document_path);
 [[nodiscard]] ToolchainProfileResult
 toolchain_profile_from_sysroot_input(const std::filesystem::path &path,
                                      ToolchainProfileOrigin origin);

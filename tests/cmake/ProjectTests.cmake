@@ -2377,7 +2377,7 @@ add_test(NAME ahflc.dump_package_graph.reports_sysroot_mismatch_for_corelib_mani
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${PROJECT_SOURCE_DIR}/std/ahfl.toml"
-            "-DAHFLC_ARGS=dump\;package-graph\;--manifest\;${PROJECT_SOURCE_DIR}/std/ahfl.toml\;--sysroot\;${AHFL_TESTS_DIR}/integration/package_graph_manifest"
+            "-DAHFLC_ARGS=dump\;package-graph\;--manifest\;${PROJECT_SOURCE_DIR}/std/ahfl.toml\;--sysroot\;${AHFL_TESTS_DIR}/integration/alternate_sysroot"
             "-DEXPECTED_REGEX=E::toolchain_sysroot_mismatch"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )

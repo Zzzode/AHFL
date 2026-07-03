@@ -616,6 +616,7 @@ void append_toolchain_profile(project_discovery::ToolchainProfileSet &profiles,
 
     if (workspace_root.has_value()) {
         const auto normalized_root = project_discovery::normalize_project_path(*workspace_root);
+        result.profile->scope = project_discovery::ToolchainProfileScope::WorkspaceFolder;
         for (const auto &existing : profiles.workspace_profiles) {
             if (project_discovery::normalize_project_path(existing.workspace_root) !=
                 normalized_root) {
@@ -637,6 +638,7 @@ void append_toolchain_profile(project_discovery::ToolchainProfileSet &profiles,
         return;
     }
 
+    result.profile->scope = project_discovery::ToolchainProfileScope::GlobalDefault;
     profiles.default_profile = std::move(result.profile);
 }
 

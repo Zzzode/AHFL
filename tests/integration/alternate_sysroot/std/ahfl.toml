@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[exports]
+modules = ["option", "collections", "prelude"]
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[compiler_intrinsics]
+allow = ["option"]
