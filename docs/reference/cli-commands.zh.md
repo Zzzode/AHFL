@@ -93,7 +93,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--workspace` | `<ahfl.workspace.toml>` | AHFL workspace manifest；必须配合 `--package <name>` 选择 member package |
 | `--package` | `<name>` | 与 `--workspace` 配合选择 workspace package |
 | `--target` | `<name>` | 选择 manifest target；多 target package 必须显式传入 |
-| `--sysroot` | `<path>` | AHFL sysroot；目录下必须包含 `std/ahfl.toml` |
+| `--sysroot` | `<path>` | AHFL sysroot；可传包含 `std/ahfl.toml` 的工具链根，或直接传 `std/ahfl.toml` |
 | `--capability-mocks` | `<mocks.json>` | deterministic capability mock 输入；`run` 中作为 LLM function tools source |
 | `--tool-catalog` | `<tools.json>` | 仅 `run`：deterministic runtime tool catalog 输入，作为 LLM function tools source |
 | `--capability-bindings` | `<bindings.json>` | 仅 `run`：HTTP/gRPC JSON transcoding runtime capability binding 输入 |

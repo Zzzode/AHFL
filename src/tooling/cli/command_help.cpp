@@ -113,7 +113,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  --manifest <path>           AHFL package manifest (ahfl.toml)\n"
         << "  --workspace <path>          AHFL workspace manifest (ahfl.workspace.toml)\n"
         << "  --package <name>            Workspace package name with --workspace\n"
-        << "  --sysroot <path>            AHFL sysroot containing std/ahfl.toml\n"
+        << "  --sysroot <path>            AHFL sysroot root or std/ahfl.toml\n"
         << "  --target <name>             Target name within an AHFL package manifest\n"
         << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n";
 

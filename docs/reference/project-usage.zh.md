@@ -165,7 +165,8 @@ sysroot 选择顺序：
 2. `AHFL_SYSROOT`
 3. 编译期默认 sysroot
 
-选中目录必须满足：
+`--sysroot` 和 `AHFL_SYSROOT` 可以传工具链根，也可以直接传 active
+`std/ahfl.toml`。两种输入都会归一化为同一个 sysroot manifest：
 
 ```text
 <sysroot>/std/ahfl.toml
@@ -232,7 +233,7 @@ stdlib；需要 `std` 时必须走 manifest/workspace + sysroot，或显式传
 ## 常见失败
 
 - `failed to locate sysroot std/ahfl.toml`
-  - 传入 `--sysroot`，或设置 `AHFL_SYSROOT` 指向包含 `std/ahfl.toml` 的目录。
+  - 传入 `--sysroot`，或设置 `AHFL_SYSROOT` 指向包含 `std/ahfl.toml` 的工具链根；也可直接指向 `std/ahfl.toml`。
 - `failed to resolve imported module 'std::...'`
   - 单文件模式没有 PackageGraph sysroot；改用 `--manifest` / `--workspace --package` 并传 `--sysroot`。
 - `E::toolchain_sysroot_mismatch`
