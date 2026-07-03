@@ -1,11 +1,11 @@
 ---
 rfc: "0006"
 title: "Corelib Development Sysroot"
-status: "implementing"
+status: "implemented"
 area: ["compiler", "stdlib", "tooling", "process"]
 stability: "developer-facing"
 created: "2026-07-03"
-updated: "2026-07-03"
+updated: "2026-07-04"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -438,3 +438,5 @@ LSP cache key 必须包含：
 
 - 2026-07-03: Draft opened after diagnosing corelib development duplicate `std` diagnostics in VS Code/LSP.
 - 2026-07-03: Implementation started for ToolchainProfile-driven discovery, canonical LSP/VS Code sysroot configuration, and CLI sysroot normalization.
+- 2026-07-04: Implemented ToolchainProfile source-sysroot support across CLI, LSP, VS Code bundled fallback, PackageGraph diagnostics, and source-sysroot CLI checks.
+- 2026-07-04: Removed legacy `ProjectInput` stdlib auto-discovery, including `AHFL_SOURCE_DIR` and cwd-upward std probes; raw project tests now supply explicit module roots.
