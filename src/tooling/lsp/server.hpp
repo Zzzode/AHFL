@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <istream>
+#include <optional>
 #include <ostream>
 #include <string_view>
 #include <vector>
@@ -27,6 +29,10 @@ class LspServer {
     AnalysisService analysis_;
     HoverRenderOptions hover_options_;
     std::vector<std::filesystem::path> workspace_folders_;
+    project_discovery::ToolchainProfileSet initialization_toolchain_profiles_;
+    std::optional<project_discovery::ToolchainProfileSet> configuration_toolchain_profiles_;
+    std::optional<std::string> pending_configuration_request_id_;
+    std::uint64_t next_server_request_id_{1};
     bool initialized_{false};
     bool shutdown_requested_{false};
     bool trace_enabled_{false};
@@ -34,6 +40,7 @@ class LspServer {
     // Request handlers
     void handle_request(const JsonRpcRequest &req);
     void handle_notification(const JsonRpcNotification &notif);
+    void handle_response(const JsonRpcResponse &resp);
 
     void handle_initialize(const JsonRpcRequest &req);
     void handle_shutdown(const JsonRpcRequest &req);
@@ -66,6 +73,8 @@ class LspServer {
     void handle_exit();
 
     // Analysis
+    void apply_active_toolchain_profiles();
+    void request_workspace_configuration();
     void send_diagnostic_refresh();
     void trace(std::string_view message) const;
 };

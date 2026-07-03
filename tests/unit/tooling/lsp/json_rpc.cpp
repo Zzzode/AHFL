@@ -63,6 +63,29 @@ bool test_read_notification() {
     return true;
 }
 
+bool test_read_response() {
+    std::string body = R"({"jsonrpc":"2.0","id":"cfg-1","result":[{"sysroot":"/repo"}]})";
+    std::string frame = make_frame(body);
+
+    std::istringstream in(frame);
+    std::ostringstream out;
+    JsonRpcTransport transport(in, out);
+
+    auto msg = transport.read_message();
+    if (!msg.has_value())
+        return false;
+
+    auto *resp = std::get_if<JsonRpcResponse>(&*msg);
+    if (!resp)
+        return false;
+    if (resp->id != "cfg-1")
+        return false;
+    if (!resp->result || !resp->result->is_array())
+        return false;
+
+    return true;
+}
+
 bool test_send_response_content_length() {
     std::istringstream in;
     std::ostringstream out;
@@ -86,6 +109,29 @@ bool test_send_response_content_length() {
     auto body_start = output.find("\r\n\r\n") + 4;
     std::string body = output.substr(body_start);
     if (body.find("42") == std::string::npos)
+        return false;
+
+    return true;
+}
+
+bool test_send_request_content_length() {
+    std::istringstream in;
+    std::ostringstream out;
+    JsonRpcTransport transport(in, out);
+
+    auto params = ahfl::json::JsonValue::make_object();
+    transport.send_request("cfg-1", "workspace/configuration", std::move(params));
+
+    std::string output = out.str();
+    if (output.find("Content-Length: ") != 0)
+        return false;
+    if (output.find("\r\n\r\n") == std::string::npos)
+        return false;
+    auto body_start = output.find("\r\n\r\n") + 4;
+    std::string body = output.substr(body_start);
+    if (body.find(R"("id":"cfg-1")") == std::string::npos)
+        return false;
+    if (body.find(R"("method":"workspace/configuration")") == std::string::npos)
         return false;
 
     return true;
@@ -128,7 +174,9 @@ int main() {
 
     run(test_read_request, "test_read_request");
     run(test_read_notification, "test_read_notification");
+    run(test_read_response, "test_read_response");
     run(test_send_response_content_length, "test_send_response_content_length");
+    run(test_send_request_content_length, "test_send_request_content_length");
     run(test_empty_stream_returns_nullopt, "test_empty_stream_returns_nullopt");
     run(test_malformed_json_returns_nullopt_without_throwing,
         "test_malformed_json_returns_nullopt_without_throwing");

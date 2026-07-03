@@ -24,8 +24,6 @@ struct JsonRpcNotification {
     std::unique_ptr<json::JsonValue> params;
 };
 
-using IncomingMessage = std::variant<JsonRpcRequest, JsonRpcNotification>;
-
 struct JsonRpcError {
     int code{0};
     std::string message;
@@ -36,6 +34,8 @@ struct JsonRpcResponse {
     std::unique_ptr<json::JsonValue> result; // null if error
     std::optional<JsonRpcError> error;
 };
+
+using IncomingMessage = std::variant<JsonRpcRequest, JsonRpcNotification, JsonRpcResponse>;
 
 // ---------- Transport ----------
 
@@ -49,6 +49,11 @@ class JsonRpcTransport {
 
     /// Send a response (to a request).
     void send_response(const JsonRpcResponse &resp);
+
+    /// Send a request (server → client).
+    void send_request(const std::string &id,
+                      const std::string &method,
+                      std::unique_ptr<json::JsonValue> params);
 
     /// Send a notification (server → client).
     void send_notification(const std::string &method, std::unique_ptr<json::JsonValue> params);

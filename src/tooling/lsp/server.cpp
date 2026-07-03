@@ -701,6 +701,82 @@ toolchain_profiles_from_json(const json::JsonValue &toolchain,
     return profiles;
 }
 
+void upsert_workspace_toolchain_profile(project_discovery::ToolchainProfileSet &profiles,
+                                        project_discovery::WorkspaceToolchainProfile profile) {
+    const auto normalized_root = project_discovery::normalize_project_path(profile.workspace_root);
+    profile.workspace_root = normalized_root;
+    profile.profile.scope = project_discovery::ToolchainProfileScope::WorkspaceFolder;
+    for (auto &existing : profiles.workspace_profiles) {
+        if (project_discovery::normalize_project_path(existing.workspace_root) == normalized_root) {
+            existing = std::move(profile);
+            return;
+        }
+    }
+    profiles.workspace_profiles.push_back(std::move(profile));
+}
+
+[[nodiscard]] project_discovery::ToolchainProfileSet merge_toolchain_profiles(
+    const project_discovery::ToolchainProfileSet &initialization,
+    const std::optional<project_discovery::ToolchainProfileSet> &configuration) {
+    project_discovery::ToolchainProfileSet merged = initialization;
+    if (!configuration.has_value()) {
+        return merged;
+    }
+
+    if (configuration->default_profile.has_value()) {
+        merged.default_profile = configuration->default_profile;
+        merged.default_profile->scope = project_discovery::ToolchainProfileScope::GlobalDefault;
+    }
+    for (const auto &workspace_profile : configuration->workspace_profiles) {
+        upsert_workspace_toolchain_profile(merged, workspace_profile);
+    }
+    merged.diagnostics.reserve(merged.diagnostics.size() + configuration->diagnostics.size());
+    for (const auto &diagnostic : configuration->diagnostics) {
+        merged.diagnostics.push_back(diagnostic);
+    }
+    return merged;
+}
+
+[[nodiscard]] project_discovery::ToolchainProfileSet
+toolchain_profiles_from_workspace_configuration_result(
+    const json::JsonValue &result, const std::vector<std::filesystem::path> &workspace_folders) {
+    project_discovery::ToolchainProfileSet profiles;
+    if (!result.is_array()) {
+        return profiles;
+    }
+
+    for (std::size_t index = 0; index < result.array_items.size(); ++index) {
+        const auto &item = *result.array_items[index];
+        std::optional<std::string_view> sysroot;
+        if (item.is_object()) {
+            if (const auto *value = item.get("sysroot"); value != nullptr) {
+                sysroot = value->as_string();
+            }
+        } else {
+            sysroot = item.as_string();
+        }
+        if (!sysroot.has_value() || sysroot->empty()) {
+            continue;
+        }
+
+        std::optional<std::filesystem::path> workspace_root;
+        if (index < workspace_folders.size()) {
+            workspace_root = workspace_folders[index];
+        }
+        auto sysroot_path = std::filesystem::path(std::string(*sysroot));
+        if (workspace_root.has_value() && !sysroot_path.is_absolute()) {
+            sysroot_path =
+                project_discovery::normalize_project_path(*workspace_root / sysroot_path);
+        }
+        append_toolchain_profile(profiles,
+                                 std::move(sysroot_path),
+                                 project_discovery::ToolchainProfileOrigin::LspConfiguration,
+                                 std::move(workspace_root));
+    }
+
+    return profiles;
+}
+
 [[nodiscard]] project_discovery::ToolchainProfileSet
 toolchain_profiles_from_initialize(const json::JsonValue *params) {
     project_discovery::ToolchainProfileSet profiles;
@@ -1253,6 +1329,8 @@ void LspServer::run() {
                 using T = std::decay_t<decltype(m)>;
                 if constexpr (std::is_same_v<T, JsonRpcRequest>) {
                     handle_request(m);
+                } else if constexpr (std::is_same_v<T, JsonRpcResponse>) {
+                    handle_response(m);
                 } else {
                     handle_notification(m);
                 }
@@ -1348,11 +1426,28 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
     }
 }
 
+void LspServer::handle_response(const JsonRpcResponse &resp) {
+    if (!pending_configuration_request_id_.has_value() ||
+        resp.id != *pending_configuration_request_id_) {
+        return;
+    }
+    pending_configuration_request_id_.reset();
+    if (resp.error.has_value() || !resp.result) {
+        return;
+    }
+
+    configuration_toolchain_profiles_ =
+        toolchain_profiles_from_workspace_configuration_result(*resp.result, workspace_folders_);
+    apply_active_toolchain_profiles();
+    send_diagnostic_refresh();
+}
+
 void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
     workspace_folders_ = workspace_folders_from_initialize(req.params.get());
     analysis_.set_workspace_folders(workspace_folders_);
-    analysis_.set_toolchain_profiles(toolchain_profiles_from_initialize(req.params.get()));
+    initialization_toolchain_profiles_ = toolchain_profiles_from_initialize(req.params.get());
+    apply_active_toolchain_profiles();
     hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
@@ -1442,11 +1537,12 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
 void LspServer::handle_did_change_configuration(const json::JsonValue &params) {
     apply_hover_options_from_configuration(hover_options_, params);
     const auto profiles = toolchain_profiles_from_configuration(params);
-    if (!profiles.has_value()) {
-        return;
+    if (profiles.has_value()) {
+        configuration_toolchain_profiles_ = std::move(*profiles);
+        apply_active_toolchain_profiles();
+        send_diagnostic_refresh();
     }
-    analysis_.set_toolchain_profiles(std::move(*profiles));
-    send_diagnostic_refresh();
+    request_workspace_configuration();
 }
 
 void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) {
@@ -1458,6 +1554,7 @@ void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) 
     remove_workspace_folder_roots(workspace_folders_, event->get("removed"));
     append_workspace_folder_roots(workspace_folders_, event->get("added"));
     analysis_.set_workspace_folders(workspace_folders_);
+    request_workspace_configuration();
     send_diagnostic_refresh();
 }
 
@@ -1469,6 +1566,33 @@ void LspServer::handle_watched_files_changed(const json::JsonValue &params) {
 
 void LspServer::handle_exit() {
     shutdown_requested_ = true;
+}
+
+void LspServer::apply_active_toolchain_profiles() {
+    analysis_.set_toolchain_profiles(merge_toolchain_profiles(initialization_toolchain_profiles_,
+                                                              configuration_toolchain_profiles_));
+}
+
+void LspServer::request_workspace_configuration() {
+    auto params = json::JsonValue::make_object();
+    auto items = json::JsonValue::make_array();
+    for (const auto &folder : workspace_folders_) {
+        auto item = json::JsonValue::make_object();
+        item->set("scopeUri", json::JsonValue::make_string(AnalysisService::uri_from_path(folder)));
+        item->set("section", json::JsonValue::make_string("ahfl.toolchain"));
+        items->push(std::move(item));
+    }
+    if (items->array_items.empty()) {
+        auto item = json::JsonValue::make_object();
+        item->set("section", json::JsonValue::make_string("ahfl.toolchain"));
+        items->push(std::move(item));
+    }
+    params->set("items", std::move(items));
+
+    pending_configuration_request_id_ =
+        "ahfl-workspace-configuration-" + std::to_string(next_server_request_id_++);
+    transport_.send_request(
+        *pending_configuration_request_id_, "workspace/configuration", std::move(params));
 }
 
 void LspServer::send_diagnostic_refresh() {

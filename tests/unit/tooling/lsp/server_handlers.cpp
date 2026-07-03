@@ -584,6 +584,16 @@ std::string did_change_body(const std::string &uri, int version, const std::stri
            escape_json_string(text) + R"("}]}})";
 }
 
+std::string did_change_configuration_body() {
+    return R"({"jsonrpc":"2.0","method":"workspace/didChangeConfiguration","params":{}})";
+}
+
+std::string workspace_configuration_response_body(std::string_view request_id,
+                                                  std::string_view sysroot) {
+    return R"({"jsonrpc":"2.0","id":")" + std::string(request_id) + R"(","result":[{"sysroot":")" +
+           escape_json_string(std::string(sysroot)) + R"("}]})";
+}
+
 std::string initialize_body(const std::filesystem::path &root) {
     return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
            AnalysisService::uri_from_path(root) + R"("}})";
@@ -1950,6 +1960,52 @@ void test_lsp_legacy_initialization_sysroot_option_is_ignored() {
 
     check(output.find("E::toolchain_sysroot_mismatch") != std::string::npos,
           "legacy_sysroot_initialization_option.ignored");
+}
+
+void test_did_change_configuration_requests_resource_toolchain_profile() {
+    const auto root = make_temp_project("resource_configuration_sysroot");
+    const auto std_root = root / "std";
+    const auto alternate_root = make_temp_project("resource_configuration_alternate_sysroot");
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+    write_minimal_std_package(alternate_root / "std", "alternate");
+
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, alternate_root),
+        did_open_body(json_uri, 1, json_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        did_change_configuration_body(),
+        workspace_configuration_response_body("ahfl-workspace-configuration-1", "."),
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find(R"("method":"workspace/configuration")") != std::string::npos,
+          "resource_configuration.request_sent");
+    check(output.find(R"("section":"ahfl.toolchain")") != std::string::npos,
+          "resource_configuration.section");
+    check(output.find(R"("scopeUri":")" + AnalysisService::uri_from_path(root)) !=
+              std::string::npos,
+          "resource_configuration.scope_uri");
+
+    const auto before = response_body_for_id(output, 2);
+    check(before.find("E::toolchain_sysroot_mismatch") != std::string::npos,
+          "resource_configuration.initial_mismatch");
+
+    const auto after = response_body_for_id(output, 3);
+    check(after.find("E::toolchain_sysroot_mismatch") == std::string::npos,
+          "resource_configuration.updated_no_mismatch");
+    check(after.find("unknown type 'collections::List'") == std::string::npos,
+          "resource_configuration.updated_imports_resolve");
 }
 
 void test_workspace_manifest_does_not_capture_unlisted_nested_package() {
@@ -3925,6 +3981,7 @@ int main() {
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
     test_lsp_legacy_initialization_sysroot_option_is_ignored();
+    test_did_change_configuration_requests_resource_toolchain_profile();
     test_workspace_manifest_does_not_capture_unlisted_nested_package();
     test_lsp_project_discovery_ignores_process_cwd_sysroot_probe();
     test_project_graph_error_does_not_fall_back_to_single_file_semantics();

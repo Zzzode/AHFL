@@ -5,6 +5,42 @@
 #include <string>
 
 namespace ahfl::lsp {
+namespace {
+
+[[nodiscard]] std::string id_value_to_string(const json::JsonValue &id_val) {
+    if (auto s = id_val.as_string(); s.has_value()) {
+        return std::string(*s);
+    }
+    if (auto i = id_val.as_int(); i.has_value()) {
+        return std::to_string(*i);
+    }
+    return "0";
+}
+
+void set_id_field(json::JsonValue &object, const std::string &id) {
+    int64_t id_int = 0;
+    auto [ptr, ec] = std::from_chars(id.data(), id.data() + id.size(), id_int);
+    if (ec == std::errc{} && ptr == id.data() + id.size()) {
+        object.set("id", json::JsonValue::make_int(id_int));
+        return;
+    }
+    object.set("id", json::JsonValue::make_string(id));
+}
+
+void set_cloned_field(json::JsonValue &object,
+                      std::string key,
+                      const std::unique_ptr<json::JsonValue> &value) {
+    if (!value) {
+        return;
+    }
+    auto json_str = json::serialize_json(*value);
+    auto reparsed = json::parse_json(json_str);
+    if (reparsed.has_value()) {
+        object.set(std::move(key), std::move(*reparsed));
+    }
+}
+
+} // namespace
 
 JsonRpcTransport::JsonRpcTransport(std::istream &in, std::ostream &out) : in_(in), out_(out) {}
 
@@ -52,8 +88,35 @@ std::optional<IncomingMessage> JsonRpcTransport::read_message() {
 
     auto &root = *json_opt.value();
 
-    // Extract method
+    // Check if it is a response to a server-initiated request.
+    const auto *id_val = root.get("id");
     const auto *method_val = root.get("method");
+    if (method_val == nullptr && id_val != nullptr) {
+        JsonRpcResponse resp;
+        resp.id = id_value_to_string(*id_val);
+        if (auto *result_raw = root.get_mut("result"); result_raw != nullptr) {
+            resp.result = std::make_unique<json::JsonValue>();
+            std::swap(*resp.result, *result_raw);
+        }
+        if (const auto *error_raw = root.get("error");
+            error_raw != nullptr && error_raw->is_object()) {
+            JsonRpcError error;
+            if (const auto *code = error_raw->get("code"); code != nullptr) {
+                if (auto value = code->as_int(); value.has_value()) {
+                    error.code = static_cast<int>(*value);
+                }
+            }
+            if (const auto *message = error_raw->get("message"); message != nullptr) {
+                if (auto value = message->as_string(); value.has_value()) {
+                    error.message = std::string(*value);
+                }
+            }
+            resp.error = std::move(error);
+        }
+        return IncomingMessage{std::move(resp)};
+    }
+
+    // Extract method
     if (method_val == nullptr) {
         return std::nullopt;
     }
@@ -72,22 +135,13 @@ std::optional<IncomingMessage> JsonRpcTransport::read_message() {
         std::swap(*params, *params_raw);
     }
 
-    // Check if it's a request (has "id") or notification
-    const auto *id_val = root.get("id");
     if (id_val != nullptr) {
         // It's a request
         JsonRpcRequest req;
         req.method = std::string(*method_str);
         req.params = std::move(params);
 
-        // id can be string or number
-        if (auto s = id_val->as_string(); s.has_value()) {
-            req.id = std::string(*s);
-        } else if (auto i = id_val->as_int(); i.has_value()) {
-            req.id = std::to_string(*i);
-        } else {
-            req.id = "0";
-        }
+        req.id = id_value_to_string(*id_val);
 
         return IncomingMessage{std::move(req)};
     }
@@ -102,15 +156,7 @@ std::optional<IncomingMessage> JsonRpcTransport::read_message() {
 void JsonRpcTransport::send_response(const JsonRpcResponse &resp) {
     auto obj = json::JsonValue::make_object();
     obj->set("jsonrpc", json::JsonValue::make_string("2.0"));
-
-    // Try to send id as integer if it looks like one
-    int64_t id_int = 0;
-    auto [ptr, ec] = std::from_chars(resp.id.data(), resp.id.data() + resp.id.size(), id_int);
-    if (ec == std::errc{} && ptr == resp.id.data() + resp.id.size()) {
-        obj->set("id", json::JsonValue::make_int(id_int));
-    } else {
-        obj->set("id", json::JsonValue::make_string(resp.id));
-    }
+    set_id_field(*obj, resp.id);
 
     if (resp.error.has_value()) {
         auto err_obj = json::JsonValue::make_object();
@@ -118,18 +164,22 @@ void JsonRpcTransport::send_response(const JsonRpcResponse &resp) {
         err_obj->set("message", json::JsonValue::make_string(resp.error->message));
         obj->set("error", std::move(err_obj));
     } else if (resp.result) {
-        // Clone the result by serialize+reparse (simple approach)
-        auto json_str = json::serialize_json(*resp.result);
-        auto re = json::parse_json(json_str);
-        if (re.has_value()) {
-            obj->set("result", std::move(*re));
-        } else {
-            obj->set("result", json::JsonValue::make_null());
-        }
+        set_cloned_field(*obj, "result", resp.result);
     } else {
         obj->set("result", json::JsonValue::make_null());
     }
 
+    write_message(json::serialize_json(*obj));
+}
+
+void JsonRpcTransport::send_request(const std::string &id,
+                                    const std::string &method,
+                                    std::unique_ptr<json::JsonValue> params) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("jsonrpc", json::JsonValue::make_string("2.0"));
+    set_id_field(*obj, id);
+    obj->set("method", json::JsonValue::make_string(method));
+    set_cloned_field(*obj, "params", params);
     write_message(json::serialize_json(*obj));
 }
 
@@ -139,13 +189,7 @@ void JsonRpcTransport::send_notification(const std::string &method,
     obj->set("jsonrpc", json::JsonValue::make_string("2.0"));
     obj->set("method", json::JsonValue::make_string(method));
 
-    if (params) {
-        auto json_str = json::serialize_json(*params);
-        auto re = json::parse_json(json_str);
-        if (re.has_value()) {
-            obj->set("params", std::move(*re));
-        }
-    }
+    set_cloned_field(*obj, "params", params);
 
     write_message(json::serialize_json(*obj));
 }
