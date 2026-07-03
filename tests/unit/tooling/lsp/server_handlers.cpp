@@ -2125,6 +2125,8 @@ void test_lsp_bundled_sysroot_mismatch_reports_related_information() {
 
     check(output.find("E::toolchain_sysroot_mismatch") != std::string::npos,
           "bundled_sysroot_mismatch_related.mismatch");
+    check(output.find("help: configure ahfl.toolchain.sysroot") != std::string::npos,
+          "bundled_sysroot_mismatch_related.help");
     check(output.find("\"relatedInformation\"") != std::string::npos,
           "bundled_sysroot_mismatch_related.related_information");
     check(output.find("opened standard-library package manifest") != std::string::npos,

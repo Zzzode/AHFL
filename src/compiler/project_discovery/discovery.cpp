@@ -592,8 +592,14 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
         add_error_with_code(discovery.diagnostics,
                             kToolchainSysrootMismatch,
                             "this standard-library package is not the active AHFL sysroot; "
-                            "active std manifest is '" +
-                                normalized_sysroot_manifest.generic_string() + "'",
+                            "active sysroot is '" +
+                                normalized_sysroot_manifest.generic_string() +
+                                "', opened package is '" +
+                                normalized_package_manifest.generic_string() +
+                                "'; help: configure ahfl.toolchain.sysroot to '" +
+                                normalized_package_manifest.parent_path().parent_path()
+                                    .generic_string() +
+                                "' when developing corelib",
                             {},
                             {
                                 related_path(normalized_package_manifest,

@@ -533,9 +533,15 @@ reject_mismatched_std_manifest(const std::filesystem::path &package_manifest_pat
     if (!declares_std_identity(package_manifest)) {
         return false;
     }
+    const auto normalized_package_manifest = normalize_manifest_path(package_manifest_path);
+    const auto normalized_sysroot_manifest = normalize_manifest_path(sysroot_manifest_path);
     err << "error [E::toolchain_sysroot_mismatch]: this standard-library package is not the "
-           "active AHFL sysroot; active std manifest is "
-        << normalize_manifest_path(sysroot_manifest_path).generic_string() << '\n';
+           "active AHFL sysroot\n"
+        << "  active sysroot: " << normalized_sysroot_manifest.generic_string() << '\n'
+        << "  opened package: " << normalized_package_manifest.generic_string() << '\n'
+        << "  help: configure --sysroot to "
+        << normalized_package_manifest.parent_path().parent_path().generic_string()
+        << " when developing corelib\n";
     return true;
 }
 
