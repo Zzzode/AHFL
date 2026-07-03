@@ -1929,6 +1929,92 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
     check(!has_ambiguous_import, "sysroot_std.no_ambiguous_import");
 }
 
+void write_primitive_home_std_package(const std::filesystem::path &std_root,
+                                      std::string_view string_source,
+                                      std::string_view uuid_source) {
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"string\", \"uuid\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"string_*\", \"uuid_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(std_root / "string.ahfl", std::string(string_source));
+    write_file(std_root / "uuid.ahfl", std::string(uuid_source));
+}
+
+void test_definition_targets_source_sysroot_primitive_home_modules() {
+    const auto root = make_temp_project("definition_primitive_home_modules");
+    const auto std_root = root / "std";
+    const auto string_path = std_root / "string.ahfl";
+    const auto uuid_path = std_root / "uuid.ahfl";
+    const std::string string_source = "module std::string;\n"
+                                      "\n"
+                                      "@builtin(\"string_raw_length\")\n"
+                                      "fn string_raw_length(s: String) -> Int effect Pure;\n"
+                                      "\n"
+                                      "impl String {\n"
+                                      "    fn length(self) -> Int effect Pure decreases 0 {\n"
+                                      "        return string_raw_length(self);\n"
+                                      "    }\n"
+                                      "}\n";
+    const std::string uuid_source = "module std::uuid;\n"
+                                    "\n"
+                                    "@builtin(\"uuid_to_string\")\n"
+                                    "fn uuid_to_string(u: UUID) -> String effect Pure;\n"
+                                    "\n"
+                                    "impl UUID {\n"
+                                    "    fn to_string(self) -> String effect Pure decreases 0 {\n"
+                                    "        return uuid_to_string(self);\n"
+                                    "    }\n"
+                                    "}\n";
+    write_primitive_home_std_package(std_root, string_source, uuid_source);
+
+    const auto string_uri = AnalysisService::uri_from_path(string_path);
+    const auto uuid_uri = AnalysisService::uri_from_path(uuid_path);
+    const std::string string_definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "String")) + R"(})";
+    const std::string uuid_definition =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "UUID")) + R"(})";
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(uuid_uri, 1, uuid_source),
+        string_definition,
+        uuid_definition,
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+    const auto string_response = response_body_for_id(output, 2);
+    const auto uuid_response = response_body_for_id(output, 3);
+
+    check(string_response.find(string_uri) != std::string::npos,
+          "definition.primitive_string_targets_std_string_uri");
+    check(string_response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
+          "definition.primitive_string_targets_impl_selection");
+    check(uuid_response.find(uuid_uri) != std::string::npos,
+          "definition.primitive_uuid_targets_std_uuid_uri");
+    check(uuid_response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
+          "definition.primitive_uuid_targets_impl_selection");
+}
+
 void write_minimal_std_sources(const std::filesystem::path &std_root,
                                const std::filesystem::path &json_path,
                                std::string_view json_source) {
@@ -4269,6 +4355,7 @@ int main() {
     test_package_graph_workspace_rejects_private_dependency_module();
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
+    test_definition_targets_source_sysroot_primitive_home_modules();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();

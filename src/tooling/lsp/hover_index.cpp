@@ -595,7 +595,9 @@ void add_agent_capability_targets(HoverTargetIndex &index,
                                                const LspSourceSnapshot &source,
                                                SourceRange range) {
     return snapshot.resolve_result.find_reference(ReferenceKind::TypeName, range, source.source_id)
-        .has_value();
+               .has_value() ||
+           snapshot.resolve_result.find_reference(ReferenceKind::TraitBound, range, source.source_id)
+               .has_value();
 }
 
 [[nodiscard]] std::string_view builtin_type_constructor(const ast::TypeSyntax &type) noexcept {
@@ -1185,6 +1187,133 @@ void add_block_targets(HoverTargetIndex &index,
     }
 }
 
+void add_type_param_targets(HoverTargetIndex &index,
+                            const LspAnalysisSnapshot &snapshot,
+                            const LspSourceSnapshot &source,
+                            const std::vector<Owned<ast::TypeParamSyntax>> &type_params) {
+    for (const auto &param : type_params) {
+        if (param == nullptr) {
+            continue;
+        }
+        for (const auto &bound : param->bounds) {
+            add_type_syntax_targets(index, snapshot, source, bound.get());
+        }
+    }
+}
+
+void add_where_clause_targets(HoverTargetIndex &index,
+                              const LspAnalysisSnapshot &snapshot,
+                              const LspSourceSnapshot &source,
+                              const ast::WhereClauseSyntax *where_clause) {
+    if (where_clause == nullptr) {
+        return;
+    }
+    for (const auto &constraint : where_clause->constraints) {
+        if (constraint == nullptr) {
+            continue;
+        }
+        add_type_syntax_targets(index, snapshot, source, constraint->subject.get());
+        for (const auto &argument : constraint->arguments) {
+            add_type_syntax_targets(index, snapshot, source, argument.get());
+        }
+        for (const auto &bound : constraint->bounds) {
+            add_type_syntax_targets(index, snapshot, source, bound.get());
+        }
+    }
+}
+
+void add_function_signature_type_targets(HoverTargetIndex &index,
+                                         const LspAnalysisSnapshot &snapshot,
+                                         const LspSourceSnapshot &source,
+                                         const ast::FnDecl &function) {
+    add_type_param_targets(index, snapshot, source, function.type_params);
+    for (const auto &param : function.params) {
+        if (param != nullptr) {
+            add_type_syntax_targets(index, snapshot, source, param->type.get());
+        }
+    }
+    add_type_syntax_targets(index, snapshot, source, function.return_type.get());
+    add_where_clause_targets(index, snapshot, source, function.where_clause.get());
+}
+
+void add_trait_item_type_targets(HoverTargetIndex &index,
+                                 const LspAnalysisSnapshot &snapshot,
+                                 const LspSourceSnapshot &source,
+                                 const ast::TraitItemSyntax &item) {
+    switch (item.kind) {
+    case ast::TraitItemKind::Fn:
+        add_type_param_targets(index, snapshot, source, item.type_params);
+        for (const auto &param : item.params) {
+            if (param != nullptr) {
+                add_type_syntax_targets(index, snapshot, source, param->type.get());
+            }
+        }
+        add_type_syntax_targets(index, snapshot, source, item.return_type.get());
+        add_where_clause_targets(index, snapshot, source, item.where_clause.get());
+        return;
+    case ast::TraitItemKind::AssocType:
+        if (item.assoc_type == nullptr) {
+            return;
+        }
+        add_type_param_targets(index, snapshot, source, item.assoc_type->type_params);
+        for (const auto &bound : item.assoc_type->bounds) {
+            add_type_syntax_targets(index, snapshot, source, bound.get());
+        }
+        add_type_syntax_targets(index, snapshot, source, item.assoc_type->default_type.get());
+        return;
+    case ast::TraitItemKind::AssocConst:
+        if (item.assoc_const == nullptr) {
+            return;
+        }
+        add_type_syntax_targets(index, snapshot, source, item.assoc_const->type.get());
+        add_expr_syntax_targets(index, snapshot, source, item.assoc_const->default_value.get());
+        return;
+    }
+}
+
+void add_trait_decl_type_targets(HoverTargetIndex &index,
+                                 const LspAnalysisSnapshot &snapshot,
+                                 const LspSourceSnapshot &source,
+                                 const ast::TraitDecl &declaration) {
+    add_type_param_targets(index, snapshot, source, declaration.type_params);
+    for (const auto &super_trait : declaration.super_traits) {
+        add_type_syntax_targets(index, snapshot, source, super_trait.get());
+    }
+    add_where_clause_targets(index, snapshot, source, declaration.where_clause.get());
+    for (const auto &item : declaration.items) {
+        if (item != nullptr) {
+            add_trait_item_type_targets(index, snapshot, source, *item);
+        }
+    }
+}
+
+void add_impl_decl_type_targets(HoverTargetIndex &index,
+                                const LspAnalysisSnapshot &snapshot,
+                                const LspSourceSnapshot &source,
+                                const ast::ImplDecl &declaration) {
+    add_type_param_targets(index, snapshot, source, declaration.type_params);
+    add_type_syntax_targets(index, snapshot, source, declaration.trait_ref.get());
+    add_type_syntax_targets(index, snapshot, source, declaration.target_type.get());
+    add_where_clause_targets(index, snapshot, source, declaration.where_clause.get());
+
+    for (const auto &method : declaration.methods) {
+        if (method != nullptr) {
+            add_function_signature_type_targets(index, snapshot, source, *method);
+        }
+    }
+    for (const auto &assoc_type : declaration.assoc_items) {
+        if (assoc_type != nullptr) {
+            add_type_syntax_targets(index, snapshot, source, assoc_type->type.get());
+        }
+    }
+    for (const auto &assoc_const : declaration.const_items) {
+        if (assoc_const != nullptr) {
+            add_type_syntax_targets(index, snapshot, source, assoc_const->type.get());
+            add_expr_syntax_targets(index, snapshot, source, assoc_const->value.get());
+        }
+    }
+}
+
 void add_ast_targets_for_declaration(HoverTargetIndex &index,
                                      const LspAnalysisSnapshot &snapshot,
                                      const LspSourceSnapshot &source,
@@ -1457,19 +1586,20 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         add_expr_syntax_targets(
             index, snapshot, source, static_cast<const ast::ConstDecl &>(declaration).value.get());
         return;
-    case ast::NodeKind::ContractDecl:
-    case ast::NodeKind::Program:
     case ast::NodeKind::FnDecl:
-        // P2 (RFC §3.2.2): fn-declaration hover targets (param/return/effect/
-        // where-clause) land in P2b once fn symbols are registered. P2a only
-        // needs the AST surface to parse.
+        add_function_signature_type_targets(
+            index, snapshot, source, static_cast<const ast::FnDecl &>(declaration));
         return;
     case ast::NodeKind::TraitDecl:
+        add_trait_decl_type_targets(
+            index, snapshot, source, static_cast<const ast::TraitDecl &>(declaration));
+        return;
     case ast::NodeKind::ImplDecl:
-        // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait/impl hover targets
-        // (super-traits, method signatures, assoc types) land in P3b once
-        // trait symbols and impl-method bindings are registered. P3a only
-        // needs the AST surface to parse.
+        add_impl_decl_type_targets(
+            index, snapshot, source, static_cast<const ast::ImplDecl &>(declaration));
+        return;
+    case ast::NodeKind::ContractDecl:
+    case ast::NodeKind::Program:
         return;
     }
 }

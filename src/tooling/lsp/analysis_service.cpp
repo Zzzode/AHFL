@@ -195,6 +195,61 @@ dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
     return prefixes;
 }
 
+void append_unique_entry_file(ProjectInput &input, const std::filesystem::path &path) {
+    const auto normalized = std::filesystem::path(AnalysisService::normalized_path_key(path));
+    if (std::find(input.entry_files.begin(), input.entry_files.end(), normalized) !=
+        input.entry_files.end()) {
+        return;
+    }
+
+    std::error_code error;
+    if (!std::filesystem::exists(normalized, error) || error) {
+        return;
+    }
+
+    input.entry_files.push_back(normalized);
+}
+
+[[nodiscard]] std::filesystem::path exported_module_path(const package_graph::PackageNode &package,
+                                                         std::string_view module_key) {
+    auto relative = std::filesystem::path(std::string(module_key));
+    relative += ".ahfl";
+    return package.module_root / relative;
+}
+
+[[nodiscard]] bool exports_module_key(const package_graph::PackageNode &package,
+                                      std::string_view module_key) {
+    return std::find(package.exported_modules.begin(),
+                     package.exported_modules.end(),
+                     module_key) != package.exported_modules.end();
+}
+
+void append_primitive_home_entry_files(ProjectInput &input,
+                                       const package_graph::PackageGraph &graph) {
+    constexpr std::string_view kPrimitiveHomeModules[] = {
+        "string",
+        "uuid",
+        "time",
+        "decimal",
+    };
+
+    const auto std_package = std::find_if(graph.packages.begin(),
+                                          graph.packages.end(),
+                                          [](const package_graph::PackageNode &package) {
+                                              return package.module_prefix == "std";
+                                          });
+    if (std_package == graph.packages.end()) {
+        return;
+    }
+
+    for (const auto module_key : kPrimitiveHomeModules) {
+        if (!exports_module_key(*std_package, module_key)) {
+            continue;
+        }
+        append_unique_entry_file(input, exported_module_path(*std_package, module_key));
+    }
+}
+
 [[nodiscard]] ProjectInput
 project_input_from_package_graph(const package_graph::PackageGraph &graph,
                                  const std::filesystem::path &requested_file,
@@ -219,6 +274,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
     }
+    append_primitive_home_entry_files(input, graph);
     return input;
 }
 

@@ -310,6 +310,152 @@ symbol_selection_source_range(const Symbol &symbol, const LspSourceSnapshot &sou
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<std::string_view>
+std_home_module_for_primitive_type(std::string_view type_name) noexcept {
+    if (type_name == "String") {
+        return "std::string";
+    }
+    if (type_name == "UUID") {
+        return "std::uuid";
+    }
+    if (type_name == "Timestamp" || type_name == "Duration") {
+        return "std::time";
+    }
+    if (type_name == "Decimal") {
+        return "std::decimal";
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<std::string>
+module_name_for_source(const LspSourceSnapshot &source) {
+    if (source.program == nullptr) {
+        return std::nullopt;
+    }
+    for (const auto &declaration : source.program->declarations) {
+        if (declaration == nullptr || declaration->kind != ast::NodeKind::ModuleDecl) {
+            continue;
+        }
+        const auto &module = static_cast<const ast::ModuleDecl &>(*declaration);
+        if (module.name == nullptr) {
+            return std::nullopt;
+        }
+        return module.name->spelling();
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] const LspSourceSnapshot *
+source_for_module_name(const LspAnalysisSnapshot &snapshot, std::string_view module_name) {
+    for (const auto &source : snapshot.sources) {
+        const auto declared_module = module_name_for_source(source);
+        if (declared_module.has_value() && *declared_module == module_name) {
+            return &source;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<SourceRange> identifier_range_at(const SourceFile &source,
+                                                             std::size_t offset,
+                                                             std::string_view identifier) {
+    if (identifier.empty() || offset + identifier.size() > source.content.size()) {
+        return std::nullopt;
+    }
+    if (source.content.compare(offset, identifier.size(), identifier) != 0) {
+        return std::nullopt;
+    }
+
+    const auto before_ok = offset == 0 || !is_identifier_char(source.content[offset - 1]);
+    const auto after = offset + identifier.size();
+    const auto after_ok = after >= source.content.size() || !is_identifier_char(source.content[after]);
+    if (!before_ok || !after_ok) {
+        return std::nullopt;
+    }
+
+    return SourceRange{
+        .begin_offset = offset,
+        .end_offset = after,
+    };
+}
+
+[[nodiscard]] std::optional<SourceRange> find_identifier_range(const SourceFile &source,
+                                                               std::string_view identifier,
+                                                               std::size_t search_from = 0) {
+    std::size_t cursor = std::min(search_from, source.content.size());
+    while (cursor < source.content.size()) {
+        const auto found = source.content.find(identifier, cursor);
+        if (found == std::string::npos) {
+            return std::nullopt;
+        }
+        if (const auto range = identifier_range_at(source, found, identifier); range.has_value()) {
+            return range;
+        }
+        cursor = found + 1;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<SourceRange>
+primitive_home_selection_range(const LspSourceSnapshot &source, std::string_view type_name) {
+    if (source.source == nullptr) {
+        return std::nullopt;
+    }
+
+    const std::string impl_prefix = "impl " + std::string(type_name);
+    std::size_t cursor = 0;
+    while (cursor < source.source->content.size()) {
+        const auto impl = source.source->content.find(impl_prefix, cursor);
+        if (impl == std::string::npos) {
+            break;
+        }
+        const auto type_offset = impl + std::string_view("impl ").size();
+        if (const auto range = identifier_range_at(*source.source, type_offset, type_name);
+            range.has_value()) {
+            return range;
+        }
+        cursor = impl + 1;
+    }
+
+    return find_identifier_range(*source.source, type_name);
+}
+
+[[nodiscard]] std::optional<Location>
+primitive_type_definition_at(const LspAnalysisSnapshot &snapshot,
+                             const LspSourceSnapshot &source,
+                             std::size_t offset) {
+    const auto index_iter = snapshot.hover_indices.find(hover_index_key(source));
+    if (index_iter == snapshot.hover_indices.end()) {
+        return std::nullopt;
+    }
+
+    const auto *target = index_iter->second.lookup(offset);
+    if (target == nullptr || target->kind != HoverTargetKind::TypeReference ||
+        target->role != "builtin type") {
+        return std::nullopt;
+    }
+
+    const auto home_module = std_home_module_for_primitive_type(target->local_name);
+    if (!home_module.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto *home_source = source_for_module_name(snapshot, *home_module);
+    if (home_source == nullptr || home_source->source == nullptr) {
+        return std::nullopt;
+    }
+
+    const auto selection = primitive_home_selection_range(*home_source, target->local_name);
+    if (!selection.has_value()) {
+        return std::nullopt;
+    }
+
+    return Location{
+        .uri = home_source->uri,
+        .range = to_lsp_range(*home_source->source, *selection),
+    };
+}
+
 [[nodiscard]] std::optional<Location> rename_location_at(const LspAnalysisSnapshot &snapshot,
                                                          const LspSourceSnapshot &source,
                                                          std::size_t offset) {
@@ -1717,8 +1863,17 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    const auto offset = offset_at(*source->source, position);
+    const auto target = symbol_at(*snapshot, *source, offset);
     if (!target.has_value()) {
+        if (const auto location = primitive_type_definition_at(*snapshot, *source, offset);
+            location.has_value()) {
+            JsonRpcResponse resp;
+            resp.id = req.id;
+            resp.result = serialize_location(*location);
+            transport_.send_response(resp);
+            return;
+        }
         send_null(transport_, req.id);
         return;
     }
