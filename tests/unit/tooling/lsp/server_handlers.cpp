@@ -608,6 +608,25 @@ std::string initialize_body_with_sysroot(const std::filesystem::path &root,
            root_uri + R"(","sysroot":")" + escape_json_string(sysroot.string()) + R"("}]}}}}})";
 }
 
+std::string initialize_body_with_bundled_sysroot(const std::filesystem::path &root,
+                                                 const std::filesystem::path &sysroot) {
+    return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
+           AnalysisService::uri_from_path(root) +
+           R"(","initializationOptions":{"ahfl":{"toolchain":{"bundledSysroot":")" +
+           escape_json_string(sysroot.string()) + R"("}}}}})";
+}
+
+std::string initialize_body_with_default_and_bundled_sysroot(
+    const std::filesystem::path &root,
+    const std::filesystem::path &default_sysroot,
+    const std::filesystem::path &bundled_sysroot) {
+    return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
+           AnalysisService::uri_from_path(root) +
+           R"(","initializationOptions":{"ahfl":{"toolchain":{"defaultSysroot":")" +
+           escape_json_string(default_sysroot.string()) + R"(","bundledSysroot":")" +
+           escape_json_string(bundled_sysroot.string()) + R"("}}}}})";
+}
+
 std::string initialize_body_with_legacy_sysroot(const std::filesystem::path &root,
                                                 const std::filesystem::path &sysroot) {
     return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
@@ -2026,6 +2045,60 @@ void test_lsp_initialization_sysroot_option_selects_toolchain_sysroot() {
           "sysroot_std_initialization_option.std_imports_resolve");
     check(output.find("unknown type 'option::Option'") == std::string::npos,
           "sysroot_std_initialization_option.option_imports_resolve");
+}
+
+void test_lsp_bundled_sysroot_initialization_option_selects_fallback() {
+    const auto root = make_temp_project("sysroot_std_bundled_initialization_option");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    const auto output = run_lsp_messages({
+        initialize_body_with_bundled_sysroot(std_root, root),
+        did_open_body(json_uri, 1, json_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find("unknown type 'collections::List'") == std::string::npos,
+          "sysroot_std_bundled_initialization_option.std_imports_resolve");
+    check(output.find("unknown type 'option::Option'") == std::string::npos,
+          "sysroot_std_bundled_initialization_option.option_imports_resolve");
+}
+
+void test_lsp_default_sysroot_precedes_bundled_fallback() {
+    const auto root = make_temp_project("default_sysroot_precedes_bundled");
+    const auto alternate_root = make_temp_project("default_sysroot_precedes_bundled_alt");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+    write_minimal_std_package(alternate_root / "std", "alternate");
+
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    const auto output = run_lsp_messages({
+        initialize_body_with_default_and_bundled_sysroot(std_root, alternate_root, root),
+        did_open_body(json_uri, 1, json_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find("E::toolchain_sysroot_mismatch") != std::string::npos,
+          "default_sysroot_precedes_bundled.mismatch");
 }
 
 void test_lsp_legacy_initialization_sysroot_option_is_ignored() {
@@ -4158,6 +4231,8 @@ int main() {
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
+    test_lsp_bundled_sysroot_initialization_option_selects_fallback();
+    test_lsp_default_sysroot_precedes_bundled_fallback();
     test_lsp_legacy_initialization_sysroot_option_is_ignored();
     test_lsp_noncanonical_toolchain_sysroot_initialization_option_is_ignored();
     test_did_change_configuration_requests_resource_toolchain_profile();

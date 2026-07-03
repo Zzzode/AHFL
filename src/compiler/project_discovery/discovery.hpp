@@ -24,6 +24,7 @@ enum class ToolchainProfileOrigin {
     CompileDefault,
     LspConfiguration,
     LspInitialization,
+    BundledExtension,
 };
 
 enum class ToolchainProfileScope {

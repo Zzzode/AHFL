@@ -244,7 +244,7 @@ LSP profile precedence：
 1. `workspace/configuration` 中按 resource 查询到的 `ahfl.toolchain.sysroot`。
 2. `initializationOptions.ahfl.toolchain.profiles[]` 中匹配 workspace folder URI 的 profile。
 3. `initializationOptions.ahfl.toolchain.defaultSysroot`。
-4. VS Code extension bundled sysroot，由 client 作为 initialization options 发送。
+4. `initializationOptions.ahfl.toolchain.bundledSysroot`，由 VS Code extension 作为 bundled fallback 发送。
 5. server compile-time default sysroot。
 
 配置值为空字符串表示“没有显式配置”，不能表示当前目录。相对路径如果来自 workspace configuration，按对应 workspace folder 解析；如果来自 initialization options，client 必须发送绝对 URI 或绝对文件系统路径。
@@ -258,6 +258,7 @@ LSP 初始化输入示例：
   "ahfl": {
     "toolchain": {
       "defaultSysroot": "/repo/AHFL",
+      "bundledSysroot": "/extension/AHFL",
       "profiles": [
         {
           "workspaceFolder": "file:///repo/AHFL",
@@ -305,7 +306,7 @@ AHFL 仓库自身必须提交 repo-local `.vscode/settings.json`，显式声明�
 
 该设置让打开 `std/json.ahfl` 时 active sysroot 指向当前 checkout，而不是 extension bundled sysroot。`${workspaceFolder}` 展开由 client 完成；server 只接收 canonical path。
 
-Extension 不得再通过 server process environment 注入 `AHFL_SYSROOT`。它必须把 resolved bundled sysroot 或 workspace sysroot 写入 canonical initialization options，并在 `workspace/didChangeConfiguration` 中发送 `ahfl.toolchain.sysroot` 的变化。这样 profile origin 对 server、diagnostics 和用户都可见。
+Extension 不得再通过 server process environment 注入 `AHFL_SYSROOT`。它必须把 resolved workspace sysroot 写入 `defaultSysroot` / `profiles[]`，把 bundled fallback 写入 `bundledSysroot`，并在 `workspace/didChangeConfiguration` 中发送 `ahfl.toolchain.sysroot` 的变化。这样 profile origin 对 server、diagnostics 和用户都可见。
 
 ### PackageGraph integration
 
@@ -367,7 +368,7 @@ LSP cache key 必须包含：
 
 影响范围：
 
-1. LSP server initialization options schema 增加 `ahfl.toolchain.defaultSysroot` 和 `ahfl.toolchain.profiles[]`，并删除 `initializationOptions.sysroot` / `initializationOptions.ahfl.sysroot`。
+1. LSP server initialization options schema 增加 `ahfl.toolchain.defaultSysroot`、`ahfl.toolchain.bundledSysroot` 和 `ahfl.toolchain.profiles[]`，并删除 `initializationOptions.sysroot` / `initializationOptions.ahfl.sysroot`。
 2. VS Code extension 需要新增 `ahfl.toolchain.sysroot` setting，并调整 bundled sysroot fallback 优先级。
 3. Project discovery 入口需要接受 `ToolchainProfileSet`，不能继续从任意 search root 猜测 sysroot。
 4. stdlib / corelib 开发文档需要要求 AHFL repo workspace 配置 `"ahfl.toolchain.sysroot": "${workspaceFolder}"`。
@@ -402,9 +403,9 @@ LSP cache key 必须包含：
 2. Project discovery tests：manifest 等于 selected `std_manifest` 时走 `ProjectContextKind::SysrootPackage`；manifest 是另一个 standard-library package 时产生 `E::toolchain_sysroot_mismatch`；普通 package 继续走 UserProject。
 3. PackageGraph tests：`build_package_graph_from_sysroot` 只生成 `PackageId(0)`；用户 package name/prefix `std` 仍报错；普通 builder 不新增 std 特判。
 4. CLI integration tests：`ahflc check std/json.ahfl --sysroot .`、`ahflc check std/json.ahfl --sysroot std/ahfl.toml`、普通用户 package import `std`、lockfile sysroot checksum drift。
-5. LSP schema tests：canonical `initializationOptions.ahfl.toolchain.defaultSysroot` / `profiles[]` 生效；旧 `initializationOptions.sysroot` 和 `initializationOptions.ahfl.sysroot` 不再生效。
+5. LSP schema tests：canonical `initializationOptions.ahfl.toolchain.defaultSysroot` / `bundledSysroot` / `profiles[]` 生效；旧 `initializationOptions.sysroot` 和 `initializationOptions.ahfl.sysroot` 不再生效。
 6. LSP behavior tests：workspace configured sysroot opens `std/collections.ahfl` without duplicate diagnostics；bundled sysroot plus workspace `std` reports mismatch；didChangeConfiguration rebuilds diagnostics。
-7. VS Code extension tests：setting resolution、`${workspaceFolder}` expansion、initializationOptions payload、bundled fallback ordering、no `AHFL_SYSROOT` injection。
+7. VS Code extension tests：setting resolution、`${workspaceFolder}` expansion、initializationOptions payload、`defaultSysroot` over `bundledSysroot` fallback ordering、no `AHFL_SYSROOT` injection。
 8. Multi-root tests：不同 workspace folder profile 隔离；cross-folder path dependency with different profiles 报 `E::toolchain_profile_ambiguous`。
 9. Std search cleanup tests：public CLI/LSP path 不受 `AHFL_SOURCE_DIR`、cwd upward std probe、`ProjectInput.stdlib_search_roots` 影响。
 10. Regression fixtures：覆盖当前 duplicate package name、duplicate module prefix、user package cannot be named `std` 三类现象。

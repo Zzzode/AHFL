@@ -690,6 +690,17 @@ toolchain_profiles_from_initialization_json(const json::JsonValue &toolchain) {
                                      std::nullopt);
         }
     }
+    if (!profiles.default_profile.has_value()) {
+        if (const auto *sysroot = toolchain.get("bundledSysroot"); sysroot != nullptr) {
+            if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
+                append_toolchain_profile(
+                    profiles,
+                    std::filesystem::path(std::string(*value)),
+                    project_discovery::ToolchainProfileOrigin::BundledExtension,
+                    std::nullopt);
+            }
+        }
+    }
     if (const auto *items = toolchain.get("profiles"); items != nullptr) {
         parse_toolchain_profiles_array(
             profiles, *items, project_discovery::ToolchainProfileOrigin::LspInitialization);

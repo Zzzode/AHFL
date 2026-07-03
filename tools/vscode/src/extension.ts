@@ -23,7 +23,8 @@ interface AhflToolchainProfile {
 }
 
 interface AhflToolchainOptions {
-    defaultSysroot: string;
+    defaultSysroot?: string;
+    bundledSysroot: string;
     profiles: AhflToolchainProfile[];
 }
 
@@ -239,11 +240,14 @@ function toolchainOptionsFromConfiguration(context: vscode.ExtensionContext): Ah
         defaultFolder
     );
 
-    return {
-        defaultSysroot:
-            configuredDefault.length > 0 ? configuredDefault : context.extensionUri.fsPath,
+    const options: AhflToolchainOptions = {
+        bundledSysroot: context.extensionUri.fsPath,
         profiles,
     };
+    if (configuredDefault.length > 0) {
+        options.defaultSysroot = configuredDefault;
+    }
+    return options;
 }
 
 function workspaceConfigurationFromRequest(

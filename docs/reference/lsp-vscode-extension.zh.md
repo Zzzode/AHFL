@@ -73,13 +73,14 @@ code --extensionDevelopmentPath="$(pwd)" /Users/bytedance/Develop/AHFL
 ```
 
 该设置是 resource-scoped。扩展会在初始化时发送
-`initializationOptions.ahfl.toolchain.defaultSysroot` / `profiles[]`，并在
+`initializationOptions.ahfl.toolchain.defaultSysroot` / `bundledSysroot` /
+`profiles[]`，并在
 server 发起 `workspace/configuration` 请求时返回展开后的
 `ahfl.toolchain.sysroot`。`${workspaceFolder}` 和相对路径由扩展按对应
 workspace folder 展开，server 只接收规范化后的工具链根或空字符串。
 
 配置为空字符串表示“没有显式 resource 配置”。这种情况下，platform VSIX
-使用随扩展打包的 `<extension>/std/ahfl.toml` 作为 bundled sysroot fallback；
+通过 `bundledSysroot` 使用随扩展打包的 `<extension>/std/ahfl.toml` 作为 fallback；
 扩展不得通过 server process environment 注入 `AHFL_SYSROOT`。
 
 ## 四、本地打包 VSIX

@@ -153,6 +153,8 @@ void append_discovery_diagnostics(std::vector<package_graph::Diagnostic> &target
         return "lsp-configuration";
     case ToolchainProfileOrigin::LspInitialization:
         return "lsp-initialization";
+    case ToolchainProfileOrigin::BundledExtension:
+        return "bundled-extension";
     }
     return "unknown";
 }
