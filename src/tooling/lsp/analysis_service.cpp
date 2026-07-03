@@ -271,6 +271,11 @@ sysroot_only_graph_for_lsp(const manifest::PackageManifest &manifest,
     return graph;
 }
 
+[[nodiscard]] bool is_lsp_sysroot_std_manifest(const manifest::PackageManifest &manifest) {
+    return manifest.package_name == "std" && manifest.package_kind == "standard-library" &&
+           manifest.module_prefix == "std";
+}
+
 [[nodiscard]] std::optional<LspPackageGraphInput>
 build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
                                    const std::vector<std::filesystem::path> &workspace_roots) {
@@ -285,12 +290,19 @@ build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
         return std::nullopt;
     }
 
+    const auto normalized_package_manifest =
+        std::filesystem::path(AnalysisService::normalized_path_key(*package_manifest_path));
+    if (is_lsp_sysroot_std_manifest(*package_manifest)) {
+        return LspPackageGraphInput{
+            .graph = sysroot_only_graph_for_lsp(*package_manifest, normalized_package_manifest),
+            .manifest_path = normalized_package_manifest,
+        };
+    }
+
     const auto sysroot_manifest = find_lsp_sysroot_manifest(workspace_roots);
     if (!sysroot_manifest.has_value()) {
         return std::nullopt;
     }
-    const auto normalized_package_manifest =
-        std::filesystem::path(AnalysisService::normalized_path_key(*package_manifest_path));
     const auto normalized_sysroot_manifest =
         std::filesystem::path(AnalysisService::normalized_path_key(*sysroot_manifest));
     if (normalized_package_manifest == normalized_sysroot_manifest) {

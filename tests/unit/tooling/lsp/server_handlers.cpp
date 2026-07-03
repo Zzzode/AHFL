@@ -1673,6 +1673,96 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
     check(!has_ambiguous_import, "sysroot_std.no_ambiguous_import");
 }
 
+void write_minimal_std_sources(const std::filesystem::path &std_root,
+                               const std::filesystem::path &json_path,
+                               std::string_view json_source) {
+    write_std_manifest(std_root);
+    write_file(std_root / "collections.ahfl",
+               "module std::collections;\n"
+               "\n"
+               "struct List<T> {}\n");
+    write_file(std_root / "option.ahfl",
+               "module std::option;\n"
+               "\n"
+               "enum Option<T> { Some(T), None, }\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(json_path, std::string(json_source));
+}
+
+void check_std_json_lsp_project_analysis(const std::filesystem::path &std_root,
+                                         const std::filesystem::path &json_path,
+                                         std::string_view json_source,
+                                         std::vector<std::filesystem::path> workspace_roots,
+                                         std::string_view label) {
+    const auto uri = AnalysisService::uri_from_path(json_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = std::string(json_source),
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_roots(std::move(workspace_roots));
+
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    check(snapshot != nullptr, std::string(label) + ".snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    check(snapshot->project_aware, std::string(label) + ".project_aware");
+    check(snapshot->package_graph_manifest.has_value(), std::string(label) + ".manifest_recorded");
+    if (snapshot->package_graph_manifest.has_value()) {
+        check(
+            *snapshot->package_graph_manifest ==
+                std::filesystem::path(AnalysisService::normalized_path_key(std_root / "ahfl.toml")),
+            std::string(label) + ".manifest_is_std");
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(uri);
+    const auto has_unknown_std_import =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown type 'collections::List'") !=
+                       std::string::npos ||
+                   diagnostic.message.find("unknown type 'option::Option'") != std::string::npos;
+        });
+    check(!has_unknown_std_import, std::string(label) + ".std_imports_resolve");
+}
+
+void test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory() {
+    const auto root = make_temp_project("sysroot_std_folder_root");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+
+    check_std_json_lsp_project_analysis(
+        std_root, json_path, json_source, {std_root}, "sysroot_std_folder_root");
+}
+
+void test_sysroot_std_manifest_detected_without_workspace_root() {
+    const auto root = make_temp_project("sysroot_std_no_workspace_root");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+
+    check_std_json_lsp_project_analysis(
+        std_root, json_path, json_source, {}, "sysroot_std_no_workspace_root");
+}
+
 void test_package_graph_manifest_does_not_inject_prelude() {
     const auto root = make_temp_project("package_graph_explicit_prelude");
     const auto source_path = root / "src" / "main.ahfl";
@@ -3351,6 +3441,8 @@ int main() {
     test_package_graph_workspace_rejects_private_dependency_module();
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
+    test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
+    test_sysroot_std_manifest_detected_without_workspace_root();
     test_package_graph_manifest_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
