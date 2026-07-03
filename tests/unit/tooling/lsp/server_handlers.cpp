@@ -1559,6 +1559,89 @@ void test_package_graph_workspace_selects_member_dependency_source() {
           "package_graph_workspace.definition_targets_workspace_dependency_source");
 }
 
+void test_cross_workspace_path_dependency_rejects_mixed_toolchain_profiles() {
+    const auto root = make_temp_project("cross_workspace_toolchain_profile");
+    const auto workspace_a = root / "workspace-a";
+    const auto workspace_b = root / "workspace-b";
+    const auto app_root = workspace_a;
+    const auto lib_root = workspace_b / "lib";
+    const auto sysroot_a = root / "sysroot-a";
+    const auto sysroot_b = root / "sysroot-b";
+    const auto app_path = app_root / "src" / "main.ahfl";
+
+    write_minimal_std_package(sysroot_a / "std", "profile-a");
+    write_minimal_std_package(sysroot_b / "std", "profile-b");
+    write_package_manifest(app_root,
+                           "app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\n"
+                           "lib = { source = \"path\", path = \"../workspace-b/lib\", "
+                           "version = \"0.1.0\" }\n");
+    write_package_manifest(lib_root, "lib", "lib", "\"types\"", "src/types.ahfl");
+
+    const std::string app_source = "module app::main;\n"
+                                   "import lib::types as types;\n"
+                                   "\n"
+                                   "struct Use {\n"
+                                   "    payload: types::Msg;\n"
+                                   "}\n";
+    write_file(app_path, app_source);
+    write_file(lib_root / "src" / "types.ahfl",
+               "module lib::types;\n"
+               "struct Msg {}\n");
+
+    project_discovery::ToolchainProfileSet profiles;
+    auto add_workspace_profile = [&](const std::filesystem::path &workspace_root,
+                                     const std::filesystem::path &sysroot,
+                                     std::string_view label) {
+        auto result = project_discovery::toolchain_profile_from_sysroot_input(
+            sysroot, project_discovery::ToolchainProfileOrigin::LspInitialization);
+        check(result.profile.has_value(),
+              "cross_workspace_toolchain_profile." + std::string(label) + "_exists");
+        profiles.diagnostics.insert(
+            profiles.diagnostics.end(), result.diagnostics.begin(), result.diagnostics.end());
+        if (!result.profile.has_value()) {
+            return;
+        }
+        result.profile->scope = project_discovery::ToolchainProfileScope::WorkspaceFolder;
+        profiles.workspace_profiles.push_back(project_discovery::WorkspaceToolchainProfile{
+            .workspace_root = workspace_root,
+            .profile = std::move(*result.profile),
+        });
+    };
+    add_workspace_profile(workspace_a, sysroot_a, "profile_a");
+    add_workspace_profile(workspace_b, sysroot_b, "profile_b");
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = app_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = app_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({workspace_a, workspace_b});
+    analysis.set_toolchain_profiles(std::move(profiles));
+
+    const auto *snapshot = analysis.snapshot_for_uri(app_uri);
+    check(snapshot != nullptr, "cross_workspace_toolchain_profile.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(app_uri);
+    const auto has_profile_conflict =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.code == "E::toolchain_profile_ambiguous" &&
+                   diagnostic.message.find("workspace-b/lib/ahfl.toml") != std::string::npos;
+        });
+    check(has_profile_conflict, "cross_workspace_toolchain_profile.diagnostic");
+}
+
 void test_package_graph_workspace_rejects_private_dependency_module() {
     const auto root = make_temp_project("package_graph_workspace_private_module");
     const auto app_root = root / "packages" / "app";
@@ -3974,6 +4057,7 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
+    test_cross_workspace_path_dependency_rejects_mixed_toolchain_profiles();
     test_package_graph_workspace_rejects_private_dependency_module();
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();

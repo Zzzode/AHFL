@@ -14,6 +14,7 @@ constexpr std::string_view kProjectDiscovery = "E::project_discovery";
 constexpr std::string_view kToolchainSysrootInvalid = "E::toolchain_sysroot_invalid";
 constexpr std::string_view kToolchainSysrootMissing = "E::toolchain_sysroot_missing";
 constexpr std::string_view kToolchainSysrootMismatch = "E::toolchain_sysroot_mismatch";
+constexpr std::string_view kToolchainProfileAmbiguous = "E::toolchain_profile_ambiguous";
 
 void add_error_with_code(std::vector<package_graph::Diagnostic> &diagnostics,
                          std::string_view code,
@@ -290,6 +291,45 @@ void append_package_graph_diagnostics(std::vector<package_graph::Diagnostic> &ta
     }
 }
 
+[[nodiscard]] bool same_toolchain_sysroot(const ToolchainProfile &lhs,
+                                          const ToolchainProfile &rhs) {
+    return normalize_project_path(lhs.std_manifest) == normalize_project_path(rhs.std_manifest);
+}
+
+void reject_cross_profile_package_graph(ProjectDiscoveryResult &discovery,
+                                        const ProjectDiscoveryInput &input,
+                                        const ToolchainProfileSelection &active_selection) {
+    if (!discovery.context.has_value()) {
+        return;
+    }
+
+    for (const auto &package : discovery.context->graph.packages) {
+        if (package.source == package_graph::PackageSourceKind::Sysroot) {
+            continue;
+        }
+
+        const auto package_selection =
+            select_toolchain_profile_for_document(input.toolchains, package.manifest_path);
+        if (!package_selection.has_value() ||
+            same_toolchain_sysroot(active_selection.profile, package_selection->profile)) {
+            continue;
+        }
+
+        add_error_with_code(
+            discovery.diagnostics,
+            kToolchainProfileAmbiguous,
+            "package graph crosses AHFL toolchain profiles; package manifest '" +
+                normalize_project_path(package.manifest_path).generic_string() +
+                "' uses sysroot '" +
+                normalize_project_path(package_selection->profile.std_manifest).generic_string() +
+                "' but active document uses sysroot '" +
+                normalize_project_path(active_selection.profile.std_manifest).generic_string() +
+                "'");
+        discovery.context.reset();
+        return;
+    }
+}
+
 [[nodiscard]] ProjectDiscoveryResult
 build_sysroot_context(const std::filesystem::path &sysroot_manifest_path) {
     ProjectDiscoveryResult discovery;
@@ -513,10 +553,12 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
         }
         if (workspace_contains_package_manifest(
                 *workspace_manifest, *workspace_manifest_path, normalized_package_manifest)) {
-            return build_workspace_context(*workspace_manifest_path,
-                                           normalized_package_manifest,
-                                           std::move(*package_manifest),
-                                           normalized_sysroot_manifest);
+            auto workspace_discovery = build_workspace_context(*workspace_manifest_path,
+                                                               normalized_package_manifest,
+                                                               std::move(*package_manifest),
+                                                               normalized_sysroot_manifest);
+            reject_cross_profile_package_graph(workspace_discovery, input, *active_selection);
+            return workspace_discovery;
         }
         if (input.explicit_workspace_manifest_path.has_value()) {
             add_error(discovery.diagnostics,
@@ -528,7 +570,10 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
             workspace_manifest_path->parent_path().parent_path(), "ahfl.workspace.toml", boundary);
     }
 
-    return build_manifest_context(normalized_package_manifest, normalized_sysroot_manifest);
+    auto manifest_discovery =
+        build_manifest_context(normalized_package_manifest, normalized_sysroot_manifest);
+    reject_cross_profile_package_graph(manifest_discovery, input, *active_selection);
+    return manifest_discovery;
 }
 
 } // namespace ahfl::project_discovery
