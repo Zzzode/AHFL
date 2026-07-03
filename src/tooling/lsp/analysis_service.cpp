@@ -1,16 +1,13 @@
 #include "tooling/lsp/analysis_service.hpp"
 
 #include "ahfl/compiler/frontend/ast.hpp"
-#include "compiler/manifest/manifest.hpp"
 #include "compiler/package_graph/package_graph.hpp"
+#include "compiler/project_discovery/discovery.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <charconv>
-#include <cstdlib>
 #include <filesystem>
-#include <fstream>
-#include <sstream>
 #include <system_error>
 #include <vector>
 
@@ -93,263 +90,6 @@ namespace {
     return SourceRange{
         .begin_offset = 0,
         .end_offset = std::min<std::size_t>(source.content.size(), 1),
-    };
-}
-
-[[nodiscard]] bool read_plain_file(const std::filesystem::path &path, std::string &content) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return false;
-    }
-
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    content = buffer.str();
-    return true;
-}
-
-[[nodiscard]] std::optional<std::filesystem::path>
-find_nearest_named_file(const std::filesystem::path &start, std::string_view filename) {
-    if (start.empty()) {
-        return std::nullopt;
-    }
-
-    auto current = std::filesystem::path(AnalysisService::normalized_path_key(start));
-    while (!current.empty()) {
-        const auto candidate = current / std::string{filename};
-        std::error_code error;
-        if (std::filesystem::is_regular_file(candidate, error) && !error) {
-            return std::filesystem::path(AnalysisService::normalized_path_key(candidate));
-        }
-
-        const auto parent = current.parent_path();
-        if (parent == current || parent.empty()) {
-            break;
-        }
-        current = parent;
-    }
-
-    return std::nullopt;
-}
-
-[[nodiscard]] std::optional<std::filesystem::path>
-find_sysroot_manifest_from_directory(const std::filesystem::path &start) {
-    const auto candidate = std::filesystem::path(
-        AnalysisService::normalized_path_key(std::filesystem::path(start) / "std" / "ahfl.toml"));
-    std::error_code error;
-    if (std::filesystem::is_regular_file(candidate, error) && !error) {
-        return candidate;
-    }
-    return std::nullopt;
-}
-
-[[nodiscard]] std::optional<std::filesystem::path>
-find_lsp_sysroot_manifest(const std::vector<std::filesystem::path> &workspace_roots) {
-    if (const char *env_root = std::getenv("AHFL_SYSROOT");
-        env_root != nullptr && *env_root != '\0') {
-        if (auto manifest = find_sysroot_manifest_from_directory(env_root); manifest.has_value()) {
-            return manifest;
-        }
-    }
-
-    for (const auto &root : workspace_roots) {
-        if (auto manifest = find_sysroot_manifest_from_directory(root); manifest.has_value()) {
-            return manifest;
-        }
-    }
-
-    std::error_code error;
-    auto current = std::filesystem::current_path(error);
-    if (error) {
-        return std::nullopt;
-    }
-    current = std::filesystem::path(AnalysisService::normalized_path_key(current));
-    while (!current.empty()) {
-        if (auto manifest = find_sysroot_manifest_from_directory(current); manifest.has_value()) {
-            return manifest;
-        }
-        const auto parent = current.parent_path();
-        if (parent == current || parent.empty()) {
-            break;
-        }
-        current = parent;
-    }
-
-    return std::nullopt;
-}
-
-[[nodiscard]] std::optional<manifest::PackageManifest>
-load_lsp_package_manifest(const std::filesystem::path &manifest_path) {
-    std::string text;
-    if (!read_plain_file(manifest_path, text)) {
-        return std::nullopt;
-    }
-    auto parsed = manifest::parse_package_manifest(text);
-    if (parsed.has_errors() || !parsed.manifest.has_value()) {
-        return std::nullopt;
-    }
-    return std::move(*parsed.manifest);
-}
-
-[[nodiscard]] std::optional<manifest::WorkspaceManifest>
-load_lsp_workspace_manifest(const std::filesystem::path &manifest_path) {
-    std::string text;
-    if (!read_plain_file(manifest_path, text)) {
-        return std::nullopt;
-    }
-    auto parsed = manifest::parse_workspace_manifest(text);
-    if (parsed.has_errors() || !parsed.manifest.has_value()) {
-        return std::nullopt;
-    }
-    return std::move(*parsed.manifest);
-}
-
-[[nodiscard]] bool
-workspace_contains_package_manifest(const manifest::WorkspaceManifest &workspace,
-                                    const std::filesystem::path &workspace_manifest_path,
-                                    const std::filesystem::path &package_manifest_path) {
-    const auto workspace_root = std::filesystem::path(
-        AnalysisService::normalized_path_key(workspace_manifest_path.parent_path()));
-    const auto package_manifest =
-        std::filesystem::path(AnalysisService::normalized_path_key(package_manifest_path));
-    for (const auto &member : workspace.members) {
-        const auto member_manifest = std::filesystem::path(
-            AnalysisService::normalized_path_key(workspace_root / member / "ahfl.toml"));
-        if (member_manifest == package_manifest) {
-            return true;
-        }
-    }
-    return false;
-}
-
-struct LspPackageGraphInput {
-    package_graph::PackageGraph graph;
-    std::filesystem::path manifest_path;
-};
-
-[[nodiscard]] std::vector<std::string>
-exported_module_paths(const std::vector<manifest::ExportedModuleManifest> &modules) {
-    std::vector<std::string> paths;
-    paths.reserve(modules.size());
-    for (const auto &module : modules) {
-        paths.push_back(module.module_path);
-    }
-    return paths;
-}
-
-[[nodiscard]] package_graph::PackageGraph
-sysroot_only_graph_for_lsp(const manifest::PackageManifest &manifest,
-                           const std::filesystem::path &manifest_path) {
-    const auto normalized_manifest =
-        std::filesystem::path(AnalysisService::normalized_path_key(manifest_path));
-    const auto package_root = std::filesystem::path(
-        AnalysisService::normalized_path_key(normalized_manifest.parent_path()));
-    const auto module_root = std::filesystem::path(
-        AnalysisService::normalized_path_key(package_root / manifest.module_root));
-
-    package_graph::PackageGraph graph;
-    graph.packages.push_back(package_graph::PackageNode{
-        .id = package_graph::PackageId{0},
-        .source = package_graph::PackageSourceKind::Sysroot,
-        .name = manifest.package_name,
-        .version = manifest.package_version,
-        .kind = manifest.package_kind,
-        .module_prefix = manifest.module_prefix,
-        .package_root = package_root,
-        .module_root = module_root,
-        .manifest_path = normalized_manifest,
-        .checksum = {},
-        .exported_modules = exported_module_paths(manifest.exported_modules),
-        .compiler_intrinsics_allow = manifest.compiler_intrinsics_allow,
-        .targets = {},
-    });
-    graph.module_roots.push_back(package_graph::ModuleRootEntry{
-        .prefix = manifest.module_prefix,
-        .package = package_graph::PackageId{0},
-        .root = module_root,
-    });
-    return graph;
-}
-
-[[nodiscard]] bool is_lsp_sysroot_std_manifest(const manifest::PackageManifest &manifest) {
-    return manifest.package_name == "std" && manifest.package_kind == "standard-library" &&
-           manifest.module_prefix == "std";
-}
-
-[[nodiscard]] std::optional<LspPackageGraphInput>
-build_lsp_package_graph_for_source(const std::filesystem::path &source_path,
-                                   const std::vector<std::filesystem::path> &workspace_roots) {
-    const auto package_manifest_path =
-        find_nearest_named_file(source_path.parent_path(), "ahfl.toml");
-    if (!package_manifest_path.has_value()) {
-        return std::nullopt;
-    }
-
-    const auto package_manifest = load_lsp_package_manifest(*package_manifest_path);
-    if (!package_manifest.has_value()) {
-        return std::nullopt;
-    }
-
-    const auto normalized_package_manifest =
-        std::filesystem::path(AnalysisService::normalized_path_key(*package_manifest_path));
-    if (is_lsp_sysroot_std_manifest(*package_manifest)) {
-        return LspPackageGraphInput{
-            .graph = sysroot_only_graph_for_lsp(*package_manifest, normalized_package_manifest),
-            .manifest_path = normalized_package_manifest,
-        };
-    }
-
-    const auto sysroot_manifest = find_lsp_sysroot_manifest(workspace_roots);
-    if (!sysroot_manifest.has_value()) {
-        return std::nullopt;
-    }
-    const auto normalized_sysroot_manifest =
-        std::filesystem::path(AnalysisService::normalized_path_key(*sysroot_manifest));
-    if (normalized_package_manifest == normalized_sysroot_manifest) {
-        return LspPackageGraphInput{
-            .graph = sysroot_only_graph_for_lsp(*package_manifest, normalized_sysroot_manifest),
-            .manifest_path = normalized_sysroot_manifest,
-        };
-    }
-
-    auto workspace_manifest_path =
-        find_nearest_named_file(package_manifest_path->parent_path(), "ahfl.workspace.toml");
-    while (workspace_manifest_path.has_value()) {
-        const auto workspace_manifest = load_lsp_workspace_manifest(*workspace_manifest_path);
-        if (workspace_manifest.has_value() &&
-            workspace_contains_package_manifest(
-                *workspace_manifest, *workspace_manifest_path, *package_manifest_path)) {
-            auto result = package_graph::build_package_graph_from_workspace(
-                package_graph::WorkspaceBuildInput{
-                    .workspace_manifest_path = *workspace_manifest_path,
-                    .package_name = package_manifest->package_name,
-                    .sysroot_manifest_path = *sysroot_manifest,
-                });
-            if (!result.has_errors() && result.graph.has_value()) {
-                return LspPackageGraphInput{
-                    .graph = std::move(*result.graph),
-                    .manifest_path = *workspace_manifest_path,
-                };
-            }
-            return std::nullopt;
-        }
-
-        workspace_manifest_path = find_nearest_named_file(
-            workspace_manifest_path->parent_path().parent_path(), "ahfl.workspace.toml");
-    }
-
-    auto result =
-        package_graph::build_package_graph_from_manifests(package_graph::ManifestBuildInput{
-            .root_manifest_path = *package_manifest_path,
-            .sysroot_manifest_path = *sysroot_manifest,
-        });
-    if (result.has_errors() || !result.graph.has_value()) {
-        return std::nullopt;
-    }
-
-    return LspPackageGraphInput{
-        .graph = std::move(*result.graph),
-        .manifest_path = *package_manifest_path,
     };
 }
 
@@ -539,6 +279,33 @@ void collect_diagnostics_for_uri(std::vector<LspDiagnostic> &out,
     }
 }
 
+[[nodiscard]] LspDiagnostic
+project_discovery_diagnostic(const package_graph::Diagnostic &diagnostic,
+                             const LspSourceSnapshot &source) {
+    LspDiagnostic result;
+    result.severity = DiagnosticSeverity::Error;
+    result.message = diagnostic.message;
+    result.code = diagnostic.code.empty() ? "project.discovery" : diagnostic.code;
+    result.source = "ahfl";
+    result.range = source.source == nullptr
+                       ? Range{}
+                       : to_lsp_range(*source.source, fallback_range(*source.source));
+    return result;
+}
+
+void append_project_diagnostics(LspAnalysisSnapshot &snapshot,
+                                const std::string &uri,
+                                const std::vector<package_graph::Diagnostic> &diagnostics) {
+    const auto *source = snapshot.source_for_uri(uri);
+    if (source == nullptr) {
+        return;
+    }
+    snapshot.project_diagnostics.reserve(snapshot.project_diagnostics.size() + diagnostics.size());
+    for (const auto &diagnostic : diagnostics) {
+        snapshot.project_diagnostics.push_back(project_discovery_diagnostic(diagnostic, *source));
+    }
+}
+
 void index_source(LspAnalysisSnapshot &snapshot, LspSourceSnapshot source) {
     const auto index = snapshot.sources.size();
     if (!source.uri.empty()) {
@@ -590,6 +357,10 @@ const TypedProgram *LspAnalysisSnapshot::typed_program() const noexcept {
 std::vector<LspDiagnostic> LspAnalysisSnapshot::diagnostics_for_uri(std::string_view uri) const {
     std::vector<LspDiagnostic> diagnostics;
 
+    if (uri == requested_uri) {
+        diagnostics.insert(
+            diagnostics.end(), project_diagnostics.begin(), project_diagnostics.end());
+    }
     if (project_result) {
         collect_diagnostics_for_uri(
             diagnostics, project_result->diagnostics, *this, uri, "parse.diagnostic");
@@ -614,14 +385,19 @@ std::vector<LspDiagnostic> LspAnalysisSnapshot::diagnostics_for_uri(std::string_
 
 AnalysisService::AnalysisService(const DocumentStore &store) : store_(store) {}
 
-void AnalysisService::set_workspace_roots(std::vector<std::filesystem::path> roots) {
-    workspace_roots_.clear();
-    workspace_roots_.reserve(roots.size());
+void AnalysisService::set_workspace_folders(std::vector<std::filesystem::path> roots) {
+    workspace_folders_.clear();
+    workspace_folders_.reserve(roots.size());
     for (const auto &root : roots) {
         if (!root.empty()) {
-            workspace_roots_.push_back(std::filesystem::path(normalized_path_key(root)));
+            workspace_folders_.push_back(std::filesystem::path(normalized_path_key(root)));
         }
     }
+    invalidate_all();
+}
+
+void AnalysisService::set_sysroot_path(std::optional<std::filesystem::path> path) {
+    sysroot_path_ = std::move(path);
     invalidate_all();
 }
 
@@ -731,14 +507,23 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
     Validator validator;
 
     if (document_path.has_value()) {
-        const auto package_graph_input =
-            build_lsp_package_graph_for_source(*document_path, workspace_roots_);
-        if (package_graph_input.has_value()) {
+        std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
+        workspace_boundaries.reserve(workspace_folders_.size());
+        for (const auto &root : workspace_folders_) {
+            workspace_boundaries.push_back(project_discovery::WorkspaceBoundary{.root = root});
+        }
+        auto project_context =
+            project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
+                .document_path = *document_path,
+                .workspace_boundaries = std::move(workspace_boundaries),
+                .explicit_sysroot_path = sysroot_path_,
+            });
+        if (project_context.context.has_value()) {
             snapshot->project_aware = true;
-            snapshot->package_graph_manifest = package_graph_input->manifest_path;
+            snapshot->package_graph_manifest = project_context.context->graph_manifest_path;
 
             auto project_input = project_input_from_package_graph(
-                package_graph_input->graph, *document_path, open_document_overlays());
+                project_context.context->graph, *document_path, open_document_overlays());
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =
                 std::make_unique<ProjectParseResult>(std::move(project_result));
@@ -771,6 +556,23 @@ std::unique_ptr<LspAnalysisSnapshot> AnalysisService::build_snapshot(const std::
                 }
             }
 
+            build_hover_indices(*snapshot);
+            return snapshot;
+        }
+
+        if (project_context.project_manifest_found || project_context.has_errors()) {
+            snapshot->project_aware = project_context.project_manifest_found;
+            auto parse_result = frontend.parse_text(document->uri, document->text);
+            snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
+            index_source(*snapshot,
+                         LspSourceSnapshot{
+                             .uri = uri,
+                             .path = *document_path,
+                             .source = &snapshot->parse_result->source,
+                             .program = snapshot->parse_result->program.get(),
+                             .source_id = std::nullopt,
+                         });
+            append_project_diagnostics(*snapshot, uri, project_context.diagnostics);
             build_hover_indices(*snapshot);
             return snapshot;
         }

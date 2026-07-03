@@ -287,6 +287,55 @@ TEST_CASE("PackageGraph assigns sysroot std to PackageId(0) and root to PackageI
     CHECK(result.graph->module_roots[1].prefix == "refund_audit");
 }
 
+TEST_CASE("PackageGraph can build a sysroot-only graph for toolchain sources") {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto root_dir = std::filesystem::temp_directory_path() /
+                          ("ahfl_package_graph_sysroot_only_" + std::to_string(stamp));
+    const auto sysroot_dir = root_dir / "std";
+    std::error_code error;
+    REQUIRE(std::filesystem::create_directories(sysroot_dir, error));
+    REQUIRE(write_text_file(sysroot_dir / "prelude.ahfl", "module std::prelude;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "option.ahfl", "module std::option;\n"));
+    REQUIRE(write_text_file(sysroot_dir / "ahfl.toml", R"TOML(manifest_version = 1
+
+[package]
+name = "std"
+version = "0.1.0"
+edition = "2026"
+kind = "standard-library"
+
+[module]
+prefix = "std"
+root = "."
+
+[prelude]
+module = "std::prelude"
+injection = "explicit"
+
+[exports]
+modules = ["prelude", "option"]
+
+[compiler_intrinsics]
+allow = ["option_*"]
+)TOML"));
+
+    auto result = ahfl::package_graph::build_package_graph_from_sysroot(
+        ahfl::package_graph::SysrootBuildInput{
+            .sysroot_manifest_path = sysroot_dir / "ahfl.toml",
+        });
+    std::filesystem::remove_all(root_dir, error);
+
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.graph.has_value());
+    REQUIRE(result.graph->packages.size() == 1);
+    CHECK(result.graph->packages[0].id.value == 0);
+    CHECK(result.graph->packages[0].source == PackageSourceKind::Sysroot);
+    CHECK(result.graph->packages[0].name == "std");
+    REQUIRE(result.graph->module_roots.size() == 1);
+    CHECK(result.graph->module_roots[0].prefix == "std");
+    CHECK(result.graph->dependencies.empty());
+}
+
 TEST_CASE("PackageGraph rejects sysroot std manifests that violate RFC contract") {
     SUBCASE("module root") {
         auto sysroot = std_input();

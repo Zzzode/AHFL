@@ -543,7 +543,7 @@ hover_render_options_from_initialize(const json::JsonValue *params) {
 }
 
 [[nodiscard]] std::vector<std::filesystem::path>
-workspace_roots_from_initialize(const json::JsonValue *params) {
+workspace_folders_from_initialize(const json::JsonValue *params) {
     std::vector<std::filesystem::path> roots;
     if (params == nullptr) {
         return roots;
@@ -579,6 +579,35 @@ workspace_roots_from_initialize(const json::JsonValue *params) {
     }
 
     return roots;
+}
+
+[[nodiscard]] std::optional<std::filesystem::path>
+sysroot_path_from_initialize(const json::JsonValue *params) {
+    if (params == nullptr) {
+        return std::nullopt;
+    }
+    const auto *init_options = params->get("initializationOptions");
+    if (init_options == nullptr || !init_options->is_object()) {
+        return std::nullopt;
+    }
+    if (const auto *sysroot = init_options->get("sysroot"); sysroot != nullptr) {
+        if (const auto value = sysroot->as_string(); value.has_value() && !value->empty()) {
+            return std::filesystem::path(std::string(*value));
+        }
+    }
+    const auto *ahfl = init_options->get("ahfl");
+    if (ahfl == nullptr || !ahfl->is_object()) {
+        return std::nullopt;
+    }
+    const auto *sysroot = ahfl->get("sysroot");
+    if (sysroot == nullptr) {
+        return std::nullopt;
+    }
+    const auto value = sysroot->as_string();
+    if (!value.has_value() || value->empty()) {
+        return std::nullopt;
+    }
+    return std::filesystem::path(std::string(*value));
 }
 
 void append_workspace_folder_roots(std::vector<std::filesystem::path> &roots,
@@ -1172,8 +1201,9 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
 
 void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
-    workspace_roots_ = workspace_roots_from_initialize(req.params.get());
-    analysis_.set_workspace_roots(workspace_roots_);
+    workspace_folders_ = workspace_folders_from_initialize(req.params.get());
+    analysis_.set_workspace_folders(workspace_folders_);
+    analysis_.set_sysroot_path(sysroot_path_from_initialize(req.params.get()));
     hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
@@ -1266,9 +1296,9 @@ void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) 
         return;
     }
 
-    remove_workspace_folder_roots(workspace_roots_, event->get("removed"));
-    append_workspace_folder_roots(workspace_roots_, event->get("added"));
-    analysis_.set_workspace_roots(workspace_roots_);
+    remove_workspace_folder_roots(workspace_folders_, event->get("removed"));
+    append_workspace_folder_roots(workspace_folders_, event->get("added"));
+    analysis_.set_workspace_folders(workspace_folders_);
     send_diagnostic_refresh();
 }
 

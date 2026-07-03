@@ -18,6 +18,7 @@ target_link_libraries(ahfl_tooling_lsp
     PUBLIC
         ahfl_compiler_semantics
         ahfl_compiler_package_graph
+        ahfl_compiler_project_discovery
         ahfl_base_json
         ahfl_tooling_formatter
 )

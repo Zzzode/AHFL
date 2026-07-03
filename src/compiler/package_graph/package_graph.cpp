@@ -821,6 +821,32 @@ BuildResult build_package_graph_from_workspace(const WorkspaceBuildInput &input)
     });
 }
 
+BuildResult build_package_graph_from_sysroot(const SysrootBuildInput &input) {
+    BuildResult result;
+
+    auto sysroot = load_manifest_package(
+        input.sysroot_manifest_path, PackageSourceKind::Sysroot, result.diagnostics, "sysroot std");
+    if (result.has_errors() || !sysroot.has_value()) {
+        return result;
+    }
+
+    PackageGraph graph;
+    graph.packages.push_back(make_node(PackageId{0}, *sysroot));
+    graph.module_roots.push_back(ModuleRootEntry{
+        .prefix = sysroot->manifest.module_prefix,
+        .package = PackageId{0},
+        .root = module_root_for(*sysroot),
+    });
+
+    validate_sysroot_std_contract(*sysroot, result.diagnostics);
+    validate_exported_modules(IndexedInput{.id = PackageId{0}, .input = &*sysroot},
+                              result.diagnostics);
+    if (!result.has_errors()) {
+        result.graph = std::move(graph);
+    }
+    return result;
+}
+
 std::string_view source_kind_name(PackageSourceKind kind) noexcept {
     switch (kind) {
     case PackageSourceKind::Sysroot:

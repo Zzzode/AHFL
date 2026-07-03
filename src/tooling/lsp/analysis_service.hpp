@@ -36,6 +36,7 @@ struct LspAnalysisSnapshot {
     std::uint64_t workspace_revision{0};
     bool project_aware{false};
     std::optional<std::filesystem::path> package_graph_manifest;
+    std::vector<LspDiagnostic> project_diagnostics;
 
     std::unique_ptr<ParseResult> parse_result;
     std::unique_ptr<ProjectParseResult> project_result;
@@ -60,7 +61,8 @@ class AnalysisService {
   public:
     explicit AnalysisService(const DocumentStore &store);
 
-    void set_workspace_roots(std::vector<std::filesystem::path> roots);
+    void set_workspace_folders(std::vector<std::filesystem::path> roots);
+    void set_sysroot_path(std::optional<std::filesystem::path> path);
     void invalidate_all();
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
@@ -76,7 +78,8 @@ class AnalysisService {
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
 
     const DocumentStore &store_;
-    std::vector<std::filesystem::path> workspace_roots_;
+    std::vector<std::filesystem::path> workspace_folders_;
+    std::optional<std::filesystem::path> sysroot_path_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
     std::size_t analysis_runs_{0};
 };

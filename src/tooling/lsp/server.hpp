@@ -26,7 +26,7 @@ class LspServer {
     DocumentStore store_;
     AnalysisService analysis_;
     HoverRenderOptions hover_options_;
-    std::vector<std::filesystem::path> workspace_roots_;
+    std::vector<std::filesystem::path> workspace_folders_;
     bool initialized_{false};
     bool shutdown_requested_{false};
     bool trace_enabled_{false};

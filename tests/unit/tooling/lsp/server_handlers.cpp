@@ -6,13 +6,15 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
-#include <functional>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {
@@ -21,6 +23,76 @@ using namespace ahfl::lsp;
 
 int test_count = 0;
 int pass_count = 0;
+
+class ScopedEnvVar {
+  public:
+    ScopedEnvVar(const char *name, const std::string &value) : name_(name) {
+        if (const char *existing = std::getenv(name); existing != nullptr) {
+            old_value_ = existing;
+        }
+        ::setenv(name, value.c_str(), 1);
+    }
+
+    ~ScopedEnvVar() {
+        if (old_value_.has_value()) {
+            ::setenv(name_, old_value_->c_str(), 1);
+        } else {
+            ::unsetenv(name_);
+        }
+    }
+
+    ScopedEnvVar(const ScopedEnvVar &) = delete;
+    ScopedEnvVar &operator=(const ScopedEnvVar &) = delete;
+
+  private:
+    const char *name_;
+    std::optional<std::string> old_value_;
+};
+
+class ScopedUnsetEnvVar {
+  public:
+    explicit ScopedUnsetEnvVar(const char *name) : name_(name) {
+        if (const char *existing = std::getenv(name); existing != nullptr) {
+            old_value_ = existing;
+        }
+        ::unsetenv(name);
+    }
+
+    ~ScopedUnsetEnvVar() {
+        if (old_value_.has_value()) {
+            ::setenv(name_, old_value_->c_str(), 1);
+        }
+    }
+
+    ScopedUnsetEnvVar(const ScopedUnsetEnvVar &) = delete;
+    ScopedUnsetEnvVar &operator=(const ScopedUnsetEnvVar &) = delete;
+
+  private:
+    const char *name_;
+    std::optional<std::string> old_value_;
+};
+
+class ScopedCurrentPath {
+  public:
+    explicit ScopedCurrentPath(const std::filesystem::path &path) {
+        std::error_code error;
+        old_path_ = std::filesystem::current_path(error);
+        if (!error) {
+            std::filesystem::current_path(path, error);
+        }
+    }
+
+    ~ScopedCurrentPath() {
+        std::error_code error;
+        std::filesystem::current_path(old_path_, error);
+    }
+
+    ScopedCurrentPath(const ScopedCurrentPath &) = delete;
+    ScopedCurrentPath &operator=(const ScopedCurrentPath &) = delete;
+
+  private:
+    std::filesystem::path old_path_;
+};
 
 void check(bool condition, const std::string &test_name) {
     ++test_count;
@@ -355,11 +427,12 @@ void check_hover_integration_fixture_coverage() {
     // server_handlers.cpp lives at tests/unit/tooling/lsp/server_handlers.cpp;
     // walk up 4 directories to reach the repo root.
     const std::filesystem::path this_file(__FILE__);
-    const auto repo_root = this_file.parent_path()   // tests/unit/tooling/lsp
-                               .parent_path()        // tests/unit/tooling
-                               .parent_path()        // tests/unit
-                               .parent_path()        // tests
-                               .parent_path();       // repo root
+    const auto repo_root = this_file
+                               .parent_path()  // tests/unit/tooling/lsp
+                               .parent_path()  // tests/unit/tooling
+                               .parent_path()  // tests/unit
+                               .parent_path()  // tests
+                               .parent_path(); // repo root
     const auto root = repo_root / "tests" / "integration" / "check_ok";
     const auto entry = root / "app" / "main.ahfl";
     const auto entry_uri = AnalysisService::uri_from_path(entry);
@@ -371,7 +444,7 @@ void check_hover_integration_fixture_coverage() {
         .text = read_file(entry),
     });
     AnalysisService analysis(store);
-    analysis.set_workspace_roots({root});
+    analysis.set_workspace_folders({root});
 
     const auto *snapshot = analysis.snapshot_for_uri(entry_uri);
     check(snapshot != nullptr, "hoverCoverage.integration.snapshot_exists");
@@ -498,6 +571,14 @@ std::string initialize_body(const std::filesystem::path &root) {
            AnalysisService::uri_from_path(root) + R"("}})";
 }
 
+std::string initialize_body_with_sysroot(const std::filesystem::path &root,
+                                         const std::filesystem::path &sysroot) {
+    return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
+           AnalysisService::uri_from_path(root) +
+           R"(","initializationOptions":{"ahfl":{"sysroot":")" +
+           escape_json_string(sysroot.string()) + R"("}}}})";
+}
+
 std::string diagnostics_output_for_source(const std::string &source) {
     const auto full_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
@@ -581,8 +662,7 @@ void test_prepare_rename_returns_range_or_null() {
 
     const std::string decl_params =
         R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":7}})";
-    const auto decl_output =
-        run_handler_request(source, "textDocument/prepareRename", decl_params);
+    const auto decl_output = run_handler_request(source, "textDocument/prepareRename", decl_params);
     const auto decl_response = response_body_for_id(decl_output, 2);
     check(decl_response.find("\"start\":{\"line\":0,\"character\":7}") != std::string::npos,
           "prepareRename.declaration_start");
@@ -591,8 +671,7 @@ void test_prepare_rename_returns_range_or_null() {
 
     const std::string ref_params =
         R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":5,"character":13}})";
-    const auto ref_output =
-        run_handler_request(source, "textDocument/prepareRename", ref_params);
+    const auto ref_output = run_handler_request(source, "textDocument/prepareRename", ref_params);
     const auto ref_response = response_body_for_id(ref_output, 2);
     check(ref_response.find("\"start\":{\"line\":5,\"character\":13}") != std::string::npos,
           "prepareRename.reference_start");
@@ -745,7 +824,8 @@ void test_diagnostic_refresh_notifications_on_document_changes() {
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         did_open_body(uri, 1, "struct Msg {\n    value: String;\n}\n"),
         did_change_body(uri, 2, "struct Msg {\n    value: Int;\n}\n"),
-        R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":")" + uri + R"("}}})",
+        R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":")" +
+            uri + R"("}}})",
         R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
     });
     check(count_substring(close_output, "\"method\":\"$/diagnostic/refresh\"") == 3,
@@ -795,7 +875,8 @@ void test_text_document_diagnostic_previous_result_id_unchanged() {
     const auto first_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         did_open_body(uri, 1, source),
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            uri + R"("}}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto first_response = response_body_for_id(first_output, 2);
@@ -807,13 +888,13 @@ void test_text_document_diagnostic_previous_result_id_unchanged() {
     const auto second_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         did_open_body(uri, 1, source),
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("},"previousResultId":")" + result_id + R"("}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            uri + R"("},"previousResultId":")" + result_id + R"("}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto second_response = response_body_for_id(second_output, 2);
     const auto second_result_id = extract_result_id(second_response);
-    check(second_result_id == result_id,
-          "textDocumentDiagnostic.prev_id_unchanged_same_result_id");
+    check(second_result_id == result_id, "textDocumentDiagnostic.prev_id_unchanged_same_result_id");
     check(second_response.find("\"items\":[]") != std::string::npos,
           "textDocumentDiagnostic.prev_id_unchanged_empty_items");
     check(second_response.find("\"kind\":\"full\"") != std::string::npos,
@@ -823,13 +904,13 @@ void test_text_document_diagnostic_previous_result_id_unchanged() {
     const auto third_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         did_open_body(uri, 1, source),
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("},"previousResultId":"fake-id-123"}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            uri + R"("},"previousResultId":"fake-id-123"}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto third_response = response_body_for_id(third_output, 2);
     const auto third_result_id = extract_result_id(third_response);
-    check(third_result_id == result_id,
-          "textDocumentDiagnostic.prev_id_mismatch_same_result_id");
+    check(third_result_id == result_id, "textDocumentDiagnostic.prev_id_mismatch_same_result_id");
     // With a valid source and no errors, items may be empty or not - just check resultId matches
 }
 
@@ -945,14 +1026,14 @@ void test_workspace_diagnostic_previous_result_ids_filter() {
     check(!types_result_id.empty(), "workspaceDiagnostic.prev.types_result_id_found");
 
     // Second pass: send both previousResultIds - both documents unchanged, so both should be skipped
-    const auto prev_ids_json =
-        "{\"" + main_uri + "\":\"" + main_result_id + "\",\"" + types_uri + "\":\"" +
-        types_result_id + "\"}";
+    const auto prev_ids_json = "{\"" + main_uri + "\":\"" + main_result_id + "\",\"" + types_uri +
+                               "\":\"" + types_result_id + "\"}";
     const auto second_output = run_lsp_messages({
         initialize_body(root),
         did_open_body(main_uri, 1, main_source),
         did_open_body(types_uri, 1, types_source),
-        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" + prev_ids_json + R"(}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" +
+            prev_ids_json + R"(}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto second_response = response_body_for_id(second_output, 2);
@@ -963,15 +1044,16 @@ void test_workspace_diagnostic_previous_result_ids_filter() {
     // Third pass: change types source, send both previousResultIds
     // Only types should appear in the response
     const std::string changed_types_source = "module app::types;\n"
-                                              "\n"
-                                              "struct Msg {\n"
-                                              "    value: Int;\n"
-                                              "}\n";
+                                             "\n"
+                                             "struct Msg {\n"
+                                             "    value: Int;\n"
+                                             "}\n";
     const auto third_output = run_lsp_messages({
         initialize_body(root),
         did_open_body(main_uri, 1, main_source),
         did_open_body(types_uri, 1, changed_types_source),
-        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" + prev_ids_json + R"(}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" +
+            prev_ids_json + R"(}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto third_response = response_body_for_id(third_output, 2);
@@ -1012,10 +1094,8 @@ void test_workspace_diagnostic_reports_unopened_project_sources() {
     });
 
     const auto response = response_body_for_id(output, 2);
-    check(response.find("\"items\":[") != std::string::npos,
-          "workspaceDiagnostic.items_array");
-    check(response.find(main_uri) != std::string::npos,
-          "workspaceDiagnostic.includes_open_entry");
+    check(response.find("\"items\":[") != std::string::npos, "workspaceDiagnostic.items_array");
+    check(response.find(main_uri) != std::string::npos, "workspaceDiagnostic.includes_open_entry");
     check(response.find(types_uri) != std::string::npos,
           "workspaceDiagnostic.includes_unopened_import");
     check(response.find("\"version\":null") != std::string::npos,
@@ -1065,9 +1145,8 @@ void test_watched_file_change_invalidates_project_source_graph() {
         LspMessageStep{.body = workspace_diagnostic_before},
         LspMessageStep{
             .body = watched_change,
-            .before = [types_path, broken_types_source]() {
-                write_file(types_path, broken_types_source);
-            },
+            .before = [types_path,
+                       broken_types_source]() { write_file(types_path, broken_types_source); },
         },
         LspMessageStep{.body = workspace_diagnostic_after},
         LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
@@ -1458,7 +1537,7 @@ void test_package_graph_workspace_rejects_private_dependency_module() {
     });
 
     AnalysisService analysis(store);
-    analysis.set_workspace_roots({root});
+    analysis.set_workspace_folders({root});
 
     const auto *snapshot = analysis.snapshot_for_uri(app_uri);
     check(snapshot != nullptr, "package_graph_workspace_private_module.snapshot_exists");
@@ -1637,6 +1716,7 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
                "\n"
                "enum Option<T> { Some(T), None, }\n");
     write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    const ScopedEnvVar sysroot_env("AHFL_SYSROOT", root.string());
 
     const auto collections_uri = AnalysisService::uri_from_path(collections_path);
     DocumentStore store;
@@ -1648,7 +1728,7 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
     });
 
     AnalysisService analysis(store);
-    analysis.set_workspace_roots({root});
+    analysis.set_workspace_folders({root});
 
     const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
     check(snapshot != nullptr, "sysroot_std.snapshot_exists");
@@ -1659,10 +1739,10 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
     check(snapshot->project_aware, "sysroot_std.project_aware");
     check(snapshot->package_graph_manifest.has_value(), "sysroot_std.manifest_recorded");
     if (snapshot->package_graph_manifest.has_value()) {
-        check(*snapshot->package_graph_manifest ==
-                  std::filesystem::path(
-                      AnalysisService::normalized_path_key(std_root / "ahfl.toml")),
-              "sysroot_std.manifest_is_std");
+        check(
+            *snapshot->package_graph_manifest ==
+                std::filesystem::path(AnalysisService::normalized_path_key(std_root / "ahfl.toml")),
+            "sysroot_std.manifest_is_std");
     }
 
     const auto diagnostics = snapshot->diagnostics_for_uri(collections_uri);
@@ -1694,6 +1774,7 @@ void check_std_json_lsp_project_analysis(const std::filesystem::path &std_root,
                                          std::string_view json_source,
                                          std::vector<std::filesystem::path> workspace_roots,
                                          std::string_view label) {
+    const ScopedEnvVar sysroot_env("AHFL_SYSROOT", std_root.parent_path().string());
     const auto uri = AnalysisService::uri_from_path(json_path);
     DocumentStore store;
     store.open(TextDocumentItem{
@@ -1704,7 +1785,7 @@ void check_std_json_lsp_project_analysis(const std::filesystem::path &std_root,
     });
 
     AnalysisService analysis(store);
-    analysis.set_workspace_roots(std::move(workspace_roots));
+    analysis.set_workspace_folders(std::move(workspace_roots));
 
     const auto *snapshot = analysis.snapshot_for_uri(uri);
     check(snapshot != nullptr, std::string(label) + ".snapshot_exists");
@@ -1763,6 +1844,197 @@ void test_sysroot_std_manifest_detected_without_workspace_root() {
         std_root, json_path, json_source, {}, "sysroot_std_no_workspace_root");
 }
 
+void test_lsp_initialization_sysroot_option_selects_toolchain_sysroot() {
+    const auto root = make_temp_project("sysroot_std_initialization_option");
+    const auto std_root = root / "std";
+    const auto json_path = std_root / "json.ahfl";
+    const std::string json_source = "module std::json;\n"
+                                    "import std::collections as collections;\n"
+                                    "import std::option as option;\n"
+                                    "\n"
+                                    "type List<T> = collections::List<T>;\n"
+                                    "type MaybeList<T> = option::Option<List<T>>;\n";
+    write_minimal_std_sources(std_root, json_path, json_source);
+
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(std_root, root),
+        did_open_body(json_uri, 1, json_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            json_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find("unknown type 'collections::List'") == std::string::npos,
+          "sysroot_std_initialization_option.std_imports_resolve");
+    check(output.find("unknown type 'option::Option'") == std::string::npos,
+          "sysroot_std_initialization_option.option_imports_resolve");
+}
+
+void test_workspace_manifest_does_not_capture_unlisted_nested_package() {
+    const auto root = make_temp_project("workspace_unlisted_nested_package");
+    const auto app_root = root / "packages" / "app";
+    const auto standalone_root = root / "packages" / "standalone";
+    const auto main_path = standalone_root / "src" / "main.ahfl";
+    const auto types_path = standalone_root / "src" / "types.ahfl";
+    write_workspace_manifest(root, "\"packages/app\"");
+    write_package_manifest(app_root, "listed-app", "listed", "\"main\"");
+    write_package_manifest(standalone_root, "standalone", "standalone", "\"main\", \"types\"");
+
+    const std::string main_source = "module standalone::main;\n"
+                                    "import standalone::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path,
+               "module standalone::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: String;\n"
+               "}\n");
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+    check(snapshot != nullptr, "workspace_unlisted_nested.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+    check(snapshot->project_aware, "workspace_unlisted_nested.project_aware");
+    check(snapshot->package_graph_manifest.has_value(),
+          "workspace_unlisted_nested.manifest_recorded");
+    if (snapshot->package_graph_manifest.has_value()) {
+        check(*snapshot->package_graph_manifest ==
+                  std::filesystem::path(
+                      AnalysisService::normalized_path_key(standalone_root / "ahfl.toml")),
+              "workspace_unlisted_nested.uses_package_manifest");
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(main_uri);
+    const auto has_unknown_msg =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown type 'types::Msg'") != std::string::npos;
+        });
+    check(!has_unknown_msg, "workspace_unlisted_nested.local_import_resolves");
+}
+
+void test_lsp_project_discovery_ignores_process_cwd_sysroot_probe() {
+    const ScopedUnsetEnvVar unset_sysroot("AHFL_SYSROOT");
+    const auto root = make_temp_project("cwd_independent_project_discovery");
+    const auto poison_root = make_temp_project("cwd_poison_sysroot");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "cwd-independent", "app", "\"main\", \"types\"");
+    write_file(poison_root / "std" / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"not-std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"library\"\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path,
+               "module app::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: String;\n"
+               "}\n");
+    const ScopedCurrentPath cwd(poison_root);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+    check(snapshot != nullptr, "cwd_independent.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+    check(snapshot->project_aware, "cwd_independent.project_aware");
+    const auto diagnostics = snapshot->diagnostics_for_uri(main_uri);
+    const auto has_poisoned_sysroot =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("not-std") != std::string::npos ||
+                   diagnostic.message.find("sysroot package must be standard-library package") !=
+                       std::string::npos;
+        });
+    check(!has_poisoned_sysroot, "cwd_independent.ignores_process_cwd_sysroot");
+}
+
+void test_project_graph_error_does_not_fall_back_to_single_file_semantics() {
+    const auto root = make_temp_project("project_error_no_single_file_fallback");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "project-error", "app", "\"main\"");
+    const std::string source = "module app::main;\n"
+                               "import app::types as types;\n"
+                               "\n"
+                               "struct Use {\n"
+                               "    payload: types::Msg;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    analysis.set_sysroot_path(root / "missing-sysroot");
+
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    check(snapshot != nullptr, "project_error_no_fallback.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(uri);
+    const auto has_sysroot_error =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("failed to open sysroot std manifest") !=
+                       std::string::npos ||
+                   diagnostic.message.find("failed to open sysroot std") != std::string::npos;
+        });
+    const auto has_unknown_type =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown type 'types::Msg'") != std::string::npos;
+        });
+    check(has_sysroot_error, "project_error_no_fallback.sysroot_diagnostic");
+    check(!has_unknown_type, "project_error_no_fallback.no_single_file_unknown_type");
+}
+
 void test_package_graph_manifest_does_not_inject_prelude() {
     const auto root = make_temp_project("package_graph_explicit_prelude");
     const auto source_path = root / "src" / "main.ahfl";
@@ -1785,7 +2057,7 @@ void test_package_graph_manifest_does_not_inject_prelude() {
     });
 
     AnalysisService analysis(store);
-    analysis.set_workspace_roots({root});
+    analysis.set_workspace_folders({root});
 
     const auto *snapshot = analysis.snapshot_for_uri(uri);
     check(snapshot != nullptr, "package_graph_explicit_prelude.snapshot_exists");
@@ -2187,22 +2459,21 @@ void test_hover_service_payload_contract() {
 void test_hover_trait_where_bounds() {
     // h-3: trait-level where-clause bounds must surface in hover as
     // individual "Bound: <subject>: `Trait` + `Trait`" facts.
-    const std::string source =
-        "trait Display {\n"
-        "}\n"
-        "\n"
-        "trait Hash {\n"
-        "}\n"
-        "\n"
-        "trait Foo<T> where T: Display + Hash {\n"
-        "    fn describe(self) -> String;\n"
-        "}\n"
-        "\n"
-        "fn use_foo<U>(x: U) -> String\n"
-        "    where U: Foo<Int>\n"
-        "{\n"
-        "    return \"ok\";\n"
-        "}\n";
+    const std::string source = "trait Display {\n"
+                               "}\n"
+                               "\n"
+                               "trait Hash {\n"
+                               "}\n"
+                               "\n"
+                               "trait Foo<T> where T: Display + Hash {\n"
+                               "    fn describe(self) -> String;\n"
+                               "}\n"
+                               "\n"
+                               "fn use_foo<U>(x: U) -> String\n"
+                               "    where U: Foo<Int>\n"
+                               "{\n"
+                               "    return \"ok\";\n"
+                               "}\n";
 
     DocumentStore store;
     store.open(TextDocumentItem{
@@ -2224,8 +2495,7 @@ void test_hover_trait_where_bounds() {
 
     // Hover over the `Foo` reference at the where clause in use_foo (occurrence 1
     // picks the "Foo<Int>" site, not the trait declaration).
-    const auto payload =
-        hover.payload_at(*snapshot, *lsp_source, position_of(source, "Foo<Int>"));
+    const auto payload = hover.payload_at(*snapshot, *lsp_source, position_of(source, "Foo<Int>"));
     check(payload.has_value(), "hoverTraitWhere.payload_exists");
     if (!payload.has_value()) {
         return;
@@ -2304,25 +2574,23 @@ void test_signature_help_keyword_family() {
     // placed (a) right after the open-paren (activeParameter=0), (b) after a
     // comma following the first argument (activeParameter=1), and (c) on a
     // non-keyword identifier that should return null.
-    const std::string prefix =
-        "struct M { v: String; }\n"
-        "\n"
-        "agent A {\n"
-        "    input: M;\n"
-        "    context: M;\n"
-        "    output: M;\n"
-        "    states: [Init, Done];\n"
-        "    initial: Init;\n"
-        "    final: [Done];\n"
-        "    transition Init -> Done;\n"
-        "}\n"
-        "\n"
-        "flow for A {\n"
-        "    state Init {\n";
-    const std::string suffix =
-        "        goto Done;\n"
-        "    }\n"
-        "}\n";
+    const std::string prefix = "struct M { v: String; }\n"
+                               "\n"
+                               "agent A {\n"
+                               "    input: M;\n"
+                               "    context: M;\n"
+                               "    output: M;\n"
+                               "    states: [Init, Done];\n"
+                               "    initial: Init;\n"
+                               "    final: [Done];\n"
+                               "    transition Init -> Done;\n"
+                               "}\n"
+                               "\n"
+                               "flow for A {\n"
+                               "    state Init {\n";
+    const std::string suffix = "        goto Done;\n"
+                               "    }\n"
+                               "}\n";
 
     auto run_case = [&](const std::string &stmt_line,
                         const std::string &keyword,
@@ -2358,12 +2626,12 @@ void test_signature_help_keyword_family() {
         const uint32_t stmt_line_no = 14;
         // cursor_offset_inside_stmt is relative to stmt_line text (0-based).
         const uint32_t ch =
-            static_cast<uint32_t>(indent.size()) +
-            static_cast<uint32_t>(cursor_offset_inside_stmt);
+            static_cast<uint32_t>(indent.size()) + static_cast<uint32_t>(cursor_offset_inside_stmt);
         const std::string params =
             R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
             std::to_string(stmt_line_no) + R"(,"character":)" + std::to_string(ch) + R"(}})";
-        const std::string response = run_handler_request(source, "textDocument/signatureHelp", params);
+        const std::string response =
+            run_handler_request(source, "textDocument/signatureHelp", params);
 
         if (!label_needle.empty()) {
             check(response.find(label_needle) != std::string::npos,
@@ -2413,55 +2681,75 @@ void test_signature_help_keyword_family() {
     // -- assert --
     // Case 1: cursor right after `assert(` -> activeParameter=0
     // stmt = `assert(` - cursor offset = 7 (after '(')
-    run_case("assert(", "assert", 7,
+    run_case("assert(",
+             "assert",
+             7,
              "\"label\":\"assert(condition: Bool[, message: String])\"",
              "Predicate assertion; throws assertion failure when condition is False",
-             2, 0);
+             2,
+             0);
     // Case 2: after first arg + comma: `assert(x, ` cursor offset = 10
-    run_case("assert(x, ", "assert", 10,
+    run_case("assert(x, ",
+             "assert",
+             10,
              "\"label\":\"assert(condition: Bool[, message: String])\"",
              "Predicate assertion; throws assertion failure when condition is False",
-             2, 1);
+             2,
+             1);
     // Case 3 (negative): cursor after a regular identifier that is not in family.
     // Use a `foo(` call; expect null because foo is not declared.
-    run_case("foo(", "assert_not_family", 4,
-             "", "", 0, std::nullopt);
+    run_case("foo(", "assert_not_family", 4, "", "", 0, std::nullopt);
 
     // -- unwrap --
-    run_case("unwrap(", "unwrap", 7,
+    run_case("unwrap(",
+             "unwrap",
+             7,
              R"("label":"unwrap(value: Option<T>) -> T")",
              "Optional deconstructor; if value is Some<T> returns T",
-             1, 0);
-    run_case("unwrap(x, ", "unwrap", 10,
+             1,
+             0);
+    run_case("unwrap(x, ",
+             "unwrap",
+             10,
              R"("label":"unwrap(value: Option<T>) -> T")",
              "Optional deconstructor; if value is Some<T> returns T",
-             1, 1);
-    run_case("bar(", "unwrap_not_family", 4,
-             "", "", 0, std::nullopt);
+             1,
+             1);
+    run_case("bar(", "unwrap_not_family", 4, "", "", 0, std::nullopt);
 
     // -- requires --
-    run_case("requires(", "requires", 9,
+    run_case("requires(",
+             "requires",
+             9,
              "\"label\":\"requires(condition: Bool[, message: String])\"",
              "Contract requirement; fails contract evaluation",
-             2, 0);
-    run_case("requires(x, ", "requires", 12,
+             2,
+             0);
+    run_case("requires(x, ",
+             "requires",
+             12,
              "\"label\":\"requires(condition: Bool[, message: String])\"",
              "Contract requirement; fails contract evaluation",
-             2, 1);
-    run_case("baz(", "requires_not_family", 4,
-             "", "", 0, std::nullopt);
+             2,
+             1);
+    run_case("baz(", "requires_not_family", 4, "", "", 0, std::nullopt);
 
     // -- unreachable --
-    run_case("unreachable(", "unreachable", 12,
+    run_case("unreachable(",
+             "unreachable",
+             12,
              "\"label\":\"unreachable([message: String])\"",
              "Unreachable code marker; if ever executed raises kind: UNREACHABLE_EXECUTED",
-             1, 0);
-    run_case("unreachable(, ", "unreachable", 14,
+             1,
+             0);
+    run_case("unreachable(, ",
+             "unreachable",
+             14,
              "\"label\":\"unreachable([message: String])\"",
              "Unreachable code marker; if ever executed raises kind: UNREACHABLE_EXECUTED",
-             1, 1);
-    run_case("qux(", "unreachable_not_family", 4,
-             "", "", 0, std::nullopt);
+             1,
+             1);
+    run_case("qux(", "unreachable_not_family", 4, "", "", 0, std::nullopt);
 }
 
 void test_completion_type_member_enum_state_and_workflow_contexts() {
@@ -2671,14 +2959,14 @@ void test_code_action_qf_duplicate_struct_related_navigation() {
         did_open_body(a_uri, 1, a_source),
         did_open_body(AnalysisService::uri_from_path(b_path), 1, b_source),
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeAction","params":{"textDocument":{"uri":")" +
-            a_uri + R"("},"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":8}}}})",
+            a_uri +
+            R"("},"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":8}}}})",
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
 
     const auto response = response_body_for_id(output, 2);
     // Non-empty result array is the minimum assertion.
-    check(response.find("\"result\":[") != std::string::npos,
-          "codeAction.qf_dup.result_is_array");
+    check(response.find("\"result\":[") != std::string::npos, "codeAction.qf_dup.result_is_array");
     // The related navigation action is a quick-fix that mentions the
     // other module name in its title.
     check(response.find("\"kind\":\"quickfix\"") != std::string::npos,
@@ -2767,7 +3055,8 @@ void test_hover_target_tie_break_order_contract() {
         "flow for A {\n"
         "    state Init {\n"
         "        let made = Request { category: \"ok\", priority: Priority::High, retries: 1 };\n"
-        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 };\n"
+        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 "
+        "};\n"
         "        goto Done;\n"
         "    }\n"
         "}\n";
@@ -2778,8 +3067,7 @@ void test_hover_target_tie_break_order_contract() {
     // (`Priority`).  This matches real developer behavior and ensures the
     // cursor position lands inside the narrowed range used by the
     // EnumLiteral write-side (last_identifier_range).
-    const auto rich =
-        run_hover_request_with_init(source, "High, retries", kRichInit);
+    const auto rich = run_hover_request_with_init(source, "High, retries", kRichInit);
 
     // Priority-0 EnumLiteral payload markers: headline "enum variant" OR
     // the signature block that wraps "Priority::High" in backticks (both are
@@ -2864,8 +3152,8 @@ void test_hover_target_tie_break_order_contract() {
     // identifier position of the DeclarationName target for the enum type.
     // This occurrence is unique (the input: and output: lines use
     // `Priority;` / `Priority,\n` — never `Priority {\n`).
-    const auto on_enum_decl = run_hover_request_with_init(
-        enum_decl_source, "Priority {\n", kRichInit);
+    const auto on_enum_decl =
+        run_hover_request_with_init(enum_decl_source, "Priority {\n", kRichInit);
     // DeclarationName / EnumType payload: headline "enum" or backticked name.
     check(on_enum_decl.find("enum") != std::string::npos ||
               on_enum_decl.find("`Priority`") != std::string::npos,
@@ -2891,34 +3179,32 @@ void test_hover_target_tie_break_order_contract() {
     //   Typechecker fires typecheck.TYPE_MISMATCH at the literal range; the
     //   range also hosts a literal-expression target, so we get a same-range
     //   tie.
-    const std::string diag_source =
-        "struct Ctx {\n"
-        "    counter: Int = 0;\n"
-        "}\n"
-        "\n"
-        "agent A {\n"
-        "    input: Ctx;\n"
-        "    context: Ctx;\n"
-        "    output: Ctx;\n"
-        "    states: [Init, Done];\n"
-        "    initial: Init;\n"
-        "    final: [Done];\n"
-        "    capabilities: [];\n"
-        "    transition Init -> Done;\n"
-        "}\n"
-        "\n"
-        "flow for A {\n"
-        "    state Init {\n"
-        // Bool-bound = Int-literal 1 → TYPE_MISMATCH at range of `1`.
-        "        let ok: Bool = 1;\n"
-        "        goto Done;\n"
-        "    }\n"
-        "}\n";
+    const std::string diag_source = "struct Ctx {\n"
+                                    "    counter: Int = 0;\n"
+                                    "}\n"
+                                    "\n"
+                                    "agent A {\n"
+                                    "    input: Ctx;\n"
+                                    "    context: Ctx;\n"
+                                    "    output: Ctx;\n"
+                                    "    states: [Init, Done];\n"
+                                    "    initial: Init;\n"
+                                    "    final: [Done];\n"
+                                    "    capabilities: [];\n"
+                                    "    transition Init -> Done;\n"
+                                    "}\n"
+                                    "\n"
+                                    "flow for A {\n"
+                                    "    state Init {\n"
+                                    // Bool-bound = Int-literal 1 → TYPE_MISMATCH at range of `1`.
+                                    "        let ok: Bool = 1;\n"
+                                    "        goto Done;\n"
+                                    "    }\n"
+                                    "}\n";
     // Needle "= 1;\n" — needle[0] is `=`; we want the `1`.  Use "1;\n"
     // so position_of() lands on `1`.  This occurrence is unique because the
     // only other literal is `counter: Int = 0;` (≠ "1;\n").
-    const auto on_mismatch = run_hover_request_with_init(
-        diag_source, "1;\n", kRichInit);
+    const auto on_mismatch = run_hover_request_with_init(diag_source, "1;\n", kRichInit);
     // Diagnostic-winner marker: TYPE_MISMATCH code, or a human-readable
     // fragment of the message (Bool-vs-Int wording).
     check(on_mismatch.find("TYPE_MISMATCH") != std::string::npos ||
@@ -2948,8 +3234,7 @@ void test_code_action_qf_unused_import_text_edit() {
                                     "}\n";
     write_file(root / "src" / "main.ahfl", main_source);
 
-    const std::string uri =
-        AnalysisService::uri_from_path(root / "src" / "main.ahfl");
+    const std::string uri = AnalysisService::uri_from_path(root / "src" / "main.ahfl");
 
     const std::string code_action_params =
         R"({"textDocument":{"uri":")" + uri +
@@ -3116,22 +3401,23 @@ void test_code_action_qf_agent_context() {
         }
     }
     check(qf != nullptr, "codeAction.qf_ctx.action_found");
-    if (qf == nullptr) return;
+    if (qf == nullptr)
+        return;
 
     // 1. Human-readable title carries the inserted clause verbatim so the
     //    IDE preview matches what will be written.
     check(qf->title.find("Insert `context: struct { };` clause") != std::string::npos,
           "codeAction.qf_ctx.title_mentions_insert_context");
     // 2. kind == quickfix (the `only:["quickfix"]` client filter will pick it).
-    check(qf->kind == CodeActionKind::QuickFix,
-          "codeAction.qf_ctx.kind_is_quickfix");
+    check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_ctx.kind_is_quickfix");
     // 3. isPreferred so clients with "apply preferred quickfix" shortcuts
     //    default to this (it is the only valid remediation).
     check(qf->is_preferred, "codeAction.qf_ctx.marked_preferred");
     // 4. The workspace edit must contain *exactly one* TextEdit and its
     //    payload must contain the new `context: struct { };` declaration.
     check(qf->edit.has_value(), "codeAction.qf_ctx.has_workspace_edit");
-    if (!qf->edit.has_value()) return;
+    if (!qf->edit.has_value())
+        return;
 
     std::size_t total_edits = 0;
     bool found_struct_clause = false;
@@ -3142,7 +3428,8 @@ void test_code_action_qf_agent_context() {
         for (const auto &e : edits) {
             if (e.new_text.find("context: struct { };") != std::string::npos)
                 found_struct_clause = true;
-            if (!e.new_text.empty()) found_non_empty = true;
+            if (!e.new_text.empty())
+                found_non_empty = true;
             insert_pos = e.range.start;
         }
     }
@@ -3208,21 +3495,22 @@ void test_code_action_qf_agent_capabilities() {
         }
     }
     check(qf != nullptr, "codeAction.qf_caps.action_found");
-    if (qf == nullptr) return;
+    if (qf == nullptr)
+        return;
 
     // 1. Title verbatim matches QW-4 lint UX copy.
     check(qf->title.find("Insert empty `capabilities: [];` clause") != std::string::npos,
           "codeAction.qf_caps.title_mentions_insert_capabilities");
     // 2. kind == quickfix.
-    check(qf->kind == CodeActionKind::QuickFix,
-          "codeAction.qf_caps.kind_is_quickfix");
+    check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_caps.kind_is_quickfix");
     // 3. isPreferred.
     check(qf->is_preferred, "codeAction.qf_caps.marked_preferred");
     // 4. Workspace edit contains the expected insertion text and the
     //    insert position is before the first transition (i.e. on a line
     //    strictly less than the transition line = line 10).
     check(qf->edit.has_value(), "codeAction.qf_caps.has_workspace_edit");
-    if (!qf->edit.has_value()) return;
+    if (!qf->edit.has_value())
+        return;
 
     std::size_t total_edits = 0;
     bool found_empty_array = false;
@@ -3233,7 +3521,8 @@ void test_code_action_qf_agent_capabilities() {
         for (const auto &e : edits) {
             if (e.new_text.find("capabilities: [];") != std::string::npos)
                 found_empty_array = true;
-            if (!e.new_text.empty()) found_non_empty = true;
+            if (!e.new_text.empty())
+                found_non_empty = true;
             insert_pos = e.range.start;
         }
     }
@@ -3348,22 +3637,21 @@ void test_hover_struct_literal_shows_construct_summary() {
         "flow for A {\n"
         "    state Init {\n"
         "        let made = Request { category: \"ok\", priority: Priority::High, retries: 1 };\n"
-        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 };\n"
+        "        let dup = Request{ category: input.category, priority: Priority::Low, retries: 0 "
+        "};\n"
         "        goto Done;\n"
         "    }\n"
         "}\n";
 
     // Initialize with maxFacts high enough to surface every field (default = 3
     // would cut off `retries` after Fields + category + priority).
-    const char *kRichInit =
-        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
-        R"({"initializationOptions":{"ahfl":{"hover":{"maxFacts":20}}}}})";
+    const char *kRichInit = R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":)"
+                            R"({"initializationOptions":{"ahfl":{"hover":{"maxFacts":20}}}}})";
 
     // (1) Hover on the `Request` type-name that opens the FIRST literal.
     //     Needle includes the trailing ` { category` fragment so we avoid
     //     the schema references (agent input/context/output) by accident.
-    const auto on_first =
-        run_hover_request_with_init(source, "Request { category", kRichInit);
+    const auto on_first = run_hover_request_with_init(source, "Request { category", kRichInit);
     check(on_first.find("Creates a `Request` struct") != std::string::npos,
           "hover.construct.first.signature_creates_keyword");
     check(on_first.find("struct literal") != std::string::npos,
@@ -3443,6 +3731,10 @@ int main() {
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
+    test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
+    test_workspace_manifest_does_not_capture_unlisted_nested_package();
+    test_lsp_project_discovery_ignores_process_cwd_sysroot_probe();
+    test_project_graph_error_does_not_fall_back_to_single_file_semantics();
     test_package_graph_manifest_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
