@@ -181,6 +181,27 @@ std = { source = "sysroot" }
 
 如果 sysroot 缺失，PackageGraph 阶段失败；工具不应回退到当前目录猜测 stdlib。
 
+开发 AHFL corelib 时，当前 checkout 可以作为 source sysroot：
+
+```bash
+ahflc check --manifest std/ahfl.toml --sysroot .
+ahflc check std/json.ahfl --sysroot .
+ahflc dump package-graph --manifest std/ahfl.toml --sysroot .
+```
+
+这条路径不会把 `std/` 同时当成用户 package 和外部 sysroot。打开
+`std/*.ahfl` 的 VS Code workspace 应配置：
+
+```json
+{
+  "ahfl.toolchain.sysroot": "${workspaceFolder}"
+}
+```
+
+单文件 public CLI 模式不会从 `AHFL_SOURCE_DIR` 或当前工作目录向上猜测
+stdlib；需要 `std` 时必须走 manifest/workspace + sysroot，或显式传
+`--sysroot .` 开发 source sysroot。
+
 ## Manifest 字段
 
 | 字段 | 必填 | 说明 |
@@ -212,6 +233,14 @@ std = { source = "sysroot" }
 
 - `failed to locate sysroot std/ahfl.toml`
   - 传入 `--sysroot`，或设置 `AHFL_SYSROOT` 指向包含 `std/ahfl.toml` 的目录。
+- `failed to resolve imported module 'std::...'`
+  - 单文件模式没有 PackageGraph sysroot；改用 `--manifest` / `--workspace --package` 并传 `--sysroot`。
+- `E::toolchain_sysroot_mismatch`
+  - 打开的 standard-library package 不是 active sysroot；开发 corelib 时将 `--sysroot` 或 VS Code `ahfl.toolchain.sysroot` 指向当前 checkout。
+- `E::toolchain_profile_ambiguous`
+  - 同一 PackageGraph 跨了两个不同 sysroot profile；统一 workspace folder 的 sysroot 配置，或拆分 workspace / dependency 边界。
+- `E::toolchain_incompatible`
+  - active sysroot 与当前 language server 不兼容；使用同一构建产出的 server / VSIX 和 std。
 - `dependency package '...' is not in PackageGraph`
   - dependency 未在 workspace members 中声明，或 path dependency 指向了无效 package。
 - `workspace does not contain package named '...'`

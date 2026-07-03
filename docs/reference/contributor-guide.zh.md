@@ -57,6 +57,37 @@ ctest --preset test-dev --output-on-failure -L 'store-import-.*'
 
 Store-import CLI artifact 尚未完成 PackageGraph manifest 输入接入时，不要在贡献指南里新增旧 JSON descriptor 示例；用 CTest label 覆盖现有内部路径，等对应 artifact 接入 manifest 后再补公开命令。
 
+## Corelib / std 开发
+
+修改 `std/` 时，必须把当前 checkout 显式配置为 active sysroot，而不是依赖
+LSP 或 CLI 从当前目录猜测标准库位置：
+
+```bash
+./build/dev/src/tooling/cli/ahflc check \
+  --manifest std/ahfl.toml \
+  --sysroot .
+./build/dev/src/tooling/cli/ahflc check std/json.ahfl \
+  --sysroot .
+./build/dev/src/tooling/cli/ahflc dump package-graph \
+  --manifest std/ahfl.toml \
+  --sysroot .
+```
+
+VS Code 开发 AHFL 仓库时，workspace settings 必须包含：
+
+```json
+{
+  "ahfl.toolchain.sysroot": "${workspaceFolder}"
+}
+```
+
+该配置让 `std/*.ahfl` 作为 source-sysroot package 参与分析。不要通过
+`AHFL_SYSROOT`、旧 `initializationOptions.sysroot`、旧
+`initializationOptions.ahfl.sysroot` 或手写 search-root 方式修复 corelib
+diagnostics。若打开 `std/*.ahfl` 时出现 `E::toolchain_sysroot_mismatch`，
+说明 active sysroot 不是当前 checkout；若出现 `E::toolchain_profile_ambiguous`，
+说明同一 PackageGraph 跨了不同 workspace folder 的 sysroot profile。
+
 ## 按改动类型找入口
 
 ### 1. 改 store import descriptor 模型 / validation / bootstrap

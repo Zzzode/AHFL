@@ -6,6 +6,29 @@ only APIs that are implemented and unit-tested (`tests/integration/stdlib_units/
 `std::*` modules resolve through the sysroot `std/ahfl.toml` package in
 PackageGraph inputs, so no custom import root option is needed.
 
+For user packages, declare the sysroot dependency in `ahfl.toml` and pass an
+explicit sysroot:
+
+```toml
+[dependencies]
+std = { source = "sysroot" }
+```
+
+```bash
+ahflc check --manifest path/to/ahfl.toml --target lib --sysroot /path/to/AHFL
+```
+
+When developing AHFL corelib itself, check the source sysroot directly:
+
+```bash
+ahflc check --manifest std/ahfl.toml --sysroot .
+ahflc check std/json.ahfl --sysroot .
+```
+
+Plain single-file mode does not auto-discover `std` from `AHFL_SOURCE_DIR` or
+the current working directory. Use a manifest-backed package or pass the
+corelib source sysroot explicitly for stdlib recipes.
+
 Coverage maps to the corelib-support-workplan module matrix: Option / Result /
 String / List / Set / Map / cmp.
 

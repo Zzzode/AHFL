@@ -69,6 +69,14 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--manifest` | 单 package 工程入口 | `ahflc check --manifest tests/integration/package_graph_manifest/ahfl.toml --target workflow --sysroot .` |
 | `--workspace --package` | 多 package workspace 入口 | `ahflc check --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --target workflow --sysroot .` |
 
+单文件模式只适合不依赖 `std` / PackageGraph metadata 的快速试验。若源码
+`import std::*`，必须使用 `--manifest` / `--workspace --package` 并传入
+`--sysroot`，或在开发 corelib 时显式传入当前 checkout：
+
+```bash
+ahflc check std/json.ahfl --sysroot .
+```
+
 Package manifest 示例：
 
 ```toml
@@ -123,7 +131,7 @@ std = { source = "sysroot" }
 | `--workspace <path>` | 使用 workspace manifest（`ahfl.workspace.toml`） |
 | `--package <name>` | 从 workspace 中选择 package |
 | `--target <name>` | 选择 manifest 中的 target |
-| `--sysroot <path>` | 指向包含 `std/ahfl.toml` 的 AHFL sysroot |
+| `--sysroot <path>` | 指向包含 `std/ahfl.toml` 的 AHFL sysroot；也可直接传 `std/ahfl.toml` |
 | `--capability-mocks <path>` | 为 dry run / runtime artifact 提供 mock capability 输入；在 `run` 中作为 LLM tool source |
 | `--tool-catalog <path>` | 仅 `run`：提供 deterministic runtime tool catalog，并作为 LLM function tools source |
 | `--input-fixture <fixture>` | 选择 runtime fixture request |
