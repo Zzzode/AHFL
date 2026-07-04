@@ -106,6 +106,63 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
     return package_graph::PackageId{std::numeric_limits<std::size_t>::max()};
 }
 
+struct SourceUnitOrderKey {
+    package_graph::PackageId package_id;
+    std::string path_key;
+};
+
+[[nodiscard]] SourceUnitOrderKey source_unit_order_key(const LspWorkspaceIndexInput &input,
+                                                       const std::filesystem::path &raw_path) {
+    const auto path = normalize_path(raw_path);
+    return SourceUnitOrderKey{
+        .package_id = package_id_for_path(input.scope.package_roots, path),
+        .path_key = path.generic_string(),
+    };
+}
+
+[[nodiscard]] bool source_unit_order_less(const SourceUnitOrderKey &lhs,
+                                          const SourceUnitOrderKey &rhs) {
+    if (lhs.package_id.value != rhs.package_id.value) {
+        return lhs.package_id.value < rhs.package_id.value;
+    }
+    return lhs.path_key < rhs.path_key;
+}
+
+[[nodiscard]] std::vector<std::filesystem::path>
+ordered_entry_files_for_index(const LspWorkspaceIndexInput &input) {
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(input.project.entry_files.size());
+    for (const auto &entry_file : input.project.entry_files) {
+        paths.push_back(normalize_path(entry_file));
+    }
+    std::sort(paths.begin(), paths.end(), [&](const auto &lhs, const auto &rhs) {
+        return source_unit_order_less(source_unit_order_key(input, lhs),
+                                      source_unit_order_key(input, rhs));
+    });
+    paths.erase(std::unique(paths.begin(),
+                            paths.end(),
+                            [](const auto &lhs, const auto &rhs) {
+                                return normalize_path(lhs).generic_string() ==
+                                       normalize_path(rhs).generic_string();
+                            }),
+                paths.end());
+    return paths;
+}
+
+[[nodiscard]] std::vector<const SourceUnit *>
+ordered_source_units_for_index(const LspWorkspaceIndexInput &input, const SourceGraph &graph) {
+    std::vector<const SourceUnit *> sources;
+    sources.reserve(graph.sources.size());
+    for (const auto &source : graph.sources) {
+        sources.push_back(&source);
+    }
+    std::sort(sources.begin(), sources.end(), [&](const SourceUnit *lhs, const SourceUnit *rhs) {
+        return source_unit_order_less(source_unit_order_key(input, lhs->path),
+                                      source_unit_order_key(input, rhs->path));
+    });
+    return sources;
+}
+
 [[nodiscard]] bool has_extent(SourceRange range) noexcept {
     return range.end_offset > range.begin_offset;
 }
@@ -551,7 +608,7 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                  const DiagnosticBag *project_diagnostics = nullptr) {
     SourceUnitByPathMap source_units_by_path;
     SourceUnitByDiagnosticNameMap source_units_by_name;
-    for (const auto &entry_file : input.project.entry_files) {
+    for (const auto &entry_file : ordered_entry_files_for_index(input)) {
         const auto path = normalize_path(entry_file);
         const auto path_key = path.generic_string();
         auto parse_result = [&]() {
@@ -1004,13 +1061,13 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
     SourceUnitByPathMap source_units_by_path;
     SourceUnitByDiagnosticNameMap source_units_by_name;
     SourceUnitBySourceIdMap source_units_by_source_id;
-    for (const auto &source : project.graph.sources) {
+    for (const auto *source : ordered_source_units_for_index(input, project.graph)) {
         const auto source_unit = register_source_unit(
-            index, source_units_by_path, input, source.path, FactCompleteness::Resolved);
-        source_units_by_source_id.emplace(source.id.value, source_unit);
+            index, source_units_by_path, input, source->path, FactCompleteness::Resolved);
+        source_units_by_source_id.emplace(source->id.value, source_unit);
         if (const auto *source_fact = source_unit_fact(index, source_unit);
             source_fact != nullptr) {
-            add_diagnostic_source_aliases(source_units_by_name, *source_fact, &source.source);
+            add_diagnostic_source_aliases(source_units_by_name, *source_fact, &source->source);
         }
     }
     append_index_diagnostics_by_source_name(index,

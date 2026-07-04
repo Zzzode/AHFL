@@ -1850,6 +1850,77 @@ void test_workspace_index_queries_sort_by_package_source_and_order() {
     }
 }
 
+void test_workspace_index_assigns_source_units_by_scope_order() {
+    const auto root = make_temp_project("workspace_index_source_unit_order");
+    const auto source_root = root / "src";
+    const auto a_path = source_root / "a.ahfl";
+    const auto b_path = source_root / "b.ahfl";
+
+    write_file(a_path,
+               "module app::a;\n"
+               "\n"
+               "struct A {}\n");
+    write_file(b_path,
+               "module app::b;\n"
+               "\n"
+               "struct B {}\n");
+
+    ahfl::ProjectInput project;
+    project.entry_files = {b_path, a_path};
+    project.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = source_root,
+        .exported_modules = {"a", "b"},
+        .dependency_prefixes = {},
+    });
+
+    const auto package_id = ahfl::package_graph::PackageId{0};
+    const ahfl::Frontend frontend;
+    auto index = build_lsp_workspace_index(
+        frontend,
+        LspWorkspaceIndexInput{
+            .project = std::move(project),
+            .scope =
+                NavigationIndexScope{
+                    .package_roots =
+                        {
+                            LspIndexPackageRoot{
+                                .package_id = package_id,
+                                .module_root = source_root,
+                            },
+                        },
+                },
+            .metadata =
+                NavigationIndexMetadata{
+                    .revision = 7,
+                    .index_schema_version = "test-index-schema",
+                    .index_identity_schema_version = "test-identity-schema",
+                },
+        });
+
+    const auto &source_units = index.source_units();
+    check(source_units.size() == 2, "workspace_index.source_unit_order.count");
+    if (source_units.size() == 2) {
+        check(source_units[0].source_unit_id == SourceUnitId{0},
+              "workspace_index.source_unit_order.first_id");
+        check(source_units[0].uri == AnalysisService::uri_from_path(a_path),
+              "workspace_index.source_unit_order.a_first");
+        check(source_units[1].source_unit_id == SourceUnitId{1},
+              "workspace_index.source_unit_order.second_id");
+        check(source_units[1].uri == AnalysisService::uri_from_path(b_path),
+              "workspace_index.source_unit_order.b_second");
+    }
+
+    const auto package_sources = index.source_units_for_package(package_id);
+    check(package_sources.size() == 2, "workspace_index.source_unit_order.package_count");
+    if (package_sources.size() == 2) {
+        check(package_sources[0] == SourceUnitId{0},
+              "workspace_index.source_unit_order.package_a_first");
+        check(package_sources[1] == SourceUnitId{1},
+              "workspace_index.source_unit_order.package_b_second");
+    }
+}
+
 void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
     const auto root = make_temp_project("project_index_partial_typecheck");
     const auto main_path = root / "src" / "main.ahfl";
@@ -6102,6 +6173,7 @@ int main() {
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_references_include_indexed_unopened_source();
     test_workspace_index_queries_sort_by_package_source_and_order();
+    test_workspace_index_assigns_source_units_by_scope_order();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
