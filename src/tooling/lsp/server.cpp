@@ -2834,6 +2834,9 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
             }
         }
 
+        if (snapshot->workspace_index != nullptr) {
+            continue;
+        }
         const auto *fallback = snapshot->source_for_uri(snapshot->requested_uri);
         if (fallback == nullptr) {
             continue;
