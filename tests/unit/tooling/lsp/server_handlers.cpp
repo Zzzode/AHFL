@@ -2380,6 +2380,95 @@ void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails
           "workspace_symbol.parse_skeleton_includes_parse_failed_symbol");
 }
 
+void test_parse_failed_export_does_not_block_typed_facts_for_healthy_index_sources() {
+    const auto root = make_temp_project("project_index_parse_error_keeps_healthy_typed");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto impls_path = root / "src" / "impls.ahfl";
+    const auto broken_path = root / "src" / "broken.ahfl";
+    write_package_manifest(root,
+                           "lsp-project-parse-error-keeps-healthy-index",
+                           "app",
+                           "\"main\", \"impls\", \"broken\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "fn keep(x: Int) -> Int effect Pure decreases 0 {\n"
+                                    "    return x;\n"
+                                    "}\n";
+    const std::string impls_source = "module app::impls;\n"
+                                     "\n"
+                                     "impl Int {}\n";
+    const std::string broken_source = "module app::broken;\n"
+                                      "\n"
+                                      "struct ParsedBeforeError {\n"
+                                      "    value: Int;\n"
+                                      "}\n"
+                                      "\n"
+                                      "fn still_broken(\n";
+    write_file(main_path, main_source);
+    write_file(impls_path, impls_source);
+    write_file(broken_path, broken_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto impls_uri = AnalysisService::uri_from_path(impls_path);
+    const auto broken_uri = AnalysisService::uri_from_path(broken_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_index.parse_error_healthy.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(impls_uri) == nullptr,
+                  "workspace_index.parse_error_healthy.impls_not_semantic_source");
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_index.parse_error_healthy.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *broken_source_unit =
+                    index_source_unit_for_uri(*snapshot->workspace_index, broken_uri);
+                check(broken_source_unit != nullptr,
+                      "workspace_index.parse_error_healthy.broken_source_unit_exists");
+                if (broken_source_unit != nullptr) {
+                    check(index_has_diagnostic(*snapshot->workspace_index,
+                                               broken_source_unit->source_unit_id,
+                                               IndexDiagnosticPhase::Parse,
+                                               "parse."),
+                          "workspace_index.parse_error_healthy.broken_parse_diagnostic");
+                }
+                const auto impl_locations =
+                    snapshot->workspace_index->implementation_locations_for_primitive(
+                        PrimitiveKind::Int);
+                check(std::find_if(impl_locations.begin(),
+                                   impl_locations.end(),
+                                   [&](const Location &location) {
+                                       return location.uri == impls_uri;
+                                   }) != impl_locations.end(),
+                      "workspace_index.parse_error_healthy.typed_impl_survives");
+            }
+        }
+    }
+
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(main_uri, position_of(main_source, "Int) ->")) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        implementation,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(impls_uri) != std::string::npos,
+          "implementation.parse_error_healthy_includes_typed_impl");
+}
+
 void test_project_open_document_overlay_drives_definition() {
     const auto root = make_temp_project("project_overlay");
     const auto main_path = root / "src" / "main.ahfl";
@@ -6512,6 +6601,7 @@ int main() {
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
+    test_parse_failed_export_does_not_block_typed_facts_for_healthy_index_sources();
     test_project_open_document_overlay_drives_definition();
     test_workspace_index_includes_open_unexported_overlay();
     test_project_diagnostics_refresh_dependent_open_documents();

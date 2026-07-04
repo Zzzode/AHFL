@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "ahfl/compiler/frontend/frontend.hpp"
@@ -349,6 +350,7 @@ using DefBySymbolMap = std::unordered_map<std::size_t, DefId>;
 using SourceUnitByDiagnosticNameMap = std::unordered_map<std::string, SourceUnitId>;
 using SourceUnitBySourceIdMap = std::unordered_map<std::size_t, SourceUnitId>;
 using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
+using SourceUnitPathSet = std::unordered_set<std::string>;
 
 [[nodiscard]] TypeKey type_key_for_type_with_defs(const Type &type,
                                                   const DefBySymbolMap *def_by_symbol);
@@ -784,15 +786,19 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
     }
 }
 
-void append_parse_skeleton_facts(LspWorkspaceIndex &index,
-                                 const Frontend &frontend,
-                                 const LspWorkspaceIndexInput &input,
-                                 const DiagnosticBag *project_diagnostics = nullptr) {
-    SourceUnitByPathMap source_units_by_path;
-    SourceUnitByDiagnosticNameMap source_units_by_name;
+void append_parse_skeleton_facts_into(LspWorkspaceIndex &index,
+                                      const Frontend &frontend,
+                                      const LspWorkspaceIndexInput &input,
+                                      SourceUnitByPathMap &source_units_by_path,
+                                      SourceUnitByDiagnosticNameMap &source_units_by_name,
+                                      const DiagnosticBag *project_diagnostics,
+                                      const SourceUnitPathSet *skip_paths) {
     for (const auto &entry_file : ordered_entry_files_for_index(input)) {
         const auto path = normalize_path(entry_file);
         const auto path_key = path.generic_string();
+        if (skip_paths != nullptr && skip_paths->contains(path_key)) {
+            continue;
+        }
         auto parse_result = [&]() {
             if (const auto overlay = input.project.source_overlays.find(path_key);
                 overlay != input.project.source_overlays.end()) {
@@ -843,6 +849,21 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
     }
 }
 
+void append_parse_skeleton_facts(LspWorkspaceIndex &index,
+                                 const Frontend &frontend,
+                                 const LspWorkspaceIndexInput &input,
+                                 const DiagnosticBag *project_diagnostics = nullptr) {
+    SourceUnitByPathMap source_units_by_path;
+    SourceUnitByDiagnosticNameMap source_units_by_name;
+    append_parse_skeleton_facts_into(index,
+                                     frontend,
+                                     input,
+                                     source_units_by_path,
+                                     source_units_by_name,
+                                     project_diagnostics,
+                                     nullptr);
+}
+
 } // namespace
 
 std::size_t TypeKeyHash::operator()(const TypeKey &key) const noexcept {
@@ -869,9 +890,19 @@ void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
         if (fact.package_id.value >= source_units_by_package_.size()) {
             source_units_by_package_.resize(fact.package_id.value + 1);
         }
-        source_units_by_package_[fact.package_id.value].push_back(fact.source_unit_id);
+        auto &package_sources = source_units_by_package_[fact.package_id.value];
+        if (std::find(package_sources.begin(), package_sources.end(), fact.source_unit_id) ==
+            package_sources.end()) {
+            package_sources.push_back(fact.source_unit_id);
+            std::sort(package_sources.begin(),
+                      package_sources.end(),
+                      [](SourceUnitId lhs, SourceUnitId rhs) { return lhs.value < rhs.value; });
+        }
     }
-    source_units_.push_back(std::move(fact));
+    if (fact.source_unit_id.value >= source_units_.size()) {
+        source_units_.resize(fact.source_unit_id.value + 1);
+    }
+    source_units_[fact.source_unit_id.value] = std::move(fact);
 }
 
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
@@ -1282,17 +1313,24 @@ class IndexAnalysisPipeline {
         input_.project.entry_files = ordered_entry_files_for_index(input_);
 
         auto project = parse_project(frontend_, input_.project);
-        if (project.has_errors()) {
+        if (project.has_errors() && project.graph.sources.empty()) {
             append_parse_skeleton_facts(index_, frontend_, input_, &project.diagnostics);
             return std::move(index_);
         }
 
         register_parsed_sources(project.graph);
-        append_index_diagnostics_by_source_name(index_,
-                                                source_units_by_name_,
-                                                project.diagnostics,
-                                                IndexDiagnosticPhase::Parse,
-                                                FactCompleteness::Resolved);
+        if (project.has_errors()) {
+            const auto parsed_paths = parsed_source_paths(project.graph);
+            append_parse_skeleton_facts_into(index_,
+                                             frontend_,
+                                             input_,
+                                             source_units_by_path_,
+                                             source_units_by_name_,
+                                             nullptr,
+                                             &parsed_paths);
+        }
+        append_index_diagnostics_by_source_name(
+            index_, source_units_by_name_, project.diagnostics, IndexDiagnosticPhase::Parse);
 
         Resolver resolver;
         auto resolved = resolver.resolve(project.graph);
@@ -1328,6 +1366,15 @@ class IndexAnalysisPipeline {
     }
 
   private:
+    [[nodiscard]] SourceUnitPathSet parsed_source_paths(const SourceGraph &graph) const {
+        SourceUnitPathSet paths;
+        paths.reserve(graph.sources.size());
+        for (const auto &source : graph.sources) {
+            paths.insert(normalize_path(source.path).generic_string());
+        }
+        return paths;
+    }
+
     void register_parsed_sources(const SourceGraph &graph) {
         for (const auto *source : ordered_source_units_for_index(input_, graph)) {
             const auto source_unit = register_source_unit(
