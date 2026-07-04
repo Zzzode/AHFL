@@ -728,7 +728,7 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
     const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, const Symbol &symbol) {
     if ((symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum) &&
         snapshot.workspace_index != nullptr) {
-        const auto def = snapshot.workspace_index->find_def(symbol.kind, symbol.canonical_name);
+        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
         if (def.has_value()) {
             auto locations =
                 snapshot.workspace_index->implementation_locations_for_nominal_def(*def);
@@ -738,7 +738,7 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
         }
     }
     if (symbol.kind == SymbolKind::Trait && snapshot.workspace_index != nullptr) {
-        const auto def = snapshot.workspace_index->find_def(symbol.kind, symbol.canonical_name);
+        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
         if (def.has_value()) {
             auto locations = snapshot.workspace_index->implementation_locations_for_trait(*def);
             if (!locations.empty()) {
@@ -2457,8 +2457,7 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
 
         const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
         if (symbol.has_value() && snapshot->workspace_index != nullptr) {
-            const auto def = snapshot->workspace_index->find_def(symbol->get().kind,
-                                                                 symbol->get().canonical_name);
+            const auto def = snapshot->workspace_def_for_symbol(symbol->get().id);
             if (def.has_value()) {
                 for (const auto &location :
                      snapshot->workspace_index->reference_locations_for_def(*def)) {

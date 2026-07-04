@@ -207,8 +207,6 @@ class LspWorkspaceIndex {
         return diagnostics_;
     }
 
-    [[nodiscard]] std::optional<DefId> find_def(SymbolKind kind,
-                                                std::string_view canonical_name) const;
     [[nodiscard]] std::vector<SourceUnitId>
     source_units_for_package(package_graph::PackageId package_id) const;
     [[nodiscard]] std::vector<const IndexDiagnosticFact *>

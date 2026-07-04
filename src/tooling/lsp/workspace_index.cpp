@@ -665,16 +665,6 @@ void LspWorkspaceIndex::add_diagnostic(IndexDiagnosticFact fact) {
     diagnostics_.push_back(std::move(fact));
 }
 
-std::optional<DefId> LspWorkspaceIndex::find_def(SymbolKind kind,
-                                                 std::string_view canonical_name) const {
-    for (const auto &symbol : symbols_) {
-        if (symbol.kind == kind && symbol.canonical_name == canonical_name) {
-            return symbol.def_id;
-        }
-    }
-    return std::nullopt;
-}
-
 std::vector<SourceUnitId>
 LspWorkspaceIndex::source_units_for_package(package_graph::PackageId package_id) const {
     if (package_id.value >= source_units_by_package_.size()) {

@@ -64,11 +64,13 @@ struct LspAnalysisSnapshot {
     std::unordered_map<std::string, std::size_t> source_by_uri;
     std::unordered_map<std::string, std::size_t> source_by_display_name;
     std::unordered_map<std::size_t, std::size_t> source_by_id;
+    std::unordered_map<std::size_t, DefId> workspace_def_by_symbol;
     std::unordered_map<std::size_t, HoverTargetIndex> hover_indices;
 
     [[nodiscard]] const LspSourceSnapshot *source_for_uri(std::string_view uri) const;
     [[nodiscard]] const LspSourceSnapshot *source_for_id(SourceId id) const;
     [[nodiscard]] const LspSourceSnapshot *source_for_display_name(std::string_view name) const;
+    [[nodiscard]] std::optional<DefId> workspace_def_for_symbol(SymbolId symbol) const;
     [[nodiscard]] const TypedProgram *typed_program() const noexcept;
     [[nodiscard]] std::vector<LspDiagnostic> diagnostics_for_uri(std::string_view uri) const;
 };

@@ -568,6 +568,38 @@ void index_source(LspAnalysisSnapshot &snapshot, LspSourceSnapshot source) {
     snapshot.sources.push_back(std::move(source));
 }
 
+[[nodiscard]] bool same_range(SourceRange lhs, SourceRange rhs) noexcept {
+    return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
+}
+
+void build_workspace_def_remap(LspAnalysisSnapshot &snapshot) {
+    snapshot.workspace_def_by_symbol.clear();
+    if (snapshot.workspace_index == nullptr) {
+        return;
+    }
+
+    const auto &index_symbols = snapshot.workspace_index->symbols();
+    for (const auto &semantic_symbol : snapshot.resolve_result.symbol_table.symbols()) {
+        if (!semantic_symbol.source_id.has_value()) {
+            continue;
+        }
+        const auto *source = snapshot.source_for_id(*semantic_symbol.source_id);
+        if (source == nullptr) {
+            continue;
+        }
+
+        const auto index_symbol =
+            std::find_if(index_symbols.begin(), index_symbols.end(), [&](const SymbolFact &fact) {
+                return fact.kind == semantic_symbol.kind && fact.location.uri == source->uri &&
+                       same_range(fact.declaration_range, semantic_symbol.declaration_range);
+            });
+        if (index_symbol != index_symbols.end()) {
+            snapshot.workspace_def_by_symbol.emplace(semantic_symbol.id.value,
+                                                     index_symbol->def_id);
+        }
+    }
+}
+
 } // namespace
 
 const LspSourceSnapshot *LspAnalysisSnapshot::source_for_uri(std::string_view uri) const {
@@ -592,6 +624,14 @@ const LspSourceSnapshot *LspAnalysisSnapshot::source_for_display_name(std::strin
         return nullptr;
     }
     return &sources[it->second];
+}
+
+std::optional<DefId> LspAnalysisSnapshot::workspace_def_for_symbol(SymbolId symbol) const {
+    const auto found = workspace_def_by_symbol.find(symbol.value);
+    if (found == workspace_def_by_symbol.end()) {
+        return std::nullopt;
+    }
+    return found->second;
 }
 
 const TypedProgram *LspAnalysisSnapshot::typed_program() const noexcept {
@@ -905,6 +945,7 @@ AnalysisService::build_snapshot(const std::string &uri,
 
             if (!snapshot->project_result->has_errors()) {
                 snapshot->resolve_result = resolver.resolve(snapshot->project_result->graph);
+                build_workspace_def_remap(*snapshot);
                 if (!snapshot->resolve_result.has_errors()) {
                     auto type_result = type_checker.check(snapshot->project_result->graph,
                                                           snapshot->resolve_result);
