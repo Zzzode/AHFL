@@ -4033,6 +4033,66 @@ void test_package_graph_manifest_does_not_inject_prelude() {
     check(has_unknown_some, "package_graph_explicit_prelude.some_is_not_implicit");
 }
 
+void test_index_only_exported_type_does_not_satisfy_unimported_reference() {
+    const auto root = make_temp_project("index_only_type_visibility");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto indexed_path = root / "src" / "indexed.ahfl";
+    write_package_manifest(root, "lsp-index-only-type", "app", "\"main\", \"indexed\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    value: IndexOnly;\n"
+                                    "}\n";
+    const std::string indexed_source = "module app::indexed;\n"
+                                       "\n"
+                                       "struct IndexOnly {}\n";
+    write_file(main_path, main_source);
+    write_file(indexed_path, indexed_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto indexed_uri = AnalysisService::uri_from_path(indexed_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+    check(snapshot != nullptr, "index_only_type_visibility.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+
+    check(snapshot->source_for_uri(indexed_uri) == nullptr,
+          "index_only_type_visibility.indexed_not_semantic_source");
+    check(snapshot->workspace_index != nullptr, "index_only_type_visibility.index_exists");
+    if (snapshot->workspace_index != nullptr) {
+        const auto *indexed_source_unit =
+            index_source_unit_for_uri(*snapshot->workspace_index, indexed_uri);
+        check(indexed_source_unit != nullptr,
+              "index_only_type_visibility.indexed_source_unit_exists");
+        const auto &symbols = snapshot->workspace_index->symbols();
+        const auto indexed_symbol =
+            std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                return symbol.canonical_name == "app::indexed::IndexOnly";
+            });
+        check(indexed_symbol != symbols.end(),
+              "index_only_type_visibility.indexed_symbol_fact_exists");
+    }
+
+    const auto diagnostics = snapshot->diagnostics_for_uri(main_uri);
+    const auto has_unknown_index_only =
+        std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.message.find("unknown type 'IndexOnly'") != std::string::npos;
+        });
+    check(has_unknown_index_only, "index_only_type_visibility.unimported_type_stays_unknown");
+}
+
 void test_hover_renderer_detail_levels() {
     HoverPayload payload;
     payload.signature = "states: [Init, Done]";
@@ -5719,6 +5779,7 @@ int main() {
     test_analysis_snapshot_cache_key_records_toolchain_identity();
     test_sysroot_index_cache_key_separates_workspace_roots();
     test_package_graph_manifest_does_not_inject_prelude();
+    test_index_only_exported_type_does_not_satisfy_unimported_reference();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();
     test_hover_respects_client_markup_and_debug_options();
