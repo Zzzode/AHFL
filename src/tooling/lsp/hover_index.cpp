@@ -1386,6 +1386,16 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
                                        variant->name,
                                        symbol->get().id,
                                        "enum variant");
+                for (const auto &payload : variant->payload) {
+                    add_type_syntax_targets(index, snapshot, source, payload.get());
+                }
+                for (const auto &field : variant->named_fields) {
+                    if (field) {
+                        add_type_syntax_targets(index, snapshot, source, field->type.get());
+                        add_expr_syntax_targets(
+                            index, snapshot, source, field->default_value.get());
+                    }
+                }
             }
         }
         return;

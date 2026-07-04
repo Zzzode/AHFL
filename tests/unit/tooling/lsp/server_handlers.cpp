@@ -1992,6 +1992,15 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
                                     "fn primitive_probe(flag: Bool, count: Int, ratio: Float, "
                                     "id: UUID) -> String effect Pure;\n"
                                     "\n"
+                                    "enum PrimitiveEnvelope {\n"
+                                    "    EBool(Bool),\n"
+                                    "    EInt(Int),\n"
+                                    "    EFloat(Float),\n"
+                                    "    EText(String),\n"
+                                    "    EId(UUID),\n"
+                                    "    ERecord(flag: Bool, label: String),\n"
+                                    "}\n"
+                                    "\n"
                                     "impl UUID {}\n";
     write_primitive_home_std_package(
         std_root, bool_source, int_source, float_source, string_source, uuid_source);
@@ -2016,6 +2025,12 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
     const std::string uuid_definition =
         R"({"jsonrpc":"2.0","id":6,"method":"textDocument/definition","params":)" +
         hover_params_at(uuid_uri, position_of(uuid_source, "UUID")) + R"(})";
+    const std::string enum_bool_definition =
+        R"({"jsonrpc":"2.0","id":7,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Bool),")) + R"(})";
+    const std::string enum_named_bool_definition =
+        R"({"jsonrpc":"2.0","id":8,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Bool, label")) + R"(})";
 
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
@@ -2025,13 +2040,17 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
         float_definition,
         string_definition,
         uuid_definition,
-        R"({"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}})",
+        enum_bool_definition,
+        enum_named_bool_definition,
+        R"({"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}})",
     });
     const auto bool_response = response_body_for_id(output, 2);
     const auto int_response = response_body_for_id(output, 3);
     const auto float_response = response_body_for_id(output, 4);
     const auto string_response = response_body_for_id(output, 5);
     const auto uuid_response = response_body_for_id(output, 6);
+    const auto enum_bool_response = response_body_for_id(output, 7);
+    const auto enum_named_bool_response = response_body_for_id(output, 8);
 
     check(bool_response.find(bool_uri) != std::string::npos,
           "definition.primitive_bool_targets_std_bool_uri");
@@ -2052,8 +2071,16 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
           "definition.primitive_string_targets_impl_selection");
     check(uuid_response.find(uuid_uri) != std::string::npos,
           "definition.primitive_uuid_targets_std_uuid_uri");
-    check(uuid_response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
+    check(uuid_response.find(R"("start":{"line":14,"character":5})") != std::string::npos,
           "definition.primitive_uuid_targets_impl_selection");
+    check(enum_bool_response.find(bool_uri) != std::string::npos,
+          "definition.primitive_enum_tuple_payload_bool_targets_std_bool_uri");
+    check(enum_bool_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_enum_tuple_payload_bool_targets_impl_selection");
+    check(enum_named_bool_response.find(bool_uri) != std::string::npos,
+          "definition.primitive_enum_struct_payload_bool_targets_std_bool_uri");
+    check(enum_named_bool_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_enum_struct_payload_bool_targets_impl_selection");
 }
 
 void write_minimal_std_sources(const std::filesystem::path &std_root,
