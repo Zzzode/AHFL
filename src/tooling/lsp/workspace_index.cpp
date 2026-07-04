@@ -448,11 +448,7 @@ struct ImplFactCandidate {
 
 [[nodiscard]] const SourceUnitFact *source_unit_fact(const LspWorkspaceIndex &index,
                                                      SourceUnitId id) {
-    const auto &source_units = index.source_units();
-    if (id.value >= source_units.size()) {
-        return nullptr;
-    }
-    return source_units[id.value].valid ? &source_units[id.value] : nullptr;
+    return index.source_unit_for_id(id);
 }
 
 [[nodiscard]] package_graph::PackageId invalid_package_id() {
@@ -921,6 +917,7 @@ void LspWorkspaceIndex::set_metadata(NavigationIndexMetadata metadata) {
 
 void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
     fact.valid = true;
+    const auto id = fact.source_unit_id;
     if (fact.package_id.value != std::numeric_limits<std::size_t>::max()) {
         if (fact.package_id.value >= source_units_by_package_.size()) {
             source_units_by_package_.resize(fact.package_id.value + 1);
@@ -934,21 +931,26 @@ void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
                       [](SourceUnitId lhs, SourceUnitId rhs) { return lhs.value < rhs.value; });
         }
     }
-    if (fact.source_unit_id.value >= source_units_.size()) {
-        source_units_.resize(fact.source_unit_id.value + 1);
+    if (const auto existing = source_unit_index_by_id_.find(id.value);
+        existing != source_unit_index_by_id_.end()) {
+        source_units_[existing->second] = std::move(fact);
+        return;
     }
-    source_units_[fact.source_unit_id.value] = std::move(fact);
+    source_unit_index_by_id_.emplace(id.value, source_units_.size());
+    source_units_.push_back(std::move(fact));
 }
 
 void LspWorkspaceIndex::set_source_unit_completeness(SourceUnitId source_unit,
                                                      FactCompleteness completeness) {
-    if (source_unit.value >= source_units_.size()) {
+    const auto existing = source_unit_index_by_id_.find(source_unit.value);
+    if (existing == source_unit_index_by_id_.end()) {
         return;
     }
-    if (!source_units_[source_unit.value].valid) {
+    auto &fact = source_units_[existing->second];
+    if (!fact.valid) {
         return;
     }
-    source_units_[source_unit.value].completeness = completeness;
+    fact.completeness = completeness;
 }
 
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
@@ -991,11 +993,17 @@ void LspWorkspaceIndex::add_impl(ImplFact fact) {
 void LspWorkspaceIndex::add_diagnostic(IndexDiagnosticFact fact) {
     const auto id = IndexDiagnosticFactId{diagnostics_.size()};
     fact.diagnostic_id = id;
-    if (fact.source_unit_id.value >= diagnostics_by_source_.size()) {
-        diagnostics_by_source_.resize(fact.source_unit_id.value + 1);
-    }
     diagnostics_by_source_[fact.source_unit_id.value].push_back(id);
     diagnostics_.push_back(std::move(fact));
+}
+
+const SourceUnitFact *LspWorkspaceIndex::source_unit_for_id(SourceUnitId source_unit) const {
+    const auto existing = source_unit_index_by_id_.find(source_unit.value);
+    if (existing == source_unit_index_by_id_.end()) {
+        return nullptr;
+    }
+    const auto &fact = source_units_[existing->second];
+    return fact.valid ? &fact : nullptr;
 }
 
 std::vector<SourceUnitId>
@@ -1008,13 +1016,14 @@ LspWorkspaceIndex::source_units_for_package(package_graph::PackageId package_id)
 
 std::vector<const IndexDiagnosticFact *>
 LspWorkspaceIndex::diagnostics_for_source(SourceUnitId source_unit) const {
-    if (source_unit.value >= diagnostics_by_source_.size()) {
+    const auto source_diagnostics = diagnostics_by_source_.find(source_unit.value);
+    if (source_diagnostics == diagnostics_by_source_.end()) {
         return {};
     }
 
     std::vector<const IndexDiagnosticFact *> matched;
-    matched.reserve(diagnostics_by_source_[source_unit.value].size());
-    for (const auto id : diagnostics_by_source_[source_unit.value]) {
+    matched.reserve(source_diagnostics->second.size());
+    for (const auto id : source_diagnostics->second) {
         if (id.value < diagnostics_.size()) {
             matched.push_back(&diagnostics_[id.value]);
         }

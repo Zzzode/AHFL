@@ -216,6 +216,7 @@ class LspWorkspaceIndex {
         return metadata_;
     }
 
+    [[nodiscard]] const SourceUnitFact *source_unit_for_id(SourceUnitId source_unit) const;
     [[nodiscard]] std::vector<SourceUnitId>
     source_units_for_package(package_graph::PackageId package_id) const;
     [[nodiscard]] std::vector<const IndexDiagnosticFact *>
@@ -239,9 +240,10 @@ class LspWorkspaceIndex {
     std::vector<ReferenceFact> references_;
     std::vector<ImplFact> impls_;
     std::vector<IndexDiagnosticFact> diagnostics_;
+    std::unordered_map<std::size_t, std::size_t> source_unit_index_by_id_;
     std::vector<std::vector<SourceUnitId>> source_units_by_package_;
     std::vector<std::vector<ReferenceFactId>> references_by_def_;
-    std::vector<std::vector<IndexDiagnosticFactId>> diagnostics_by_source_;
+    std::unordered_map<std::size_t, std::vector<IndexDiagnosticFactId>> diagnostics_by_source_;
     std::vector<std::vector<WorkspaceImplId>> impls_by_trait_;
     std::vector<std::vector<WorkspaceImplId>> impls_by_nominal_def_;
     std::unordered_map<TypeKey, std::vector<WorkspaceImplId>, TypeKeyHash> impls_by_type_;

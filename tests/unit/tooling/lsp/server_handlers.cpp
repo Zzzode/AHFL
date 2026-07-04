@@ -1930,18 +1930,19 @@ void test_project_references_include_indexed_unopened_source() {
                     }
                     check(msg_symbol->package_id.value != std::numeric_limits<std::size_t>::max(),
                           "references.index_model.msg_symbol_has_package_id");
-                    check(msg_symbol->source_unit_id.value < source_units.size(),
+                    const auto *source_unit =
+                        snapshot->workspace_index->source_unit_for_id(msg_symbol->source_unit_id);
+                    check(source_unit != nullptr,
                           "references.index_model.msg_symbol_source_unit_valid");
                     check(msg_symbol->selection_range.end_offset >
                               msg_symbol->selection_range.begin_offset,
                           "references.index_model.msg_symbol_selection_range_has_extent");
-                    if (msg_symbol->source_unit_id.value < source_units.size()) {
-                        const auto &source_unit = source_units[msg_symbol->source_unit_id.value];
-                        check(source_unit.package_id == msg_symbol->package_id,
+                    if (source_unit != nullptr) {
+                        check(source_unit->package_id == msg_symbol->package_id,
                               "references.index_model.source_unit_package_matches_symbol");
-                        check(source_unit.revision == snapshot->workspace_revision,
+                        check(source_unit->revision == snapshot->workspace_revision,
                               "references.index_model.source_unit_revision_matches_snapshot");
-                        check(source_unit.uri == types_uri,
+                        check(source_unit->uri == types_uri,
                               "references.index_model.source_unit_uri_matches_types");
                         const auto package_sources =
                             snapshot->workspace_index->source_units_for_package(
@@ -2223,6 +2224,26 @@ void test_workspace_index_identity_hash_and_flat_store_ids() {
         .location = index_test_location("file:///pkg.ahfl", 3),
         .completeness = FactCompleteness::Parsed,
     });
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = SourceUnitId{1000},
+        .package_id = ahfl::package_graph::PackageId{0},
+        .path = "overlay.ahfl",
+        .uri = "file:///overlay.ahfl",
+        .revision = 1,
+        .scope_kinds = {LspNavigationIndexSourceKind::OpenOverlay},
+        .completeness = FactCompleteness::Parsed,
+    });
+    index.add_diagnostic(IndexDiagnosticFact{
+        .diagnostic_id = IndexDiagnosticFactId{99},
+        .package_id = ahfl::package_graph::PackageId{0},
+        .source_unit_id = SourceUnitId{1000},
+        .phase = IndexDiagnosticPhase::Parse,
+        .severity = ahfl::DiagnosticSeverity::Error,
+        .code = "parse.test",
+        .message = "overlay parse diagnostic",
+        .range = ahfl::SourceRange{0, 1},
+        .completeness = FactCompleteness::Parsed,
+    });
 
     const auto *box_symbol = index.symbol_for_def(DefId{0});
     check(box_symbol != nullptr, "workspace_index.identity.symbol_flat_id_exists");
@@ -2242,6 +2263,19 @@ void test_workspace_index_identity_hash_and_flat_store_ids() {
         check(references.front().range.start.line == 2,
               "workspace_index.identity.reference_location");
     }
+    const auto *overlay_source = index.source_unit_for_id(SourceUnitId{1000});
+    check(overlay_source != nullptr, "workspace_index.identity.opaque_source_unit_lookup");
+    if (overlay_source != nullptr) {
+        check(overlay_source->uri == "file:///overlay.ahfl",
+              "workspace_index.identity.opaque_source_unit_uri");
+    }
+    check(index.source_units().size() == 2,
+          "workspace_index.identity.opaque_source_unit_dense_store");
+    const auto overlay_diagnostics = index.diagnostics_for_source(SourceUnitId{1000});
+    check(overlay_diagnostics.size() == 1,
+          "workspace_index.identity.opaque_source_unit_diagnostics");
+    check(index.source_unit_for_id(SourceUnitId{7}) == nullptr,
+          "workspace_index.identity.unknown_source_unit_missing");
 }
 
 void test_workspace_index_queries_sort_by_package_source_and_order() {

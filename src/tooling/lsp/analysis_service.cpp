@@ -20,6 +20,7 @@ namespace {
 
 constexpr std::string_view kWorkspaceIndexSchemaVersion = "lsp-workspace-index-v1";
 constexpr std::string_view kWorkspaceIndexIdentitySchemaVersion = "lsp-workspace-index-identity-v1";
+constexpr std::size_t kExtraSourceUnitIdBase = std::size_t{1} << 48U;
 
 [[nodiscard]] bool is_hex(char ch) noexcept {
     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
@@ -336,7 +337,8 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
 [[nodiscard]] std::vector<LspIndexSourceUnitSeed> index_source_units_from_scope_kinds(
     const package_graph::PackageGraph &graph,
     const NavigationScopeKindMap &scope_kinds,
-    std::unordered_map<std::string, std::size_t> &extra_source_unit_ordinals_by_path) {
+    std::unordered_map<std::string, SourceUnitId> &extra_source_unit_ids_by_path,
+    std::size_t &next_extra_source_unit_id) {
     std::unordered_map<std::string, std::vector<const package_graph::SourceUnitNode *>>
         graph_units_by_path;
     graph_units_by_path.reserve(graph.source_units.size());
@@ -395,14 +397,17 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
             continue;
         }
 
-        const auto path_key = source_unit_registry_key(source_unit.package_id, source_unit.path);
-        auto [registry_entry, inserted] = extra_source_unit_ordinals_by_path.try_emplace(
-            path_key, extra_source_unit_ordinals_by_path.size());
-        if (inserted) {
-            registry_entry->second = extra_source_unit_ordinals_by_path.size() - 1;
+        if (next_extra_source_unit_id < kExtraSourceUnitIdBase) {
+            next_extra_source_unit_id = kExtraSourceUnitIdBase;
         }
-        source_unit.source_unit_id =
-            SourceUnitId{graph.source_units.size() + registry_entry->second};
+
+        const auto path_key = source_unit_registry_key(source_unit.package_id, source_unit.path);
+        auto [registry_entry, inserted] =
+            extra_source_unit_ids_by_path.try_emplace(path_key, SourceUnitId{});
+        if (inserted) {
+            registry_entry->second = SourceUnitId{next_extra_source_unit_id++};
+        }
+        source_unit.source_unit_id = registry_entry->second;
     }
     std::sort(source_units.begin(),
               source_units.end(),
@@ -870,7 +875,8 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
                 .source_units =
                     index_source_units_from_scope_kinds(project_context.context->graph,
                                                         sysroot_scope_kinds,
-                                                        extra_source_unit_ordinals_by_path_),
+                                                        extra_source_unit_ids_by_path_,
+                                                        next_extra_source_unit_id_),
             },
         .metadata =
             NavigationIndexMetadata{
@@ -1051,7 +1057,8 @@ AnalysisService::build_snapshot(const std::string &uri,
                         .source_units = index_source_units_from_scope_kinds(
                             project_context.context->graph,
                             workspace_scope_kinds,
-                            extra_source_unit_ordinals_by_path_),
+                            extra_source_unit_ids_by_path_,
+                            next_extra_source_unit_id_),
                     },
                 .metadata =
                     NavigationIndexMetadata{

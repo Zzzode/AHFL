@@ -112,7 +112,8 @@ class AnalysisService {
     project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
     std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> sysroot_index_cache_;
-    std::unordered_map<std::string, std::size_t> extra_source_unit_ordinals_by_path_;
+    std::unordered_map<std::string, SourceUnitId> extra_source_unit_ids_by_path_;
+    std::size_t next_extra_source_unit_id_{0};
     std::size_t analysis_runs_{0};
 };
 
