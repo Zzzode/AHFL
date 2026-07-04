@@ -1,6 +1,7 @@
 #include "tooling/lsp/code_lens.hpp"
 
 #include <cctype>
+#include <optional>
 #include <string_view>
 
 namespace ahfl::lsp {
@@ -87,6 +88,51 @@ void update_brace_depth(std::string_view line, int &depth, bool &in_block_commen
         }
         ++i;
     }
+}
+
+[[nodiscard]] std::optional<std::string_view> code_lens_label(SymbolKind kind) {
+    switch (kind) {
+    case SymbolKind::Struct:
+        return "struct";
+    case SymbolKind::Enum:
+        return "enum";
+    case SymbolKind::TypeAlias:
+        return "type";
+    case SymbolKind::Const:
+        return "const";
+    case SymbolKind::Capability:
+        return "capability";
+    case SymbolKind::Predicate:
+        return "predicate";
+    case SymbolKind::Agent:
+        return "agent";
+    case SymbolKind::Workflow:
+        return "workflow";
+    case SymbolKind::Function:
+        return "fn";
+    case SymbolKind::Trait:
+        return "trait";
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] CodeLens code_lens_for_symbol(const SymbolFact &symbol, std::string_view label) {
+    CodeLens lens;
+    lens.range = symbol.location.range;
+
+    std::string title;
+    title.reserve(label.size() + 1 + symbol.local_name.size());
+    title.append(label);
+    if (!symbol.local_name.empty()) {
+        title.push_back(' ');
+        title.append(symbol.local_name);
+    }
+    lens.command_title = std::move(title);
+    lens.command = "ahfl.showReferences";
+    if (!symbol.local_name.empty()) {
+        lens.command_arguments.push_back(symbol.local_name);
+    }
+    return lens;
 }
 
 } // namespace
@@ -181,6 +227,21 @@ std::vector<CodeLens> compute_code_lens(const std::string &source) {
         ++line_number;
     }
 
+    return result;
+}
+
+std::vector<CodeLens> compute_code_lens(const LspWorkspaceIndex &index, std::string_view uri) {
+    std::vector<CodeLens> result;
+    for (const auto &symbol : index.symbols()) {
+        if (symbol.completeness == FactCompleteness::Invalid || symbol.location.uri != uri) {
+            continue;
+        }
+        const auto label = code_lens_label(symbol.kind);
+        if (!label.has_value()) {
+            continue;
+        }
+        result.push_back(code_lens_for_symbol(symbol, *label));
+    }
     return result;
 }
 

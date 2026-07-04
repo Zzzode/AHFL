@@ -775,6 +775,50 @@ void test_references_returns_locations() {
     check(output.find("\"id\"") != std::string::npos, "references.has_response");
 }
 
+void test_code_lens_uses_text_fallback_without_workspace_index() {
+    const std::string source = "struct Foo {\n"
+                               "    value: String;\n"
+                               "}\n";
+    const std::string params = R"({"textDocument":{"uri":"file:///test.ahfl"}})";
+    const auto output = run_handler_request(source, "textDocument/codeLens", params);
+    const auto response = response_body_for_id(output, 2);
+
+    check(response.find(R"("title":"struct Foo")") != std::string::npos,
+          "codeLens.fallback_struct_title");
+    check(response.find(R"("command":"ahfl.showReferences")") != std::string::npos,
+          "codeLens.fallback_command");
+}
+
+void test_code_lens_uses_workspace_index_symbols() {
+    const auto root = make_temp_project("code_lens_workspace_index");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-code-lens-index", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "fn keep(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return x;\n"
+                               "}\n";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const std::string code_lens =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/codeLens","params":{"textDocument":{"uri":")" +
+        main_uri + R"("}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, source),
+        code_lens,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    check(response.find(R"("title":"fn keep")") != std::string::npos,
+          "codeLens.index_function_title");
+    check(response.find(R"("command":"ahfl.showReferences")") != std::string::npos,
+          "codeLens.index_command");
+    check(response.find(R"("arguments":["keep"])") != std::string::npos, "codeLens.index_argument");
+}
+
 void test_rename_returns_workspace_edit() {
     std::string source =
         "struct Msg {\n    value: String;\n}\n\nstruct Envelope {\n    payload: Msg;\n}";
@@ -6715,6 +6759,8 @@ int main() {
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();
+    test_code_lens_uses_text_fallback_without_workspace_index();
+    test_code_lens_uses_workspace_index_symbols();
     test_rename_returns_workspace_edit();
     test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();

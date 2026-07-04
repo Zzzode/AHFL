@@ -3306,7 +3306,13 @@ void LspServer::handle_code_lens(const JsonRpcRequest &req) {
         return;
     }
 
-    auto lenses = compute_code_lens(document->text);
+    std::vector<CodeLens> lenses;
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    if (snapshot != nullptr && snapshot->workspace_index != nullptr) {
+        lenses = compute_code_lens(*snapshot->workspace_index, uri);
+    } else {
+        lenses = compute_code_lens(document->text);
+    }
 
     auto result = json::JsonValue::make_array();
     for (const auto &lens : lenses) {
