@@ -117,6 +117,7 @@ struct SourceUnitFact {
     std::uint64_t revision{0};
     std::vector<LspNavigationIndexSourceKind> scope_kinds;
     FactCompleteness completeness{FactCompleteness::Resolved};
+    bool valid{false};
 };
 
 struct ImplMethodFact {

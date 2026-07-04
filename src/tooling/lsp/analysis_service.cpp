@@ -342,6 +342,9 @@ sysroot_index_cache_key(const LspToolchainCacheKey &key,
 [[nodiscard]] bool source_units_reference_path(const LspWorkspaceIndex &index,
                                                const std::unordered_set<std::string> &path_keys) {
     for (const auto &source_unit : index.source_units()) {
+        if (!source_unit.valid) {
+            continue;
+        }
         if (path_keys.contains(AnalysisService::normalized_path_key(source_unit.path))) {
             return true;
         }
@@ -383,9 +386,11 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
     return best;
 }
 
-[[nodiscard]] std::vector<LspIndexSourceUnitSeed>
-index_source_units_from_scope_kinds(const package_graph::PackageGraph &graph,
-                                    const NavigationScopeKindMap &scope_kinds) {
+[[nodiscard]] std::vector<LspIndexSourceUnitSeed> index_source_units_from_scope_kinds(
+    const package_graph::PackageGraph &graph,
+    const NavigationScopeKindMap &scope_kinds,
+    std::unordered_map<std::string, SourceUnitId> &source_unit_ids_by_path,
+    std::size_t &next_source_unit_id) {
     std::vector<LspIndexSourceUnitSeed> source_units;
     source_units.reserve(scope_kinds.size());
     for (const auto &[path_key, kinds] : scope_kinds) {
@@ -408,8 +413,14 @@ index_source_units_from_scope_kinds(const package_graph::PackageGraph &graph,
                   }
                   return lhs.path.generic_string() < rhs.path.generic_string();
               });
-    for (std::size_t index = 0; index < source_units.size(); ++index) {
-        source_units[index].source_unit_id = SourceUnitId{index};
+    for (auto &source_unit : source_units) {
+        const auto path_key = source_unit.path.generic_string();
+        auto [registry_entry, inserted] =
+            source_unit_ids_by_path.try_emplace(path_key, SourceUnitId{next_source_unit_id});
+        if (inserted) {
+            ++next_source_unit_id;
+        }
+        source_unit.source_unit_id = registry_entry->second;
     }
     return source_units;
 }
@@ -866,7 +877,9 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
             NavigationIndexScope{
                 .package_roots = index_package_roots_from_graph(project_context.context->graph),
                 .source_units = index_source_units_from_scope_kinds(project_context.context->graph,
-                                                                    sysroot_scope_kinds),
+                                                                    sysroot_scope_kinds,
+                                                                    source_unit_ids_by_path_,
+                                                                    next_source_unit_id_),
             },
         .metadata =
             NavigationIndexMetadata{
@@ -1044,8 +1057,11 @@ AnalysisService::build_snapshot(const std::string &uri,
                     NavigationIndexScope{
                         .package_roots =
                             index_package_roots_from_graph(project_context.context->graph),
-                        .source_units = index_source_units_from_scope_kinds(
-                            project_context.context->graph, workspace_scope_kinds),
+                        .source_units =
+                            index_source_units_from_scope_kinds(project_context.context->graph,
+                                                                workspace_scope_kinds,
+                                                                source_unit_ids_by_path_,
+                                                                next_source_unit_id_),
                     },
                 .metadata =
                     NavigationIndexMetadata{

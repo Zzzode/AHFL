@@ -452,7 +452,7 @@ struct ImplFactCandidate {
     if (id.value >= source_units.size()) {
         return nullptr;
     }
-    return &source_units[id.value];
+    return source_units[id.value].valid ? &source_units[id.value] : nullptr;
 }
 
 [[nodiscard]] bool source_unit_has_scope_kind(const SourceUnitFact &source,
@@ -583,6 +583,7 @@ void append_index_diagnostics_by_source_name(
         .revision = input.metadata.revision,
         .scope_kinds = scope_kinds,
         .completeness = completeness,
+        .valid = true,
     });
     source_units_by_path.emplace(path_key, source_unit);
     return source_unit;
@@ -925,6 +926,7 @@ void LspWorkspaceIndex::set_metadata(NavigationIndexMetadata metadata) {
 }
 
 void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
+    fact.valid = true;
     if (fact.package_id.value != std::numeric_limits<std::size_t>::max()) {
         if (fact.package_id.value >= source_units_by_package_.size()) {
             source_units_by_package_.resize(fact.package_id.value + 1);
@@ -947,6 +949,9 @@ void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
 void LspWorkspaceIndex::set_source_unit_completeness(SourceUnitId source_unit,
                                                      FactCompleteness completeness) {
     if (source_unit.value >= source_units_.size()) {
+        return;
+    }
+    if (!source_units_[source_unit.value].valid) {
         return;
     }
     source_units_[source_unit.value].completeness = completeness;

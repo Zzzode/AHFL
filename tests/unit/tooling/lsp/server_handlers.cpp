@@ -1432,6 +1432,76 @@ void test_manifest_watcher_refreshes_workspace_index_scope() {
           "manifestWatcherIndex.after_includes_exported_uri");
 }
 
+void test_manifest_invalidation_preserves_workspace_source_unit_ids() {
+    const auto root = make_temp_project("manifest_source_unit_stability");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto extra_path = root / "src" / "extra.ahfl";
+    const auto manifest_path = root / "ahfl.toml";
+    write_package_manifest(root, "lsp-manifest-source-unit-stability", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string extra_source = "module app::extra;\n"
+                                     "\n"
+                                     "struct ExtraOnly {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(extra_path, extra_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto extra_uri = AnalysisService::uri_from_path(extra_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    const auto *initial = analysis.snapshot_for_uri(main_uri);
+    check(initial != nullptr, "manifestSourceUnitStability.initial_snapshot_exists");
+    if (initial == nullptr || initial->workspace_index == nullptr) {
+        check(false, "manifestSourceUnitStability.initial_index_exists");
+        return;
+    }
+    const auto *initial_main = index_source_unit_for_uri(*initial->workspace_index, main_uri);
+    check(initial_main != nullptr, "manifestSourceUnitStability.initial_main_source_exists");
+    if (initial_main == nullptr) {
+        return;
+    }
+    const auto main_source_unit = initial_main->source_unit_id;
+
+    write_package_manifest(
+        root, "lsp-manifest-source-unit-stability", "app", "\"main\", \"extra\"");
+    analysis.invalidate_paths({manifest_path});
+
+    const auto *updated = analysis.snapshot_for_uri(main_uri);
+    check(updated != nullptr, "manifestSourceUnitStability.updated_snapshot_exists");
+    if (updated == nullptr || updated->workspace_index == nullptr) {
+        check(false, "manifestSourceUnitStability.updated_index_exists");
+        return;
+    }
+
+    const auto *updated_main = index_source_unit_for_uri(*updated->workspace_index, main_uri);
+    const auto *updated_extra = index_source_unit_for_uri(*updated->workspace_index, extra_uri);
+    check(updated_main != nullptr, "manifestSourceUnitStability.updated_main_source_exists");
+    check(updated_extra != nullptr, "manifestSourceUnitStability.updated_extra_source_exists");
+    if (updated_main != nullptr) {
+        check(updated_main->source_unit_id == main_source_unit,
+              "manifestSourceUnitStability.main_source_id_stable");
+    }
+    if (updated_extra != nullptr) {
+        check(updated_extra->source_unit_id.value > main_source_unit.value,
+              "manifestSourceUnitStability.extra_source_id_appended");
+    }
+}
+
 void test_project_input_source_cache_is_distinct_from_open_overlays() {
     const auto root = make_temp_project("project_source_cache_overlay");
     const auto main_path = root / "src" / "main.ahfl";
@@ -6660,6 +6730,7 @@ int main() {
     test_watched_file_change_invalidates_project_source_graph();
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
     test_manifest_watcher_refreshes_workspace_index_scope();
+    test_manifest_invalidation_preserves_workspace_source_unit_ids();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
