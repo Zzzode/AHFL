@@ -2293,20 +2293,6 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
     if (!target.has_value()) {
         auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
         if (!locations.empty()) {
-            if (const auto primitive_type = primitive_type_key_at(*snapshot, *source, offset);
-                primitive_type.has_value()) {
-                for (const auto &location :
-                     primitive_implementation_locations(*snapshot, *source, *primitive_type)) {
-                    push_unique_location(locations, location);
-                }
-                if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
-                    sysroot_index != nullptr) {
-                    for (const auto &location :
-                         sysroot_index->implementation_locations_for_type(*primitive_type)) {
-                        push_unique_location(locations, location);
-                    }
-                }
-            }
             JsonRpcResponse resp;
             resp.id = req.id;
             resp.result = serialize_location_or_array(locations);

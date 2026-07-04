@@ -3685,10 +3685,10 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
 
     check(definition_response.find(int_uri) != std::string::npos,
           "definition.primitive_int_includes_canonical_home");
-    check(definition_response.find(fmt_uri) != std::string::npos,
-          "definition.primitive_int_includes_exported_fmt_impl");
-    check(definition_response.find(json_uri) != std::string::npos,
-          "definition.primitive_int_includes_exported_json_impl");
+    check(definition_response.find(fmt_uri) == std::string::npos,
+          "definition.primitive_int_excludes_exported_fmt_impl");
+    check(definition_response.find(json_uri) == std::string::npos,
+          "definition.primitive_int_excludes_exported_json_impl");
     check(implementation_response.find(int_uri) != std::string::npos,
           "implementation.primitive_int_includes_canonical_home_impl");
     check(implementation_response.find(fmt_uri) != std::string::npos,
