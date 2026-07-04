@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-04"
+updated: "2026-07-05"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -39,7 +39,7 @@ rfcs:
     stability: "developer-facing"
   - rfc: "0007"
     title: "LSP Workspace Navigation Index"
-    status: "draft"
+    status: "implemented"
     file: "0007-lsp-workspace-navigation-index.zh.md"
     area: ["compiler", "stdlib", "tooling"]
     stability: "developer-facing"

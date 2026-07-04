@@ -1,22 +1,30 @@
 ---
 rfc: "0007"
 title: "LSP Workspace Navigation Index"
-status: "draft"
+status: "implemented"
 area: ["compiler", "stdlib", "tooling"]
 stability: "developer-facing"
 created: "2026-07-04"
-updated: "2026-07-04"
+updated: "2026-07-05"
 authors: ["LLM-orchestrated"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
   compiler: "compiler owner"
   stdlib: "stdlib owner"
   tooling: "tooling owner"
 required_reviewers: ["compiler", "stdlib", "tooling"]
-tracking_issue: "TBD"
-discussion: "TBD"
-implementation_prs: []
-decision_due: "2026-07-18"
+tracking_issue: "https://github.com/Zzzode/AHFL/issues/15"
+discussion: "https://github.com/Zzzode/AHFL/issues/15"
+implementation_prs:
+  - "https://github.com/Zzzode/AHFL/commit/12b3e57eec56c771912aac22dbe9a19696a7254b"
+  - "https://github.com/Zzzode/AHFL/commit/697d06c4846165d4a4140f70c10ca148b07f1399"
+  - "https://github.com/Zzzode/AHFL/commit/eda162a23567eab52b8a72455f2b54d71d28e284"
+  - "https://github.com/Zzzode/AHFL/commit/c92706c4a757421e318880655586cb5eb0250bb8"
+  - "https://github.com/Zzzode/AHFL/commit/30e7f0cc03b6a731ffc732fbb17faa61be15df34"
+  - "https://github.com/Zzzode/AHFL/commit/56f35e7ce6f1a80b77dc03414eb7e9671b8122fc"
+  - "https://github.com/Zzzode/AHFL/commit/0dde6f252842f1078654b7bdfe63c64cdd93c958"
+  - "https://github.com/Zzzode/AHFL/commit/537b0621edf650ae4364d3496145bea245a2aaec"
+decision_due: "2026-07-05"
 ---
 
 # RFC 0007: LSP Workspace Navigation Index
@@ -329,13 +337,13 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 
 ### Transitional compatibility
 
-当前已经落地的过渡行为只能作为未完成状态的描述，不构成兼容性承诺。RFC 0007 implemented 时必须删除这些路径：
+这些过渡行为只能作为未完成状态的描述，不构成兼容性承诺。RFC 0007 implemented 状态已经删除这些路径，后续不得恢复：
 
 1. `definition` 对 primitive 返回 canonical home + impl candidates，满足 VS Code 默认 Cmd-click UX。
 2. `implementation` 返回语义层已有 `TypeEnvironment::impls()` 里的 impl locations。
 3. source-sysroot 打开 std 文件时临时加载 std exported modules。
 
-但这些行为必须被标记为临时实现细节。最终架构中：
+这些行为必须被标记为临时实现细节。implemented 状态下的最终架构中：
 
 1. std exported modules 属于 `LspWorkspaceIndex` scope，不属于 SemanticSourceGraph entries。
 2. primitive identity 不再使用 string normalized key。
@@ -413,13 +421,18 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 
 ## Open Questions
 
-1. `typeDefinition` 是否在 RFC 0007 第一阶段就公开 provider，还是先内部实现、等 coverage 达标后再 advertise？
-2. `LspWorkspaceIndex` 是否需要磁盘缓存，还是 v1 只做进程内 cache？
-3. Trait impl 语法 `impl Trait for Target` 落地后，现有 inherent-impl-with-matching-methods 的 std 表达方式如何迁移到同一 `ImplFact` model？
-4. RFC 0005 是否需要补充完整 package source enumeration，以便 current package private modules 在未打开、未 import 时也能进入 index？
-5. `DefId` 的 v1 source-order ordinal 在大规模编辑下是否足够稳定，还是需要后续引入语法节点级 numeric fingerprint？
-6. `definition` primitive 多候选 fallback 何时移除，是否需要 VS Code extension 侧绑定默认快捷键到 implementation？
+v1 implemented 状态已收口以下决策：
+
+1. `typeDefinition` 第一阶段公开 provider，并通过 handler tests 覆盖 primitive、nominal type 和 expression result type 三类入口。
+2. `LspWorkspaceIndex` v1 只做进程内 cache；磁盘缓存、remote index server 和跨 checkout cache 保持 non-goal。
+3. Trait impl 语法落地前，`ImplFact` 保留 `trait_def`、`trait_range` 和 `trait_location` 字段；未来 `impl Trait for Target` 直接填充同一模型，不新增并行 fact 类型。
+4. RFC 0005 暂不补充完整文件系统枚举；current package private modules 只有在 target/import graph 可证明归属，或作为 open overlay 出现时进入 v1 index。
+5. `DefId` v1 使用 source-order flat-store ordinal；大规模编辑下的语法节点 numeric fingerprint 留给后续 incremental-index RFC。
+6. primitive `definition` 多候选 fallback 已移除：`definition` / `typeDefinition` 返回 canonical primitive home，impl 列表通过 `textDocument/implementation` 暴露；VS Code extension 不需要非标准 payload。
 
 ## Decision History
 
 - 2026-07-04: Draft opened after debugging primitive type navigation in `std/collections.ahfl` and identifying the need to separate navigation index scope from semantic source graph scope.
+- 2026-07-05: Implemented PackageGraph-derived `SourceUnitId` identity, opaque source-unit lookup, structured `PrimitiveKind` / `TypeKey` primitive homes, and index-owned `DefId` / `WorkspaceImplId` / `ReferenceFactId` flat stores.
+- 2026-07-05: Migrated `definition`, `typeDefinition`, `implementation`, `references`, `workspace/symbol`, and CodeLens to consume `LspWorkspaceIndex` / lazy sysroot index facts without injecting exported std modules into `SemanticSourceGraph`.
+- 2026-07-05: Added tests for source-sysroot primitive impl candidates, ordinary user lazy sysroot indexing, path dependency exports, open overlays, partial parse/resolve/typecheck facts, stable ordering, cache invalidation, and multi-root toolchain profile isolation.
