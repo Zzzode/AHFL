@@ -3,6 +3,8 @@
 #include "tooling/lsp/hover_service.hpp"
 #include "tooling/lsp/server.hpp"
 
+#include "compiler/syntax/frontend/project.hpp"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -1304,6 +1306,57 @@ void test_watched_file_change_invalidates_project_source_graph() {
           "watchedFileChange.after_includes_imported_source");
     check(after_response.find("resolve.") != std::string::npos,
           "watchedFileChange.after_reanalyzes_changed_import");
+}
+
+void test_project_input_source_cache_is_distinct_from_open_overlays() {
+    const auto root = make_temp_project("project_source_cache_overlay");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_file(main_path,
+               "module app::main;\n"
+               "\n"
+               "struct DiskOnly {}\n");
+
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(main_path);
+    input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = root / "src",
+        .exported_modules = {"main"},
+        .dependency_prefixes = {},
+    });
+
+    const auto source_key = AnalysisService::normalized_path_key(main_path);
+    input.source_cache.emplace(source_key,
+                               "module app::main;\n"
+                               "\n"
+                               "struct CachedOnly {}\n");
+
+    const ahfl::Frontend frontend;
+    auto cached_result = ahfl::parse_project(frontend, input);
+    check(!cached_result.has_errors(), "project_input.source_cache.no_errors");
+    check(cached_result.graph.sources.size() == 1, "project_input.source_cache.source_count");
+    if (!cached_result.graph.sources.empty()) {
+        const auto &content = cached_result.graph.sources.front().source.content;
+        check(content.find("CachedOnly") != std::string::npos,
+              "project_input.source_cache.uses_cached_text");
+        check(content.find("DiskOnly") == std::string::npos,
+              "project_input.source_cache.skips_disk_text");
+    }
+
+    input.source_overlays.emplace(source_key,
+                                  "module app::main;\n"
+                                  "\n"
+                                  "struct OverlayOnly {}\n");
+    auto overlay_result = ahfl::parse_project(frontend, input);
+    check(!overlay_result.has_errors(), "project_input.source_overlay.no_errors");
+    check(overlay_result.graph.sources.size() == 1, "project_input.source_overlay.source_count");
+    if (!overlay_result.graph.sources.empty()) {
+        const auto &content = overlay_result.graph.sources.front().source.content;
+        check(content.find("OverlayOnly") != std::string::npos,
+              "project_input.source_overlay.uses_overlay_text");
+        check(content.find("CachedOnly") == std::string::npos,
+              "project_input.source_overlay.precedes_cache_text");
+    }
 }
 
 void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
@@ -5980,6 +6033,7 @@ int main() {
     test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
+    test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();

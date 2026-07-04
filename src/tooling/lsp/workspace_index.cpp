@@ -559,6 +559,10 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                 overlay != input.project.source_overlays.end()) {
                 return frontend.parse_text(path_key, overlay->second);
             }
+            if (const auto cached = input.project.source_cache.find(path_key);
+                cached != input.project.source_cache.end()) {
+                return frontend.parse_text(path_key, cached->second);
+            }
             return frontend.parse_file(path);
         }();
         const auto source_unit = register_source_unit(

@@ -298,10 +298,10 @@ void append_exported_entry_files(
     }
 }
 
-void seed_source_overlays_from_graph(ProjectInput &input, const SourceGraph &graph) {
+void seed_source_cache_from_graph(ProjectInput &input, const SourceGraph &graph) {
     for (const auto &source : graph.sources) {
         const auto key = AnalysisService::normalized_path_key(source.path);
-        input.source_overlays.try_emplace(key, source.source.content);
+        input.source_cache.try_emplace(key, source.source.content);
     }
 }
 
@@ -947,7 +947,7 @@ AnalysisService::build_snapshot(const std::string &uri,
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =
                 std::make_unique<ProjectParseResult>(std::move(project_result));
-            seed_source_overlays_from_graph(index_input.project, snapshot->project_result->graph);
+            seed_source_cache_from_graph(index_input.project, snapshot->project_result->graph);
             auto workspace_index = build_lsp_workspace_index(frontend, std::move(index_input));
             snapshot->workspace_index =
                 std::make_unique<LspWorkspaceIndex>(std::move(workspace_index));

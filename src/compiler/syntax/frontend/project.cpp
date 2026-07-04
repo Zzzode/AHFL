@@ -390,9 +390,13 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
 
         in_progress_paths.insert(path_key);
         auto parse_result = [&]() {
-            const auto overlay = input.source_overlays.find(path_key);
-            if (overlay != input.source_overlays.end()) {
+            if (const auto overlay = input.source_overlays.find(path_key);
+                overlay != input.source_overlays.end()) {
                 return frontend.parse_text(display_path(path), overlay->second);
+            }
+            if (const auto cached = input.source_cache.find(path_key);
+                cached != input.source_cache.end()) {
+                return frontend.parse_text(display_path(path), cached->second);
             }
             return frontend.parse_file(path);
         }();

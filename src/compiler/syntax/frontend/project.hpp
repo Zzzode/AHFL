@@ -25,6 +25,7 @@ struct ProjectInput {
     std::vector<ModuleRoot> module_roots{};
     bool inject_prelude{false};
     std::unordered_map<std::string, std::string> source_overlays{};
+    std::unordered_map<std::string, std::string> source_cache{};
     bool enforce_package_dependencies{false};
 };
 
