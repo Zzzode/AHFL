@@ -3814,6 +3814,69 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
     }
 }
 
+void test_sysroot_index_cache_key_separates_workspace_roots() {
+    const auto root = make_temp_project("sysroot_index_cache_key_workspace_roots");
+    const auto sysroot = root / "sysroot";
+    const auto app_a = root / "app-a";
+    const auto app_b = root / "app-b";
+    const auto main_a = app_a / "src" / "main.ahfl";
+    const auto main_b = app_b / "src" / "main.ahfl";
+    write_minimal_std_package(sysroot / "std", "shared-sysroot");
+    write_package_manifest(app_a,
+                           "cache-key-app-a",
+                           "appa",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_package_manifest(app_b,
+                           "cache-key-app-b",
+                           "appb",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+
+    const std::string source_a = "module appa::main;\n"
+                                 "\n"
+                                 "struct MsgA {\n"
+                                 "    value: String;\n"
+                                 "}\n";
+    const std::string source_b = "module appb::main;\n"
+                                 "\n"
+                                 "struct MsgB {\n"
+                                 "    value: String;\n"
+                                 "}\n";
+    write_file(main_a, source_a);
+    write_file(main_b, source_b);
+
+    const auto uri_a = AnalysisService::uri_from_path(main_a);
+    const auto uri_b = AnalysisService::uri_from_path(main_b);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri_a,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source_a,
+    });
+    store.open(TextDocumentItem{
+        .uri = uri_b,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source_b,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({app_a, app_b});
+    analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+
+    const auto *index_a = analysis.sysroot_index_for_uri(uri_a);
+    const auto *index_a_again = analysis.sysroot_index_for_uri(uri_a);
+    const auto *index_b = analysis.sysroot_index_for_uri(uri_b);
+    check(index_a != nullptr, "sysroot_index_cache_key.index_a_exists");
+    check(index_b != nullptr, "sysroot_index_cache_key.index_b_exists");
+    check(index_a == index_a_again, "sysroot_index_cache_key.reuses_same_workspace_entry");
+    check(index_a != index_b, "sysroot_index_cache_key.separates_workspace_entries");
+}
+
 void test_package_graph_manifest_does_not_inject_prelude() {
     const auto root = make_temp_project("package_graph_explicit_prelude");
     const auto source_path = root / "src" / "main.ahfl";
@@ -5535,6 +5598,7 @@ int main() {
     test_incompatible_toolchain_profile_stops_project_analysis();
     test_toolchain_profile_records_std_identity_checksum();
     test_analysis_snapshot_cache_key_records_toolchain_identity();
+    test_sysroot_index_cache_key_separates_workspace_roots();
     test_package_graph_manifest_does_not_inject_prelude();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
     test_hover_renderer_detail_levels();

@@ -317,6 +317,13 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
     return roots;
 }
 
+[[nodiscard]] std::string sysroot_index_cache_key(const LspToolchainCacheKey &key,
+                                                  std::uint64_t workspace_revision) {
+    return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.std_manifest + "#" +
+           key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
+           std::to_string(workspace_revision);
+}
+
 [[nodiscard]] const package_graph::PackageNode *
 package_for_requested_file(const package_graph::PackageGraph &graph,
                            const std::filesystem::path &requested_file) {
@@ -680,9 +687,7 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         return nullptr;
     }
 
-    const auto cache_key = key->std_manifest + "#" + key->std_identity + "#" +
-                           key->index_schema_version + "#" +
-                           std::to_string(store_.workspace_revision());
+    const auto cache_key = sysroot_index_cache_key(*key, store_.workspace_revision());
     if (const auto existing = sysroot_index_cache_.find(cache_key);
         existing != sysroot_index_cache_.end()) {
         return existing->second.get();
