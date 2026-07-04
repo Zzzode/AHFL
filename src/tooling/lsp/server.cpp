@@ -336,6 +336,31 @@ std_home_module_for_primitive_type(std::string_view type_name) noexcept {
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<std::string_view>
+primitive_type_name_for_kind(PrimitiveKind kind) noexcept {
+    switch (kind) {
+    case PrimitiveKind::Unit:
+        return "Unit";
+    case PrimitiveKind::Bool:
+        return "Bool";
+    case PrimitiveKind::Int:
+        return "Int";
+    case PrimitiveKind::Float:
+        return "Float";
+    case PrimitiveKind::String:
+        return "String";
+    case PrimitiveKind::UUID:
+        return "UUID";
+    case PrimitiveKind::Timestamp:
+        return "Timestamp";
+    case PrimitiveKind::Duration:
+        return "Duration";
+    case PrimitiveKind::Decimal:
+        return "Decimal";
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] std::optional<std::string> module_name_for_source(const LspSourceSnapshot &source) {
     if (source.program == nullptr) {
         return std::nullopt;
@@ -426,6 +451,34 @@ primitive_home_selection_range(const LspSourceSnapshot &source, std::string_view
     }
 
     return find_identifier_range(*source.source, type_name);
+}
+
+[[nodiscard]] std::optional<Location>
+primitive_type_definition_for_kind(const LspAnalysisSnapshot &snapshot, PrimitiveKind kind) {
+    const auto type_name = primitive_type_name_for_kind(kind);
+    if (!type_name.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto home_module = std_home_module_for_primitive_type(*type_name);
+    if (!home_module.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto *home_source = source_for_module_name(snapshot, *home_module);
+    if (home_source == nullptr || home_source->source == nullptr) {
+        return std::nullopt;
+    }
+
+    const auto selection = primitive_home_selection_range(*home_source, *type_name);
+    if (!selection.has_value()) {
+        return std::nullopt;
+    }
+
+    return Location{
+        .uri = home_source->uri,
+        .range = to_lsp_range(*home_source->source, *selection),
+    };
 }
 
 [[nodiscard]] std::optional<Location> primitive_type_definition_at(
@@ -531,6 +584,56 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
     if (duplicate == locations.end()) {
         locations.push_back(std::move(location));
     }
+}
+
+[[nodiscard]] std::optional<SymbolId> nominal_symbol_for_type(const Type &type) {
+    return type.visit(types::Overloads{
+        [](const types::StructT &structure) { return structure.symbol; },
+        [](const types::EnumT &enumeration) { return enumeration.symbol; },
+        [](const types::EnumVariantT &variant) { return variant.symbol; },
+        [](const auto &) { return std::optional<SymbolId>{}; },
+    });
+}
+
+[[nodiscard]] std::vector<Location> type_definition_locations_for_type(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, const Type &type) {
+    std::vector<Location> locations;
+    if (const auto primitive = primitive_kind_for_type(type); primitive.has_value()) {
+        if (const auto location = primitive_type_definition_for_kind(snapshot, *primitive);
+            location.has_value()) {
+            locations.push_back(*location);
+        }
+        return locations;
+    }
+
+    const auto symbol_id = nominal_symbol_for_type(type);
+    if (!symbol_id.has_value()) {
+        return locations;
+    }
+
+    const auto symbol = snapshot.resolve_result.symbol_table.get(*symbol_id);
+    if (!symbol.has_value()) {
+        return locations;
+    }
+    if (const auto location = symbol_location(snapshot, symbol->get(), source);
+        location.has_value()) {
+        locations.push_back(*location);
+    }
+    return locations;
+}
+
+[[nodiscard]] std::vector<Location> type_definition_locations_for_expression_at(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
+    if (snapshot.type_check_result == nullptr) {
+        return {};
+    }
+
+    const auto *expr =
+        snapshot.type_check_result->typed_program.find_expr_containing(offset, source.source_id);
+    if (expr == nullptr || expr->type == nullptr) {
+        return {};
+    }
+    return type_definition_locations_for_type(snapshot, source, *expr->type);
 }
 
 void push_impl_location(std::vector<OrderedLocation> &locations,
@@ -2156,6 +2259,15 @@ void LspServer::handle_type_definition(const JsonRpcRequest &req) {
 
     const auto offset = offset_at(*source->source, position);
     if (auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
+        !locations.empty()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_location_or_array(locations);
+        transport_.send_response(resp);
+        return;
+    }
+
+    if (auto locations = type_definition_locations_for_expression_at(*snapshot, *source, offset);
         !locations.empty()) {
         JsonRpcResponse resp;
         resp.id = req.id;

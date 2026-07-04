@@ -1366,13 +1366,19 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto main_path = root / "src" / "main.ahfl";
     const auto types_path = root / "src" / "types.ahfl";
     write_package_manifest(root, "lsp-project", "app", "\"main\", \"types\"");
-    write_file(main_path,
-               "module app::main;\n"
-               "import app::types as types;\n"
-               "\n"
-               "struct Use {\n"
-               "    payload: types::Msg;\n"
-               "}\n");
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n"
+                                    "\n"
+                                    "fn use_msg(payload: types::Msg) -> Int effect Pure "
+                                    "decreases 0 {\n"
+                                    "    let copy = payload;\n"
+                                    "    return 0;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
     write_file(types_path,
                "module app::types;\n"
                "\n"
@@ -1383,14 +1389,7 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto main_uri = AnalysisService::uri_from_path(main_path);
     const auto types_uri = AnalysisService::uri_from_path(types_path);
     const std::string init = initialize_body(root);
-    const std::string open_main = did_open_body(main_uri,
-                                                1,
-                                                "module app::main;\n"
-                                                "import app::types as types;\n"
-                                                "\n"
-                                                "struct Use {\n"
-                                                "    payload: types::Msg;\n"
-                                                "}\n");
+    const std::string open_main = did_open_body(main_uri, 1, main_source);
     const std::string definition =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":")" +
         main_uri + R"("},"position":{"line":4,"character":22}}})";
@@ -1399,14 +1398,24 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const std::string type_definition =
         R"({"jsonrpc":"2.0","id":5,"method":"textDocument/typeDefinition","params":{"textDocument":{"uri":")" +
         main_uri + R"("},"position":{"line":4,"character":22}}})";
+    const std::string expression_type_definition =
+        R"({"jsonrpc":"2.0","id":7,"method":"textDocument/typeDefinition","params":)" +
+        hover_params_at(main_uri, position_of(main_source, "payload;")) + R"(})";
     const std::string rename =
         R"({"jsonrpc":"2.0","id":4,"method":"textDocument/rename","params":{"textDocument":{"uri":")" +
         main_uri + R"("},"position":{"line":4,"character":22},"newName":"Message"}})";
-    const std::string shutdown = R"({"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}})";
+    const std::string shutdown = R"({"jsonrpc":"2.0","id":8,"method":"shutdown","params":{}})";
 
-    const auto output = run_lsp_messages(
-        {init, open_main, definition, workspace_symbol, rename, type_definition, shutdown});
+    const auto output = run_lsp_messages({init,
+                                          open_main,
+                                          definition,
+                                          workspace_symbol,
+                                          rename,
+                                          type_definition,
+                                          expression_type_definition,
+                                          shutdown});
     const auto type_definition_response = response_body_for_id(output, 5);
+    const auto expression_type_definition_response = response_body_for_id(output, 7);
     check(output.find(types_uri) != std::string::npos, "project.definition_targets_imported_uri");
     check(output.find("\"name\":\"Msg\"") != std::string::npos,
           "project.workspace_symbol_includes_unopened_source");
@@ -1415,6 +1424,8 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     check(output.find(types_uri) != std::string::npos, "project.rename_edits_decl_uri");
     check(type_definition_response.find(types_uri) != std::string::npos,
           "project.type_definition_targets_imported_uri");
+    check(expression_type_definition_response.find(types_uri) != std::string::npos,
+          "project.type_definition_expression_targets_result_type");
 }
 
 void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
