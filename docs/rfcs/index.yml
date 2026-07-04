@@ -37,3 +37,9 @@ rfcs:
     file: "0006-corelib-development-sysroot.zh.md"
     area: ["compiler", "stdlib", "tooling", "process"]
     stability: "developer-facing"
+  - rfc: "0007"
+    title: "LSP Workspace Navigation Index"
+    status: "draft"
+    file: "0007-lsp-workspace-navigation-index.zh.md"
+    area: ["compiler", "stdlib", "tooling"]
+    stability: "developer-facing"

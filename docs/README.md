@@ -143,6 +143,7 @@ Avoid:
 - [0004-native-grpc-transport.zh.md](./rfcs/0004-native-grpc-transport.zh.md)
 - [0005-package-configuration-system.zh.md](./rfcs/0005-package-configuration-system.zh.md)
 - [0006-corelib-development-sysroot.zh.md](./rfcs/0006-corelib-development-sysroot.zh.md)
+- [0007-lsp-workspace-navigation-index.zh.md](./rfcs/0007-lsp-workspace-navigation-index.zh.md)
 
 ## Governance
 
