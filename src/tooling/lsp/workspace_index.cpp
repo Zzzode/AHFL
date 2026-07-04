@@ -152,6 +152,15 @@ source_unit_seed_for_path(const NavigationIndexScope &scope,
     return lhs.path_key < rhs.path_key;
 }
 
+[[nodiscard]] std::vector<LspNavigationIndexSourceKind>
+canonical_scope_kinds(std::vector<LspNavigationIndexSourceKind> kinds) {
+    std::sort(kinds.begin(), kinds.end(), [](auto lhs, auto rhs) {
+        return static_cast<std::uint8_t>(lhs) < static_cast<std::uint8_t>(rhs);
+    });
+    kinds.erase(std::unique(kinds.begin(), kinds.end()), kinds.end());
+    return kinds;
+}
+
 [[nodiscard]] std::vector<std::filesystem::path>
 ordered_entry_files_for_index(const LspWorkspaceIndexInput &input) {
     std::vector<std::filesystem::path> paths;
@@ -552,8 +561,8 @@ void append_index_diagnostics_by_source_name(
         seed == nullptr ? SourceUnitId{index.source_units().size()} : seed->source_unit_id;
     const auto package_id =
         seed == nullptr ? package_id_for_path(input.scope.package_roots, path) : seed->package_id;
-    const auto scope_kinds =
-        seed == nullptr ? std::vector<LspNavigationIndexSourceKind>{} : seed->scope_kinds;
+    const auto scope_kinds = seed == nullptr ? std::vector<LspNavigationIndexSourceKind>{}
+                                             : canonical_scope_kinds(seed->scope_kinds);
     index.add_source_unit(SourceUnitFact{
         .source_unit_id = source_unit,
         .package_id = package_id,

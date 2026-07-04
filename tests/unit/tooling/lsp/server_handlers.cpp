@@ -1984,7 +1984,12 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
                                 .source_unit_id = SourceUnitId{0},
                                 .package_id = package_id,
                                 .path = b_path,
-                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                                .scope_kinds =
+                                    {
+                                        LspNavigationIndexSourceKind::PrimitiveHome,
+                                        LspNavigationIndexSourceKind::PackageExport,
+                                        LspNavigationIndexSourceKind::PackageExport,
+                                    },
                             },
                             LspIndexSourceUnitSeed{
                                 .source_unit_id = SourceUnitId{1},
@@ -2012,6 +2017,14 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
         check(source_unit_has_scope_kind(source_units[0],
                                          LspNavigationIndexSourceKind::PackageExport),
               "workspace_index.source_unit_order.scope_kind");
+        check(source_units[0].scope_kinds.size() == 2,
+              "workspace_index.source_unit_order.scope_kinds_deduplicated");
+        if (source_units[0].scope_kinds.size() == 2) {
+            check(source_units[0].scope_kinds[0] == LspNavigationIndexSourceKind::PackageExport,
+                  "workspace_index.source_unit_order.scope_kinds_sorted_package");
+            check(source_units[0].scope_kinds[1] == LspNavigationIndexSourceKind::PrimitiveHome,
+                  "workspace_index.source_unit_order.scope_kinds_sorted_primitive");
+        }
         check(source_units[1].source_unit_id == SourceUnitId{1},
               "workspace_index.source_unit_order.second_id");
         check(source_units[1].uri == AnalysisService::uri_from_path(a_path),
