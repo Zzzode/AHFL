@@ -10,6 +10,7 @@
 #include <charconv>
 #include <filesystem>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 namespace ahfl::lsp {
@@ -330,6 +331,32 @@ sysroot_index_cache_key(const LspToolchainCacheKey &key,
 
 [[nodiscard]] std::string package_graph_identity(const package_graph::PackageGraph &graph) {
     return "sha256:" + support::sha256_hex(package_graph::serialize_package_graph_json(graph));
+}
+
+[[nodiscard]] bool is_project_manifest_path(const std::filesystem::path &path) {
+    const auto filename = path.filename().generic_string();
+    return filename == "ahfl.toml" || filename == "ahfl.workspace.toml";
+}
+
+[[nodiscard]] bool source_units_reference_path(const LspWorkspaceIndex &index,
+                                               const std::unordered_set<std::string> &path_keys) {
+    for (const auto &source_unit : index.source_units()) {
+        if (path_keys.contains(AnalysisService::normalized_path_key(source_unit.path))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool snapshot_references_path(const LspAnalysisSnapshot &snapshot,
+                                            const std::unordered_set<std::string> &path_keys) {
+    for (const auto &source : snapshot.sources) {
+        if (path_keys.contains(AnalysisService::normalized_path_key(source.path))) {
+            return true;
+        }
+    }
+    return snapshot.workspace_index != nullptr &&
+           source_units_reference_path(*snapshot.workspace_index, path_keys);
 }
 
 [[nodiscard]] const package_graph::PackageNode *
@@ -696,6 +723,38 @@ void AnalysisService::set_toolchain_profiles(project_discovery::ToolchainProfile
 void AnalysisService::invalidate_all() {
     cache_.clear();
     sysroot_index_cache_.clear();
+}
+
+void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> &paths) {
+    std::unordered_set<std::string> path_keys;
+    path_keys.reserve(paths.size());
+    for (const auto &path : paths) {
+        const auto normalized = std::filesystem::path(normalized_path_key(path));
+        if (is_project_manifest_path(normalized)) {
+            invalidate_all();
+            return;
+        }
+        path_keys.insert(normalized.generic_string());
+    }
+    if (path_keys.empty()) {
+        return;
+    }
+
+    for (auto iter = cache_.begin(); iter != cache_.end();) {
+        if (iter->second != nullptr && snapshot_references_path(*iter->second, path_keys)) {
+            iter = cache_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+
+    for (auto iter = sysroot_index_cache_.begin(); iter != sysroot_index_cache_.end();) {
+        if (iter->second != nullptr && source_units_reference_path(*iter->second, path_keys)) {
+            iter = sysroot_index_cache_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
 }
 
 const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &uri) {

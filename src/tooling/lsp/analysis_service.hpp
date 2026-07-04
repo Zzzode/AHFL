@@ -86,6 +86,7 @@ class AnalysisService {
     void set_workspace_folders(std::vector<std::filesystem::path> roots);
     void set_toolchain_profiles(project_discovery::ToolchainProfileSet profiles);
     void invalidate_all();
+    void invalidate_paths(const std::vector<std::filesystem::path> &paths);
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
     [[nodiscard]] const LspWorkspaceIndex *sysroot_index_for_uri(const std::string &uri);

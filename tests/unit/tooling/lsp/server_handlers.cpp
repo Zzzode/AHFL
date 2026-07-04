@@ -1308,6 +1308,70 @@ void test_watched_file_change_invalidates_project_source_graph() {
           "watchedFileChange.after_reanalyzes_changed_import");
 }
 
+void test_watched_file_path_invalidation_keeps_unaffected_snapshots() {
+    const auto root = make_temp_project("watched_file_path_invalidation");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    const auto unrelated_path = root / "scratch" / "note.ahfl";
+    write_package_manifest(root, "lsp-watched-path-invalidation", "app", "\"main\", \"types\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string valid_types_source = "module app::types;\n"
+                                           "\n"
+                                           "struct Msg {\n"
+                                           "    value: String;\n"
+                                           "}\n";
+    const std::string broken_types_source = "module app::types;\n"
+                                            "\n"
+                                            "struct Msg {\n"
+                                            "    value: Missing;\n"
+                                            "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, valid_types_source);
+    write_file(unrelated_path, "module scratch::note;\n");
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *first = analysis.snapshot_for_uri(main_uri);
+    check(first != nullptr, "watchedPathInvalidation.first_snapshot_exists");
+    check(analysis.analysis_runs() == 1, "watchedPathInvalidation.initial_run_count");
+
+    analysis.invalidate_paths({unrelated_path});
+    const auto *after_unrelated = analysis.snapshot_for_uri(main_uri);
+    check(after_unrelated != nullptr, "watchedPathInvalidation.unrelated_snapshot_exists");
+    check(analysis.analysis_runs() == 1, "watchedPathInvalidation.unrelated_keeps_cache");
+
+    write_file(types_path, broken_types_source);
+    analysis.invalidate_paths({types_path});
+    const auto *after_types = analysis.snapshot_for_uri(main_uri);
+    check(after_types != nullptr, "watchedPathInvalidation.related_snapshot_exists");
+    check(analysis.analysis_runs() == 2, "watchedPathInvalidation.related_rebuilds_cache");
+    if (after_types != nullptr) {
+        const auto diagnostics = after_types->diagnostics_for_uri(types_uri);
+        const auto has_missing =
+            std::any_of(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diag) {
+                return diag.message.find("unknown type 'Missing'") != std::string::npos;
+            });
+        check(has_missing, "watchedPathInvalidation.related_reloads_disk_source");
+    }
+}
+
 void test_project_input_source_cache_is_distinct_from_open_overlays() {
     const auto root = make_temp_project("project_source_cache_overlay");
     const auto main_path = root / "src" / "main.ahfl";
@@ -6242,6 +6306,7 @@ int main() {
     test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
+    test_watched_file_path_invalidation_keeps_unaffected_snapshots();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();

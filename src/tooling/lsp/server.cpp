@@ -14,11 +14,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
 namespace ahfl::lsp {
 
@@ -2111,8 +2113,31 @@ void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) 
 }
 
 void LspServer::handle_watched_files_changed(const json::JsonValue &params) {
-    (void)params;
-    analysis_.invalidate_all();
+    std::vector<std::filesystem::path> changed_paths;
+    if (const auto *changes = params.get("changes"); changes != nullptr && changes->is_array()) {
+        changed_paths.reserve(changes->array_items.size());
+        for (const auto &change : changes->array_items) {
+            if (change == nullptr) {
+                continue;
+            }
+            const auto *uri_value = change->get("uri");
+            if (uri_value == nullptr) {
+                continue;
+            }
+            const auto uri = uri_value->as_string();
+            if (!uri.has_value()) {
+                continue;
+            }
+            if (const auto path = AnalysisService::path_from_uri(*uri); path.has_value()) {
+                changed_paths.push_back(*path);
+            }
+        }
+    }
+    if (changed_paths.empty()) {
+        analysis_.invalidate_all();
+    } else {
+        analysis_.invalidate_paths(changed_paths);
+    }
     send_diagnostic_refresh();
 }
 
