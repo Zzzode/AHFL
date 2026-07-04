@@ -4273,6 +4273,10 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
           "analysis_toolchain_cache_key.root_manifest");
     check(first->toolchain_cache_key->workspace_manifest.empty(),
           "analysis_toolchain_cache_key.no_workspace_manifest");
+    check(first->toolchain_cache_key->package_graph_identity.starts_with("sha256:"),
+          "analysis_toolchain_cache_key.package_graph_identity_prefix");
+    check(first->toolchain_cache_key->package_graph_identity.size() == 71,
+          "analysis_toolchain_cache_key.package_graph_identity_length");
     check(first->toolchain_cache_key->std_manifest ==
               AnalysisService::normalized_path_key(sysroot_a / "std" / "ahfl.toml"),
           "analysis_toolchain_cache_key.std_manifest");
@@ -4302,8 +4306,10 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
 void test_analysis_snapshot_cache_key_records_workspace_manifest() {
     const auto root = make_temp_project("analysis_workspace_manifest_cache_key");
     const auto app_root = root / "packages" / "app";
+    const auto lib_root = root / "packages" / "lib";
     const auto sysroot = root / "sysroot";
     const auto main_path = app_root / "src" / "main.ahfl";
+    const auto lib_path = lib_root / "src" / "lib.ahfl";
 
     write_workspace_manifest(root, "\"packages/app\"");
     write_package_manifest(app_root, "workspace-cache-key-app", "app", "\"main\"");
@@ -4342,10 +4348,28 @@ void test_analysis_snapshot_cache_key_records_workspace_manifest() {
     check(snapshot->toolchain_cache_key->workspace_manifest ==
               AnalysisService::normalized_path_key(root / "ahfl.workspace.toml"),
           "analysis_workspace_manifest_cache_key.workspace_manifest");
+    const auto first_graph_identity = snapshot->toolchain_cache_key->package_graph_identity;
+    check(first_graph_identity.starts_with("sha256:"),
+          "analysis_workspace_manifest_cache_key.graph_identity_prefix");
     check(snapshot->package_graph_manifest ==
               std::optional<std::filesystem::path>{std::filesystem::path(
                   AnalysisService::normalized_path_key(root / "ahfl.workspace.toml"))},
           "analysis_workspace_manifest_cache_key.snapshot_graph_manifest");
+
+    write_workspace_manifest(root, "\"packages/app\", \"packages/lib\"");
+    write_package_manifest(lib_root, "workspace-cache-key-lib", "lib", "\"lib\"", "src/lib.ahfl");
+    write_file(lib_path,
+               "module lib::lib;\n"
+               "\n"
+               "struct Lib {}\n");
+    analysis.invalidate_all();
+
+    const auto *updated = analysis.snapshot_for_uri(uri);
+    check(updated != nullptr, "analysis_workspace_manifest_cache_key.updated_snapshot_exists");
+    if (updated != nullptr && updated->toolchain_cache_key.has_value()) {
+        check(updated->toolchain_cache_key->package_graph_identity != first_graph_identity,
+              "analysis_workspace_manifest_cache_key.graph_identity_changes");
+    }
 }
 
 void test_analysis_snapshot_cache_key_records_open_overlay_revisions() {

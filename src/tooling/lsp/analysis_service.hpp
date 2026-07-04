@@ -34,6 +34,7 @@ struct LspToolchainCacheKey {
     std::string workspace_folder_uri;
     std::string root_manifest;
     std::string workspace_manifest;
+    std::string package_graph_identity;
     std::string std_manifest;
     std::string std_identity;
     std::string scope;

@@ -1,6 +1,7 @@
 #include "tooling/lsp/analysis_service.hpp"
 
 #include "ahfl/compiler/frontend/ast.hpp"
+#include "base/support/sha256.hpp"
 #include "compiler/package_graph/package_graph.hpp"
 #include "compiler/project_discovery/discovery.hpp"
 
@@ -322,9 +323,13 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
 sysroot_index_cache_key(const LspToolchainCacheKey &key,
                         std::string_view open_document_overlay_revision_set) {
     return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.workspace_manifest + "#" +
-           key.std_manifest + "#" + key.std_identity + "#" + key.scope + "#" +
-           key.index_schema_version + "#" + key.index_identity_schema_version + "#" +
-           std::string{open_document_overlay_revision_set};
+           key.package_graph_identity + "#" + key.std_manifest + "#" + key.std_identity + "#" +
+           key.scope + "#" + key.index_schema_version + "#" + key.index_identity_schema_version +
+           "#" + std::string{open_document_overlay_revision_set};
+}
+
+[[nodiscard]] std::string package_graph_identity(const package_graph::PackageGraph &graph) {
+    return "sha256:" + support::sha256_hex(package_graph::serialize_package_graph_json(graph));
 }
 
 [[nodiscard]] const package_graph::PackageNode *
@@ -881,6 +886,7 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
             project_context.context->workspace_manifest_path.has_value()
                 ? normalized_path_key(*project_context.context->workspace_manifest_path)
                 : std::string{},
+        .package_graph_identity = package_graph_identity(project_context.context->graph),
         .std_manifest = normalized_path_key(selection->profile.std_manifest),
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
