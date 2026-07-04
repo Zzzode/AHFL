@@ -1910,6 +1910,123 @@ void test_project_references_include_indexed_unopened_source() {
     check(count_substring(response, extra_uri) == 1, "references.index_emits_unopened_export_once");
 }
 
+void test_user_package_references_include_lazy_sysroot_index() {
+    const auto root = make_temp_project("references_lazy_sysroot_index");
+    const auto app_root = root / "app";
+    const auto std_root = root / "std";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto collections_path = std_root / "collections.ahfl";
+    const auto json_path = std_root / "json.ahfl";
+
+    write_package_manifest(app_root,
+                           "references-sysroot-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"collections\", \"json\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"collections_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(collections_path,
+               "module std::collections;\n"
+               "\n"
+               "struct List<T> {}\n");
+    write_file(json_path,
+               "module std::json;\n"
+               "import std::collections as collections;\n"
+               "\n"
+               "struct JsonList {\n"
+               "    payload: collections::List<Int>;\n"
+               "}\n");
+
+    const std::string app_source = "module app::main;\n"
+                                   "import std::collections as collections;\n"
+                                   "\n"
+                                   "struct Use {\n"
+                                   "    payload: collections::List<Int>;\n"
+                                   "}\n";
+    write_file(app_path, app_source);
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    const auto collections_uri = AnalysisService::uri_from_path(collections_path);
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = app_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = app_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(root));
+        const auto *snapshot = analysis.snapshot_for_uri(app_uri);
+        check(snapshot != nullptr, "references.lazy_sysroot.snapshot_exists");
+        const auto *sysroot_index = analysis.sysroot_index_for_uri(app_uri);
+        check(sysroot_index != nullptr, "references.lazy_sysroot.index_exists");
+        if (sysroot_index != nullptr) {
+            const auto &symbols = sysroot_index->symbols();
+            const auto list_symbol =
+                std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                    return symbol.canonical_name == "std::collections::List";
+                });
+            check(list_symbol != symbols.end(), "references.lazy_sysroot.list_symbol_exists");
+            if (list_symbol != symbols.end()) {
+                const auto indexed_refs =
+                    sysroot_index->reference_locations_for_def(list_symbol->def_id);
+                check(std::find_if(indexed_refs.begin(),
+                                   indexed_refs.end(),
+                                   [&](const Location &location) {
+                                       return location.uri == json_uri;
+                                   }) != indexed_refs.end(),
+                      "references.lazy_sysroot.index_includes_json_reference");
+            }
+        }
+    }
+    const auto list_position = position_of(app_source, "List<Int>");
+    const std::string references =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":{"textDocument":{"uri":")" +
+        app_uri + R"("},"position":{"line":)" + std::to_string(list_position.line) +
+        R"(,"character":)" + std::to_string(list_position.character) +
+        R"(},"context":{"includeDeclaration":true}}})";
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(app_uri, 1, app_source),
+        references,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+
+    check(response.find(collections_uri) != std::string::npos,
+          "references.lazy_sysroot_includes_std_declaration");
+    check(response.find(json_uri) != std::string::npos,
+          "references.lazy_sysroot_includes_unopened_std_export");
+    check(response.find(app_uri) != std::string::npos,
+          "references.lazy_sysroot_keeps_user_semantic_reference");
+}
+
 void test_workspace_index_queries_sort_by_package_source_and_order() {
     LspWorkspaceIndex index;
     const auto pkg1 = ahfl::package_graph::PackageId{1};
@@ -6785,6 +6902,7 @@ int main() {
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_references_include_indexed_unopened_source();
+    test_user_package_references_include_lazy_sysroot_index();
     test_workspace_index_queries_sort_by_package_source_and_order();
     test_workspace_index_assigns_source_units_by_scope_order();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();

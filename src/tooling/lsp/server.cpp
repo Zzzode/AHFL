@@ -627,6 +627,20 @@ struct OrderedLocation {
            lhs.range.end.character == rhs.range.end.character;
 }
 
+[[nodiscard]] bool same_source_range(SourceRange lhs, SourceRange rhs) noexcept {
+    return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
+}
+
+[[nodiscard]] bool same_file_uri(std::string_view lhs, std::string_view rhs) {
+    const auto lhs_path = AnalysisService::path_from_uri(lhs);
+    const auto rhs_path = AnalysisService::path_from_uri(rhs);
+    if (!lhs_path.has_value() || !rhs_path.has_value()) {
+        return lhs == rhs;
+    }
+    return AnalysisService::normalized_path_key(*lhs_path) ==
+           AnalysisService::normalized_path_key(*rhs_path);
+}
+
 void push_unique_location(std::vector<Location> &locations, Location location) {
     const auto duplicate =
         std::find_if(locations.begin(), locations.end(), [&](const Location &existing) {
@@ -660,6 +674,33 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
         return std::nullopt;
     }
     return fact->location;
+}
+
+[[nodiscard]] std::optional<DefId> index_def_for_symbol(const LspWorkspaceIndex &index,
+                                                        const LspAnalysisSnapshot &snapshot,
+                                                        const Symbol &symbol) {
+    if (!symbol.source_id.has_value()) {
+        return std::nullopt;
+    }
+    const auto *source = snapshot.source_for_id(*symbol.source_id);
+    if (source == nullptr) {
+        return std::nullopt;
+    }
+    const auto selection_range = symbol_navigation_source_range(symbol, *source);
+
+    for (const auto &fact : index.symbols()) {
+        if (fact.completeness == FactCompleteness::Invalid || fact.kind != symbol.kind) {
+            continue;
+        }
+        if (!same_file_uri(fact.location.uri, source->uri)) {
+            continue;
+        }
+        if (same_source_range(fact.declaration_range, symbol.declaration_range) ||
+            same_source_range(fact.selection_range, selection_range)) {
+            return fact.def_id;
+        }
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] std::vector<Location> type_definition_locations_for_type(
@@ -2515,6 +2556,17 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
                     push_unique_location(locations, location);
                 }
                 used_workspace_index = true;
+            }
+        }
+        if (symbol.has_value()) {
+            if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
+                sysroot_index != nullptr) {
+                const auto def = index_def_for_symbol(*sysroot_index, *snapshot, symbol->get());
+                if (def.has_value()) {
+                    for (const auto &location : sysroot_index->reference_locations_for_def(*def)) {
+                        push_unique_location(locations, location);
+                    }
+                }
             }
         }
 
