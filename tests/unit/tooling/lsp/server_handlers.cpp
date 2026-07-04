@@ -18,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -2027,6 +2028,138 @@ void test_user_package_references_include_lazy_sysroot_index() {
           "references.lazy_sysroot_keeps_user_semantic_reference");
 }
 
+void test_workspace_index_identity_hash_and_flat_store_ids() {
+    check(SourceUnitId{7} == SourceUnitId{7}, "workspace_index.identity.source_unit_equal");
+    check(!(SourceUnitId{7} == SourceUnitId{8}), "workspace_index.identity.source_unit_not_equal");
+    check(DefId{3} == DefId{3}, "workspace_index.identity.def_equal");
+    check(!(DefId{3} == DefId{4}), "workspace_index.identity.def_not_equal");
+    check(WorkspaceImplId{5} == WorkspaceImplId{5}, "workspace_index.identity.impl_equal");
+    check(!(WorkspaceImplId{5} == WorkspaceImplId{6}), "workspace_index.identity.impl_not_equal");
+    check(ReferenceFactId{9} == ReferenceFactId{9}, "workspace_index.identity.reference_equal");
+    check(!(ReferenceFactId{9} == ReferenceFactId{10}),
+          "workspace_index.identity.reference_not_equal");
+
+    const auto int_type = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Int,
+    };
+    const auto int_type_again = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Int,
+    };
+    const auto float_type = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Float,
+    };
+    const auto decimal_zero = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Decimal,
+        .primitive_parameter = 0,
+    };
+    const auto decimal_two = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Decimal,
+        .primitive_parameter = 2,
+    };
+    const auto list_int = TypeKey{
+        .kind = TypeKey::Kind::Nominal,
+        .def = DefId{42},
+        .type_args = {int_type},
+    };
+    const auto list_float = TypeKey{
+        .kind = TypeKey::Kind::Nominal,
+        .def = DefId{42},
+        .type_args = {float_type},
+    };
+
+    check(int_type == int_type_again, "workspace_index.identity.type_key_equal");
+    check(TypeKeyHash{}(int_type) == TypeKeyHash{}(int_type_again),
+          "workspace_index.identity.type_key_equal_hash");
+
+    std::unordered_set<TypeKey, TypeKeyHash> keys;
+    keys.insert(int_type);
+    keys.insert(int_type_again);
+    keys.insert(float_type);
+    keys.insert(decimal_zero);
+    keys.insert(decimal_two);
+    keys.insert(list_int);
+    keys.insert(list_float);
+    check(keys.size() == 6, "workspace_index.identity.type_key_hash_distinguishes_shape");
+    check(keys.find(decimal_two) != keys.end(),
+          "workspace_index.identity.decimal_parameter_lookup");
+    check(keys.find(list_int) != keys.end(), "workspace_index.identity.nominal_generic_lookup");
+
+    LspWorkspaceIndex index;
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = SourceUnitId{0},
+        .package_id = ahfl::package_graph::PackageId{0},
+        .path = "pkg.ahfl",
+        .uri = "file:///pkg.ahfl",
+        .revision = 1,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_symbol(SymbolFact{
+        .def_id = DefId{99},
+        .package_id = ahfl::package_graph::PackageId{0},
+        .source_unit_id = SourceUnitId{0},
+        .kind = ahfl::SymbolKind::Struct,
+        .local_name = "Box",
+        .canonical_name = "pkg::Box",
+        .declaration_range = ahfl::SourceRange{0, 3},
+        .selection_range = ahfl::SourceRange{0, 3},
+        .location = index_test_location("file:///pkg.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_impl(ImplFact{
+        .impl_id = WorkspaceImplId{99},
+        .package_id = ahfl::package_graph::PackageId{0},
+        .source_unit_id = SourceUnitId{0},
+        .target_type = TypeKey{.kind = TypeKey::Kind::Nominal, .def = DefId{0}},
+        .declaration_range = ahfl::SourceRange{4, 8},
+        .target_range = ahfl::SourceRange{9, 12},
+        .location = index_test_location("file:///pkg.ahfl", 1),
+        .source_order = 0,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_reference(ReferenceFact{
+        .package_id = ahfl::package_graph::PackageId{0},
+        .source_unit_id = SourceUnitId{0},
+        .target_def = DefId{0},
+        .reference_kind = ahfl::ReferenceKind::TypeName,
+        .range = ahfl::SourceRange{13, 16},
+        .location = index_test_location("file:///pkg.ahfl", 2),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_reference(ReferenceFact{
+        .package_id = ahfl::package_graph::PackageId{0},
+        .source_unit_id = SourceUnitId{0},
+        .target_def = DefId{0},
+        .reference_kind = ahfl::ReferenceKind::TypeName,
+        .range = ahfl::SourceRange{17, 20},
+        .location = index_test_location("file:///pkg.ahfl", 3),
+        .completeness = FactCompleteness::Parsed,
+    });
+
+    const auto *box_symbol = index.symbol_for_def(DefId{0});
+    check(box_symbol != nullptr, "workspace_index.identity.symbol_flat_id_exists");
+    if (box_symbol != nullptr) {
+        check(box_symbol->def_id == DefId{0}, "workspace_index.identity.symbol_flat_id");
+    }
+    const auto &impls = index.impls();
+    check(impls.size() == 1, "workspace_index.identity.impl_count");
+    if (!impls.empty()) {
+        check(impls.front().impl_id == WorkspaceImplId{0}, "workspace_index.identity.impl_flat_id");
+    }
+    const auto nominal_impls = index.implementation_locations_for_nominal_def(DefId{0});
+    check(nominal_impls.size() == 1, "workspace_index.identity.nominal_impl_lookup");
+    const auto references = index.reference_locations_for_def(DefId{0});
+    check(references.size() == 1, "workspace_index.identity.resolved_references_only");
+    if (!references.empty()) {
+        check(references.front().range.start.line == 2,
+              "workspace_index.identity.reference_location");
+    }
+}
+
 void test_workspace_index_queries_sort_by_package_source_and_order() {
     LspWorkspaceIndex index;
     const auto pkg1 = ahfl::package_graph::PackageId{1};
@@ -3989,12 +4122,16 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
           "definition.primitive_int_excludes_exported_fmt_impl");
     check(definition_response.find(json_uri) == std::string::npos,
           "definition.primitive_int_excludes_exported_json_impl");
+    check(definition_response.find(R"("command")") == std::string::npos,
+          "definition.primitive_int_payload_has_no_command");
     check(implementation_response.find(int_uri) != std::string::npos,
           "implementation.primitive_int_includes_canonical_home_impl");
     check(implementation_response.find(fmt_uri) != std::string::npos,
           "implementation.primitive_int_includes_exported_fmt_impl");
     check(implementation_response.find(json_uri) != std::string::npos,
           "implementation.primitive_int_includes_exported_json_impl");
+    check(implementation_response.find(R"("command")") == std::string::npos,
+          "implementation.primitive_int_payload_has_no_command");
     check(workspace_symbol_response.find(fmt_uri) != std::string::npos,
           "workspace_symbol.index_includes_exported_fmt_function");
     check(workspace_symbol_response.find("format") != std::string::npos,
@@ -6903,6 +7040,7 @@ int main() {
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_references_include_indexed_unopened_source();
     test_user_package_references_include_lazy_sysroot_index();
+    test_workspace_index_identity_hash_and_flat_store_ids();
     test_workspace_index_queries_sort_by_package_source_and_order();
     test_workspace_index_assigns_source_units_by_scope_order();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
