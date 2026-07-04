@@ -223,6 +223,7 @@ class LspWorkspaceIndex {
     source_units_for_package(package_graph::PackageId package_id) const;
     [[nodiscard]] std::vector<const IndexDiagnosticFact *>
     diagnostics_for_source(SourceUnitId source_unit) const;
+    [[nodiscard]] const SymbolFact *symbol_for_def(DefId def) const;
     [[nodiscard]] std::vector<const SymbolFact *> workspace_symbols(std::string_view query) const;
     [[nodiscard]] std::vector<Location> reference_locations_for_def(DefId def) const;
     [[nodiscard]] std::vector<Location>

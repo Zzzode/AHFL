@@ -644,6 +644,22 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
     });
 }
 
+[[nodiscard]] std::optional<Location> indexed_symbol_location(const LspAnalysisSnapshot &snapshot,
+                                                              const Symbol &symbol) {
+    if (snapshot.workspace_index == nullptr) {
+        return std::nullopt;
+    }
+    const auto def = snapshot.workspace_def_for_symbol(symbol.id);
+    if (!def.has_value()) {
+        return std::nullopt;
+    }
+    const auto *fact = snapshot.workspace_index->symbol_for_def(*def);
+    if (fact == nullptr || fact->completeness == FactCompleteness::Invalid) {
+        return std::nullopt;
+    }
+    return fact->location;
+}
+
 [[nodiscard]] std::vector<Location> type_definition_locations_for_type(
     const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, const Type &type) {
     std::vector<Location> locations;
@@ -662,6 +678,11 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
 
     const auto symbol = snapshot.resolve_result.symbol_table.get(*symbol_id);
     if (!symbol.has_value()) {
+        return locations;
+    }
+    if (const auto location = indexed_symbol_location(snapshot, symbol->get());
+        location.has_value()) {
+        locations.push_back(*location);
         return locations;
     }
     if (const auto location = symbol_location(snapshot, symbol->get(), source);
@@ -2285,7 +2306,10 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
         send_null(transport_, req.id);
         return;
     }
-    const auto location = symbol_location(*snapshot, symbol->get(), *source);
+    auto location = indexed_symbol_location(*snapshot, symbol->get());
+    if (!location.has_value()) {
+        location = symbol_location(*snapshot, symbol->get(), *source);
+    }
     if (!location.has_value()) {
         send_null(transport_, req.id);
         return;
@@ -2349,7 +2373,10 @@ void LspServer::handle_type_definition(const JsonRpcRequest &req) {
         send_null(transport_, req.id);
         return;
     }
-    const auto location = symbol_location(*snapshot, symbol->get(), *source);
+    auto location = indexed_symbol_location(*snapshot, symbol->get());
+    if (!location.has_value()) {
+        location = symbol_location(*snapshot, symbol->get(), *source);
+    }
     if (!location.has_value()) {
         send_null(transport_, req.id);
         return;

@@ -849,6 +849,14 @@ LspWorkspaceIndex::diagnostics_for_source(SourceUnitId source_unit) const {
     return matched;
 }
 
+const SymbolFact *LspWorkspaceIndex::symbol_for_def(DefId def) const {
+    if (def.value >= symbols_.size()) {
+        return nullptr;
+    }
+    const auto &symbol = symbols_[def.value];
+    return symbol.def_id == def ? &symbol : nullptr;
+}
+
 std::vector<const SymbolFact *> LspWorkspaceIndex::workspace_symbols(std::string_view query) const {
     std::vector<const SymbolFact *> matched;
     for (const auto &symbol : symbols_) {

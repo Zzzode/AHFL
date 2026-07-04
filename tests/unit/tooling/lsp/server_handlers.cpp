@@ -1800,6 +1800,15 @@ void test_workspace_index_queries_sort_by_package_source_and_order() {
         .completeness = FactCompleteness::Resolved,
     });
 
+    const auto *target_symbol = index.symbol_for_def(target_def);
+    check(target_symbol != nullptr, "workspace_index.order.symbol_for_def_exists");
+    if (target_symbol != nullptr) {
+        check(target_symbol->location.uri == "file:///pkg2.ahfl",
+              "workspace_index.order.symbol_for_def_location");
+    }
+    check(index.symbol_for_def(DefId{99}) == nullptr,
+          "workspace_index.order.symbol_for_unknown_def_missing");
+
     const auto symbols = index.workspace_symbols("Thing");
     check(symbols.size() == 3, "workspace_index.order.symbol_count");
     if (symbols.size() == 3) {
