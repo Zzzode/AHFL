@@ -3506,6 +3506,17 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                 const auto indexed_impls =
                     snapshot->workspace_index->implementation_locations_for_primitive(
                         PrimitiveKind::Int);
+                const auto indexed_home =
+                    snapshot->workspace_index->primitive_home_location_for_type(TypeKey{
+                        .kind = TypeKey::Kind::Primitive,
+                        .primitive = PrimitiveKind::Int,
+                    });
+                check(indexed_home.has_value(),
+                      "workspace_index.std_impl.primitive_home_location_exists");
+                if (indexed_home.has_value()) {
+                    check(indexed_home->uri == int_uri,
+                          "workspace_index.std_impl.primitive_home_location_targets_int");
+                }
                 check(std::find_if(indexed_impls.begin(),
                                    indexed_impls.end(),
                                    [&](const Location &location) {

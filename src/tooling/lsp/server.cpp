@@ -457,6 +457,17 @@ primitive_home_selection_range(const LspSourceSnapshot &source, std::string_view
 
 [[nodiscard]] std::optional<Location>
 primitive_type_definition_for_kind(const LspAnalysisSnapshot &snapshot, PrimitiveKind kind) {
+    const TypeKey type{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = kind,
+    };
+    if (snapshot.workspace_index != nullptr) {
+        if (const auto location = snapshot.workspace_index->primitive_home_location_for_type(type);
+            location.has_value()) {
+            return location;
+        }
+    }
+
     const auto type_name = primitive_type_name_for_kind(kind);
     if (!type_name.has_value()) {
         return std::nullopt;
@@ -483,38 +494,29 @@ primitive_type_definition_for_kind(const LspAnalysisSnapshot &snapshot, Primitiv
     };
 }
 
+[[nodiscard]] std::optional<Location>
+primitive_type_definition_for_type_key(const LspAnalysisSnapshot &snapshot, const TypeKey &type) {
+    if (snapshot.workspace_index != nullptr) {
+        if (const auto location = snapshot.workspace_index->primitive_home_location_for_type(type);
+            location.has_value()) {
+            return location;
+        }
+    }
+    if (type.kind != TypeKey::Kind::Primitive || !type.primitive.has_value()) {
+        return std::nullopt;
+    }
+    return primitive_type_definition_for_kind(snapshot, *type.primitive);
+}
+
+[[nodiscard]] std::optional<TypeKey> primitive_type_key_at(const LspAnalysisSnapshot &snapshot,
+                                                           const LspSourceSnapshot &source,
+                                                           std::size_t offset);
+
 [[nodiscard]] std::optional<Location> primitive_type_definition_at(
     const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
-    const auto index_iter = snapshot.hover_indices.find(hover_index_key(source));
-    if (index_iter == snapshot.hover_indices.end()) {
-        return std::nullopt;
-    }
-
-    const auto *target = index_iter->second.lookup(offset);
-    if (target == nullptr || target->kind != HoverTargetKind::TypeReference ||
-        target->role != "builtin type") {
-        return std::nullopt;
-    }
-
-    const auto home_module = std_home_module_for_primitive_type(target->local_name);
-    if (!home_module.has_value()) {
-        return std::nullopt;
-    }
-
-    const auto *home_source = source_for_module_name(snapshot, *home_module);
-    if (home_source == nullptr || home_source->source == nullptr) {
-        return std::nullopt;
-    }
-
-    const auto selection = primitive_home_selection_range(*home_source, target->local_name);
-    if (!selection.has_value()) {
-        return std::nullopt;
-    }
-
-    return Location{
-        .uri = home_source->uri,
-        .range = to_lsp_range(*home_source->source, *selection),
-    };
+    const auto type = primitive_type_key_at(snapshot, source, offset);
+    return type.has_value() ? primitive_type_definition_for_type_key(snapshot, *type)
+                            : std::nullopt;
 }
 
 [[nodiscard]] std::optional<std::int64_t> decimal_scale_at(const SourceFile &source,

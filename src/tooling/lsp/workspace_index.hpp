@@ -232,6 +232,8 @@ class LspWorkspaceIndex {
     [[nodiscard]] std::vector<Location> implementation_locations_for_trait(DefId trait) const;
     [[nodiscard]] std::vector<Location>
     implementation_locations_for_primitive(PrimitiveKind kind) const;
+    [[nodiscard]] std::optional<Location>
+    primitive_home_location_for_type(const TypeKey &type) const;
 
   private:
     NavigationIndexMetadata metadata_;
