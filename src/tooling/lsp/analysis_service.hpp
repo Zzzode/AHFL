@@ -90,6 +90,7 @@ class AnalysisService {
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
     [[nodiscard]] const LspWorkspaceIndex *sysroot_index_for_uri(const std::string &uri);
+    [[nodiscard]] std::vector<const LspWorkspaceIndex *> workspace_root_indices();
     [[nodiscard]] std::vector<const LspAnalysisSnapshot *> workspace_snapshots();
     [[nodiscard]] std::size_t analysis_runs() const noexcept;
 
@@ -112,6 +113,7 @@ class AnalysisService {
     project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
     std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> sysroot_index_cache_;
+    std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> workspace_root_index_cache_;
     std::unordered_map<std::string, SourceUnitId> extra_source_unit_ids_by_path_;
     std::size_t next_extra_source_unit_id_{0};
     std::size_t analysis_runs_{0};

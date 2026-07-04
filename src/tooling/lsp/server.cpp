@@ -2703,48 +2703,42 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
 
     auto result = json::JsonValue::make_array();
     std::unordered_set<std::string> emitted;
+    auto append_index_symbols = [&](const LspWorkspaceIndex &index) {
+        for (const auto *symbol : index.workspace_symbols(query)) {
+            if (symbol == nullptr) {
+                continue;
+            }
+            const auto key = symbol->canonical_name + "@" + symbol->location.uri + ":" +
+                             std::to_string(symbol->location.range.start.line) + ":" +
+                             std::to_string(symbol->location.range.start.character);
+            if (!emitted.insert(key).second) {
+                continue;
+            }
+
+            SymbolInformation info;
+            info.name = symbol->local_name;
+            info.kind = to_lsp_symbol_kind(symbol->kind);
+            info.location = symbol->location;
+            result->push(serialize_symbol_information(info));
+        }
+    };
+
+    for (const auto *index : analysis_.workspace_root_indices()) {
+        if (index != nullptr) {
+            append_index_symbols(*index);
+        }
+    }
+
     for (const auto *snapshot : analysis_.workspace_snapshots()) {
         if (snapshot == nullptr) {
             continue;
         }
         if (snapshot->workspace_index != nullptr) {
-            for (const auto *symbol : snapshot->workspace_index->workspace_symbols(query)) {
-                if (symbol == nullptr) {
-                    continue;
-                }
-                const auto key = symbol->canonical_name + "@" + symbol->location.uri + ":" +
-                                 std::to_string(symbol->location.range.start.line) + ":" +
-                                 std::to_string(symbol->location.range.start.character);
-                if (!emitted.insert(key).second) {
-                    continue;
-                }
-
-                SymbolInformation info;
-                info.name = symbol->local_name;
-                info.kind = to_lsp_symbol_kind(symbol->kind);
-                info.location = symbol->location;
-                result->push(serialize_symbol_information(info));
-            }
+            append_index_symbols(*snapshot->workspace_index);
         }
         if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(snapshot->requested_uri);
             sysroot_index != nullptr) {
-            for (const auto *symbol : sysroot_index->workspace_symbols(query)) {
-                if (symbol == nullptr) {
-                    continue;
-                }
-                const auto key = symbol->canonical_name + "@" + symbol->location.uri + ":" +
-                                 std::to_string(symbol->location.range.start.line) + ":" +
-                                 std::to_string(symbol->location.range.start.character);
-                if (!emitted.insert(key).second) {
-                    continue;
-                }
-
-                SymbolInformation info;
-                info.name = symbol->local_name;
-                info.kind = to_lsp_symbol_kind(symbol->kind);
-                info.location = symbol->location;
-                result->push(serialize_symbol_information(info));
-            }
+            append_index_symbols(*sysroot_index);
         }
 
         if (snapshot->workspace_index != nullptr) {

@@ -277,6 +277,16 @@ sysroot_index_cache_key(const LspToolchainCacheKey &key,
     return "sha256:" + support::sha256_hex(package_graph::serialize_package_graph_json(graph));
 }
 
+[[nodiscard]] std::string
+workspace_root_index_cache_key(const std::filesystem::path &workspace_root,
+                               const package_graph::PackageGraph &graph,
+                               std::string_view open_document_overlay_revision_set) {
+    return AnalysisService::uri_from_path(workspace_root) + "#" + package_graph_identity(graph) +
+           "#" + std::string{kWorkspaceIndexSchemaVersion} + "#" +
+           std::string{kWorkspaceIndexIdentitySchemaVersion} + "#" +
+           std::string{open_document_overlay_revision_set};
+}
+
 [[nodiscard]] bool is_project_manifest_path(const std::filesystem::path &path) {
     const auto filename = path.filename().generic_string();
     return filename == "ahfl.toml" || filename == "ahfl.workspace.toml";
@@ -760,6 +770,7 @@ void AnalysisService::set_toolchain_profiles(project_discovery::ToolchainProfile
 void AnalysisService::invalidate_all() {
     cache_.clear();
     sysroot_index_cache_.clear();
+    workspace_root_index_cache_.clear();
 }
 
 void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> &paths) {
@@ -788,6 +799,14 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
     for (auto iter = sysroot_index_cache_.begin(); iter != sysroot_index_cache_.end();) {
         if (iter->second != nullptr && source_units_reference_path(*iter->second, path_keys)) {
             iter = sysroot_index_cache_.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+
+    for (auto iter = workspace_root_index_cache_.begin(); iter != workspace_root_index_cache_.end();) {
+        if (iter->second != nullptr && source_units_reference_path(*iter->second, path_keys)) {
+            iter = workspace_root_index_cache_.erase(iter);
         } else {
             ++iter;
         }
@@ -890,6 +909,71 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
     const auto *result = index.get();
     sysroot_index_cache_[cache_key] = std::move(index);
     return result;
+}
+
+std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices() {
+    std::vector<const LspWorkspaceIndex *> indices;
+    const auto overlay_revision_set = open_document_overlay_revision_set();
+
+    std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
+    workspace_boundaries.reserve(workspace_folders_.size());
+    for (const auto &root : workspace_folders_) {
+        workspace_boundaries.push_back(project_discovery::WorkspaceBoundary{.root = root});
+    }
+
+    for (const auto &root : workspace_folders_) {
+        auto project_context =
+            project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
+                .document_path = root,
+                .workspace_boundaries = workspace_boundaries,
+                .toolchains = toolchain_profiles_,
+            });
+        if (!project_context.context.has_value()) {
+            continue;
+        }
+
+        const auto cache_key = workspace_root_index_cache_key(
+            root, project_context.context->graph, overlay_revision_set);
+        if (const auto existing = workspace_root_index_cache_.find(cache_key);
+            existing != workspace_root_index_cache_.end()) {
+            indices.push_back(existing->second.get());
+            continue;
+        }
+
+        Frontend frontend;
+        NavigationScopeKindMap workspace_scope_kinds;
+        auto index_input = LspWorkspaceIndexInput{
+            .project = project_input_from_package_graph(project_context.context->graph,
+                                                        root,
+                                                        open_document_overlays(),
+                                                        LspProjectInputMode::WorkspaceIndex,
+                                                        &workspace_scope_kinds),
+            .scope =
+                NavigationIndexScope{
+                    .package_roots = index_package_roots_from_graph(project_context.context->graph),
+                    .source_units =
+                        index_source_units_from_scope_kinds(project_context.context->graph,
+                                                            workspace_scope_kinds,
+                                                            extra_source_unit_ids_by_path_,
+                                                            next_extra_source_unit_id_),
+                },
+            .metadata =
+                NavigationIndexMetadata{
+                    .revision = store_.workspace_revision(),
+                    .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
+                    .index_identity_schema_version =
+                        std::string{kWorkspaceIndexIdentitySchemaVersion},
+                },
+        };
+
+        auto index = std::make_unique<LspWorkspaceIndex>(
+            build_lsp_workspace_index(frontend, std::move(index_input)));
+        const auto *result = index.get();
+        workspace_root_index_cache_[cache_key] = std::move(index);
+        indices.push_back(result);
+    }
+
+    return indices;
 }
 
 std::vector<const LspAnalysisSnapshot *> AnalysisService::workspace_snapshots() {

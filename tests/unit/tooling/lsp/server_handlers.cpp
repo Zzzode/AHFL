@@ -1843,6 +1843,41 @@ void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
           "project.workspace_symbol_dedup_preserves_location");
 }
 
+void test_workspace_symbol_uses_root_index_without_open_documents() {
+    const auto root = make_temp_project("project_workspace_symbol_cold_index");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-project-cold-symbol", "app", "\"main\", \"types\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct ColdMsg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"ColdMsg"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(types_uri) != std::string::npos,
+          "project.workspace_symbol_cold_index_includes_unopened_uri");
+    check(response.find("ColdMsg") != std::string::npos,
+          "project.workspace_symbol_cold_index_includes_name");
+}
+
 void test_project_references_include_indexed_unopened_source() {
     const auto root = make_temp_project("project_references_index");
     const auto main_path = root / "src" / "main.ahfl";
@@ -7327,6 +7362,7 @@ int main() {
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
+    test_workspace_symbol_uses_root_index_without_open_documents();
     test_project_references_include_indexed_unopened_source();
     test_user_package_references_include_lazy_sysroot_index();
     test_workspace_index_identity_hash_and_flat_store_ids();
