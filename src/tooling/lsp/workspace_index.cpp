@@ -164,7 +164,10 @@ canonical_scope_kinds(std::vector<LspNavigationIndexSourceKind> kinds) {
 [[nodiscard]] std::vector<std::filesystem::path>
 ordered_entry_files_for_index(const LspWorkspaceIndexInput &input) {
     std::vector<std::filesystem::path> paths;
-    paths.reserve(input.project.entry_files.size());
+    paths.reserve(input.scope.source_units.size() + input.project.entry_files.size());
+    for (const auto &seed : input.scope.source_units) {
+        paths.push_back(normalize_path(seed.path));
+    }
     for (const auto &entry_file : input.project.entry_files) {
         paths.push_back(normalize_path(entry_file));
     }
@@ -1277,6 +1280,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                                             LspWorkspaceIndexInput input) {
     LspWorkspaceIndex index;
     index.set_metadata(input.metadata);
+    input.project.entry_files = ordered_entry_files_for_index(input);
 
     auto project = parse_project(frontend, input.project);
     if (project.has_errors()) {

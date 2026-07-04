@@ -1955,7 +1955,7 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
                "}\n");
 
     ahfl::ProjectInput project;
-    project.entry_files = {b_path, a_path};
+    project.entry_files = {a_path};
     project.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
         .prefix = "app",
         .root = source_root,
@@ -2014,6 +2014,8 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
               "workspace_index.source_unit_order.first_id");
         check(source_units[0].uri == AnalysisService::uri_from_path(b_path),
               "workspace_index.source_unit_order.scope_seed_b_first");
+        check(source_units[0].uri != AnalysisService::uri_from_path(a_path),
+              "workspace_index.source_unit_order.scope_seed_not_entry_file");
         check(source_unit_has_scope_kind(source_units[0],
                                          LspNavigationIndexSourceKind::PackageExport),
               "workspace_index.source_unit_order.scope_kind");
