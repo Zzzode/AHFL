@@ -3221,17 +3221,17 @@ void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
     write_file(fmt_path,
                "module std::fmt;\n"
                "\n"
-               "fn format_decimal(x: Decimal(0)) -> String effect Pure;\n");
+               "fn format_decimal(x: Decimal(2)) -> String effect Pure;\n");
     write_file(string_path, "module std::string;\n\nimpl String {}\n");
 
     const std::string fmt_overlay = "module std::fmt;\n"
                                     "\n"
-                                    "fn format_decimal(x: Decimal(0)) -> String effect Pure;\n"
+                                    "fn format_decimal(x: Decimal(2)) -> String effect Pure;\n"
                                     "\n"
-                                    "impl Decimal(0) {}\n";
+                                    "impl Decimal(2) {}\n";
     const std::string app_source = "module app::main;\n"
                                    "\n"
-                                   "fn keep(x: Decimal(0)) -> Decimal(0) effect Pure decreases 0 "
+                                   "fn keep(x: Decimal(2)) -> Decimal(2) effect Pure decreases 0 "
                                    "{\n"
                                    "    return x;\n"
                                    "}\n";
@@ -3259,8 +3259,11 @@ void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
         const auto *index = analysis.sysroot_index_for_uri(app_uri);
         check(index != nullptr, "sysroot_overlay_impl.index_exists");
         if (index != nullptr) {
-            const auto decimal_impls =
-                index->implementation_locations_for_primitive(PrimitiveKind::Decimal);
+            const auto decimal_impls = index->implementation_locations_for_type(TypeKey{
+                .kind = TypeKey::Kind::Primitive,
+                .primitive = PrimitiveKind::Decimal,
+                .primitive_parameter = 2,
+            });
             check(std::find_if(decimal_impls.begin(),
                                decimal_impls.end(),
                                [&](const Location &location) { return location.uri == fmt_uri; }) !=
@@ -3271,7 +3274,7 @@ void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
 
     const std::string implementation =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
-        hover_params_at(app_uri, position_of(app_source, "Decimal(0)")) + R"(})";
+        hover_params_at(app_uri, position_of(app_source, "Decimal(2)")) + R"(})";
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
         did_open_body(app_uri, 1, app_source),

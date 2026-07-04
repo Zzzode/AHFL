@@ -515,9 +515,43 @@ primitive_type_definition_for_kind(const LspAnalysisSnapshot &snapshot, Primitiv
     };
 }
 
-[[nodiscard]] std::optional<std::string> primitive_type_name_at(const LspAnalysisSnapshot &snapshot,
-                                                                const LspSourceSnapshot &source,
-                                                                std::size_t offset) {
+[[nodiscard]] std::optional<std::int64_t> decimal_scale_at(const SourceFile &source,
+                                                           std::size_t cursor) {
+    auto skip_space = [&]() {
+        while (cursor < source.content.size() &&
+               std::isspace(static_cast<unsigned char>(source.content[cursor])) != 0) {
+            ++cursor;
+        }
+    };
+
+    skip_space();
+    if (cursor >= source.content.size() || source.content[cursor] != '(') {
+        return std::nullopt;
+    }
+    ++cursor;
+    skip_space();
+
+    if (cursor >= source.content.size() ||
+        std::isdigit(static_cast<unsigned char>(source.content[cursor])) == 0) {
+        return std::nullopt;
+    }
+    std::int64_t scale = 0;
+    while (cursor < source.content.size() &&
+           std::isdigit(static_cast<unsigned char>(source.content[cursor])) != 0) {
+        scale = scale * 10 + static_cast<std::int64_t>(source.content[cursor] - '0');
+        ++cursor;
+    }
+
+    skip_space();
+    if (cursor >= source.content.size() || source.content[cursor] != ')') {
+        return std::nullopt;
+    }
+    return scale;
+}
+
+[[nodiscard]] std::optional<TypeKey> primitive_type_key_at(const LspAnalysisSnapshot &snapshot,
+                                                           const LspSourceSnapshot &source,
+                                                           std::size_t offset) {
     const auto index_iter = snapshot.hover_indices.find(hover_index_key(source));
     if (index_iter == snapshot.hover_indices.end()) {
         return std::nullopt;
@@ -528,7 +562,20 @@ primitive_type_definition_for_kind(const LspAnalysisSnapshot &snapshot, Primitiv
         target->role != "builtin type") {
         return std::nullopt;
     }
-    return target->local_name;
+    const auto primitive = primitive_kind_from_spelling(target->local_name);
+    if (!primitive.has_value()) {
+        return std::nullopt;
+    }
+
+    TypeKey key{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = *primitive,
+    };
+    if (*primitive == PrimitiveKind::Decimal && source.source != nullptr) {
+        key.primitive_parameter =
+            decimal_scale_at(*source.source, target->token_range.end_offset).value_or(0);
+    }
+    return key;
 }
 
 [[nodiscard]] bool has_extent(SourceRange range) noexcept {
@@ -728,15 +775,10 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
 [[nodiscard]] std::vector<Location>
 primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
                                    const LspSourceSnapshot &source,
-                                   std::string_view primitive_name) {
-    const auto primitive = primitive_kind_from_spelling(primitive_name);
-    if (!primitive.has_value()) {
-        return {};
-    }
-
+                                   const TypeKey &primitive_type) {
     if (snapshot.workspace_index != nullptr) {
         auto locations =
-            snapshot.workspace_index->implementation_locations_for_primitive(*primitive);
+            snapshot.workspace_index->implementation_locations_for_type(primitive_type);
         if (!locations.empty()) {
             return locations;
         }
@@ -752,8 +794,7 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
         if (impl.target_type == nullptr) {
             continue;
         }
-        if (type_key_for_type(*impl.target_type) ==
-            TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = *primitive}) {
+        if (type_key_for_type(*impl.target_type) == primitive_type) {
             push_impl_location(ordered, snapshot, source, impl, false);
         }
     }
@@ -769,10 +810,6 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
         locations.push_back(*home);
     }
 
-    const auto primitive_name = primitive_type_name_at(snapshot, source, offset);
-    if (!primitive_name.has_value()) {
-        return locations;
-    }
     return locations;
 }
 
@@ -2328,17 +2365,14 @@ void LspServer::handle_implementation(const JsonRpcRequest &req) {
         if (symbol.has_value()) {
             locations = implementation_locations_for_symbol(*snapshot, *source, symbol->get());
         }
-    } else if (const auto primitive_name = primitive_type_name_at(*snapshot, *source, offset);
-               primitive_name.has_value()) {
-        locations = primitive_implementation_locations(*snapshot, *source, *primitive_name);
-        if (const auto primitive = primitive_kind_from_spelling(*primitive_name);
-            primitive.has_value()) {
-            if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
-                sysroot_index != nullptr) {
-                for (const auto &location :
-                     sysroot_index->implementation_locations_for_primitive(*primitive)) {
-                    push_unique_location(locations, location);
-                }
+    } else if (const auto primitive_type = primitive_type_key_at(*snapshot, *source, offset);
+               primitive_type.has_value()) {
+        locations = primitive_implementation_locations(*snapshot, *source, *primitive_type);
+        if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
+            sysroot_index != nullptr) {
+            for (const auto &location :
+                 sysroot_index->implementation_locations_for_type(*primitive_type)) {
+                push_unique_location(locations, location);
             }
         }
     }
