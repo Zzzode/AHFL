@@ -4271,6 +4271,8 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
     check(first->toolchain_cache_key->root_manifest ==
               AnalysisService::normalized_path_key(app_root / "ahfl.toml"),
           "analysis_toolchain_cache_key.root_manifest");
+    check(first->toolchain_cache_key->workspace_manifest.empty(),
+          "analysis_toolchain_cache_key.no_workspace_manifest");
     check(first->toolchain_cache_key->std_manifest ==
               AnalysisService::normalized_path_key(sysroot_a / "std" / "ahfl.toml"),
           "analysis_toolchain_cache_key.std_manifest");
@@ -4295,6 +4297,55 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
         check(third->toolchain_cache_key->std_identity == profile_b.profile->std_identity,
               "analysis_toolchain_cache_key.updated_std_identity");
     }
+}
+
+void test_analysis_snapshot_cache_key_records_workspace_manifest() {
+    const auto root = make_temp_project("analysis_workspace_manifest_cache_key");
+    const auto app_root = root / "packages" / "app";
+    const auto sysroot = root / "sysroot";
+    const auto main_path = app_root / "src" / "main.ahfl";
+
+    write_workspace_manifest(root, "\"packages/app\"");
+    write_package_manifest(app_root, "workspace-cache-key-app", "app", "\"main\"");
+    write_minimal_std_package(sysroot / "std", "workspace-cache-key-std");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot));
+
+    const auto *snapshot = analysis.snapshot_for_uri(uri);
+    check(snapshot != nullptr, "analysis_workspace_manifest_cache_key.snapshot_exists");
+    if (snapshot == nullptr || !snapshot->toolchain_cache_key.has_value()) {
+        check(false, "analysis_workspace_manifest_cache_key.key_exists");
+        return;
+    }
+
+    check(snapshot->toolchain_cache_key->root_manifest ==
+              AnalysisService::normalized_path_key(app_root / "ahfl.toml"),
+          "analysis_workspace_manifest_cache_key.root_manifest");
+    check(snapshot->toolchain_cache_key->workspace_manifest ==
+              AnalysisService::normalized_path_key(root / "ahfl.workspace.toml"),
+          "analysis_workspace_manifest_cache_key.workspace_manifest");
+    check(snapshot->package_graph_manifest ==
+              std::optional<std::filesystem::path>{std::filesystem::path(
+                  AnalysisService::normalized_path_key(root / "ahfl.workspace.toml"))},
+          "analysis_workspace_manifest_cache_key.snapshot_graph_manifest");
 }
 
 void test_analysis_snapshot_cache_key_records_open_overlay_revisions() {
@@ -6209,6 +6260,7 @@ int main() {
     test_incompatible_toolchain_profile_stops_project_analysis();
     test_toolchain_profile_records_std_identity_checksum();
     test_analysis_snapshot_cache_key_records_toolchain_identity();
+    test_analysis_snapshot_cache_key_records_workspace_manifest();
     test_analysis_snapshot_cache_key_records_open_overlay_revisions();
     test_sysroot_index_cache_key_separates_workspace_roots();
     test_package_graph_manifest_does_not_inject_prelude();

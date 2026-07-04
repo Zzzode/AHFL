@@ -321,9 +321,9 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
 [[nodiscard]] std::string
 sysroot_index_cache_key(const LspToolchainCacheKey &key,
                         std::string_view open_document_overlay_revision_set) {
-    return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.std_manifest + "#" +
-           key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
-           key.index_identity_schema_version + "#" +
+    return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.workspace_manifest + "#" +
+           key.std_manifest + "#" + key.std_identity + "#" + key.scope + "#" +
+           key.index_schema_version + "#" + key.index_identity_schema_version + "#" +
            std::string{open_document_overlay_revision_set};
 }
 
@@ -858,22 +858,29 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
         }
     }
 
-    const auto package_manifest = project_discovery::find_package_manifest_for_document(
-        normalized_document, workspace_boundaries);
-    if (!package_manifest.has_value()) {
-        return std::nullopt;
-    }
-
     const auto selection = project_discovery::select_toolchain_profile_for_document(
         toolchain_profiles_, normalized_document);
     if (!selection.has_value()) {
+        return std::nullopt;
+    }
+    const auto project_context =
+        project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
+            .document_path = normalized_document,
+            .workspace_boundaries = workspace_boundaries,
+            .toolchains = toolchain_profiles_,
+        });
+    if (!project_context.context.has_value()) {
         return std::nullopt;
     }
 
     return LspToolchainCacheKey{
         .workspace_folder_uri =
             workspace_root.has_value() ? uri_from_path(*workspace_root) : std::string{},
-        .root_manifest = normalized_path_key(*package_manifest),
+        .root_manifest = normalized_path_key(project_context.context->package_manifest_path),
+        .workspace_manifest =
+            project_context.context->workspace_manifest_path.has_value()
+                ? normalized_path_key(*project_context.context->workspace_manifest_path)
+                : std::string{},
         .std_manifest = normalized_path_key(selection->profile.std_manifest),
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
