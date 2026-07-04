@@ -190,6 +190,7 @@ class LspWorkspaceIndex {
     void set_metadata(NavigationIndexMetadata metadata);
 
     void add_source_unit(SourceUnitFact fact);
+    void set_source_unit_completeness(SourceUnitId source_unit, FactCompleteness completeness);
     void add_symbol(SymbolFact fact);
     void add_reference(ReferenceFact fact);
     void add_impl(ImplFact fact);

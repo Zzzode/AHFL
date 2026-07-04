@@ -2018,6 +2018,8 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
               "workspace_index.source_unit_order.scope_seed_b_first");
         check(source_units[0].uri != AnalysisService::uri_from_path(a_path),
               "workspace_index.source_unit_order.scope_seed_not_entry_file");
+        check(source_units[0].completeness == FactCompleteness::Typed,
+              "workspace_index.source_unit_order.first_typed");
         check(source_unit_has_scope_kind(source_units[0],
                                          LspNavigationIndexSourceKind::PackageExport),
               "workspace_index.source_unit_order.scope_kind");
@@ -2033,6 +2035,8 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
               "workspace_index.source_unit_order.second_id");
         check(source_units[1].uri == AnalysisService::uri_from_path(a_path),
               "workspace_index.source_unit_order.scope_seed_a_second");
+        check(source_units[1].completeness == FactCompleteness::Typed,
+              "workspace_index.source_unit_order.second_typed");
     }
 
     const auto package_sources = index.source_units_for_package(package_id);

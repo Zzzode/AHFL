@@ -944,6 +944,14 @@ void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
     source_units_[fact.source_unit_id.value] = std::move(fact);
 }
 
+void LspWorkspaceIndex::set_source_unit_completeness(SourceUnitId source_unit,
+                                                     FactCompleteness completeness) {
+    if (source_unit.value >= source_units_.size()) {
+        return;
+    }
+    source_units_[source_unit.value].completeness = completeness;
+}
+
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
     fact.def_id = DefId{symbols_.size()};
     symbols_.push_back(std::move(fact));
@@ -1395,6 +1403,7 @@ class IndexAnalysisPipeline {
             return std::move(index_);
         }
 
+        update_source_completeness(project.graph, FactCompleteness::Resolved);
         emit_resolved_symbol_facts(project.graph, resolved);
         emit_resolved_reference_facts(project.graph, resolved);
 
@@ -1411,6 +1420,7 @@ class IndexAnalysisPipeline {
             return std::move(index_);
         }
 
+        update_source_completeness(project.graph, FactCompleteness::Typed);
         emit_typed_impl_facts(project.graph, typed);
         return std::move(index_);
     }
@@ -1428,11 +1438,20 @@ class IndexAnalysisPipeline {
     void register_parsed_sources(const SourceGraph &graph) {
         for (const auto *source : ordered_source_units_for_index(input_, graph)) {
             const auto source_unit = register_source_unit(
-                index_, source_units_by_path_, input_, source->path, FactCompleteness::Resolved);
+                index_, source_units_by_path_, input_, source->path, FactCompleteness::Parsed);
             source_units_by_source_id_.emplace(source->id.value, source_unit);
             if (const auto *source_fact = source_unit_fact(index_, source_unit);
                 source_fact != nullptr) {
                 add_diagnostic_source_aliases(source_units_by_name_, *source_fact, &source->source);
+            }
+        }
+    }
+
+    void update_source_completeness(const SourceGraph &graph, FactCompleteness completeness) {
+        for (const auto &source : graph.sources) {
+            const auto source_unit = index_source_unit_for_source(source);
+            if (source_unit.has_value()) {
+                index_.set_source_unit_completeness(*source_unit, completeness);
             }
         }
     }
