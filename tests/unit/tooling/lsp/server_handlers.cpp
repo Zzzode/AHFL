@@ -105,6 +105,28 @@ void check(bool condition, const std::string &test_name) {
     }
 }
 
+const SourceUnitFact *index_source_unit_for_uri(const LspWorkspaceIndex &index,
+                                                const std::string &uri) {
+    const auto &source_units = index.source_units();
+    const auto found = std::find_if(source_units.begin(),
+                                    source_units.end(),
+                                    [&](const SourceUnitFact &unit) { return unit.uri == uri; });
+    return found == source_units.end() ? nullptr : &*found;
+}
+
+bool index_has_diagnostic(const LspWorkspaceIndex &index,
+                          SourceUnitId source_unit,
+                          IndexDiagnosticPhase phase,
+                          const std::string &code_prefix) {
+    const auto diagnostics = index.diagnostics_for_source(source_unit);
+    return std::find_if(
+               diagnostics.begin(), diagnostics.end(), [&](const IndexDiagnosticFact *diagnostic) {
+                   return diagnostic != nullptr && diagnostic->phase == phase &&
+                          diagnostic->code.rfind(code_prefix, 0) == 0 &&
+                          !diagnostic->message.empty();
+               }) != diagnostics.end();
+}
+
 /// Helper: construct a Content-Length framed message string.
 std::string make_frame(const std::string &json_body) {
     std::string frame;
@@ -1565,6 +1587,21 @@ void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fail
         if (snapshot != nullptr) {
             check(snapshot->source_for_uri(broken_uri) == nullptr,
                   "workspace_symbol.partial_index.broken_not_in_semantic_sources");
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_symbol.partial_index.workspace_index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *broken_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, broken_uri);
+                check(broken_source != nullptr,
+                      "workspace_symbol.partial_index.broken_source_unit_exists");
+                if (broken_source != nullptr) {
+                    check(index_has_diagnostic(*snapshot->workspace_index,
+                                               broken_source->source_unit_id,
+                                               IndexDiagnosticPhase::TypeCheck,
+                                               "typecheck."),
+                          "workspace_symbol.partial_index.typecheck_diagnostic_fact");
+                }
+            }
         }
     }
 
@@ -1621,6 +1658,21 @@ void test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails(
         if (snapshot != nullptr) {
             check(snapshot->source_for_uri(broken_uri) == nullptr,
                   "workspace_symbol.resolve_index.broken_not_in_semantic_sources");
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_symbol.resolve_index.workspace_index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *broken_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, broken_uri);
+                check(broken_source != nullptr,
+                      "workspace_symbol.resolve_index.broken_source_unit_exists");
+                if (broken_source != nullptr) {
+                    check(index_has_diagnostic(*snapshot->workspace_index,
+                                               broken_source->source_unit_id,
+                                               IndexDiagnosticPhase::Resolve,
+                                               "resolve."),
+                          "workspace_symbol.resolve_index.resolve_diagnostic_fact");
+                }
+            }
         }
     }
 
@@ -1663,6 +1715,37 @@ void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails
 
     const auto main_uri = AnalysisService::uri_from_path(main_path);
     const auto broken_uri = AnalysisService::uri_from_path(broken_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_symbol.parse_index.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_symbol.parse_index.workspace_index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *broken_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, broken_uri);
+                check(broken_source != nullptr,
+                      "workspace_symbol.parse_index.broken_source_unit_exists");
+                if (broken_source != nullptr) {
+                    check(index_has_diagnostic(*snapshot->workspace_index,
+                                               broken_source->source_unit_id,
+                                               IndexDiagnosticPhase::Parse,
+                                               "parse."),
+                          "workspace_symbol.parse_index.parse_diagnostic_fact");
+                }
+            }
+        }
+    }
+
     const std::string workspace_symbol =
         R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"ParsedBeforeError"}})";
     const auto output = run_lsp_messages({

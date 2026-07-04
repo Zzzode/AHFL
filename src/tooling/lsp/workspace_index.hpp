@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 #include "compiler/package_graph/package_graph.hpp"
@@ -64,6 +65,19 @@ struct ReferenceFactId {
 
     [[nodiscard]] friend bool operator==(ReferenceFactId lhs,
                                          ReferenceFactId rhs) noexcept = default;
+};
+
+struct IndexDiagnosticFactId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(IndexDiagnosticFactId lhs,
+                                         IndexDiagnosticFactId rhs) noexcept = default;
+};
+
+enum class IndexDiagnosticPhase : std::uint8_t {
+    Parse,
+    Resolve,
+    TypeCheck,
 };
 
 struct TypeKey {
@@ -132,12 +146,25 @@ struct ReferenceFact {
     FactCompleteness completeness{FactCompleteness::Resolved};
 };
 
+struct IndexDiagnosticFact {
+    IndexDiagnosticFactId diagnostic_id;
+    package_graph::PackageId package_id;
+    SourceUnitId source_unit_id;
+    IndexDiagnosticPhase phase{IndexDiagnosticPhase::Parse};
+    ahfl::DiagnosticSeverity severity{ahfl::DiagnosticSeverity::Error};
+    std::string code;
+    std::string message;
+    SourceRange range;
+    FactCompleteness completeness{FactCompleteness::Invalid};
+};
+
 class LspWorkspaceIndex {
   public:
     void add_source_unit(SourceUnitFact fact);
     void add_symbol(SymbolFact fact);
     void add_reference(ReferenceFact fact);
     void add_impl(ImplFact fact);
+    void add_diagnostic(IndexDiagnosticFact fact);
 
     [[nodiscard]] const std::vector<SourceUnitFact> &source_units() const noexcept {
         return source_units_;
@@ -155,10 +182,16 @@ class LspWorkspaceIndex {
         return references_;
     }
 
+    [[nodiscard]] const std::vector<IndexDiagnosticFact> &diagnostics() const noexcept {
+        return diagnostics_;
+    }
+
     [[nodiscard]] std::optional<DefId> find_def(SymbolKind kind,
                                                 std::string_view canonical_name) const;
     [[nodiscard]] std::vector<SourceUnitId>
     source_units_for_package(package_graph::PackageId package_id) const;
+    [[nodiscard]] std::vector<const IndexDiagnosticFact *>
+    diagnostics_for_source(SourceUnitId source_unit) const;
     [[nodiscard]] std::vector<const SymbolFact *> workspace_symbols(std::string_view query) const;
     [[nodiscard]] std::vector<Location> reference_locations_for_def(DefId def) const;
     [[nodiscard]] std::vector<Location>
@@ -171,8 +204,10 @@ class LspWorkspaceIndex {
     std::vector<SymbolFact> symbols_;
     std::vector<ReferenceFact> references_;
     std::vector<ImplFact> impls_;
+    std::vector<IndexDiagnosticFact> diagnostics_;
     std::vector<std::vector<SourceUnitId>> source_units_by_package_;
     std::vector<std::vector<ReferenceFactId>> references_by_def_;
+    std::vector<std::vector<IndexDiagnosticFactId>> diagnostics_by_source_;
     std::unordered_map<TypeKey, std::vector<WorkspaceImplId>, TypeKeyHash> impls_by_type_;
 };
 

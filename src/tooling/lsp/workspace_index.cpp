@@ -222,6 +222,7 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
 }
 
 using DefBySymbolMap = std::unordered_map<std::size_t, DefId>;
+using SourceUnitByDiagnosticNameMap = std::unordered_map<std::string, SourceUnitId>;
 using SourceUnitBySourceIdMap = std::unordered_map<std::size_t, SourceUnitId>;
 using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
 
@@ -255,6 +256,101 @@ using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
         return nullptr;
     }
     return &source_units[id.value];
+}
+
+[[nodiscard]] package_graph::PackageId invalid_package_id() {
+    return package_graph::PackageId{std::numeric_limits<std::size_t>::max()};
+}
+
+void add_diagnostic_source_alias(SourceUnitByDiagnosticNameMap &source_units_by_name,
+                                 std::string_view name,
+                                 SourceUnitId source_unit) {
+    if (!name.empty()) {
+        source_units_by_name.try_emplace(std::string(name), source_unit);
+    }
+}
+
+void add_diagnostic_source_aliases(SourceUnitByDiagnosticNameMap &source_units_by_name,
+                                   const SourceUnitFact &fact,
+                                   const SourceFile *source = nullptr) {
+    add_diagnostic_source_alias(source_units_by_name, fact.uri, fact.source_unit_id);
+    add_diagnostic_source_alias(
+        source_units_by_name, fact.path.generic_string(), fact.source_unit_id);
+    add_diagnostic_source_alias(source_units_by_name, fact.path.string(), fact.source_unit_id);
+    add_diagnostic_source_alias(source_units_by_name, display_path(fact.path), fact.source_unit_id);
+    if (source != nullptr) {
+        add_diagnostic_source_alias(
+            source_units_by_name, source->display_name, fact.source_unit_id);
+    }
+}
+
+[[nodiscard]] std::optional<SourceUnitId>
+source_unit_for_diagnostic(const SourceUnitByDiagnosticNameMap &source_units_by_name,
+                           const Diagnostic &diagnostic) {
+    if (!diagnostic.source_name.has_value()) {
+        return std::nullopt;
+    }
+    const auto found = source_units_by_name.find(*diagnostic.source_name);
+    if (found == source_units_by_name.end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
+[[nodiscard]] std::string fallback_code_for_phase(IndexDiagnosticPhase phase) {
+    switch (phase) {
+    case IndexDiagnosticPhase::Parse:
+        return "parse.diagnostic";
+    case IndexDiagnosticPhase::Resolve:
+        return "resolve.diagnostic";
+    case IndexDiagnosticPhase::TypeCheck:
+        return "typecheck.diagnostic";
+    }
+    return "index.diagnostic";
+}
+
+[[nodiscard]] FactCompleteness diagnostic_completeness(const LspWorkspaceIndex &index,
+                                                       SourceUnitId source_unit,
+                                                       std::optional<FactCompleteness> fallback) {
+    if (fallback.has_value()) {
+        return *fallback;
+    }
+    const auto *fact = source_unit_fact(index, source_unit);
+    return fact == nullptr ? FactCompleteness::Invalid : fact->completeness;
+}
+
+void append_index_diagnostic(LspWorkspaceIndex &index,
+                             SourceUnitId source_unit,
+                             const Diagnostic &diagnostic,
+                             IndexDiagnosticPhase phase,
+                             std::optional<FactCompleteness> completeness) {
+    const auto *fact = source_unit_fact(index, source_unit);
+    index.add_diagnostic(IndexDiagnosticFact{
+        .diagnostic_id = IndexDiagnosticFactId{index.diagnostics().size()},
+        .package_id = fact == nullptr ? invalid_package_id() : fact->package_id,
+        .source_unit_id = source_unit,
+        .phase = phase,
+        .severity = diagnostic.severity,
+        .code = diagnostic.code.value_or(fallback_code_for_phase(phase)),
+        .message = diagnostic.message,
+        .range = diagnostic.range.value_or(SourceRange{}),
+        .completeness = diagnostic_completeness(index, source_unit, completeness),
+    });
+}
+
+void append_index_diagnostics_by_source_name(
+    LspWorkspaceIndex &index,
+    const SourceUnitByDiagnosticNameMap &source_units_by_name,
+    const DiagnosticBag &diagnostics,
+    IndexDiagnosticPhase phase,
+    std::optional<FactCompleteness> completeness = std::nullopt) {
+    for (const auto &diagnostic : diagnostics.entries()) {
+        const auto source_unit = source_unit_for_diagnostic(source_units_by_name, diagnostic);
+        if (!source_unit.has_value()) {
+            continue;
+        }
+        append_index_diagnostic(index, *source_unit, diagnostic, phase, completeness);
+    }
 }
 
 [[nodiscard]] SourceUnitId register_source_unit(LspWorkspaceIndex &index,
@@ -388,8 +484,10 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
 
 void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                  const Frontend &frontend,
-                                 const LspWorkspaceIndexInput &input) {
+                                 const LspWorkspaceIndexInput &input,
+                                 const DiagnosticBag *project_diagnostics = nullptr) {
     SourceUnitByPathMap source_units_by_path;
+    SourceUnitByDiagnosticNameMap source_units_by_name;
     for (const auto &entry_file : input.project.entry_files) {
         const auto path = normalize_path(entry_file);
         const auto path_key = path.generic_string();
@@ -406,6 +504,10 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
             input,
             path,
             parse_result.program ? FactCompleteness::Parsed : FactCompleteness::Invalid);
+        if (const auto *source_fact = source_unit_fact(index, source_unit);
+            source_fact != nullptr) {
+            add_diagnostic_source_aliases(source_units_by_name, *source_fact, &parse_result.source);
+        }
         if (!parse_result.program) {
             continue;
         }
@@ -422,6 +524,10 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                      uri_from_path(path),
                                      parse_result.source,
                                      *parse_result.program);
+    }
+    if (project_diagnostics != nullptr) {
+        append_index_diagnostics_by_source_name(
+            index, source_units_by_name, *project_diagnostics, IndexDiagnosticPhase::Parse);
     }
 }
 
@@ -475,6 +581,16 @@ void LspWorkspaceIndex::add_impl(ImplFact fact) {
     impls_.push_back(std::move(fact));
 }
 
+void LspWorkspaceIndex::add_diagnostic(IndexDiagnosticFact fact) {
+    const auto id = IndexDiagnosticFactId{diagnostics_.size()};
+    fact.diagnostic_id = id;
+    if (fact.source_unit_id.value >= diagnostics_by_source_.size()) {
+        diagnostics_by_source_.resize(fact.source_unit_id.value + 1);
+    }
+    diagnostics_by_source_[fact.source_unit_id.value].push_back(id);
+    diagnostics_.push_back(std::move(fact));
+}
+
 std::optional<DefId> LspWorkspaceIndex::find_def(SymbolKind kind,
                                                  std::string_view canonical_name) const {
     for (const auto &symbol : symbols_) {
@@ -491,6 +607,22 @@ LspWorkspaceIndex::source_units_for_package(package_graph::PackageId package_id)
         return {};
     }
     return source_units_by_package_[package_id.value];
+}
+
+std::vector<const IndexDiagnosticFact *>
+LspWorkspaceIndex::diagnostics_for_source(SourceUnitId source_unit) const {
+    if (source_unit.value >= diagnostics_by_source_.size()) {
+        return {};
+    }
+
+    std::vector<const IndexDiagnosticFact *> matched;
+    matched.reserve(diagnostics_by_source_[source_unit.value].size());
+    for (const auto id : diagnostics_by_source_[source_unit.value]) {
+        if (id.value < diagnostics_.size()) {
+            matched.push_back(&diagnostics_[id.value]);
+        }
+    }
+    return matched;
 }
 
 std::vector<const SymbolFact *> LspWorkspaceIndex::workspace_symbols(std::string_view query) const {
@@ -714,20 +846,36 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
 
     auto project = parse_project(frontend, input.project);
     if (project.has_errors()) {
-        append_parse_skeleton_facts(index, frontend, input);
+        append_parse_skeleton_facts(index, frontend, input, &project.diagnostics);
         return index;
     }
 
     SourceUnitByPathMap source_units_by_path;
+    SourceUnitByDiagnosticNameMap source_units_by_name;
     SourceUnitBySourceIdMap source_units_by_source_id;
     for (const auto &source : project.graph.sources) {
         const auto source_unit = register_source_unit(
             index, source_units_by_path, input, source.path, FactCompleteness::Resolved);
         source_units_by_source_id.emplace(source.id.value, source_unit);
+        if (const auto *source_fact = source_unit_fact(index, source_unit);
+            source_fact != nullptr) {
+            add_diagnostic_source_aliases(source_units_by_name, *source_fact, &source.source);
+        }
     }
+    append_index_diagnostics_by_source_name(index,
+                                            source_units_by_name,
+                                            project.diagnostics,
+                                            IndexDiagnosticPhase::Parse,
+                                            FactCompleteness::Resolved);
 
     Resolver resolver;
     auto resolved = resolver.resolve(project.graph);
+    append_index_diagnostics_by_source_name(index,
+                                            source_units_by_name,
+                                            resolved.diagnostics,
+                                            IndexDiagnosticPhase::Resolve,
+                                            resolved.has_errors() ? FactCompleteness::Parsed
+                                                                  : FactCompleteness::Resolved);
     if (resolved.has_errors()) {
         for (const auto &source : project.graph.sources) {
             const auto source_unit = source_units_by_source_id.find(source.id.value);
@@ -816,6 +964,12 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
 
     TypeChecker type_checker;
     auto typed = type_checker.check(project.graph, resolved);
+    append_index_diagnostics_by_source_name(index,
+                                            source_units_by_name,
+                                            typed.diagnostics,
+                                            IndexDiagnosticPhase::TypeCheck,
+                                            typed.has_errors() ? FactCompleteness::Resolved
+                                                               : FactCompleteness::Typed);
     if (typed.has_errors()) {
         return index;
     }
