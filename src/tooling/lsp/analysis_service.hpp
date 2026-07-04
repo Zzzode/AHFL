@@ -37,6 +37,7 @@ struct LspToolchainCacheKey {
     std::string std_identity;
     std::string scope;
     std::string index_schema_version;
+    std::string index_identity_schema_version;
 
     [[nodiscard]] friend bool operator==(const LspToolchainCacheKey &lhs,
                                          const LspToolchainCacheKey &rhs) = default;

@@ -4147,6 +4147,9 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
           "analysis_toolchain_cache_key.scope");
     check(first->toolchain_cache_key->index_schema_version == "lsp-workspace-index-v1",
           "analysis_toolchain_cache_key.index_schema_version");
+    check(first->toolchain_cache_key->index_identity_schema_version ==
+              "lsp-workspace-index-identity-v1",
+          "analysis_toolchain_cache_key.index_identity_schema_version");
 
     analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot_b));
     const auto *third = analysis.snapshot_for_uri(uri);

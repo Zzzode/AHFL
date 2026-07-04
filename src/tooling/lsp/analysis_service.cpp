@@ -16,6 +16,7 @@ namespace ahfl::lsp {
 namespace {
 
 constexpr std::string_view kWorkspaceIndexSchemaVersion = "lsp-workspace-index-v1";
+constexpr std::string_view kWorkspaceIndexIdentitySchemaVersion = "lsp-workspace-index-identity-v1";
 
 [[nodiscard]] bool is_hex(char ch) noexcept {
     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
@@ -321,7 +322,7 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
                                                   std::uint64_t workspace_revision) {
     return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.std_manifest + "#" +
            key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
-           std::to_string(workspace_revision);
+           key.index_identity_schema_version + "#" + std::to_string(workspace_revision);
 }
 
 [[nodiscard]] const package_graph::PackageNode *
@@ -864,6 +865,7 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
         .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
+        .index_identity_schema_version = std::string{kWorkspaceIndexIdentitySchemaVersion},
     };
 }
 
