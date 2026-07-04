@@ -1990,7 +1990,7 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
                                     "\n"
                                     "@builtin(\"primitive_probe\")\n"
                                     "fn primitive_probe(flag: Bool, count: Int, ratio: Float, "
-                                    "id: UUID) -> String effect Pure;\n"
+                                    "id: UUID, callback: Fn(Int) -> Unit) -> String effect Pure;\n"
                                     "\n"
                                     "enum PrimitiveEnvelope {\n"
                                     "    EBool(Bool),\n"
@@ -2031,6 +2031,9 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
     const std::string enum_named_bool_definition =
         R"({"jsonrpc":"2.0","id":8,"method":"textDocument/definition","params":)" +
         hover_params_at(uuid_uri, position_of(uuid_source, "Bool, label")) + R"(})";
+    const std::string fn_param_int_definition =
+        R"({"jsonrpc":"2.0","id":9,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Int) -> Unit")) + R"(})";
 
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
@@ -2042,7 +2045,8 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
         uuid_definition,
         enum_bool_definition,
         enum_named_bool_definition,
-        R"({"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}})",
+        fn_param_int_definition,
+        R"({"jsonrpc":"2.0","id":10,"method":"shutdown","params":{}})",
     });
     const auto bool_response = response_body_for_id(output, 2);
     const auto int_response = response_body_for_id(output, 3);
@@ -2051,6 +2055,7 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
     const auto uuid_response = response_body_for_id(output, 6);
     const auto enum_bool_response = response_body_for_id(output, 7);
     const auto enum_named_bool_response = response_body_for_id(output, 8);
+    const auto fn_param_int_response = response_body_for_id(output, 9);
 
     check(bool_response.find(bool_uri) != std::string::npos,
           "definition.primitive_bool_targets_std_bool_uri");
@@ -2081,6 +2086,10 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
           "definition.primitive_enum_struct_payload_bool_targets_std_bool_uri");
     check(enum_named_bool_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
           "definition.primitive_enum_struct_payload_bool_targets_impl_selection");
+    check(fn_param_int_response.find(int_uri) != std::string::npos,
+          "definition.primitive_fn_param_int_targets_std_int_uri");
+    check(fn_param_int_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_fn_param_int_targets_impl_selection");
 }
 
 void write_minimal_std_sources(const std::filesystem::path &std_root,

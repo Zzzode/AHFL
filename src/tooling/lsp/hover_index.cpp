@@ -701,6 +701,12 @@ void add_type_syntax_targets(HoverTargetIndex &index,
                            add_type_syntax_targets(index, snapshot, source, arg.get());
                        }
                    },
+                   [&](const ast::FnType &t) {
+                       for (const auto &param : t.params) {
+                           add_type_syntax_targets(index, snapshot, source, param.get());
+                       }
+                       add_type_syntax_targets(index, snapshot, source, t.return_type.get());
+                   },
                    [](const auto &) {
                        // Leaf types with no sub-types or name — nothing to add
                    },
