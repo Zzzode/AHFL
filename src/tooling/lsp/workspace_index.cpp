@@ -635,6 +635,9 @@ std::vector<const SymbolFact *> LspWorkspaceIndex::workspace_symbols(std::string
         matched.push_back(&symbol);
     }
     std::sort(matched.begin(), matched.end(), [](const SymbolFact *lhs, const SymbolFact *rhs) {
+        if (lhs->package_id.value != rhs->package_id.value) {
+            return lhs->package_id.value < rhs->package_id.value;
+        }
         if (lhs->source_unit_id.value != rhs->source_unit_id.value) {
             return lhs->source_unit_id.value < rhs->source_unit_id.value;
         }
@@ -662,6 +665,9 @@ std::vector<Location> LspWorkspaceIndex::reference_locations_for_def(DefId def) 
 
     std::sort(
         matched.begin(), matched.end(), [](const ReferenceFact *lhs, const ReferenceFact *rhs) {
+            if (lhs->package_id.value != rhs->package_id.value) {
+                return lhs->package_id.value < rhs->package_id.value;
+            }
             if (lhs->source_unit_id.value != rhs->source_unit_id.value) {
                 return lhs->source_unit_id.value < rhs->source_unit_id.value;
             }
@@ -695,6 +701,9 @@ LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const 
     }
 
     std::sort(matched.begin(), matched.end(), [](const ImplFact *lhs, const ImplFact *rhs) {
+        if (lhs->package_id.value != rhs->package_id.value) {
+            return lhs->package_id.value < rhs->package_id.value;
+        }
         if (lhs->source_unit_id.value != rhs->source_unit_id.value) {
             return lhs->source_unit_id.value < rhs->source_unit_id.value;
         }

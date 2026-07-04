@@ -127,6 +127,18 @@ bool index_has_diagnostic(const LspWorkspaceIndex &index,
                }) != diagnostics.end();
 }
 
+Location
+index_test_location(const std::string &uri, std::uint32_t line, std::uint32_t character = 0) {
+    return Location{
+        .uri = uri,
+        .range =
+            Range{
+                .start = Position{.line = line, .character = character},
+                .end = Position{.line = line, .character = character + 1},
+            },
+    };
+}
+
 /// Helper: construct a Content-Length framed message string.
 std::string make_frame(const std::string &json_body) {
     std::string frame;
@@ -1547,6 +1559,191 @@ void test_project_references_include_indexed_unopened_source() {
           "references.index_includes_semantic_import_source");
     check(response.find(extra_uri) != std::string::npos,
           "references.index_includes_unopened_exported_source");
+}
+
+void test_workspace_index_queries_sort_by_package_source_and_order() {
+    LspWorkspaceIndex index;
+    const auto pkg1 = ahfl::package_graph::PackageId{1};
+    const auto pkg2 = ahfl::package_graph::PackageId{2};
+    const auto source_pkg2 = SourceUnitId{0};
+    const auto source_pkg1_a = SourceUnitId{1};
+    const auto source_pkg1_b = SourceUnitId{2};
+
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = source_pkg2,
+        .package_id = pkg2,
+        .path = "pkg2.ahfl",
+        .uri = "file:///pkg2.ahfl",
+        .revision = 1,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = source_pkg1_a,
+        .package_id = pkg1,
+        .path = "pkg1_a.ahfl",
+        .uri = "file:///pkg1_a.ahfl",
+        .revision = 1,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = source_pkg1_b,
+        .package_id = pkg1,
+        .path = "pkg1_b.ahfl",
+        .uri = "file:///pkg1_b.ahfl",
+        .revision = 1,
+        .completeness = FactCompleteness::Typed,
+    });
+
+    const auto target_def = DefId{0};
+    index.add_symbol(SymbolFact{
+        .def_id = target_def,
+        .package_id = pkg2,
+        .source_unit_id = source_pkg2,
+        .kind = ahfl::SymbolKind::Struct,
+        .local_name = "Thing",
+        .canonical_name = "pkg2::Thing",
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .selection_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg2.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_symbol(SymbolFact{
+        .def_id = DefId{1},
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_b,
+        .kind = ahfl::SymbolKind::Struct,
+        .local_name = "Thing",
+        .canonical_name = "pkg1::b::Thing",
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .selection_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_b.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_symbol(SymbolFact{
+        .def_id = DefId{2},
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_a,
+        .kind = ahfl::SymbolKind::Struct,
+        .local_name = "Thing",
+        .canonical_name = "pkg1::a::Thing",
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .selection_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_a.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+
+    const auto symbols = index.workspace_symbols("Thing");
+    check(symbols.size() == 3, "workspace_index.order.symbol_count");
+    if (symbols.size() == 3) {
+        check(symbols[0]->location.uri == "file:///pkg1_a.ahfl",
+              "workspace_index.order.symbol_pkg1_source_a_first");
+        check(symbols[1]->location.uri == "file:///pkg1_b.ahfl",
+              "workspace_index.order.symbol_pkg1_source_b_second");
+        check(symbols[2]->location.uri == "file:///pkg2.ahfl",
+              "workspace_index.order.symbol_pkg2_last");
+    }
+
+    index.add_reference(ReferenceFact{
+        .package_id = pkg2,
+        .source_unit_id = source_pkg2,
+        .target_def = target_def,
+        .reference_kind = ahfl::ReferenceKind::TypeName,
+        .range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg2.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_reference(ReferenceFact{
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_b,
+        .target_def = target_def,
+        .reference_kind = ahfl::ReferenceKind::TypeName,
+        .range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_b.ahfl", 0),
+        .completeness = FactCompleteness::Resolved,
+    });
+    index.add_reference(ReferenceFact{
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_a,
+        .target_def = target_def,
+        .reference_kind = ahfl::ReferenceKind::TypeName,
+        .range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_a.ahfl", 7),
+        .completeness = FactCompleteness::Resolved,
+    });
+    const auto references = index.reference_locations_for_def(target_def);
+    check(references.size() == 3, "workspace_index.order.reference_count");
+    if (references.size() == 3) {
+        check(references[0].uri == "file:///pkg1_a.ahfl",
+              "workspace_index.order.reference_pkg1_source_a_first");
+        check(references[1].uri == "file:///pkg1_b.ahfl",
+              "workspace_index.order.reference_pkg1_source_b_second");
+        check(references[2].uri == "file:///pkg2.ahfl",
+              "workspace_index.order.reference_pkg2_last");
+    }
+
+    const auto int_type = TypeKey{
+        .kind = TypeKey::Kind::Primitive,
+        .primitive = PrimitiveKind::Int,
+    };
+    index.add_impl(ImplFact{
+        .impl_id = WorkspaceImplId{0},
+        .package_id = pkg2,
+        .source_unit_id = source_pkg2,
+        .target_type = int_type,
+        .trait_def = std::nullopt,
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .target_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg2.ahfl", 0),
+        .source_order = 0,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_impl(ImplFact{
+        .impl_id = WorkspaceImplId{1},
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_a,
+        .target_type = int_type,
+        .trait_def = std::nullopt,
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .target_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_a_second.ahfl", 0),
+        .source_order = 2,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_impl(ImplFact{
+        .impl_id = WorkspaceImplId{2},
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_b,
+        .target_type = int_type,
+        .trait_def = std::nullopt,
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .target_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_b.ahfl", 0),
+        .source_order = 0,
+        .completeness = FactCompleteness::Typed,
+    });
+    index.add_impl(ImplFact{
+        .impl_id = WorkspaceImplId{3},
+        .package_id = pkg1,
+        .source_unit_id = source_pkg1_a,
+        .target_type = int_type,
+        .trait_def = std::nullopt,
+        .declaration_range = ahfl::SourceRange{0, 5},
+        .target_range = ahfl::SourceRange{0, 5},
+        .location = index_test_location("file:///pkg1_a_first.ahfl", 0),
+        .source_order = 1,
+        .completeness = FactCompleteness::Typed,
+    });
+    const auto impls = index.implementation_locations_for_type(int_type);
+    check(impls.size() == 4, "workspace_index.order.impl_count");
+    if (impls.size() == 4) {
+        check(impls[0].uri == "file:///pkg1_a_first.ahfl",
+              "workspace_index.order.impl_pkg1_source_a_order_first");
+        check(impls[1].uri == "file:///pkg1_a_second.ahfl",
+              "workspace_index.order.impl_pkg1_source_a_order_second");
+        check(impls[2].uri == "file:///pkg1_b.ahfl",
+              "workspace_index.order.impl_pkg1_source_b_third");
+        check(impls[3].uri == "file:///pkg2.ahfl", "workspace_index.order.impl_pkg2_last");
+    }
 }
 
 void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
@@ -5094,6 +5291,7 @@ int main() {
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_references_include_indexed_unopened_source();
+    test_workspace_index_queries_sort_by_package_source_and_order();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
