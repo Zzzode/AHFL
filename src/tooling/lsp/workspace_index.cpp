@@ -381,12 +381,18 @@ void append_index_diagnostics_by_source_name(
 
     const auto source_unit = SourceUnitId{index.source_units().size()};
     const auto package_id = package_id_for_path(input.package_roots, path);
+    const auto scope_kinds = [&]() {
+        const auto found = input.source_scope_kinds.find(path_key);
+        return found == input.source_scope_kinds.end() ? std::vector<LspNavigationIndexSourceKind>{}
+                                                       : found->second;
+    }();
     index.add_source_unit(SourceUnitFact{
         .source_unit_id = source_unit,
         .package_id = package_id,
         .path = path,
         .uri = uri_from_path(path),
         .revision = input.revision,
+        .scope_kinds = scope_kinds,
         .completeness = completeness,
     });
     source_units_by_path.emplace(path_key, source_unit);

@@ -41,6 +41,14 @@ enum class FactCompleteness : std::uint8_t {
     Invalid,
 };
 
+enum class LspNavigationIndexSourceKind : std::uint8_t {
+    SemanticEntry,
+    PackageExport,
+    SysrootExport,
+    PrimitiveHome,
+    OpenOverlay,
+};
+
 struct SourceUnitId {
     std::size_t value{0};
 
@@ -107,6 +115,7 @@ struct SourceUnitFact {
     std::filesystem::path path;
     std::string uri;
     std::uint64_t revision{0};
+    std::vector<LspNavigationIndexSourceKind> scope_kinds;
     FactCompleteness completeness{FactCompleteness::Resolved};
 };
 
@@ -229,6 +238,7 @@ struct LspIndexPackageRoot {
 struct LspWorkspaceIndexInput {
     ProjectInput project;
     std::vector<LspIndexPackageRoot> package_roots;
+    std::unordered_map<std::string, std::vector<LspNavigationIndexSourceKind>> source_scope_kinds;
     std::uint64_t revision{0};
 };
 

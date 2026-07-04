@@ -127,6 +127,16 @@ bool index_has_diagnostic(const LspWorkspaceIndex &index,
                }) != diagnostics.end();
 }
 
+bool source_unit_has_scope_kind(const SourceUnitFact &source, LspNavigationIndexSourceKind kind) {
+    return std::find(source.scope_kinds.begin(), source.scope_kinds.end(), kind) !=
+           source.scope_kinds.end();
+}
+
+bool source_unit_has_export_scope(const SourceUnitFact &source) {
+    return source_unit_has_scope_kind(source, LspNavigationIndexSourceKind::PackageExport) ||
+           source_unit_has_scope_kind(source, LspNavigationIndexSourceKind::SysrootExport);
+}
+
 Location
 index_test_location(const std::string &uri, std::uint32_t line, std::uint32_t character = 0) {
     return Location{
@@ -2057,6 +2067,11 @@ void test_workspace_index_includes_open_unexported_overlay() {
                 const auto *draft_source =
                     index_source_unit_for_uri(*snapshot->workspace_index, draft_uri);
                 check(draft_source != nullptr, "workspace_index.open_overlay.source_unit_exists");
+                if (draft_source != nullptr) {
+                    check(source_unit_has_scope_kind(*draft_source,
+                                                     LspNavigationIndexSourceKind::OpenOverlay),
+                          "workspace_index.open_overlay.scope_kind");
+                }
                 const auto symbols = snapshot->workspace_index->workspace_symbols("DraftOnly");
                 check(std::find_if(symbols.begin(),
                                    symbols.end(),
@@ -2933,6 +2948,30 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                   "workspace_index.std_impl.json_not_in_semantic_sources");
             check(snapshot->workspace_index != nullptr, "workspace_index.std_impl.index_exists");
             if (snapshot->workspace_index != nullptr) {
+                const auto *int_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, int_uri);
+                const auto *fmt_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, fmt_uri);
+                const auto *json_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, json_uri);
+                check(int_source != nullptr, "workspace_index.std_impl.int_source_unit_exists");
+                check(fmt_source != nullptr, "workspace_index.std_impl.fmt_source_unit_exists");
+                check(json_source != nullptr, "workspace_index.std_impl.json_source_unit_exists");
+                if (int_source != nullptr) {
+                    check(source_unit_has_export_scope(*int_source),
+                          "workspace_index.std_impl.int_export_scope");
+                    check(source_unit_has_scope_kind(*int_source,
+                                                     LspNavigationIndexSourceKind::PrimitiveHome),
+                          "workspace_index.std_impl.int_primitive_home_scope");
+                }
+                if (fmt_source != nullptr) {
+                    check(source_unit_has_export_scope(*fmt_source),
+                          "workspace_index.std_impl.fmt_export_scope");
+                }
+                if (json_source != nullptr) {
+                    check(source_unit_has_export_scope(*json_source),
+                          "workspace_index.std_impl.json_export_scope");
+                }
                 const auto indexed_impls =
                     snapshot->workspace_index->implementation_locations_for_primitive(
                         PrimitiveKind::Int);
