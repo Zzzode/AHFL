@@ -2156,6 +2156,13 @@ void test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails(
                                       "\n"
                                       "struct ResolveIndexed {\n"
                                       "    value: MissingType;\n"
+                                      "}\n"
+                                      "\n"
+                                      "impl ResolveIndexed {\n"
+                                      "    fn clone(self: ResolveIndexed) -> ResolveIndexed "
+                                      "effect Pure decreases 0 {\n"
+                                      "        return self;\n"
+                                      "    }\n"
                                       "}\n";
     write_file(main_path, main_source);
     write_file(broken_path, broken_source);
@@ -2190,6 +2197,21 @@ void test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails(
                                                IndexDiagnosticPhase::Resolve,
                                                "resolve."),
                           "workspace_symbol.resolve_index.resolve_diagnostic_fact");
+                    const auto &impls = snapshot->workspace_index->impls();
+                    const auto parsed_impl =
+                        std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+                            return impl.location.uri == broken_uri &&
+                                   impl.completeness == FactCompleteness::Parsed;
+                        });
+                    check(parsed_impl != impls.end(),
+                          "workspace_symbol.resolve_index.parsed_impl_fact_exists");
+                    if (parsed_impl != impls.end()) {
+                        check(parsed_impl->source_unit_id == broken_source->source_unit_id,
+                              "workspace_symbol.resolve_index.parsed_impl_source_unit");
+                        check(!parsed_impl->methods.empty() &&
+                                  parsed_impl->methods.front().name == "clone",
+                              "workspace_symbol.resolve_index.parsed_impl_method_header");
+                    }
                 }
             }
         }
@@ -2228,6 +2250,13 @@ void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails
                                       "    value: Int;\n"
                                       "}\n"
                                       "\n"
+                                      "impl ParsedBeforeError {\n"
+                                      "    fn clone(self: ParsedBeforeError) -> "
+                                      "ParsedBeforeError effect Pure decreases 0 {\n"
+                                      "        return self;\n"
+                                      "    }\n"
+                                      "}\n"
+                                      "\n"
                                       "fn still_broken(\n";
     write_file(main_path, main_source);
     write_file(broken_path, broken_source);
@@ -2260,6 +2289,29 @@ void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails
                                                IndexDiagnosticPhase::Parse,
                                                "parse."),
                           "workspace_symbol.parse_index.parse_diagnostic_fact");
+                    const auto &impls = snapshot->workspace_index->impls();
+                    const auto parsed_impl =
+                        std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+                            return impl.location.uri == broken_uri &&
+                                   impl.completeness == FactCompleteness::Parsed;
+                        });
+                    check(parsed_impl != impls.end(),
+                          "workspace_symbol.parse_index.parsed_impl_fact_exists");
+                    if (parsed_impl != impls.end()) {
+                        check(parsed_impl->source_unit_id == broken_source->source_unit_id,
+                              "workspace_symbol.parse_index.parsed_impl_source_unit");
+                        check(parsed_impl->target_type.kind == TypeKey::Kind::Unknown,
+                              "workspace_symbol.parse_index.parsed_impl_unknown_type");
+                        check(!parsed_impl->methods.empty() &&
+                                  parsed_impl->methods.front().name == "clone",
+                              "workspace_symbol.parse_index.parsed_impl_method_header");
+                    }
+                    const auto queried_impls =
+                        snapshot->workspace_index->implementation_locations_for_type(TypeKey{
+                            .kind = TypeKey::Kind::Unknown,
+                        });
+                    check(queried_impls.empty(),
+                          "workspace_symbol.parse_index.parsed_impl_not_queryable");
                 }
             }
         }

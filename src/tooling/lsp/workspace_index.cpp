@@ -695,6 +695,76 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
     }
 }
 
+[[nodiscard]] SourceRange skeleton_impl_target_range(const ast::ImplDecl &impl) {
+    if (impl.target_type != nullptr && has_extent(impl.target_type->range)) {
+        return impl.target_type->range;
+    }
+    return impl.range;
+}
+
+[[nodiscard]] std::vector<ImplMethodFact>
+skeleton_method_facts_for_impl(const ast::ImplDecl &impl) {
+    std::vector<ImplMethodFact> methods;
+    methods.reserve(impl.methods.size());
+    for (const auto &method : impl.methods) {
+        if (method == nullptr) {
+            continue;
+        }
+        methods.push_back(ImplMethodFact{
+            .name = method->name,
+            .declaration_range = method->range,
+            .has_body = method->body != nullptr,
+            .builtin_name = method->builtin_name,
+            .source_order = methods.size(),
+        });
+    }
+    return methods;
+}
+
+void append_skeleton_impl_facts(LspWorkspaceIndex &index,
+                                SourceUnitId source_unit,
+                                package_graph::PackageId package_id,
+                                std::string_view uri,
+                                const SourceFile &source,
+                                const ast::Program &program) {
+    std::size_t source_order = 0;
+    for (const auto &declaration : program.declarations) {
+        if (declaration == nullptr || declaration->kind != ast::NodeKind::ImplDecl) {
+            continue;
+        }
+        const auto &impl = static_cast<const ast::ImplDecl &>(*declaration);
+        const auto target_range = skeleton_impl_target_range(impl);
+        const auto trait_range = impl.trait_ref != nullptr && has_extent(impl.trait_ref->range)
+                                     ? std::optional<SourceRange>{impl.trait_ref->range}
+                                     : std::nullopt;
+        index.add_impl(ImplFact{
+            .impl_id = WorkspaceImplId{index.impls().size()},
+            .package_id = package_id,
+            .source_unit_id = source_unit,
+            .target_type = TypeKey{.kind = TypeKey::Kind::Unknown},
+            .trait_def = std::nullopt,
+            .trait_range = trait_range,
+            .declaration_range = impl.range,
+            .target_range = target_range,
+            .location =
+                Location{
+                    .uri = std::string(uri),
+                    .range = to_lsp_range(source, target_range),
+                },
+            .trait_location = trait_range.has_value()
+                                  ? std::optional<Location>{Location{
+                                        .uri = std::string(uri),
+                                        .range = to_lsp_range(source, *trait_range),
+                                    }}
+                                  : std::nullopt,
+            .methods = skeleton_method_facts_for_impl(impl),
+            .source_order = source_order,
+            .completeness = FactCompleteness::Parsed,
+        });
+        ++source_order;
+    }
+}
+
 void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                  const Frontend &frontend,
                                  const LspWorkspaceIndexInput &input,
@@ -741,6 +811,12 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                      uri_from_path(path),
                                      parse_result.source,
                                      *parse_result.program);
+        append_skeleton_impl_facts(index,
+                                   source_unit,
+                                   package_id,
+                                   uri_from_path(path),
+                                   parse_result.source,
+                                   *parse_result.program);
     }
     if (project_diagnostics != nullptr) {
         append_index_diagnostics_by_source_name(
@@ -1203,6 +1279,12 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                                          uri_from_path(source.path),
                                          source.source,
                                          *source.program);
+            append_skeleton_impl_facts(index,
+                                       source_unit->second,
+                                       package_id,
+                                       uri_from_path(source.path),
+                                       source.source,
+                                       *source.program);
         }
         return index;
     }
