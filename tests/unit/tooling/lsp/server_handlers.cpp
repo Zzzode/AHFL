@@ -3180,6 +3180,110 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
           "lazy_sysroot.workspace_symbol_includes_fmt_name");
 }
 
+void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
+    const auto root = make_temp_project("sysroot_overlay_primitive_impl");
+    const auto app_root = root / "app";
+    const auto std_root = root / "std";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto decimal_path = std_root / "decimal.ahfl";
+    const auto fmt_path = std_root / "fmt.ahfl";
+    const auto string_path = std_root / "string.ahfl";
+    write_package_manifest(app_root,
+                           "sysroot-overlay-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"decimal\", \"fmt\", \"string\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"primitive_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(decimal_path, "module std::decimal;\n\nimpl Decimal(0) {}\n");
+    write_file(fmt_path,
+               "module std::fmt;\n"
+               "\n"
+               "fn format_decimal(x: Decimal(0)) -> String effect Pure;\n");
+    write_file(string_path, "module std::string;\n\nimpl String {}\n");
+
+    const std::string fmt_overlay = "module std::fmt;\n"
+                                    "\n"
+                                    "fn format_decimal(x: Decimal(0)) -> String effect Pure;\n"
+                                    "\n"
+                                    "impl Decimal(0) {}\n";
+    const std::string app_source = "module app::main;\n"
+                                   "\n"
+                                   "fn keep(x: Decimal(0)) -> Decimal(0) effect Pure decreases 0 "
+                                   "{\n"
+                                   "    return x;\n"
+                                   "}\n";
+    write_file(app_path, app_source);
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = app_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = app_source,
+        });
+        store.open(TextDocumentItem{
+            .uri = fmt_uri,
+            .language_id = "ahfl",
+            .version = 7,
+            .text = fmt_overlay,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(root));
+        const auto *index = analysis.sysroot_index_for_uri(app_uri);
+        check(index != nullptr, "sysroot_overlay_impl.index_exists");
+        if (index != nullptr) {
+            const auto decimal_impls =
+                index->implementation_locations_for_primitive(PrimitiveKind::Decimal);
+            check(std::find_if(decimal_impls.begin(),
+                               decimal_impls.end(),
+                               [&](const Location &location) { return location.uri == fmt_uri; }) !=
+                      decimal_impls.end(),
+                  "sysroot_overlay_impl.index_includes_unsaved_fmt_impl");
+        }
+    }
+
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(app_uri, position_of(app_source, "Decimal(0)")) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(app_uri, 1, app_source),
+        did_open_body(fmt_uri, 7, fmt_overlay),
+        implementation,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(fmt_uri) != std::string::npos,
+          "sysroot_overlay_impl.implementation_includes_unsaved_fmt_impl");
+}
+
 void write_minimal_std_sources(const std::filesystem::path &std_root,
                                const std::filesystem::path &json_path,
                                std::string_view json_source) {
@@ -5594,6 +5698,7 @@ int main() {
     test_implementation_uses_index_for_unopened_nominal_impls();
     test_std_exported_impl_modules_feed_primitive_candidates();
     test_user_package_lazy_sysroot_index_feeds_primitive_candidates();
+    test_open_sysroot_overlay_feeds_primitive_implementation_candidates();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
