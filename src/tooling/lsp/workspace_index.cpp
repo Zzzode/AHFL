@@ -122,6 +122,22 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
     return impl.declaration_range;
 }
 
+[[nodiscard]] std::vector<ImplMethodFact> method_facts_for_impl(const ImplTypeInfo &impl) {
+    std::vector<ImplMethodFact> methods;
+    methods.reserve(impl.methods.size());
+    for (std::size_t index = 0; index < impl.methods.size(); ++index) {
+        const auto &method = impl.methods[index];
+        methods.push_back(ImplMethodFact{
+            .name = method.name,
+            .declaration_range = method.declaration_range,
+            .has_body = method.has_body,
+            .builtin_name = method.builtin_name,
+            .source_order = index,
+        });
+    }
+    return methods;
+}
+
 [[nodiscard]] const SourceUnit *source_unit_for_id(const SourceGraph &graph, SourceId id) {
     for (const auto &source : graph.sources) {
         if (source.id == id) {
@@ -1036,6 +1052,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
             .declaration_range = impl.declaration_range,
             .target_range = impl_location_range(impl),
             .location = *location,
+            .methods = method_facts_for_impl(impl),
             .source_order = impl.index,
             .completeness = FactCompleteness::Typed,
         });

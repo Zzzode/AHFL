@@ -110,6 +110,14 @@ struct SourceUnitFact {
     FactCompleteness completeness{FactCompleteness::Resolved};
 };
 
+struct ImplMethodFact {
+    std::string name;
+    SourceRange declaration_range;
+    bool has_body{false};
+    std::optional<std::string> builtin_name;
+    std::size_t source_order{0};
+};
+
 struct ImplFact {
     WorkspaceImplId impl_id;
     package_graph::PackageId package_id;
@@ -119,6 +127,7 @@ struct ImplFact {
     SourceRange declaration_range;
     SourceRange target_range;
     Location location;
+    std::vector<ImplMethodFact> methods;
     std::size_t source_order{0};
     FactCompleteness completeness{FactCompleteness::Typed};
 };

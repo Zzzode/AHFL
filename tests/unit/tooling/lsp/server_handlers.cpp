@@ -2789,7 +2789,11 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
     const std::string extra_source = "module app::extra;\n"
                                      "import app::types as types;\n"
                                      "\n"
-                                     "impl types::Msg {}\n";
+                                     "impl types::Msg {\n"
+                                     "    fn display(self) -> Int effect Pure decreases 0 {\n"
+                                     "        return 0;\n"
+                                     "    }\n"
+                                     "}\n";
     write_file(main_path, main_source);
     write_file(types_path, types_source);
     write_file(extra_path, extra_source);
@@ -2811,6 +2815,26 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
         if (snapshot != nullptr) {
             check(snapshot->source_for_uri(extra_uri) == nullptr,
                   "implementation.nominal_index.extra_not_in_semantic_sources");
+            check(snapshot->workspace_index != nullptr,
+                  "implementation.nominal_index.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto &impls = snapshot->workspace_index->impls();
+                const auto extra_impl =
+                    std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+                        return impl.location.uri == extra_uri;
+                    });
+                check(extra_impl != impls.end(), "implementation.nominal_index.impl_fact_exists");
+                if (extra_impl != impls.end()) {
+                    check(extra_impl->methods.size() == 1,
+                          "implementation.nominal_index.impl_method_count");
+                    if (!extra_impl->methods.empty()) {
+                        check(extra_impl->methods.front().name == "display",
+                              "implementation.nominal_index.impl_method_name");
+                        check(extra_impl->methods.front().has_body,
+                              "implementation.nominal_index.impl_method_has_body");
+                    }
+                }
+            }
         }
     }
 
