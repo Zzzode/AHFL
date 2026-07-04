@@ -455,12 +455,6 @@ struct ImplFactCandidate {
     return source_units[id.value].valid ? &source_units[id.value] : nullptr;
 }
 
-[[nodiscard]] bool source_unit_has_scope_kind(const SourceUnitFact &source,
-                                              LspNavigationIndexSourceKind kind) {
-    return std::find(source.scope_kinds.begin(), source.scope_kinds.end(), kind) !=
-           source.scope_kinds.end();
-}
-
 [[nodiscard]] package_graph::PackageId invalid_package_id() {
     return package_graph::PackageId{std::numeric_limits<std::size_t>::max()};
 }
@@ -1220,30 +1214,8 @@ LspWorkspaceIndex::primitive_home_location_for_type(const TypeKey &type) const {
     }
 
     std::vector<const ImplFact *> matched;
-    if (const auto found = impls_by_type_.find(type); found != impls_by_type_.end()) {
-        for (const auto id : found->second) {
-            if (id.value >= impls_.size()) {
-                continue;
-            }
-            const auto &impl = impls_[id.value];
-            if (impl.completeness != FactCompleteness::Typed) {
-                continue;
-            }
-            const auto *source = source_unit_fact(*this, impl.source_unit_id);
-            if (source == nullptr ||
-                !source_unit_has_scope_kind(*source, LspNavigationIndexSourceKind::PrimitiveHome)) {
-                continue;
-            }
-            matched.push_back(&impl);
-        }
-    }
     for (const auto &impl : impls_) {
         if (impl.target_type != type || impl.completeness == FactCompleteness::Invalid) {
-            continue;
-        }
-        const auto *source = source_unit_fact(*this, impl.source_unit_id);
-        if (source == nullptr ||
-            !source_unit_has_scope_kind(*source, LspNavigationIndexSourceKind::PrimitiveHome)) {
             continue;
         }
         matched.push_back(&impl);

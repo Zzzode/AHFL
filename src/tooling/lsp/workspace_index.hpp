@@ -45,7 +45,6 @@ enum class LspNavigationIndexSourceKind : std::uint8_t {
     SemanticEntry,
     PackageExport,
     SysrootExport,
-    PrimitiveHome,
     OpenOverlay,
 };
 

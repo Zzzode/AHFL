@@ -223,35 +223,6 @@ void append_scoped_entry_file(ProjectInput &input,
     }
 }
 
-void append_primitive_home_entry_files(ProjectInput &input,
-                                       const package_graph::PackageGraph &graph,
-                                       NavigationScopeKindMap *scope_kinds = nullptr) {
-    constexpr std::string_view kPrimitiveHomeModules[] = {
-        "bool",
-        "int",
-        "float",
-        "string",
-        "uuid",
-        "time",
-        "decimal",
-    };
-
-    for (const auto module_key : kPrimitiveHomeModules) {
-        const auto source_unit = std::find_if(
-            graph.source_units.begin(), graph.source_units.end(), [&](const auto &unit) {
-                const auto *package = graph.find_package(unit.package);
-                return package != nullptr && package->module_prefix == "std" &&
-                       unit.module_path == module_key &&
-                       source_unit_has_role(unit, package_graph::SourceUnitRole::Export);
-            });
-        if (source_unit == graph.source_units.end()) {
-            continue;
-        }
-        append_scoped_entry_file(
-            input, scope_kinds, source_unit->path, LspNavigationIndexSourceKind::PrimitiveHome);
-    }
-}
-
 void append_exported_entry_files(
     ProjectInput &input,
     const package_graph::PackageGraph &graph,
@@ -526,7 +497,6 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             append_exported_entry_files(input, graph, package, true, scope_kinds, kind);
         }
         append_open_overlay_entry_files(input, scope_kinds, graph, requested_file);
-        append_primitive_home_entry_files(input, graph, scope_kinds);
     }
     return input;
 }

@@ -2499,7 +2499,7 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
                                 .path = b_path,
                                 .scope_kinds =
                                     {
-                                        LspNavigationIndexSourceKind::PrimitiveHome,
+                                        LspNavigationIndexSourceKind::OpenOverlay,
                                         LspNavigationIndexSourceKind::PackageExport,
                                         LspNavigationIndexSourceKind::PackageExport,
                                     },
@@ -2539,8 +2539,8 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
         if (source_units[0].scope_kinds.size() == 2) {
             check(source_units[0].scope_kinds[0] == LspNavigationIndexSourceKind::PackageExport,
                   "workspace_index.source_unit_order.scope_kinds_sorted_package");
-            check(source_units[0].scope_kinds[1] == LspNavigationIndexSourceKind::PrimitiveHome,
-                  "workspace_index.source_unit_order.scope_kinds_sorted_primitive");
+            check(source_units[0].scope_kinds[1] == LspNavigationIndexSourceKind::OpenOverlay,
+                  "workspace_index.source_unit_order.scope_kinds_sorted_overlay");
         }
         check(source_units[1].source_unit_id == SourceUnitId{1},
               "workspace_index.source_unit_order.second_id");
@@ -3764,6 +3764,74 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
           "typeDefinition.primitive_enum_tuple_payload_bool_targets_impl_selection");
 }
 
+void test_definition_discovers_primitive_home_from_exported_impl_facts() {
+    const auto root = make_temp_project("definition_primitive_home_from_impl_facts");
+    const auto std_root = root / "std";
+    const auto int_home_path = std_root / "numbers" / "int_home.ahfl";
+    const auto use_path = std_root / "use.ahfl";
+    const std::string int_home_source = "module std::numbers::int_home;\n"
+                                        "\n"
+                                        "impl Int {}\n";
+    const std::string use_source = "module std::use;\n"
+                                   "\n"
+                                   "@builtin(\"primitive_use\")\n"
+                                   "fn primitive_use(x: Int) -> Int effect Pure;\n";
+
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"numbers/int_home\", \"use\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"primitive_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(int_home_path, int_home_source);
+    write_file(use_path, use_source);
+
+    const auto int_home_uri = AnalysisService::uri_from_path(int_home_path);
+    const auto use_uri = AnalysisService::uri_from_path(use_path);
+    const std::string int_definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+        hover_params_at(use_uri, position_of(use_source, "Int")) + R"(})";
+    const std::string int_type_definition =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/typeDefinition","params":)" +
+        hover_params_at(use_uri, position_of(use_source, "Int")) + R"(})";
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(use_uri, 1, use_source),
+        int_definition,
+        int_type_definition,
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+    const auto definition_response = response_body_for_id(output, 2);
+    const auto type_definition_response = response_body_for_id(output, 3);
+
+    check(definition_response.find(int_home_uri) != std::string::npos,
+          "definition.primitive_home_from_impl_facts.targets_exported_home_uri");
+    check(definition_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_home_from_impl_facts.targets_impl_selection");
+    check(definition_response.find("std/int.ahfl") == std::string::npos,
+          "definition.primitive_home_from_impl_facts.no_std_int_fallback");
+    check(type_definition_response.find(int_home_uri) != std::string::npos,
+          "typeDefinition.primitive_home_from_impl_facts.targets_exported_home_uri");
+}
+
 void test_implementation_returns_all_impl_blocks_for_type() {
     const auto root = make_temp_project("implementation_type_impl_candidates");
     const auto path = root / "main.ahfl";
@@ -4131,9 +4199,6 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                 if (int_source != nullptr) {
                     check(source_unit_has_export_scope(*int_source),
                           "workspace_index.std_impl.int_export_scope");
-                    check(source_unit_has_scope_kind(*int_source,
-                                                     LspNavigationIndexSourceKind::PrimitiveHome),
-                          "workspace_index.std_impl.int_primitive_home_scope");
                 }
                 if (fmt_source != nullptr) {
                     check(source_unit_has_export_scope(*fmt_source),
@@ -7142,6 +7207,7 @@ int main() {
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_definition_targets_source_sysroot_primitive_home_modules();
+    test_definition_discovers_primitive_home_from_exported_impl_facts();
     test_implementation_returns_all_impl_blocks_for_type();
     test_implementation_uses_index_for_unopened_nominal_impls();
     test_implementation_uses_nominal_def_index_for_generic_impls();
