@@ -1402,6 +1402,7 @@ class IndexAnalysisPipeline {
                                                 typed.has_errors() ? FactCompleteness::Resolved
                                                                    : FactCompleteness::Typed);
         if (typed.has_errors()) {
+            emit_typed_impl_facts(project.graph, typed);
             append_impl_skeleton_facts(project.graph, FactCompleteness::Resolved);
             return std::move(index_);
         }
