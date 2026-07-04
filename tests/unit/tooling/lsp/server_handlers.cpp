@@ -1861,6 +1861,9 @@ void test_project_references_include_indexed_unopened_source() {
           "references.index_includes_semantic_import_source");
     check(response.find(extra_uri) != std::string::npos,
           "references.index_includes_unopened_exported_source");
+    check(count_substring(response, types_uri) == 1, "references.index_emits_declaration_once");
+    check(count_substring(response, main_uri) == 1, "references.index_emits_semantic_import_once");
+    check(count_substring(response, extra_uri) == 1, "references.index_emits_unopened_export_once");
 }
 
 void test_workspace_index_queries_sort_by_package_source_and_order() {

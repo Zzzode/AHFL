@@ -2505,6 +2505,7 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
             }
         }
 
+        bool used_workspace_index = false;
         const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
         if (symbol.has_value() && snapshot->workspace_index != nullptr) {
             const auto def = snapshot->workspace_def_for_symbol(symbol->get().id);
@@ -2513,14 +2514,17 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
                      snapshot->workspace_index->reference_locations_for_def(*def)) {
                     push_unique_location(locations, location);
                 }
+                used_workspace_index = true;
             }
         }
 
-        for (const auto &reference : snapshot->resolve_result.references()) {
-            if (reference.target == *target) {
-                if (const auto location = reference_location(*snapshot, reference, *source);
-                    location.has_value()) {
-                    push_unique_location(locations, *location);
+        if (!used_workspace_index) {
+            for (const auto &reference : snapshot->resolve_result.references()) {
+                if (reference.target == *target) {
+                    if (const auto location = reference_location(*snapshot, reference, *source);
+                        location.has_value()) {
+                        push_unique_location(locations, *location);
+                    }
                 }
             }
         }
