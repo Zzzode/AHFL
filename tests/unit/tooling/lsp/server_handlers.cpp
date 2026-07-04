@@ -4226,6 +4226,69 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
     }
 }
 
+void test_analysis_snapshot_cache_key_records_open_overlay_revisions() {
+    const auto root = make_temp_project("analysis_overlay_revision_key");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto draft_path = root / "src" / "draft.ahfl";
+    write_package_manifest(root, "overlay-revision-key-app", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct Main {}\n";
+    const std::string draft_source = "module app::draft;\n"
+                                     "\n"
+                                     "struct Draft {}\n";
+    write_file(main_path, main_source);
+    write_file(draft_path, draft_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto draft_uri = AnalysisService::uri_from_path(draft_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+    store.open(TextDocumentItem{
+        .uri = draft_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = draft_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *first = analysis.snapshot_for_uri(main_uri);
+    check(first != nullptr, "analysis_overlay_revision_key.first_exists");
+    check(analysis.analysis_runs() == 1, "analysis_overlay_revision_key.single_run");
+    if (first == nullptr) {
+        return;
+    }
+
+    const auto first_overlay_key = first->open_document_overlay_revision_set;
+    check(first_overlay_key.find(main_uri + "@") != std::string::npos,
+          "analysis_overlay_revision_key.includes_main");
+    check(first_overlay_key.find(draft_uri + "@") != std::string::npos,
+          "analysis_overlay_revision_key.includes_draft");
+
+    store.change(draft_uri,
+                 2,
+                 "module app::draft;\n"
+                 "\n"
+                 "struct DraftChanged {}\n");
+    const auto *second = analysis.snapshot_for_uri(main_uri);
+    check(second != nullptr, "analysis_overlay_revision_key.second_exists");
+    check(analysis.analysis_runs() == 2, "analysis_overlay_revision_key.rebuilds_after_overlay");
+    if (second != nullptr) {
+        check(second->open_document_overlay_revision_set != first_overlay_key,
+              "analysis_overlay_revision_key.changes_after_overlay_edit");
+        check(second->open_document_overlay_revision_set.find(draft_uri + "@") != std::string::npos,
+              "analysis_overlay_revision_key.keeps_draft_after_edit");
+    }
+}
+
 void test_sysroot_index_cache_key_separates_workspace_roots() {
     const auto root = make_temp_project("sysroot_index_cache_key_workspace_roots");
     const auto sysroot = root / "sysroot";
@@ -6074,6 +6137,7 @@ int main() {
     test_incompatible_toolchain_profile_stops_project_analysis();
     test_toolchain_profile_records_std_identity_checksum();
     test_analysis_snapshot_cache_key_records_toolchain_identity();
+    test_analysis_snapshot_cache_key_records_open_overlay_revisions();
     test_sysroot_index_cache_key_separates_workspace_roots();
     test_package_graph_manifest_does_not_inject_prelude();
     test_index_only_exported_type_does_not_satisfy_unimported_reference();

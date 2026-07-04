@@ -318,11 +318,13 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
     return roots;
 }
 
-[[nodiscard]] std::string sysroot_index_cache_key(const LspToolchainCacheKey &key,
-                                                  std::uint64_t workspace_revision) {
+[[nodiscard]] std::string
+sysroot_index_cache_key(const LspToolchainCacheKey &key,
+                        std::string_view open_document_overlay_revision_set) {
     return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.std_manifest + "#" +
            key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
-           key.index_identity_schema_version + "#" + std::to_string(workspace_revision);
+           key.index_identity_schema_version + "#" +
+           std::string{open_document_overlay_revision_set};
 }
 
 [[nodiscard]] const package_graph::PackageNode *
@@ -700,18 +702,20 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     }
 
     const auto workspace_revision = store_.workspace_revision();
+    const auto overlay_revision_set = open_document_overlay_revision_set();
     const auto toolchain_cache_key = toolchain_cache_key_for_uri(uri);
     if (const auto existing = cache_.find(uri); existing != cache_.end()) {
         const auto &snapshot = *existing->second;
         if (snapshot.document_version == document->version &&
             snapshot.document_revision == *revision && snapshot.content_hash == *hash &&
             snapshot.workspace_revision == workspace_revision &&
+            snapshot.open_document_overlay_revision_set == overlay_revision_set &&
             snapshot.toolchain_cache_key == toolchain_cache_key) {
             return existing->second.get();
         }
     }
 
-    auto snapshot = build_snapshot(uri, toolchain_cache_key);
+    auto snapshot = build_snapshot(uri, toolchain_cache_key, overlay_revision_set);
     if (!snapshot) {
         return nullptr;
     }
@@ -728,7 +732,8 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         return nullptr;
     }
 
-    const auto cache_key = sysroot_index_cache_key(*key, store_.workspace_revision());
+    const auto overlay_revision_set = open_document_overlay_revision_set();
+    const auto cache_key = sysroot_index_cache_key(*key, overlay_revision_set);
     if (const auto existing = sysroot_index_cache_.find(cache_key);
         existing != sysroot_index_cache_.end()) {
         return existing->second.get();
@@ -879,7 +884,8 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
 
 std::unique_ptr<LspAnalysisSnapshot>
 AnalysisService::build_snapshot(const std::string &uri,
-                                std::optional<LspToolchainCacheKey> toolchain_cache_key) {
+                                std::optional<LspToolchainCacheKey> toolchain_cache_key,
+                                std::string open_document_overlay_revision_set) {
     const auto *document = store_.get(uri);
     const auto revision = store_.revision(uri);
     const auto hash = store_.content_hash(uri);
@@ -893,6 +899,7 @@ AnalysisService::build_snapshot(const std::string &uri,
     snapshot->document_revision = *revision;
     snapshot->content_hash = *hash;
     snapshot->workspace_revision = store_.workspace_revision();
+    snapshot->open_document_overlay_revision_set = std::move(open_document_overlay_revision_set);
     snapshot->toolchain_cache_key = std::move(toolchain_cache_key);
 
     const auto document_path = path_from_uri(uri);
@@ -1044,6 +1051,27 @@ std::unordered_map<std::string, std::string> AnalysisService::open_document_over
         overlays.emplace(normalized_path_key(*path), document->text);
     }
     return overlays;
+}
+
+std::string AnalysisService::open_document_overlay_revision_set() const {
+    auto uris = store_.all_uris();
+    std::sort(uris.begin(), uris.end());
+
+    std::string key;
+    for (const auto &uri : uris) {
+        const auto revision = store_.revision(uri);
+        const auto hash = store_.content_hash(uri);
+        if (!revision.has_value() || !hash.has_value()) {
+            continue;
+        }
+        key += uri;
+        key += "@";
+        key += std::to_string(*revision);
+        key += ":";
+        key += std::to_string(*hash);
+        key += ";";
+    }
+    return key;
 }
 
 } // namespace ahfl::lsp

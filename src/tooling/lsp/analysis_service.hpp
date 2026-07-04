@@ -49,6 +49,7 @@ struct LspAnalysisSnapshot {
     std::uint64_t document_revision{0};
     std::uint64_t content_hash{0};
     std::uint64_t workspace_revision{0};
+    std::string open_document_overlay_revision_set;
     std::optional<LspToolchainCacheKey> toolchain_cache_key;
     bool project_aware{false};
     std::optional<std::filesystem::path> package_graph_manifest;
@@ -95,10 +96,13 @@ class AnalysisService {
 
   private:
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
-    build_snapshot(const std::string &uri, std::optional<LspToolchainCacheKey> toolchain_cache_key);
+    build_snapshot(const std::string &uri,
+                   std::optional<LspToolchainCacheKey> toolchain_cache_key,
+                   std::string open_document_overlay_revision_set);
     [[nodiscard]] std::optional<LspToolchainCacheKey>
     toolchain_cache_key_for_uri(const std::string &uri) const;
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
+    [[nodiscard]] std::string open_document_overlay_revision_set() const;
 
     const DocumentStore &store_;
     std::vector<std::filesystem::path> workspace_folders_;
