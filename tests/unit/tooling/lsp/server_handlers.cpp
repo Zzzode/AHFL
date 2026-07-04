@@ -2834,6 +2834,7 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
     const auto collections_path = std_root / "collections.ahfl";
     const auto int_path = std_root / "int.ahfl";
     const auto fmt_path = std_root / "fmt.ahfl";
+    const auto json_path = std_root / "json.ahfl";
     const std::string collections_source = "module std::collections;\n"
                                            "\n"
                                            "struct Set<T> {}\n"
@@ -2848,6 +2849,11 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                                    "fn format(x: Int) -> String effect Pure;\n"
                                    "\n"
                                    "impl Int {}\n";
+    const std::string json_source = "module std::json;\n"
+                                    "\n"
+                                    "fn encode_int(x: Int) -> String effect Pure;\n"
+                                    "\n"
+                                    "impl Int {}\n";
     write_file(std_root / "ahfl.toml",
                "manifest_version = 1\n"
                "\n"
@@ -2862,7 +2868,7 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
                "root = \".\"\n"
                "\n"
                "[exports]\n"
-               "modules = [\"prelude\", \"collections\", \"int\", \"fmt\"]\n"
+               "modules = [\"prelude\", \"collections\", \"int\", \"fmt\", \"json\"]\n"
                "\n"
                "[prelude]\n"
                "module = \"std::prelude\"\n"
@@ -2874,10 +2880,12 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
     write_file(collections_path, collections_source);
     write_file(int_path, int_source);
     write_file(fmt_path, fmt_source);
+    write_file(json_path, json_source);
 
     const auto collections_uri = AnalysisService::uri_from_path(collections_path);
     const auto int_uri = AnalysisService::uri_from_path(int_path);
     const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    const auto json_uri = AnalysisService::uri_from_path(json_path);
     {
         DocumentStore store;
         store.open(TextDocumentItem{
@@ -2895,7 +2903,32 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
         if (snapshot != nullptr) {
             check(snapshot->source_for_uri(fmt_uri) == nullptr,
                   "workspace_index.std_impl.fmt_not_in_semantic_sources");
+            check(snapshot->source_for_uri(json_uri) == nullptr,
+                  "workspace_index.std_impl.json_not_in_semantic_sources");
             check(snapshot->workspace_index != nullptr, "workspace_index.std_impl.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto indexed_impls =
+                    snapshot->workspace_index->implementation_locations_for_primitive(
+                        PrimitiveKind::Int);
+                check(std::find_if(indexed_impls.begin(),
+                                   indexed_impls.end(),
+                                   [&](const Location &location) {
+                                       return location.uri == int_uri;
+                                   }) != indexed_impls.end(),
+                      "workspace_index.std_impl.index_includes_int_impl");
+                check(std::find_if(indexed_impls.begin(),
+                                   indexed_impls.end(),
+                                   [&](const Location &location) {
+                                       return location.uri == fmt_uri;
+                                   }) != indexed_impls.end(),
+                      "workspace_index.std_impl.index_includes_fmt_impl");
+                check(std::find_if(indexed_impls.begin(),
+                                   indexed_impls.end(),
+                                   [&](const Location &location) {
+                                       return location.uri == json_uri;
+                                   }) != indexed_impls.end(),
+                      "workspace_index.std_impl.index_includes_json_impl");
+            }
         }
     }
 
@@ -2928,6 +2961,8 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
           "implementation.primitive_int_includes_canonical_home_impl");
     check(implementation_response.find(fmt_uri) != std::string::npos,
           "implementation.primitive_int_includes_exported_fmt_impl");
+    check(implementation_response.find(json_uri) != std::string::npos,
+          "implementation.primitive_int_includes_exported_json_impl");
     check(workspace_symbol_response.find(fmt_uri) != std::string::npos,
           "workspace_symbol.index_includes_exported_fmt_function");
     check(workspace_symbol_response.find("format") != std::string::npos,
