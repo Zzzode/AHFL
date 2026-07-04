@@ -440,3 +440,4 @@ LSP cache key 必须包含：
 - 2026-07-03: Implementation started for ToolchainProfile-driven discovery, canonical LSP/VS Code sysroot configuration, and CLI sysroot normalization.
 - 2026-07-04: Implemented ToolchainProfile source-sysroot support across CLI, LSP, VS Code bundled fallback, PackageGraph diagnostics, and source-sysroot CLI checks.
 - 2026-07-04: Removed legacy `ProjectInput` stdlib auto-discovery, including `AHFL_SOURCE_DIR` and cwd-upward std probes; raw project tests now supply explicit module roots.
+- 2026-07-04: RFC 0007 split LSP semantic visibility from workspace navigation indexing, so source-sysroot exported modules feed IDE navigation without being injected into the current semantic source graph.

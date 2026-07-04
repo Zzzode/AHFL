@@ -83,6 +83,31 @@ workspace folder 展开，server 只接收规范化后的工具链根或空字�
 通过 `bundledSysroot` 使用随扩展打包的 `<extension>/std/ahfl.toml` 作为 fallback；
 扩展不得通过 server process environment 注入 `AHFL_SYSROOT`。
 
+### LSP workspace navigation index
+
+Server 会在 PackageGraph 与 active sysroot profile 之上构建独立的
+`LspWorkspaceIndex`。这个索引只服务 IDE 导航，不会扩大当前文件的
+import 可见性，也不会让未 import 的 `std::prelude`、`std::fmt` 或
+其他 exported module 符号变成可调用符号。
+
+请求语义如下：
+
+1. `textDocument/definition` 返回声明位置。primitive type 返回 canonical
+   primitive home，不再把 `std::fmt`、`std::json` 等 impl module 混进
+   definition 结果。
+2. `textDocument/implementation` 返回类型或 trait 的 impl 候选。corelib
+   开发和普通用户工程都通过 workspace/sysroot index 找到 exported std
+   modules 中的 primitive impl。
+3. `textDocument/references` 优先使用当前 semantic snapshot 的可见引用，
+   并按需合并 workspace/sysroot index 中未打开文件的 resolved references。
+4. `workspace/symbol` 与 CodeLens 使用 index facts；如果 snapshot 还没有
+   index，CodeLens 才退回文本级 fallback。
+
+VS Code 客户端不需要特殊命令或非标准 payload。跳转请求返回标准
+`Location[]`；如果需要查看所有 impl，应使用 VS Code 的
+“Go to Implementations”，而不是期待 Cmd-click 的 definition 展开 impl
+列表。
+
 ## 四、本地打包 VSIX
 
 面向用户的 VSIX 应通过仓库根目录脚本生成：
@@ -144,9 +169,10 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 1. 打开包含 `.ahfl` 文件的工作区。
 2. 对 platform VSIX，确认扩展可自动启动内置 `server/ahfl-lsp`。
 3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。Server 通过 `textDocument/diagnostic` 和 `workspace/diagnostic` full report 的 pull 模式提供诊断，并通过 `$/diagnostic/refresh` 通知客户端拉取更新。
-4. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
-5. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
-6. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
+4. 对 primitive type 触发 definition 与 implementation：definition 应跳到 primitive home，implementation 应列出 exported std modules 中的相关 impl。
+5. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
+6. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
+7. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
 
 ## 五、Marketplace 手动发布
 
