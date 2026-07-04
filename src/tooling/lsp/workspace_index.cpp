@@ -377,6 +377,40 @@ struct SymbolFactCandidate {
     return lhs.symbol->canonical_name < rhs.symbol->canonical_name;
 }
 
+struct ImplFactCandidate {
+    package_graph::PackageId package_id;
+    SourceUnitId source_unit_id;
+    TypeKey target_type;
+    std::optional<DefId> trait_def;
+    std::optional<SourceRange> trait_range;
+    SourceRange declaration_range;
+    SourceRange target_range;
+    Location location;
+    std::optional<Location> trait_location;
+    std::vector<ImplMethodFact> methods;
+    std::size_t source_order{0};
+};
+
+[[nodiscard]] bool impl_fact_candidate_less(const ImplFactCandidate &lhs,
+                                            const ImplFactCandidate &rhs) {
+    if (lhs.package_id.value != rhs.package_id.value) {
+        return lhs.package_id.value < rhs.package_id.value;
+    }
+    if (lhs.source_unit_id.value != rhs.source_unit_id.value) {
+        return lhs.source_unit_id.value < rhs.source_unit_id.value;
+    }
+    if (lhs.source_order != rhs.source_order) {
+        return lhs.source_order < rhs.source_order;
+    }
+    if (lhs.declaration_range.begin_offset != rhs.declaration_range.begin_offset) {
+        return lhs.declaration_range.begin_offset < rhs.declaration_range.begin_offset;
+    }
+    if (lhs.declaration_range.end_offset != rhs.declaration_range.end_offset) {
+        return lhs.declaration_range.end_offset < rhs.declaration_range.end_offset;
+    }
+    return lhs.location.uri < rhs.location.uri;
+}
+
 [[nodiscard]] std::vector<TypeKey> type_keys_for_args(const std::vector<TypePtr> &args,
                                                       const DefBySymbolMap *def_by_symbol) {
     std::vector<TypeKey> keys;
@@ -762,6 +796,7 @@ void LspWorkspaceIndex::add_reference(ReferenceFact fact) {
 
 void LspWorkspaceIndex::add_impl(ImplFact fact) {
     const auto id = WorkspaceImplId{impls_.size()};
+    fact.impl_id = id;
     if (fact.completeness == FactCompleteness::Typed) {
         impls_by_type_[fact.target_type].push_back(id);
         if (fact.target_type.kind == TypeKey::Kind::Nominal && fact.target_type.def.has_value()) {
@@ -1256,6 +1291,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         return index;
     }
 
+    std::vector<ImplFactCandidate> impl_candidates;
     for (const auto &[raw_index, impl] : typed.environment.impls()) {
         (void)raw_index;
         if (impl.target_type == nullptr || !impl.source_id.has_value()) {
@@ -1274,8 +1310,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
             continue;
         }
         const auto *source_fact = source_unit_fact(index, source_unit_id->second);
-        index.add_impl(ImplFact{
-            .impl_id = WorkspaceImplId{index.impls().size()},
+        impl_candidates.push_back(ImplFactCandidate{
             .package_id = source_fact == nullptr
                               ? package_id_for_path(input.scope.package_roots, source_unit->path)
                               : source_fact->package_id,
@@ -1293,6 +1328,25 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
             .trait_location = impl_trait_location(project.graph, impl),
             .methods = method_facts_for_impl(impl),
             .source_order = impl.index,
+        });
+    }
+
+    std::sort(impl_candidates.begin(), impl_candidates.end(), impl_fact_candidate_less);
+
+    for (auto &candidate : impl_candidates) {
+        index.add_impl(ImplFact{
+            .impl_id = WorkspaceImplId{index.impls().size()},
+            .package_id = candidate.package_id,
+            .source_unit_id = candidate.source_unit_id,
+            .target_type = std::move(candidate.target_type),
+            .trait_def = candidate.trait_def,
+            .trait_range = candidate.trait_range,
+            .declaration_range = candidate.declaration_range,
+            .target_range = candidate.target_range,
+            .location = std::move(candidate.location),
+            .trait_location = std::move(candidate.trait_location),
+            .methods = std::move(candidate.methods),
+            .source_order = candidate.source_order,
             .completeness = FactCompleteness::Typed,
         });
     }

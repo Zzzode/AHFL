@@ -1923,11 +1923,23 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
     write_file(a_path,
                "module app::a;\n"
                "\n"
-               "struct A {}\n");
+               "struct A {}\n"
+               "\n"
+               "impl A {\n"
+               "    fn keep_a(self: A) -> A effect Pure decreases 0 {\n"
+               "        return self;\n"
+               "    }\n"
+               "}\n");
     write_file(b_path,
                "module app::b;\n"
                "\n"
-               "struct B {}\n");
+               "struct B {}\n"
+               "\n"
+               "impl B {\n"
+               "    fn keep_b(self: B) -> B effect Pure decreases 0 {\n"
+               "        return self;\n"
+               "    }\n"
+               "}\n");
 
     ahfl::ProjectInput project;
     project.entry_files = {b_path, a_path};
@@ -2020,6 +2032,26 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
               "workspace_index.source_unit_order.a_symbol_source_unit");
         check(b_symbol->def_id.value < a_symbol->def_id.value,
               "workspace_index.source_unit_order.def_id_uses_scope_order");
+    }
+
+    const auto b_uri = AnalysisService::uri_from_path(b_path);
+    const auto a_uri = AnalysisService::uri_from_path(a_path);
+    const auto &impls = index.impls();
+    const auto b_impl = std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+        return impl.location.uri == b_uri;
+    });
+    const auto a_impl = std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+        return impl.location.uri == a_uri;
+    });
+    check(b_impl != impls.end(), "workspace_index.source_unit_order.b_impl_exists");
+    check(a_impl != impls.end(), "workspace_index.source_unit_order.a_impl_exists");
+    if (b_impl != impls.end() && a_impl != impls.end()) {
+        check(b_impl->source_unit_id == SourceUnitId{0},
+              "workspace_index.source_unit_order.b_impl_source_unit");
+        check(a_impl->source_unit_id == SourceUnitId{1},
+              "workspace_index.source_unit_order.a_impl_source_unit");
+        check(b_impl->impl_id.value < a_impl->impl_id.value,
+              "workspace_index.source_unit_order.impl_id_uses_scope_order");
     }
 }
 
