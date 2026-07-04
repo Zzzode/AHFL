@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <limits>
 #include <unordered_map>
@@ -339,6 +340,42 @@ using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
 
 [[nodiscard]] TypeKey type_key_for_type_with_defs(const Type &type,
                                                   const DefBySymbolMap *def_by_symbol);
+
+struct SymbolFactCandidate {
+    const Symbol *symbol{nullptr};
+    SourceUnitId source_unit_id;
+    package_graph::PackageId package_id;
+    Location location;
+    SourceRange selection_range;
+};
+
+[[nodiscard]] bool symbol_fact_candidate_less(const SymbolFactCandidate &lhs,
+                                              const SymbolFactCandidate &rhs) {
+    if (lhs.package_id.value != rhs.package_id.value) {
+        return lhs.package_id.value < rhs.package_id.value;
+    }
+    if (lhs.source_unit_id.value != rhs.source_unit_id.value) {
+        return lhs.source_unit_id.value < rhs.source_unit_id.value;
+    }
+    const auto lhs_namespace = static_cast<std::uint8_t>(lhs.symbol->name_space);
+    const auto rhs_namespace = static_cast<std::uint8_t>(rhs.symbol->name_space);
+    if (lhs_namespace != rhs_namespace) {
+        return lhs_namespace < rhs_namespace;
+    }
+    if (lhs.symbol->declaration_range.begin_offset != rhs.symbol->declaration_range.begin_offset) {
+        return lhs.symbol->declaration_range.begin_offset <
+               rhs.symbol->declaration_range.begin_offset;
+    }
+    if (lhs.symbol->declaration_range.end_offset != rhs.symbol->declaration_range.end_offset) {
+        return lhs.symbol->declaration_range.end_offset < rhs.symbol->declaration_range.end_offset;
+    }
+    const auto lhs_kind = static_cast<std::uint8_t>(lhs.symbol->kind);
+    const auto rhs_kind = static_cast<std::uint8_t>(rhs.symbol->kind);
+    if (lhs_kind != rhs_kind) {
+        return lhs_kind < rhs_kind;
+    }
+    return lhs.symbol->canonical_name < rhs.symbol->canonical_name;
+}
 
 [[nodiscard]] std::vector<TypeKey> type_keys_for_args(const std::vector<TypePtr> &args,
                                                       const DefBySymbolMap *def_by_symbol) {
@@ -1127,7 +1164,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         return index;
     }
 
-    DefBySymbolMap def_by_symbol;
+    std::vector<SymbolFactCandidate> symbol_candidates;
     for (const auto &symbol : resolved.symbol_table.symbols()) {
         const auto location = symbol_location(project.graph, symbol);
         if (!location.has_value() || !symbol.source_id.has_value()) {
@@ -1141,25 +1178,38 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         if (source_unit_id == source_units_by_source_id.end()) {
             continue;
         }
-        const auto def_id = DefId{index.symbols().size()};
-        def_by_symbol.emplace(symbol.id.value, def_id);
         const auto *source_fact = source_unit_fact(index, source_unit_id->second);
         const auto package_id =
             source_fact == nullptr
                 ? package_id_for_path(input.scope.package_roots, source_unit->path)
                 : source_fact->package_id;
         const auto selection_range = symbol_navigation_range(source_unit->source, symbol);
+        symbol_candidates.push_back(SymbolFactCandidate{
+            .symbol = &symbol,
+            .source_unit_id = source_unit_id->second,
+            .package_id = package_id,
+            .location = *location,
+            .selection_range = selection_range,
+        });
+    }
+
+    std::sort(symbol_candidates.begin(), symbol_candidates.end(), symbol_fact_candidate_less);
+
+    DefBySymbolMap def_by_symbol;
+    for (const auto &candidate : symbol_candidates) {
+        const auto def_id = DefId{index.symbols().size()};
+        def_by_symbol.emplace(candidate.symbol->id.value, def_id);
         index.add_symbol(SymbolFact{
             .def_id = def_id,
-            .package_id = package_id,
-            .source_unit_id = source_unit_id->second,
-            .kind = symbol.kind,
-            .name_space = symbol.name_space,
-            .local_name = symbol.local_name,
-            .canonical_name = symbol.canonical_name,
-            .declaration_range = symbol.declaration_range,
-            .selection_range = selection_range,
-            .location = *location,
+            .package_id = candidate.package_id,
+            .source_unit_id = candidate.source_unit_id,
+            .kind = candidate.symbol->kind,
+            .name_space = candidate.symbol->name_space,
+            .local_name = candidate.symbol->local_name,
+            .canonical_name = candidate.symbol->canonical_name,
+            .declaration_range = candidate.symbol->declaration_range,
+            .selection_range = candidate.selection_range,
+            .location = candidate.location,
             .completeness = FactCompleteness::Resolved,
         });
     }

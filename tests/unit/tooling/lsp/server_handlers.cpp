@@ -2001,6 +2001,26 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
         check(package_sources[1] == SourceUnitId{1},
               "workspace_index.source_unit_order.package_a_second");
     }
+
+    const auto &symbols = index.symbols();
+    const auto b_symbol =
+        std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+            return symbol.local_name == "B";
+        });
+    const auto a_symbol =
+        std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+            return symbol.local_name == "A";
+        });
+    check(b_symbol != symbols.end(), "workspace_index.source_unit_order.b_symbol_exists");
+    check(a_symbol != symbols.end(), "workspace_index.source_unit_order.a_symbol_exists");
+    if (b_symbol != symbols.end() && a_symbol != symbols.end()) {
+        check(b_symbol->source_unit_id == SourceUnitId{0},
+              "workspace_index.source_unit_order.b_symbol_source_unit");
+        check(a_symbol->source_unit_id == SourceUnitId{1},
+              "workspace_index.source_unit_order.a_symbol_source_unit");
+        check(b_symbol->def_id.value < a_symbol->def_id.value,
+              "workspace_index.source_unit_order.def_id_uses_scope_order");
+    }
 }
 
 void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
