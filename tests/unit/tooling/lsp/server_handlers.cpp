@@ -3596,6 +3596,8 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
         const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
         check(snapshot != nullptr, "workspace_index.std_impl.snapshot_exists");
         if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(int_uri) == nullptr,
+                  "workspace_index.std_impl.int_not_in_semantic_sources");
             check(snapshot->source_for_uri(fmt_uri) == nullptr,
                   "workspace_index.std_impl.fmt_not_in_semantic_sources");
             check(snapshot->source_for_uri(json_uri) == nullptr,
@@ -3771,6 +3773,8 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
         const auto *snapshot = analysis.snapshot_for_uri(app_uri);
         check(snapshot != nullptr, "lazy_sysroot.snapshot_exists");
         if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(int_uri) == nullptr,
+                  "lazy_sysroot.int_not_in_semantic_sources");
             check(snapshot->source_for_uri(fmt_uri) == nullptr,
                   "lazy_sysroot.fmt_not_in_semantic_sources");
         }

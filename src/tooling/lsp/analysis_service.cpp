@@ -472,9 +472,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
     }
-    if (mode == LspProjectInputMode::Semantic) {
-        append_primitive_home_entry_files(input, graph);
-    } else if (mode == LspProjectInputMode::SysrootIndex) {
+    if (mode == LspProjectInputMode::SysrootIndex) {
         for (const auto &package : graph.packages) {
             if (package.source == package_graph::PackageSourceKind::Sysroot &&
                 package.module_prefix == "std") {
@@ -483,7 +481,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
                 break;
             }
         }
-    } else {
+    } else if (mode == LspProjectInputMode::WorkspaceIndex) {
         const auto *requested_package = package_for_requested_file(graph, requested_file);
         for (const auto &package : graph.packages) {
             if (package.source == package_graph::PackageSourceKind::Sysroot &&

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -722,6 +723,44 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
     return impl.range;
 }
 
+[[nodiscard]] TypeKey primitive_type_key_for_syntax(const ast::TypeSyntax *type) {
+    if (type == nullptr) {
+        return TypeKey{.kind = TypeKey::Kind::Unknown};
+    }
+    return std::visit(
+        [](const auto &node) -> TypeKey {
+            using Node = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<Node, ast::UnitType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Unit};
+            } else if constexpr (std::is_same_v<Node, ast::BoolType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Bool};
+            } else if constexpr (std::is_same_v<Node, ast::IntType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Int};
+            } else if constexpr (std::is_same_v<Node, ast::FloatType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Float};
+            } else if constexpr (std::is_same_v<Node, ast::StringType> ||
+                                 std::is_same_v<Node, ast::BoundedStringType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive,
+                               .primitive = PrimitiveKind::String};
+            } else if constexpr (std::is_same_v<Node, ast::UuidType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::UUID};
+            } else if constexpr (std::is_same_v<Node, ast::TimestampType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive,
+                               .primitive = PrimitiveKind::Timestamp};
+            } else if constexpr (std::is_same_v<Node, ast::DurationType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive,
+                               .primitive = PrimitiveKind::Duration};
+            } else if constexpr (std::is_same_v<Node, ast::DecimalType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive,
+                               .primitive = PrimitiveKind::Decimal,
+                               .primitive_parameter = node.scale};
+            } else {
+                return TypeKey{.kind = TypeKey::Kind::Unknown};
+            }
+        },
+        type->node);
+}
+
 [[nodiscard]] std::vector<ImplMethodFact>
 skeleton_method_facts_for_impl(const ast::ImplDecl &impl) {
     std::vector<ImplMethodFact> methods;
@@ -762,7 +801,7 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
             .impl_id = WorkspaceImplId{index.impls().size()},
             .package_id = package_id,
             .source_unit_id = source_unit,
-            .target_type = TypeKey{.kind = TypeKey::Kind::Unknown},
+            .target_type = primitive_type_key_for_syntax(impl.target_type.get()),
             .trait_def = std::nullopt,
             .trait_range = trait_range,
             .declaration_range = impl.range,
@@ -1184,6 +1223,17 @@ LspWorkspaceIndex::primitive_home_location_for_type(const TypeKey &type) const {
             }
             matched.push_back(&impl);
         }
+    }
+    for (const auto &impl : impls_) {
+        if (impl.target_type != type || impl.completeness == FactCompleteness::Invalid) {
+            continue;
+        }
+        const auto *source = source_unit_fact(*this, impl.source_unit_id);
+        if (source == nullptr ||
+            !source_unit_has_scope_kind(*source, LspNavigationIndexSourceKind::PrimitiveHome)) {
+            continue;
+        }
+        matched.push_back(&impl);
     }
 
     if (matched.empty()) {
