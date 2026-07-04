@@ -654,6 +654,33 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
     return finalize_impl_locations(std::move(ordered));
 }
 
+[[nodiscard]] std::vector<Location>
+primitive_type_definition_locations_at(const LspAnalysisSnapshot &snapshot,
+                                       const LspSourceSnapshot &source,
+                                       std::size_t offset) {
+    std::vector<Location> locations;
+    if (const auto home = primitive_type_definition_at(snapshot, source, offset);
+        home.has_value()) {
+        locations.push_back(*home);
+    }
+
+    const auto primitive_name = primitive_type_name_at(snapshot, source, offset);
+    if (!primitive_name.has_value()) {
+        return locations;
+    }
+    for (const auto &impl_location :
+         primitive_implementation_locations(snapshot, source, *primitive_name)) {
+        const auto duplicate =
+            std::find_if(locations.begin(), locations.end(), [&](const Location &location) {
+                return same_location(location, impl_location);
+            });
+        if (duplicate == locations.end()) {
+            locations.push_back(impl_location);
+        }
+    }
+    return locations;
+}
+
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 serialize_location_array(const std::vector<Location> &locations) {
     auto result = json::JsonValue::make_array();
@@ -661,6 +688,14 @@ serialize_location_array(const std::vector<Location> &locations) {
         result->push(serialize_location(location));
     }
     return result;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_location_or_array(const std::vector<Location> &locations) {
+    if (locations.size() == 1) {
+        return serialize_location(locations.front());
+    }
+    return serialize_location_array(locations);
 }
 
 [[nodiscard]] std::optional<Location> rename_location_at(const LspAnalysisSnapshot &snapshot,
@@ -2075,11 +2110,11 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
     const auto offset = offset_at(*source->source, position);
     const auto target = symbol_at(*snapshot, *source, offset);
     if (!target.has_value()) {
-        if (const auto location = primitive_type_definition_at(*snapshot, *source, offset);
-            location.has_value()) {
+        auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
+        if (!locations.empty()) {
             JsonRpcResponse resp;
             resp.id = req.id;
-            resp.result = serialize_location(*location);
+            resp.result = serialize_location_or_array(locations);
             transport_.send_response(resp);
             return;
         }

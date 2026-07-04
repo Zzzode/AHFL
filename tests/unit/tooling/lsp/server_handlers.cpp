@@ -2126,6 +2126,82 @@ void test_implementation_returns_all_impl_blocks_for_type() {
           "implementation.type_second_impl_selection");
 }
 
+void test_std_exported_impl_modules_feed_primitive_candidates() {
+    const auto root = make_temp_project("std_exported_impl_candidates");
+    const auto std_root = root / "std";
+    const auto collections_path = std_root / "collections.ahfl";
+    const auto int_path = std_root / "int.ahfl";
+    const auto fmt_path = std_root / "fmt.ahfl";
+    const std::string collections_source =
+        "module std::collections;\n"
+        "\n"
+        "struct Set<T> {}\n"
+        "\n"
+        "@builtin(\"set_raw_size\")\n"
+        "fn set_raw_size<T>(s: Set<T>) -> Int effect Pure;\n";
+    const std::string int_source = "module std::int;\n"
+                                   "\n"
+                                   "impl Int {}\n";
+    const std::string fmt_source = "module std::fmt;\n"
+                                   "\n"
+                                   "impl Int {}\n";
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"collections\", \"int\", \"fmt\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"set_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(collections_path, collections_source);
+    write_file(int_path, int_source);
+    write_file(fmt_path, fmt_source);
+
+    const auto collections_uri = AnalysisService::uri_from_path(collections_path);
+    const auto int_uri = AnalysisService::uri_from_path(int_path);
+    const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    const auto int_position = position_of(collections_source, "Int effect");
+    const std::string definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+        hover_params_at(collections_uri, int_position) + R"(})";
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/implementation","params":)" +
+        hover_params_at(collections_uri, int_position) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(collections_uri, 1, collections_source),
+        definition,
+        implementation,
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+    const auto definition_response = response_body_for_id(output, 2);
+    const auto implementation_response = response_body_for_id(output, 3);
+
+    check(definition_response.find(int_uri) != std::string::npos,
+          "definition.primitive_int_includes_canonical_home");
+    check(definition_response.find(fmt_uri) != std::string::npos,
+          "definition.primitive_int_includes_exported_fmt_impl");
+    check(implementation_response.find(int_uri) != std::string::npos,
+          "implementation.primitive_int_includes_canonical_home_impl");
+    check(implementation_response.find(fmt_uri) != std::string::npos,
+          "implementation.primitive_int_includes_exported_fmt_impl");
+}
+
 void write_minimal_std_sources(const std::filesystem::path &std_root,
                                const std::filesystem::path &json_path,
                                std::string_view json_source) {
@@ -4466,6 +4542,7 @@ int main() {
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_definition_targets_source_sysroot_primitive_home_modules();
     test_implementation_returns_all_impl_blocks_for_type();
+    test_std_exported_impl_modules_feed_primitive_candidates();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();

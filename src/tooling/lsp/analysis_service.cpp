@@ -217,13 +217,6 @@ void append_unique_entry_file(ProjectInput &input, const std::filesystem::path &
     return package.module_root / relative;
 }
 
-[[nodiscard]] bool exports_module_key(const package_graph::PackageNode &package,
-                                      std::string_view module_key) {
-    return std::find(package.exported_modules.begin(),
-                     package.exported_modules.end(),
-                     module_key) != package.exported_modules.end();
-}
-
 void append_primitive_home_entry_files(ProjectInput &input,
                                        const package_graph::PackageGraph &graph) {
     constexpr std::string_view kPrimitiveHomeModules[] = {
@@ -246,11 +239,41 @@ void append_primitive_home_entry_files(ProjectInput &input,
     }
 
     for (const auto module_key : kPrimitiveHomeModules) {
-        if (!exports_module_key(*std_package, module_key)) {
+        if (std::find(std_package->exported_modules.begin(),
+                      std_package->exported_modules.end(),
+                      module_key) == std_package->exported_modules.end()) {
             continue;
         }
         append_unique_entry_file(input, exported_module_path(*std_package, module_key));
     }
+}
+
+void append_std_exported_entry_files(ProjectInput &input,
+                                     const package_graph::PackageNode &std_package) {
+    for (const auto &module_key : std_package.exported_modules) {
+        if (module_key == "prelude") {
+            continue;
+        }
+        append_unique_entry_file(input, exported_module_path(std_package, module_key));
+    }
+}
+
+[[nodiscard]] const package_graph::PackageNode *
+std_package_for_requested_file(const package_graph::PackageGraph &graph,
+                               const std::filesystem::path &requested_file) {
+    const auto normalized_request =
+        std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
+    for (const auto &package : graph.packages) {
+        if (package.module_prefix != "std") {
+            continue;
+        }
+        const auto module_root =
+            std::filesystem::path(AnalysisService::normalized_path_key(package.module_root));
+        if (path_is_equal_or_descendant(normalized_request, module_root)) {
+            return &package;
+        }
+    }
+    return nullptr;
 }
 
 [[nodiscard]] ProjectInput
@@ -277,7 +300,12 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
     }
-    append_primitive_home_entry_files(input, graph);
+    if (const auto *requested_std_package = std_package_for_requested_file(graph, requested_file);
+        requested_std_package != nullptr) {
+        append_std_exported_entry_files(input, *requested_std_package);
+    } else {
+        append_primitive_home_entry_files(input, graph);
+    }
     return input;
 }
 
