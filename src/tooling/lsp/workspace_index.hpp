@@ -75,12 +75,23 @@ struct TypeKey {
     [[nodiscard]] friend bool operator==(const TypeKey &lhs, const TypeKey &rhs) noexcept = default;
 };
 
+struct SourceUnitFact {
+    SourceUnitId source_unit_id;
+    package_graph::PackageId package_id;
+    std::filesystem::path path;
+    std::string uri;
+    std::uint64_t revision{0};
+    FactCompleteness completeness{FactCompleteness::Resolved};
+};
+
 struct ImplFact {
     WorkspaceImplId impl_id;
     package_graph::PackageId package_id;
     SourceUnitId source_unit_id;
     TypeKey target_type;
     std::optional<DefId> trait_def;
+    SourceRange declaration_range;
+    SourceRange target_range;
     Location location;
     std::size_t source_order{0};
     FactCompleteness completeness{FactCompleteness::Typed};
@@ -93,6 +104,8 @@ struct SymbolFact {
     SymbolKind kind{SymbolKind::Struct};
     std::string local_name;
     std::string canonical_name;
+    SourceRange declaration_range;
+    SourceRange selection_range;
     Location location;
     FactCompleteness completeness{FactCompleteness::Resolved};
 };
@@ -102,15 +115,21 @@ struct ReferenceFact {
     SourceUnitId source_unit_id;
     std::optional<DefId> target_def;
     ReferenceKind reference_kind{ReferenceKind::TypeName};
+    SourceRange range;
     Location location;
     FactCompleteness completeness{FactCompleteness::Resolved};
 };
 
 class LspWorkspaceIndex {
   public:
+    void add_source_unit(SourceUnitFact fact);
     void add_symbol(SymbolFact fact);
     void add_reference(ReferenceFact fact);
     void add_impl(ImplFact fact);
+
+    [[nodiscard]] const std::vector<SourceUnitFact> &source_units() const noexcept {
+        return source_units_;
+    }
 
     [[nodiscard]] const std::vector<SymbolFact> &symbols() const noexcept {
         return symbols_;
@@ -130,6 +149,7 @@ class LspWorkspaceIndex {
     implementation_locations_for_primitive(PrimitiveKind kind) const;
 
   private:
+    std::vector<SourceUnitFact> source_units_;
     std::vector<SymbolFact> symbols_;
     std::vector<ReferenceFact> references_;
     std::vector<ImplFact> impls_;
@@ -143,6 +163,7 @@ struct LspIndexPackageRoot {
 struct LspWorkspaceIndexInput {
     ProjectInput project;
     std::vector<LspIndexPackageRoot> package_roots;
+    std::uint64_t revision{0};
 };
 
 [[nodiscard]] std::optional<PrimitiveKind> primitive_kind_from_spelling(std::string_view name);

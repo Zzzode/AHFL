@@ -1458,6 +1458,8 @@ void test_project_references_include_indexed_unopened_source() {
         if (snapshot != nullptr) {
             check(snapshot->workspace_index != nullptr, "references.index_model.index_exists");
             if (snapshot->workspace_index != nullptr) {
+                const auto &source_units = snapshot->workspace_index->source_units();
+                check(!source_units.empty(), "references.index_model.source_units_exist");
                 const auto &symbols = snapshot->workspace_index->symbols();
                 const auto msg_symbol =
                     std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
@@ -1467,6 +1469,20 @@ void test_project_references_include_indexed_unopened_source() {
                 if (msg_symbol != symbols.end()) {
                     check(msg_symbol->package_id.value != std::numeric_limits<std::size_t>::max(),
                           "references.index_model.msg_symbol_has_package_id");
+                    check(msg_symbol->source_unit_id.value < source_units.size(),
+                          "references.index_model.msg_symbol_source_unit_valid");
+                    check(msg_symbol->selection_range.end_offset >
+                              msg_symbol->selection_range.begin_offset,
+                          "references.index_model.msg_symbol_selection_range_has_extent");
+                    if (msg_symbol->source_unit_id.value < source_units.size()) {
+                        const auto &source_unit = source_units[msg_symbol->source_unit_id.value];
+                        check(source_unit.package_id == msg_symbol->package_id,
+                              "references.index_model.source_unit_package_matches_symbol");
+                        check(source_unit.revision == snapshot->workspace_revision,
+                              "references.index_model.source_unit_revision_matches_snapshot");
+                        check(source_unit.uri == types_uri,
+                              "references.index_model.source_unit_uri_matches_types");
+                    }
                 }
             }
         }
@@ -1545,6 +1561,62 @@ void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fail
           "workspace_symbol.partial_index_includes_typecheck_failed_export");
     check(response.find("BrokenIndexed") != std::string::npos,
           "workspace_symbol.partial_index_includes_typecheck_failed_symbol");
+}
+
+void test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails() {
+    const auto root = make_temp_project("project_index_partial_resolve");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto broken_path = root / "src" / "broken.ahfl";
+    write_package_manifest(
+        root, "lsp-project-partial-resolve-index", "app", "\"main\", \"broken\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string broken_source = "module app::broken;\n"
+                                      "\n"
+                                      "struct ResolveIndexed {\n"
+                                      "    value: MissingType;\n"
+                                      "}\n";
+    write_file(main_path, main_source);
+    write_file(broken_path, broken_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto broken_uri = AnalysisService::uri_from_path(broken_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_symbol.resolve_index.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(broken_uri) == nullptr,
+                  "workspace_symbol.resolve_index.broken_not_in_semantic_sources");
+        }
+    }
+
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"ResolveIndexed"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(broken_uri) != std::string::npos,
+          "workspace_symbol.resolve_index_includes_resolve_failed_export");
+    check(response.find("ResolveIndexed") != std::string::npos,
+          "workspace_symbol.resolve_index_includes_resolve_failed_symbol");
 }
 
 void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails() {
@@ -4919,6 +4991,7 @@ int main() {
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_references_include_indexed_unopened_source();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
+    test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
     test_project_open_document_overlay_drives_definition();
     test_project_diagnostics_refresh_dependent_open_documents();

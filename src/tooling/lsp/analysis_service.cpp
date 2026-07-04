@@ -649,6 +649,7 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
                                                     open_document_overlays(),
                                                     LspProjectInputMode::SysrootIndex),
         .package_roots = index_package_roots_from_graph(project_context.context->graph),
+        .revision = store_.workspace_revision(),
     };
     auto index = std::make_unique<LspWorkspaceIndex>(
         build_lsp_workspace_index(frontend, std::move(index_input)));
@@ -805,6 +806,7 @@ AnalysisService::build_snapshot(const std::string &uri,
                                                             std::move(overlays),
                                                             LspProjectInputMode::WorkspaceIndex),
                 .package_roots = index_package_roots_from_graph(project_context.context->graph),
+                .revision = snapshot->workspace_revision,
             };
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =

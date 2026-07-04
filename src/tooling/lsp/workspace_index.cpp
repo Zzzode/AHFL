@@ -218,6 +218,8 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
 }
 
 using DefBySymbolMap = std::unordered_map<std::size_t, DefId>;
+using SourceUnitBySourceIdMap = std::unordered_map<std::size_t, SourceUnitId>;
+using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
 
 [[nodiscard]] TypeKey type_key_for_type_with_defs(const Type &type,
                                                   const DefBySymbolMap *def_by_symbol);
@@ -240,6 +242,41 @@ using DefBySymbolMap = std::unordered_map<std::size_t, DefId>;
         return std::nullopt;
     }
     return found->second;
+}
+
+[[nodiscard]] const SourceUnitFact *source_unit_fact(const LspWorkspaceIndex &index,
+                                                     SourceUnitId id) {
+    const auto &source_units = index.source_units();
+    if (id.value >= source_units.size()) {
+        return nullptr;
+    }
+    return &source_units[id.value];
+}
+
+[[nodiscard]] SourceUnitId register_source_unit(LspWorkspaceIndex &index,
+                                                SourceUnitByPathMap &source_units_by_path,
+                                                const LspWorkspaceIndexInput &input,
+                                                const std::filesystem::path &raw_path,
+                                                FactCompleteness completeness) {
+    const auto path = normalize_path(raw_path);
+    const auto path_key = path.generic_string();
+    if (const auto existing = source_units_by_path.find(path_key);
+        existing != source_units_by_path.end()) {
+        return existing->second;
+    }
+
+    const auto source_unit = SourceUnitId{index.source_units().size()};
+    const auto package_id = package_id_for_path(input.package_roots, path);
+    index.add_source_unit(SourceUnitFact{
+        .source_unit_id = source_unit,
+        .package_id = package_id,
+        .path = path,
+        .uri = uri_from_path(path),
+        .revision = input.revision,
+        .completeness = completeness,
+    });
+    source_units_by_path.emplace(path_key, source_unit);
+    return source_unit;
 }
 
 [[nodiscard]] std::string module_name_for_program(const ast::Program &program) {
@@ -301,10 +338,54 @@ skeleton_symbol_for_declaration(const ast::Decl &declaration) {
     }
 }
 
+void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
+                                  SourceUnitId source_unit,
+                                  package_graph::PackageId package_id,
+                                  std::string_view module_name,
+                                  std::string_view uri,
+                                  const SourceFile &source,
+                                  const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (declaration == nullptr) {
+            continue;
+        }
+        const auto skeleton = skeleton_symbol_for_declaration(*declaration);
+        if (!skeleton.has_value() || skeleton->second.empty()) {
+            continue;
+        }
+
+        const auto canonical_name = module_name.empty()
+                                        ? skeleton->second
+                                        : std::string(module_name) + "::" + skeleton->second;
+        const auto selection_range =
+            symbol_navigation_range(source,
+                                    Symbol{
+                                        .local_name = skeleton->second,
+                                        .declaration_range = declaration->range,
+                                    });
+        index.add_symbol(SymbolFact{
+            .def_id = DefId{index.symbols().size()},
+            .package_id = package_id,
+            .source_unit_id = source_unit,
+            .kind = skeleton->first,
+            .local_name = skeleton->second,
+            .canonical_name = canonical_name,
+            .declaration_range = declaration->range,
+            .selection_range = selection_range,
+            .location =
+                Location{
+                    .uri = std::string(uri),
+                    .range = to_lsp_range(source, selection_range),
+                },
+            .completeness = FactCompleteness::Parsed,
+        });
+    }
+}
+
 void append_parse_skeleton_facts(LspWorkspaceIndex &index,
                                  const Frontend &frontend,
                                  const LspWorkspaceIndexInput &input) {
-    std::size_t source_ordinal = 0;
+    SourceUnitByPathMap source_units_by_path;
     for (const auto &entry_file : input.project.entry_files) {
         const auto path = normalize_path(entry_file);
         const auto path_key = path.generic_string();
@@ -315,51 +396,36 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
             }
             return frontend.parse_file(path);
         }();
+        const auto source_unit = register_source_unit(
+            index,
+            source_units_by_path,
+            input,
+            path,
+            parse_result.program ? FactCompleteness::Parsed : FactCompleteness::Invalid);
         if (!parse_result.program) {
-            ++source_ordinal;
             continue;
         }
 
         const auto module_name = module_name_for_program(*parse_result.program);
-        for (const auto &declaration : parse_result.program->declarations) {
-            if (declaration == nullptr) {
-                continue;
-            }
-            const auto skeleton = skeleton_symbol_for_declaration(*declaration);
-            if (!skeleton.has_value() || skeleton->second.empty()) {
-                continue;
-            }
-
-            const auto canonical_name =
-                module_name.empty() ? skeleton->second : module_name + "::" + skeleton->second;
-            const auto source_unit = SourceUnitId{source_ordinal};
-            const auto package_id = package_id_for_path(input.package_roots, path);
-            index.add_symbol(SymbolFact{
-                .def_id = DefId{index.symbols().size()},
-                .package_id = package_id,
-                .source_unit_id = source_unit,
-                .kind = skeleton->first,
-                .local_name = skeleton->second,
-                .canonical_name = canonical_name,
-                .location =
-                    Location{
-                        .uri = uri_from_path(path),
-                        .range = to_lsp_range(
-                            parse_result.source,
-                            symbol_navigation_range(parse_result.source,
-                                                    Symbol{
-                                                        .local_name = skeleton->second,
-                                                        .declaration_range = declaration->range,
-                                                    })),
-                    },
-                .completeness = FactCompleteness::Parsed,
-            });
-        }
-        ++source_ordinal;
+        const auto *source_fact = source_unit_fact(index, source_unit);
+        const auto package_id = source_fact == nullptr
+                                    ? package_id_for_path(input.package_roots, path)
+                                    : source_fact->package_id;
+        append_skeleton_symbol_facts(index,
+                                     source_unit,
+                                     package_id,
+                                     module_name,
+                                     uri_from_path(path),
+                                     parse_result.source,
+                                     *parse_result.program);
     }
 }
 
 } // namespace
+
+void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
+    source_units_.push_back(std::move(fact));
+}
 
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
     symbols_.push_back(std::move(fact));
@@ -597,9 +663,34 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         return index;
     }
 
+    SourceUnitByPathMap source_units_by_path;
+    SourceUnitBySourceIdMap source_units_by_source_id;
+    for (const auto &source : project.graph.sources) {
+        const auto source_unit = register_source_unit(
+            index, source_units_by_path, input, source.path, FactCompleteness::Resolved);
+        source_units_by_source_id.emplace(source.id.value, source_unit);
+    }
+
     Resolver resolver;
     auto resolved = resolver.resolve(project.graph);
     if (resolved.has_errors()) {
+        for (const auto &source : project.graph.sources) {
+            const auto source_unit = source_units_by_source_id.find(source.id.value);
+            if (source_unit == source_units_by_source_id.end() || source.program == nullptr) {
+                continue;
+            }
+            const auto *source_fact = source_unit_fact(index, source_unit->second);
+            const auto package_id = source_fact == nullptr
+                                        ? package_id_for_path(input.package_roots, source.path)
+                                        : source_fact->package_id;
+            append_skeleton_symbol_facts(index,
+                                         source_unit->second,
+                                         package_id,
+                                         source.module_name,
+                                         uri_from_path(source.path),
+                                         source.source,
+                                         *source.program);
+        }
         return index;
     }
 
@@ -613,16 +704,26 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         if (source_unit == nullptr) {
             continue;
         }
+        const auto source_unit_id = source_units_by_source_id.find(symbol.source_id->value);
+        if (source_unit_id == source_units_by_source_id.end()) {
+            continue;
+        }
         const auto def_id = DefId{index.symbols().size()};
         def_by_symbol.emplace(symbol.id.value, def_id);
-        const auto package_id = package_id_for_path(input.package_roots, source_unit->path);
+        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
+        const auto package_id = source_fact == nullptr
+                                    ? package_id_for_path(input.package_roots, source_unit->path)
+                                    : source_fact->package_id;
+        const auto selection_range = symbol_navigation_range(source_unit->source, symbol);
         index.add_symbol(SymbolFact{
             .def_id = def_id,
             .package_id = package_id,
-            .source_unit_id = SourceUnitId{symbol.source_id->value},
+            .source_unit_id = source_unit_id->second,
             .kind = symbol.kind,
             .local_name = symbol.local_name,
             .canonical_name = symbol.canonical_name,
+            .declaration_range = symbol.declaration_range,
+            .selection_range = selection_range,
             .location = *location,
             .completeness = FactCompleteness::Resolved,
         });
@@ -637,13 +738,21 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         if (source_unit == nullptr) {
             continue;
         }
+        const auto source_unit_id = source_units_by_source_id.find(reference.source_id->value);
+        if (source_unit_id == source_units_by_source_id.end()) {
+            continue;
+        }
+        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
         const auto target = def_by_symbol.find(reference.target.value);
         index.add_reference(ReferenceFact{
-            .package_id = package_id_for_path(input.package_roots, source_unit->path),
-            .source_unit_id = SourceUnitId{reference.source_id->value},
+            .package_id = source_fact == nullptr
+                              ? package_id_for_path(input.package_roots, source_unit->path)
+                              : source_fact->package_id,
+            .source_unit_id = source_unit_id->second,
             .target_def =
                 target == def_by_symbol.end() ? std::nullopt : std::optional<DefId>{target->second},
             .reference_kind = reference.kind,
+            .range = reference.range,
             .location = *location,
             .completeness = target == def_by_symbol.end() ? FactCompleteness::Parsed
                                                           : FactCompleteness::Resolved,
@@ -669,12 +778,21 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         if (source_unit == nullptr) {
             continue;
         }
+        const auto source_unit_id = source_units_by_source_id.find(impl.source_id->value);
+        if (source_unit_id == source_units_by_source_id.end()) {
+            continue;
+        }
+        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
         index.add_impl(ImplFact{
             .impl_id = WorkspaceImplId{index.impls().size()},
-            .package_id = package_id_for_path(input.package_roots, source_unit->path),
-            .source_unit_id = SourceUnitId{impl.source_id->value},
+            .package_id = source_fact == nullptr
+                              ? package_id_for_path(input.package_roots, source_unit->path)
+                              : source_fact->package_id,
+            .source_unit_id = source_unit_id->second,
             .target_type = type_key_for_type_with_defs(*impl.target_type, &def_by_symbol),
             .trait_def = std::nullopt,
+            .declaration_range = impl.declaration_range,
+            .target_range = impl_location_range(impl),
             .location = *location,
             .source_order = impl.index,
             .completeness = FactCompleteness::Typed,
