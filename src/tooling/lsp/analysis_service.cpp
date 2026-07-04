@@ -768,7 +768,12 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
                 .package_roots = index_package_roots_from_graph(project_context.context->graph),
                 .source_scope_kinds = std::move(sysroot_scope_kinds),
             },
-        .revision = store_.workspace_revision(),
+        .metadata =
+            NavigationIndexMetadata{
+                .revision = store_.workspace_revision(),
+                .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
+                .index_identity_schema_version = std::string{kWorkspaceIndexIdentitySchemaVersion},
+            },
     };
     auto index = std::make_unique<LspWorkspaceIndex>(
         build_lsp_workspace_index(frontend, std::move(index_input)));
@@ -931,7 +936,13 @@ AnalysisService::build_snapshot(const std::string &uri,
                             index_package_roots_from_graph(project_context.context->graph),
                         .source_scope_kinds = std::move(workspace_scope_kinds),
                     },
-                .revision = snapshot->workspace_revision,
+                .metadata =
+                    NavigationIndexMetadata{
+                        .revision = snapshot->workspace_revision,
+                        .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
+                        .index_identity_schema_version =
+                            std::string{kWorkspaceIndexIdentitySchemaVersion},
+                    },
             };
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =

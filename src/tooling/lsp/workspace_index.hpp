@@ -179,8 +179,16 @@ struct IndexDiagnosticFact {
     FactCompleteness completeness{FactCompleteness::Invalid};
 };
 
+struct NavigationIndexMetadata {
+    std::uint64_t revision{0};
+    std::string index_schema_version;
+    std::string index_identity_schema_version;
+};
+
 class LspWorkspaceIndex {
   public:
+    void set_metadata(NavigationIndexMetadata metadata);
+
     void add_source_unit(SourceUnitFact fact);
     void add_symbol(SymbolFact fact);
     void add_reference(ReferenceFact fact);
@@ -207,6 +215,10 @@ class LspWorkspaceIndex {
         return diagnostics_;
     }
 
+    [[nodiscard]] const NavigationIndexMetadata &metadata() const noexcept {
+        return metadata_;
+    }
+
     [[nodiscard]] std::vector<SourceUnitId>
     source_units_for_package(package_graph::PackageId package_id) const;
     [[nodiscard]] std::vector<const IndexDiagnosticFact *>
@@ -221,6 +233,7 @@ class LspWorkspaceIndex {
     implementation_locations_for_primitive(PrimitiveKind kind) const;
 
   private:
+    NavigationIndexMetadata metadata_;
     std::vector<SourceUnitFact> source_units_;
     std::vector<SymbolFact> symbols_;
     std::vector<ReferenceFact> references_;
@@ -247,7 +260,7 @@ struct NavigationIndexScope {
 struct LspWorkspaceIndexInput {
     ProjectInput project;
     NavigationIndexScope scope;
-    std::uint64_t revision{0};
+    NavigationIndexMetadata metadata;
 };
 
 [[nodiscard]] std::optional<PrimitiveKind> primitive_kind_from_spelling(std::string_view name);

@@ -409,7 +409,7 @@ void append_index_diagnostics_by_source_name(
         .package_id = package_id,
         .path = path,
         .uri = uri_from_path(path),
-        .revision = input.revision,
+        .revision = input.metadata.revision,
         .scope_kinds = scope_kinds,
         .completeness = completeness,
     });
@@ -609,6 +609,10 @@ std::size_t TypeKeyHash::operator()(const TypeKey &key) const noexcept {
         hash_combine(seed, TypeKeyHash{}(arg));
     }
     return seed;
+}
+
+void LspWorkspaceIndex::set_metadata(NavigationIndexMetadata metadata) {
+    metadata_ = std::move(metadata);
 }
 
 void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
@@ -985,6 +989,7 @@ TypeKey type_key_for_type(const Type &type) {
 LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                                             LspWorkspaceIndexInput input) {
     LspWorkspaceIndex index;
+    index.set_metadata(input.metadata);
 
     auto project = parse_project(frontend, input.project);
     if (project.has_errors()) {

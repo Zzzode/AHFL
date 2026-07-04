@@ -1513,6 +1513,15 @@ void test_project_references_include_indexed_unopened_source() {
         if (snapshot != nullptr) {
             check(snapshot->workspace_index != nullptr, "references.index_model.index_exists");
             if (snapshot->workspace_index != nullptr) {
+                check(snapshot->workspace_index->metadata().revision ==
+                          snapshot->workspace_revision,
+                      "references.index_model.metadata_revision_matches_snapshot");
+                check(snapshot->workspace_index->metadata().index_schema_version ==
+                          "lsp-workspace-index-v1",
+                      "references.index_model.metadata_index_schema");
+                check(snapshot->workspace_index->metadata().index_identity_schema_version ==
+                          "lsp-workspace-index-identity-v1",
+                      "references.index_model.metadata_identity_schema");
                 const auto &source_units = snapshot->workspace_index->source_units();
                 check(!source_units.empty(), "references.index_model.source_units_exist");
                 const auto &symbols = snapshot->workspace_index->symbols();
