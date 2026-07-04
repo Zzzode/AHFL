@@ -751,24 +751,21 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
 
 [[nodiscard]] std::vector<Location> implementation_locations_for_symbol(
     const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, const Symbol &symbol) {
-    if ((symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum) &&
-        snapshot.workspace_index != nullptr) {
-        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
-        if (def.has_value()) {
-            auto locations =
-                snapshot.workspace_index->implementation_locations_for_nominal_def(*def);
-            if (!locations.empty()) {
-                return locations;
+    if (snapshot.workspace_index != nullptr) {
+        if (symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum) {
+            const auto def = snapshot.workspace_def_for_symbol(symbol.id);
+            if (def.has_value()) {
+                return snapshot.workspace_index->implementation_locations_for_nominal_def(*def);
             }
+            return {};
         }
-    }
-    if (symbol.kind == SymbolKind::Trait && snapshot.workspace_index != nullptr) {
-        const auto def = snapshot.workspace_def_for_symbol(symbol.id);
-        if (def.has_value()) {
-            auto locations = snapshot.workspace_index->implementation_locations_for_trait(*def);
-            if (!locations.empty()) {
-                return locations;
+
+        if (symbol.kind == SymbolKind::Trait) {
+            const auto def = snapshot.workspace_def_for_symbol(symbol.id);
+            if (def.has_value()) {
+                return snapshot.workspace_index->implementation_locations_for_trait(*def);
             }
+            return {};
         }
     }
 
@@ -800,11 +797,7 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
                                    const LspSourceSnapshot &source,
                                    const TypeKey &primitive_type) {
     if (snapshot.workspace_index != nullptr) {
-        auto locations =
-            snapshot.workspace_index->implementation_locations_for_type(primitive_type);
-        if (!locations.empty()) {
-            return locations;
-        }
+        return snapshot.workspace_index->implementation_locations_for_type(primitive_type);
     }
 
     if (snapshot.type_check_result == nullptr) {
