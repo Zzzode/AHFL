@@ -744,7 +744,8 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
                                 package_graph::PackageId package_id,
                                 std::string_view uri,
                                 const SourceFile &source,
-                                const ast::Program &program) {
+                                const ast::Program &program,
+                                FactCompleteness completeness = FactCompleteness::Parsed) {
     std::size_t source_order = 0;
     for (const auto &declaration : program.declarations) {
         if (declaration == nullptr || declaration->kind != ast::NodeKind::ImplDecl) {
@@ -777,7 +778,7 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
                                   : std::nullopt,
             .methods = skeleton_method_facts_for_impl(impl),
             .source_order = source_order,
-            .completeness = FactCompleteness::Parsed,
+            .completeness = completeness,
         });
         ++source_order;
     }
@@ -1430,6 +1431,23 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                                             typed.has_errors() ? FactCompleteness::Resolved
                                                                : FactCompleteness::Typed);
     if (typed.has_errors()) {
+        for (const auto &source : project.graph.sources) {
+            const auto source_unit = source_units_by_source_id.find(source.id.value);
+            if (source_unit == source_units_by_source_id.end() || source.program == nullptr) {
+                continue;
+            }
+            const auto *source_fact = source_unit_fact(index, source_unit->second);
+            const auto package_id =
+                source_fact == nullptr ? package_id_for_path(input.scope.package_roots, source.path)
+                                       : source_fact->package_id;
+            append_skeleton_impl_facts(index,
+                                       source_unit->second,
+                                       package_id,
+                                       uri_from_path(source.path),
+                                       source.source,
+                                       *source.program,
+                                       FactCompleteness::Resolved);
+        }
         return index;
     }
 

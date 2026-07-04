@@ -2100,6 +2100,13 @@ void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fail
                                       "    value: Int;\n"
                                       "}\n"
                                       "\n"
+                                      "impl BrokenIndexed {\n"
+                                      "    fn clone(self: BrokenIndexed) -> BrokenIndexed effect "
+                                      "Pure decreases 0 {\n"
+                                      "        return self;\n"
+                                      "    }\n"
+                                      "}\n"
+                                      "\n"
                                       "const bad: Int = \"not an int\";\n";
     write_file(main_path, main_source);
     write_file(broken_path, broken_source);
@@ -2134,6 +2141,29 @@ void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fail
                                                IndexDiagnosticPhase::TypeCheck,
                                                "typecheck."),
                           "workspace_symbol.partial_index.typecheck_diagnostic_fact");
+                    const auto &impls = snapshot->workspace_index->impls();
+                    const auto resolved_impl =
+                        std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+                            return impl.location.uri == broken_uri &&
+                                   impl.completeness == FactCompleteness::Resolved;
+                        });
+                    check(resolved_impl != impls.end(),
+                          "workspace_symbol.partial_index.resolved_impl_fact_exists");
+                    if (resolved_impl != impls.end()) {
+                        check(resolved_impl->source_unit_id == broken_source->source_unit_id,
+                              "workspace_symbol.partial_index.resolved_impl_source_unit");
+                        check(resolved_impl->target_type.kind == TypeKey::Kind::Unknown,
+                              "workspace_symbol.partial_index.resolved_impl_unknown_type");
+                        check(!resolved_impl->methods.empty() &&
+                                  resolved_impl->methods.front().name == "clone",
+                              "workspace_symbol.partial_index.resolved_impl_method_header");
+                    }
+                    const auto queried_impls =
+                        snapshot->workspace_index->implementation_locations_for_type(TypeKey{
+                            .kind = TypeKey::Kind::Unknown,
+                        });
+                    check(queried_impls.empty(),
+                          "workspace_symbol.partial_index.resolved_impl_not_queryable");
                 }
             }
         }
