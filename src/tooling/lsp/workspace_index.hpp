@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "ahfl/base/support/source.hpp"
@@ -58,6 +59,13 @@ struct WorkspaceImplId {
                                          WorkspaceImplId rhs) noexcept = default;
 };
 
+struct ReferenceFactId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(ReferenceFactId lhs,
+                                         ReferenceFactId rhs) noexcept = default;
+};
+
 struct TypeKey {
     enum class Kind : std::uint8_t {
         Unknown,
@@ -73,6 +81,10 @@ struct TypeKey {
     std::vector<TypeKey> type_args;
 
     [[nodiscard]] friend bool operator==(const TypeKey &lhs, const TypeKey &rhs) noexcept = default;
+};
+
+struct TypeKeyHash {
+    [[nodiscard]] std::size_t operator()(const TypeKey &key) const noexcept;
 };
 
 struct SourceUnitFact {
@@ -139,8 +151,14 @@ class LspWorkspaceIndex {
         return impls_;
     }
 
+    [[nodiscard]] const std::vector<ReferenceFact> &references() const noexcept {
+        return references_;
+    }
+
     [[nodiscard]] std::optional<DefId> find_def(SymbolKind kind,
                                                 std::string_view canonical_name) const;
+    [[nodiscard]] std::vector<SourceUnitId>
+    source_units_for_package(package_graph::PackageId package_id) const;
     [[nodiscard]] std::vector<const SymbolFact *> workspace_symbols(std::string_view query) const;
     [[nodiscard]] std::vector<Location> reference_locations_for_def(DefId def) const;
     [[nodiscard]] std::vector<Location>
@@ -153,6 +171,9 @@ class LspWorkspaceIndex {
     std::vector<SymbolFact> symbols_;
     std::vector<ReferenceFact> references_;
     std::vector<ImplFact> impls_;
+    std::vector<std::vector<SourceUnitId>> source_units_by_package_;
+    std::vector<std::vector<ReferenceFactId>> references_by_def_;
+    std::unordered_map<TypeKey, std::vector<WorkspaceImplId>, TypeKeyHash> impls_by_type_;
 };
 
 struct LspIndexPackageRoot {

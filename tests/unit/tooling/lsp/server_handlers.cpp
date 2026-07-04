@@ -1482,7 +1482,28 @@ void test_project_references_include_indexed_unopened_source() {
                               "references.index_model.source_unit_revision_matches_snapshot");
                         check(source_unit.uri == types_uri,
                               "references.index_model.source_unit_uri_matches_types");
+                        const auto package_sources =
+                            snapshot->workspace_index->source_units_for_package(
+                                msg_symbol->package_id);
+                        check(std::find(package_sources.begin(),
+                                        package_sources.end(),
+                                        msg_symbol->source_unit_id) != package_sources.end(),
+                              "references.index_model.package_source_map_includes_msg_source");
                     }
+                    const auto indexed_references =
+                        snapshot->workspace_index->reference_locations_for_def(msg_symbol->def_id);
+                    check(std::find_if(indexed_references.begin(),
+                                       indexed_references.end(),
+                                       [&](const Location &location) {
+                                           return location.uri == main_uri;
+                                       }) != indexed_references.end(),
+                          "references.index_model.reference_map_includes_main");
+                    check(std::find_if(indexed_references.begin(),
+                                       indexed_references.end(),
+                                       [&](const Location &location) {
+                                           return location.uri == extra_uri;
+                                       }) != indexed_references.end(),
+                          "references.index_model.reference_map_includes_extra");
                 }
             }
         }

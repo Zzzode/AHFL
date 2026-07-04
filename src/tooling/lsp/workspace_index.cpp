@@ -16,6 +16,10 @@ namespace ahfl::lsp {
 
 namespace {
 
+void hash_combine(std::size_t &seed, std::size_t value) noexcept {
+    seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+}
+
 [[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
     const auto pos = source.locate(offset);
     return Position{
@@ -423,7 +427,28 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
 
 } // namespace
 
+std::size_t TypeKeyHash::operator()(const TypeKey &key) const noexcept {
+    std::size_t seed = std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(key.kind));
+    if (key.primitive.has_value()) {
+        hash_combine(seed, std::hash<std::uint8_t>{}(static_cast<std::uint8_t>(*key.primitive)));
+    }
+    hash_combine(seed, std::hash<std::int64_t>{}(key.primitive_parameter));
+    if (key.def.has_value()) {
+        hash_combine(seed, std::hash<std::size_t>{}(key.def->value));
+    }
+    for (const auto &arg : key.type_args) {
+        hash_combine(seed, TypeKeyHash{}(arg));
+    }
+    return seed;
+}
+
 void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
+    if (fact.package_id.value != std::numeric_limits<std::size_t>::max()) {
+        if (fact.package_id.value >= source_units_by_package_.size()) {
+            source_units_by_package_.resize(fact.package_id.value + 1);
+        }
+        source_units_by_package_[fact.package_id.value].push_back(fact.source_unit_id);
+    }
     source_units_.push_back(std::move(fact));
 }
 
@@ -432,10 +457,21 @@ void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
 }
 
 void LspWorkspaceIndex::add_reference(ReferenceFact fact) {
+    const auto id = ReferenceFactId{references_.size()};
+    if (fact.target_def.has_value()) {
+        if (fact.target_def->value >= references_by_def_.size()) {
+            references_by_def_.resize(fact.target_def->value + 1);
+        }
+        references_by_def_[fact.target_def->value].push_back(id);
+    }
     references_.push_back(std::move(fact));
 }
 
 void LspWorkspaceIndex::add_impl(ImplFact fact) {
+    const auto id = WorkspaceImplId{impls_.size()};
+    if (fact.completeness == FactCompleteness::Typed) {
+        impls_by_type_[fact.target_type].push_back(id);
+    }
     impls_.push_back(std::move(fact));
 }
 
@@ -447,6 +483,14 @@ std::optional<DefId> LspWorkspaceIndex::find_def(SymbolKind kind,
         }
     }
     return std::nullopt;
+}
+
+std::vector<SourceUnitId>
+LspWorkspaceIndex::source_units_for_package(package_graph::PackageId package_id) const {
+    if (package_id.value >= source_units_by_package_.size()) {
+        return {};
+    }
+    return source_units_by_package_[package_id.value];
 }
 
 std::vector<const SymbolFact *> LspWorkspaceIndex::workspace_symbols(std::string_view query) const {
@@ -472,9 +516,15 @@ std::vector<const SymbolFact *> LspWorkspaceIndex::workspace_symbols(std::string
 
 std::vector<Location> LspWorkspaceIndex::reference_locations_for_def(DefId def) const {
     std::vector<const ReferenceFact *> matched;
-    for (const auto &reference : references_) {
-        if (reference.completeness == FactCompleteness::Resolved && reference.target_def == def) {
-            matched.push_back(&reference);
+    if (def.value < references_by_def_.size()) {
+        for (const auto id : references_by_def_[def.value]) {
+            if (id.value >= references_.size()) {
+                continue;
+            }
+            const auto &reference = references_[id.value];
+            if (reference.completeness == FactCompleteness::Resolved) {
+                matched.push_back(&reference);
+            }
         }
     }
 
@@ -500,11 +550,16 @@ std::vector<Location> LspWorkspaceIndex::reference_locations_for_def(DefId def) 
 std::vector<Location>
 LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const {
     std::vector<const ImplFact *> matched;
-    for (const auto &impl : impls_) {
-        if (impl.completeness != FactCompleteness::Typed || impl.target_type != type) {
-            continue;
+    if (const auto found = impls_by_type_.find(type); found != impls_by_type_.end()) {
+        for (const auto id : found->second) {
+            if (id.value >= impls_.size()) {
+                continue;
+            }
+            const auto &impl = impls_[id.value];
+            if (impl.completeness == FactCompleteness::Typed) {
+                matched.push_back(&impl);
+            }
         }
-        matched.push_back(&impl);
     }
 
     std::sort(matched.begin(), matched.end(), [](const ImplFact *lhs, const ImplFact *rhs) {
