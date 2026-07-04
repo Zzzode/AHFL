@@ -49,11 +49,7 @@ enum class LspNavigationIndexSourceKind : std::uint8_t {
     OpenOverlay,
 };
 
-struct SourceUnitId {
-    std::size_t value{0};
-
-    [[nodiscard]] friend bool operator==(SourceUnitId lhs, SourceUnitId rhs) noexcept = default;
-};
+using SourceUnitId = package_graph::SourceUnitId;
 
 struct DefId {
     std::size_t value{0};

@@ -90,6 +90,20 @@ make_handoff_export_array(const std::vector<manifest::HandoffExportManifest> &va
     return value;
 }
 
+[[nodiscard]] std::unique_ptr<json::JsonValue> make_source_unit_json(const SourceUnitNode &unit) {
+    auto value = json::JsonValue::make_object();
+    value->set("id", json::JsonValue::make_int(static_cast<std::int64_t>(unit.id.value)));
+    value->set("package", json::JsonValue::make_int(static_cast<std::int64_t>(unit.package.value)));
+    value->set("path", json::JsonValue::make_string(unit.path.generic_string()));
+    value->set("module_path", json::JsonValue::make_string(unit.module_path));
+    auto roles = json::JsonValue::make_array();
+    for (const auto role : unit.roles) {
+        roles->push(json::JsonValue::make_string(std::string{source_unit_role_name(role)}));
+    }
+    value->set("roles", std::move(roles));
+    return value;
+}
+
 } // namespace
 
 std::string serialize_package_graph_json(const PackageGraph &graph) {
@@ -112,6 +126,12 @@ std::string serialize_package_graph_json(const PackageGraph &graph) {
         module_roots->push(make_module_root_json(entry));
     }
     root->set("module_roots", std::move(module_roots));
+
+    auto source_units = json::JsonValue::make_array();
+    for (const auto &source_unit : graph.source_units) {
+        source_units->push(make_source_unit_json(source_unit));
+    }
+    root->set("source_units", std::move(source_units));
 
     return json::serialize_json(*root);
 }

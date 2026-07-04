@@ -3,6 +3,7 @@
 #include "compiler/manifest/manifest.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -28,6 +29,25 @@ struct ModuleId {
     std::string module_path;
 
     [[nodiscard]] friend bool operator==(const ModuleId &lhs, const ModuleId &rhs) = default;
+};
+
+struct SourceUnitId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(SourceUnitId lhs, SourceUnitId rhs) noexcept = default;
+};
+
+enum class SourceUnitRole : std::uint8_t {
+    TargetEntry,
+    Export,
+};
+
+struct SourceUnitNode {
+    SourceUnitId id;
+    PackageId package;
+    std::filesystem::path path;
+    std::string module_path;
+    std::vector<SourceUnitRole> roles;
 };
 
 enum class PackageSourceKind {
@@ -122,8 +142,10 @@ struct PackageGraph {
     std::vector<PackageNode> packages;
     std::vector<DependencyEdge> dependencies;
     std::vector<ModuleRootEntry> module_roots;
+    std::vector<SourceUnitNode> source_units;
 
     [[nodiscard]] const PackageNode *find_package(PackageId id) const;
+    [[nodiscard]] const SourceUnitNode *find_source_unit(SourceUnitId id) const;
     [[nodiscard]] std::optional<PackageId> package_by_name(std::string_view name) const;
 };
 
@@ -144,5 +166,6 @@ struct BuildResult {
 compute_package_checksum(const PackageInput &input, std::vector<Diagnostic> &diagnostics);
 [[nodiscard]] std::string serialize_package_graph_json(const PackageGraph &graph);
 [[nodiscard]] std::string_view source_kind_name(PackageSourceKind kind) noexcept;
+[[nodiscard]] std::string_view source_unit_role_name(SourceUnitRole role) noexcept;
 
 } // namespace ahfl::package_graph

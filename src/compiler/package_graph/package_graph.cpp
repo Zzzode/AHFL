@@ -55,6 +55,159 @@ directory_module_path(const std::filesystem::path &root, const std::filesystem::
     return normalize_manifest_path(root / module_path / "mod.ahfl");
 }
 
+[[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
+                                                       const std::filesystem::path &module_path) {
+    const auto single_file = module_file_path(root, module_path);
+    const auto directory_module = directory_module_path(root, module_path);
+
+    std::error_code error;
+    const bool single_exists = std::filesystem::exists(single_file, error) && !error;
+    error.clear();
+    const bool directory_exists = std::filesystem::exists(directory_module, error) && !error;
+
+    if (!single_exists && directory_exists) {
+        return directory_module;
+    }
+    return single_file;
+}
+
+[[nodiscard]] std::filesystem::path module_path_from_target_symbol(std::string_view entry,
+                                                                   std::string_view module_prefix) {
+    std::vector<std::string_view> segments;
+    std::size_t start = 0;
+    while (start < entry.size()) {
+        const auto separator = entry.find("::", start);
+        if (separator == std::string_view::npos) {
+            segments.push_back(entry.substr(start));
+            break;
+        }
+        segments.push_back(entry.substr(start, separator - start));
+        start = separator + 2;
+    }
+    if (segments.size() < 2 || segments.front() != module_prefix) {
+        return {};
+    }
+
+    std::filesystem::path relative;
+    for (std::size_t index = 1; index + 1 < segments.size(); ++index) {
+        relative /= std::string(segments[index]);
+    }
+    return relative;
+}
+
+[[nodiscard]] std::string module_path_key_from_source_path(const std::filesystem::path &module_root,
+                                                           const std::filesystem::path &path) {
+    std::error_code error;
+    auto relative = std::filesystem::relative(path, module_root, error);
+    if (error || relative.empty()) {
+        relative = path.lexically_relative(module_root);
+    }
+    if (relative.empty()) {
+        return {};
+    }
+
+    if (relative.filename() == "mod.ahfl") {
+        relative = relative.parent_path();
+    } else if (relative.extension() == ".ahfl") {
+        relative.replace_extension();
+    }
+    return relative.generic_string();
+}
+
+[[nodiscard]] std::optional<std::pair<std::filesystem::path, std::string>>
+target_entry_source(const PackageNode &package, const TargetNode &target) {
+    if (target.entry.empty()) {
+        return std::nullopt;
+    }
+
+    if (target.entry.ends_with(".ahfl") || target.entry.find('/') != std::string::npos ||
+        target.entry.find('\\') != std::string::npos) {
+        const auto path = normalize_manifest_path(package.package_root / target.entry);
+        return std::pair{path, module_path_key_from_source_path(package.module_root, path)};
+    }
+
+    const auto module_path = module_path_from_target_symbol(target.entry, package.module_prefix);
+    if (module_path.empty()) {
+        return std::nullopt;
+    }
+    return std::pair{module_source_path(package.module_root, module_path),
+                     module_path.generic_string()};
+}
+
+[[nodiscard]] bool source_unit_has_role(const SourceUnitNode &unit, SourceUnitRole role) {
+    return std::find(unit.roles.begin(), unit.roles.end(), role) != unit.roles.end();
+}
+
+[[nodiscard]] std::string source_unit_registry_key(PackageId package,
+                                                   const std::filesystem::path &path) {
+    return std::to_string(package.value) + '\0' + path.generic_string();
+}
+
+void append_source_unit_role(SourceUnitNode &unit, SourceUnitRole role) {
+    if (!source_unit_has_role(unit, role)) {
+        unit.roles.push_back(role);
+        std::sort(unit.roles.begin(), unit.roles.end(), [](SourceUnitRole lhs, SourceUnitRole rhs) {
+            return static_cast<std::uint8_t>(lhs) < static_cast<std::uint8_t>(rhs);
+        });
+    }
+}
+
+void append_source_unit(PackageGraph &graph,
+                        std::unordered_map<std::string, SourceUnitId> &by_path,
+                        PackageId package,
+                        std::filesystem::path path,
+                        std::string module_path,
+                        SourceUnitRole role) {
+    path = normalize_manifest_path(path);
+    const auto path_key = source_unit_registry_key(package, path);
+    if (const auto existing = by_path.find(path_key); existing != by_path.end()) {
+        auto &unit = graph.source_units[existing->second.value];
+        append_source_unit_role(unit, role);
+        if (unit.module_path.empty()) {
+            unit.module_path = std::move(module_path);
+        }
+        return;
+    }
+
+    const auto id = SourceUnitId{graph.source_units.size()};
+    by_path.emplace(path_key, id);
+    graph.source_units.push_back(SourceUnitNode{
+        .id = id,
+        .package = package,
+        .path = std::move(path),
+        .module_path = std::move(module_path),
+        .roles = {role},
+    });
+}
+
+void populate_source_units(PackageGraph &graph) {
+    graph.source_units.clear();
+    std::unordered_map<std::string, SourceUnitId> by_path;
+    for (const auto &package : graph.packages) {
+        for (const auto &target : package.targets) {
+            auto source = target_entry_source(package, target);
+            if (!source.has_value()) {
+                continue;
+            }
+            append_source_unit(graph,
+                               by_path,
+                               package.id,
+                               std::move(source->first),
+                               std::move(source->second),
+                               SourceUnitRole::TargetEntry);
+        }
+        for (const auto &module_path : package.exported_modules) {
+            append_source_unit(
+                graph,
+                by_path,
+                package.id,
+                module_source_path(package.module_root, std::filesystem::path{module_path}),
+                module_path,
+                SourceUnitRole::Export);
+        }
+    }
+}
+
 [[nodiscard]] TargetNode
 make_target(PackageId package, std::size_t index, const manifest::TargetManifest &manifest) {
     return TargetNode{
@@ -516,6 +669,13 @@ const PackageNode *PackageGraph::find_package(PackageId id) const {
     return &packages[id.value];
 }
 
+const SourceUnitNode *PackageGraph::find_source_unit(SourceUnitId id) const {
+    if (id.value >= source_units.size()) {
+        return nullptr;
+    }
+    return &source_units[id.value];
+}
+
 std::optional<PackageId> PackageGraph::package_by_name(std::string_view name) const {
     for (const auto &package : packages) {
         if (package.name == name) {
@@ -720,6 +880,7 @@ BuildResult build_package_graph(const BuildInput &input) {
     }
 
     if (!result.has_errors()) {
+        populate_source_units(graph);
         result.graph = std::move(graph);
     }
     return result;
@@ -847,6 +1008,7 @@ BuildResult build_package_graph_from_sysroot(const SysrootBuildInput &input) {
     validate_exported_modules(IndexedInput{.id = PackageId{0}, .input = &*sysroot},
                               result.diagnostics);
     if (!result.has_errors()) {
+        populate_source_units(graph);
         result.graph = std::move(graph);
     }
     return result;
@@ -862,6 +1024,16 @@ std::string_view source_kind_name(PackageSourceKind kind) noexcept {
         return "workspace";
     case PackageSourceKind::Path:
         return "path";
+    }
+    return "unknown";
+}
+
+std::string_view source_unit_role_name(SourceUnitRole role) noexcept {
+    switch (role) {
+    case SourceUnitRole::TargetEntry:
+        return "target-entry";
+    case SourceUnitRole::Export:
+        return "export";
     }
     return "unknown";
 }

@@ -148,6 +148,11 @@ std = { source = "sysroot" }
     return has_diagnostic(result.diagnostics, needle);
 }
 
+[[nodiscard]] bool has_source_unit_role(const ahfl::package_graph::SourceUnitNode &unit,
+                                        ahfl::package_graph::SourceUnitRole role) {
+    return std::find(unit.roles.begin(), unit.roles.end(), role) != unit.roles.end();
+}
+
 [[nodiscard]] std::string_view slice(std::string_view input, ahfl::SourceRange range) {
     return input.substr(range.begin_offset, range.end_offset - range.begin_offset);
 }
@@ -334,6 +339,44 @@ allow = ["option_*"]
     REQUIRE(result.graph->module_roots.size() == 1);
     CHECK(result.graph->module_roots[0].prefix == "std");
     CHECK(result.graph->dependencies.empty());
+}
+
+TEST_CASE("PackageGraph assigns source units from target entries and exports") {
+    auto result = build_manifest_graph_with_exports("[\"main\"]", true, false);
+
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.graph.has_value());
+    const auto &graph = *result.graph;
+    REQUIRE(graph.source_units.size() == 3);
+    for (std::size_t index = 0; index < graph.source_units.size(); ++index) {
+        CHECK(graph.source_units[index].id.value == index);
+        CHECK(graph.find_source_unit(ahfl::package_graph::SourceUnitId{index}) ==
+              &graph.source_units[index]);
+    }
+
+    const auto &prelude = graph.source_units[0];
+    CHECK(prelude.package == ahfl::package_graph::PackageId{0});
+    CHECK(prelude.module_path == "prelude");
+    CHECK(prelude.roles.size() == 1);
+    CHECK(has_source_unit_role(prelude, ahfl::package_graph::SourceUnitRole::Export));
+
+    const auto &option = graph.source_units[1];
+    CHECK(option.package == ahfl::package_graph::PackageId{0});
+    CHECK(option.module_path == "option");
+    CHECK(option.roles.size() == 1);
+    CHECK(has_source_unit_role(option, ahfl::package_graph::SourceUnitRole::Export));
+
+    const auto &main = graph.source_units[2];
+    CHECK(main.package == ahfl::package_graph::PackageId{1});
+    CHECK(main.module_path == "main");
+    CHECK(main.path.filename() == "main.ahfl");
+    CHECK(main.roles.size() == 2);
+    CHECK(has_source_unit_role(main, ahfl::package_graph::SourceUnitRole::TargetEntry));
+    CHECK(has_source_unit_role(main, ahfl::package_graph::SourceUnitRole::Export));
+
+    const auto json = ahfl::package_graph::serialize_package_graph_json(graph);
+    CHECK(json.find("\"source_units\"") != std::string::npos);
+    CHECK(json.find("\"roles\":[\"target-entry\",\"export\"]") != std::string::npos);
 }
 
 TEST_CASE("PackageGraph rejects sysroot std manifests that violate RFC contract") {

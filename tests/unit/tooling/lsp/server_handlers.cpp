@@ -1547,6 +1547,90 @@ void test_manifest_invalidation_preserves_workspace_source_unit_ids() {
     }
 }
 
+void test_lsp_workspace_index_uses_package_graph_source_unit_ids() {
+    const auto root = make_temp_project("lsp_package_graph_source_unit_ids");
+    const auto sysroot = root / "sysroot";
+    const auto app_root = root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    const auto extra_path = app_root / "src" / "extra.ahfl";
+    write_minimal_std_package(sysroot / "std", "graph-source-units");
+    write_package_manifest(app_root, "lsp-graph-source-units", "app", "\"main\", \"extra\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {}\n";
+    const std::string extra_source = "module app::extra;\n"
+                                     "\n"
+                                     "struct ExtraOnly {}\n";
+    write_file(main_path, main_source);
+    write_file(extra_path, extra_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto extra_uri = AnalysisService::uri_from_path(extra_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    auto profiles = toolchain_profile_set_for_sysroot(sysroot);
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    analysis.set_toolchain_profiles(profiles);
+    const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+    check(snapshot != nullptr, "workspaceIndex.graph_source_ids.snapshot_exists");
+    if (snapshot == nullptr || snapshot->workspace_index == nullptr) {
+        check(false, "workspaceIndex.graph_source_ids.index_exists");
+        return;
+    }
+
+    const auto project_context =
+        project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
+            .document_path = main_path,
+            .workspace_boundaries = {project_discovery::WorkspaceBoundary{.root = root}},
+            .toolchains = std::move(profiles),
+        });
+    check(project_context.context.has_value(), "workspaceIndex.graph_source_ids.context_exists");
+    if (!project_context.context.has_value()) {
+        return;
+    }
+
+    const auto app_package =
+        project_context.context->graph.package_by_name("lsp-graph-source-units");
+    check(app_package.has_value(), "workspaceIndex.graph_source_ids.package_exists");
+    if (!app_package.has_value()) {
+        return;
+    }
+
+    const auto source_unit_for_module =
+        [&](std::string_view module_path) -> const ahfl::package_graph::SourceUnitNode * {
+        const auto &units = project_context.context->graph.source_units;
+        const auto found = std::find_if(units.begin(), units.end(), [&](const auto &unit) {
+            return unit.package == *app_package && unit.module_path == module_path;
+        });
+        return found == units.end() ? nullptr : &*found;
+    };
+
+    const auto *graph_main = source_unit_for_module("main");
+    const auto *graph_extra = source_unit_for_module("extra");
+    const auto *index_main = index_source_unit_for_uri(*snapshot->workspace_index, main_uri);
+    const auto *index_extra = index_source_unit_for_uri(*snapshot->workspace_index, extra_uri);
+    check(graph_main != nullptr, "workspaceIndex.graph_source_ids.graph_main_exists");
+    check(graph_extra != nullptr, "workspaceIndex.graph_source_ids.graph_extra_exists");
+    check(index_main != nullptr, "workspaceIndex.graph_source_ids.index_main_exists");
+    check(index_extra != nullptr, "workspaceIndex.graph_source_ids.index_extra_exists");
+    if (graph_main != nullptr && index_main != nullptr) {
+        check(index_main->source_unit_id == graph_main->id,
+              "workspaceIndex.graph_source_ids.main_matches_graph");
+    }
+    if (graph_extra != nullptr && index_extra != nullptr) {
+        check(index_extra->source_unit_id == graph_extra->id,
+              "workspaceIndex.graph_source_ids.extra_matches_graph");
+    }
+}
+
 void test_project_input_source_cache_is_distinct_from_open_overlays() {
     const auto root = make_temp_project("project_source_cache_overlay");
     const auto main_path = root / "src" / "main.ahfl";
@@ -7034,6 +7118,7 @@ int main() {
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
     test_manifest_watcher_refreshes_workspace_index_scope();
     test_manifest_invalidation_preserves_workspace_source_unit_ids();
+    test_lsp_workspace_index_uses_package_graph_source_unit_ids();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();

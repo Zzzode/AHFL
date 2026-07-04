@@ -131,56 +131,6 @@ root_package_for_lsp(const package_graph::PackageGraph &graph) {
     return found == graph.packages.end() ? nullptr : &*found;
 }
 
-[[nodiscard]] std::filesystem::path module_path_from_target_symbol(std::string_view entry,
-                                                                   std::string_view module_prefix) {
-    std::vector<std::string_view> segments;
-    std::size_t start = 0;
-    while (start < entry.size()) {
-        const auto separator = entry.find("::", start);
-        if (separator == std::string_view::npos) {
-            segments.push_back(entry.substr(start));
-            break;
-        }
-        segments.push_back(entry.substr(start, separator - start));
-        start = separator + 2;
-    }
-    if (segments.size() < 2 || segments.front() != module_prefix) {
-        return {};
-    }
-
-    std::filesystem::path relative;
-    for (std::size_t index = 1; index + 1 < segments.size(); ++index) {
-        relative /= std::string(segments[index]);
-    }
-    if (relative.empty()) {
-        return {};
-    }
-    relative += ".ahfl";
-    return relative;
-}
-
-[[nodiscard]] std::filesystem::path lsp_target_entry_file(const package_graph::PackageNode &package,
-                                                          const std::filesystem::path &fallback) {
-    if (package.targets.empty() || package.targets.front().entry.empty()) {
-        return fallback;
-    }
-
-    const auto &entry = package.targets.front().entry;
-    if (entry.ends_with(".ahfl") || entry.find('/') != std::string::npos ||
-        entry.find('\\') != std::string::npos) {
-        return std::filesystem::path(
-            AnalysisService::normalized_path_key(package.package_root / entry));
-    }
-
-    const auto relative_module = module_path_from_target_symbol(entry, package.module_prefix);
-    if (!relative_module.empty()) {
-        return std::filesystem::path(
-            AnalysisService::normalized_path_key(package.module_root / relative_module));
-    }
-
-    return fallback;
-}
-
 [[nodiscard]] std::vector<std::string>
 dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
                                 package_graph::PackageId package_id) {
@@ -199,6 +149,34 @@ dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
     std::sort(prefixes.begin(), prefixes.end());
     prefixes.erase(std::unique(prefixes.begin(), prefixes.end()), prefixes.end());
     return prefixes;
+}
+
+[[nodiscard]] bool source_unit_has_role(const package_graph::SourceUnitNode &unit,
+                                        package_graph::SourceUnitRole role) {
+    return std::find(unit.roles.begin(), unit.roles.end(), role) != unit.roles.end();
+}
+
+[[nodiscard]] const package_graph::SourceUnitNode *
+first_source_unit_for_role(const package_graph::PackageGraph &graph,
+                           package_graph::PackageId package,
+                           package_graph::SourceUnitRole role) {
+    const auto found =
+        std::find_if(graph.source_units.begin(), graph.source_units.end(), [&](const auto &unit) {
+            return unit.package == package && source_unit_has_role(unit, role);
+        });
+    return found == graph.source_units.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] std::filesystem::path
+semantic_entry_file_from_package_graph(const package_graph::PackageGraph &graph,
+                                       const package_graph::PackageNode &package,
+                                       const std::filesystem::path &fallback) {
+    if (const auto *source_unit = first_source_unit_for_role(
+            graph, package.id, package_graph::SourceUnitRole::TargetEntry);
+        source_unit != nullptr) {
+        return source_unit->path;
+    }
+    return fallback;
 }
 
 using NavigationScopeKindMap =
@@ -245,13 +223,6 @@ void append_scoped_entry_file(ProjectInput &input,
     }
 }
 
-[[nodiscard]] std::filesystem::path exported_module_path(const package_graph::PackageNode &package,
-                                                         std::string_view module_key) {
-    auto relative = std::filesystem::path(std::string(module_key));
-    relative += ".ahfl";
-    return package.module_root / relative;
-}
-
 void append_primitive_home_entry_files(ProjectInput &input,
                                        const package_graph::PackageGraph &graph,
                                        NavigationScopeKindMap *scope_kinds = nullptr) {
@@ -265,39 +236,39 @@ void append_primitive_home_entry_files(ProjectInput &input,
         "decimal",
     };
 
-    const auto std_package = std::find_if(
-        graph.packages.begin(),
-        graph.packages.end(),
-        [](const package_graph::PackageNode &package) { return package.module_prefix == "std"; });
-    if (std_package == graph.packages.end()) {
-        return;
-    }
-
     for (const auto module_key : kPrimitiveHomeModules) {
-        if (std::find(std_package->exported_modules.begin(),
-                      std_package->exported_modules.end(),
-                      module_key) == std_package->exported_modules.end()) {
+        const auto source_unit = std::find_if(
+            graph.source_units.begin(), graph.source_units.end(), [&](const auto &unit) {
+                const auto *package = graph.find_package(unit.package);
+                return package != nullptr && package->module_prefix == "std" &&
+                       unit.module_path == module_key &&
+                       source_unit_has_role(unit, package_graph::SourceUnitRole::Export);
+            });
+        if (source_unit == graph.source_units.end()) {
             continue;
         }
-        append_scoped_entry_file(input,
-                                 scope_kinds,
-                                 exported_module_path(*std_package, module_key),
-                                 LspNavigationIndexSourceKind::PrimitiveHome);
+        append_scoped_entry_file(
+            input, scope_kinds, source_unit->path, LspNavigationIndexSourceKind::PrimitiveHome);
     }
 }
 
 void append_exported_entry_files(
     ProjectInput &input,
+    const package_graph::PackageGraph &graph,
     const package_graph::PackageNode &package,
     bool include_prelude,
     NavigationScopeKindMap *scope_kinds = nullptr,
     LspNavigationIndexSourceKind kind = LspNavigationIndexSourceKind::PackageExport) {
-    for (const auto &module_key : package.exported_modules) {
-        if (!include_prelude && package.module_prefix == "std" && module_key == "prelude") {
+    for (const auto &source_unit : graph.source_units) {
+        if (source_unit.package != package.id ||
+            !source_unit_has_role(source_unit, package_graph::SourceUnitRole::Export)) {
             continue;
         }
-        append_scoped_entry_file(
-            input, scope_kinds, exported_module_path(package, module_key), kind);
+        if (!include_prelude && package.module_prefix == "std" &&
+            source_unit.module_path == "prelude") {
+            continue;
+        }
+        append_scoped_entry_file(input, scope_kinds, source_unit.path, kind);
     }
 }
 
@@ -386,18 +357,50 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
     return best;
 }
 
+[[nodiscard]] std::string source_unit_registry_key(package_graph::PackageId package,
+                                                   const std::filesystem::path &path) {
+    return std::to_string(package.value) + '\0' + path.generic_string();
+}
+
 [[nodiscard]] std::vector<LspIndexSourceUnitSeed> index_source_units_from_scope_kinds(
     const package_graph::PackageGraph &graph,
     const NavigationScopeKindMap &scope_kinds,
-    std::unordered_map<std::string, SourceUnitId> &source_unit_ids_by_path,
-    std::size_t &next_source_unit_id) {
+    std::unordered_map<std::string, std::size_t> &extra_source_unit_ordinals_by_path) {
+    std::unordered_map<std::string, std::vector<const package_graph::SourceUnitNode *>>
+        graph_units_by_path;
+    graph_units_by_path.reserve(graph.source_units.size());
+    for (const auto &unit : graph.source_units) {
+        graph_units_by_path[std::filesystem::path(AnalysisService::normalized_path_key(unit.path))
+                                .generic_string()]
+            .push_back(&unit);
+    }
+
     std::vector<LspIndexSourceUnitSeed> source_units;
     source_units.reserve(scope_kinds.size());
     for (const auto &[path_key, kinds] : scope_kinds) {
         const auto path = std::filesystem::path(path_key);
+        const auto normalized_path_key =
+            std::filesystem::path(AnalysisService::normalized_path_key(path)).generic_string();
         const auto *package = package_for_requested_file(graph, path);
+        if (const auto graph_units = graph_units_by_path.find(normalized_path_key);
+            graph_units != graph_units_by_path.end()) {
+            const auto unit = std::find_if(
+                graph_units->second.begin(), graph_units->second.end(), [&](const auto *candidate) {
+                    return package != nullptr && candidate->package == package->id;
+                });
+            const auto *graph_unit =
+                unit == graph_units->second.end() ? graph_units->second.front() : *unit;
+            source_units.push_back(LspIndexSourceUnitSeed{
+                .source_unit_id = graph_unit->id,
+                .package_id = graph_unit->package,
+                .path = graph_unit->path,
+                .scope_kinds = kinds,
+            });
+            continue;
+        }
+
         source_units.push_back(LspIndexSourceUnitSeed{
-            .source_unit_id = SourceUnitId{0},
+            .source_unit_id = SourceUnitId{std::numeric_limits<std::size_t>::max()},
             .package_id = package == nullptr
                               ? package_graph::PackageId{std::numeric_limits<std::size_t>::max()}
                               : package->id,
@@ -408,20 +411,33 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
     std::sort(source_units.begin(),
               source_units.end(),
               [](const LspIndexSourceUnitSeed &lhs, const LspIndexSourceUnitSeed &rhs) {
+                  if (lhs.source_unit_id.value != rhs.source_unit_id.value) {
+                      return lhs.source_unit_id.value < rhs.source_unit_id.value;
+                  }
                   if (lhs.package_id.value != rhs.package_id.value) {
                       return lhs.package_id.value < rhs.package_id.value;
                   }
                   return lhs.path.generic_string() < rhs.path.generic_string();
               });
     for (auto &source_unit : source_units) {
-        const auto path_key = source_unit.path.generic_string();
-        auto [registry_entry, inserted] =
-            source_unit_ids_by_path.try_emplace(path_key, SourceUnitId{next_source_unit_id});
-        if (inserted) {
-            ++next_source_unit_id;
+        if (graph.find_source_unit(source_unit.source_unit_id) != nullptr) {
+            continue;
         }
-        source_unit.source_unit_id = registry_entry->second;
+
+        const auto path_key = source_unit_registry_key(source_unit.package_id, source_unit.path);
+        auto [registry_entry, inserted] = extra_source_unit_ordinals_by_path.try_emplace(
+            path_key, extra_source_unit_ordinals_by_path.size());
+        if (inserted) {
+            registry_entry->second = extra_source_unit_ordinals_by_path.size() - 1;
+        }
+        source_unit.source_unit_id =
+            SourceUnitId{graph.source_units.size() + registry_entry->second};
     }
+    std::sort(source_units.begin(),
+              source_units.end(),
+              [](const LspIndexSourceUnitSeed &lhs, const LspIndexSourceUnitSeed &rhs) {
+                  return lhs.source_unit_id.value < rhs.source_unit_id.value;
+              });
     return source_units;
 }
 
@@ -463,9 +479,10 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     const auto fallback_entry =
         std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
     if (mode != LspProjectInputMode::SysrootIndex) {
-        const auto semantic_entry = root_package == nullptr
-                                        ? fallback_entry
-                                        : lsp_target_entry_file(*root_package, fallback_entry);
+        const auto semantic_entry =
+            root_package == nullptr
+                ? fallback_entry
+                : semantic_entry_file_from_package_graph(graph, *root_package, fallback_entry);
         input.entry_files.push_back(semantic_entry);
         record_navigation_scope_kind(
             scope_kinds, semantic_entry, LspNavigationIndexSourceKind::SemanticEntry);
@@ -487,8 +504,12 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
         for (const auto &package : graph.packages) {
             if (package.source == package_graph::PackageSourceKind::Sysroot &&
                 package.module_prefix == "std") {
-                append_exported_entry_files(
-                    input, package, true, scope_kinds, LspNavigationIndexSourceKind::SysrootExport);
+                append_exported_entry_files(input,
+                                            graph,
+                                            package,
+                                            true,
+                                            scope_kinds,
+                                            LspNavigationIndexSourceKind::SysrootExport);
                 break;
             }
         }
@@ -502,7 +523,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             const auto kind = package.source == package_graph::PackageSourceKind::Sysroot
                                   ? LspNavigationIndexSourceKind::SysrootExport
                                   : LspNavigationIndexSourceKind::PackageExport;
-            append_exported_entry_files(input, package, true, scope_kinds, kind);
+            append_exported_entry_files(input, graph, package, true, scope_kinds, kind);
         }
         append_open_overlay_entry_files(input, scope_kinds, graph, requested_file);
         append_primitive_home_entry_files(input, graph, scope_kinds);
@@ -876,10 +897,10 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         .scope =
             NavigationIndexScope{
                 .package_roots = index_package_roots_from_graph(project_context.context->graph),
-                .source_units = index_source_units_from_scope_kinds(project_context.context->graph,
-                                                                    sysroot_scope_kinds,
-                                                                    source_unit_ids_by_path_,
-                                                                    next_source_unit_id_),
+                .source_units =
+                    index_source_units_from_scope_kinds(project_context.context->graph,
+                                                        sysroot_scope_kinds,
+                                                        extra_source_unit_ordinals_by_path_),
             },
         .metadata =
             NavigationIndexMetadata{
@@ -1057,11 +1078,10 @@ AnalysisService::build_snapshot(const std::string &uri,
                     NavigationIndexScope{
                         .package_roots =
                             index_package_roots_from_graph(project_context.context->graph),
-                        .source_units =
-                            index_source_units_from_scope_kinds(project_context.context->graph,
-                                                                workspace_scope_kinds,
-                                                                source_unit_ids_by_path_,
-                                                                next_source_unit_id_),
+                        .source_units = index_source_units_from_scope_kinds(
+                            project_context.context->graph,
+                            workspace_scope_kinds,
+                            extra_source_unit_ordinals_by_path_),
                     },
                 .metadata =
                     NavigationIndexMetadata{
