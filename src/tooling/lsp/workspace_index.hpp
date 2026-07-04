@@ -133,6 +133,7 @@ struct ImplFact {
     SourceUnitId source_unit_id;
     TypeKey target_type;
     std::optional<DefId> trait_def;
+    std::optional<SourceRange> trait_range;
     SourceRange declaration_range;
     SourceRange target_range;
     Location location;

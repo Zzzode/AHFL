@@ -1054,7 +1054,12 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                               : source_fact->package_id,
             .source_unit_id = source_unit_id->second,
             .target_type = type_key_for_type_with_defs(*impl.target_type, &def_by_symbol),
-            .trait_def = std::nullopt,
+            .trait_def = impl.trait_symbol.has_value()
+                             ? def_for_symbol(def_by_symbol, *impl.trait_symbol)
+                             : std::nullopt,
+            .trait_range = has_extent(impl.trait_ref_range)
+                               ? std::optional<SourceRange>{impl.trait_ref_range}
+                               : std::nullopt,
             .declaration_range = impl.declaration_range,
             .target_range = impl_location_range(impl),
             .location = *location,

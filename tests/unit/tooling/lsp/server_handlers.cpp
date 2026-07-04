@@ -2801,14 +2801,19 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
     const std::string types_source = "module app::types;\n"
                                      "\n"
                                      "struct Msg {}\n";
-    const std::string extra_source = "module app::extra;\n"
-                                     "import app::types as types;\n"
-                                     "\n"
-                                     "impl types::Msg {\n"
-                                     "    fn display(self) -> Int effect Pure decreases 0 {\n"
-                                     "        return 0;\n"
-                                     "    }\n"
-                                     "}\n";
+    const std::string extra_source =
+        "module app::extra;\n"
+        "import app::types as types;\n"
+        "\n"
+        "trait Renderable {\n"
+        "    fn display(self: types::Msg) -> Int effect Pure;\n"
+        "}\n"
+        "\n"
+        "impl Renderable for types::Msg {\n"
+        "    fn display(self: types::Msg) -> Int effect Pure decreases 0 {\n"
+        "        return 0;\n"
+        "    }\n"
+        "}\n";
     write_file(main_path, main_source);
     write_file(types_path, types_source);
     write_file(extra_path, extra_source);
@@ -2833,6 +2838,14 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
             check(snapshot->workspace_index != nullptr,
                   "implementation.nominal_index.index_exists");
             if (snapshot->workspace_index != nullptr) {
+                const auto &symbols = snapshot->workspace_index->symbols();
+                const auto trait_symbol =
+                    std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                        return symbol.canonical_name == "app::extra::Renderable" &&
+                               symbol.kind == ahfl::SymbolKind::Trait;
+                    });
+                check(trait_symbol != symbols.end(),
+                      "implementation.nominal_index.trait_symbol_fact_exists");
                 const auto &impls = snapshot->workspace_index->impls();
                 const auto extra_impl =
                     std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
@@ -2840,6 +2853,16 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
                     });
                 check(extra_impl != impls.end(), "implementation.nominal_index.impl_fact_exists");
                 if (extra_impl != impls.end()) {
+                    check(extra_impl->trait_def.has_value(),
+                          "implementation.nominal_index.impl_trait_def_exists");
+                    if (trait_symbol != symbols.end() && extra_impl->trait_def.has_value()) {
+                        check(*extra_impl->trait_def == trait_symbol->def_id,
+                              "implementation.nominal_index.impl_trait_def_matches");
+                    }
+                    check(extra_impl->trait_range.has_value() &&
+                              extra_impl->trait_range->end_offset >
+                                  extra_impl->trait_range->begin_offset,
+                          "implementation.nominal_index.impl_trait_range_has_extent");
                     check(extra_impl->methods.size() == 1,
                           "implementation.nominal_index.impl_method_count");
                     if (!extra_impl->methods.empty()) {
@@ -2865,7 +2888,7 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
     const auto response = response_body_for_id(output, 2);
     check(response.find(extra_uri) != std::string::npos,
           "implementation.nominal_index_includes_unopened_exported_impl");
-    check(response.find(R"("start":{"line":3,"character":5})") != std::string::npos,
+    check(response.find(R"("start":{"line":7,"character":20})") != std::string::npos,
           "implementation.nominal_index_targets_impl_selection");
 }
 
