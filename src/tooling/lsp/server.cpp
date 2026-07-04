@@ -589,6 +589,15 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
             }
         }
     }
+    if (symbol.kind == SymbolKind::Trait && snapshot.workspace_index != nullptr) {
+        const auto def = snapshot.workspace_index->find_def(symbol.kind, symbol.canonical_name);
+        if (def.has_value()) {
+            auto locations = snapshot.workspace_index->implementation_locations_for_trait(*def);
+            if (!locations.empty()) {
+                return locations;
+            }
+        }
+    }
 
     if (snapshot.type_check_result == nullptr) {
         return {};

@@ -2863,6 +2863,17 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
                               extra_impl->trait_range->end_offset >
                                   extra_impl->trait_range->begin_offset,
                           "implementation.nominal_index.impl_trait_range_has_extent");
+                    if (trait_symbol != symbols.end()) {
+                        const auto trait_impl_locations =
+                            snapshot->workspace_index->implementation_locations_for_trait(
+                                trait_symbol->def_id);
+                        check(std::find_if(trait_impl_locations.begin(),
+                                           trait_impl_locations.end(),
+                                           [&](const Location &location) {
+                                               return location.uri == extra_uri;
+                                           }) != trait_impl_locations.end(),
+                              "implementation.nominal_index.impl_trait_query_includes_extra");
+                    }
                     check(extra_impl->methods.size() == 1,
                           "implementation.nominal_index.impl_method_count");
                     if (!extra_impl->methods.empty()) {

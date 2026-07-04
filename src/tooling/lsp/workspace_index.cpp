@@ -201,6 +201,23 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
     };
 }
 
+[[nodiscard]] std::optional<Location> impl_trait_location(const SourceGraph &graph,
+                                                          const ImplTypeInfo &impl) {
+    if (!impl.source_id.has_value() || !has_extent(impl.trait_ref_range)) {
+        return std::nullopt;
+    }
+
+    const auto *source = source_unit_for_id(graph, *impl.source_id);
+    if (source == nullptr) {
+        return std::nullopt;
+    }
+
+    return Location{
+        .uri = uri_from_path(source->path),
+        .range = to_lsp_range(source->source, impl.trait_ref_range),
+    };
+}
+
 [[nodiscard]] std::optional<Location> symbol_location(const SourceGraph &graph,
                                                       const Symbol &symbol) {
     if (!symbol.source_id.has_value() || !has_extent(symbol.declaration_range)) {
@@ -622,6 +639,12 @@ void LspWorkspaceIndex::add_impl(ImplFact fact) {
     const auto id = WorkspaceImplId{impls_.size()};
     if (fact.completeness == FactCompleteness::Typed) {
         impls_by_type_[fact.target_type].push_back(id);
+        if (fact.trait_def.has_value()) {
+            if (fact.trait_def->value >= impls_by_trait_.size()) {
+                impls_by_trait_.resize(fact.trait_def->value + 1);
+            }
+            impls_by_trait_[fact.trait_def->value].push_back(id);
+        }
     }
     impls_.push_back(std::move(fact));
 }
@@ -730,21 +753,8 @@ std::vector<Location> LspWorkspaceIndex::reference_locations_for_def(DefId def) 
     return locations;
 }
 
-std::vector<Location>
-LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const {
-    std::vector<const ImplFact *> matched;
-    if (const auto found = impls_by_type_.find(type); found != impls_by_type_.end()) {
-        for (const auto id : found->second) {
-            if (id.value >= impls_.size()) {
-                continue;
-            }
-            const auto &impl = impls_[id.value];
-            if (impl.completeness == FactCompleteness::Typed) {
-                matched.push_back(&impl);
-            }
-        }
-    }
-
+[[nodiscard]] std::vector<Location>
+sorted_unique_impl_locations(std::vector<const ImplFact *> matched) {
     std::sort(matched.begin(), matched.end(), [](const ImplFact *lhs, const ImplFact *rhs) {
         if (lhs->package_id.value != rhs->package_id.value) {
             return lhs->package_id.value < rhs->package_id.value;
@@ -768,6 +778,68 @@ LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const 
             });
         if (duplicate == locations.end()) {
             locations.push_back(impl->location);
+        }
+    }
+    return locations;
+}
+
+std::vector<Location>
+LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const {
+    std::vector<const ImplFact *> matched;
+    if (const auto found = impls_by_type_.find(type); found != impls_by_type_.end()) {
+        for (const auto id : found->second) {
+            if (id.value >= impls_.size()) {
+                continue;
+            }
+            const auto &impl = impls_[id.value];
+            if (impl.completeness == FactCompleteness::Typed) {
+                matched.push_back(&impl);
+            }
+        }
+    }
+
+    return sorted_unique_impl_locations(std::move(matched));
+}
+
+std::vector<Location> LspWorkspaceIndex::implementation_locations_for_trait(DefId trait) const {
+    std::vector<const ImplFact *> matched;
+    if (trait.value < impls_by_trait_.size()) {
+        for (const auto id : impls_by_trait_[trait.value]) {
+            if (id.value >= impls_.size()) {
+                continue;
+            }
+            const auto &impl = impls_[id.value];
+            if (impl.completeness == FactCompleteness::Typed) {
+                matched.push_back(&impl);
+            }
+        }
+    }
+
+    std::sort(matched.begin(), matched.end(), [](const ImplFact *lhs, const ImplFact *rhs) {
+        if (lhs->package_id.value != rhs->package_id.value) {
+            return lhs->package_id.value < rhs->package_id.value;
+        }
+        if (lhs->source_unit_id.value != rhs->source_unit_id.value) {
+            return lhs->source_unit_id.value < rhs->source_unit_id.value;
+        }
+        return lhs->source_order < rhs->source_order;
+    });
+
+    std::vector<Location> locations;
+    locations.reserve(matched.size());
+    for (const auto *impl : matched) {
+        const auto &candidate =
+            impl->trait_location.has_value() ? *impl->trait_location : impl->location;
+        const auto duplicate =
+            std::find_if(locations.begin(), locations.end(), [&](const Location &location) {
+                return location.uri == candidate.uri &&
+                       location.range.start.line == candidate.range.start.line &&
+                       location.range.start.character == candidate.range.start.character &&
+                       location.range.end.line == candidate.range.end.line &&
+                       location.range.end.character == candidate.range.end.character;
+            });
+        if (duplicate == locations.end()) {
+            locations.push_back(candidate);
         }
     }
     return locations;
@@ -1063,6 +1135,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
             .declaration_range = impl.declaration_range,
             .target_range = impl_location_range(impl),
             .location = *location,
+            .trait_location = impl_trait_location(project.graph, impl),
             .methods = method_facts_for_impl(impl),
             .source_order = impl.index,
             .completeness = FactCompleteness::Typed,
