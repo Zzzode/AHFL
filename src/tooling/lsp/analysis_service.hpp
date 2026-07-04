@@ -18,6 +18,7 @@
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"
+#include "tooling/lsp/workspace_index.hpp"
 
 namespace ahfl::lsp {
 
@@ -35,6 +36,7 @@ struct LspToolchainCacheKey {
     std::string std_manifest;
     std::string std_identity;
     std::string scope;
+    std::string index_schema_version;
 
     [[nodiscard]] friend bool operator==(const LspToolchainCacheKey &lhs,
                                          const LspToolchainCacheKey &rhs) = default;
@@ -56,6 +58,7 @@ struct LspAnalysisSnapshot {
     ResolveResult resolve_result;
     std::unique_ptr<TypeCheckResult> type_check_result;
     std::unique_ptr<ValidationResult> validation_result;
+    std::unique_ptr<LspWorkspaceIndex> workspace_index;
 
     std::vector<LspSourceSnapshot> sources;
     std::unordered_map<std::string, std::size_t> source_by_uri;
@@ -79,6 +82,7 @@ class AnalysisService {
     void invalidate_all();
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
+    [[nodiscard]] const LspWorkspaceIndex *sysroot_index_for_uri(const std::string &uri);
     [[nodiscard]] std::vector<const LspAnalysisSnapshot *> workspace_snapshots();
     [[nodiscard]] std::size_t analysis_runs() const noexcept;
 
@@ -97,6 +101,7 @@ class AnalysisService {
     std::vector<std::filesystem::path> workspace_folders_;
     project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
+    std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> sysroot_index_cache_;
     std::size_t analysis_runs_{0};
 };
 

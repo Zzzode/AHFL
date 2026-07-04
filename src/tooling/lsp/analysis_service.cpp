@@ -15,6 +15,8 @@ namespace ahfl::lsp {
 
 namespace {
 
+constexpr std::string_view kWorkspaceIndexSchemaVersion = "lsp-workspace-index-v1";
+
 [[nodiscard]] bool is_hex(char ch) noexcept {
     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
 }
@@ -229,11 +231,10 @@ void append_primitive_home_entry_files(ProjectInput &input,
         "decimal",
     };
 
-    const auto std_package = std::find_if(graph.packages.begin(),
-                                          graph.packages.end(),
-                                          [](const package_graph::PackageNode &package) {
-                                              return package.module_prefix == "std";
-                                          });
+    const auto std_package = std::find_if(
+        graph.packages.begin(),
+        graph.packages.end(),
+        [](const package_graph::PackageNode &package) { return package.module_prefix == "std"; });
     if (std_package == graph.packages.end()) {
         return;
     }
@@ -248,45 +249,80 @@ void append_primitive_home_entry_files(ProjectInput &input,
     }
 }
 
-void append_std_exported_entry_files(ProjectInput &input,
-                                     const package_graph::PackageNode &std_package) {
-    for (const auto &module_key : std_package.exported_modules) {
-        if (module_key == "prelude") {
+void append_exported_entry_files(ProjectInput &input,
+                                 const package_graph::PackageNode &package,
+                                 bool include_prelude) {
+    for (const auto &module_key : package.exported_modules) {
+        if (!include_prelude && package.module_prefix == "std" && module_key == "prelude") {
             continue;
         }
-        append_unique_entry_file(input, exported_module_path(std_package, module_key));
+        append_unique_entry_file(input, exported_module_path(package, module_key));
     }
 }
 
+void seed_source_overlays_from_graph(ProjectInput &input, const SourceGraph &graph) {
+    for (const auto &source : graph.sources) {
+        const auto key = AnalysisService::normalized_path_key(source.path);
+        input.source_overlays.try_emplace(key, source.source.content);
+    }
+}
+
+[[nodiscard]] std::vector<LspIndexPackageRoot>
+index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
+    std::vector<LspIndexPackageRoot> roots;
+    roots.reserve(graph.packages.size());
+    for (const auto &package : graph.packages) {
+        roots.push_back(LspIndexPackageRoot{
+            .package_id = package.id,
+            .module_root = package.module_root,
+        });
+    }
+    return roots;
+}
+
 [[nodiscard]] const package_graph::PackageNode *
-std_package_for_requested_file(const package_graph::PackageGraph &graph,
-                               const std::filesystem::path &requested_file) {
+package_for_requested_file(const package_graph::PackageGraph &graph,
+                           const std::filesystem::path &requested_file) {
     const auto normalized_request =
         std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
+    const package_graph::PackageNode *best = nullptr;
     for (const auto &package : graph.packages) {
-        if (package.module_prefix != "std") {
-            continue;
-        }
         const auto module_root =
             std::filesystem::path(AnalysisService::normalized_path_key(package.module_root));
-        if (path_is_equal_or_descendant(normalized_request, module_root)) {
-            return &package;
+        if (!path_is_equal_or_descendant(normalized_request, module_root)) {
+            continue;
+        }
+        if (best == nullptr ||
+            module_root.generic_string().size() >
+                std::filesystem::path(AnalysisService::normalized_path_key(best->module_root))
+                    .generic_string()
+                    .size()) {
+            best = &package;
         }
     }
-    return nullptr;
+    return best;
 }
+
+enum class LspProjectInputMode {
+    Semantic,
+    WorkspaceIndex,
+    SysrootIndex,
+};
 
 [[nodiscard]] ProjectInput
 project_input_from_package_graph(const package_graph::PackageGraph &graph,
                                  const std::filesystem::path &requested_file,
-                                 std::unordered_map<std::string, std::string> overlays) {
+                                 std::unordered_map<std::string, std::string> overlays,
+                                 LspProjectInputMode mode) {
     ProjectInput input;
     const auto *root_package = root_package_for_lsp(graph);
     const auto fallback_entry =
         std::filesystem::path(AnalysisService::normalized_path_key(requested_file));
-    input.entry_files.push_back(root_package == nullptr
-                                    ? fallback_entry
-                                    : lsp_target_entry_file(*root_package, fallback_entry));
+    if (mode != LspProjectInputMode::SysrootIndex) {
+        input.entry_files.push_back(root_package == nullptr
+                                        ? fallback_entry
+                                        : lsp_target_entry_file(*root_package, fallback_entry));
+    }
     input.inject_prelude = false;
     input.source_overlays = std::move(overlays);
     input.enforce_package_dependencies = true;
@@ -300,10 +336,25 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
     }
-    if (const auto *requested_std_package = std_package_for_requested_file(graph, requested_file);
-        requested_std_package != nullptr) {
-        append_std_exported_entry_files(input, *requested_std_package);
+    if (mode == LspProjectInputMode::Semantic) {
+        append_primitive_home_entry_files(input, graph);
+    } else if (mode == LspProjectInputMode::SysrootIndex) {
+        for (const auto &package : graph.packages) {
+            if (package.source == package_graph::PackageSourceKind::Sysroot &&
+                package.module_prefix == "std") {
+                append_exported_entry_files(input, package, true);
+                break;
+            }
+        }
     } else {
+        const auto *requested_package = package_for_requested_file(graph, requested_file);
+        for (const auto &package : graph.packages) {
+            if (package.source == package_graph::PackageSourceKind::Sysroot &&
+                !(requested_package == &package && package.module_prefix == "std")) {
+                continue;
+            }
+            append_exported_entry_files(input, package, true);
+        }
         append_primitive_home_entry_files(input, graph);
     }
     return input;
@@ -522,6 +573,7 @@ void AnalysisService::set_toolchain_profiles(project_discovery::ToolchainProfile
 
 void AnalysisService::invalidate_all() {
     cache_.clear();
+    sysroot_index_cache_.clear();
 }
 
 const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &uri) {
@@ -553,6 +605,56 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     auto *snapshot_ptr = snapshot.get();
     cache_[uri] = std::move(snapshot);
     return snapshot_ptr;
+}
+
+const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::string &uri) {
+    const auto key = toolchain_cache_key_for_uri(uri);
+    if (!key.has_value()) {
+        return nullptr;
+    }
+
+    const auto cache_key = key->std_manifest + "#" + key->std_identity + "#" +
+                           key->index_schema_version + "#" +
+                           std::to_string(store_.workspace_revision());
+    if (const auto existing = sysroot_index_cache_.find(cache_key);
+        existing != sysroot_index_cache_.end()) {
+        return existing->second.get();
+    }
+
+    const auto document_path = path_from_uri(uri);
+    if (!document_path.has_value()) {
+        return nullptr;
+    }
+
+    std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
+    workspace_boundaries.reserve(workspace_folders_.size());
+    for (const auto &root : workspace_folders_) {
+        workspace_boundaries.push_back(project_discovery::WorkspaceBoundary{.root = root});
+    }
+
+    auto project_context =
+        project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
+            .document_path = *document_path,
+            .workspace_boundaries = std::move(workspace_boundaries),
+            .toolchains = toolchain_profiles_,
+        });
+    if (!project_context.context.has_value()) {
+        return nullptr;
+    }
+
+    Frontend frontend;
+    auto index_input = LspWorkspaceIndexInput{
+        .project = project_input_from_package_graph(project_context.context->graph,
+                                                    *document_path,
+                                                    open_document_overlays(),
+                                                    LspProjectInputMode::SysrootIndex),
+        .package_roots = index_package_roots_from_graph(project_context.context->graph),
+    };
+    auto index = std::make_unique<LspWorkspaceIndex>(
+        build_lsp_workspace_index(frontend, std::move(index_input)));
+    const auto *result = index.get();
+    sysroot_index_cache_[cache_key] = std::move(index);
+    return result;
 }
 
 std::vector<const LspAnalysisSnapshot *> AnalysisService::workspace_snapshots() {
@@ -647,6 +749,7 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
         .std_manifest = normalized_path_key(selection->profile.std_manifest),
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
+        .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
     };
 }
 
@@ -691,11 +794,25 @@ AnalysisService::build_snapshot(const std::string &uri,
             snapshot->project_aware = true;
             snapshot->package_graph_manifest = project_context.context->graph_manifest_path;
 
-            auto project_input = project_input_from_package_graph(
-                project_context.context->graph, *document_path, open_document_overlays());
+            auto overlays = open_document_overlays();
+            auto project_input = project_input_from_package_graph(project_context.context->graph,
+                                                                  *document_path,
+                                                                  overlays,
+                                                                  LspProjectInputMode::Semantic);
+            auto index_input = LspWorkspaceIndexInput{
+                .project = project_input_from_package_graph(project_context.context->graph,
+                                                            *document_path,
+                                                            std::move(overlays),
+                                                            LspProjectInputMode::WorkspaceIndex),
+                .package_roots = index_package_roots_from_graph(project_context.context->graph),
+            };
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =
                 std::make_unique<ProjectParseResult>(std::move(project_result));
+            seed_source_overlays_from_graph(index_input.project, snapshot->project_result->graph);
+            auto workspace_index = build_lsp_workspace_index(frontend, std::move(index_input));
+            snapshot->workspace_index =
+                std::make_unique<LspWorkspaceIndex>(std::move(workspace_index));
 
             for (const auto &source : snapshot->project_result->graph.sources) {
                 index_source(*snapshot,

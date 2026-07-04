@@ -46,6 +46,7 @@ class LspServer {
     void handle_shutdown(const JsonRpcRequest &req);
     void handle_completion(const JsonRpcRequest &req);
     void handle_definition(const JsonRpcRequest &req);
+    void handle_type_definition(const JsonRpcRequest &req);
     void handle_implementation(const JsonRpcRequest &req);
     void handle_hover(const JsonRpcRequest &req);
     void handle_references(const JsonRpcRequest &req);

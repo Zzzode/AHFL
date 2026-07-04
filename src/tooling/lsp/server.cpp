@@ -336,8 +336,7 @@ std_home_module_for_primitive_type(std::string_view type_name) noexcept {
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<std::string>
-module_name_for_source(const LspSourceSnapshot &source) {
+[[nodiscard]] std::optional<std::string> module_name_for_source(const LspSourceSnapshot &source) {
     if (source.program == nullptr) {
         return std::nullopt;
     }
@@ -354,8 +353,8 @@ module_name_for_source(const LspSourceSnapshot &source) {
     return std::nullopt;
 }
 
-[[nodiscard]] const LspSourceSnapshot *
-source_for_module_name(const LspAnalysisSnapshot &snapshot, std::string_view module_name) {
+[[nodiscard]] const LspSourceSnapshot *source_for_module_name(const LspAnalysisSnapshot &snapshot,
+                                                              std::string_view module_name) {
     for (const auto &source : snapshot.sources) {
         const auto declared_module = module_name_for_source(source);
         if (declared_module.has_value() && *declared_module == module_name) {
@@ -365,9 +364,8 @@ source_for_module_name(const LspAnalysisSnapshot &snapshot, std::string_view mod
     return nullptr;
 }
 
-[[nodiscard]] std::optional<SourceRange> identifier_range_at(const SourceFile &source,
-                                                             std::size_t offset,
-                                                             std::string_view identifier) {
+[[nodiscard]] std::optional<SourceRange>
+identifier_range_at(const SourceFile &source, std::size_t offset, std::string_view identifier) {
     if (identifier.empty() || offset + identifier.size() > source.content.size()) {
         return std::nullopt;
     }
@@ -377,7 +375,8 @@ source_for_module_name(const LspAnalysisSnapshot &snapshot, std::string_view mod
 
     const auto before_ok = offset == 0 || !is_identifier_char(source.content[offset - 1]);
     const auto after = offset + identifier.size();
-    const auto after_ok = after >= source.content.size() || !is_identifier_char(source.content[after]);
+    const auto after_ok =
+        after >= source.content.size() || !is_identifier_char(source.content[after]);
     if (!before_ok || !after_ok) {
         return std::nullopt;
     }
@@ -429,10 +428,8 @@ primitive_home_selection_range(const LspSourceSnapshot &source, std::string_view
     return find_identifier_range(*source.source, type_name);
 }
 
-[[nodiscard]] std::optional<Location>
-primitive_type_definition_at(const LspAnalysisSnapshot &snapshot,
-                             const LspSourceSnapshot &source,
-                             std::size_t offset) {
+[[nodiscard]] std::optional<Location> primitive_type_definition_at(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
     const auto index_iter = snapshot.hover_indices.find(hover_index_key(source));
     if (index_iter == snapshot.hover_indices.end()) {
         return std::nullopt;
@@ -465,10 +462,9 @@ primitive_type_definition_at(const LspAnalysisSnapshot &snapshot,
     };
 }
 
-[[nodiscard]] std::optional<std::string>
-primitive_type_name_at(const LspAnalysisSnapshot &snapshot,
-                       const LspSourceSnapshot &source,
-                       std::size_t offset) {
+[[nodiscard]] std::optional<std::string> primitive_type_name_at(const LspAnalysisSnapshot &snapshot,
+                                                                const LspSourceSnapshot &source,
+                                                                std::size_t offset) {
     const auto index_iter = snapshot.hover_indices.find(hover_index_key(source));
     if (index_iter == snapshot.hover_indices.end()) {
         return std::nullopt;
@@ -482,47 +478,14 @@ primitive_type_name_at(const LspAnalysisSnapshot &snapshot,
     return target->local_name;
 }
 
-[[nodiscard]] std::optional<std::string>
-primitive_normalized_type_key(std::string_view type_name) {
-    if (type_name == "Unit") {
-        return "primitive:Unit";
-    }
-    if (type_name == "Bool") {
-        return "primitive:Bool";
-    }
-    if (type_name == "Int") {
-        return "primitive:Int";
-    }
-    if (type_name == "Float") {
-        return "primitive:Float";
-    }
-    if (type_name == "String") {
-        return "primitive:String";
-    }
-    if (type_name == "UUID") {
-        return "primitive:UUID";
-    }
-    if (type_name == "Timestamp") {
-        return "primitive:Timestamp";
-    }
-    if (type_name == "Duration") {
-        return "primitive:Duration";
-    }
-    if (type_name == "Decimal") {
-        return "primitive:Decimal:0";
-    }
-    return std::nullopt;
-}
-
 [[nodiscard]] bool has_extent(SourceRange range) noexcept {
     return range.end_offset > range.begin_offset;
 }
 
-[[nodiscard]] std::optional<Location>
-location_for_source_range(const LspAnalysisSnapshot &snapshot,
-                          std::optional<SourceId> source_id,
-                          const LspSourceSnapshot &fallback,
-                          SourceRange range) {
+[[nodiscard]] std::optional<Location> location_for_source_range(const LspAnalysisSnapshot &snapshot,
+                                                                std::optional<SourceId> source_id,
+                                                                const LspSourceSnapshot &fallback,
+                                                                SourceRange range) {
     const auto *source = &fallback;
     if (source_id.has_value()) {
         if (const auto *resolved = snapshot.source_for_id(*source_id); resolved != nullptr) {
@@ -558,6 +521,16 @@ struct OrderedLocation {
            lhs.range.start.character == rhs.range.start.character &&
            lhs.range.end.line == rhs.range.end.line &&
            lhs.range.end.character == rhs.range.end.character;
+}
+
+void push_unique_location(std::vector<Location> &locations, Location location) {
+    const auto duplicate =
+        std::find_if(locations.begin(), locations.end(), [&](const Location &existing) {
+            return same_location(existing, location);
+        });
+    if (duplicate == locations.end()) {
+        locations.push_back(std::move(location));
+    }
 }
 
 void push_impl_location(std::vector<OrderedLocation> &locations,
@@ -601,10 +574,22 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
     return result;
 }
 
-[[nodiscard]] std::vector<Location>
-implementation_locations_for_symbol(const LspAnalysisSnapshot &snapshot,
-                                    const LspSourceSnapshot &source,
-                                    const Symbol &symbol) {
+[[nodiscard]] std::vector<Location> implementation_locations_for_symbol(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, const Symbol &symbol) {
+    if ((symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum) &&
+        snapshot.workspace_index != nullptr) {
+        const auto def = snapshot.workspace_index->find_def(symbol.kind, symbol.canonical_name);
+        if (def.has_value()) {
+            auto locations = snapshot.workspace_index->implementation_locations_for_type(TypeKey{
+                .kind = TypeKey::Kind::Nominal,
+                .def = *def,
+            });
+            if (!locations.empty()) {
+                return locations;
+            }
+        }
+    }
+
     if (snapshot.type_check_result == nullptr) {
         return {};
     }
@@ -632,11 +617,20 @@ implementation_locations_for_symbol(const LspAnalysisSnapshot &snapshot,
 primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
                                    const LspSourceSnapshot &source,
                                    std::string_view primitive_name) {
-    if (snapshot.type_check_result == nullptr) {
+    const auto primitive = primitive_kind_from_spelling(primitive_name);
+    if (!primitive.has_value()) {
         return {};
     }
-    const auto normalized_key = primitive_normalized_type_key(primitive_name);
-    if (!normalized_key.has_value()) {
+
+    if (snapshot.workspace_index != nullptr) {
+        auto locations =
+            snapshot.workspace_index->implementation_locations_for_primitive(*primitive);
+        if (!locations.empty()) {
+            return locations;
+        }
+    }
+
+    if (snapshot.type_check_result == nullptr) {
         return {};
     }
 
@@ -646,7 +640,8 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
         if (impl.target_type == nullptr) {
             continue;
         }
-        if (TypeEnvironment::normalize_type_key(*impl.target_type) == *normalized_key) {
+        if (type_key_for_type(*impl.target_type) ==
+            TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = *primitive}) {
             push_impl_location(ordered, snapshot, source, impl, false);
         }
     }
@@ -654,10 +649,8 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
     return finalize_impl_locations(std::move(ordered));
 }
 
-[[nodiscard]] std::vector<Location>
-primitive_type_definition_locations_at(const LspAnalysisSnapshot &snapshot,
-                                       const LspSourceSnapshot &source,
-                                       std::size_t offset) {
+[[nodiscard]] std::vector<Location> primitive_type_definition_locations_at(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
     std::vector<Location> locations;
     if (const auto home = primitive_type_definition_at(snapshot, source, offset);
         home.has_value()) {
@@ -667,16 +660,6 @@ primitive_type_definition_locations_at(const LspAnalysisSnapshot &snapshot,
     const auto primitive_name = primitive_type_name_at(snapshot, source, offset);
     if (!primitive_name.has_value()) {
         return locations;
-    }
-    for (const auto &impl_location :
-         primitive_implementation_locations(snapshot, source, *primitive_name)) {
-        const auto duplicate =
-            std::find_if(locations.begin(), locations.end(), [&](const Location &location) {
-                return same_location(location, impl_location);
-            });
-        if (duplicate == locations.end()) {
-            locations.push_back(impl_location);
-        }
     }
     return locations;
 }
@@ -988,16 +971,17 @@ void add_toolchain_profile_ambiguity(project_discovery::ToolchainProfileSet &pro
                    "' has multiple AHFL sysroots: '" + existing_std_manifest.generic_string() +
                    "' and '" + new_std_manifest.generic_string() + "'",
         .range = {},
-        .related = {
-            package_graph::Diagnostic::Related{
-                .path = existing_std_manifest,
-                .message = "existing sysroot profile for this workspace folder",
+        .related =
+            {
+                package_graph::Diagnostic::Related{
+                    .path = existing_std_manifest,
+                    .message = "existing sysroot profile for this workspace folder",
+                },
+                package_graph::Diagnostic::Related{
+                    .path = new_std_manifest,
+                    .message = "conflicting sysroot profile for this workspace folder",
+                },
             },
-            package_graph::Diagnostic::Related{
-                .path = new_std_manifest,
-                .message = "conflicting sysroot profile for this workspace folder",
-            },
-        },
     });
 }
 
@@ -1770,6 +1754,8 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_completion(req);
     } else if (req.method == "textDocument/definition") {
         handle_definition(req);
+    } else if (req.method == "textDocument/typeDefinition") {
+        handle_type_definition(req);
     } else if (req.method == "textDocument/implementation") {
         handle_implementation(req);
     } else if (req.method == "textDocument/hover") {
@@ -2139,6 +2125,61 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
     transport_.send_response(resp);
 }
 
+void LspServer::handle_type_definition(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto offset = offset_at(*source->source, position);
+    if (auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
+        !locations.empty()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_location_or_array(locations);
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto target = symbol_at(*snapshot, *source, offset);
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    if (!symbol.has_value() ||
+        (symbol->get().kind != SymbolKind::Struct && symbol->get().kind != SymbolKind::Enum &&
+         symbol->get().kind != SymbolKind::TypeAlias && symbol->get().kind != SymbolKind::Trait)) {
+        send_null(transport_, req.id);
+        return;
+    }
+    const auto location = symbol_location(*snapshot, symbol->get(), *source);
+    if (!location.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_location(*location);
+    transport_.send_response(resp);
+}
+
 void LspServer::handle_implementation(const JsonRpcRequest &req) {
     if (!req.params) {
         send_empty_array(transport_, req.id);
@@ -2169,6 +2210,16 @@ void LspServer::handle_implementation(const JsonRpcRequest &req) {
     } else if (const auto primitive_name = primitive_type_name_at(*snapshot, *source, offset);
                primitive_name.has_value()) {
         locations = primitive_implementation_locations(*snapshot, *source, *primitive_name);
+        if (const auto primitive = primitive_kind_from_spelling(*primitive_name);
+            primitive.has_value()) {
+            if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
+                sysroot_index != nullptr) {
+                for (const auto &location :
+                     sysroot_index->implementation_locations_for_primitive(*primitive)) {
+                    push_unique_location(locations, location);
+                }
+            }
+        }
     }
 
     JsonRpcResponse resp;
@@ -2229,7 +2280,8 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
     }
 
     const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
-    auto result = json::JsonValue::make_array();
+    std::vector<Location> locations;
+
     if (target.has_value()) {
         bool include_declaration = false;
         if (const auto *context = req.params->get("context"); context != nullptr) {
@@ -2245,7 +2297,19 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
             if (symbol.has_value()) {
                 if (const auto location = symbol_location(*snapshot, symbol->get(), *source);
                     location.has_value()) {
-                    result->push(serialize_location(*location));
+                    push_unique_location(locations, *location);
+                }
+            }
+        }
+
+        const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+        if (symbol.has_value() && snapshot->workspace_index != nullptr) {
+            const auto def = snapshot->workspace_index->find_def(symbol->get().kind,
+                                                                 symbol->get().canonical_name);
+            if (def.has_value()) {
+                for (const auto &location :
+                     snapshot->workspace_index->reference_locations_for_def(*def)) {
+                    push_unique_location(locations, location);
                 }
             }
         }
@@ -2254,10 +2318,15 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
             if (reference.target == *target) {
                 if (const auto location = reference_location(*snapshot, reference, *source);
                     location.has_value()) {
-                    result->push(serialize_location(*location));
+                    push_unique_location(locations, *location);
                 }
             }
         }
+    }
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &location : locations) {
+        result->push(serialize_location(location));
     }
 
     JsonRpcResponse resp;
@@ -2523,6 +2592,46 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
         if (snapshot == nullptr) {
             continue;
         }
+        if (snapshot->workspace_index != nullptr) {
+            for (const auto *symbol : snapshot->workspace_index->workspace_symbols(query)) {
+                if (symbol == nullptr) {
+                    continue;
+                }
+                const auto key = symbol->canonical_name + "@" + symbol->location.uri + ":" +
+                                 std::to_string(symbol->location.range.start.line) + ":" +
+                                 std::to_string(symbol->location.range.start.character);
+                if (!emitted.insert(key).second) {
+                    continue;
+                }
+
+                SymbolInformation info;
+                info.name = symbol->local_name;
+                info.kind = to_lsp_symbol_kind(symbol->kind);
+                info.location = symbol->location;
+                result->push(serialize_symbol_information(info));
+            }
+        }
+        if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(snapshot->requested_uri);
+            sysroot_index != nullptr) {
+            for (const auto *symbol : sysroot_index->workspace_symbols(query)) {
+                if (symbol == nullptr) {
+                    continue;
+                }
+                const auto key = symbol->canonical_name + "@" + symbol->location.uri + ":" +
+                                 std::to_string(symbol->location.range.start.line) + ":" +
+                                 std::to_string(symbol->location.range.start.character);
+                if (!emitted.insert(key).second) {
+                    continue;
+                }
+
+                SymbolInformation info;
+                info.name = symbol->local_name;
+                info.kind = to_lsp_symbol_kind(symbol->kind);
+                info.location = symbol->location;
+                result->push(serialize_symbol_information(info));
+            }
+        }
+
         const auto *fallback = snapshot->source_for_uri(snapshot->requested_uri);
         if (fallback == nullptr) {
             continue;

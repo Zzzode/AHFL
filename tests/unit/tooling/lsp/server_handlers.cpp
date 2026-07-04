@@ -11,6 +11,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -753,6 +754,8 @@ void test_prepare_rename_returns_range_or_null() {
           "prepareRename.capability_renames_object");
     check(init_response.find("\"prepareProvider\":true") != std::string::npos,
           "prepareRename.capability_prepare_provider");
+    check(init_response.find("\"typeDefinitionProvider\":true") != std::string::npos,
+          "typeDefinition.capability_provider");
 
     const std::string decl_params =
         R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":7}})";
@@ -1349,19 +1352,25 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
         main_uri + R"("},"position":{"line":4,"character":22}}})";
     const std::string workspace_symbol =
         R"({"jsonrpc":"2.0","id":3,"method":"workspace/symbol","params":{"query":"Msg"}})";
+    const std::string type_definition =
+        R"({"jsonrpc":"2.0","id":5,"method":"textDocument/typeDefinition","params":{"textDocument":{"uri":")" +
+        main_uri + R"("},"position":{"line":4,"character":22}}})";
     const std::string rename =
         R"({"jsonrpc":"2.0","id":4,"method":"textDocument/rename","params":{"textDocument":{"uri":")" +
         main_uri + R"("},"position":{"line":4,"character":22},"newName":"Message"}})";
-    const std::string shutdown = R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})";
+    const std::string shutdown = R"({"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}})";
 
-    const auto output =
-        run_lsp_messages({init, open_main, definition, workspace_symbol, rename, shutdown});
+    const auto output = run_lsp_messages(
+        {init, open_main, definition, workspace_symbol, rename, type_definition, shutdown});
+    const auto type_definition_response = response_body_for_id(output, 5);
     check(output.find(types_uri) != std::string::npos, "project.definition_targets_imported_uri");
     check(output.find("\"name\":\"Msg\"") != std::string::npos,
           "project.workspace_symbol_includes_unopened_source");
     check(output.find("Message") != std::string::npos, "project.rename_contains_new_name");
     check(output.find(main_uri) != std::string::npos, "project.rename_edits_main_uri");
     check(output.find(types_uri) != std::string::npos, "project.rename_edits_decl_uri");
+    check(type_definition_response.find(types_uri) != std::string::npos,
+          "project.type_definition_targets_imported_uri");
 }
 
 void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
@@ -1401,6 +1410,180 @@ void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
           "project.workspace_symbol_deduplicates_symbol");
     check(response.find(types_uri) != std::string::npos,
           "project.workspace_symbol_dedup_preserves_location");
+}
+
+void test_project_references_include_indexed_unopened_source() {
+    const auto root = make_temp_project("project_references_index");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    const auto extra_path = root / "src" / "extra.ahfl";
+    write_package_manifest(root, "lsp-project-references", "app", "\"main\", \"types\", \"extra\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    const std::string extra_source = "module app::extra;\n"
+                                     "import app::types as types;\n"
+                                     "\n"
+                                     "struct Other {\n"
+                                     "    payload: types::Msg;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+    write_file(extra_path, extra_source);
+
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto extra_uri = AnalysisService::uri_from_path(extra_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = types_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = types_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(types_uri);
+        check(snapshot != nullptr, "references.index_model.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->workspace_index != nullptr, "references.index_model.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto &symbols = snapshot->workspace_index->symbols();
+                const auto msg_symbol =
+                    std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                        return symbol.canonical_name == "app::types::Msg";
+                    });
+                check(msg_symbol != symbols.end(), "references.index_model.msg_symbol_fact");
+                if (msg_symbol != symbols.end()) {
+                    check(msg_symbol->package_id.value != std::numeric_limits<std::size_t>::max(),
+                          "references.index_model.msg_symbol_has_package_id");
+                }
+            }
+        }
+    }
+
+    const auto refs_position = position_of(types_source, "Msg");
+    const std::string references =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":)" +
+        hover_params_at(types_uri, refs_position) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(types_uri, 1, types_source),
+        references,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(main_uri) != std::string::npos,
+          "references.index_includes_semantic_import_source");
+    check(response.find(extra_uri) != std::string::npos,
+          "references.index_includes_unopened_exported_source");
+}
+
+void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
+    const auto root = make_temp_project("project_index_partial_typecheck");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto broken_path = root / "src" / "broken.ahfl";
+    write_package_manifest(root, "lsp-project-partial-index", "app", "\"main\", \"broken\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string broken_source = "module app::broken;\n"
+                                      "\n"
+                                      "struct BrokenIndexed {\n"
+                                      "    value: Int;\n"
+                                      "}\n"
+                                      "\n"
+                                      "const bad: Int = \"not an int\";\n";
+    write_file(main_path, main_source);
+    write_file(broken_path, broken_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto broken_uri = AnalysisService::uri_from_path(broken_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_symbol.partial_index.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(broken_uri) == nullptr,
+                  "workspace_symbol.partial_index.broken_not_in_semantic_sources");
+        }
+    }
+
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"BrokenIndexed"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(broken_uri) != std::string::npos,
+          "workspace_symbol.partial_index_includes_typecheck_failed_export");
+    check(response.find("BrokenIndexed") != std::string::npos,
+          "workspace_symbol.partial_index_includes_typecheck_failed_symbol");
+}
+
+void test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails() {
+    const auto root = make_temp_project("project_index_parse_skeleton");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto broken_path = root / "src" / "broken.ahfl";
+    write_package_manifest(root, "lsp-project-parse-skeleton", "app", "\"main\", \"broken\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string broken_source = "module app::broken;\n"
+                                      "\n"
+                                      "struct ParsedBeforeError {\n"
+                                      "    value: Int;\n"
+                                      "}\n"
+                                      "\n"
+                                      "fn still_broken(\n";
+    write_file(main_path, main_source);
+    write_file(broken_path, broken_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto broken_uri = AnalysisService::uri_from_path(broken_path);
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"ParsedBeforeError"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(broken_uri) != std::string::npos,
+          "workspace_symbol.parse_skeleton_includes_parse_failed_export");
+    check(response.find("ParsedBeforeError") != std::string::npos,
+          "workspace_symbol.parse_skeleton_includes_parse_failed_symbol");
 }
 
 void test_project_open_document_overlay_drives_definition() {
@@ -2034,6 +2217,9 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
     const std::string fn_param_int_definition =
         R"({"jsonrpc":"2.0","id":9,"method":"textDocument/definition","params":)" +
         hover_params_at(uuid_uri, position_of(uuid_source, "Int) -> Unit")) + R"(})";
+    const std::string enum_bool_type_definition =
+        R"({"jsonrpc":"2.0","id":10,"method":"textDocument/typeDefinition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Bool),")) + R"(})";
 
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
@@ -2046,7 +2232,8 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
         enum_bool_definition,
         enum_named_bool_definition,
         fn_param_int_definition,
-        R"({"jsonrpc":"2.0","id":10,"method":"shutdown","params":{}})",
+        enum_bool_type_definition,
+        R"({"jsonrpc":"2.0","id":11,"method":"shutdown","params":{}})",
     });
     const auto bool_response = response_body_for_id(output, 2);
     const auto int_response = response_body_for_id(output, 3);
@@ -2056,6 +2243,7 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
     const auto enum_bool_response = response_body_for_id(output, 7);
     const auto enum_named_bool_response = response_body_for_id(output, 8);
     const auto fn_param_int_response = response_body_for_id(output, 9);
+    const auto enum_bool_type_response = response_body_for_id(output, 10);
 
     check(bool_response.find(bool_uri) != std::string::npos,
           "definition.primitive_bool_targets_std_bool_uri");
@@ -2090,6 +2278,10 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
           "definition.primitive_fn_param_int_targets_std_int_uri");
     check(fn_param_int_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
           "definition.primitive_fn_param_int_targets_impl_selection");
+    check(enum_bool_type_response.find(bool_uri) != std::string::npos,
+          "typeDefinition.primitive_enum_tuple_payload_bool_targets_std_bool_uri");
+    check(enum_bool_type_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "typeDefinition.primitive_enum_tuple_payload_bool_targets_impl_selection");
 }
 
 void test_implementation_returns_all_impl_blocks_for_type() {
@@ -2118,12 +2310,72 @@ void test_implementation_returns_all_impl_blocks_for_type() {
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     const auto response = response_body_for_id(output, 2);
-    check(count_substring(response, uri) == 2,
-          "implementation.type_returns_two_impl_locations");
+    check(count_substring(response, uri) == 2, "implementation.type_returns_two_impl_locations");
     check(response.find(R"("start":{"line":4,"character":5})") != std::string::npos,
           "implementation.type_first_impl_selection");
     check(response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
           "implementation.type_second_impl_selection");
+}
+
+void test_implementation_uses_index_for_unopened_nominal_impls() {
+    const auto root = make_temp_project("implementation_index_nominal_impls");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    const auto extra_path = root / "src" / "extra.ahfl";
+    write_package_manifest(
+        root, "lsp-implementation-index", "app", "\"main\", \"types\", \"extra\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {}\n";
+    const std::string extra_source = "module app::extra;\n"
+                                     "import app::types as types;\n"
+                                     "\n"
+                                     "impl types::Msg {}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+    write_file(extra_path, extra_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto extra_uri = AnalysisService::uri_from_path(extra_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "implementation.nominal_index.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(extra_uri) == nullptr,
+                  "implementation.nominal_index.extra_not_in_semantic_sources");
+        }
+    }
+
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(main_uri, position_of(main_source, "Msg;")) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        implementation,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(extra_uri) != std::string::npos,
+          "implementation.nominal_index_includes_unopened_exported_impl");
+    check(response.find(R"("start":{"line":3,"character":5})") != std::string::npos,
+          "implementation.nominal_index_targets_impl_selection");
 }
 
 void test_std_exported_impl_modules_feed_primitive_candidates() {
@@ -2132,17 +2384,18 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
     const auto collections_path = std_root / "collections.ahfl";
     const auto int_path = std_root / "int.ahfl";
     const auto fmt_path = std_root / "fmt.ahfl";
-    const std::string collections_source =
-        "module std::collections;\n"
-        "\n"
-        "struct Set<T> {}\n"
-        "\n"
-        "@builtin(\"set_raw_size\")\n"
-        "fn set_raw_size<T>(s: Set<T>) -> Int effect Pure;\n";
+    const std::string collections_source = "module std::collections;\n"
+                                           "\n"
+                                           "struct Set<T> {}\n"
+                                           "\n"
+                                           "@builtin(\"set_raw_size\")\n"
+                                           "fn set_raw_size<T>(s: Set<T>) -> Int effect Pure;\n";
     const std::string int_source = "module std::int;\n"
                                    "\n"
                                    "impl Int {}\n";
     const std::string fmt_source = "module std::fmt;\n"
+                                   "\n"
+                                   "fn format(x: Int) -> String effect Pure;\n"
                                    "\n"
                                    "impl Int {}\n";
     write_file(std_root / "ahfl.toml",
@@ -2175,6 +2428,27 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
     const auto collections_uri = AnalysisService::uri_from_path(collections_path);
     const auto int_uri = AnalysisService::uri_from_path(int_path);
     const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = collections_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = collections_source,
+        });
+
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(root));
+        const auto *snapshot = analysis.snapshot_for_uri(collections_uri);
+        check(snapshot != nullptr, "workspace_index.std_impl.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(fmt_uri) == nullptr,
+                  "workspace_index.std_impl.fmt_not_in_semantic_sources");
+            check(snapshot->workspace_index != nullptr, "workspace_index.std_impl.index_exists");
+        }
+    }
+
     const auto int_position = position_of(collections_source, "Int effect");
     const std::string definition =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
@@ -2182,24 +2456,133 @@ void test_std_exported_impl_modules_feed_primitive_candidates() {
     const std::string implementation =
         R"({"jsonrpc":"2.0","id":3,"method":"textDocument/implementation","params":)" +
         hover_params_at(collections_uri, int_position) + R"(})";
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":4,"method":"workspace/symbol","params":{"query":"format"}})";
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
         did_open_body(collections_uri, 1, collections_source),
         definition,
         implementation,
-        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})",
     });
     const auto definition_response = response_body_for_id(output, 2);
     const auto implementation_response = response_body_for_id(output, 3);
+    const auto workspace_symbol_response = response_body_for_id(output, 4);
 
     check(definition_response.find(int_uri) != std::string::npos,
           "definition.primitive_int_includes_canonical_home");
-    check(definition_response.find(fmt_uri) != std::string::npos,
-          "definition.primitive_int_includes_exported_fmt_impl");
+    check(definition_response.find(fmt_uri) == std::string::npos,
+          "definition.primitive_int_does_not_include_exported_fmt_impl");
     check(implementation_response.find(int_uri) != std::string::npos,
           "implementation.primitive_int_includes_canonical_home_impl");
     check(implementation_response.find(fmt_uri) != std::string::npos,
           "implementation.primitive_int_includes_exported_fmt_impl");
+    check(workspace_symbol_response.find(fmt_uri) != std::string::npos,
+          "workspace_symbol.index_includes_exported_fmt_function");
+    check(workspace_symbol_response.find("format") != std::string::npos,
+          "workspace_symbol.index_includes_exported_fmt_name");
+}
+
+void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
+    const auto root = make_temp_project("user_package_lazy_sysroot_index");
+    const auto app_root = root / "app";
+    const auto std_root = root / "std";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto int_path = std_root / "int.ahfl";
+    const auto fmt_path = std_root / "fmt.ahfl";
+    const auto string_path = std_root / "string.ahfl";
+    write_package_manifest(app_root,
+                           "lazy-sysroot-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"int\", \"fmt\", \"string\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"primitive_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(int_path, "module std::int;\n\nimpl Int {}\n");
+    write_file(fmt_path,
+               "module std::fmt;\n"
+               "\n"
+               "fn format_int(x: Int) -> String effect Pure;\n"
+               "\n"
+               "impl Int {}\n");
+    write_file(string_path, "module std::string;\n\nimpl String {}\n");
+
+    const std::string app_source = "module app::main;\n"
+                                   "\n"
+                                   "fn keep(x: Int) -> Int effect Pure decreases 0 {\n"
+                                   "    return x;\n"
+                                   "}\n";
+    write_file(app_path, app_source);
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    const auto int_uri = AnalysisService::uri_from_path(int_path);
+    const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = app_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = app_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(root));
+        const auto *snapshot = analysis.snapshot_for_uri(app_uri);
+        check(snapshot != nullptr, "lazy_sysroot.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(fmt_uri) == nullptr,
+                  "lazy_sysroot.fmt_not_in_semantic_sources");
+        }
+    }
+
+    const auto int_position = position_of(app_source, "Int) ->");
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(app_uri, int_position) + R"(})";
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":3,"method":"workspace/symbol","params":{"query":"format_int"}})";
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(app_uri, 1, app_source),
+        implementation,
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+    const auto implementation_response = response_body_for_id(output, 2);
+    const auto workspace_symbol_response = response_body_for_id(output, 3);
+
+    check(implementation_response.find(int_uri) != std::string::npos,
+          "lazy_sysroot.implementation_includes_primitive_home");
+    check(implementation_response.find(fmt_uri) != std::string::npos,
+          "lazy_sysroot.implementation_includes_fmt_impl");
+    check(workspace_symbol_response.find(fmt_uri) != std::string::npos,
+          "lazy_sysroot.workspace_symbol_includes_fmt");
+    check(workspace_symbol_response.find("format_int") != std::string::npos,
+          "lazy_sysroot.workspace_symbol_includes_fmt_name");
 }
 
 void write_minimal_std_sources(const std::filesystem::path &std_root,
@@ -2831,6 +3214,8 @@ void test_analysis_snapshot_cache_key_records_toolchain_identity() {
           "analysis_toolchain_cache_key.std_identity");
     check(first->toolchain_cache_key->scope == "workspace-folder-uri",
           "analysis_toolchain_cache_key.scope");
+    check(first->toolchain_cache_key->index_schema_version == "lsp-workspace-index-v1",
+          "analysis_toolchain_cache_key.index_schema_version");
 
     analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, sysroot_b));
     const auto *third = analysis.snapshot_for_uri(uri);
@@ -4532,6 +4917,9 @@ int main() {
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
+    test_project_references_include_indexed_unopened_source();
+    test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
+    test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
     test_project_open_document_overlay_drives_definition();
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
@@ -4542,7 +4930,9 @@ int main() {
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_definition_targets_source_sysroot_primitive_home_modules();
     test_implementation_returns_all_impl_blocks_for_type();
+    test_implementation_uses_index_for_unopened_nominal_impls();
     test_std_exported_impl_modules_feed_primitive_candidates();
+    test_user_package_lazy_sysroot_index_feeds_primitive_candidates();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();

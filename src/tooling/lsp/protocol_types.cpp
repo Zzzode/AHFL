@@ -106,6 +106,10 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
         obj->set("definitionProvider", json::JsonValue::make_bool(true));
     }
 
+    if (caps.type_definition_provider) {
+        obj->set("typeDefinitionProvider", json::JsonValue::make_bool(true));
+    }
+
     if (caps.implementation_provider) {
         obj->set("implementationProvider", json::JsonValue::make_bool(true));
     }

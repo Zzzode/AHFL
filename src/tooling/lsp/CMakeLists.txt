@@ -12,6 +12,7 @@ add_library(ahfl_tooling_lsp STATIC
     selection_range.cpp
     semantic_tokens.cpp
     server.cpp
+    workspace_index.cpp
 )
 
 target_link_libraries(ahfl_tooling_lsp
