@@ -217,6 +217,7 @@ class LspWorkspaceIndex {
     [[nodiscard]] std::vector<Location> reference_locations_for_def(DefId def) const;
     [[nodiscard]] std::vector<Location>
     implementation_locations_for_type(const TypeKey &type) const;
+    [[nodiscard]] std::vector<Location> implementation_locations_for_nominal_def(DefId def) const;
     [[nodiscard]] std::vector<Location> implementation_locations_for_trait(DefId trait) const;
     [[nodiscard]] std::vector<Location>
     implementation_locations_for_primitive(PrimitiveKind kind) const;
@@ -231,6 +232,7 @@ class LspWorkspaceIndex {
     std::vector<std::vector<ReferenceFactId>> references_by_def_;
     std::vector<std::vector<IndexDiagnosticFactId>> diagnostics_by_source_;
     std::vector<std::vector<WorkspaceImplId>> impls_by_trait_;
+    std::vector<std::vector<WorkspaceImplId>> impls_by_nominal_def_;
     std::unordered_map<TypeKey, std::vector<WorkspaceImplId>, TypeKeyHash> impls_by_type_;
 };
 

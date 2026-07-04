@@ -730,10 +730,8 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
         snapshot.workspace_index != nullptr) {
         const auto def = snapshot.workspace_index->find_def(symbol.kind, symbol.canonical_name);
         if (def.has_value()) {
-            auto locations = snapshot.workspace_index->implementation_locations_for_type(TypeKey{
-                .kind = TypeKey::Kind::Nominal,
-                .def = *def,
-            });
+            auto locations =
+                snapshot.workspace_index->implementation_locations_for_nominal_def(*def);
             if (!locations.empty()) {
                 return locations;
             }

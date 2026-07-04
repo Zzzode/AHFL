@@ -2914,6 +2914,100 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
           "implementation.nominal_index_targets_impl_selection");
 }
 
+void test_implementation_uses_nominal_def_index_for_generic_impls() {
+    const auto root = make_temp_project("implementation_index_generic_nominal_impls");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    write_package_manifest(root, "lsp-implementation-generic-index", "app", "\"main\", \"types\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Box<Int>;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Box<T> {}\n"
+                                     "\n"
+                                     "impl<T> Box<T> {\n"
+                                     "    fn size(self: Box<T>) -> Int effect Pure decreases 0 {\n"
+                                     "        return 0;\n"
+                                     "    }\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "implementation.generic_nominal_index.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->workspace_index != nullptr,
+                  "implementation.generic_nominal_index.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto &symbols = snapshot->workspace_index->symbols();
+                const auto box_symbol =
+                    std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                        return symbol.canonical_name == "app::types::Box" &&
+                               symbol.kind == ahfl::SymbolKind::Struct;
+                    });
+                check(box_symbol != symbols.end(),
+                      "implementation.generic_nominal_index.box_symbol_fact_exists");
+                const auto &impls = snapshot->workspace_index->impls();
+                const auto generic_impl =
+                    std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
+                        return impl.location.uri == types_uri;
+                    });
+                check(generic_impl != impls.end(),
+                      "implementation.generic_nominal_index.impl_fact_exists");
+                if (generic_impl != impls.end()) {
+                    check(generic_impl->target_type.kind == TypeKey::Kind::Nominal,
+                          "implementation.generic_nominal_index.impl_target_nominal");
+                    check(!generic_impl->target_type.type_args.empty(),
+                          "implementation.generic_nominal_index.impl_target_has_type_args");
+                }
+                if (box_symbol != symbols.end()) {
+                    const auto box_impl_locations =
+                        snapshot->workspace_index->implementation_locations_for_nominal_def(
+                            box_symbol->def_id);
+                    check(std::find_if(box_impl_locations.begin(),
+                                       box_impl_locations.end(),
+                                       [&](const Location &location) {
+                                           return location.uri == types_uri;
+                                       }) != box_impl_locations.end(),
+                          "implementation.generic_nominal_index.nominal_def_query_includes_impl");
+                }
+            }
+        }
+    }
+
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(main_uri, position_of(main_source, "Box<Int>")) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        implementation,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(types_uri) != std::string::npos,
+          "implementation.generic_nominal_index_includes_generic_impl");
+    check(response.find("\"start\":{\"line\":4") != std::string::npos,
+          "implementation.generic_nominal_index_targets_impl_line");
+}
+
 void test_std_exported_impl_modules_feed_primitive_candidates() {
     const auto root = make_temp_project("std_exported_impl_candidates");
     const auto std_root = root / "std";
@@ -5847,6 +5941,7 @@ int main() {
     test_definition_targets_source_sysroot_primitive_home_modules();
     test_implementation_returns_all_impl_blocks_for_type();
     test_implementation_uses_index_for_unopened_nominal_impls();
+    test_implementation_uses_nominal_def_index_for_generic_impls();
     test_std_exported_impl_modules_feed_primitive_candidates();
     test_user_package_lazy_sysroot_index_feeds_primitive_candidates();
     test_watched_sysroot_file_change_refreshes_primitive_candidates();

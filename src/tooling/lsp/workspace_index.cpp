@@ -639,6 +639,12 @@ void LspWorkspaceIndex::add_impl(ImplFact fact) {
     const auto id = WorkspaceImplId{impls_.size()};
     if (fact.completeness == FactCompleteness::Typed) {
         impls_by_type_[fact.target_type].push_back(id);
+        if (fact.target_type.kind == TypeKey::Kind::Nominal && fact.target_type.def.has_value()) {
+            if (fact.target_type.def->value >= impls_by_nominal_def_.size()) {
+                impls_by_nominal_def_.resize(fact.target_type.def->value + 1);
+            }
+            impls_by_nominal_def_[fact.target_type.def->value].push_back(id);
+        }
         if (fact.trait_def.has_value()) {
             if (fact.trait_def->value >= impls_by_trait_.size()) {
                 impls_by_trait_.resize(fact.trait_def->value + 1);
@@ -797,8 +803,27 @@ LspWorkspaceIndex::implementation_locations_for_type(const TypeKey &type) const 
             }
         }
     }
+    if (type.kind == TypeKey::Kind::Nominal && type.def.has_value() &&
+        type.def->value < impls_by_nominal_def_.size()) {
+        for (const auto id : impls_by_nominal_def_[type.def->value]) {
+            if (id.value >= impls_.size()) {
+                continue;
+            }
+            const auto &impl = impls_[id.value];
+            if (impl.completeness == FactCompleteness::Typed) {
+                matched.push_back(&impl);
+            }
+        }
+    }
 
     return sorted_unique_impl_locations(std::move(matched));
+}
+
+std::vector<Location> LspWorkspaceIndex::implementation_locations_for_nominal_def(DefId def) const {
+    return implementation_locations_for_type(TypeKey{
+        .kind = TypeKey::Kind::Nominal,
+        .def = def,
+    });
 }
 
 std::vector<Location> LspWorkspaceIndex::implementation_locations_for_trait(DefId trait) const {
