@@ -295,6 +295,7 @@ struct ServerCapabilities {
     bool text_document_sync_full{true};
     bool completion_provider{true};
     bool definition_provider{true};
+    bool implementation_provider{true};
     bool hover_provider{true};
     bool references_provider{true};
     bool rename_provider{true};

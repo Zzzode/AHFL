@@ -2092,6 +2092,40 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
           "definition.primitive_fn_param_int_targets_impl_selection");
 }
 
+void test_implementation_returns_all_impl_blocks_for_type() {
+    const auto root = make_temp_project("implementation_type_impl_candidates");
+    const auto path = root / "main.ahfl";
+    const std::string source = "module app;\n"
+                               "\n"
+                               "struct Box {}\n"
+                               "\n"
+                               "impl Box {}\n"
+                               "impl Box {}\n"
+                               "\n"
+                               "fn keep(x: Box) -> Box effect Pure decreases 0 {\n"
+                               "    return x;\n"
+                               "}\n";
+    write_file(path, source);
+
+    const auto uri = AnalysisService::uri_from_path(path);
+    const std::string implementation =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(uri, position_of(source, "Box) ->")) + R"(})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(uri, 1, source),
+        implementation,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(count_substring(response, uri) == 2,
+          "implementation.type_returns_two_impl_locations");
+    check(response.find(R"("start":{"line":4,"character":5})") != std::string::npos,
+          "implementation.type_first_impl_selection");
+    check(response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
+          "implementation.type_second_impl_selection");
+}
+
 void write_minimal_std_sources(const std::filesystem::path &std_root,
                                const std::filesystem::path &json_path,
                                std::string_view json_source) {
@@ -4431,6 +4465,7 @@ int main() {
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_definition_targets_source_sysroot_primitive_home_modules();
+    test_implementation_returns_all_impl_blocks_for_type();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
     test_lsp_initialization_sysroot_option_selects_toolchain_sysroot();
