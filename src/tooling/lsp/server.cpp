@@ -703,6 +703,17 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
     return locations;
 }
 
+void append_primitive_type_definition_locations_from_index(std::vector<Location> &locations,
+                                                           const LspWorkspaceIndex *index,
+                                                           const TypeKey &type) {
+    if (index == nullptr) {
+        return;
+    }
+    if (const auto home = index->primitive_home_location_for_type(type); home.has_value()) {
+        push_unique_location(locations, *home);
+    }
+}
+
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 serialize_location_array(const std::vector<Location> &locations) {
     auto result = json::JsonValue::make_array();
@@ -2159,6 +2170,13 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
     const auto target = symbol_at(*snapshot, *source, offset);
     if (!target.has_value()) {
         auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
+        if (locations.empty()) {
+            if (const auto type = primitive_type_key_at(*snapshot, *source, offset);
+                type.has_value()) {
+                append_primitive_type_definition_locations_from_index(
+                    locations, analysis_.sysroot_index_for_uri(uri), *type);
+            }
+        }
         if (!locations.empty()) {
             JsonRpcResponse resp;
             resp.id = req.id;
@@ -2211,11 +2229,17 @@ void LspServer::handle_type_definition(const JsonRpcRequest &req) {
     }
 
     const auto offset = offset_at(*source->source, position);
-    if (auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
-        !locations.empty()) {
+    auto primitive_locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
+    if (primitive_locations.empty()) {
+        if (const auto type = primitive_type_key_at(*snapshot, *source, offset); type.has_value()) {
+            append_primitive_type_definition_locations_from_index(
+                primitive_locations, analysis_.sysroot_index_for_uri(uri), *type);
+        }
+    }
+    if (!primitive_locations.empty()) {
         JsonRpcResponse resp;
         resp.id = req.id;
-        resp.result = serialize_location_or_array(locations);
+        resp.result = serialize_location_or_array(primitive_locations);
         transport_.send_response(resp);
         return;
     }

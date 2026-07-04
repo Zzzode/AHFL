@@ -4399,21 +4399,37 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
     }
 
     const auto int_position = position_of(app_source, "Int) ->");
+    const std::string definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+        hover_params_at(app_uri, int_position) + R"(})";
+    const std::string type_definition =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/typeDefinition","params":)" +
+        hover_params_at(app_uri, int_position) + R"(})";
     const std::string implementation =
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        R"({"jsonrpc":"2.0","id":4,"method":"textDocument/implementation","params":)" +
         hover_params_at(app_uri, int_position) + R"(})";
     const std::string workspace_symbol =
-        R"({"jsonrpc":"2.0","id":3,"method":"workspace/symbol","params":{"query":"format_int"}})";
+        R"({"jsonrpc":"2.0","id":5,"method":"workspace/symbol","params":{"query":"format_int"}})";
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
         did_open_body(app_uri, 1, app_source),
+        definition,
+        type_definition,
         implementation,
         workspace_symbol,
-        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+        R"({"jsonrpc":"2.0","id":6,"method":"shutdown","params":{}})",
     });
-    const auto implementation_response = response_body_for_id(output, 2);
-    const auto workspace_symbol_response = response_body_for_id(output, 3);
+    const auto definition_response = response_body_for_id(output, 2);
+    const auto type_definition_response = response_body_for_id(output, 3);
+    const auto implementation_response = response_body_for_id(output, 4);
+    const auto workspace_symbol_response = response_body_for_id(output, 5);
 
+    check(definition_response.find(int_uri) != std::string::npos,
+          "lazy_sysroot.definition_includes_primitive_home");
+    check(definition_response.find(fmt_uri) == std::string::npos,
+          "lazy_sysroot.definition_excludes_fmt_impl");
+    check(type_definition_response.find(int_uri) != std::string::npos,
+          "lazy_sysroot.type_definition_includes_primitive_home");
     check(implementation_response.find(int_uri) != std::string::npos,
           "lazy_sysroot.implementation_includes_primitive_home");
     check(implementation_response.find(fmt_uri) != std::string::npos,
