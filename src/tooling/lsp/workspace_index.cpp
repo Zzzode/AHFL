@@ -397,11 +397,12 @@ void append_index_diagnostics_by_source_name(
     }
 
     const auto source_unit = SourceUnitId{index.source_units().size()};
-    const auto package_id = package_id_for_path(input.package_roots, path);
+    const auto package_id = package_id_for_path(input.scope.package_roots, path);
     const auto scope_kinds = [&]() {
-        const auto found = input.source_scope_kinds.find(path_key);
-        return found == input.source_scope_kinds.end() ? std::vector<LspNavigationIndexSourceKind>{}
-                                                       : found->second;
+        const auto found = input.scope.source_scope_kinds.find(path_key);
+        return found == input.scope.source_scope_kinds.end()
+                   ? std::vector<LspNavigationIndexSourceKind>{}
+                   : found->second;
     }();
     index.add_source_unit(SourceUnitFact{
         .source_unit_id = source_unit,
@@ -577,7 +578,7 @@ void append_parse_skeleton_facts(LspWorkspaceIndex &index,
         const auto module_name = module_name_for_program(*parse_result.program);
         const auto *source_fact = source_unit_fact(index, source_unit);
         const auto package_id = source_fact == nullptr
-                                    ? package_id_for_path(input.package_roots, path)
+                                    ? package_id_for_path(input.scope.package_roots, path)
                                     : source_fact->package_id;
         append_skeleton_symbol_facts(index,
                                      source_unit,
@@ -1024,9 +1025,9 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                 continue;
             }
             const auto *source_fact = source_unit_fact(index, source_unit->second);
-            const auto package_id = source_fact == nullptr
-                                        ? package_id_for_path(input.package_roots, source.path)
-                                        : source_fact->package_id;
+            const auto package_id =
+                source_fact == nullptr ? package_id_for_path(input.scope.package_roots, source.path)
+                                       : source_fact->package_id;
             append_skeleton_symbol_facts(index,
                                          source_unit->second,
                                          package_id,
@@ -1055,9 +1056,10 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         const auto def_id = DefId{index.symbols().size()};
         def_by_symbol.emplace(symbol.id.value, def_id);
         const auto *source_fact = source_unit_fact(index, source_unit_id->second);
-        const auto package_id = source_fact == nullptr
-                                    ? package_id_for_path(input.package_roots, source_unit->path)
-                                    : source_fact->package_id;
+        const auto package_id =
+            source_fact == nullptr
+                ? package_id_for_path(input.scope.package_roots, source_unit->path)
+                : source_fact->package_id;
         const auto selection_range = symbol_navigation_range(source_unit->source, symbol);
         index.add_symbol(SymbolFact{
             .def_id = def_id,
@@ -1091,7 +1093,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         const auto target = def_by_symbol.find(reference.target.value);
         index.add_reference(ReferenceFact{
             .package_id = source_fact == nullptr
-                              ? package_id_for_path(input.package_roots, source_unit->path)
+                              ? package_id_for_path(input.scope.package_roots, source_unit->path)
                               : source_fact->package_id,
             .source_unit_id = source_unit_id->second,
             .target_def =
@@ -1137,7 +1139,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
         index.add_impl(ImplFact{
             .impl_id = WorkspaceImplId{index.impls().size()},
             .package_id = source_fact == nullptr
-                              ? package_id_for_path(input.package_roots, source_unit->path)
+                              ? package_id_for_path(input.scope.package_roots, source_unit->path)
                               : source_fact->package_id,
             .source_unit_id = source_unit_id->second,
             .target_type = type_key_for_type_with_defs(*impl.target_type, &def_by_symbol),
