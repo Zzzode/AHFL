@@ -1372,6 +1372,66 @@ void test_watched_file_path_invalidation_keeps_unaffected_snapshots() {
     }
 }
 
+void test_manifest_watcher_refreshes_workspace_index_scope() {
+    const auto root = make_temp_project("manifest_watcher_workspace_index_scope");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto extra_path = root / "src" / "extra.ahfl";
+    const auto manifest_path = root / "ahfl.toml";
+    write_package_manifest(root, "lsp-manifest-watcher-index", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string extra_source = "module app::extra;\n"
+                                     "\n"
+                                     "struct ExtraOnly {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(extra_path, extra_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto extra_uri = AnalysisService::uri_from_path(extra_path);
+    const auto manifest_uri = AnalysisService::uri_from_path(manifest_path);
+    const std::string workspace_symbol_before =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"ExtraOnly"}})";
+    const std::string watched_manifest_change =
+        R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":")" +
+        manifest_uri + R"(","type":2}]}})";
+    const std::string workspace_symbol_after =
+        R"({"jsonrpc":"2.0","id":3,"method":"workspace/symbol","params":{"query":"ExtraOnly"}})";
+
+    const auto output = run_lsp_message_steps({
+        LspMessageStep{.body = initialize_body(root)},
+        LspMessageStep{.body = did_open_body(main_uri, 1, main_source)},
+        LspMessageStep{.body = workspace_symbol_before},
+        LspMessageStep{
+            .body = watched_manifest_change,
+            .before =
+                [root]() {
+                    write_package_manifest(
+                        root, "lsp-manifest-watcher-index", "app", "\"main\", \"extra\"");
+                },
+        },
+        LspMessageStep{.body = workspace_symbol_after},
+        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
+    });
+
+    const auto before_response = response_body_for_id(output, 2);
+    check(before_response.find("ExtraOnly") == std::string::npos,
+          "manifestWatcherIndex.before_excludes_unexported_symbol");
+    check(before_response.find(extra_uri) == std::string::npos,
+          "manifestWatcherIndex.before_excludes_unexported_uri");
+
+    const auto after_response = response_body_for_id(output, 3);
+    check(after_response.find("ExtraOnly") != std::string::npos,
+          "manifestWatcherIndex.after_includes_exported_symbol");
+    check(after_response.find(extra_uri) != std::string::npos,
+          "manifestWatcherIndex.after_includes_exported_uri");
+}
+
 void test_project_input_source_cache_is_distinct_from_open_overlays() {
     const auto root = make_temp_project("project_source_cache_overlay");
     const auto main_path = root / "src" / "main.ahfl";
@@ -6599,6 +6659,7 @@ int main() {
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
+    test_manifest_watcher_refreshes_workspace_index_scope();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
