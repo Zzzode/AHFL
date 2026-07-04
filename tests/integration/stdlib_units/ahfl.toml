@@ -1,0 +1,103 @@
+manifest_version = 1
+
+[package]
+name = "stdlib-units"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "stdlib_units"
+root = "."
+
+[exports]
+modules = [
+  "option_ut",
+  "result_ut",
+  "string_ut",
+  "list_ut",
+  "map_ut",
+  "set_ut",
+  "cmp_ut",
+  "time_ut",
+  "uuid_ut",
+  "json_ut",
+  "decimal_ut",
+  "prelude_ut",
+  "option_neg_map",
+  "option_neg_unwrap_or",
+  "option_neg_not_option",
+  "option_neg_arity",
+  "option_neg_unknown",
+]
+
+[targets.option-ut]
+kind = "library"
+entry = "option_ut.ahfl"
+
+[targets.result-ut]
+kind = "library"
+entry = "result_ut.ahfl"
+
+[targets.string-ut]
+kind = "library"
+entry = "string_ut.ahfl"
+
+[targets.list-ut]
+kind = "library"
+entry = "list_ut.ahfl"
+
+[targets.map-ut]
+kind = "library"
+entry = "map_ut.ahfl"
+
+[targets.set-ut]
+kind = "library"
+entry = "set_ut.ahfl"
+
+[targets.cmp-ut]
+kind = "library"
+entry = "cmp_ut.ahfl"
+
+[targets.time-ut]
+kind = "library"
+entry = "time_ut.ahfl"
+
+[targets.uuid-ut]
+kind = "library"
+entry = "uuid_ut.ahfl"
+
+[targets.json-ut]
+kind = "library"
+entry = "json_ut.ahfl"
+
+[targets.decimal-ut]
+kind = "library"
+entry = "decimal_ut.ahfl"
+
+[targets.prelude-ut]
+kind = "library"
+entry = "prelude_ut.ahfl"
+
+[targets.option-neg-map]
+kind = "library"
+entry = "option_neg_map.ahfl"
+
+[targets.option-neg-unwrap-or]
+kind = "library"
+entry = "option_neg_unwrap_or.ahfl"
+
+[targets.option-neg-not-option]
+kind = "library"
+entry = "option_neg_not_option.ahfl"
+
+[targets.option-neg-arity]
+kind = "library"
+entry = "option_neg_arity.ahfl"
+
+[targets.option-neg-unknown]
+kind = "library"
+entry = "option_neg_unknown.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }

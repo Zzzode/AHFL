@@ -45,13 +45,13 @@ readonly 当前不是源码语法，也不是 Semantic IR `TypeRef` / JSON IR �
 文本 IR：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit ir examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit ir examples/refund/audit.ahfl
 ```
 
 JSON IR：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
 ```
 
 文本 IR 适合：

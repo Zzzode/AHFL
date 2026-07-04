@@ -36,6 +36,7 @@
 #include "runtime/evaluator/runtime_fn_table.hpp"
 #include "runtime/evaluator/value.hpp"
 
+#include "common/project_input_support.hpp"
 #include "common/test_support.hpp"
 
 #include <algorithm>
@@ -90,12 +91,9 @@ struct CompileArtifacts {
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    a.parse = ahfl::parse_project(frontend,
-                                  ahfl::ProjectInput{
-                                      .entry_files = {main_path},
-                                      .search_roots = {a.root, std::filesystem::path{"std"}},
-                                      .inject_prelude = true,
-                                  });
+    a.parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, a.root, __FILE__));
 
     const ahfl::Resolver resolver;
     a.resolve = resolver.resolve(a.parse.graph);

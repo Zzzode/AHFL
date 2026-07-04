@@ -7,6 +7,7 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
+#include "common/project_input_support.hpp"
 #include "common/test_support.hpp"
 
 #include <filesystem>
@@ -690,11 +691,10 @@ int run_validate_package_rejects_unknown_capability(
 int run_file_expr_temporal(const std::filesystem::path &input_file) {
     const ahfl::Frontend frontend;
 
-    auto parse_result = ahfl::parse_project(frontend,
-                                            ahfl::ProjectInput{
-                                                .entry_files = {input_file},
-                                                .inject_prelude = true,
-                                            });
+    auto parse_result =
+        ahfl::parse_project(frontend,
+                            ahfl::test_support::project_input_with_repo_std_for_test_file(
+                                input_file, input_file.parent_path(), __FILE__));
     if (parse_result.has_errors()) {
         parse_result.diagnostics.render(std::cout);
         return 1;

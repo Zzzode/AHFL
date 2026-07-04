@@ -323,7 +323,7 @@ Use these files as the implementation baseline:
 - [core-language.zh.md](../spec/core-language.zh.md) for the
   normative grammar, type system, and static semantics
 - [AHFL.g4](../../grammar/AHFL.g4) for the parser grammar
-- [refund_audit_core_v0_1.ahfl](../../examples/refund_audit_core_v0_1.ahfl)
+- [refund/audit.ahfl](../../examples/refund/audit.ahfl)
   for the minimal consistent example
 
 ## Suggested Versioning

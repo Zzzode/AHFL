@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "expr-temporal"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "ir"
+root = "ir"
+
+[exports]
+modules = ["expr_temporal"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "ir::expr_temporal::ExprWorkflow"
+exports = [
+  { kind = "workflow", name = "ir::expr_temporal::ExprWorkflow" },
+  { kind = "agent", name = "ir::expr_temporal::ExprAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

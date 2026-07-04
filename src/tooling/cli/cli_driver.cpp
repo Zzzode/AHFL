@@ -421,8 +421,10 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
 
 [[nodiscard]] bool command_can_discover_package_graph(const CommandLineOptions &options,
                                                       std::optional<CommandKind> command) {
-    return command == CommandKind::Check && !options.manifest_path.has_value() &&
-           !options.workspace_manifest_path.has_value() && options.positional.size() == 1;
+    return command != CommandKind::Format &&
+           selected_action_supports_package_graph_input(options, command) &&
+           !options.manifest_path.has_value() && !options.workspace_manifest_path.has_value() &&
+           options.positional.size() == 1;
 }
 
 [[nodiscard]] bool workspace_package_is_selected(const CommandLineOptions &options,

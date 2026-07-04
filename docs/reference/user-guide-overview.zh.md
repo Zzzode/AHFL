@@ -86,19 +86,19 @@ cmake --build --preset build-dev
 检查示例源码：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 ```
 
 查看编译器摘要：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
 ```
 
 生成形式化模型：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit smv examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit smv examples/refund/audit.ahfl
 ```
 
 查看命令帮助：

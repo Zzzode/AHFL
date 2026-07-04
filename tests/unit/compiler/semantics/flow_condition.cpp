@@ -10,6 +10,7 @@
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
@@ -187,13 +188,9 @@ struct ProjectTypeCheckResult {
     write_file(main_path, project_source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
-                                .inject_prelude = true,
-                            });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     if (parse_result.has_errors()) {
         std::ostringstream ss;
         parse_result.diagnostics.render(ss);

@@ -4,6 +4,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <filesystem>
@@ -87,13 +88,9 @@ typecheck_multi_module(std::string_view project_tag,
             return {};
         return std::string{(std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()};
     };
-    const auto parse_result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {*entry_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
-                                .inject_prelude = true,
-                            });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(*entry_path, root, __FILE__));
     if (parse_result.has_errors()) {
         std::ostringstream ss;
         parse_result.diagnostics.render(ss);

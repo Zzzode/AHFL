@@ -43,6 +43,7 @@ target_link_libraries(ahfl_compiler_ir_tests
         doctest
 )
 target_include_directories(ahfl_compiler_ir_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_compiler_ir_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_compiler_ir_tests)
 
 add_executable(ahfl_compiler_ir_opt_tests

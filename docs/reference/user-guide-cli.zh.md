@@ -46,8 +46,8 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 | 动作 | 用途 | 示例 |
 |------|------|------|
-| `check` | 解析、命名解析、类型检查、结构验证 | `ahflc check examples/refund_audit_core_v0_1.ahfl` |
-| `fmt` | 按 `.ahfl-format` 或默认规则格式化单个源文件；`--check` 只检查不写回 | `ahflc fmt --check examples/refund_audit_core_v0_1.ahfl` |
+| `check` | 解析、命名解析、类型检查、结构验证 | `ahflc check examples/refund/audit.ahfl` |
+| `fmt` | 按 `.ahfl-format` 或默认规则格式化单个源文件；`--check` 只检查不写回 | `ahflc fmt --check examples/refund/audit.ahfl` |
 | `dump ast` | 输出 AST outline | `ahflc dump ast <input>` |
 | `dump types` | 输出类型环境 | `ahflc dump types <input>` |
 | `dump package-graph` | 输出 PackageGraph | `ahflc dump package-graph --manifest <ahfl.toml>` |
@@ -65,13 +65,15 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 | 模式 | 适用场景 | 示例 |
 |------|----------|------|
-| 单文件 | 快速试验、最小复现 | `ahflc check examples/refund_audit_core_v0_1.ahfl` |
+| 源文件自动发现 | 从源码向上发现最近的 `ahfl.toml` 并使用 package target | `ahflc check examples/refund/audit.ahfl` |
+| 裸单文件 | 不依赖 `std` / PackageGraph metadata 的快速试验、最小复现 | `ahflc check tests/golden/ir/ok_alias_const.ahfl` |
 | `--manifest` | 单 package 工程入口 | `ahflc check --manifest tests/integration/package_graph_manifest/ahfl.toml --target workflow --sysroot .` |
 | `--workspace --package` | 多 package workspace 入口 | `ahflc check --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --target workflow --sysroot .` |
 
-单文件模式只适合不依赖 `std` / PackageGraph metadata 的快速试验。若源码
-`import std::*`，必须使用 `--manifest` / `--workspace --package` 并传入
-`--sysroot`，或在开发 corelib 时显式传入当前 checkout：
+裸单文件模式只适合不依赖 `std` / PackageGraph metadata 的快速试验。若源码
+`import std::*`，应把源码放在 `ahfl.toml` 覆盖的 package 内，让 CLI 从源码
+自动发现 package，或显式使用 `--manifest` / `--workspace --package` 并传入
+`--sysroot`。开发 corelib 时可显式传入当前 checkout：
 
 ```bash
 ahflc check std/json.ahfl --sysroot .
@@ -161,11 +163,11 @@ std = { source = "sysroot" }
 `ahflc fmt` 支持文件、目录、package manifest 和 workspace manifest。默认行为会原地改写输入文件；`--check` 只比较格式化结果，不写回，发现差异时返回非零退出码。
 
 ```bash
-./build/dev/src/tooling/cli/ahflc fmt examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc fmt examples/refund/audit.ahfl
 ./build/dev/src/tooling/cli/ahflc fmt examples/
 ./build/dev/src/tooling/cli/ahflc fmt --manifest tests/integration/package_graph_manifest/ahfl.toml --sysroot .
 ./build/dev/src/tooling/cli/ahflc fmt --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --sysroot .
-./build/dev/src/tooling/cli/ahflc fmt --check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc fmt --check examples/refund/audit.ahfl
 ```
 
 目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`--manifest` / `--workspace --package` 会格式化 PackageGraph 覆盖的 package source。批量 `--check` 会继续检查所有可读取文件，并输出 partial failure 汇总，例如 `format failed for 2 of 3 input(s)`。
@@ -229,17 +231,17 @@ printf ':help\n:quit\n' | ./build/dev/src/tooling/repl/ahfl-repl
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc emit summary -O --time-passes \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 
 ./build/dev/src/tooling/cli/ahflc emit smv --smv-size-report \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 
 ./build/dev/src/tooling/cli/ahflc emit summary \
   --trace-export trace.jsonl \
   --metrics-export metrics.jsonl \
   --structured-log ahflc.jsonl \
   --memory-report memory.json \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 ```
 
 当前 memory report 是结构性 proxy，不是平台 RSS / allocator 观测；trace/metrics/logging 目前是 CLI command 级，pass-level event schema 仍是后续工作。
@@ -277,13 +279,13 @@ printf ':help\n:quit\n' | ./build/dev/src/tooling/repl/ahfl-repl
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc emit summary \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 
 ./build/dev/src/tooling/cli/ahflc emit ir-json \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 
 ./build/dev/src/tooling/cli/ahflc emit smv \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 ```
 
 PackageGraph native handoff 示例：

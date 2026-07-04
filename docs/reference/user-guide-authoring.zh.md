@@ -2,7 +2,7 @@
 
 本文面向 `.ahfl` 文件作者，说明如何把一个 Agent 工作流拆成数据模型、外部 capability、Agent 状态机、行为契约、状态处理逻辑和 workflow DAG。
 
-示例源码可从 [refund_audit_core_v0_1.ahfl](../../examples/refund_audit_core_v0_1.ahfl) 开始阅读。完整语法以 [core-language.zh.md](../spec/core-language.zh.md) 为准。
+示例源码可从 [refund/audit.ahfl](../../examples/refund/audit.ahfl) 开始阅读。完整语法以 [core-language.zh.md](../spec/core-language.zh.md) 为准。
 
 ## 文件结构
 
@@ -283,9 +283,9 @@ Package manifest 和 handoff target 的具体命令见 [CLI 工作流](./user-gu
 单文件：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
-./build/dev/src/tooling/cli/ahflc dump ast examples/refund_audit_core_v0_1.ahfl
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
+./build/dev/src/tooling/cli/ahflc dump ast examples/refund/audit.ahfl
+./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
 ```
 
 项目：

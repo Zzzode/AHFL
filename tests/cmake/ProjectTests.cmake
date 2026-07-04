@@ -11,6 +11,7 @@ set(AHFL_STDLIB_API_SMOKE_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_api_smo
 set(AHFL_STDLIB_API_SMOKE_ARGS --manifest "${AHFL_STDLIB_API_SMOKE_MANIFEST}" --target lib --sysroot "${PROJECT_SOURCE_DIR}")
 set(AHFL_PRELUDE_EXPLICIT_MANIFEST "${AHFL_TESTS_DIR}/integration/prelude_explicit/app/ahfl.toml")
 set(AHFL_PRELUDE_EXPLICIT_ARGS --manifest "${AHFL_PRELUDE_EXPLICIT_MANIFEST}" --target lib --sysroot "${PROJECT_SOURCE_DIR}")
+set(AHFL_DECREASES_LENGTH_SELF_MANIFEST "${AHFL_TESTS_DIR}/integration/package_golden/ok_decreases_length_self/ahfl.toml")
 
 add_test(NAME ahfl.frontend.project.ok_basic
     COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
@@ -241,7 +242,7 @@ add_test(NAME ahfl.handoff.package.validate_rejects_unknown_capability
 add_test(NAME ahfl.handoff.package.file_expr_temporal
     COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             file-expr-temporal
-            "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+            "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
 )
 
 add_test(NAME ahfl.dry_run.local.project_workflow_value_flow
@@ -3927,10 +3928,9 @@ add_test(NAME ahflc.emit_summary.manifest.workflow_value_flow
 add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DSUBCOMMAND=emit smv"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.ahfl"
+            "-DAHFLC_ARGS=emit smv --manifest ${AHFL_DECREASES_LENGTH_SELF_MANIFEST} --target workflow --sysroot ${PROJECT_SOURCE_DIR}"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_decreases_length_self.smv"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedOutput.cmake"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
 add_test(NAME ahflc.check.workspace.fail_node_input

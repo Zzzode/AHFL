@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "refund-audit-example"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund"
+root = "refund"
+
+[exports]
+modules = ["audit"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund::audit::RefundAuditWorkflow"
+exports = [
+  { kind = "workflow", name = "refund::audit::RefundAuditWorkflow" },
+  { kind = "agent", name = "refund::audit::RefundAudit" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

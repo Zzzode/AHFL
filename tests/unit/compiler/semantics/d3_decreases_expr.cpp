@@ -25,6 +25,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
@@ -85,12 +86,9 @@ void dump_diags(const char *tag, const ahfl::DiagnosticBag &bag) {
     write_file(main_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    a.parse = ahfl::parse_project(frontend,
-                                  ahfl::ProjectInput{
-                                      .entry_files = {main_path},
-                                      .search_roots = {a.root, std::filesystem::path{"std"}},
-                                      .inject_prelude = true,
-                                  });
+    a.parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, a.root, __FILE__));
 
     std::size_t parse_err_count = 0;
     for (const auto &d : a.parse.diagnostics.entries()) {

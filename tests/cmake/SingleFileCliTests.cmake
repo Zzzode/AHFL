@@ -1,19 +1,25 @@
+set(AHFL_STDLIB_UNITS_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_units/ahfl.toml")
+set(AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST
+    "${AHFL_TESTS_DIR}/integration/package_golden/container_variance_failures/ahfl.toml"
+)
+set(AHFL_REFUND_AUDIT_EXAMPLE_SOURCE "${AHFL_EXAMPLES_DIR}/refund/audit.ahfl")
+
 ahfl_add_check_test(
     ahflc.check.example
-    "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
+    "${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
 )
 
 add_test(NAME ahflc.dump_ast.example
     COMMAND $<TARGET_FILE:ahflc> dump ast
-            "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
+            "${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
 )
 set_tests_properties(ahflc.dump_ast.example PROPERTIES
-    PASS_REGULAR_EXPRESSION "program (.*/)?examples/refund_audit_core_v0_1\\.ahfl"
+    PASS_REGULAR_EXPRESSION "program (.*/)?examples/refund/audit\\.ahfl"
 )
 
 add_test(NAME ahflc.dump_types.example
     COMMAND $<TARGET_FILE:ahflc> dump types
-            "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
+            "${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
 )
 set_tests_properties(ahflc.dump_types.example PROPERTIES
     PASS_REGULAR_EXPRESSION "workflow refund::audit::RefundAuditWorkflow"
@@ -168,7 +174,7 @@ add_test(NAME ahflc.quality.smv_size_budget.pass_productization
 add_test(NAME ahflc.quality.smv_size_budget.refund_audit
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DINPUT_FILE=${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
+            "-DINPUT_FILE=${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
             "-DMAX_BYTES=32000"
             "-DMAX_LINES=230"
             "-DMAX_LTLSPEC=32"
@@ -179,8 +185,8 @@ add_test(NAME ahflc.quality.smv_size_budget.refund_audit
 ahfl_add_output_test(
     ahflc.emit_ir.example
     "emit ir"
-    "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
-    "${AHFL_TESTS_DIR}/golden/ir/refund_audit_core_v0_1.ir"
+    "${AHFL_REFUND_AUDIT_EXAMPLE_SOURCE}"
+    "${AHFL_TESTS_DIR}/golden/ir/refund_audit.ir"
 )
 
 ahfl_add_output_test(
@@ -193,7 +199,7 @@ ahfl_add_output_test(
 ahfl_add_output_test(
     ahflc.emit_ir.expr_temporal
     "emit ir"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ir"
 )
 
@@ -352,35 +358,35 @@ ahfl_add_command_fail_test(
 ahfl_add_output_test(
     ahflc.emit_ir_json.expr_temporal
     "emit ir-json"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_opt_ir.expr_temporal
     "emit opt-ir"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_opt_ir_json.expr_temporal
     "emit opt-ir-json"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_opt_ir_optimized.expr_temporal
     "emit opt-ir -O"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.optimized"
 )
 
 ahfl_add_output_test(
     ahflc.emit_opt_ir_json_optimized.expr_temporal
     "emit opt-ir-json -O"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.optimized.json"
 )
 
@@ -422,7 +428,7 @@ ahfl_add_output_test(
 ahfl_add_output_test(
     ahflc.emit_smv.expr_temporal
     "emit smv"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/formal/ok_expr_temporal.smv"
 )
 
@@ -548,7 +554,7 @@ if(AHFL_SMV_CHECKER)
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_expr_temporal.verify.smv"
-                "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+                "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     )
     set_tests_properties(ahflc.verify_formal.real_smv_observation_assumptions PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -624,7 +630,7 @@ ahfl_discover_package_golden_tests()
 ahfl_add_output_test(
     ahflc.emit_native_json.expr_temporal
     "emit native-json"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE}"
     "${AHFL_TESTS_DIR}/golden/native/ok_expr_temporal.native.json"
 )
 
@@ -707,33 +713,38 @@ ahfl_add_check_fail_test(
     "exact schema mismatch in agent context default"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.container_variance_map_key_mismatch
-    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_key_mismatch.ahfl"
+    "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
+    map-key-mismatch
     "expected std::collections::Map<String, Int>, got std::collections::Map<String\\(2, 8\\), Int>"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.container_variance_optional_reverse_mismatch
-    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_optional_reverse_mismatch.ahfl"
+    "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
+    optional-reverse-mismatch
     "expected std::option::Option<String\\(2, 8\\)>, got std::option::Option<String>"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.container_variance_list_reverse_mismatch
-    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_list_reverse_mismatch.ahfl"
+    "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
+    list-reverse-mismatch
     "expected std::collections::List<String\\(2, 8\\)>, got std::collections::List<String>"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.container_variance_set_reverse_mismatch
-    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_set_reverse_mismatch.ahfl"
+    "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
+    set-reverse-mismatch
     "expected std::collections::Set<String\\(2, 8\\)>, got std::collections::Set<String>"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.container_variance_map_value_reverse_mismatch
-    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_value_reverse_mismatch.ahfl"
+    "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
+    map-value-reverse-mismatch
     "expected std::collections::Map<String, String\\(2, 8\\)>, got std::collections::Map<String, String>"
 )
 
@@ -932,136 +943,153 @@ set_tests_properties(p5_smv_golden_lock.negative_diag PROPERTIES
 # Positive fixtures cover every tracked stdlib_units/*_ut.ahfl module. The five
 # option_neg_* fixtures are the negative-path counterpart.
 # ---------------------------------------------------------------------------
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_option_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-ut
 )
 set_tests_properties(ahflc.check.stdlib_option_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;option"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_result_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/result_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    result-ut
 )
 set_tests_properties(ahflc.check.stdlib_result_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;result"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_string_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/string_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    string-ut
 )
 set_tests_properties(ahflc.check.stdlib_string_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;string"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_list_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/list_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    list-ut
 )
 set_tests_properties(ahflc.check.stdlib_list_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;list"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_map_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/map_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    map-ut
 )
 set_tests_properties(ahflc.check.stdlib_map_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;map"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_set_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/set_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    set-ut
 )
 set_tests_properties(ahflc.check.stdlib_set_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;set"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_cmp_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/cmp_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    cmp-ut
 )
 set_tests_properties(ahflc.check.stdlib_cmp_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;cmp"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_time_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/time_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    time-ut
 )
 set_tests_properties(ahflc.check.stdlib_time_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;time"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_uuid_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/uuid_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    uuid-ut
 )
 set_tests_properties(ahflc.check.stdlib_uuid_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;uuid"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_json_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/json_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    json-ut
 )
 set_tests_properties(ahflc.check.stdlib_json_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;json"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_decimal_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/decimal_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    decimal-ut
 )
 set_tests_properties(ahflc.check.stdlib_decimal_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;decimal"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.stdlib_prelude_ut
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/prelude_ut.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    prelude-ut
 )
 set_tests_properties(ahflc.check.stdlib_prelude_ut PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: checked"
     LABELS "stdlib;unit;prelude"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_map
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_map.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-neg-map
     "got Fn"
 )
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_unwrap_or
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_unwrap_or.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-neg-unwrap-or
     "got Bool"
 )
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_not_option
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_not_option.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-neg-not-option
     "got Int"
 )
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_arity
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_arity.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-neg-arity
     "WRONG_ARITY"
 )
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.stdlib_option_neg_unknown
-    "${AHFL_TESTS_DIR}/integration/stdlib_units/option_neg_unknown.ahfl"
+    "${AHFL_STDLIB_UNITS_MANIFEST}"
+    option-neg-unknown
     "UNKNOWN_CALLABLE"
 )

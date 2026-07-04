@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "decreases-length-self"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "formal"
+root = "formal"
+
+[exports]
+modules = ["decreases_length_self"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "formal::decreases_length_self::WorkerWorkflow"
+exports = [
+  { kind = "workflow", name = "formal::decreases_length_self::WorkerWorkflow" },
+  { kind = "agent", name = "formal::decreases_length_self::WorkerAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

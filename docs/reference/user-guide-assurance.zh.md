@@ -89,7 +89,7 @@ ok: assurance validation ready
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc emit smv \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 ```
 
 调用 NuSMV / nuXmv：
@@ -100,7 +100,7 @@ ok: assurance validation ready
   --model-checker /path/to/nuXmv \
   --checker-timeout-seconds 60 \
   --formal-model-out /tmp/refund_audit.smv \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 ```
 
 `--formal-backend` 当前支持 `nuxmv`、`nusmv`、`spin`、`tlaplus` 四个 capability matrix 条目；只有 `nuxmv` / `nusmv` 进入 AHFL SMV 外部验证路径。`spin` / `tlaplus` 当前只承诺模型 emission，`verify` 会以 `checker_status: verification_unsupported` 失败。`--checker-timeout-seconds` 控制外部 checker 进程上限；超时会以 `checker_status: checker_error` 和 `checker_timed_out: true` 失败，便于 CI 区分卡死与普通反例。

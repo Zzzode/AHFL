@@ -24,6 +24,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
@@ -125,11 +126,8 @@ struct TypedHIRFixture {
                                 const std::vector<std::filesystem::path> &entry_files) const {
         const auto parse =
             ahfl::parse_project(selected_frontend,
-                                ahfl::ProjectInput{
-                                    .entry_files = entry_files,
-                                    .search_roots = {root, std::filesystem::path{"std"}},
-                                    .inject_prelude = true,
-                                });
+                                ahfl::test_support::project_input_with_repo_std_for_test_file(
+                                    entry_files, root, __FILE__));
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);
@@ -179,11 +177,8 @@ struct TypedHIRFixture {
                               const std::vector<std::filesystem::path> &entry_files) const {
         const auto parse =
             ahfl::parse_project(frontend,
-                                ahfl::ProjectInput{
-                                    .entry_files = entry_files,
-                                    .search_roots = {root, std::filesystem::path{"std"}},
-                                    .inject_prelude = true,
-                                });
+                                ahfl::test_support::project_input_with_repo_std_for_test_file(
+                                    entry_files, root, __FILE__));
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);
@@ -387,12 +382,9 @@ run_project_caller(const ahfl::Frontend &frontend,
     using namespace ahfl;
     using namespace ahfl::evaluator;
 
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = entry_files,
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(entry_files, root, __FILE__));
     if (parse.has_errors()) {
         for (const auto &d : parse.diagnostics.entries()) {
             MESSAGE("parse: " << d.message);
@@ -3875,12 +3867,9 @@ flow for Worker {
 )AHFL";
 
     write_file(source_path, source);
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {source_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(source_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_parity");
     REQUIRE(source_unit != nullptr);
@@ -3995,12 +3984,9 @@ flow for Worker {
 )AHFL";
 
     write_file(source_path, source);
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {source_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(source_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     const auto *source_unit = source_unit_for_module(parse.graph, "typed::statement_children");
     REQUIRE(source_unit != nullptr);
@@ -4284,12 +4270,9 @@ fn t1() -> Bool effect Pure decreases 0 {
 
     // Lowering round-trip: the lowered IR must produce a valid verifiable
     // program and the t1 body must call an impl#-target (inherent dispatch).
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {main_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4325,12 +4308,9 @@ fn t2() -> String effect Pure decreases 0 {
     CHECK(call_expr->type->holds<ahfl::types::StringT>());
     CHECK(call_expr->member_name == "unwrap_or");
 
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {main_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4368,12 +4348,9 @@ fn t3() -> Int effect Pure decreases 0 {
     CHECK(call_expr->is_pure);
     CHECK(call_expr->member_name == "length");
 
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {main_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);
@@ -4411,12 +4388,9 @@ fn t4() -> Int effect Pure decreases 0 {
     CHECK(call_expr->member_name == "length");
 
     // Full parse → resolve → typecheck → lower → verify round trip.
-    const auto parse = ahfl::parse_project(frontend,
-                                           ahfl::ProjectInput{
-                                               .entry_files = {main_path},
-                                               .search_roots = {root, std::filesystem::path{"std"}},
-                                               .inject_prelude = true,
-                                           });
+    const auto parse = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse.has_errors());
     ahfl::Resolver resolver2;
     const auto resolve2 = resolver2.resolve(parse.graph);

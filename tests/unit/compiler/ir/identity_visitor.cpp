@@ -14,6 +14,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
@@ -789,12 +790,9 @@ flow for IndexAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {main_path},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -878,12 +876,9 @@ flow for LiteralAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {main_path},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -979,12 +974,9 @@ flow for OptionAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {main_path},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -1079,12 +1071,9 @@ flow for HigherOrderAgent {
     write_file(main_path, source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result = ahfl::parse_project(frontend,
-                                                  ahfl::ProjectInput{
-                                                      .entry_files = {main_path},
-                                                      .search_roots = {root},
-                                                      .inject_prelude = true,
-                                                  });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;

@@ -193,14 +193,14 @@ ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl
 `--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 是当前已产品化的 CLI profiling / size-report / observability flag。它们都不改变 stdout artifact；`--time-passes` 和 `--smv-size-report` 报告写入 stderr，`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 写入侧路文件。
 
 ```bash
-ahflc emit summary -O --time-passes examples/refund_audit_core_v0_1.ahfl
-ahflc emit smv --smv-size-report examples/refund_audit_core_v0_1.ahfl
+ahflc emit summary -O --time-passes examples/refund/audit.ahfl
+ahflc emit smv --smv-size-report examples/refund/audit.ahfl
 ahflc emit summary \
   --trace-export trace.jsonl \
   --metrics-export metrics.jsonl \
   --structured-log ahflc.jsonl \
   --memory-report memory.json \
-  examples/refund_audit_core_v0_1.ahfl
+  examples/refund/audit.ahfl
 ```
 
 当前边界：

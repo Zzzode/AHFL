@@ -22,6 +22,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "tooling/formatter/formatter.hpp"
 
@@ -69,11 +70,8 @@ struct CompileArtifacts {
 
     const ahfl::Frontend frontend;
     a.parse = ahfl::parse_project(frontend,
-                                  ahfl::ProjectInput{
-                                      .entry_files = {main_path},
-                                      .search_roots = {a.root, std::filesystem::path{"std"}},
-                                      .inject_prelude = false,
-                                  });
+                                  ahfl::test_support::project_input_with_repo_std_for_test_file(
+                                      main_path, a.root, __FILE__, false));
 
     std::size_t parse_err_count = 0;
     if (a.parse.has_errors()) {

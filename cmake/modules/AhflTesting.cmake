@@ -14,6 +14,26 @@ function(ahfl_add_check_fail_test name source_file expected_pattern)
     )
 endfunction()
 
+function(ahfl_add_manifest_check_test name manifest_file target_name)
+    add_test(NAME ${name}
+        COMMAND $<TARGET_FILE:ahflc> check
+                --manifest "${manifest_file}"
+                --target "${target_name}"
+                --sysroot "${PROJECT_SOURCE_DIR}"
+    )
+endfunction()
+
+function(ahfl_add_manifest_check_fail_test name manifest_file target_name expected_pattern)
+    add_test(NAME ${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DAHFLC=$<TARGET_FILE:ahflc>
+            -DINPUT_FILE=${manifest_file}
+            "-DAHFLC_ARGS=check;--manifest;${manifest_file};--target;${target_name};--sysroot;${PROJECT_SOURCE_DIR}"
+            -DEXPECTED_REGEX=${expected_pattern}
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+endfunction()
+
 function(ahfl_add_command_fail_test name subcommand source_file expected_pattern)
     add_test(NAME ${name}
         COMMAND ${CMAKE_COMMAND}

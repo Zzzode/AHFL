@@ -47,7 +47,7 @@ AHFL 当前处于活跃的编译器与工具链开发阶段。为了改进语言
 
 ## 语言预览
 
-摘自 [examples/refund_audit_core_v0_1.ahfl](examples/refund_audit_core_v0_1.ahfl)：
+摘自 [examples/refund/audit.ahfl](examples/refund/audit.ahfl)：
 
 ```ahfl
 agent RefundAudit {
@@ -107,13 +107,13 @@ cmake --build --preset build-dev
 
 ```bash
 # 类型检查源码文件。
-./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
 # 输出人类可读的编译摘要。
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
 
 # 输出机器可读的 Semantic IR。
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
 
 # 查看所有命令和 artifact。
 ./build/dev/src/tooling/cli/ahflc --help

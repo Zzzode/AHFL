@@ -47,7 +47,7 @@ Current baseline:
 
 ## Language Preview
 
-Excerpt from [examples/refund_audit_core_v0_1.ahfl](examples/refund_audit_core_v0_1.ahfl):
+Excerpt from [examples/refund/audit.ahfl](examples/refund/audit.ahfl):
 
 ```ahfl
 agent RefundAudit {
@@ -107,13 +107,13 @@ cmake --build --preset build-dev
 
 ```bash
 # Type-check a source file.
-./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
 # Emit a human-readable compiler summary.
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
 
 # Emit machine-readable Semantic IR.
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
 
 # Inspect all commands and artifacts.
 ./build/dev/src/tooling/cli/ahflc --help

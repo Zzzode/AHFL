@@ -26,6 +26,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <cstdio>
@@ -51,11 +52,8 @@ struct TypedHIRFixture {
                   const std::vector<std::filesystem::path> &entry_files) const {
         const auto parse =
             ahfl::parse_project(frontend,
-                                ahfl::ProjectInput{
-                                    .entry_files = entry_files,
-                                    .search_roots = {root, std::filesystem::path{"std"}},
-                                    .inject_prelude = true,
-                                });
+                                ahfl::test_support::project_input_with_repo_std_for_test_file(
+                                    entry_files, root, __FILE__));
         if (parse.has_errors()) {
             std::ostringstream ss;
             parse.diagnostics.render(ss);

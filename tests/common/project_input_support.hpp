@@ -18,6 +18,43 @@ repo_root_from_integration_root(const std::filesystem::path &root) {
     return fixture_root.parent_path().parent_path().parent_path();
 }
 
+[[nodiscard]] inline std::filesystem::path
+repo_root_from_source_file(const std::filesystem::path &source_file) {
+    std::error_code error;
+    auto current =
+        source_file.is_absolute() ? source_file : std::filesystem::absolute(source_file, error);
+    if (error) {
+        current = source_file;
+        error.clear();
+    }
+
+    const auto normalized = std::filesystem::weakly_canonical(current, error);
+    current = error ? current.lexically_normal() : normalized;
+    error.clear();
+
+    if (std::filesystem::is_regular_file(current, error)) {
+        current = current.parent_path();
+    }
+    error.clear();
+
+    for (auto candidate = current; !candidate.empty(); candidate = candidate.parent_path()) {
+        if (std::filesystem::exists(candidate / "std" / "ahfl.toml", error) && !error &&
+            std::filesystem::exists(candidate / "src", error) && !error) {
+            return candidate;
+        }
+        error.clear();
+        if (candidate == candidate.parent_path()) {
+            break;
+        }
+    }
+
+    auto cwd = std::filesystem::current_path(error);
+    if (!error && std::filesystem::exists(cwd / "std" / "ahfl.toml", error) && !error) {
+        return cwd;
+    }
+    return current;
+}
+
 [[nodiscard]] inline std::vector<std::string> repo_std_exports() {
     return {"prelude",
             "bool",
@@ -126,6 +163,29 @@ inline void append_repo_std_module_root(ProjectInput &input,
     append_workspace_module_roots(input, root);
     append_repo_std_module_root(input, repo_root_from_integration_root(root));
     return input;
+}
+
+[[nodiscard]] inline ProjectInput
+project_input_with_repo_std_for_test_file(const std::vector<std::filesystem::path> &entries,
+                                          const std::filesystem::path &root,
+                                          const std::filesystem::path &test_source_file,
+                                          bool inject_prelude = true) {
+    ProjectInput input;
+    input.entry_files = entries;
+    input.search_roots.push_back(root);
+    input.inject_prelude = inject_prelude;
+    append_workspace_module_roots(input, root);
+    append_repo_std_module_root(input, repo_root_from_source_file(test_source_file));
+    return input;
+}
+
+[[nodiscard]] inline ProjectInput
+project_input_with_repo_std_for_test_file(const std::filesystem::path &entry,
+                                          const std::filesystem::path &root,
+                                          const std::filesystem::path &test_source_file,
+                                          bool inject_prelude = true) {
+    return project_input_with_repo_std_for_test_file(
+        std::vector<std::filesystem::path>{entry}, root, test_source_file, inject_prelude);
 }
 
 } // namespace ahfl::test_support

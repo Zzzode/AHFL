@@ -1,0 +1,43 @@
+manifest_version = 1
+
+[package]
+name = "container-variance-failures"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "typecheck"
+root = "."
+
+[exports]
+modules = [
+  "container_variance_map_key_mismatch",
+  "container_variance_optional_reverse_mismatch",
+  "container_variance_list_reverse_mismatch",
+  "container_variance_set_reverse_mismatch",
+  "container_variance_map_value_reverse_mismatch",
+]
+
+[targets.map-key-mismatch]
+kind = "library"
+entry = "container_variance_map_key_mismatch.ahfl"
+
+[targets.optional-reverse-mismatch]
+kind = "library"
+entry = "container_variance_optional_reverse_mismatch.ahfl"
+
+[targets.list-reverse-mismatch]
+kind = "library"
+entry = "container_variance_list_reverse_mismatch.ahfl"
+
+[targets.set-reverse-mismatch]
+kind = "library"
+entry = "container_variance_set_reverse_mismatch.ahfl"
+
+[targets.map-value-reverse-mismatch]
+kind = "library"
+entry = "container_variance_map_value_reverse_mismatch.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }

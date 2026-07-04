@@ -143,7 +143,12 @@ def build_cases(tests_dir: Path, repo_root: Path) -> List[Case]:
         ),
         Case(
             name="expr_temporal",
-            source=ir / "ok_expr_temporal.ahfl",
+            source=tests_dir
+            / "integration"
+            / "package_golden"
+            / "ok_expr_temporal"
+            / "ir"
+            / "expr_temporal.ahfl",
             expected=formal / "ok_expr_temporal.smv",
         ),
         Case(

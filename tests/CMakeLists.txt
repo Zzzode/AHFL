@@ -1,5 +1,8 @@
 set(AHFL_EXAMPLES_DIR "${PROJECT_SOURCE_DIR}/examples")
 set(AHFL_TESTS_DIR "${PROJECT_SOURCE_DIR}/tests")
+set(AHFL_EXPR_TEMPORAL_PACKAGE_SOURCE
+    "${AHFL_TESTS_DIR}/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl"
+)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 

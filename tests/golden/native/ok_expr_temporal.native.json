@@ -1,9 +1,25 @@
 {
   "format_version": "ahfl.native-package.v1",
   "metadata": {
-    "identity": null,
-    "entry_target": null,
-    "export_targets": [],
+    "identity": {
+      "format_version": "ahfl.native-package.v1",
+      "name": "expr-temporal",
+      "version": "0.1.0"
+    },
+    "entry_target": {
+      "kind": "workflow",
+      "canonical_name": "ir::expr_temporal::ExprWorkflow"
+    },
+    "export_targets": [
+      {
+        "kind": "workflow",
+        "canonical_name": "ir::expr_temporal::ExprWorkflow"
+      },
+      {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent"
+      }
+    ],
     "capability_binding_keys": []
   },
   "executable_targets": [

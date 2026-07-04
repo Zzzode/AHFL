@@ -5,6 +5,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "common/project_input_support.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
@@ -150,13 +151,9 @@ template <typename DiagBag> void dump_diagnostics(std::string_view label, const 
     write_file(main_path, "module app::main;\n" + std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
-                                .inject_prelude = true,
-                            });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -177,13 +174,9 @@ template <typename DiagBag> void dump_diagnostics(std::string_view label, const 
     write_file(source_path, std::string{source});
 
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {source_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
-                                .inject_prelude = true,
-                            });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(source_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
@@ -2565,13 +2558,9 @@ flow for HirAgent {
     write_file(main_path, "module app::main;\n" + source);
 
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend,
-                            ahfl::ProjectInput{
-                                .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
-                                .inject_prelude = true,
-                            });
+    const auto parse_result = ahfl::parse_project(
+        frontend,
+        ahfl::test_support::project_input_with_repo_std_for_test_file(main_path, root, __FILE__));
     REQUIRE_FALSE(parse_result.has_errors());
 
     const ahfl::Resolver resolver;
