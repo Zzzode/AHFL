@@ -252,9 +252,16 @@ struct LspIndexPackageRoot {
     std::filesystem::path module_root;
 };
 
+struct LspIndexSourceUnitSeed {
+    SourceUnitId source_unit_id;
+    package_graph::PackageId package_id;
+    std::filesystem::path path;
+    std::vector<LspNavigationIndexSourceKind> scope_kinds;
+};
+
 struct NavigationIndexScope {
     std::vector<LspIndexPackageRoot> package_roots;
-    std::unordered_map<std::string, std::vector<LspNavigationIndexSourceKind>> source_scope_kinds;
+    std::vector<LspIndexSourceUnitSeed> source_units;
 };
 
 struct LspWorkspaceIndexInput {

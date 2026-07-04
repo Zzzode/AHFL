@@ -107,21 +107,44 @@ package_id_for_path(const std::vector<LspIndexPackageRoot> &package_roots,
 }
 
 struct SourceUnitOrderKey {
+    std::optional<SourceUnitId> seeded_id;
     package_graph::PackageId package_id;
     std::string path_key;
 };
 
+[[nodiscard]] const LspIndexSourceUnitSeed *
+source_unit_seed_for_path(const NavigationIndexScope &scope,
+                          const std::filesystem::path &raw_path) {
+    const auto path_key = normalize_path(raw_path).generic_string();
+    for (const auto &seed : scope.source_units) {
+        if (normalize_path(seed.path).generic_string() == path_key) {
+            return &seed;
+        }
+    }
+    return nullptr;
+}
+
 [[nodiscard]] SourceUnitOrderKey source_unit_order_key(const LspWorkspaceIndexInput &input,
                                                        const std::filesystem::path &raw_path) {
     const auto path = normalize_path(raw_path);
+    const auto *seed = source_unit_seed_for_path(input.scope, path);
     return SourceUnitOrderKey{
-        .package_id = package_id_for_path(input.scope.package_roots, path),
+        .seeded_id =
+            seed == nullptr ? std::nullopt : std::optional<SourceUnitId>{seed->source_unit_id},
+        .package_id = seed == nullptr ? package_id_for_path(input.scope.package_roots, path)
+                                      : seed->package_id,
         .path_key = path.generic_string(),
     };
 }
 
 [[nodiscard]] bool source_unit_order_less(const SourceUnitOrderKey &lhs,
                                           const SourceUnitOrderKey &rhs) {
+    if (lhs.seeded_id.has_value() != rhs.seeded_id.has_value()) {
+        return lhs.seeded_id.has_value();
+    }
+    if (lhs.seeded_id.has_value() && lhs.seeded_id->value != rhs.seeded_id->value) {
+        return lhs.seeded_id->value < rhs.seeded_id->value;
+    }
     if (lhs.package_id.value != rhs.package_id.value) {
         return lhs.package_id.value < rhs.package_id.value;
     }
@@ -453,14 +476,13 @@ void append_index_diagnostics_by_source_name(
         return existing->second;
     }
 
-    const auto source_unit = SourceUnitId{index.source_units().size()};
-    const auto package_id = package_id_for_path(input.scope.package_roots, path);
-    const auto scope_kinds = [&]() {
-        const auto found = input.scope.source_scope_kinds.find(path_key);
-        return found == input.scope.source_scope_kinds.end()
-                   ? std::vector<LspNavigationIndexSourceKind>{}
-                   : found->second;
-    }();
+    const auto *seed = source_unit_seed_for_path(input.scope, path);
+    const auto source_unit =
+        seed == nullptr ? SourceUnitId{index.source_units().size()} : seed->source_unit_id;
+    const auto package_id =
+        seed == nullptr ? package_id_for_path(input.scope.package_roots, path) : seed->package_id;
+    const auto scope_kinds =
+        seed == nullptr ? std::vector<LspNavigationIndexSourceKind>{} : seed->scope_kinds;
     index.add_source_unit(SourceUnitFact{
         .source_unit_id = source_unit,
         .package_id = package_id,

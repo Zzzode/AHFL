@@ -9,6 +9,7 @@
 #include <cctype>
 #include <charconv>
 #include <filesystem>
+#include <limits>
 #include <system_error>
 #include <unordered_set>
 #include <vector>
@@ -380,6 +381,37 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
         }
     }
     return best;
+}
+
+[[nodiscard]] std::vector<LspIndexSourceUnitSeed>
+index_source_units_from_scope_kinds(const package_graph::PackageGraph &graph,
+                                    const NavigationScopeKindMap &scope_kinds) {
+    std::vector<LspIndexSourceUnitSeed> source_units;
+    source_units.reserve(scope_kinds.size());
+    for (const auto &[path_key, kinds] : scope_kinds) {
+        const auto path = std::filesystem::path(path_key);
+        const auto *package = package_for_requested_file(graph, path);
+        source_units.push_back(LspIndexSourceUnitSeed{
+            .source_unit_id = SourceUnitId{0},
+            .package_id = package == nullptr
+                              ? package_graph::PackageId{std::numeric_limits<std::size_t>::max()}
+                              : package->id,
+            .path = path,
+            .scope_kinds = kinds,
+        });
+    }
+    std::sort(source_units.begin(),
+              source_units.end(),
+              [](const LspIndexSourceUnitSeed &lhs, const LspIndexSourceUnitSeed &rhs) {
+                  if (lhs.package_id.value != rhs.package_id.value) {
+                      return lhs.package_id.value < rhs.package_id.value;
+                  }
+                  return lhs.path.generic_string() < rhs.path.generic_string();
+              });
+    for (std::size_t index = 0; index < source_units.size(); ++index) {
+        source_units[index].source_unit_id = SourceUnitId{index};
+    }
+    return source_units;
 }
 
 void append_open_overlay_entry_files(ProjectInput &input,
@@ -835,7 +867,8 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         .scope =
             NavigationIndexScope{
                 .package_roots = index_package_roots_from_graph(project_context.context->graph),
-                .source_scope_kinds = std::move(sysroot_scope_kinds),
+                .source_units = index_source_units_from_scope_kinds(project_context.context->graph,
+                                                                    sysroot_scope_kinds),
             },
         .metadata =
             NavigationIndexMetadata{
@@ -1013,7 +1046,8 @@ AnalysisService::build_snapshot(const std::string &uri,
                     NavigationIndexScope{
                         .package_roots =
                             index_package_roots_from_graph(project_context.context->graph),
-                        .source_scope_kinds = std::move(workspace_scope_kinds),
+                        .source_units = index_source_units_from_scope_kinds(
+                            project_context.context->graph, workspace_scope_kinds),
                     },
                 .metadata =
                     NavigationIndexMetadata{

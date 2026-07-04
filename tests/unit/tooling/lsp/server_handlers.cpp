@@ -1953,6 +1953,21 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
                                 .module_root = source_root,
                             },
                         },
+                    .source_units =
+                        {
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{0},
+                                .package_id = package_id,
+                                .path = b_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{1},
+                                .package_id = package_id,
+                                .path = a_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                        },
                 },
             .metadata =
                 NavigationIndexMetadata{
@@ -1967,21 +1982,24 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
     if (source_units.size() == 2) {
         check(source_units[0].source_unit_id == SourceUnitId{0},
               "workspace_index.source_unit_order.first_id");
-        check(source_units[0].uri == AnalysisService::uri_from_path(a_path),
-              "workspace_index.source_unit_order.a_first");
+        check(source_units[0].uri == AnalysisService::uri_from_path(b_path),
+              "workspace_index.source_unit_order.scope_seed_b_first");
+        check(source_unit_has_scope_kind(source_units[0],
+                                         LspNavigationIndexSourceKind::PackageExport),
+              "workspace_index.source_unit_order.scope_kind");
         check(source_units[1].source_unit_id == SourceUnitId{1},
               "workspace_index.source_unit_order.second_id");
-        check(source_units[1].uri == AnalysisService::uri_from_path(b_path),
-              "workspace_index.source_unit_order.b_second");
+        check(source_units[1].uri == AnalysisService::uri_from_path(a_path),
+              "workspace_index.source_unit_order.scope_seed_a_second");
     }
 
     const auto package_sources = index.source_units_for_package(package_id);
     check(package_sources.size() == 2, "workspace_index.source_unit_order.package_count");
     if (package_sources.size() == 2) {
         check(package_sources[0] == SourceUnitId{0},
-              "workspace_index.source_unit_order.package_a_first");
+              "workspace_index.source_unit_order.package_b_first");
         check(package_sources[1] == SourceUnitId{1},
-              "workspace_index.source_unit_order.package_b_second");
+              "workspace_index.source_unit_order.package_a_second");
     }
 }
 
