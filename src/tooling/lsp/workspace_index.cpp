@@ -66,11 +66,9 @@ void hash_combine(std::size_t &seed, std::size_t value) noexcept {
     std::error_code error;
     const auto absolute = std::filesystem::absolute(path, error);
     auto candidate = error ? path.lexically_normal() : absolute.lexically_normal();
-    if (std::filesystem::exists(candidate, error)) {
-        const auto canonical = std::filesystem::weakly_canonical(candidate, error);
-        if (!error) {
-            candidate = canonical.lexically_normal();
-        }
+    const auto canonical = std::filesystem::weakly_canonical(candidate, error);
+    if (!error) {
+        candidate = canonical.lexically_normal();
     }
     return candidate;
 }

@@ -197,7 +197,9 @@ dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
     return prefixes;
 }
 
-void append_unique_entry_file(ProjectInput &input, const std::filesystem::path &path) {
+void append_unique_entry_file(ProjectInput &input,
+                              const std::filesystem::path &path,
+                              bool require_existing_file = true) {
     const auto normalized = std::filesystem::path(AnalysisService::normalized_path_key(path));
     if (std::find(input.entry_files.begin(), input.entry_files.end(), normalized) !=
         input.entry_files.end()) {
@@ -205,7 +207,7 @@ void append_unique_entry_file(ProjectInput &input, const std::filesystem::path &
     }
 
     std::error_code error;
-    if (!std::filesystem::exists(normalized, error) || error) {
+    if (require_existing_file && (!std::filesystem::exists(normalized, error) || error)) {
         return;
     }
 
@@ -303,6 +305,25 @@ package_for_requested_file(const package_graph::PackageGraph &graph,
     return best;
 }
 
+void append_open_overlay_entry_files(ProjectInput &input,
+                                     const package_graph::PackageGraph &graph,
+                                     const std::filesystem::path &requested_file) {
+    const auto *requested_package = package_for_requested_file(graph, requested_file);
+    for (const auto &[path_key, text] : input.source_overlays) {
+        (void)text;
+        const auto overlay_path = std::filesystem::path(path_key);
+        const auto *overlay_package = package_for_requested_file(graph, overlay_path);
+        if (overlay_package == nullptr) {
+            continue;
+        }
+        if (overlay_package->source == package_graph::PackageSourceKind::Sysroot &&
+            !(requested_package == overlay_package && overlay_package->module_prefix == "std")) {
+            continue;
+        }
+        append_unique_entry_file(input, overlay_path, false);
+    }
+}
+
 enum class LspProjectInputMode {
     Semantic,
     WorkspaceIndex,
@@ -355,6 +376,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             }
             append_exported_entry_files(input, package, true);
         }
+        append_open_overlay_entry_files(input, graph, requested_file);
         append_primitive_home_entry_files(input, graph);
     }
     return input;
@@ -699,11 +721,9 @@ std::string AnalysisService::normalized_path_key(const std::filesystem::path &pa
     std::error_code error;
     const auto absolute = std::filesystem::absolute(path, error);
     auto candidate = error ? path.lexically_normal() : absolute.lexically_normal();
-    if (std::filesystem::exists(candidate, error)) {
-        const auto canonical = std::filesystem::weakly_canonical(candidate, error);
-        if (!error) {
-            candidate = canonical.lexically_normal();
-        }
+    const auto canonical = std::filesystem::weakly_canonical(candidate, error);
+    if (!error) {
+        candidate = canonical.lexically_normal();
     }
     return candidate.generic_string();
 }

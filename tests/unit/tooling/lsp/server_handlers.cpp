@@ -2008,6 +2008,83 @@ void test_project_open_document_overlay_drives_definition() {
           "project.overlay_definition_targets_unsaved_source");
 }
 
+void test_workspace_index_includes_open_unexported_overlay() {
+    const auto root = make_temp_project("workspace_index_open_unexported_overlay");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto draft_path = root / "src" / "draft.ahfl";
+    write_package_manifest(root, "lsp-open-overlay-index", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string draft_overlay = "module app::draft;\n"
+                                      "\n"
+                                      "struct DraftOnly {\n"
+                                      "    value: String;\n"
+                                      "}\n";
+    write_file(main_path, main_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto draft_uri = AnalysisService::uri_from_path(draft_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+        store.open(TextDocumentItem{
+            .uri = draft_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = draft_overlay,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_index.open_overlay.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(draft_uri) == nullptr,
+                  "workspace_index.open_overlay.not_semantic_source");
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_index.open_overlay.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *draft_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, draft_uri);
+                check(draft_source != nullptr, "workspace_index.open_overlay.source_unit_exists");
+                const auto symbols = snapshot->workspace_index->workspace_symbols("DraftOnly");
+                check(std::find_if(symbols.begin(),
+                                   symbols.end(),
+                                   [&](const SymbolFact *symbol) {
+                                       return symbol != nullptr &&
+                                              symbol->location.uri == draft_uri &&
+                                              symbol->local_name == "DraftOnly";
+                                   }) != symbols.end(),
+                      "workspace_index.open_overlay.symbol_fact_exists");
+            }
+        }
+    }
+
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"DraftOnly"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(draft_uri, 1, draft_overlay),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(draft_uri) != std::string::npos,
+          "workspace_symbol.open_overlay_includes_unexported_uri");
+    check(response.find("DraftOnly") != std::string::npos,
+          "workspace_symbol.open_overlay_includes_unexported_name");
+}
+
 void test_project_diagnostics_refresh_dependent_open_documents() {
     const auto root = make_temp_project("project_diagnostics_refresh");
     const auto main_path = root / "src" / "main.ahfl";
@@ -5296,6 +5373,7 @@ int main() {
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
     test_project_open_document_overlay_drives_definition();
+    test_workspace_index_includes_open_unexported_overlay();
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
