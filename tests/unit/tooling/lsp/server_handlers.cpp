@@ -1768,7 +1768,7 @@ void test_workspace_index_queries_sort_by_package_source_and_order() {
 
     const auto target_def = DefId{0};
     index.add_symbol(SymbolFact{
-        .def_id = target_def,
+        .def_id = DefId{42},
         .package_id = pkg2,
         .source_unit_id = source_pkg2,
         .kind = ahfl::SymbolKind::Struct,
@@ -1807,6 +1807,8 @@ void test_workspace_index_queries_sort_by_package_source_and_order() {
     const auto *target_symbol = index.symbol_for_def(target_def);
     check(target_symbol != nullptr, "workspace_index.order.symbol_for_def_exists");
     if (target_symbol != nullptr) {
+        check(target_symbol->def_id == target_def,
+              "workspace_index.order.symbol_for_def_normalized");
         check(target_symbol->location.uri == "file:///pkg2.ahfl",
               "workspace_index.order.symbol_for_def_location");
     }

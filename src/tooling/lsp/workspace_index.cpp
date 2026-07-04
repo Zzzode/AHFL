@@ -875,6 +875,7 @@ void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
 }
 
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
+    fact.def_id = DefId{symbols_.size()};
     symbols_.push_back(std::move(fact));
 }
 
