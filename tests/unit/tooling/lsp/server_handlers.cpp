@@ -3408,6 +3408,93 @@ void test_package_graph_workspace_selects_member_dependency_source() {
           "package_graph_workspace.definition_targets_workspace_dependency_source");
 }
 
+void test_workspace_index_includes_path_dependency_exports() {
+    const auto root = make_temp_project("workspace_index_path_dependency");
+    const auto app_root = root / "app";
+    const auto lib_root = root / "lib";
+    const auto std_root = root / "std";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    const auto types_path = lib_root / "src" / "types.ahfl";
+
+    write_minimal_std_package(std_root, "path-dependency-index");
+    write_package_manifest(app_root,
+                           "path-index-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\n"
+                           "lib = { source = \"path\", path = \"../lib\", version = \"0.1.0\" }\n");
+    write_package_manifest(lib_root, "lib", "lib", "\"types\"", "src/types.ahfl");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct LocalOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string types_source = "module lib::types;\n"
+                                     "\n"
+                                     "struct PathMsg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(root));
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspace_index.path_dependency.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->source_for_uri(types_uri) == nullptr,
+                  "workspace_index.path_dependency.not_semantic_source");
+            check(snapshot->workspace_index != nullptr,
+                  "workspace_index.path_dependency.index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                const auto *dependency_source =
+                    index_source_unit_for_uri(*snapshot->workspace_index, types_uri);
+                check(dependency_source != nullptr,
+                      "workspace_index.path_dependency.source_unit_exists");
+                if (dependency_source != nullptr) {
+                    check(source_unit_has_export_scope(*dependency_source),
+                          "workspace_index.path_dependency.export_scope");
+                }
+                const auto path_symbols = snapshot->workspace_index->workspace_symbols("PathMsg");
+                check(std::find_if(path_symbols.begin(),
+                                   path_symbols.end(),
+                                   [&](const SymbolFact *symbol) {
+                                       return symbol != nullptr && symbol->location.uri == types_uri;
+                                   }) != path_symbols.end(),
+                      "workspace_index.path_dependency.symbol_fact_exists");
+            }
+        }
+    }
+
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"PathMsg"}})";
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(main_uri, 1, main_source),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(types_uri) != std::string::npos,
+          "workspace_index.path_dependency.workspace_symbol_uri");
+    check(response.find("PathMsg") != std::string::npos,
+          "workspace_index.path_dependency.workspace_symbol_name");
+}
+
 void test_cross_workspace_path_dependency_rejects_mixed_toolchain_profiles() {
     const auto root = make_temp_project("cross_workspace_toolchain_profile");
     const auto workspace_a = root / "workspace-a";
@@ -4519,6 +4606,13 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
                   "lazy_sysroot.int_not_in_semantic_sources");
             check(snapshot->source_for_uri(fmt_uri) == nullptr,
                   "lazy_sysroot.fmt_not_in_semantic_sources");
+            check(snapshot->workspace_index != nullptr, "lazy_sysroot.workspace_index_exists");
+            if (snapshot->workspace_index != nullptr) {
+                check(index_source_unit_for_uri(*snapshot->workspace_index, int_uri) == nullptr,
+                      "lazy_sysroot.workspace_index_excludes_int_export");
+                check(index_source_unit_for_uri(*snapshot->workspace_index, fmt_uri) == nullptr,
+                      "lazy_sysroot.workspace_index_excludes_fmt_export");
+            }
         }
     }
 
@@ -5606,6 +5700,154 @@ void test_sysroot_index_cache_key_separates_workspace_roots() {
     check(index_b != nullptr, "sysroot_index_cache_key.index_b_exists");
     check(index_a == index_a_again, "sysroot_index_cache_key.reuses_same_workspace_entry");
     check(index_a != index_b, "sysroot_index_cache_key.separates_workspace_entries");
+}
+
+void test_multi_root_sysroot_index_uses_resource_toolchain_profiles() {
+    const auto root = make_temp_project("multi_root_sysroot_index_profiles");
+    const auto app_a = root / "app-a";
+    const auto app_b = root / "app-b";
+    const auto sysroot_a = root / "sysroot-a";
+    const auto sysroot_b = root / "sysroot-b";
+    const auto main_a = app_a / "src" / "main.ahfl";
+    const auto main_b = app_b / "src" / "main.ahfl";
+    const auto fmt_a = sysroot_a / "std" / "fmt.ahfl";
+    const auto fmt_b = sysroot_b / "std" / "fmt.ahfl";
+
+    auto write_profiled_std = [&](const std::filesystem::path &std_root,
+                                  std::string_view format_name,
+                                  std::string_view marker) {
+        write_file(std_root / "ahfl.toml",
+                   "manifest_version = 1\n"
+                   "\n"
+                   "[package]\n"
+                   "name = \"std\"\n"
+                   "version = \"0.1.0\"\n"
+                   "edition = \"2026\"\n"
+                   "kind = \"standard-library\"\n"
+                   "\n"
+                   "[module]\n"
+                   "prefix = \"std\"\n"
+                   "root = \".\"\n"
+                   "\n"
+                   "[exports]\n"
+                   "modules = [\"prelude\", \"int\", \"fmt\"]\n"
+                   "\n"
+                   "[prelude]\n"
+                   "module = \"std::prelude\"\n"
+                   "injection = \"explicit\"\n"
+                   "\n"
+                   "[compiler_intrinsics]\n"
+                   "allow = [\"primitive_*\"]\n");
+        write_file(std_root / "prelude.ahfl",
+                   "module std::prelude;\n"
+                   "// " +
+                       std::string(marker) + "\n");
+        write_file(std_root / "int.ahfl", "module std::int;\n\nimpl Int {}\n");
+        write_file(std_root / "fmt.ahfl",
+                   "module std::fmt;\n"
+                   "\n"
+                   "fn " +
+                       std::string(format_name) +
+                       "(x: Int) -> String effect Pure;\n"
+                       "\n"
+                       "impl Int {}\n");
+    };
+    write_profiled_std(sysroot_a / "std", "format_a", "profile-a");
+    write_profiled_std(sysroot_b / "std", "format_b", "profile-b");
+    write_package_manifest(app_a,
+                           "multi-root-app-a",
+                           "appa",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_package_manifest(app_b,
+                           "multi-root-app-b",
+                           "appb",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+
+    const std::string source_a = "module appa::main;\n"
+                                 "\n"
+                                 "fn keep_a(x: Int) -> Int effect Pure decreases 0 {\n"
+                                 "    return x;\n"
+                                 "}\n";
+    const std::string source_b = "module appb::main;\n"
+                                 "\n"
+                                 "fn keep_b(x: Int) -> Int effect Pure decreases 0 {\n"
+                                 "    return x;\n"
+                                 "}\n";
+    write_file(main_a, source_a);
+    write_file(main_b, source_b);
+
+    project_discovery::ToolchainProfileSet profiles;
+    auto add_workspace_profile = [&](const std::filesystem::path &workspace_root,
+                                     const std::filesystem::path &sysroot,
+                                     std::string_view label) {
+        auto result = project_discovery::toolchain_profile_from_sysroot_input(
+            sysroot, project_discovery::ToolchainProfileOrigin::LspInitialization);
+        check(result.profile.has_value(),
+              "multi_root_sysroot_index." + std::string(label) + "_profile_exists");
+        profiles.diagnostics.insert(
+            profiles.diagnostics.end(), result.diagnostics.begin(), result.diagnostics.end());
+        if (!result.profile.has_value()) {
+            return;
+        }
+        result.profile->scope = project_discovery::ToolchainProfileScope::WorkspaceFolder;
+        profiles.workspace_profiles.push_back(project_discovery::WorkspaceToolchainProfile{
+            .workspace_root = workspace_root,
+            .profile = std::move(*result.profile),
+        });
+    };
+    add_workspace_profile(app_a, sysroot_a, "a");
+    add_workspace_profile(app_b, sysroot_b, "b");
+
+    const auto uri_a = AnalysisService::uri_from_path(main_a);
+    const auto uri_b = AnalysisService::uri_from_path(main_b);
+    const auto fmt_a_uri = AnalysisService::uri_from_path(fmt_a);
+    const auto fmt_b_uri = AnalysisService::uri_from_path(fmt_b);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = uri_a,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source_a,
+    });
+    store.open(TextDocumentItem{
+        .uri = uri_b,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source_b,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({app_a, app_b});
+    analysis.set_toolchain_profiles(std::move(profiles));
+
+    const auto *index_a = analysis.sysroot_index_for_uri(uri_a);
+    const auto *index_b = analysis.sysroot_index_for_uri(uri_b);
+    check(index_a != nullptr, "multi_root_sysroot_index.index_a_exists");
+    check(index_b != nullptr, "multi_root_sysroot_index.index_b_exists");
+    if (index_a != nullptr) {
+        check(!index_a->workspace_symbols("format_a").empty(),
+              "multi_root_sysroot_index.a_contains_own_symbol");
+        check(index_a->workspace_symbols("format_b").empty(),
+              "multi_root_sysroot_index.a_excludes_other_symbol");
+        check(index_source_unit_for_uri(*index_a, fmt_a_uri) != nullptr,
+              "multi_root_sysroot_index.a_contains_own_source");
+        check(index_source_unit_for_uri(*index_a, fmt_b_uri) == nullptr,
+              "multi_root_sysroot_index.a_excludes_other_source");
+    }
+    if (index_b != nullptr) {
+        check(!index_b->workspace_symbols("format_b").empty(),
+              "multi_root_sysroot_index.b_contains_own_symbol");
+        check(index_b->workspace_symbols("format_a").empty(),
+              "multi_root_sysroot_index.b_excludes_other_symbol");
+        check(index_source_unit_for_uri(*index_b, fmt_b_uri) != nullptr,
+              "multi_root_sysroot_index.b_contains_own_source");
+        check(index_source_unit_for_uri(*index_b, fmt_a_uri) == nullptr,
+              "multi_root_sysroot_index.b_excludes_other_source");
+    }
 }
 
 void test_package_graph_manifest_does_not_inject_prelude() {
@@ -7378,6 +7620,7 @@ int main() {
     test_project_diagnostics_refresh_dependent_open_documents();
     test_package_graph_manifest_selects_module_roots_for_source();
     test_package_graph_workspace_selects_member_dependency_source();
+    test_workspace_index_includes_path_dependency_exports();
     test_cross_workspace_path_dependency_rejects_mixed_toolchain_profiles();
     test_package_graph_workspace_rejects_private_dependency_module();
     test_package_graph_workspace_preserves_cross_package_hover();
@@ -7409,6 +7652,7 @@ int main() {
     test_analysis_snapshot_cache_key_records_workspace_manifest();
     test_analysis_snapshot_cache_key_records_open_overlay_revisions();
     test_sysroot_index_cache_key_separates_workspace_roots();
+    test_multi_root_sysroot_index_uses_resource_toolchain_profiles();
     test_package_graph_manifest_does_not_inject_prelude();
     test_index_only_exported_type_does_not_satisfy_unimported_reference();
     test_diagnostic_related_information_surfaces_for_multi_module_mismatch();
