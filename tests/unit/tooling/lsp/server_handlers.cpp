@@ -1524,6 +1524,25 @@ void test_project_references_include_indexed_unopened_source() {
                 if (msg_symbol != symbols.end()) {
                     check(msg_symbol->name_space == ahfl::SymbolNamespace::Types,
                           "references.index_model.msg_symbol_namespace");
+                    const auto &semantic_symbols = snapshot->resolve_result.symbol_table.symbols();
+                    const auto semantic_msg =
+                        std::find_if(semantic_symbols.begin(),
+                                     semantic_symbols.end(),
+                                     [](const ahfl::Symbol &symbol) {
+                                         return symbol.canonical_name == "app::types::Msg";
+                                     });
+                    check(semantic_msg != semantic_symbols.end(),
+                          "references.index_model.semantic_msg_symbol_exists");
+                    if (semantic_msg != semantic_symbols.end()) {
+                        const auto remapped_def =
+                            snapshot->workspace_def_for_symbol(semantic_msg->id);
+                        check(remapped_def.has_value(),
+                              "references.index_model.semantic_remap_exists");
+                        if (remapped_def.has_value()) {
+                            check(*remapped_def == msg_symbol->def_id,
+                                  "references.index_model.semantic_remap_matches_index_def");
+                        }
+                    }
                     check(msg_symbol->package_id.value != std::numeric_limits<std::size_t>::max(),
                           "references.index_model.msg_symbol_has_package_id");
                     check(msg_symbol->source_unit_id.value < source_units.size(),
@@ -2857,6 +2876,34 @@ void test_implementation_uses_index_for_unopened_nominal_impls() {
                     });
                 check(trait_symbol != symbols.end(),
                       "implementation.nominal_index.trait_symbol_fact_exists");
+                const auto msg_symbol =
+                    std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+                        return symbol.canonical_name == "app::types::Msg" &&
+                               symbol.kind == ahfl::SymbolKind::Struct;
+                    });
+                check(msg_symbol != symbols.end(),
+                      "implementation.nominal_index.msg_symbol_fact_exists");
+                if (msg_symbol != symbols.end()) {
+                    const auto &semantic_symbols = snapshot->resolve_result.symbol_table.symbols();
+                    const auto semantic_msg =
+                        std::find_if(semantic_symbols.begin(),
+                                     semantic_symbols.end(),
+                                     [](const ahfl::Symbol &symbol) {
+                                         return symbol.canonical_name == "app::types::Msg";
+                                     });
+                    check(semantic_msg != semantic_symbols.end(),
+                          "implementation.nominal_index.semantic_msg_symbol_exists");
+                    if (semantic_msg != semantic_symbols.end()) {
+                        const auto remapped_def =
+                            snapshot->workspace_def_for_symbol(semantic_msg->id);
+                        check(remapped_def.has_value(),
+                              "implementation.nominal_index.semantic_remap_exists");
+                        if (remapped_def.has_value()) {
+                            check(*remapped_def == msg_symbol->def_id,
+                                  "implementation.nominal_index.semantic_remap_matches_index_def");
+                        }
+                    }
+                }
                 const auto &impls = snapshot->workspace_index->impls();
                 const auto extra_impl =
                     std::find_if(impls.begin(), impls.end(), [&](const ImplFact &impl) {
