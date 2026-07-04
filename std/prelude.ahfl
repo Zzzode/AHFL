@@ -21,12 +21,12 @@ module std::prelude;
 // ===========================================================================
 
 // ---- sub-module imports ---------------------------------------------------
-import std::option as option;
-import std::result as result;
-import std::collections as collections;
-import std::string as string;
-import std::cmp as cmp;
-import std::fmt as fmt;
+import std::option;
+import std::result;
+import std::collections;
+import std::string;
+import std::cmp;
+import std::fmt;
 
 // ===========================================================================
 // §9.1.1  TYPES

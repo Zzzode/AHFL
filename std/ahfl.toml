@@ -17,6 +17,9 @@ injection = "explicit"
 [exports]
 modules = [
   "prelude",
+  "bool",
+  "int",
+  "float",
   "option",
   "result",
   "string",

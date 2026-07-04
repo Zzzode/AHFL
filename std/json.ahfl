@@ -1,9 +1,7 @@
 module std::json;
 
-import std::collections as collections;
-import std::option as option;
-import std::string as string;
-import std::traits as traits;
+import std::collections;
+import std::option;
 
 type List<T> = collections::List<T>;
 type Map<K, V> = collections::Map<K, V>;

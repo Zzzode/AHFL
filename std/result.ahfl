@@ -1,6 +1,6 @@
 module std::result;
 
-import std::option as option;
+import std::option;
 
 enum Result<T, E> {
     Ok(T),

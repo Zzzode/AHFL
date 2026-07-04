@@ -1,0 +1,4 @@
+module std::int;
+
+// Primitive home module for Int. Extension methods live in domain modules.
+impl Int {}

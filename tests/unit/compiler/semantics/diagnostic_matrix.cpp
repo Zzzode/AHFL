@@ -72,6 +72,14 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     out << content;
 }
 
+[[nodiscard]] std::filesystem::path repo_sysroot_search_root() {
+#ifdef AHFL_SOURCE_DIR
+    return std::filesystem::path{AHFL_SOURCE_DIR};
+#else
+    return std::filesystem::path{"."};
+#endif
+}
+
 [[nodiscard]] std::filesystem::path module_source_path(const std::filesystem::path &root,
                                                        std::string_view module_name) {
     auto path = root;
@@ -103,7 +111,7 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
         ahfl::parse_project(frontend,
                             ahfl::ProjectInput{
                                 .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .search_roots = {root, repo_sysroot_search_root()},
                                 .inject_prelude = true,
                             });
     REQUIRE_FALSE(parse_result.has_errors());
@@ -164,7 +172,7 @@ typecheck_multi_module(std::string_view project_tag,
         ahfl::parse_project(frontend,
                             ahfl::ProjectInput{
                                 .entry_files = {*entry_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .search_roots = {root, repo_sysroot_search_root()},
                                 .inject_prelude = true,
                             });
     {
@@ -219,7 +227,7 @@ typecheck_multi_module(std::string_view project_tag,
         ahfl::parse_project(frontend,
                             ahfl::ProjectInput{
                                 .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .search_roots = {root, repo_sysroot_search_root()},
                                 .inject_prelude = true,
                             });
     // If parsing produced no graph at all we cannot continue — return a
@@ -258,7 +266,7 @@ typecheck_multi_module(std::string_view project_tag,
         ahfl::parse_project(frontend,
                             ahfl::ProjectInput{
                                 .entry_files = {main_path},
-                                .search_roots = {root, std::filesystem::path{"std"}},
+                                .search_roots = {root, repo_sysroot_search_root()},
                                 .inject_prelude = true,
                             });
     REQUIRE_FALSE(parse_result.has_errors());
@@ -1683,6 +1691,69 @@ resolve_multi_module(std::string_view project_tag,
         .parse = std::move(parse_result),
         .resolve = std::move(resolve_result),
     };
+}
+
+TEST_CASE("resolver import aliases") {
+    SUBCASE("derive default import alias from module leaf name") {
+        const NamedModuleSource mod_main = {"app::main", R"AHFL(
+module app::main;
+import lib::types;
+
+struct Use {
+    payload: types::Msg;
+}
+)AHFL"};
+        const NamedModuleSource mod_types = {"lib::types", R"AHFL(
+module lib::types;
+
+struct Msg {
+    value: String;
+}
+)AHFL"};
+
+        const auto [parse, res] =
+            resolve_multi_module("default_import_alias", {mod_main, mod_types});
+        (void)parse;
+        CHECK_FALSE(res.has_errors());
+        REQUIRE(res.imports().size() == 1);
+        CHECK(res.imports().front().alias == "types");
+        CHECK(res.imports().front().target_module == "lib::types");
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.UNUSED_IMPORT") == 0);
+        CHECK(std::any_of(res.references().begin(), res.references().end(), [](const auto &ref) {
+            return ref.text == "types::Msg";
+        }));
+    }
+
+    SUBCASE("explicit prelude import is used by bare prelude symbols") {
+        const NamedModuleSource mod_main = {"app::main", R"AHFL(
+module app::main;
+import std::prelude;
+
+struct Use {
+    payload: Option<Int>;
+}
+)AHFL"};
+        const NamedModuleSource mod_prelude = {"std::prelude", R"AHFL(
+module std::prelude;
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+)AHFL"};
+
+        const auto [parse, res] =
+            resolve_multi_module("default_import_prelude", {mod_main, mod_prelude});
+        (void)parse;
+        CHECK_FALSE(res.has_errors());
+        REQUIRE(res.imports().size() == 1);
+        CHECK(res.imports().front().alias == "prelude");
+        CHECK(res.imports().front().target_module == "std::prelude");
+        CHECK(diagnostic_count_with_code(res.diagnostics, "lint.UNUSED_IMPORT") == 0);
+        CHECK(std::any_of(res.references().begin(), res.references().end(), [](const auto &ref) {
+            return ref.text == "Option";
+        }));
+    }
 }
 
 TEST_CASE("g-4-M7 lint family") {

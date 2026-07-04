@@ -74,6 +74,16 @@ constexpr std::string_view kStdPreludeModule = "std::prelude";
     return owner;
 }
 
+[[nodiscard]] std::string default_import_alias(const ast::ImportDecl &node) {
+    if (!node.alias.empty()) {
+        return node.alias;
+    }
+    if (node.path == nullptr || node.path->segments.empty()) {
+        return {};
+    }
+    return node.path->segments.back();
+}
+
 [[nodiscard]] std::size_t hash_mix(std::size_t seed, std::size_t value) noexcept {
     seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
     return seed;
@@ -199,7 +209,8 @@ class ResolverPass final {
             return;
         }
 
-        if (node.alias.empty()) {
+        const auto alias = default_import_alias(node);
+        if (alias.empty()) {
             result_.add_import(ImportBinding{
                 .alias = "",
                 .target_module = node.path->spelling(),
@@ -209,13 +220,13 @@ class ResolverPass final {
             return;
         }
 
-        if (const auto existing = import_alias_index_.find(node.alias);
+        if (const auto existing = import_alias_index_.find(alias);
             existing != import_alias_index_.end()) {
             emit_error(error_codes::resolve::DuplicateImport,
                        messages::resolve::DuplicateImport,
                        current_source_,
                        node.range,
-                       node.alias);
+                       alias);
             const auto &prev_import = result_.imports()[existing->second];
             if (auto src = source_unit_for(*prev_import.source_id); src.has_value()) {
                 emit_note(error_codes::resolve::DuplicateImport,
@@ -226,10 +237,10 @@ class ResolverPass final {
             return;
         }
 
-        import_alias_index_.emplace(node.alias, result_.imports().size());
-        import_aliases_.emplace(node.alias, node.path->spelling());
+        import_alias_index_.emplace(alias, result_.imports().size());
+        import_aliases_.emplace(alias, node.path->spelling());
         result_.add_import(ImportBinding{
-            .alias = node.alias,
+            .alias = alias,
             .target_module = node.path->spelling(),
             .source_id = current_source_id_,
             .declaration_range = node.range,
@@ -2098,11 +2109,13 @@ class ResolverPass final {
         std::unordered_map<std::size_t,
                            std::unordered_set<std::string_view>>
             ref_prefixes_per_source;
+        std::unordered_map<std::size_t, std::vector<SymbolId>> ref_targets_per_source;
         for (const auto &ref : result_.references()) {
             if (!ref.source_id.has_value()) {
                 continue;
             }
             ref_prefixes_per_source[ref.source_id->value].emplace(ref.text);
+            ref_targets_per_source[ref.source_id->value].push_back(ref.target);
         }
 
         // Helper: does any reference text for `sid` begin with alias,
@@ -2133,9 +2146,22 @@ class ResolverPass final {
             return false;
         };
 
+        const auto prelude_import_is_used = [&](SourceId sid) -> bool {
+            const auto it = ref_targets_per_source.find(sid.value);
+            if (it == ref_targets_per_source.end()) {
+                return false;
+            }
+            for (const auto target : it->second) {
+                const auto symbol = result_.symbol_table.get(target);
+                if (symbol.has_value() && symbol->get().module_name == kStdPreludeModule) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         for (const auto &binding : result_.imports()) {
-            // Skip wildcards / re-exports that have no alias (the
-            // CollectImports pass writes alias="" for these).
+            // Skip malformed imports that did not yield a usable alias.
             if (binding.alias.empty()) {
                 continue;
             }
@@ -2143,6 +2169,10 @@ class ResolverPass final {
                 continue;
             }
             if (alias_is_used(*binding.source_id, binding.alias)) {
+                continue;
+            }
+            if (binding.target_module == kStdPreludeModule &&
+                prelude_import_is_used(*binding.source_id)) {
                 continue;
             }
 

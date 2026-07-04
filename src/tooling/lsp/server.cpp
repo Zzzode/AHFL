@@ -312,6 +312,15 @@ symbol_selection_source_range(const Symbol &symbol, const LspSourceSnapshot &sou
 
 [[nodiscard]] std::optional<std::string_view>
 std_home_module_for_primitive_type(std::string_view type_name) noexcept {
+    if (type_name == "Bool") {
+        return "std::bool";
+    }
+    if (type_name == "Int") {
+        return "std::int";
+    }
+    if (type_name == "Float") {
+        return "std::float";
+    }
     if (type_name == "String") {
         return "std::string";
     }

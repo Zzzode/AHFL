@@ -227,6 +227,9 @@ void append_unique_entry_file(ProjectInput &input, const std::filesystem::path &
 void append_primitive_home_entry_files(ProjectInput &input,
                                        const package_graph::PackageGraph &graph) {
     constexpr std::string_view kPrimitiveHomeModules[] = {
+        "bool",
+        "int",
+        "float",
         "string",
         "uuid",
         "time",

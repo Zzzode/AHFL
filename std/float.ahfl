@@ -1,0 +1,4 @@
+module std::float;
+
+// Primitive home module for Float. Extension methods live in domain modules.
+impl Float {}

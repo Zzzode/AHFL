@@ -616,10 +616,10 @@ std::string initialize_body_with_bundled_sysroot(const std::filesystem::path &ro
            escape_json_string(sysroot.string()) + R"("}}}}})";
 }
 
-std::string initialize_body_with_default_and_bundled_sysroot(
-    const std::filesystem::path &root,
-    const std::filesystem::path &default_sysroot,
-    const std::filesystem::path &bundled_sysroot) {
+std::string
+initialize_body_with_default_and_bundled_sysroot(const std::filesystem::path &root,
+                                                 const std::filesystem::path &default_sysroot,
+                                                 const std::filesystem::path &bundled_sysroot) {
     return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
            AnalysisService::uri_from_path(root) +
            R"(","initializationOptions":{"ahfl":{"toolchain":{"defaultSysroot":")" +
@@ -635,8 +635,9 @@ std::string initialize_body_with_legacy_sysroot(const std::filesystem::path &roo
            escape_json_string(sysroot.string()) + R"("}}}})";
 }
 
-std::string initialize_body_with_noncanonical_toolchain_sysroot(const std::filesystem::path &root,
-                                                                const std::filesystem::path &sysroot) {
+std::string
+initialize_body_with_noncanonical_toolchain_sysroot(const std::filesystem::path &root,
+                                                    const std::filesystem::path &sysroot) {
     return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
            AnalysisService::uri_from_path(root) +
            R"(","initializationOptions":{"ahfl":{"toolchain":{"sysroot":")" +
@@ -1930,6 +1931,9 @@ void test_sysroot_std_manifest_is_not_loaded_as_root_package() {
 }
 
 void write_primitive_home_std_package(const std::filesystem::path &std_root,
+                                      std::string_view bool_source,
+                                      std::string_view int_source,
+                                      std::string_view float_source,
                                       std::string_view string_source,
                                       std::string_view uuid_source) {
     write_file(std_root / "ahfl.toml",
@@ -1946,15 +1950,18 @@ void write_primitive_home_std_package(const std::filesystem::path &std_root,
                "root = \".\"\n"
                "\n"
                "[exports]\n"
-               "modules = [\"prelude\", \"string\", \"uuid\"]\n"
+               "modules = [\"prelude\", \"bool\", \"int\", \"float\", \"string\", \"uuid\"]\n"
                "\n"
                "[prelude]\n"
                "module = \"std::prelude\"\n"
                "injection = \"explicit\"\n"
                "\n"
                "[compiler_intrinsics]\n"
-               "allow = [\"string_*\", \"uuid_*\"]\n");
+               "allow = [\"primitive_*\", \"string_*\", \"uuid_*\"]\n");
     write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(std_root / "bool.ahfl", std::string(bool_source));
+    write_file(std_root / "int.ahfl", std::string(int_source));
+    write_file(std_root / "float.ahfl", std::string(float_source));
     write_file(std_root / "string.ahfl", std::string(string_source));
     write_file(std_root / "uuid.ahfl", std::string(uuid_source));
 }
@@ -1962,52 +1969,86 @@ void write_primitive_home_std_package(const std::filesystem::path &std_root,
 void test_definition_targets_source_sysroot_primitive_home_modules() {
     const auto root = make_temp_project("definition_primitive_home_modules");
     const auto std_root = root / "std";
+    const auto bool_path = std_root / "bool.ahfl";
+    const auto int_path = std_root / "int.ahfl";
+    const auto float_path = std_root / "float.ahfl";
     const auto string_path = std_root / "string.ahfl";
     const auto uuid_path = std_root / "uuid.ahfl";
+    const std::string bool_source = "module std::bool;\n"
+                                    "\n"
+                                    "impl Bool {}\n";
+    const std::string int_source = "module std::int;\n"
+                                   "\n"
+                                   "impl Int {}\n";
+    const std::string float_source = "module std::float;\n"
+                                     "\n"
+                                     "impl Float {}\n";
     const std::string string_source = "module std::string;\n"
                                       "\n"
-                                      "@builtin(\"string_raw_length\")\n"
-                                      "fn string_raw_length(s: String) -> Int effect Pure;\n"
-                                      "\n"
-                                      "impl String {\n"
-                                      "    fn length(self) -> Int effect Pure decreases 0 {\n"
-                                      "        return string_raw_length(self);\n"
-                                      "    }\n"
-                                      "}\n";
+                                      "impl String {}\n";
     const std::string uuid_source = "module std::uuid;\n"
                                     "\n"
-                                    "@builtin(\"uuid_to_string\")\n"
-                                    "fn uuid_to_string(u: UUID) -> String effect Pure;\n"
+                                    "@builtin(\"primitive_probe\")\n"
+                                    "fn primitive_probe(flag: Bool, count: Int, ratio: Float, "
+                                    "id: UUID) -> String effect Pure;\n"
                                     "\n"
-                                    "impl UUID {\n"
-                                    "    fn to_string(self) -> String effect Pure decreases 0 {\n"
-                                    "        return uuid_to_string(self);\n"
-                                    "    }\n"
-                                    "}\n";
-    write_primitive_home_std_package(std_root, string_source, uuid_source);
+                                    "impl UUID {}\n";
+    write_primitive_home_std_package(
+        std_root, bool_source, int_source, float_source, string_source, uuid_source);
 
+    const auto bool_uri = AnalysisService::uri_from_path(bool_path);
+    const auto int_uri = AnalysisService::uri_from_path(int_path);
+    const auto float_uri = AnalysisService::uri_from_path(float_path);
     const auto string_uri = AnalysisService::uri_from_path(string_path);
     const auto uuid_uri = AnalysisService::uri_from_path(uuid_path);
-    const std::string string_definition =
+    const std::string bool_definition =
         R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Bool")) + R"(})";
+    const std::string int_definition =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Int")) + R"(})";
+    const std::string float_definition =
+        R"({"jsonrpc":"2.0","id":4,"method":"textDocument/definition","params":)" +
+        hover_params_at(uuid_uri, position_of(uuid_source, "Float")) + R"(})";
+    const std::string string_definition =
+        R"({"jsonrpc":"2.0","id":5,"method":"textDocument/definition","params":)" +
         hover_params_at(uuid_uri, position_of(uuid_source, "String")) + R"(})";
     const std::string uuid_definition =
-        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/definition","params":)" +
+        R"({"jsonrpc":"2.0","id":6,"method":"textDocument/definition","params":)" +
         hover_params_at(uuid_uri, position_of(uuid_source, "UUID")) + R"(})";
 
     const auto output = run_lsp_messages({
         initialize_body_with_sysroot(root, root),
         did_open_body(uuid_uri, 1, uuid_source),
+        bool_definition,
+        int_definition,
+        float_definition,
         string_definition,
         uuid_definition,
-        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+        R"({"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}})",
     });
-    const auto string_response = response_body_for_id(output, 2);
-    const auto uuid_response = response_body_for_id(output, 3);
+    const auto bool_response = response_body_for_id(output, 2);
+    const auto int_response = response_body_for_id(output, 3);
+    const auto float_response = response_body_for_id(output, 4);
+    const auto string_response = response_body_for_id(output, 5);
+    const auto uuid_response = response_body_for_id(output, 6);
+
+    check(bool_response.find(bool_uri) != std::string::npos,
+          "definition.primitive_bool_targets_std_bool_uri");
+    check(bool_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_bool_targets_impl_selection");
+    check(int_response.find(int_uri) != std::string::npos,
+          "definition.primitive_int_targets_std_int_uri");
+    check(int_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_int_targets_impl_selection");
+    check(float_response.find(float_uri) != std::string::npos,
+          "definition.primitive_float_targets_std_float_uri");
+    check(float_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
+          "definition.primitive_float_targets_impl_selection");
 
     check(string_response.find(string_uri) != std::string::npos,
           "definition.primitive_string_targets_std_string_uri");
-    check(string_response.find(R"("start":{"line":5,"character":5})") != std::string::npos,
+    check(string_response.find(R"("start":{"line":2,"character":5})") != std::string::npos,
           "definition.primitive_string_targets_impl_selection");
     check(uuid_response.find(uuid_uri) != std::string::npos,
           "definition.primitive_uuid_targets_std_uuid_uri");
@@ -2220,8 +2261,7 @@ void test_lsp_bundled_sysroot_mismatch_reports_related_information() {
     check(output.find("active std manifest from profile origin 'bundled-extension'") !=
               std::string::npos,
           "bundled_sysroot_mismatch_related.origin_note");
-    check(output.find(AnalysisService::uri_from_path(std_root / "ahfl.toml")) !=
-              std::string::npos,
+    check(output.find(AnalysisService::uri_from_path(std_root / "ahfl.toml")) != std::string::npos,
           "bundled_sysroot_mismatch_related.opened_manifest_uri");
     check(output.find(AnalysisService::uri_from_path(bundled_root / "std" / "ahfl.toml")) !=
               std::string::npos,
@@ -2277,8 +2317,7 @@ void test_lsp_noncanonical_toolchain_sysroot_initialization_option_is_ignored() 
     const auto ignored_with_diagnostic =
         output.find("E::toolchain_sysroot_mismatch") != std::string::npos ||
         output.find("E::toolchain_sysroot_missing") != std::string::npos;
-    check(ignored_with_diagnostic,
-          "noncanonical_toolchain_sysroot_initialization_option.ignored");
+    check(ignored_with_diagnostic, "noncanonical_toolchain_sysroot_initialization_option.ignored");
 }
 
 void test_did_change_configuration_requests_resource_toolchain_profile() {

@@ -536,6 +536,10 @@ target_link_libraries(ahfl_semantics_diagnostic_matrix_tests
         ahfl_compiler_semantics
         doctest
 )
+target_compile_definitions(ahfl_semantics_diagnostic_matrix_tests
+    PRIVATE
+        AHFL_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
 ahfl_apply_project_warnings(ahfl_semantics_diagnostic_matrix_tests)
 
 add_executable(ahfl_semantics_type_mismatch_origin_tests

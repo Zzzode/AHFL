@@ -1,7 +1,7 @@
 module std::string;
 
-import std::option as option;
-import std::collections as collections;
+import std::option;
+import std::collections;
 
 // ===========================================================================
 // Compiler-internal builtin hooks. These stay as module-level prototypes

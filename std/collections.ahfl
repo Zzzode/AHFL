@@ -1,6 +1,6 @@
 module std::collections;
 
-import std::option as option;
+import std::option;
 
 struct List<T> {}
 struct Set<T> {}

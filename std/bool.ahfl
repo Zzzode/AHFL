@@ -1,0 +1,4 @@
+module std::bool;
+
+// Primitive home module for Bool. Extension methods live in domain modules.
+impl Bool {}

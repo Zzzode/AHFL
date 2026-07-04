@@ -1,6 +1,6 @@
 module std::uuid;
 
-import std::option as option;
+import std::option;
 
 // Compiler-internal builtin hooks.
 @builtin("uuid_new_v4")

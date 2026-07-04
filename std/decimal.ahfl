@@ -1,8 +1,6 @@
 module std::decimal;
 
-import std::cmp as cmp;
-import std::option as option;
-import std::traits as traits;
+import std::cmp;
 
 // ===========================================================================
 // Decimal — fixed-precision decimal primitive (RFC §3.2 / API §7.3).

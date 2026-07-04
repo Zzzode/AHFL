@@ -20,6 +20,9 @@ repo_root_from_integration_root(const std::filesystem::path &root) {
 
 [[nodiscard]] inline std::vector<std::string> repo_std_exports() {
     return {"prelude",
+            "bool",
+            "int",
+            "float",
             "option",
             "result",
             "string",
