@@ -1272,6 +1272,280 @@ TypeKey type_key_for_type_with_defs(const Type &type, const DefBySymbolMap *def_
     return TypeKey{.kind = TypeKey::Kind::Unknown};
 }
 
+class IndexAnalysisPipeline {
+  public:
+    IndexAnalysisPipeline(const Frontend &frontend, LspWorkspaceIndexInput input)
+        : frontend_(frontend), input_(std::move(input)) {}
+
+    [[nodiscard]] LspWorkspaceIndex run() {
+        index_.set_metadata(input_.metadata);
+        input_.project.entry_files = ordered_entry_files_for_index(input_);
+
+        auto project = parse_project(frontend_, input_.project);
+        if (project.has_errors()) {
+            append_parse_skeleton_facts(index_, frontend_, input_, &project.diagnostics);
+            return std::move(index_);
+        }
+
+        register_parsed_sources(project.graph);
+        append_index_diagnostics_by_source_name(index_,
+                                                source_units_by_name_,
+                                                project.diagnostics,
+                                                IndexDiagnosticPhase::Parse,
+                                                FactCompleteness::Resolved);
+
+        Resolver resolver;
+        auto resolved = resolver.resolve(project.graph);
+        append_index_diagnostics_by_source_name(index_,
+                                                source_units_by_name_,
+                                                resolved.diagnostics,
+                                                IndexDiagnosticPhase::Resolve,
+                                                resolved.has_errors() ? FactCompleteness::Parsed
+                                                                      : FactCompleteness::Resolved);
+        if (resolved.has_errors()) {
+            append_resolved_skeleton_facts(project.graph, FactCompleteness::Parsed);
+            return std::move(index_);
+        }
+
+        emit_resolved_symbol_facts(project.graph, resolved);
+        emit_resolved_reference_facts(project.graph, resolved);
+
+        TypeChecker type_checker;
+        auto typed = type_checker.check(project.graph, resolved);
+        append_index_diagnostics_by_source_name(index_,
+                                                source_units_by_name_,
+                                                typed.diagnostics,
+                                                IndexDiagnosticPhase::TypeCheck,
+                                                typed.has_errors() ? FactCompleteness::Resolved
+                                                                   : FactCompleteness::Typed);
+        if (typed.has_errors()) {
+            append_impl_skeleton_facts(project.graph, FactCompleteness::Resolved);
+            return std::move(index_);
+        }
+
+        emit_typed_impl_facts(project.graph, typed);
+        return std::move(index_);
+    }
+
+  private:
+    void register_parsed_sources(const SourceGraph &graph) {
+        for (const auto *source : ordered_source_units_for_index(input_, graph)) {
+            const auto source_unit = register_source_unit(
+                index_, source_units_by_path_, input_, source->path, FactCompleteness::Resolved);
+            source_units_by_source_id_.emplace(source->id.value, source_unit);
+            if (const auto *source_fact = source_unit_fact(index_, source_unit);
+                source_fact != nullptr) {
+                add_diagnostic_source_aliases(source_units_by_name_, *source_fact, &source->source);
+            }
+        }
+    }
+
+    [[nodiscard]] std::optional<SourceUnitId>
+    index_source_unit_for_source(const SourceUnit &source) const {
+        const auto found = source_units_by_source_id_.find(source.id.value);
+        if (found == source_units_by_source_id_.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
+    [[nodiscard]] package_graph::PackageId
+    package_id_for_index_source(const SourceUnit &source, SourceUnitId source_unit) const {
+        const auto *source_fact = source_unit_fact(index_, source_unit);
+        return source_fact == nullptr ? package_id_for_path(input_.scope.package_roots, source.path)
+                                      : source_fact->package_id;
+    }
+
+    void append_resolved_skeleton_facts(const SourceGraph &graph,
+                                        FactCompleteness impl_completeness) {
+        for (const auto &source : graph.sources) {
+            if (source.program == nullptr) {
+                continue;
+            }
+            const auto source_unit = index_source_unit_for_source(source);
+            if (!source_unit.has_value()) {
+                continue;
+            }
+            const auto package_id = package_id_for_index_source(source, *source_unit);
+            append_skeleton_symbol_facts(index_,
+                                         *source_unit,
+                                         package_id,
+                                         source.module_name,
+                                         uri_from_path(source.path),
+                                         source.source,
+                                         *source.program);
+            append_skeleton_impl_facts(index_,
+                                       *source_unit,
+                                       package_id,
+                                       uri_from_path(source.path),
+                                       source.source,
+                                       *source.program,
+                                       impl_completeness);
+        }
+    }
+
+    void append_impl_skeleton_facts(const SourceGraph &graph, FactCompleteness completeness) {
+        for (const auto &source : graph.sources) {
+            if (source.program == nullptr) {
+                continue;
+            }
+            const auto source_unit = index_source_unit_for_source(source);
+            if (!source_unit.has_value()) {
+                continue;
+            }
+            append_skeleton_impl_facts(index_,
+                                       *source_unit,
+                                       package_id_for_index_source(source, *source_unit),
+                                       uri_from_path(source.path),
+                                       source.source,
+                                       *source.program,
+                                       completeness);
+        }
+    }
+
+    void emit_resolved_symbol_facts(const SourceGraph &graph, const ResolveResult &resolved) {
+        std::vector<SymbolFactCandidate> symbol_candidates;
+        for (const auto &symbol : resolved.symbol_table.symbols()) {
+            const auto location = symbol_location(graph, symbol);
+            if (!location.has_value() || !symbol.source_id.has_value()) {
+                continue;
+            }
+            const auto *source_unit = source_unit_for_id(graph, *symbol.source_id);
+            if (source_unit == nullptr) {
+                continue;
+            }
+            const auto source_unit_id = index_source_unit_for_source(*source_unit);
+            if (!source_unit_id.has_value()) {
+                continue;
+            }
+            const auto selection_range = symbol_navigation_range(source_unit->source, symbol);
+            symbol_candidates.push_back(SymbolFactCandidate{
+                .symbol = &symbol,
+                .source_unit_id = *source_unit_id,
+                .package_id = package_id_for_index_source(*source_unit, *source_unit_id),
+                .location = *location,
+                .selection_range = selection_range,
+            });
+        }
+
+        std::sort(symbol_candidates.begin(), symbol_candidates.end(), symbol_fact_candidate_less);
+
+        for (const auto &candidate : symbol_candidates) {
+            const auto def_id = DefId{index_.symbols().size()};
+            def_by_symbol_.emplace(candidate.symbol->id.value, def_id);
+            index_.add_symbol(SymbolFact{
+                .def_id = def_id,
+                .package_id = candidate.package_id,
+                .source_unit_id = candidate.source_unit_id,
+                .kind = candidate.symbol->kind,
+                .name_space = candidate.symbol->name_space,
+                .local_name = candidate.symbol->local_name,
+                .canonical_name = candidate.symbol->canonical_name,
+                .declaration_range = candidate.symbol->declaration_range,
+                .selection_range = candidate.selection_range,
+                .location = candidate.location,
+                .completeness = FactCompleteness::Resolved,
+            });
+        }
+    }
+
+    void emit_resolved_reference_facts(const SourceGraph &graph, const ResolveResult &resolved) {
+        for (const auto &reference : resolved.references()) {
+            const auto location = reference_location(graph, reference);
+            if (!location.has_value() || !reference.source_id.has_value()) {
+                continue;
+            }
+            const auto *source_unit = source_unit_for_id(graph, *reference.source_id);
+            if (source_unit == nullptr) {
+                continue;
+            }
+            const auto source_unit_id = index_source_unit_for_source(*source_unit);
+            if (!source_unit_id.has_value()) {
+                continue;
+            }
+            const auto target = def_by_symbol_.find(reference.target.value);
+            index_.add_reference(ReferenceFact{
+                .package_id = package_id_for_index_source(*source_unit, *source_unit_id),
+                .source_unit_id = *source_unit_id,
+                .target_def = target == def_by_symbol_.end() ? std::nullopt
+                                                             : std::optional<DefId>{target->second},
+                .reference_kind = reference.kind,
+                .range = reference.range,
+                .location = *location,
+                .completeness = target == def_by_symbol_.end() ? FactCompleteness::Parsed
+                                                               : FactCompleteness::Resolved,
+            });
+        }
+    }
+
+    void emit_typed_impl_facts(const SourceGraph &graph, const TypeCheckResult &typed) {
+        std::vector<ImplFactCandidate> impl_candidates;
+        for (const auto &[raw_index, impl] : typed.environment.impls()) {
+            (void)raw_index;
+            if (impl.target_type == nullptr || !impl.source_id.has_value()) {
+                continue;
+            }
+            const auto location = impl_location(graph, impl);
+            if (!location.has_value()) {
+                continue;
+            }
+            const auto *source_unit = source_unit_for_id(graph, *impl.source_id);
+            if (source_unit == nullptr) {
+                continue;
+            }
+            const auto source_unit_id = index_source_unit_for_source(*source_unit);
+            if (!source_unit_id.has_value()) {
+                continue;
+            }
+            impl_candidates.push_back(ImplFactCandidate{
+                .package_id = package_id_for_index_source(*source_unit, *source_unit_id),
+                .source_unit_id = *source_unit_id,
+                .target_type = type_key_for_type_with_defs(*impl.target_type, &def_by_symbol_),
+                .trait_def = impl.trait_symbol.has_value()
+                                 ? def_for_symbol(def_by_symbol_, *impl.trait_symbol)
+                                 : std::nullopt,
+                .trait_range = has_extent(impl.trait_ref_range)
+                                   ? std::optional<SourceRange>{impl.trait_ref_range}
+                                   : std::nullopt,
+                .declaration_range = impl.declaration_range,
+                .target_range = impl_location_range(impl),
+                .location = *location,
+                .trait_location = impl_trait_location(graph, impl),
+                .methods = method_facts_for_impl(impl),
+                .source_order = impl.index,
+            });
+        }
+
+        std::sort(impl_candidates.begin(), impl_candidates.end(), impl_fact_candidate_less);
+
+        for (auto &candidate : impl_candidates) {
+            index_.add_impl(ImplFact{
+                .impl_id = WorkspaceImplId{index_.impls().size()},
+                .package_id = candidate.package_id,
+                .source_unit_id = candidate.source_unit_id,
+                .target_type = std::move(candidate.target_type),
+                .trait_def = candidate.trait_def,
+                .trait_range = candidate.trait_range,
+                .declaration_range = candidate.declaration_range,
+                .target_range = candidate.target_range,
+                .location = std::move(candidate.location),
+                .trait_location = std::move(candidate.trait_location),
+                .methods = std::move(candidate.methods),
+                .source_order = candidate.source_order,
+                .completeness = FactCompleteness::Typed,
+            });
+        }
+    }
+
+    const Frontend &frontend_;
+    LspWorkspaceIndexInput input_;
+    LspWorkspaceIndex index_;
+    SourceUnitByPathMap source_units_by_path_;
+    SourceUnitByDiagnosticNameMap source_units_by_name_;
+    SourceUnitBySourceIdMap source_units_by_source_id_;
+    DefBySymbolMap def_by_symbol_;
+};
+
 } // namespace
 
 TypeKey type_key_for_type(const Type &type) {
@@ -1280,239 +1554,7 @@ TypeKey type_key_for_type(const Type &type) {
 
 LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
                                             LspWorkspaceIndexInput input) {
-    LspWorkspaceIndex index;
-    index.set_metadata(input.metadata);
-    input.project.entry_files = ordered_entry_files_for_index(input);
-
-    auto project = parse_project(frontend, input.project);
-    if (project.has_errors()) {
-        append_parse_skeleton_facts(index, frontend, input, &project.diagnostics);
-        return index;
-    }
-
-    SourceUnitByPathMap source_units_by_path;
-    SourceUnitByDiagnosticNameMap source_units_by_name;
-    SourceUnitBySourceIdMap source_units_by_source_id;
-    for (const auto *source : ordered_source_units_for_index(input, project.graph)) {
-        const auto source_unit = register_source_unit(
-            index, source_units_by_path, input, source->path, FactCompleteness::Resolved);
-        source_units_by_source_id.emplace(source->id.value, source_unit);
-        if (const auto *source_fact = source_unit_fact(index, source_unit);
-            source_fact != nullptr) {
-            add_diagnostic_source_aliases(source_units_by_name, *source_fact, &source->source);
-        }
-    }
-    append_index_diagnostics_by_source_name(index,
-                                            source_units_by_name,
-                                            project.diagnostics,
-                                            IndexDiagnosticPhase::Parse,
-                                            FactCompleteness::Resolved);
-
-    Resolver resolver;
-    auto resolved = resolver.resolve(project.graph);
-    append_index_diagnostics_by_source_name(index,
-                                            source_units_by_name,
-                                            resolved.diagnostics,
-                                            IndexDiagnosticPhase::Resolve,
-                                            resolved.has_errors() ? FactCompleteness::Parsed
-                                                                  : FactCompleteness::Resolved);
-    if (resolved.has_errors()) {
-        for (const auto &source : project.graph.sources) {
-            const auto source_unit = source_units_by_source_id.find(source.id.value);
-            if (source_unit == source_units_by_source_id.end() || source.program == nullptr) {
-                continue;
-            }
-            const auto *source_fact = source_unit_fact(index, source_unit->second);
-            const auto package_id =
-                source_fact == nullptr ? package_id_for_path(input.scope.package_roots, source.path)
-                                       : source_fact->package_id;
-            append_skeleton_symbol_facts(index,
-                                         source_unit->second,
-                                         package_id,
-                                         source.module_name,
-                                         uri_from_path(source.path),
-                                         source.source,
-                                         *source.program);
-            append_skeleton_impl_facts(index,
-                                       source_unit->second,
-                                       package_id,
-                                       uri_from_path(source.path),
-                                       source.source,
-                                       *source.program);
-        }
-        return index;
-    }
-
-    std::vector<SymbolFactCandidate> symbol_candidates;
-    for (const auto &symbol : resolved.symbol_table.symbols()) {
-        const auto location = symbol_location(project.graph, symbol);
-        if (!location.has_value() || !symbol.source_id.has_value()) {
-            continue;
-        }
-        const auto *source_unit = source_unit_for_id(project.graph, *symbol.source_id);
-        if (source_unit == nullptr) {
-            continue;
-        }
-        const auto source_unit_id = source_units_by_source_id.find(symbol.source_id->value);
-        if (source_unit_id == source_units_by_source_id.end()) {
-            continue;
-        }
-        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
-        const auto package_id =
-            source_fact == nullptr
-                ? package_id_for_path(input.scope.package_roots, source_unit->path)
-                : source_fact->package_id;
-        const auto selection_range = symbol_navigation_range(source_unit->source, symbol);
-        symbol_candidates.push_back(SymbolFactCandidate{
-            .symbol = &symbol,
-            .source_unit_id = source_unit_id->second,
-            .package_id = package_id,
-            .location = *location,
-            .selection_range = selection_range,
-        });
-    }
-
-    std::sort(symbol_candidates.begin(), symbol_candidates.end(), symbol_fact_candidate_less);
-
-    DefBySymbolMap def_by_symbol;
-    for (const auto &candidate : symbol_candidates) {
-        const auto def_id = DefId{index.symbols().size()};
-        def_by_symbol.emplace(candidate.symbol->id.value, def_id);
-        index.add_symbol(SymbolFact{
-            .def_id = def_id,
-            .package_id = candidate.package_id,
-            .source_unit_id = candidate.source_unit_id,
-            .kind = candidate.symbol->kind,
-            .name_space = candidate.symbol->name_space,
-            .local_name = candidate.symbol->local_name,
-            .canonical_name = candidate.symbol->canonical_name,
-            .declaration_range = candidate.symbol->declaration_range,
-            .selection_range = candidate.selection_range,
-            .location = candidate.location,
-            .completeness = FactCompleteness::Resolved,
-        });
-    }
-
-    for (const auto &reference : resolved.references()) {
-        const auto location = reference_location(project.graph, reference);
-        if (!location.has_value() || !reference.source_id.has_value()) {
-            continue;
-        }
-        const auto *source_unit = source_unit_for_id(project.graph, *reference.source_id);
-        if (source_unit == nullptr) {
-            continue;
-        }
-        const auto source_unit_id = source_units_by_source_id.find(reference.source_id->value);
-        if (source_unit_id == source_units_by_source_id.end()) {
-            continue;
-        }
-        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
-        const auto target = def_by_symbol.find(reference.target.value);
-        index.add_reference(ReferenceFact{
-            .package_id = source_fact == nullptr
-                              ? package_id_for_path(input.scope.package_roots, source_unit->path)
-                              : source_fact->package_id,
-            .source_unit_id = source_unit_id->second,
-            .target_def =
-                target == def_by_symbol.end() ? std::nullopt : std::optional<DefId>{target->second},
-            .reference_kind = reference.kind,
-            .range = reference.range,
-            .location = *location,
-            .completeness = target == def_by_symbol.end() ? FactCompleteness::Parsed
-                                                          : FactCompleteness::Resolved,
-        });
-    }
-
-    TypeChecker type_checker;
-    auto typed = type_checker.check(project.graph, resolved);
-    append_index_diagnostics_by_source_name(index,
-                                            source_units_by_name,
-                                            typed.diagnostics,
-                                            IndexDiagnosticPhase::TypeCheck,
-                                            typed.has_errors() ? FactCompleteness::Resolved
-                                                               : FactCompleteness::Typed);
-    if (typed.has_errors()) {
-        for (const auto &source : project.graph.sources) {
-            const auto source_unit = source_units_by_source_id.find(source.id.value);
-            if (source_unit == source_units_by_source_id.end() || source.program == nullptr) {
-                continue;
-            }
-            const auto *source_fact = source_unit_fact(index, source_unit->second);
-            const auto package_id =
-                source_fact == nullptr ? package_id_for_path(input.scope.package_roots, source.path)
-                                       : source_fact->package_id;
-            append_skeleton_impl_facts(index,
-                                       source_unit->second,
-                                       package_id,
-                                       uri_from_path(source.path),
-                                       source.source,
-                                       *source.program,
-                                       FactCompleteness::Resolved);
-        }
-        return index;
-    }
-
-    std::vector<ImplFactCandidate> impl_candidates;
-    for (const auto &[raw_index, impl] : typed.environment.impls()) {
-        (void)raw_index;
-        if (impl.target_type == nullptr || !impl.source_id.has_value()) {
-            continue;
-        }
-        const auto location = impl_location(project.graph, impl);
-        if (!location.has_value()) {
-            continue;
-        }
-        const auto *source_unit = source_unit_for_id(project.graph, *impl.source_id);
-        if (source_unit == nullptr) {
-            continue;
-        }
-        const auto source_unit_id = source_units_by_source_id.find(impl.source_id->value);
-        if (source_unit_id == source_units_by_source_id.end()) {
-            continue;
-        }
-        const auto *source_fact = source_unit_fact(index, source_unit_id->second);
-        impl_candidates.push_back(ImplFactCandidate{
-            .package_id = source_fact == nullptr
-                              ? package_id_for_path(input.scope.package_roots, source_unit->path)
-                              : source_fact->package_id,
-            .source_unit_id = source_unit_id->second,
-            .target_type = type_key_for_type_with_defs(*impl.target_type, &def_by_symbol),
-            .trait_def = impl.trait_symbol.has_value()
-                             ? def_for_symbol(def_by_symbol, *impl.trait_symbol)
-                             : std::nullopt,
-            .trait_range = has_extent(impl.trait_ref_range)
-                               ? std::optional<SourceRange>{impl.trait_ref_range}
-                               : std::nullopt,
-            .declaration_range = impl.declaration_range,
-            .target_range = impl_location_range(impl),
-            .location = *location,
-            .trait_location = impl_trait_location(project.graph, impl),
-            .methods = method_facts_for_impl(impl),
-            .source_order = impl.index,
-        });
-    }
-
-    std::sort(impl_candidates.begin(), impl_candidates.end(), impl_fact_candidate_less);
-
-    for (auto &candidate : impl_candidates) {
-        index.add_impl(ImplFact{
-            .impl_id = WorkspaceImplId{index.impls().size()},
-            .package_id = candidate.package_id,
-            .source_unit_id = candidate.source_unit_id,
-            .target_type = std::move(candidate.target_type),
-            .trait_def = candidate.trait_def,
-            .trait_range = candidate.trait_range,
-            .declaration_range = candidate.declaration_range,
-            .target_range = candidate.target_range,
-            .location = std::move(candidate.location),
-            .trait_location = std::move(candidate.trait_location),
-            .methods = std::move(candidate.methods),
-            .source_order = candidate.source_order,
-            .completeness = FactCompleteness::Typed,
-        });
-    }
-
-    return index;
+    return IndexAnalysisPipeline(frontend, std::move(input)).run();
 }
 
 } // namespace ahfl::lsp
