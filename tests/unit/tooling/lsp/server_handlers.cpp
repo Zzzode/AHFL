@@ -3180,6 +3180,94 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
           "lazy_sysroot.workspace_symbol_includes_fmt_name");
 }
 
+void test_watched_sysroot_file_change_refreshes_primitive_candidates() {
+    const auto root = make_temp_project("watched_sysroot_impl_refresh");
+    const auto app_root = root / "app";
+    const auto std_root = root / "std";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto int_path = std_root / "int.ahfl";
+    const auto fmt_path = std_root / "fmt.ahfl";
+    const auto string_path = std_root / "string.ahfl";
+    write_package_manifest(app_root,
+                           "watched-sysroot-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nstd = { source = \"sysroot\" }\n");
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"int\", \"fmt\", \"string\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"primitive_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(int_path, "module std::int;\n\nimpl Int {}\n");
+    write_file(fmt_path,
+               "module std::fmt;\n"
+               "\n"
+               "fn format_int(x: Int) -> String effect Pure;\n");
+    write_file(string_path, "module std::string;\n\nimpl String {}\n");
+
+    const std::string app_source = "module app::main;\n"
+                                   "\n"
+                                   "fn keep(x: Int) -> Int effect Pure decreases 0 {\n"
+                                   "    return x;\n"
+                                   "}\n";
+    const std::string fmt_with_impl = "module std::fmt;\n"
+                                      "\n"
+                                      "fn format_int(x: Int) -> String effect Pure;\n"
+                                      "\n"
+                                      "impl Int {}\n";
+    write_file(app_path, app_source);
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    const auto fmt_uri = AnalysisService::uri_from_path(fmt_path);
+    const auto int_position = position_of(app_source, "Int) ->");
+    const std::string implementation_before =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/implementation","params":)" +
+        hover_params_at(app_uri, int_position) + R"(})";
+    const std::string watched_change =
+        R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":")" +
+        fmt_uri + R"(","type":2}]}})";
+    const std::string implementation_after =
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/implementation","params":)" +
+        hover_params_at(app_uri, int_position) + R"(})";
+
+    const auto output = run_lsp_message_steps({
+        LspMessageStep{.body = initialize_body_with_sysroot(root, root)},
+        LspMessageStep{.body = did_open_body(app_uri, 1, app_source)},
+        LspMessageStep{.body = implementation_before},
+        LspMessageStep{
+            .body = watched_change,
+            .before = [fmt_path, fmt_with_impl]() { write_file(fmt_path, fmt_with_impl); },
+        },
+        LspMessageStep{.body = implementation_after},
+        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
+    });
+    const auto before_response = response_body_for_id(output, 2);
+    const auto after_response = response_body_for_id(output, 3);
+    check(before_response.find(fmt_uri) == std::string::npos,
+          "watched_sysroot_impl.before_excludes_fmt_impl");
+    check(after_response.find(fmt_uri) != std::string::npos,
+          "watched_sysroot_impl.after_includes_fmt_impl");
+}
+
 void test_open_sysroot_overlay_feeds_primitive_implementation_candidates() {
     const auto root = make_temp_project("sysroot_overlay_primitive_impl");
     const auto app_root = root / "app";
@@ -5761,6 +5849,7 @@ int main() {
     test_implementation_uses_index_for_unopened_nominal_impls();
     test_std_exported_impl_modules_feed_primitive_candidates();
     test_user_package_lazy_sysroot_index_feeds_primitive_candidates();
+    test_watched_sysroot_file_change_refreshes_primitive_candidates();
     test_open_sysroot_overlay_feeds_primitive_implementation_candidates();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();
     test_sysroot_std_manifest_detected_without_workspace_root();
