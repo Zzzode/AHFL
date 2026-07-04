@@ -128,6 +128,7 @@ struct SymbolFact {
     package_graph::PackageId package_id;
     SourceUnitId source_unit_id;
     SymbolKind kind{SymbolKind::Struct};
+    SymbolNamespace name_space{SymbolNamespace::Types};
     std::string local_name;
     std::string canonical_name;
     SourceRange declaration_range;

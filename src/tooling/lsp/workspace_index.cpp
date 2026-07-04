@@ -436,6 +436,30 @@ skeleton_symbol_for_declaration(const ast::Decl &declaration) {
     }
 }
 
+[[nodiscard]] SymbolNamespace symbol_namespace_for_kind(SymbolKind kind) noexcept {
+    switch (kind) {
+    case SymbolKind::Struct:
+    case SymbolKind::Enum:
+    case SymbolKind::TypeAlias:
+        return SymbolNamespace::Types;
+    case SymbolKind::Const:
+        return SymbolNamespace::Consts;
+    case SymbolKind::Capability:
+        return SymbolNamespace::Capabilities;
+    case SymbolKind::Predicate:
+        return SymbolNamespace::Predicates;
+    case SymbolKind::Agent:
+        return SymbolNamespace::Agents;
+    case SymbolKind::Workflow:
+        return SymbolNamespace::Workflows;
+    case SymbolKind::Function:
+        return SymbolNamespace::Functions;
+    case SymbolKind::Trait:
+        return SymbolNamespace::Traits;
+    }
+    return SymbolNamespace::Types;
+}
+
 void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
                                   SourceUnitId source_unit,
                                   package_graph::PackageId package_id,
@@ -466,6 +490,7 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
             .package_id = package_id,
             .source_unit_id = source_unit,
             .kind = skeleton->first,
+            .name_space = symbol_namespace_for_kind(skeleton->first),
             .local_name = skeleton->second,
             .canonical_name = canonical_name,
             .declaration_range = declaration->range,
@@ -930,6 +955,7 @@ LspWorkspaceIndex build_lsp_workspace_index(const Frontend &frontend,
             .package_id = package_id,
             .source_unit_id = source_unit_id->second,
             .kind = symbol.kind,
+            .name_space = symbol.name_space,
             .local_name = symbol.local_name,
             .canonical_name = symbol.canonical_name,
             .declaration_range = symbol.declaration_range,

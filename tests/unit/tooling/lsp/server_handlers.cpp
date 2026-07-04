@@ -1501,6 +1501,8 @@ void test_project_references_include_indexed_unopened_source() {
                     });
                 check(msg_symbol != symbols.end(), "references.index_model.msg_symbol_fact");
                 if (msg_symbol != symbols.end()) {
+                    check(msg_symbol->name_space == ahfl::SymbolNamespace::Types,
+                          "references.index_model.msg_symbol_namespace");
                     check(msg_symbol->package_id.value != std::numeric_limits<std::size_t>::max(),
                           "references.index_model.msg_symbol_has_package_id");
                     check(msg_symbol->source_unit_id.value < source_units.size(),
