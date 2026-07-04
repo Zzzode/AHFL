@@ -1713,8 +1713,10 @@ void test_project_references_include_indexed_unopened_source() {
 
     const auto refs_position = position_of(types_source, "Msg");
     const std::string references =
-        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":)" +
-        hover_params_at(types_uri, refs_position) + R"(})";
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":{"textDocument":{"uri":")" +
+        types_uri + R"("},"position":{"line":)" + std::to_string(refs_position.line) +
+        R"(,"character":)" + std::to_string(refs_position.character) +
+        R"(},"context":{"includeDeclaration":true}}})";
     const auto output = run_lsp_messages({
         initialize_body(root),
         did_open_body(types_uri, 1, types_source),
@@ -1723,6 +1725,8 @@ void test_project_references_include_indexed_unopened_source() {
     });
 
     const auto response = response_body_for_id(output, 2);
+    check(response.find(types_uri) != std::string::npos,
+          "references.index_includes_declaration_source");
     check(response.find(main_uri) != std::string::npos,
           "references.index_includes_semantic_import_source");
     check(response.find(extra_uri) != std::string::npos,

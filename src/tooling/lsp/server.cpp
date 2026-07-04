@@ -2500,8 +2500,11 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
         if (include_declaration) {
             const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
             if (symbol.has_value()) {
-                if (const auto location = symbol_location(*snapshot, symbol->get(), *source);
-                    location.has_value()) {
+                auto location = indexed_symbol_location(*snapshot, symbol->get());
+                if (!location.has_value()) {
+                    location = symbol_location(*snapshot, symbol->get(), *source);
+                }
+                if (location.has_value()) {
                     push_unique_location(locations, *location);
                 }
             }
