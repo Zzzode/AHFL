@@ -3,7 +3,7 @@ updated: "2026-07-05"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
-    status: "draft"
+    status: "implemented"
     file: "0001-enum-variant-payload.zh.md"
     area: ["language", "compiler"]
     stability: "stable-language"
