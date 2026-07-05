@@ -75,7 +75,11 @@ Unit Bool Int Float String UUID Timestamp Duration Decimal
 set map
 ```
 
-说明：`Optional`、`List`、`Set`、`Map` 不再是保留关键字；它们在源码中作为普通标识符，由 prelude/import 解析到 `std::option::Option` 与 `std::collections::{List, Set, Map}` 这几个名义类型。语法层面仍保留 `Optional<A>` / `List<A>` / `Set<A>` / `Map<K, V>` 的参数化写法（§3.2），其在 Typed HIR 中降格为对应名义 struct/enum 的泛型实例化。
+说明：`Optional`、`List`、`Set`、`Map` 不属于 language primitive prelude。
+它们在源码中只是普通名义类型路径，必须通过 package dependency 与显式
+`import` 进入作用域。语言层面永远可见的 primitive 只有
+`Unit`、`Bool`、`Int`、`Float`、`String`、`UUID`、`Timestamp`、
+`Duration`、`Decimal`；用户顶层声明不得覆盖这些 primitive 名称。
 
 ### 2.3 标识符
 
@@ -139,11 +143,8 @@ ImportDecl      ::= "import" QualifiedIdent [ "as" Ident ] ";" ;
 
 ```ebnf
 Type            ::= PrimitiveType
-                  | NamedType
-                  | OptionalType
-                  | ListType
-                  | SetType
-                  | MapType ;
+                  | FnType
+                  | NamedType ;
 
 PrimitiveType   ::= "Unit"
                   | "Bool"
@@ -156,11 +157,7 @@ PrimitiveType   ::= "Unit"
                   | "Duration"
                   | "Decimal" "(" IntLiteral ")" ;
 
-NamedType       ::= QualifiedIdent ;
-OptionalType    ::= "Optional" "<" Type ">" ;
-ListType        ::= "List" "<" Type ">" ;
-SetType         ::= "Set" "<" Type ">" ;
-MapType         ::= "Map" "<" Type "," Type ">" ;
+NamedType       ::= QualifiedIdent [ "<" Type { "," Type } [ "," ] ">" ] ;
 ```
 
 ### 3.3 常量、结构体、枚举、别名
@@ -513,26 +510,26 @@ UUID
 Timestamp
 Duration
 Decimal(scale)
-Optional<T>
-List<T>
-Set<T>
-Map<K, V>
 StructName
 EnumName
+Qualified::Nominal<T...>
 ```
 
 其中：
 
 1. `String(min, max)` 是 `String` 的 refinement 形式
-2. `StructName` 与 `EnumName` 指代用户声明的具名类型
-3. `type alias` 在类型检查阶段按别名透明处理，但它本身不是新的底层值类型
-4. AHFL Core 没有 `readonly` 修饰符或 readonly 容器语法；容器 variance 是类型关系规则，不是源码类型构造子
-5. `Optional<T>`、`List<T>`、`Set<T>`、`Map<K, V>` 在源码语法层可直接书写（§3.2），但在语义上**不再是语言级 TypeKind 原语**——它们在 Typed HIR 与类型构造器中分别对应以下名义（std-nominal）类型，并由 prelude 自动导出：
-   - `Optional<T>`  → `std::option::Option<T>`（`enum`，variants `Some(T)` / `None`）
-   - `List<T>`      → `std::collections::List<T>`（`struct`）
-   - `Set<T>`       → `std::collections::Set<T>`（`struct`）
-   - `Map<K, V>`    → `std::collections::Map<K, V>`（`struct`）
-   因此它们的等价、子类型、variance 等规则均由名义 struct/enum 的泛型规则承载（§4.3.2），而不是独立的 ad-hoc 分支。
+2. `Unit`、`Bool`、`Int`、`Float`、`String`、`UUID`、`Timestamp`、
+   `Duration`、`Decimal` 是 language primitive prelude；它们不经过 ordinary
+   name lookup，也不需要 `import`
+3. `StructName`、`EnumName` 与 `Qualified::Nominal<T...>` 指代当前 package
+   或显式 import 后可见的名义类型
+4. `type alias` 在类型检查阶段按别名透明处理，但它本身不是新的底层值类型
+5. AHFL Core 没有 `readonly` 修饰符或 readonly 容器语法；容器 variance 是类型关系规则，不是源码类型构造子
+6. `std::option::Option<T>`、`std::collections::List<T>`、
+   `std::collections::Set<T>`、`std::collections::Map<K, V>` 是 standard-library
+   nominal types，不是 primitive。用户 package 必须声明
+   `std = { source = "sysroot" }` dependency，并显式 import 对应 module
+   或 alias 后才能使用这些类型；detached 单文件模式不会隐式注入它们。
 
 编译器实现还可以维护少量**内部辅助类型**，例如：
 
@@ -634,9 +631,12 @@ type A = B
 1. `Int` 不是 `Float` 的子类型
 2. `Decimal(p)` 不是 `Float` 的子类型
 3. `Decimal(p1)` 不是 `Decimal(p2)` 的子类型
-4. `T` 不是 `Optional<T>` 的子类型
-5. `Map<K, V>` 的 key 位置保持不变；不能因为 `K1 <: K2` 就推出 `Map<K1, V> <: Map<K2, V>`
-6. `readonly` 不是保留关键字，用户程序不得书写 `readonly List<T>`、`Readonly<T>` 或等价语法；若未来引入，需要单独修订本规范、grammar、AST、Typed HIR、typechecker 与 IR 表达
+4. `T` 不是 `std::option::Option<T>` 的子类型
+5. `std::collections::Map<K, V>` 的 key 位置保持不变；不能因为 `K1 <: K2`
+   就推出 `std::collections::Map<K1, V> <: std::collections::Map<K2, V>`
+6. `readonly` 不是保留关键字，用户程序不得书写 `readonly collections::List<T>`、
+   `Readonly<T>` 或等价语法；若未来引入，需要单独修订本规范、grammar、AST、
+   Typed HIR、typechecker 与 IR 表达
 
 ### 4.4 结构体与枚举
 
@@ -665,10 +665,10 @@ type A = B
 
 | 源码形式 | 期望类型 | 脱糖后的 typed HIR |
 | --- | --- | --- |
-| `none` | `Optional<T>` | `std::option::Option::None`（带泛型实参 `T` 的枚举变体值） |
-| `[]` | `List<T>` | `std::collections::list_from_array<T>()` 或等价的名义空 List 构造子 |
-| `set[]` | `Set<T>` | `std::collections::set_from_array<T>()` 或等价的名义空 Set 构造子 |
-| `map[]` | `Map<K, V>` | `std::collections::map_from_entries<K, V>()` 或等价的名义空 Map 构造子 |
+| `none` | `std::option::Option<T>` | `std::option::Option::None`（带泛型实参 `T` 的枚举变体值） |
+| `[]` | `std::collections::List<T>` | `std::collections::list_from_array<T>()` 或等价的名义空 List 构造子 |
+| `set[]` | `std::collections::Set<T>` | `std::collections::set_from_array<T>()` 或等价的名义空 Set 构造子 |
+| `map[]` | `std::collections::Map<K, V>` | `std::collections::map_from_entries<K, V>()` 或等价的名义空 Map 构造子 |
 
 因此类型检查阶段不再为"空容器字面量"维护专用代码路径；所有空形态最终都进入名义 struct/enum 的构造与类型关系通用路径。
 
@@ -733,7 +733,7 @@ fields(S) = { f1:T1, ..., fn:Tn }
 | 源码形式 | Typed HIR 脱糖结果 |
 | --- | --- |
 | `some(e)` | `std::option::Option::Some(E)`，其中 `E` 是 `e` 的脱糖后 typed 表达式；推导类型为 `std::option::Option<T>`，`T = type_of(E)` |
-| `none` | 参见 §4.5.1：脱糖为 `std::option::Option::None`，要求上下文提供 `Optional<T>` 期望类型以补全泛型实参 `T` |
+| `none` | 参见 §4.5.1：脱糖为 `std::option::Option::None`，要求上下文提供 `std::option::Option<T>` 期望类型以补全泛型实参 `T` |
 
 等价的推导规则可写作：
 
@@ -749,7 +749,7 @@ expected_type(Γ) = std::option::Option<T>
         (脱糖后值为 std::option::Option::None)
 ```
 
-因此 `Optional<T>` 的子类型与 variance 行为完全由名义 enum 泛型规则（§4.3.2）驱动，`some(e)` 和 `none` 没有专用的子类型路径。
+因此 `std::option::Option<T>` 的子类型与 variance 行为完全由名义 enum 泛型规则（§4.3.2）驱动，`some(e)` 和 `none` 没有专用的子类型路径。
 
 #### 4.6.5 capability 调用
 

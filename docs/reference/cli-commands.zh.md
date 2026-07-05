@@ -8,6 +8,7 @@
 - [durable-store-import-reference.zh.md](./durable-store-import-reference.zh.md)
 - [migration-policy.zh.md](./migration-policy.zh.md)
 - [contributor-guide.zh.md](./contributor-guide.zh.md)
+- [single-file-mode.zh.md](./single-file-mode.zh.md)
 
 ## 合并范围
 
@@ -23,7 +24,9 @@
 
 1. `ahflc` 是主要编译、验证、artifact 与 runtime CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
 2. package-aware 输入优先使用 `--manifest <ahfl.toml>`，workspace 输入使用 `--workspace <ahfl.workspace.toml> --package <name>`。
-3. 单文件 `<input.ahfl>` 只用于草稿、smoke 和低层调试；多文件或工程化输入必须使用 manifest/workspace。
+3. 单文件 `<input.ahfl>` 只用于草稿、smoke 和低层调试；无 manifest 时进入
+   `DetachedSourceUnit`，只获得 primitive prelude、当前文件局部语义和有限诊断，
+   不会隐式加载 `std` package。
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
 5. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
 6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
@@ -128,6 +131,20 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 `--search-root` 和 `dump project` 不再是公开 CLI。多文件编译、调试 source graph 或检查依赖关系时，使用 `--manifest <ahfl.toml>` 或 `--workspace <ahfl.workspace.toml> --package <name>`；source graph / dependency 诊断使用 `dump package-graph`。
 
+## 单文件 Check
+
+`ahflc check path/to/file.ahfl` 若在工作区边界内找不到 `ahfl.toml`，不会把当前目录
+当作隐式 package root，而是进入 `DetachedSourceUnit`：
+
+1. primitive-only 文件输出 `N::detached_source_unit` note；只要没有 error，退出码为 0。
+2. 任意 `import` declaration 输出 `E::detached_import`，退出码为 1。
+3. 非 primitive、非当前文件声明的 nominal type 输出
+   `E::detached_unknown_nominal_type`。
+4. `std::*` module、`List`、`Map`、`Option`、`Result` 和 primitive facade methods
+   都需要 manifest、`std = { source = "sysroot" }` dependency 与显式 import。
+
+详见 [single-file-mode.zh.md](./single-file-mode.zh.md)。
+
 ## Formatter
 
 `ahflc fmt <input.ahfl|dir>...` 使用 formatter library 格式化源文件并原地写回；目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`ahflc fmt --manifest <ahfl.toml>` 会格式化 package module root 内由 PackageGraph 覆盖的 `.ahfl` source；`ahflc fmt --workspace <ahfl.workspace.toml> --package <name>` 会格式化选中 workspace package 的 source。
@@ -228,16 +245,16 @@ ahflc emit summary \
 
 ```bash
 # 输出未运行 Opt IR passes 的 Opt IR
-ahflc emit opt-ir tests/golden/ir/ok_expr_temporal.ahfl
+ahflc emit opt-ir tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
 # 先运行 Semantic IR passes，再输出 Opt IR passes 后的结果
-ahflc emit opt-ir -O tests/golden/ir/ok_expr_temporal.ahfl
+ahflc emit opt-ir -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
 # 输出未运行 Opt IR passes 的 Opt IR JSON
-ahflc emit opt-ir-json tests/golden/ir/ok_expr_temporal.ahfl
+ahflc emit opt-ir-json tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 
 # 先运行 Semantic IR passes，再输出 Opt IR passes 后的 Opt IR JSON
-ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
+ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/expr_temporal.ahfl
 ```
 
 当前边界：

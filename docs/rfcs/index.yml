@@ -43,3 +43,15 @@ rfcs:
     file: "0007-lsp-workspace-navigation-index.zh.md"
     area: ["compiler", "stdlib", "tooling"]
     stability: "developer-facing"
+  - rfc: "0008"
+    title: "Single-File Primitive and Std Resolution"
+    status: "implemented"
+    file: "0008-single-file-std-primitive-semantics.zh.md"
+    area: ["language", "compiler", "stdlib", "tooling"]
+    stability: "developer-facing"
+  - rfc: "0009"
+    title: "Symbol Visibility and Public API Surface"
+    status: "draft"
+    file: "0009-symbol-visibility.zh.md"
+    area: ["language", "compiler", "stdlib", "tooling"]
+    stability: "stable-language"

@@ -66,7 +66,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 | 模式 | 适用场景 | 示例 |
 |------|----------|------|
 | 源文件自动发现 | 从源码向上发现最近的 `ahfl.toml` 并使用 package target | `ahflc check examples/refund/audit.ahfl` |
-| 裸单文件 | 不依赖 `std` / PackageGraph metadata 的快速试验、最小复现 | `ahflc check tests/golden/ir/ok_alias_const.ahfl` |
+| 裸单文件 | 不依赖 `std` / PackageGraph metadata 的快速试验、最小复现 | `ahflc check tests/golden/formatter/formatted_struct_2spaces.ahfl` |
 | `--manifest` | 单 package 工程入口 | `ahflc check --manifest tests/integration/package_graph_manifest/ahfl.toml --target workflow --sysroot .` |
 | `--workspace --package` | 多 package workspace 入口 | `ahflc check --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --target workflow --sysroot .` |
 

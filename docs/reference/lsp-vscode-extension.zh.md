@@ -108,6 +108,26 @@ VS Code 客户端不需要特殊命令或非标准 payload。跳转请求返回�
 “Go to Implementations”，而不是期待 Cmd-click 的 definition 展开 impl
 列表。
 
+### Detached single-file mode
+
+当打开的 `.ahfl` 文件在当前 workspace folder 边界内找不到 `ahfl.toml` 时，
+server 进入 `DetachedSourceUnit`。该模式不会隐式加载 `std` package，也不会因为
+workspace 中存在 sibling `std/` 目录而把当前文件绑定到 sysroot package。
+
+用户可见行为：
+
+1. 发布 `N::detached_source_unit` information diagnostic。
+2. `String`、`Bool`、`Int`、`Duration` 等 language primitive type 仍可用于
+   `definition` / `typeDefinition`，目标来自 active ToolchainProfile 的
+   `SysrootPrimitiveIndex`。
+3. 如果 active sysroot 缺少某个 primitive canonical home，或没有可用 default
+   ToolchainProfile，发布 `W::primitive_home_unavailable` warning。
+4. `implementation` 不为 detached primitive 返回 std facade impl candidates。
+5. completion/code action 不提供 import completion、organize imports 或自动导入
+   `std::*` 的修复动作。
+
+完整规则见 [single-file-mode.zh.md](./single-file-mode.zh.md)。
+
 ## 四、本地打包 VSIX
 
 面向用户的 VSIX 应通过仓库根目录脚本生成：

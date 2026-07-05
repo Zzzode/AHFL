@@ -6,8 +6,8 @@
 | Status | 草稿 · 可审查 |
 | SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::typecheck` + `messages::typecheck` 命名空间） |
 | Created | 2026-06-28 |
-| Updated | 2026-06-28 |
-| Coverage | 76 stable codes / 67 message templates / 38 unmapped templates（105 templates in messages::typecheck，见文末 Unmapped diagnostics） |
+| Updated | 2026-07-05 |
+| Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
 
 ## 分组分布
 
@@ -2225,7 +2225,97 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 ---
 
-## 8. TBD
+## 8. Project / Tooling Diagnostics
+
+这些 code 来自 project discovery、CLI 和 LSP 层，不一定对应
+`messages::typecheck` 模板。
+
+### N::detached_source_unit
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `N::detached_source_unit` |
+| Severity | note / LSP information |
+| Source | CLI / LSP detached single-file analysis |
+
+**触发条件**：当前 `.ahfl` 文件在 workspace boundary 内找不到 `ahfl.toml`，
+进入 `DetachedSourceUnit`。
+
+**常见修复**：
+- 对真实工程创建 `ahfl.toml`。
+- 对 scratch / formatter fixture 接受 detached 限制。
+
+### E::detached_import
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `E::detached_import` |
+| Severity | error |
+| Source | CLI / LSP detached single-file analysis |
+
+**触发条件**：detached 文件中出现任何 `import` declaration。
+
+**常见修复**：
+- 为文件创建 package manifest，或通过 `--manifest` 运行。
+- 若只是 formatter fixture，移除 import。
+
+### E::detached_unknown_nominal_type
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `E::detached_unknown_nominal_type` |
+| Severity | error |
+| Source | LSP detached single-file analysis |
+
+**触发条件**：detached 文件使用非 primitive、非当前文件声明的 nominal type，
+例如未定义的 `List<Int>`。
+
+**常见修复**：
+- 在当前文件声明该类型。
+- 或迁移到 manifest-backed package，并显式 import 对应 std/user module。
+
+### E::package_dependency_missing
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `E::package_dependency_missing` |
+| Severity | error |
+| Source | PackageGraph import resolution |
+
+**触发条件**：package source import `std::*`，但 manifest 没有声明
+`std = { source = "sysroot" }` dependency。
+
+**常见修复**：在 `[dependencies]` 中声明 `std = { source = "sysroot" }`。
+
+### E::primitive_shadowing_forbidden
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `E::primitive_shadowing_forbidden` |
+| Severity | error |
+| Source | Resolver |
+
+**触发条件**：用户顶层声明试图覆盖 language primitive prelude 名称，例如
+`struct String {}`。
+
+**常见修复**：重命名用户声明；primitive 名称不能被 package shadow。
+
+### W::primitive_home_unavailable
+
+| 字段 | 值 |
+| --- | --- |
+| Diagnostic code | `W::primitive_home_unavailable` |
+| Severity | warning / LSP warning |
+| Source | LSP `SysrootPrimitiveIndex` |
+
+**触发条件**：detached 文件使用 primitive type，但 active sysroot 缺少该 primitive
+canonical home，或没有可用 default ToolchainProfile。
+
+**常见修复**：
+- 配置 `ahfl.toolchain.sysroot` 或 LSP default sysroot。
+- 修复 sysroot，使 `std/string.ahfl`、`std/bool.ahfl` 等 primitive home 文件存在。
+
+## 9. TBD
 
 暂无"已登记但尚未归类"的稳定错误码。
 

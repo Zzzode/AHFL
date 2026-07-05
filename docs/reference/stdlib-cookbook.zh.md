@@ -26,8 +26,10 @@ ahflc check std/json.ahfl --sysroot .
 ```
 
 Plain single-file mode does not auto-discover `std` from `AHFL_SOURCE_DIR` or
-the current working directory. Use a manifest-backed package or pass the
-corelib source sysroot explicitly for stdlib recipes.
+the current working directory. It only exposes the language primitive prelude
+(`String`, `Bool`, `Int`, etc.) and local declarations; stdlib recipes require
+a manifest-backed package or the corelib source sysroot. See
+[single-file-mode.zh.md](./single-file-mode.zh.md).
 
 Coverage maps to the corelib-support-workplan module matrix: Option / Result /
 String / List / Set / Map / cmp.

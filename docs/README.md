@@ -125,6 +125,7 @@ Avoid:
 - [native-runtime-artifacts.zh.md](./reference/native-runtime-artifacts.zh.md)
 - [project-usage.zh.md](./reference/project-usage.zh.md)
 - [rfc-process.zh.md](./reference/rfc-process.zh.md)
+- [single-file-mode.zh.md](./reference/single-file-mode.zh.md)
 - [stdlib-cookbook.zh.md](./reference/stdlib-cookbook.zh.md)
 - [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md)
 - [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md)
@@ -144,6 +145,8 @@ Avoid:
 - [0005-package-configuration-system.zh.md](./rfcs/0005-package-configuration-system.zh.md)
 - [0006-corelib-development-sysroot.zh.md](./rfcs/0006-corelib-development-sysroot.zh.md)
 - [0007-lsp-workspace-navigation-index.zh.md](./rfcs/0007-lsp-workspace-navigation-index.zh.md)
+- [0008-single-file-std-primitive-semantics.zh.md](./rfcs/0008-single-file-std-primitive-semantics.zh.md)
+- [0009-symbol-visibility.zh.md](./rfcs/0009-symbol-visibility.zh.md)
 
 ## Governance
 
