@@ -84,6 +84,14 @@ namespace {
     return path;
 }
 
+[[nodiscard]] std::string_view last_qualified_segment(std::string_view spelling) noexcept {
+    const auto separator = spelling.rfind("::");
+    if (separator == std::string_view::npos) {
+        return spelling;
+    }
+    return spelling.substr(separator + 2);
+}
+
 [[nodiscard]] ir::CapabilityEffectKind
 lower_capability_effect_kind(ast::CapabilityEffectKind kind) {
     switch (kind) {
@@ -1084,6 +1092,93 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
+    struct EnumVariantTarget {
+        const EnumTypeInfo *owner{nullptr};
+        const EnumVariantInfo *variant{nullptr};
+        std::optional<SourceId> source_id;
+    };
+
+    [[nodiscard]] std::optional<EnumVariantTarget>
+    find_enum_variant_target(const types::EnumVariantT &variant_type) const noexcept {
+        const auto from_decl = [&variant_type](const TypedDecl &decl)
+            -> std::optional<EnumVariantTarget> {
+            const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
+            if (enum_info == nullptr) {
+                return std::nullopt;
+            }
+            if (enum_info->canonical_name != variant_type.canonical_name) {
+                return std::nullopt;
+            }
+            const auto variant = enum_info->find_variant(variant_type.variant_name);
+            if (!variant.has_value()) {
+                return std::nullopt;
+            }
+            return EnumVariantTarget{
+                .owner = enum_info,
+                .variant = &variant->get(),
+                .source_id = decl.source_id,
+            };
+        };
+
+        if (variant_type.symbol.has_value()) {
+            if (const auto *decl = find_decl_by_symbol(*variant_type.symbol); decl != nullptr) {
+                if (auto target = from_decl(*decl); target.has_value()) {
+                    return target;
+                }
+            }
+        }
+
+        for (const auto &decl : typed_program_->declarations) {
+            const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
+            if (enum_info == nullptr ||
+                enum_info->canonical_name != variant_type.canonical_name) {
+                continue;
+            }
+            if (auto target = from_decl(decl); target.has_value()) {
+                return target;
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<EnumVariantTarget>
+    find_enum_variant_target(const TypedExpr &expr) const noexcept {
+        if (expr.type != nullptr) {
+            if (const auto *variant_type = expr.type->get_if<types::EnumVariantT>();
+                variant_type != nullptr) {
+                return find_enum_variant_target(*variant_type);
+            }
+        }
+
+        if (!expr.resolved_symbol.has_value() || expr.semantic_name.empty()) {
+            return std::nullopt;
+        }
+        const auto *decl = find_decl_by_symbol(*expr.resolved_symbol);
+        if (decl == nullptr) {
+            return std::nullopt;
+        }
+        const auto *enum_info = payload_as<EnumTypeInfo>(decl);
+        if (enum_info == nullptr) {
+            return std::nullopt;
+        }
+        if (expr.semantic_name.find("::") == std::string::npos) {
+            return std::nullopt;
+        }
+        const auto variant_name = last_qualified_segment(expr.semantic_name);
+        if (variant_name.empty()) {
+            return std::nullopt;
+        }
+        const auto variant = enum_info->find_variant(variant_name);
+        if (!variant.has_value()) {
+            return std::nullopt;
+        }
+        return EnumVariantTarget{
+            .owner = enum_info,
+            .variant = &variant->get(),
+            .source_id = decl->source_id,
+        };
+    }
+
     struct MethodTarget {
         const ImplTypeInfo *impl{nullptr};
         const ImplMethodInfo *method{nullptr};
@@ -1438,23 +1533,82 @@ class TypedIrLowerer final {
         }
         ir::ExprRef visit_struct_literal(const TypedExpr &e) const {
             ir::StructLiteralExpr literal{.type_name = self.render_struct_target(e), .fields = {}};
-            if (const auto *variant_type = e.type != nullptr ? e.type->get_if<types::EnumVariantT>()
-                                                             : nullptr;
-                variant_type != nullptr) {
+            const auto variant_target = self.find_enum_variant_target(e);
+            const auto *variant_type = e.type != nullptr ? e.type->get_if<types::EnumVariantT>()
+                                                         : nullptr;
+            if (variant_target.has_value() && variant_target->owner != nullptr &&
+                variant_target->variant != nullptr) {
+                literal.is_enum_variant = true;
+                literal.enum_name = variant_target->owner->canonical_name;
+                literal.variant_name = variant_target->variant->name;
+                literal.type_name =
+                    variant_target->owner->canonical_name + "::" + variant_target->variant->name;
+            } else if (variant_type != nullptr) {
                 literal.is_enum_variant = true;
                 literal.enum_name = variant_type->canonical_name;
                 literal.variant_name = variant_type->variant_name;
                 literal.type_name = variant_type->canonical_name + "::" +
                                     variant_type->variant_name;
             }
+            std::vector<std::pair<std::string, const TypedExpr *>> explicit_fields;
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::StructFieldValue)
                     continue;
                 const TypedExpr *target = resolve_child(*self.typed_program_, child);
                 if (target != nullptr) {
+                    explicit_fields.emplace_back(child.name, target);
+                }
+            }
+
+            if (variant_target.has_value()) {
+                if (variant_target->variant != nullptr &&
+                    variant_target->variant->payload_kind == EnumVariantPayloadKind::Struct) {
+                    std::unordered_set<std::string> emitted_names;
+                    for (const auto &field : variant_target->variant->fields) {
+                        const auto explicit_iter = std::find_if(
+                            explicit_fields.begin(),
+                            explicit_fields.end(),
+                            [&field](const auto &item) { return item.first == field.name; });
+                        if (explicit_iter != explicit_fields.end()) {
+                            literal.fields.push_back(ir::StructFieldInit{
+                                .name = explicit_iter->first,
+                                .value = self.lower_typed_expr(*explicit_iter->second),
+                            });
+                            emitted_names.insert(explicit_iter->first);
+                            continue;
+                        }
+                        if (!field.has_default) {
+                            continue;
+                        }
+                        ir::ExprRef default_value =
+                            self.lower_expr_range(field.default_value_range,
+                                                  variant_target->source_id);
+                        if (default_value != nullptr) {
+                            literal.fields.push_back(ir::StructFieldInit{
+                                .name = field.name,
+                                .value = default_value,
+                            });
+                            emitted_names.insert(field.name);
+                        }
+                    }
+                    for (const auto &[field_name, field_value] : explicit_fields) {
+                        if (emitted_names.contains(field_name)) {
+                            continue;
+                        }
+                        literal.fields.push_back(ir::StructFieldInit{
+                            .name = field_name,
+                            .value = self.lower_typed_expr(*field_value),
+                        });
+                    }
+                    return self.make_expr(std::move(literal), range);
+                }
+            }
+
+            for (const auto &[field_name, field_value] : explicit_fields) {
+                if (field_value != nullptr) {
                     literal.fields.push_back(ir::StructFieldInit{
-                        .name = child.name,
-                        .value = self.lower_typed_expr(*target),
+                        .name = field_name,
+                        .value = self.lower_typed_expr(*field_value),
                     });
                 }
             }
@@ -1664,11 +1818,16 @@ class TypedIrLowerer final {
     }
 
     // Range-based lookup from declaration metadata into the typed expression store.
-    [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range) const {
-        const TypedExpr *typed = typed_program_->find_expr_by_range(range, current_source_id_);
+    [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range,
+                                               std::optional<SourceId> source_id) const {
+        const TypedExpr *typed = typed_program_->find_expr_by_range(range, source_id);
         if (typed != nullptr)
             return lower_typed_expr(*typed);
         return nullptr;
+    }
+
+    [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range) const {
+        return lower_expr_range(range, current_source_id_);
     }
 
     // =====================================================================

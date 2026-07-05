@@ -162,6 +162,42 @@ struct CompiledProgram {
 
 } // namespace
 
+TEST_CASE("evaluator enum struct variant constructor materializes omitted defaults") {
+    const std::string source = R"AHFL(
+enum Packet {
+    Data { code: Int, label: String = "ok" },
+}
+
+fn caller() -> Packet effect Pure decreases 0 {
+    return Packet::Data { code: 7 };
+}
+)AHFL";
+
+    auto compiled = compile("enum_struct_variant_default.ahfl", source);
+    REQUIRE(compiled.has_value());
+
+    auto result = run_caller(*compiled);
+    REQUIRE(result.has_value());
+
+    const auto *packet = std::get_if<EnumValue>(&result->node);
+    REQUIRE(packet != nullptr);
+    CHECK(packet->variant == "Data");
+
+    const auto code = packet->named_payload.find("code");
+    REQUIRE(code != packet->named_payload.end());
+    REQUIRE(code->second != nullptr);
+    const auto *code_value = std::get_if<IntValue>(&code->second->node);
+    REQUIRE(code_value != nullptr);
+    CHECK(code_value->value == 7);
+
+    const auto label = packet->named_payload.find("label");
+    REQUIRE(label != packet->named_payload.end());
+    REQUIRE(label->second != nullptr);
+    const auto *label_value = std::get_if<StringValue>(&label->second->node);
+    REQUIRE(label_value != nullptr);
+    CHECK(label_value->value == "ok");
+}
+
 // ---------------------------------------------------------------------------
 // id<T>
 // ---------------------------------------------------------------------------
