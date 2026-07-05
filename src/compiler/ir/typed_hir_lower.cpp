@@ -738,6 +738,7 @@ class TypedIrLowerer final {
         case ast::NodeKind::Program:
         case ast::NodeKind::ModuleDecl:
         case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::UseDecl:
         case ast::NodeKind::TypeAliasDecl:
         case ast::NodeKind::EnumDecl:
         case ast::NodeKind::CapabilityDecl:
@@ -2373,6 +2374,7 @@ class TypedIrLowerer final {
             // typed metadata. The IR has no declaration variants for them, so
             // ordered_typed_declarations filters them out before this switch.
             break;
+        case ast::NodeKind::UseDecl:
         case ast::NodeKind::Program:
             break;
         }

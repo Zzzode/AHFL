@@ -343,6 +343,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
         case ast::NodeKind::Program:
         case ast::NodeKind::ContractDecl:
         case ast::NodeKind::FlowDecl:
+        case ast::NodeKind::UseDecl:
             break;
         }
     }
@@ -1451,6 +1452,7 @@ void TypeCheckPass::build_impl_types() {
                 .trait_ref_range = decl.trait_ref ? decl.trait_ref->range : SourceRange{},
                 .target_type_range = decl.target_type ? decl.target_type->range : SourceRange{},
                 .source_id = entry.source_id,
+                .package_prefix = package_prefix_of(entry.source_id),
                 .module_name = module_name_of(entry.source_id),
             };
 
@@ -1611,6 +1613,7 @@ void TypeCheckPass::build_impl_types() {
                                                impl_and_method_tparams.end());
                 ImplMethodInfo method_info{
                     .name = method->name,
+                    .visibility = method->visibility,
                     .params = {},
                     .return_type = method->return_type ? resolve_type(*method->return_type)
                                                        : make_error_type(),
@@ -1689,6 +1692,7 @@ void TypeCheckPass::build_impl_types() {
                 info.assoc_items.push_back(ImplAssocItemInfo{
                     .name = assoc->name,
                     .type = assoc->type ? resolve_type(*assoc->type) : make_error_type(),
+                    .visibility = assoc->visibility,
                     .declaration_range = assoc->range,
                 });
             }

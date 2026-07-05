@@ -206,20 +206,26 @@ void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMa
     // Leaf types (Bool/Int/String/...): no TypeVars to bind.
 }
 
+[[nodiscard]] bool std_prelude_reexports_primitive_impl_module(std::string_view module_name) {
+    return module_name == "std::string";
+}
+
 } // namespace
 
 class ExpressionCheckerServices final {
   public:
     ExpressionCheckerServices(const ResolveResult &resolve_result,
                               std::optional<SourceId> current_source_id,
+                              std::string current_package_prefix,
                               const TypeEnvironment &environment,
                               TypeContext &types,
                               TypeRelationContext &relations,
                               ExpressionSemaDelegate &delegate,
                               bool enable_trace_dispatch)
         : trace_dispatch(enable_trace_dispatch), resolve_result_(resolve_result),
-          current_source_id_(current_source_id), environment_(environment), types_(types),
-          relations_(relations), delegate_(&delegate), values_(types_) {}
+          current_source_id_(current_source_id),
+          current_package_prefix_(std::move(current_package_prefix)), environment_(environment),
+          types_(types), relations_(relations), delegate_(&delegate), values_(types_) {}
 
     [[nodiscard]] const ExpressionValueFactory &values() const noexcept {
         return values_;
@@ -264,17 +270,25 @@ class ExpressionCheckerServices final {
 
         std::vector<Diagnostic::Related> notes;
         append_multi_declaration_notes(
-            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-            target.describe(), "expected type");
+            notes,
+            collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(),
+            "expected type");
         append_multi_declaration_notes(
-            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-            source.describe(), "actual type");
+            notes,
+            collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(),
+            "actual type");
         append_nominal_declared_here_note(
-            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-            target.describe(), "expected type");
+            notes,
+            collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(),
+            "expected type");
         append_nominal_declared_here_note(
-            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-            source.describe(), "actual type");
+            notes,
+            collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(),
+            "actual type");
         notes.push_back(Diagnostic::Related{
             .message = actual_type_note(source),
             .range = range,
@@ -302,17 +316,25 @@ class ExpressionCheckerServices final {
 
         std::vector<Diagnostic::Related> notes;
         append_multi_declaration_notes(
-            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-            target.describe(), "expected type");
+            notes,
+            collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(),
+            "expected type");
         append_multi_declaration_notes(
-            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-            source.describe(), "actual type");
+            notes,
+            collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(),
+            "actual type");
         append_nominal_declared_here_note(
-            notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-            target.describe(), "expected type");
+            notes,
+            collect_nominal_declarations(target, resolve_result_.symbol_table),
+            target.describe(),
+            "expected type");
         append_nominal_declared_here_note(
-            notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-            source.describe(), "actual type");
+            notes,
+            collect_nominal_declarations(source, resolve_result_.symbol_table),
+            source.describe(),
+            "actual type");
         notes.push_back(Diagnostic::Related{
             .message = expected_type_note(target, expectation),
             .range = expectation.origin_range,
@@ -362,9 +384,8 @@ class ExpressionCheckerServices final {
     // bound; emits a TRAIT_BOUND_NOT_SATISFIED diagnostic at the given range
     // on failure and returns false. Super-trait chains are followed so a
     // sub-trait impl also satisfies its ancestor bounds.
-    [[nodiscard]] bool check_bound(const Type &subject_type,
-                                   std::string_view trait_name,
-                                   SourceRange range) const {
+    [[nodiscard]] bool
+    check_bound(const Type &subject_type, std::string_view trait_name, SourceRange range) const {
         return delegate_->check_bound(subject_type, trait_name, range);
     }
 
@@ -464,8 +485,7 @@ class ExpressionCheckerServices final {
             if (impl.target_type == nullptr) {
                 continue;
             }
-            bool key_match =
-                TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
+            bool key_match = TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
             bool nominal_match = false;
             if (!key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
                 *receiver_nominal == *impl.target_symbol) {
@@ -479,7 +499,8 @@ class ExpressionCheckerServices final {
             if (!key_match && !nominal_match) {
                 continue;
             }
-            if (const auto *method = find_method_ptr(impl, method_name); method != nullptr) {
+            if (const auto *method = find_method_ptr(impl, method_name);
+                method != nullptr && method_visible_for_method_lookup(impl, *method)) {
                 candidates.push_back(MethodCandidate{.impl = &impl, .method = method});
             }
         }
@@ -526,6 +547,10 @@ class ExpressionCheckerServices final {
                 if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait.symbol) {
                     continue;
                 }
+                if (const auto *method = find_method_ptr(impl, method_name);
+                    method == nullptr || !method_visible_for_method_lookup(impl, *method)) {
+                    continue;
+                }
                 if (impl.target_type == nullptr) {
                     continue;
                 }
@@ -568,6 +593,7 @@ class ExpressionCheckerServices final {
                 .trait_ref_range = trait.declaration_range,
                 .target_type_range = self_param.declaration_range,
                 .source_id = std::nullopt,
+                .package_prefix = {},
                 .module_name = {},
             };
             trait_method_candidate_storage_.methods.push_back(std::move(method_info));
@@ -577,8 +603,8 @@ class ExpressionCheckerServices final {
             const auto &stored_impl = trait_method_candidate_storage_.impls.back();
             const auto *stored_method = find_method_ptr(stored_impl, method_name);
             if (stored_method != nullptr) {
-                candidates.push_back(MethodCandidate{.impl = &stored_impl,
-                                                     .method = stored_method});
+                candidates.push_back(
+                    MethodCandidate{.impl = &stored_impl, .method = stored_method});
             }
         }
         return candidates;
@@ -647,8 +673,51 @@ class ExpressionCheckerServices final {
     }
 
   private:
+    [[nodiscard]] bool same_package_as_current_source(const ImplTypeInfo &impl) const {
+        if (current_package_prefix_.empty() || impl.package_prefix.empty()) {
+            return true;
+        }
+        return current_package_prefix_ == impl.package_prefix;
+    }
+
+    [[nodiscard]] bool impl_visible_for_method_lookup(const ImplTypeInfo &impl) const {
+        if (same_package_as_current_source(impl)) {
+            return true;
+        }
+        if (current_source_id_.has_value() && impl.source_id == current_source_id_) {
+            return true;
+        }
+        for (const auto &binding : resolve_result_.imports()) {
+            if (binding.source_id != current_source_id_) {
+                continue;
+            }
+            if (binding.target_module == impl.module_name ||
+                (impl.target_symbol.has_value() &&
+                 resolve_result_.symbol_table.module_exports_symbol(SymbolNamespace::Types,
+                                                                     binding.target_module,
+                                                                     *impl.target_symbol)) ||
+                (binding.target_module == "std::prelude" &&
+                 std_prelude_reexports_primitive_impl_module(impl.module_name))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool method_visible_for_method_lookup(const ImplTypeInfo &impl,
+                                                        const ImplMethodInfo &method) const {
+        if (!impl_visible_for_method_lookup(impl)) {
+            return false;
+        }
+        if (same_package_as_current_source(impl) || !impl.is_inherent) {
+            return true;
+        }
+        return method.visibility == ast::Visibility::Public;
+    }
+
     const ResolveResult &resolve_result_;
     std::optional<SourceId> current_source_id_;
+    std::string current_package_prefix_;
     const TypeEnvironment &environment_;
     TypeContext &types_;
     TypeRelationContext &relations_;
@@ -1029,8 +1098,10 @@ class ExpressionChecker final {
 
         TypePtr result_type = nullptr;
         const bool is_optional = [&] {
-            if (operand.type == nullptr) return false;
-            if (is_error_type(*operand.type)) return true;
+            if (operand.type == nullptr)
+                return false;
+            if (is_error_type(*operand.type))
+                return true;
             const auto view = stdlib_bridge::std_container_type_view(*operand.type);
             if (!view.has_value() || view->kind != stdlib_bridge::StdContainerKind::Option) {
                 return false;
@@ -1040,14 +1111,12 @@ class ExpressionChecker final {
             // — that is the unwrap result type.
             if (const auto *enm = operand.type->get_if<types::EnumT>();
                 enm != nullptr && !enm->type_args.empty()) {
-                result_type = enm->type_args.front() != nullptr
-                                  ? enm->type_args.front()->clone()
-                                  : values_.make_error_type();
+                result_type = enm->type_args.front() != nullptr ? enm->type_args.front()->clone()
+                                                                : values_.make_error_type();
             } else if (const auto *var = operand.type->get_if<types::EnumVariantT>();
                        var != nullptr && !var->type_args.empty()) {
-                result_type = var->type_args.front() != nullptr
-                                  ? var->type_args.front()->clone()
-                                  : values_.make_error_type();
+                result_type = var->type_args.front() != nullptr ? var->type_args.front()->clone()
+                                                                : values_.make_error_type();
             }
             return true;
         }();
@@ -1060,11 +1129,10 @@ class ExpressionChecker final {
                     .range = unwrap.operand->range,
                 });
             }
-            services_.typecheck_error_here(
-                error_codes::typecheck::TypeMismatch,
-                std::string("unwrap operand must be of type Option<T>"),
-                unwrap.operand->range,
-                std::move(notes));
+            services_.typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                           std::string("unwrap operand must be of type Option<T>"),
+                                           unwrap.operand->range,
+                                           std::move(notes));
             return values_.error_typed_effect(operand.effect);
         }
 
@@ -1445,7 +1513,6 @@ class ExpressionChecker final {
         return values_.typed_effect(std::move(struct_type), effect);
     }
 
-
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
         const auto &call = expr.as<ast::CallExpr>();
 
@@ -1563,8 +1630,7 @@ class ExpressionChecker final {
         // ---- Stage 1: inherent unique ----------------------------------------
         dispatch_note("[dispatch.stage1.inherent] " +
                       method_call_name(*receiver.type, call.method) +
-                      ": inherent candidates=" +
-                      std::to_string(inherent_candidates.size()));
+                      ": inherent candidates=" + std::to_string(inherent_candidates.size()));
         if (inherent_candidates.size() == 1) {
             selected = &inherent_candidates.front();
             selected_from_trait = false;
@@ -1587,14 +1653,13 @@ class ExpressionChecker final {
         if (selected == nullptr) {
             dispatch_note("[dispatch.stage2.trait] " +
                           method_call_name(*receiver.type, call.method) +
-                          ": trait candidates=" +
-                          std::to_string(trait_candidates.size()));
+                          ": trait candidates=" + std::to_string(trait_candidates.size()));
             if (trait_candidates.size() == 1) {
                 selected = &trait_candidates.front();
                 selected_from_trait = true;
                 dispatch_note("[dispatch.stage2.trait] selected unique trait method '" +
-                                  trait_candidates.front().method->name + "' from trait '" +
-                                  trait_candidates.front().impl->trait_name + "'");
+                              trait_candidates.front().method->name + "' from trait '" +
+                              trait_candidates.front().impl->trait_name + "'");
             } else if (trait_candidates.size() > 1) {
                 dispatch_note("[dispatch.stage2.trait] multiple trait candidates → "
                               "AMBIGUOUS_TRAIT_IMPL");
@@ -1620,9 +1685,8 @@ class ExpressionChecker final {
         // ---- Stage 3: bound check (trait selections only) --------------------
         if (selected_from_trait && selected->impl != nullptr) {
             const std::string_view trait_name = selected->impl->trait_name;
-            dispatch_note("[dispatch.stage3.bound] verifying bound '" +
-                          receiver.type->describe() + " : " + std::string(trait_name) +
-                          "' for trait dispatch target");
+            dispatch_note("[dispatch.stage3.bound] verifying bound '" + receiver.type->describe() +
+                          " : " + std::string(trait_name) + "' for trait dispatch target");
             const bool bound_ok = services_.check_bound(*receiver.type, trait_name, expr.range);
             if (bound_ok) {
                 dispatch_note("[dispatch.stage3.bound] bound satisfied for trait '" +
@@ -1710,7 +1774,8 @@ class ExpressionChecker final {
         // If the invariant breaks, fall back to zero offset (conservative:
         // explicit args bind to the start of the combined scope).
         const bool prefix_ok = [&] {
-            if (method.type_param_names.size() < impl_tparam_count) return false;
+            if (method.type_param_names.size() < impl_tparam_count)
+                return false;
             for (std::size_t i = 0; i < impl_tparam_count; ++i) {
                 if (method.type_param_names[i] != candidate.impl->type_param_names[i]) {
                     return false;
@@ -1733,8 +1798,7 @@ class ExpressionChecker final {
                                                    std::to_string(call.type_args.size())),
                                                expr.range);
             }
-            const auto explicit_limit =
-                std::min(call.type_args.size(), method_only_tparam_count);
+            const auto explicit_limit = std::min(call.type_args.size(), method_only_tparam_count);
             for (std::size_t index = 0; index < explicit_limit; ++index) {
                 subst[explicit_tparam_offset + index] =
                     services_.resolve_type_syntax(*call.type_args[index]);
@@ -1974,12 +2038,10 @@ class ExpressionChecker final {
         // accepts any arity (they are the compiler lowering targets for
         // sugar-style collection literals). Skip arity checking for these.
         const bool is_variadic_collection_builtin =
-            fn->get().builtin_name.has_value() &&
-            (*fn->get().builtin_name == "list_from_array" ||
-             *fn->get().builtin_name == "set_from_array" ||
-             *fn->get().builtin_name == "map_from_entries");
-        if (!is_variadic_collection_builtin &&
-            call.arguments.size() != fn->get().params.size()) {
+            fn->get().builtin_name.has_value() && (*fn->get().builtin_name == "list_from_array" ||
+                                                   *fn->get().builtin_name == "set_from_array" ||
+                                                   *fn->get().builtin_name == "map_from_entries");
+        if (!is_variadic_collection_builtin && call.arguments.size() != fn->get().params.size()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::WrongArity,
                 messages::typecheck::WrongArity.format_with("function",
@@ -2096,7 +2158,8 @@ class ExpressionChecker final {
                 if (!param_names.empty() && !subst.empty()) {
                     auto it = std::find(param_names.begin(), param_names.end(), bound.subject_name);
                     if (it != param_names.end()) {
-                        const std::size_t index = static_cast<std::size_t>(it - param_names.begin());
+                        const std::size_t index =
+                            static_cast<std::size_t>(it - param_names.begin());
                         if (index < subst.size()) {
                             subject_type = subst[index];
                         }
@@ -2278,8 +2341,7 @@ class ExpressionChecker final {
                         if (expected_arg == nullptr) {
                             continue;
                         }
-                        if (subst[index] == nullptr ||
-                            !expected_arg->holds<types::TypeVarT>()) {
+                        if (subst[index] == nullptr || !expected_arg->holds<types::TypeVarT>()) {
                             subst[index] = expected_arg;
                         }
                     }
@@ -2504,8 +2566,8 @@ class ExpressionChecker final {
                 return false;
             }
             const auto view = stdlib_bridge::std_container_type_view(*owner_type);
-            return view.has_value() &&
-                   view->kind == stdlib_bridge::StdContainerKind::Option && view->nominal;
+            return view.has_value() && view->kind == stdlib_bridge::StdContainerKind::Option &&
+                   view->nominal;
         };
         if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
             binary.lhs && binary.rhs &&
@@ -2529,7 +2591,6 @@ class ExpressionChecker final {
             }
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
-
 
         const auto lhs = services_.check_expr(*binary.lhs, context_, std::nullopt);
         const auto rhs = services_.check_expr(*binary.rhs, context_, std::nullopt);
@@ -2722,6 +2783,7 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
     ExpressionCheckerServices services{
         *services_.resolve_result,
         services_.current_source_id,
+        services_.current_package_prefix,
         *services_.environment,
         *services_.types,
         *services_.relations,
@@ -2741,6 +2803,7 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
     ExpressionCheckerServices services{
         *services_.resolve_result,
         services_.current_source_id,
+        services_.current_package_prefix,
         *services_.environment,
         *services_.types,
         *services_.relations,
@@ -2849,6 +2912,8 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
     ExpressionSema sema{ExpressionSemaServices{
         .resolve_result = &resolve_result_,
         .current_source_id = current_source_id_,
+        .current_package_prefix =
+            current_source_ != nullptr ? current_source_->package_prefix : std::string{},
         .environment = &result_.environment,
         .types = types_,
         .relations = &relations_,

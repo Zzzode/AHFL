@@ -183,8 +183,8 @@ fn runTop() -> Unit effect Pure decreases 0 {
                                                                      R"AHFL(
 module lib::definitions;
 import lib::definitions as self;
-struct User { id: Int; name: String; }
-struct Product { sku: String; price: Int; }
+pub struct User { id: Int; name: String; }
+pub struct Product { sku: String; price: Int; }
 )AHFL"},
                                                });
     dump_if_mismatch("n1", result.diagnostics);
@@ -219,7 +219,7 @@ fn runTop() -> Unit effect Pure decreases 0 {
                                                                      R"AHFL(
 module lib::colors;
 import lib::colors as self;
-enum Color {
+pub enum Color {
     Red,
     Green,
     Blue,
@@ -229,7 +229,7 @@ enum Color {
                                                                      R"AHFL(
 module lib::shapes;
 import lib::shapes as self;
-enum Shape {
+pub enum Shape {
     Circle,
     Square,
 }
@@ -267,8 +267,8 @@ fn runTop() -> Unit effect Pure decreases 0 {
                                                                      R"AHFL(
 module lib::models;
 import lib::models as self;
-struct RawUser { id: Int; }
-struct Profile { owner: RawUser; }
+pub struct RawUser { id: Int; }
+pub struct Profile { owner: RawUser; }
 )AHFL"},
                                                });
     dump_if_mismatch("n3", result.diagnostics);
@@ -300,9 +300,9 @@ fn runTop() -> Unit effect Pure decreases 0 {
                                                                      R"AHFL(
 module lib::api;
 import lib::api as self;
-struct Request { body: String; }
-struct Response { status: Int; }
-fn handle(req: Request, timeoutMs: Int) -> Response effect Pure decreases 0 {
+pub struct Request { body: String; }
+pub struct Response { status: Int; }
+pub fn handle(req: Request, timeoutMs: Int) -> Response effect Pure decreases 0 {
     return Response { status: 200 };
 }
 )AHFL"},

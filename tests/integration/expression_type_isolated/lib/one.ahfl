@@ -1,9 +1,9 @@
 module lib::one;
 import lib::types as types;
 
-capability Ping(request: types::OneReq) -> types::OneRes;
+pub capability Ping(request: types::OneReq) -> types::OneRes;
 
-agent OneAgent {
+pub agent OneAgent {
     input: types::OneReq;
     context: types::OneCtx;
     output: types::OneRes;

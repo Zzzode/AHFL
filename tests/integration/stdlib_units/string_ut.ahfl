@@ -2,6 +2,7 @@ module stdlib_units::string_ut;
 
 import std::string as string;
 import std::collections as collections;
+import std::option as option;
 
 // String unit-test matrix (corelib-support-workplan M1-7 / blocker B3).
 // 29 assertions: 15 positive + 14 boundary. Method-form surface.

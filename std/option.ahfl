@@ -1,6 +1,6 @@
 module std::option;
 
-enum Option<T> {
+pub enum Option<T> {
     Some(T),
     None,
 }
@@ -14,48 +14,48 @@ fn option_some<T>(value: T) -> Option<T> effect Pure;
 // Inherent impl (P3, RFC §2). Canonical surface: opt.map(f), opt.is_some().
 // ---------------------------------------------------------------------------
 impl<T> Option<T> {
-    fn is_some(self) -> Bool effect Pure decreases 0 {
+    pub fn is_some(self) -> Bool effect Pure decreases 0 {
         return self != Option::None;
     }
 
-    fn is_none(self) -> Bool effect Pure decreases 0 {
+    pub fn is_none(self) -> Bool effect Pure decreases 0 {
         return self == Option::None;
     }
 
-    fn map<U>(self, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
+    pub fn map<U>(self, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
         return match self { Some(value) => Option::Some(f(value)), None => Option::None };
     }
 
-    fn and_then<U>(self, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+    pub fn and_then<U>(self, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
         return match self { Some(value) => f(value), None => Option::None };
     }
 
-    fn or_else(self, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
+    pub fn or_else(self, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
         return match self { Some(value) => Option::Some(value), None => alt() };
     }
 
-    fn filter(self, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+    pub fn filter(self, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
         return match self {
             Some(value) => option_filter_value<T>(value, p),
             None => Option::None
         };
     }
 
-    fn unwrap_or(self, default: T) -> T effect Pure decreases 0 {
+    pub fn unwrap_or(self, default: T) -> T effect Pure decreases 0 {
         return match self { Some(value) => value, None => default };
     }
 
-    fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
+    pub fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
         return match self { Some(value) => value, None => default() };
     }
 
-    fn get_or_insert(self, value: T) -> T effect Pure decreases 0 {
+    pub fn get_or_insert(self, value: T) -> T effect Pure decreases 0 {
         return self.unwrap_or(value);
     }
 
     // unwrap: RFC §3.2 (Result) / §2 (Option) equivalent. Panics on None in
     // P4; here we return the value via match so the body is pure + decreases.
-    fn unwrap(self, sentinel: T) -> T effect Pure decreases 0 {
+    pub fn unwrap(self, sentinel: T) -> T effect Pure decreases 0 {
         // NOTE: arity 2 (sentinel: T) distinguishes this method from
         // Result::unwrap which takes arity 1. Option<T> doesn't have a
         // zero-arg unwrap in AHFL because P3 cannot model panic at this
@@ -65,7 +65,7 @@ impl<T> Option<T> {
     }
 
     // unwrap_or_else: equivalent to unwrap_or but takes a thunk.
-    fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
+    pub fn unwrap_or_else(self, default: Fn() -> T) -> T effect Pure decreases 0 {
         return match self { Some(value) => value, None => default() };
     }
 
@@ -80,7 +80,7 @@ impl<T> Option<T> {
     // `(T, U)`, so we return a nominal struct `ZippedPair<T, U>` as a
     // workaround (declared at the bottom of this file). PHASE B restores
     // the standard `Option<(T, U)>` return type.
-    fn zip<U>(self, other: Option<U>) -> Option<ZippedPair<T, U>> effect Pure decreases 0 {
+    pub fn zip<U>(self, other: Option<U>) -> Option<ZippedPair<T, U>> effect Pure decreases 0 {
         return match self {
             Some(a) => match other {
                 // NOTE: ZippedPair<T, U> is an empty nominal (struct fields are
@@ -99,7 +99,7 @@ impl<T> Option<T> {
     // builtin hook. unzip / copied are out of scope here: unzip needs real
     // tuple types (ZippedPair is an empty nominal workaround), copied needs
     // borrow/refs which AHFL does not have.
-    fn xor(self, other: Option<T>) -> Option<T> effect Pure decreases 0 {
+    pub fn xor(self, other: Option<T>) -> Option<T> effect Pure decreases 0 {
         return match self {
             Some(va) => match other {
                 Some(_) => Option::None,
@@ -129,37 +129,37 @@ fn option_filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure d
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.is_some()` via the inherent impl on `Option<T>`.
-fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
+pub fn is_some<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
     return self.is_some();
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.is_none()` via the inherent impl on `Option<T>`.
-fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
+pub fn is_none<T>(self: Option<T>) -> Bool effect Pure decreases 0 {
     return self.is_none();
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.map(f)` via the inherent impl on `Option<T>`.
-fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
+pub fn map<T, U>(self: Option<T>, f: Fn(T) -> U) -> Option<U> effect Pure decreases 0 {
     return self.map<U>(f);
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.and_then(f)` via the inherent impl on `Option<T>`.
-fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+pub fn and_then<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
     return self.and_then<U>(f);
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.or_else(alt)` via the inherent impl on `Option<T>`.
-fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
+pub fn or_else<T>(self: Option<T>, alt: Fn() -> Option<T>) -> Option<T> effect Pure decreases 0 {
     return self.or_else(alt);
 }
 
 // UFCS surface for xor (M1-2, new API): allows option::xor<T>(a, b) as well as
 // a.xor(b). Not deprecated — this is the primary free-function entry point.
-fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 0 {
+pub fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 0 {
     return self.xor(other);
 }
 
@@ -167,23 +167,23 @@ fn xor<T>(self: Option<T>, other: Option<T>) -> Option<T> effect Pure decreases 
 // flat_map name with Result and List (prelude.ahfl has List::flat_map). Pure
 // AHFL dispatch to the inherent and_then. try? / for_each remain deferred
 // (try? needs the `?` operator grammar+sema; for_each needs a Unit return).
-fn flat_map<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
+pub fn flat_map<T, U>(self: Option<T>, f: Fn(T) -> Option<U>) -> Option<U> effect Pure decreases 0 {
     return self.and_then<U>(f);
 }
 
-fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+pub fn filter_value<T>(value: T, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     return option_filter_value<T>(value, p);
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.filter(p)` via the inherent impl on `Option<T>`.
-fn filter<T>(self: Option<T>, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
+pub fn filter<T>(self: Option<T>, p: Fn(T) -> Bool) -> Option<T> effect Pure decreases 0 {
     return self.filter(p);
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.unwrap_or(default)` via the inherent impl on `Option<T>`.
-fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
+pub fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
     return self.unwrap_or(default);
 }
 // NOTE: Option<T>.unwrap_or_else already defined above in the impl block;
@@ -194,13 +194,13 @@ fn unwrap_or<T>(self: Option<T>, default: T) -> T effect Pure decreases 0 {
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.unwrap_or_else(default)` via the inherent impl on `Option<T>`.
-fn unwrap_or_else<T>(self: Option<T>, default: Fn() -> T) -> T effect Pure decreases 0 {
+pub fn unwrap_or_else<T>(self: Option<T>, default: Fn() -> T) -> T effect Pure decreases 0 {
     return self.unwrap_or_else(default);
 }
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.get_or_insert(value)` via the inherent impl on `Option<T>`.
-fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
+pub fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
     return self.get_or_insert(value);
 }
 
@@ -208,7 +208,7 @@ fn get_or_insert<T>(self: Option<T>, value: T) -> T effect Pure decreases 0 {
 
 /// Deprecated UFCS wrapper retained for one release cycle (P5 → P6). New code
 /// should prefer `opt.zip(other)` via the inherent impl on `Option<T>`.
-fn zip<T, U>(self: Option<T>, other: Option<U>)
+pub fn zip<T, U>(self: Option<T>, other: Option<U>)
     -> Option<ZippedPair<T, U>> effect Pure decreases 0
 {
     return self.zip<U>(other);
@@ -220,11 +220,11 @@ fn zip<T, U>(self: Option<T>, other: Option<U>)
 // sugar lowering, but the standalone functions are also exposed so users
 // can pass them as `Fn` values to higher-order combinators.
 
-fn some<T>(value: T) -> Option<T> effect Pure decreases 0 {
+pub fn some<T>(value: T) -> Option<T> effect Pure decreases 0 {
     return Option::Some(value);
 }
 
-fn option_none<T>() -> Option<T> effect Pure decreases 0 {
+pub fn option_none<T>() -> Option<T> effect Pure decreases 0 {
     // NOTE: bare `none` is a reserved word in AHFL P3 grammar (matches the
     // constructor in the Option enum); we export the function under the
     // prefixed name `option_none` and rely on prelude §9.1.1 sugar to
@@ -244,4 +244,4 @@ fn option_none<T>() -> Option<T> effect Pure decreases 0 {
 //   - All callers that return ZippedPair today will return the 2-tuple instead
 // ---------------------------------------------------------------------------
 
-struct ZippedPair<T, U> {}
+pub struct ZippedPair<T, U> {}

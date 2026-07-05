@@ -1,9 +1,9 @@
 module audit_core::lib;
 
-struct AuditRequest {
+pub struct AuditRequest {
     subject: String;
 }
 
-struct AuditDecision {
+pub struct AuditDecision {
     accepted: Bool;
 }

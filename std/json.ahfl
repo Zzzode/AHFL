@@ -3,15 +3,15 @@ module std::json;
 import std::collections;
 import std::option;
 
-type List<T> = collections::List<T>;
-type Map<K, V> = collections::Map<K, V>;
+pub type List<T> = collections::List<T>;
+pub type Map<K, V> = collections::Map<K, V>;
 
-enum JsonNumber {
+pub enum JsonNumber {
     JInt(Int),
     JFloat(Float),
 }
 
-enum JsonValue {
+pub enum JsonValue {
     JNull,
     JBool(Bool),
     JInt(Int),
@@ -31,29 +31,29 @@ fn json_parse_raw(s: String) -> option::Option<JsonValue> effect Pure;
 @builtin("json_emit_raw")
 fn json_emit_raw(v: JsonValue) -> String effect Pure;
 
-fn parse(s: String) -> option::Option<JsonValue> effect Pure decreases 0 {
+pub fn parse(s: String) -> option::Option<JsonValue> effect Pure decreases 0 {
     return json_parse_raw(s);
 }
-fn emit(v: JsonValue) -> String effect Pure decreases 0 {
+pub fn emit(v: JsonValue) -> String effect Pure decreases 0 {
     return json_emit_raw(v);
 }
 
-fn is_null(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_null(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JNull => true, _ => false };
 }
-fn is_bool(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_bool(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JBool(b) => true, _ => false };
 }
-fn is_number(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_number(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JInt(n) => true, JFloat(x) => true, _ => false };
 }
-fn is_string(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_string(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JText(s) => true, _ => false };
 }
-fn is_array(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_array(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JList(xs) => true, _ => false };
 }
-fn is_object(v: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn is_object(v: JsonValue) -> Bool effect Pure decreases 0 {
     return match v { JEntries(es) => true, _ => false };
 }
 
@@ -81,13 +81,13 @@ fn jentries_payload(v: JsonValue) -> option::Option<Map<String, JsonValue>> effe
     };
 }
 
-fn as_bool(v: JsonValue) -> option::Option<Bool> effect Pure decreases 0 {
+pub fn as_bool(v: JsonValue) -> option::Option<Bool> effect Pure decreases 0 {
     return match v {
         JBool(b) => option::Option::Some(b),
         _ => option::Option::None,
     };
 }
-fn as_int(v: JsonValue) -> option::Option<Int> effect Pure decreases 0 {
+pub fn as_int(v: JsonValue) -> option::Option<Int> effect Pure decreases 0 {
     return match v {
         JInt(n) => option::Option::Some(n),
         JFloat(x) => as_int_whole(x),
@@ -101,27 +101,27 @@ fn as_int_whole(x: Float) -> option::Option<Int> effect Pure decreases 0 {
     }
     return option::Option::None;
 }
-fn as_float(v: JsonValue) -> option::Option<Float> effect Pure decreases 0 {
+pub fn as_float(v: JsonValue) -> option::Option<Float> effect Pure decreases 0 {
     return match v {
         JInt(n) => option::Option::Some(to_float_n(n)),
         JFloat(x) => option::Option::Some(x),
         _ => option::Option::None,
     };
 }
-fn as_string(v: JsonValue) -> option::Option<String> effect Pure decreases 0 {
+pub fn as_string(v: JsonValue) -> option::Option<String> effect Pure decreases 0 {
     return match v {
         JText(s) => option::Option::Some(s),
         _ => option::Option::None,
     };
 }
-fn as_array(v: JsonValue) -> option::Option<List<JsonValue>> effect Pure decreases 0 {
+pub fn as_array(v: JsonValue) -> option::Option<List<JsonValue>> effect Pure decreases 0 {
     return jlist_payload(v);
 }
-fn as_object(v: JsonValue) -> option::Option<Map<String, JsonValue>> effect Pure decreases 0 {
+pub fn as_object(v: JsonValue) -> option::Option<Map<String, JsonValue>> effect Pure decreases 0 {
     return jentries_payload(v);
 }
 
-fn at(v: JsonValue, index: Int) -> option::Option<JsonValue> effect Pure decreases 0 {
+pub fn at(v: JsonValue, index: Int) -> option::Option<JsonValue> effect Pure decreases 0 {
     return match as_array(v) {
         option::Option::Some(xs) => at_bounds(xs, index),
         option::Option::None => option::Option::None,
@@ -136,7 +136,7 @@ fn at_bounds(xs: List<JsonValue>, index: Int)
     return option::Option::Some(collections::list_raw_get<JsonValue>(xs, index));
 }
 
-fn get(v: JsonValue, key: String) -> option::Option<JsonValue> effect Pure decreases 0 {
+pub fn get(v: JsonValue, key: String) -> option::Option<JsonValue> effect Pure decreases 0 {
     return match as_object(v) {
         option::Option::Some(m) => get_lookup(m, key),
         option::Option::None => option::Option::None,
@@ -151,7 +151,7 @@ fn get_lookup(m: Map<String, JsonValue>, key: String)
     return option::Option::None;
 }
 
-fn eq_json(a: JsonValue, b: JsonValue) -> Bool effect Pure decreases 0 {
+pub fn eq_json(a: JsonValue, b: JsonValue) -> Bool effect Pure decreases 0 {
     return match a {
         JNull => match b { JNull => true, _ => false },
         JBool(ba) => match b {
@@ -197,47 +197,47 @@ fn eq_json_list_step(a: List<JsonValue>, b: List<JsonValue>, idx: Int)
     return false;
 }
 
-enum JsonErrorKind {
+pub enum JsonErrorKind {
     MissingField,
     TypeMismatch,
     InvalidValue,
 }
-struct JsonError {}
+pub struct JsonError {}
 
 impl JsonValue {
-    fn eq(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
+    pub fn eq(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
         return eq_json(self, other);
     }
-    fn ne(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
+    pub fn ne(self: JsonValue, other: JsonValue) -> Bool effect Pure decreases 0 {
         return not eq_json(self, other);
     }
-    fn fmt(self: JsonValue, discard: Unit) -> String effect Pure decreases 0 {
+    pub fn fmt(self: JsonValue, discard: Unit) -> String effect Pure decreases 0 {
         discard;
         return emit(self);
     }
-    fn to_json(self: JsonValue, discard: Unit) -> JsonValue effect Pure decreases 0 {
+    pub fn to_json(self: JsonValue, discard: Unit) -> JsonValue effect Pure decreases 0 {
         discard;
         return self;
     }
 }
 
 impl Bool {
-    fn from_json(v: JsonValue) -> option::Option<Bool> effect Pure decreases 0 {
+    pub fn from_json(v: JsonValue) -> option::Option<Bool> effect Pure decreases 0 {
         return as_bool(v);
     }
 }
 impl Int {
-    fn from_json(v: JsonValue) -> option::Option<Int> effect Pure decreases 0 {
+    pub fn from_json(v: JsonValue) -> option::Option<Int> effect Pure decreases 0 {
         return as_int(v);
     }
 }
 impl Float {
-    fn from_json(v: JsonValue) -> option::Option<Float> effect Pure decreases 0 {
+    pub fn from_json(v: JsonValue) -> option::Option<Float> effect Pure decreases 0 {
         return as_float(v);
     }
 }
 impl String {
-    fn from_json(v: JsonValue) -> option::Option<String> effect Pure decreases 0 {
+    pub fn from_json(v: JsonValue) -> option::Option<String> effect Pure decreases 0 {
         return as_string(v);
     }
 }

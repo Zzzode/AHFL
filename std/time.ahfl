@@ -21,15 +21,15 @@ fn time_duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pu
 // ===========================================================================
 
 impl Timestamp {
-    fn add(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
+    pub fn add(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
         return time_add(self, delta);
     }
 
-    fn sub(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
+    pub fn sub(self, delta: Duration) -> Timestamp effect Pure decreases 0 {
         return time_sub(self, delta);
     }
 
-    fn duration_until(self, other: Timestamp) -> Duration effect Pure decreases 0 {
+    pub fn duration_until(self, other: Timestamp) -> Duration effect Pure decreases 0 {
         return time_duration_between(self, other);
     }
 }
@@ -40,22 +40,22 @@ impl Duration {}
 // Module-level surface.
 // ===========================================================================
 
-fn now() -> Timestamp effect Nondet {
+pub fn now() -> Timestamp effect Nondet {
     return time_now();
 }
 
-fn epoch() -> Timestamp effect Pure decreases 0 {
+pub fn epoch() -> Timestamp effect Pure decreases 0 {
     return time_epoch();
 }
 
-fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
+pub fn add(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
     return self.add(delta);
 }
 
-fn sub(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
+pub fn sub(self: Timestamp, delta: Duration) -> Timestamp effect Pure decreases 0 {
     return self.sub(delta);
 }
 
-fn duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure decreases 0 {
+pub fn duration_between(start: Timestamp, end: Timestamp) -> Duration effect Pure decreases 0 {
     return time_duration_between(start, end);
 }

@@ -1144,6 +1144,18 @@ std::string TypeCheckPass::module_name_of(std::optional<SourceId> source_id) con
     return {};
 }
 
+std::string TypeCheckPass::package_prefix_of(std::optional<SourceId> source_id) const {
+    if (!source_id.has_value() || graph_ == nullptr) {
+        return {};
+    }
+    for (const auto &source : graph_->sources) {
+        if (source.id == *source_id) {
+            return source.package_prefix;
+        }
+    }
+    return {};
+}
+
 void TypeCheckPass::check_impl_coherence(const ImplTypeInfo &impl) {
     // RFC §2.2 strict orphan rule: an `impl Trait for Type` must live in the
     // module that defines Trait or the module that defines Type. Only enforced

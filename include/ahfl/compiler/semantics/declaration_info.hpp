@@ -421,6 +421,7 @@ struct TraitTypeInfo {
 struct ImplAssocItemInfo {
     std::string name;
     TypePtr type;
+    ast::Visibility visibility{ast::Visibility::PackageInternal};
     SourceRange declaration_range;
 };
 
@@ -430,6 +431,7 @@ struct ImplAssocItemInfo {
 struct ImplMethodInfo {
     std::string name;
     SymbolId symbol{0};
+    ast::Visibility visibility{ast::Visibility::PackageInternal};
     std::vector<ParamTypeInfo> params;
     TypePtr return_type;
     SourceRange return_type_range;
@@ -471,6 +473,7 @@ struct ImplTypeInfo {
     // symbol. Resolved to a module name by the typecheck pass via
     // SourceGraph::sources.
     std::optional<SourceId> source_id;
+    std::string package_prefix;
     // Module name the impl is declared in (resolved at typecheck time from
     // source_id). Empty when the impl is in the anonymous top-level program.
     std::string module_name;

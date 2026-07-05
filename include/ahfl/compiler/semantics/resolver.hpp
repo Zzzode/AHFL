@@ -99,6 +99,7 @@ struct Symbol {
     SymbolId id;
     SymbolNamespace name_space{SymbolNamespace::Types};
     SymbolKind kind{SymbolKind::Struct};
+    ast::Visibility visibility{ast::Visibility::PackageInternal};
     std::string local_name;
     std::string canonical_name;
     std::string module_name;
@@ -133,6 +134,9 @@ class SymbolTable {
                                                std::string_view module_name = "") const;
     [[nodiscard]] MaybeCRef<Symbol> find_canonical(SymbolNamespace name_space,
                                                    std::string_view name) const;
+    [[nodiscard]] bool module_exports_symbol(SymbolNamespace name_space,
+                                             std::string_view module_name,
+                                             SymbolId id) const;
     // Returns every symbol in the given namespace whose `local_name` matches
     // `name`, regardless of which module owns it. Used by diagnostics that
     // want to surface "declared in N locations" context when a name is

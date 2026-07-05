@@ -2,5 +2,5 @@ module typecheck::variance;
 import typecheck::variance as self;
 import std::collections;
 
-const WideSet: Set<String> = set_raw_empty<String>();
-const RejectedSet: Set<String(2, 8)> = self::WideSet;
+const WideSet: collections::Set<String> = collections::set_empty<String>();
+const RejectedSet: collections::Set<String(2, 8)> = self::WideSet;

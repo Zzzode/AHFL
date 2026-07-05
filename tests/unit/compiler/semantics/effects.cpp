@@ -111,6 +111,34 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
     out << content;
 }
 
+[[nodiscard]] std::string with_std_test_imports(std::string source) {
+    constexpr std::string_view option_import = "import std::option;\n";
+    constexpr std::string_view collections_import = "import std::collections;\n";
+    if (source.find(option_import) != std::string::npos &&
+        source.find(collections_import) != std::string::npos) {
+        return source;
+    }
+
+    auto insert_pos = std::size_t{0};
+    const auto module_pos = source.find("module ");
+    if (module_pos != std::string::npos) {
+        const auto module_line_end = source.find('\n', module_pos);
+        insert_pos = module_line_end == std::string::npos ? source.size() : module_line_end + 1;
+    } else {
+        const auto first_newline = source.find('\n');
+        insert_pos = first_newline == std::string::npos ? 0 : first_newline + 1;
+    }
+    std::string imports;
+    if (source.find(option_import) == std::string::npos) {
+        imports += option_import;
+    }
+    if (source.find(collections_import) == std::string::npos) {
+        imports += collections_import;
+    }
+    source.insert(insert_pos, imports);
+    return source;
+}
+
 template <typename DiagBag> void dump_diagnostics(std::string_view label, const DiagBag &bag) {
     std::ostringstream ss;
     for (const auto &entry : bag.entries()) {
@@ -148,7 +176,7 @@ template <typename DiagBag> void dump_diagnostics(std::string_view label, const 
         std::filesystem::temp_directory_path() / ("ahfl_effects_" + std::string{filename});
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
-    write_file(main_path, "module app::main;\n" + std::string{source});
+    write_file(main_path, with_std_test_imports("module app::main;\n" + std::string{source}));
 
     const ahfl::Frontend frontend;
     const auto parse_result = ahfl::parse_project(
@@ -171,7 +199,7 @@ template <typename DiagBag> void dump_diagnostics(std::string_view label, const 
     const auto root = std::filesystem::temp_directory_path() / ("ahfl_effects_" + root_name);
     std::filesystem::remove_all(root);
     const auto source_path = module_source_path(root, module_name);
-    write_file(source_path, std::string{source});
+    write_file(source_path, with_std_test_imports(std::string{source}));
 
     const ahfl::Frontend frontend;
     const auto parse_result = ahfl::parse_project(
@@ -2555,7 +2583,7 @@ flow for HirAgent {
     const auto root = std::filesystem::temp_directory_path() / "ahfl_effects_typed_hir_project";
     std::filesystem::remove_all(root);
     const auto main_path = root / "app" / "main.ahfl";
-    write_file(main_path, "module app::main;\n" + source);
+    write_file(main_path, with_std_test_imports("module app::main;\n" + source));
 
     const ahfl::Frontend frontend;
     const auto parse_result = ahfl::parse_project(

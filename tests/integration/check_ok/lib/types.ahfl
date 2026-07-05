@@ -1,17 +1,17 @@
 module lib::types;
 
-struct Request {
+pub struct Request {
     value: String;
 }
 
-struct Context {
+pub struct Context {
     value: String = "pending";
 }
 
-struct Response {
+pub struct Response {
     value: String;
 }
 
-type RequestAlias = Request;
-type ContextAlias = Context;
-type ResponseAlias = Response;
+pub type RequestAlias = Request;
+pub type ContextAlias = Context;
+pub type ResponseAlias = Response;

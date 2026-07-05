@@ -286,6 +286,9 @@ void write_file(const std::filesystem::path &path, const std::string &content) {
 
 // Small prefix providing Request/Response/Capability shared by many cases.
 const char *kSharedPrefix = R"AHFL(
+import std::option;
+import std::collections;
+
 struct Request { value: String; token: Optional<String> = std::option::Option::None; }
 struct Context { value: String = ""; }
 struct Response { value: String; code: Int = 200; }
@@ -657,6 +660,8 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR carries serializable con
     const std::string source = R"AHFL(
 module typed::const_eval;
 import typed::const_eval as self;
+import std::option;
+import std::collections;
 
 enum Priority {
     Low,
@@ -864,8 +869,9 @@ const DurationEquivalent: Bool = 60s == 1m;
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR normalizes Set and Map const values") {
     const auto root = make_temp_project("const_normalize_project");
     const auto source_path = module_source_path(root, "typed::const_normalize");
-    const std::string source = R"AHFL(
+const std::string source = R"AHFL(
 module typed::const_normalize;
+import std::collections;
 
 const SourceList: List<String> = std::collections::list_from_array<String>("b", "a");
 const SourceSet: Set<String> = std::collections::set_from_array<String>("b", "a");
@@ -949,7 +955,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
 module lib::defs;
 import lib::defs as self;
 
-const CrossForward: Int = self::Later + 1;
+pub const CrossForward: Int = self::Later + 1;
 const Later: Int = 40;
 )AHFL";
     const std::string main_source = R"AHFL(
@@ -1012,7 +1018,7 @@ const ProjectAnswer: Int = defs::CrossForward + 1;
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
 }
 
-TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project prelude resolves unqualified stdlib type aliases") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project prelude resolves unqualified stdlib type exports") {
     const auto root = make_temp_project("prelude_alias_project");
     const auto main_path = root / "app" / "main.ahfl";
 
@@ -1042,18 +1048,6 @@ struct Request {
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
-
-    const auto prelude_option =
-        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Option", "std::prelude");
-    REQUIRE(prelude_option.has_value());
-    const auto prelude_decl = std::find_if(
-        restored->declarations.begin(),
-        restored->declarations.end(),
-        [&](const ahfl::TypedDecl &decl) { return decl.symbol == prelude_option->get().id; });
-    REQUIRE(prelude_decl != restored->declarations.end());
-    const auto *prelude_alias = std::get_if<ahfl::TypeAliasDeclInfo>(&prelude_decl->payload);
-    REQUIRE(prelude_alias != nullptr);
-    CHECK(prelude_alias->type_param_names == std::vector<std::string>{"T"});
 
     const auto std_option =
         restored->find_local_symbol(ahfl::SymbolNamespace::Types, "Option", "std::option");
@@ -1451,6 +1445,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std collections List API
     const std::string main_source = R"AHFL(
 module app::main;
 import std::collections as collections;
+import std::option;
 
 struct QualifiedBag {
     xs: std::collections::List<Int>;
@@ -1556,42 +1551,6 @@ fn singleton_map_value(key: String, value: Int) -> Map<String, Int> {
 
 fn find_value(values: Map<String, Int>, key: String) -> Option<Int> {
     return collections::map_get<String, Int>(values, key);
-}
-
-fn raw_first(xs: List<Int>) -> Int {
-    return collections::list_raw_get<Int>(xs, 0);
-}
-
-fn raw_replace(xs: List<Int>, value: Int) -> List<Int> {
-    return collections::list_raw_set<Int>(xs, 0, value);
-}
-
-fn raw_length(xs: List<Int>) -> Int {
-    return collections::list_raw_length<Int>(xs);
-}
-
-fn raw_alloc(n: Int) -> List<Int> {
-    return collections::list_raw_alloc<Int>(n);
-}
-
-fn raw_has_member(values: Set<Int>, value: Int) -> Bool {
-    return collections::set_raw_contains<Int>(values, value);
-}
-
-fn raw_set_size(values: Set<Int>) -> Int {
-    return collections::set_raw_size<Int>(values);
-}
-
-fn raw_find_value(values: Map<String, Int>, key: String) -> Int {
-    return collections::map_raw_get<String, Int>(values, key);
-}
-
-fn raw_has_key(values: Map<String, Int>, key: String) -> Bool {
-    return collections::map_raw_contains_key<String, Int>(values, key);
-}
-
-fn raw_map_size(values: Map<String, Int>) -> Int {
-    return collections::map_raw_size<String, Int>(values);
 }
 
 fn inferred_first() -> Int {
@@ -2222,25 +2181,25 @@ fn inferred_missing_value() -> Bool {
     CHECK_FALSE((!saw_map_empty_call && !saw_map_empty_wrapper_call));
     CHECK_FALSE((!saw_map_singleton_call && !saw_map_singleton_wrapper_call));
     CHECK_FALSE((!saw_map_get_call && !saw_map_get_wrapper_call));
-    CHECK(saw_list_raw_get_call);
+    CHECK_FALSE(saw_list_raw_get_call);
     CHECK(saw_list_raw_get_wrapper_call);
-    CHECK(saw_list_raw_set_call);
+    CHECK_FALSE(saw_list_raw_set_call);
     CHECK(saw_list_raw_set_wrapper_call);
-    CHECK(saw_list_raw_length_call);
+    CHECK_FALSE(saw_list_raw_length_call);
     CHECK(saw_list_raw_length_wrapper_call);
-    CHECK(saw_list_raw_alloc_call);
+    CHECK_FALSE(saw_list_raw_alloc_call);
     CHECK(saw_list_raw_alloc_wrapper_call);
-    CHECK(saw_set_raw_contains_call);
+    CHECK_FALSE(saw_set_raw_contains_call);
     CHECK(saw_set_raw_contains_wrapper_call);
-    CHECK(saw_set_raw_size_call);
+    CHECK_FALSE(saw_set_raw_size_call);
     CHECK(saw_set_raw_size_wrapper_call);
     CHECK(saw_set_raw_empty_wrapper_call);
     CHECK(saw_set_raw_singleton_wrapper_call);
-    CHECK(saw_map_raw_get_call);
+    CHECK_FALSE(saw_map_raw_get_call);
     CHECK(saw_map_raw_get_wrapper_call);
-    CHECK(saw_map_raw_contains_key_call);
+    CHECK_FALSE(saw_map_raw_contains_key_call);
     CHECK(saw_map_raw_contains_key_wrapper_call);
-    CHECK(saw_map_raw_size_call);
+    CHECK_FALSE(saw_map_raw_size_call);
     CHECK(saw_map_raw_size_wrapper_call);
     CHECK(saw_map_raw_empty_wrapper_call);
     CHECK(saw_map_raw_singleton_wrapper_call);
@@ -2369,8 +2328,10 @@ fn inferred_missing_value() -> Bool {
     CHECK_FALSE((!restored_is_empty_call && !restored_is_empty_wrapper_call));
     CHECK_FALSE((!restored_map_call && !restored_map_wrapper_call));
     CHECK_FALSE((!restored_fold_call && !restored_fold_wrapper_call));
-    CHECK_FALSE((!restored_list_raw_get_call && !restored_list_raw_get_wrapper_call));
-    CHECK_FALSE((!restored_map_raw_get_call && !restored_map_raw_get_wrapper_call));
+    CHECK_FALSE(restored_list_raw_get_call);
+    CHECK(restored_list_raw_get_wrapper_call);
+    CHECK_FALSE(restored_map_raw_get_call);
+    CHECK(restored_map_raw_get_wrapper_call);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P6 project can call std string time uuid APIs") {
@@ -2393,14 +2354,6 @@ fn title_empty(s: String) -> Bool {
 
 fn title_join(left: String, right: String) -> String {
     return strings::concat(left, right);
-}
-
-fn title_raw_len(s: String) -> Int {
-    return strings::raw_length(s);
-}
-
-fn title_raw_join(left: String, right: String) -> String {
-    return strings::raw_concat(left, right);
 }
 
 fn later(t: Timestamp, d: Duration) -> Timestamp {
@@ -2470,7 +2423,8 @@ fn parse_id(s: String) -> Option<UUID> {
         saw_string_raw_length =
             saw_string_raw_length || symbol->get().canonical_name == "std::string::raw_length";
         saw_string_raw_concat =
-            saw_string_raw_concat || symbol->get().canonical_name == "std::string::raw_concat";
+            saw_string_raw_concat ||
+            symbol->get().canonical_name == "std::string::string_raw_concat";
         saw_time = saw_time || symbol->get().canonical_name == "std::time::add";
         saw_uuid = saw_uuid || symbol->get().canonical_name == "std::uuid::parse";
     }
@@ -2818,6 +2772,8 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck applies covariant container
     const std::string source = R"AHFL(
 module typed::variance;
 import typed::variance as self;
+import std::option;
+import std::collections;
 
 const NarrowOptional: Optional<String(2, 8)> = std::option::Option::None;
 const WideOptional: Optional<String> = self::NarrowOptional;
@@ -2856,6 +2812,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck keeps map keys invariant") 
     const std::string source = R"AHFL(
 module typed::variance;
 import typed::variance as self;
+import std::collections;
 
 const NarrowMapKey: Map<String(2, 8), Int> = std::collections::map_from_entries<String(2, 8), Int>();
 const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
@@ -3165,8 +3122,9 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
     const auto root = make_temp_project("snapshot_project");
     const auto source_path = module_source_path(root, "typed::snapshot");
-    const std::string source = R"AHFL(
+const std::string source = R"AHFL(
 module typed::snapshot;
+import std::option;
 
 type Label = String;
 const DefaultCode: Int = 200;
@@ -3809,8 +3767,9 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     // are exercised for parity and TypedProgram.blocks coverage.
     const auto root = make_temp_project("statement_parity_project");
     const auto source_path = module_source_path(root, "typed::statement_parity");
-    const std::string source = R"AHFL(
+const std::string source = R"AHFL(
 module typed::statement_parity;
+import std::option;
 
 struct Req { v: String; token: Optional<String> = std::option::Option::None; }
 struct Ctx { v: String = ""; count: Int = 0; }
@@ -3936,8 +3895,9 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     // to carry non-trivial children_expr_index entries.
     const auto root = make_temp_project("statement_children_project");
     const auto source_path = module_source_path(root, "typed::statement_children");
-    const std::string source = R"AHFL(
+const std::string source = R"AHFL(
 module typed::statement_children;
+import std::option;
 
 struct Req { v: String; token: Optional<String> = std::option::Option::None; }
 struct Ctx { v: String = ""; count: Int = 0; }

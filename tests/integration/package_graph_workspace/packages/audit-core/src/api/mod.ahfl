@@ -1,5 +1,5 @@
 module audit_core::api;
 
-struct AuditApiRequest {
+pub struct AuditApiRequest {
     subject: String;
 }

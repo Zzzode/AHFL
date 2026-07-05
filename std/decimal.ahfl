@@ -22,7 +22,7 @@ import std::cmp;
 // in the Ord/Hash/Display impl blocks below.
 // ===========================================================================
 
-type JDecimal = Decimal(0);
+pub type JDecimal = Decimal(0);
 
 // ===========================================================================
 // Compiler-internal builtin hooks (not user-facing). These back all of the
@@ -67,7 +67,7 @@ fn decimal_raw_to_string(a: Decimal(0)) -> String effect Pure;
 // IEEE 754 / Java BigDecimal / Rust dec::RoundingMode to avoid confusion.
 // ===========================================================================
 
-enum RoundingMode {
+pub enum RoundingMode {
     // Round towards positive infinity (3.1 -> 4, -3.1 -> -3).
     Ceiling,
     // Round towards negative infinity (3.1 -> 3, -3.1 -> -4).
@@ -89,11 +89,11 @@ enum RoundingMode {
 // `from_int(n)` is sugar for `make(n, 0)`.
 // ===========================================================================
 
-fn make(n: Int, scale: Int) -> JDecimal effect Pure decreases 0 {
+pub fn make(n: Int, scale: Int) -> JDecimal effect Pure decreases 0 {
     return decimal_raw_make(n, scale);
 }
 
-fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
+pub fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
     return make(n, 0);
 }
 
@@ -106,15 +106,15 @@ fn from_int(n: Int) -> JDecimal effect Pure decreases 0 {
 // requires-clauses bind to runtime predicates.
 // ===========================================================================
 
-fn add(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn add(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     return decimal_raw_add(a, b);
 }
 
-fn sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     return decimal_raw_sub(a, b);
 }
 
-fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     // Product scale = scale_of(a) + scale_of(b).
     return decimal_raw_mul(a, b);
 }
@@ -123,11 +123,11 @@ fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
 // Scale queries / conversion (API §7.3).
 // ===========================================================================
 
-fn scale_of(a: Decimal(0)) -> Int effect Pure decreases 0 {
+pub fn scale_of(a: Decimal(0)) -> Int effect Pure decreases 0 {
     return decimal_raw_scale(a);
 }
 
-fn with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure decreases 0 {
+pub fn with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure decreases 0 {
     // Trivially succeeds when new_scale >= scale_of(a); otherwise falls back
     // to quantize(a, new_scale, RoundingMode::Truncate).
     return decimal_raw_with_scale(a, new_scale);
@@ -135,7 +135,7 @@ fn with_scale(a: Decimal(0), new_scale: Int) -> JDecimal effect Pure decreases 0
 
 // Ordinal helper for RoundingMode: Ceiling=0 Floor=1 Truncate=2
 // HalfUp=3 HalfDown=4 HalfEven=5.
-fn mode_index(m: RoundingMode) -> Int effect Pure decreases 0 {
+pub fn mode_index(m: RoundingMode) -> Int effect Pure decreases 0 {
     return match m {
         Ceiling => 0,
         Floor => 1,
@@ -146,7 +146,7 @@ fn mode_index(m: RoundingMode) -> Int effect Pure decreases 0 {
     };
 }
 
-fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
+pub fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
     -> JDecimal effect Pure decreases 0
 {
     return decimal_raw_quantize(a, new_scale, mode_index(mode));
@@ -160,27 +160,27 @@ fn quantize(a: Decimal(0), new_scale: Int, mode: RoundingMode)
 // binds the Ord trait impl on Decimal, this wrapper forwards to it.
 // ===========================================================================
 
-fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
+pub fn compare(a: JDecimal, b: JDecimal) -> cmp::Ordering effect Pure decreases 0 {
     // TODO(P6a-Ord): forward to Ord trait dispatch once impl on primitive
     // Decimal lands; for now delegate directly to the raw builtin.
     return decimal_raw_cmp(a, b);
 }
 
-fn min(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn min(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     if compare(a, b) == cmp::Ordering::Greater {
         return b;
     }
     return a;
 }
 
-fn max(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn max(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     if compare(a, b) == cmp::Ordering::Less {
         return b;
     }
     return a;
 }
 
-fn clamp(value: JDecimal, lo: JDecimal, hi: JDecimal) -> JDecimal effect Pure decreases 0 {
+pub fn clamp(value: JDecimal, lo: JDecimal, hi: JDecimal) -> JDecimal effect Pure decreases 0 {
     return min(max(value, lo), hi);
 }
 
@@ -196,37 +196,37 @@ fn clamp(value: JDecimal, lo: JDecimal, hi: JDecimal) -> JDecimal effect Pure de
 
 impl Decimal(0) {
     // ---- trait: Eq ---------------------------------------------------------
-    fn eq(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn eq(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return decimal_raw_eq(self, other);
     }
-    fn ne(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn ne(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return not self.eq(other);
     }
 
     // ---- trait: Ord --------------------------------------------------------
-    fn compare(self, other: Decimal(0)) -> cmp::Ordering effect Pure decreases 0 {
+    pub fn compare(self, other: Decimal(0)) -> cmp::Ordering effect Pure decreases 0 {
         // TODO(P6a-Ord): wire into trait-resolver default-method binding
         // (P6a-01 / PHASE 4b) so `a.lt(b)` and friends resolve generically.
         return decimal_raw_cmp(self, other);
     }
-    fn lt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn lt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return self.compare(other) == cmp::Ordering::Less;
     }
-    fn le(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn le(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         let c: cmp::Ordering = self.compare(other);
         return (c == cmp::Ordering::Less) or (c == cmp::Ordering::Equal);
     }
-    fn gt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn gt(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         return self.compare(other) == cmp::Ordering::Greater;
     }
-    fn ge(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
+    pub fn ge(self, other: Decimal(0)) -> Bool effect Pure decreases 0 {
         let c: cmp::Ordering = self.compare(other);
         return (c == cmp::Ordering::Greater) or (c == cmp::Ordering::Equal);
     }
     // max / min / clamp are PHASE B (trait generics) — not in skeleton.
 
     // ---- trait: Hash -------------------------------------------------------
-    fn hash(self, dummy: Unit) -> Int effect Pure decreases 0 {
+    pub fn hash(self, dummy: Unit) -> Int effect Pure decreases 0 {
         // Hash::hash(self: Int) is declared with a single Int receiver in
         // std/traits; non-Int impls need a distinct arity until trait-level
         // generics support (PHASE B). Dummy Unit keeps arity unique.
@@ -256,7 +256,7 @@ impl Decimal(0) {
     }
 
     // ---- trait: Display ----------------------------------------------------
-    fn fmt(self, dummy: Unit) -> String effect Pure decreases 0 {
+    pub fn fmt(self, dummy: Unit) -> String effect Pure decreases 0 {
         // Display::fmt(self: Int) occupies arity 1; arity 2 distinguishes
         // Decimal until trait generics.
         return decimal_raw_to_string(self);

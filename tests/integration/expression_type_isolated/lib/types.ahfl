@@ -1,25 +1,25 @@
 module lib::types;
 
-struct OneReq {
+pub struct OneReq {
     value: String;
 }
 
-struct OneCtx {
+pub struct OneCtx {
     value: String = "seed";
 }
 
-struct OneRes {
+pub struct OneRes {
     value: String;
 }
 
-struct TwoReq {
+pub struct TwoReq {
     value: String;
 }
 
-struct TwoCtx {
+pub struct TwoCtx {
     value: String = "seed";
 }
 
-struct TwoRes {
+pub struct TwoRes {
     value: String;
 }

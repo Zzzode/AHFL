@@ -160,10 +160,9 @@ module trait_impl;
 // would be flagged by the resolver's module-boundary guard). This keeps the
 // orphan comparison deterministic.
 //
-// Cross-module references use qualified path names (`module::Name`): the
-// resolver's `canonical_names` index maps `<module>::<local>` to its symbol,
-// so a foreign type/trait is reached by its fully qualified spelling without
-// an `import` declaration.
+// Cross-module references use explicit imports plus qualified path names
+// (`module::Name`): imports make the dependency visible, and the resolver's
+// canonical index then binds `<module>::<local>` to its symbol.
 // ---------------------------------------------------------------------------
 
 struct ModuleSource {
@@ -456,6 +455,7 @@ struct Circle {
             .module_name = "fmtlib",
             .text = R"AHFL(
 module fmtlib;
+import shapes;
 
 trait Describe {
     fn describe(self: shapes::Circle) -> Int;
@@ -465,12 +465,14 @@ trait Describe {
         ModuleSource{
             // The orphan: defines neither Circle nor Describe, yet writes the
             // impl. Both symbols are reached via qualified paths so resolution
-            // succeeds and the coherence check fires. RFC §2.2 rejects this
+            // succeeds after explicit imports and the coherence check fires. RFC §2.2 rejects this
             // with E::orphan_impl.
             .display_name = "handlers.ahfl",
             .module_name = "handlers",
             .text = R"AHFL(
 module handlers;
+import fmtlib;
+import shapes;
 
 impl fmtlib::Describe for shapes::Circle {
     fn describe(self: shapes::Circle) -> Int {
@@ -511,6 +513,7 @@ struct Circle {
             .module_name = "fmtlib",
             .text = R"AHFL(
 module fmtlib;
+import shapes;
 
 trait Describe {
     fn describe(self: shapes::Circle) -> Int;
@@ -541,6 +544,7 @@ TEST_CASE("impl in type-defining module satisfies orphan rule") {
             .module_name = "shapes",
             .text = R"AHFL(
 module shapes;
+import fmtlib;
 
 struct Circle {
     radius: Int;
@@ -558,6 +562,7 @@ impl fmtlib::Describe for Circle {
             .module_name = "fmtlib",
             .text = R"AHFL(
 module fmtlib;
+import shapes;
 
 trait Describe {
     fn describe(self: shapes::Circle) -> Int;
@@ -755,6 +760,7 @@ struct Circle {
             .module_name = "fmtlib",
             .text = R"AHFL(
 module fmtlib;
+import shapes;
 
 trait Describe {
     fn describe(self: shapes::Circle) -> Int;
@@ -768,6 +774,8 @@ trait Describe {
             .module_name = "handlers",
             .text = R"AHFL(
 module handlers;
+import fmtlib;
+import shapes;
 
 impl fmtlib::Describe for shapes::Circle {
     fn describe(self: shapes::Circle) -> Int {
@@ -1306,6 +1314,7 @@ trait Validate {
             .module_name = "checker_a",
             .text = R"AHFL(
 module checker_a;
+import common;
 
 impl common::Validate for common::Token {
     fn ok(self: common::Token) -> Int effect Pure decreases 0 {
@@ -1319,6 +1328,7 @@ impl common::Validate for common::Token {
             .module_name = "checker_b",
             .text = R"AHFL(
 module checker_b;
+import common;
 
 impl common::Validate for common::Token {
     fn ok(self: common::Token) -> Int effect Pure decreases 0 {

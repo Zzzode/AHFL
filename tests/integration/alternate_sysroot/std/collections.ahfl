@@ -1,5 +1,5 @@
 module std::collections;
 
-struct List<T> {}
-struct Set<T> {}
-struct Map<K, V> {}
+pub struct List<T> {}
+pub struct Set<T> {}
+pub struct Map<K, V> {}

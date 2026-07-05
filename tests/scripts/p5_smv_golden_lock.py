@@ -135,11 +135,20 @@ def check_case(ahflc: str, case: Case, repo_root: Path,
 def build_cases(tests_dir: Path, repo_root: Path) -> List[Case]:
     formal = tests_dir / "golden" / "formal"
     ir = tests_dir / "golden" / "ir"
+    packages = tests_dir / "integration" / "package_golden"
     return [
         Case(
             name="alias_const",
-            source=ir / "ok_alias_const.ahfl",
             expected=formal / "ok_alias_const.smv",
+            source=None,
+            extra_args=(
+                "--manifest",
+                str(packages / "ok_alias_const" / "ahfl.toml"),
+                "--target",
+                "workflow",
+                "--sysroot",
+                str(repo_root),
+            ),
         ),
         Case(
             name="expr_temporal",
@@ -153,13 +162,29 @@ def build_cases(tests_dir: Path, repo_root: Path) -> List[Case]:
         ),
         Case(
             name="flow_workflow_semantics",
-            source=formal / "ok_flow_workflow_semantics.ahfl",
             expected=formal / "ok_flow_workflow_semantics.smv",
+            source=None,
+            extra_args=(
+                "--manifest",
+                str(packages / "ok_flow_workflow_semantics" / "ahfl.toml"),
+                "--target",
+                "workflow",
+                "--sysroot",
+                str(repo_root),
+            ),
         ),
         Case(
             name="bounded_data_semantics",
-            source=formal / "ok_bounded_data_semantics.ahfl",
             expected=formal / "ok_bounded_data_semantics.smv",
+            source=None,
+            extra_args=(
+                "--manifest",
+                str(packages / "ok_bounded_data_semantics" / "ahfl.toml"),
+                "--target",
+                "workflow",
+                "--sysroot",
+                str(repo_root),
+            ),
         ),
         Case(
             name="project_check_ok",
@@ -198,8 +223,6 @@ def run_negative_self_test(ahflc: str, tests_dir: Path, repo_root: Path,
     aggregate's own FAIL_REGULAR_EXPRESSION.
     """
     formal = tests_dir / "golden" / "formal"
-    ir = tests_dir / "golden" / "ir"
-    seed_src = ir / "ok_alias_const.ahfl"
     # Reuse ok_alias_const.ahfl but compare against an empty SMV file - this
     # guarantees mismatch without touching any in-repo golden file.
     with tempfile.TemporaryDirectory() as td:
@@ -208,8 +231,16 @@ def run_negative_self_test(ahflc: str, tests_dir: Path, repo_root: Path,
 
         bogus_case = Case(
             name="negative_self_test_bogus_expected",
-            source=seed_src,
+            source=None,
             expected=bogus_expected,
+            extra_args=(
+                "--manifest",
+                str(tests_dir / "integration" / "package_golden" / "ok_alias_const" / "ahfl.toml"),
+                "--target",
+                "workflow",
+                "--sysroot",
+                str(repo_root),
+            ),
         )
         failures: List[str] = []
         check_case(ahflc, bogus_case, repo_root, failures)

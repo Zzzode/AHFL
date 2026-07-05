@@ -21,9 +21,9 @@ import std::collections;
 // them to unqualified names before the enum.
 // ===========================================================================
 
-type List<T> = collections::List<T>;
-type Map<K, V> = collections::Map<K, V>;
-type Option<T> = option::Option<T>;
+pub type List<T> = collections::List<T>;
+pub type Map<K, V> = collections::Map<K, V>;
+pub type Option<T> = option::Option<T>;
 
 // NOTE: JsonValue enum shape MUST match the canonical definition in
 // std/json.ahfl exactly (variant names + payload types). The resolver treats
@@ -33,7 +33,7 @@ type Option<T> = option::Option<T>;
 // variant names used by FromJson / ToJson trait dispatch. Recursive payloads
 // (JList → List<JsonValue>, JEntries → Map<String, JsonValue>) are supported
 // via the resolver's recursive-ADT two-pass extension.
-enum JsonValue {
+pub enum JsonValue {
     JNull,
     JBool(Bool),
     JInt(Int),
@@ -71,14 +71,14 @@ enum JsonValue {
 
 // ---- §6.1 Eq / Ord / Hash -------------------------------------------------
 
-trait Eq {
+pub trait Eq {
     fn eq(self: Bool, other: Bool) -> Bool effect Pure;
     fn ne(self: Bool, other: Bool) -> Bool effect Pure;
 }
 
 // Ord inherits Eq; relational helpers + min/max/clamp are defaults delegated
 // to `compare` via the module-level wrappers at the bottom of this file.
-trait Ord: Eq {
+pub trait Ord: Eq {
     fn compare(self: Int, other: Int) -> cmp::Ordering effect Pure;
     fn lt(self: Int, other: Int) -> Bool effect Pure;
     fn le(self: Int, other: Int) -> Bool effect Pure;
@@ -89,7 +89,7 @@ trait Ord: Eq {
     fn clamp(self: Int, lo: Int, hi: Int) -> Int effect Pure;
 }
 
-trait Hash {
+pub trait Hash {
     fn hash(self: Int) -> Int effect Pure;
 }
 
@@ -98,7 +98,7 @@ trait Hash {
 // Element type T is a placeholder. Each concrete impl of these traits
 // overrides the T placeholder with the container's element type.
 
-trait Iterable {
+pub trait Iterable {
     fn iter_next(self: collections::List<Int>)
         -> Option<Unit> effect Pure;
     fn iter_head(self: collections::List<Int>)
@@ -107,7 +107,7 @@ trait Iterable {
         -> collections::List<Int> effect Pure;
 }
 
-trait Foldable {
+pub trait Foldable {
     fn length(self: collections::List<Int>) -> Int effect Pure;
     fn fold(self: collections::List<Int>, init: Int, f: Fn(Int, Int) -> Int)
         -> Int effect Pure;
@@ -117,33 +117,33 @@ trait Foldable {
         -> collections::List<Int> effect Pure;
 }
 
-trait Functor {
+pub trait Functor {
     fn map(self: collections::List<Int>, f: Fn(Int) -> Int)
         -> collections::List<Int> effect Pure;
 }
 
 // ---- §6.3 Display / Debug / FromStr / FromJson / ToJson ------------------
 
-trait Display {
+pub trait Display {
     fn fmt(self: Int) -> String effect Pure;
 }
 
-trait Debug {
+pub trait Debug {
     fn debug(self: Int) -> String effect Pure;
 }
 
-trait FromStr {
+pub trait FromStr {
     fn from_str(s: String) -> Option<Int> effect Pure;
 }
 
-trait FromJson {
+pub trait FromJson {
     // `value` is declared opaque here; the real JsonValue ADT is declared at
     // the bottom of this file (same module) and resolved during the same
     // type-check pass.
     fn from_json(value: JsonValue) -> Option<Int> effect Pure;
 }
 
-trait ToJson {
+pub trait ToJson {
     // Return type is JsonValue (opaque forward, defined below in this module).
     fn to_json(self: Int) -> JsonValue effect Pure;
 }

@@ -88,7 +88,13 @@ struct CompileArtifacts {
     a.root = std::filesystem::temp_directory_path() / ("ahfl_stmt_diag_" + sanitized);
     std::filesystem::remove_all(a.root);
     const auto main_path = a.root / "app" / "main.ahfl";
-    write_file(main_path, std::string{source});
+    std::string project_source{source};
+    constexpr std::string_view module_decl = "module app::main;\n";
+    if (project_source.starts_with(module_decl) &&
+        project_source.find("import std::option;") == std::string::npos) {
+        project_source.insert(module_decl.size(), "import std::option;\n");
+    }
+    write_file(main_path, project_source);
 
     const ahfl::Frontend frontend;
     a.parse = ahfl::parse_project(

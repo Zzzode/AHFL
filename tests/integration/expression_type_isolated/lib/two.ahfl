@@ -1,9 +1,9 @@
 module lib::two;
 import lib::types as types;
 
-capability Pong(request: types::TwoReq) -> types::TwoRes;
+pub capability Pong(request: types::TwoReq) -> types::TwoRes;
 
-agent TwoAgent {
+pub agent TwoAgent {
     input: types::TwoReq;
     context: types::TwoCtx;
     output: types::TwoRes;

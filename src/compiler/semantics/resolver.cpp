@@ -60,6 +60,12 @@ constexpr std::string_view kStdPreludeModule = "std::prelude";
     return "symbol";
 }
 
+[[nodiscard]] bool is_primitive_type_name(std::string_view name) {
+    return name == "Unit" || name == "Bool" || name == "Int" || name == "Float" ||
+           name == "String" || name == "UUID" || name == "Timestamp" || name == "Duration" ||
+           name == "Decimal";
+}
+
 [[nodiscard]] ast::QualifiedName make_single_segment_name(std::string name, SourceRange range) {
     return ast::QualifiedName{
         .range = range,
@@ -84,6 +90,32 @@ constexpr std::string_view kStdPreludeModule = "std::prelude";
     return node.path->segments.back();
 }
 
+[[nodiscard]] std::string default_use_alias(const ast::UseDecl &node) {
+    if (!node.alias.empty()) {
+        return node.alias;
+    }
+    if (node.path == nullptr || node.path->segments.empty()) {
+        return {};
+    }
+    return node.path->segments.back();
+}
+
+[[nodiscard]] std::optional<std::string> use_target_module(const ast::UseDecl &node) {
+    if (node.path == nullptr || node.path->segments.size() < 2) {
+        return std::nullopt;
+    }
+
+    std::vector<std::string> segments(node.path->segments.begin(), node.path->segments.end() - 1);
+    return join_segments(segments);
+}
+
+[[nodiscard]] std::optional<std::string_view> use_target_name(const ast::UseDecl &node) {
+    if (node.path == nullptr || node.path->segments.size() < 2) {
+        return std::nullopt;
+    }
+    return std::string_view{node.path->segments.back()};
+}
+
 [[nodiscard]] std::size_t hash_mix(std::size_t seed, std::size_t value) noexcept {
     seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
     return seed;
@@ -97,6 +129,7 @@ class ResolverPass final {
   public:
     [[nodiscard]] ResolveResult run(const ast::Program &program) {
         run_program(program);
+        validate_public_surface(program);
 
         detect_type_alias_cycles();
         run_lint_pass();
@@ -109,7 +142,9 @@ class ResolverPass final {
 
         run_source_graph_pass(graph, Pass::CollectImports);
         run_source_graph_pass(graph, Pass::RegisterSymbols);
+        run_source_graph_pass(graph, Pass::RegisterAliases);
         run_source_graph_pass(graph, Pass::ResolveReferences);
+        run_public_surface_pass(graph);
 
         detect_type_alias_cycles();
         run_lint_pass();
@@ -123,6 +158,9 @@ class ResolverPass final {
             return;
         case ast::NodeKind::ImportDecl:
             visit(static_cast<const ast::ImportDecl &>(node));
+            return;
+        case ast::NodeKind::UseDecl:
+            visit(static_cast<const ast::UseDecl &>(node));
             return;
         case ast::NodeKind::ConstDecl:
             visit(static_cast<const ast::ConstDecl &>(node));
@@ -194,10 +232,11 @@ class ResolverPass final {
             return;
         }
 
-        emit_error(error_codes::resolve::MultipleModuleDeclarations,
-                   MessageTemplate{"multiple module declarations are not supported in one source file"},
-                   current_source_,
-                   node.range);
+        emit_error(
+            error_codes::resolve::MultipleModuleDeclarations,
+            MessageTemplate{"multiple module declarations are not supported in one source file"},
+            current_source_,
+            node.range);
         emit_note(error_codes::resolve::MultipleModuleDeclarations,
                   messages::resolve::FirstModuleDeclarationHere,
                   current_source_,
@@ -247,10 +286,19 @@ class ResolverPass final {
         });
     }
 
+    void visit(const ast::UseDecl &node) {
+        if (current_pass_ == Pass::RegisterAliases) {
+            register_use_alias(node);
+        }
+    }
+
     void visit(const ast::ConstDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Consts, SymbolKind::Const, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Consts,
+                                  SymbolKind::Const,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -262,8 +310,11 @@ class ResolverPass final {
 
     void visit(const ast::TypeAliasDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Types, SymbolKind::TypeAlias, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Types,
+                                  SymbolKind::TypeAlias,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -286,8 +337,11 @@ class ResolverPass final {
 
     void visit(const ast::StructDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Types, SymbolKind::Struct, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Types,
+                                  SymbolKind::Struct,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -331,7 +385,8 @@ class ResolverPass final {
 
     void visit(const ast::EnumDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Types, SymbolKind::Enum, node.name, node.range);
+            (void)register_symbol(
+                SymbolNamespace::Types, SymbolKind::Enum, node.name, node.range, node.visibility);
             return;
         }
 
@@ -376,8 +431,11 @@ class ResolverPass final {
 
     void visit(const ast::CapabilityDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Capabilities, SymbolKind::Capability, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Capabilities,
+                                  SymbolKind::Capability,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -392,8 +450,11 @@ class ResolverPass final {
 
     void visit(const ast::PredicateDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Predicates, SymbolKind::Predicate, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Predicates,
+                                  SymbolKind::Predicate,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -406,8 +467,11 @@ class ResolverPass final {
 
     void visit(const ast::AgentDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Agents, SymbolKind::Agent, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Agents,
+                                  SymbolKind::Agent,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -453,8 +517,11 @@ class ResolverPass final {
 
     void visit(const ast::WorkflowDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Workflows, SymbolKind::Workflow, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Workflows,
+                                  SymbolKind::Workflow,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -497,8 +564,11 @@ class ResolverPass final {
         // are deferred to the typecheck pass, which has the typed environment
         // needed to unify generic parameters.
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Functions, SymbolKind::Function, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Functions,
+                                  SymbolKind::Function,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -656,8 +726,11 @@ class ResolverPass final {
         // (`impl Ord for T`) resolve the trait name via the dedicated
         // TraitBound reference kind.
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(
-                SymbolNamespace::Traits, SymbolKind::Trait, node.name, node.range);
+            (void)register_symbol(SymbolNamespace::Traits,
+                                  SymbolKind::Trait,
+                                  node.name,
+                                  node.range,
+                                  node.visibility);
             return;
         }
 
@@ -730,13 +803,14 @@ class ResolverPass final {
         // impl's trait_ref spelling; its type-param names are added to the
         // generic set so `\x: TraitT -> x` closures resolve correctly.
         if (node.trait_ref && node.trait_ref->is<ast::NamedType>()) {
-            const auto trait_spelling =
-                node.trait_ref->as<ast::NamedType>().name->spelling();
+            const auto trait_spelling = node.trait_ref->as<ast::NamedType>().name->spelling();
             if (current_source_ != nullptr && current_source_->program) {
                 for (const auto &decl : current_source_->program->declarations) {
-                    if (!decl || decl->kind != ast::NodeKind::TraitDecl) continue;
+                    if (!decl || decl->kind != ast::NodeKind::TraitDecl)
+                        continue;
                     const auto &trait_decl = static_cast<const ast::TraitDecl &>(*decl);
-                    if (trait_decl.name != trait_spelling) continue;
+                    if (trait_decl.name != trait_spelling)
+                        continue;
                     for (const auto &tp : trait_decl.type_params) {
                         generic_type_params_.insert(tp->name);
                     }
@@ -824,6 +898,7 @@ class ResolverPass final {
     enum class Pass {
         CollectImports,
         RegisterSymbols,
+        RegisterAliases,
         ResolveReferences,
     };
 
@@ -845,6 +920,7 @@ class ResolverPass final {
     // variables — not references to resolve. Cleared after fn signature.
     std::unordered_set<std::string> generic_type_params_;
     std::vector<std::unordered_set<std::string>> value_scopes_;
+    std::unordered_set<std::string> private_in_public_reports_;
 
     [[nodiscard]] std::string canonical_name_for(std::string_view local_name) const {
         if (!module_name_.has_value() || module_name_->empty()) {
@@ -865,6 +941,16 @@ class ResolverPass final {
         }
     }
 
+    void run_public_surface_pass(const SourceGraph &graph) {
+        for (const auto &source : graph.sources) {
+            const auto &program =
+                require(source.program.get(), "source graph program must exist before resolution");
+            enter_source(source);
+            validate_public_surface(program);
+            leave_source();
+        }
+    }
+
     void visit(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
             visit(*declaration);
@@ -878,8 +964,497 @@ class ResolverPass final {
         current_pass_ = Pass::RegisterSymbols;
         visit(program);
 
+        current_pass_ = Pass::RegisterAliases;
+        visit(program);
+
         current_pass_ = Pass::ResolveReferences;
         visit(program);
+    }
+
+    [[nodiscard]] static std::string declaration_kind_label(const ast::Decl &decl) {
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl:
+            return "const";
+        case ast::NodeKind::TypeAliasDecl:
+            return "type alias";
+        case ast::NodeKind::StructDecl:
+            return "struct";
+        case ast::NodeKind::EnumDecl:
+            return "enum";
+        case ast::NodeKind::CapabilityDecl:
+            return "capability";
+        case ast::NodeKind::PredicateDecl:
+            return "predicate";
+        case ast::NodeKind::AgentDecl:
+            return "agent";
+        case ast::NodeKind::WorkflowDecl:
+            return "workflow";
+        case ast::NodeKind::FnDecl:
+            return "fn";
+        case ast::NodeKind::TraitDecl:
+            return "trait";
+        case ast::NodeKind::UseDecl:
+            return "use";
+        case ast::NodeKind::ImplDecl:
+            return "impl";
+        case ast::NodeKind::ModuleDecl:
+            return "module";
+        case ast::NodeKind::ImportDecl:
+            return "import";
+        case ast::NodeKind::ContractDecl:
+            return "contract";
+        case ast::NodeKind::FlowDecl:
+            return "flow";
+        case ast::NodeKind::Program:
+            return "program";
+        }
+        return "declaration";
+    }
+
+    [[nodiscard]] static std::string declaration_name(const ast::Decl &decl) {
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl:
+            return static_cast<const ast::ConstDecl &>(decl).name;
+        case ast::NodeKind::TypeAliasDecl:
+            return static_cast<const ast::TypeAliasDecl &>(decl).name;
+        case ast::NodeKind::StructDecl:
+            return static_cast<const ast::StructDecl &>(decl).name;
+        case ast::NodeKind::EnumDecl:
+            return static_cast<const ast::EnumDecl &>(decl).name;
+        case ast::NodeKind::CapabilityDecl:
+            return static_cast<const ast::CapabilityDecl &>(decl).name;
+        case ast::NodeKind::PredicateDecl:
+            return static_cast<const ast::PredicateDecl &>(decl).name;
+        case ast::NodeKind::AgentDecl:
+            return static_cast<const ast::AgentDecl &>(decl).name;
+        case ast::NodeKind::WorkflowDecl:
+            return static_cast<const ast::WorkflowDecl &>(decl).name;
+        case ast::NodeKind::FnDecl:
+            return static_cast<const ast::FnDecl &>(decl).name;
+        case ast::NodeKind::TraitDecl:
+            return static_cast<const ast::TraitDecl &>(decl).name;
+        case ast::NodeKind::UseDecl:
+            return static_cast<const ast::UseDecl &>(decl).path
+                       ? static_cast<const ast::UseDecl &>(decl).path->spelling()
+                       : std::string{"<invalid-use>"};
+        case ast::NodeKind::ImplDecl:
+            return "<impl>";
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::FlowDecl:
+        case ast::NodeKind::Program:
+            return "<unnamed>";
+        }
+        return "<unnamed>";
+    }
+
+    [[nodiscard]] std::string report_key(const ast::Decl &owner,
+                                         SymbolId leaked_symbol,
+                                         SourceRange range) const {
+        return std::to_string(owner.range.begin_offset) + ":" +
+               std::to_string(owner.range.end_offset) + ":" +
+               std::to_string(leaked_symbol.value) + ":" +
+               std::to_string(range.begin_offset) + ":" + std::to_string(range.end_offset);
+    }
+
+    void emit_private_in_public(const ast::Decl &owner,
+                                const Symbol &leaked,
+                                std::string_view leaked_kind,
+                                SourceRange range) {
+        const auto key = report_key(owner, leaked.id, range);
+        if (!private_in_public_reports_.insert(key).second) {
+            return;
+        }
+        emit_error(error_codes::resolve::PrivateInPublic,
+                   messages::resolve::PrivateInPublic,
+                   current_source_,
+                   range,
+                   declaration_kind_label(owner),
+                   declaration_name(owner),
+                   std::string(leaked_kind),
+                   leaked.canonical_name);
+    }
+
+    void check_public_symbol_reference(const ast::Decl &owner,
+                                       SymbolNamespace name_space,
+                                       const ast::QualifiedName &name,
+                                       std::string_view expected_kind) {
+        const auto symbol_id = lookup(name_space, name);
+        if (!symbol_id.has_value()) {
+            return;
+        }
+        const auto symbol = result_.symbol_table.get(*symbol_id);
+        if (!symbol.has_value()) {
+            return;
+        }
+        if (symbol->get().visibility != ast::Visibility::Public) {
+            emit_private_in_public(owner, symbol->get(), expected_kind, name.range);
+        }
+    }
+
+    void check_public_type_name(const ast::Decl &owner,
+                                const ast::QualifiedName &name,
+                                const std::unordered_set<std::string> &type_params) {
+        if (name.segments.size() == 1) {
+            const auto spelling = name.spelling();
+            if (type_params.contains(spelling) || is_primitive_type_name(spelling)) {
+                return;
+            }
+        }
+
+        if (const auto type_id = lookup(SymbolNamespace::Types, name); type_id.has_value()) {
+            const auto symbol = result_.symbol_table.get(*type_id);
+            if (symbol.has_value() && symbol->get().visibility != ast::Visibility::Public) {
+                emit_private_in_public(owner, symbol->get(), "type", name.range);
+            }
+            return;
+        }
+
+        if (const auto trait_id = lookup(SymbolNamespace::Traits, name); trait_id.has_value()) {
+            const auto symbol = result_.symbol_table.get(*trait_id);
+            if (symbol.has_value() && symbol->get().visibility != ast::Visibility::Public) {
+                emit_private_in_public(owner, symbol->get(), "trait", name.range);
+            }
+        }
+    }
+
+    void check_public_type(const ast::Decl &owner,
+                           const ast::TypeSyntax &type,
+                           const std::unordered_set<std::string> &type_params) {
+        std::visit(Overloaded{
+                       [&](const ast::NamedType &named) {
+                           check_public_type_name(owner, *named.name, type_params);
+                           for (const auto &arg : named.type_args) {
+                               if (arg) {
+                                   check_public_type(owner, *arg, type_params);
+                               }
+                           }
+                       },
+                       [&](const ast::FnType &fn) {
+                           for (const auto &param : fn.params) {
+                               if (param) {
+                                   check_public_type(owner, *param, type_params);
+                               }
+                           }
+                           if (fn.return_type) {
+                               check_public_type(owner, *fn.return_type, type_params);
+                           }
+                           for (const auto &capability : fn.effect_capabilities) {
+                               check_public_symbol_reference(owner,
+                                                             SymbolNamespace::Capabilities,
+                                                             *capability,
+                                                             "capability");
+                           }
+                       },
+                       [&](const ast::AppType &app) {
+                           check_public_type_name(owner, *app.name, type_params);
+                           for (const auto &arg : app.arguments) {
+                               if (arg) {
+                                   check_public_type(owner, *arg, type_params);
+                               }
+                           }
+                       },
+                       [](const auto &) {},
+                   },
+                   type.node);
+    }
+
+    void check_public_type_params(const ast::Decl &owner,
+                                  const std::vector<Owned<ast::TypeParamSyntax>> &params,
+                                  std::unordered_set<std::string> &type_params) {
+        for (const auto &param : params) {
+            type_params.insert(param->name);
+        }
+        for (const auto &param : params) {
+            for (const auto &bound : param->bounds) {
+                if (bound) {
+                    check_public_type(owner, *bound, type_params);
+                }
+            }
+        }
+    }
+
+    void check_public_where_clause(const ast::Decl &owner,
+                                   const Owned<ast::WhereClauseSyntax> &where_clause,
+                                   const std::unordered_set<std::string> &type_params) {
+        if (!where_clause) {
+            return;
+        }
+        for (const auto &constraint : where_clause->constraints) {
+            if (constraint->subject) {
+                check_public_type(owner, *constraint->subject, type_params);
+            }
+            for (const auto &argument : constraint->arguments) {
+                if (argument) {
+                    check_public_type(owner, *argument, type_params);
+                }
+            }
+            for (const auto &bound : constraint->bounds) {
+                if (bound) {
+                    check_public_type(owner, *bound, type_params);
+                }
+            }
+        }
+    }
+
+    void check_public_effect_clause(const ast::Decl &owner,
+                                    const Owned<ast::EffectClauseSyntax> &effect_clause) {
+        if (!effect_clause || effect_clause->kind != ast::EffectClauseKind::Capability) {
+            return;
+        }
+        for (const auto &capability : effect_clause->capabilities) {
+            check_public_symbol_reference(owner,
+                                          SymbolNamespace::Capabilities,
+                                          *capability,
+                                          "capability");
+        }
+    }
+
+    void check_public_fn_signature(const ast::Decl &owner,
+                                   const ast::FnDecl &fn,
+                                   std::unordered_set<std::string> type_params = {}) {
+        check_public_type_params(owner, fn.type_params, type_params);
+        for (const auto &param : fn.params) {
+            if (param->type) {
+                check_public_type(owner, *param->type, type_params);
+            }
+        }
+        if (fn.return_type) {
+            check_public_type(owner, *fn.return_type, type_params);
+        }
+        check_public_where_clause(owner, fn.where_clause, type_params);
+        check_public_effect_clause(owner, fn.effect_clause);
+    }
+
+    void validate_public_declaration(const ast::Decl &decl) {
+        if (decl.kind == ast::NodeKind::ImplDecl) {
+            validate_impl_visibility(static_cast<const ast::ImplDecl &>(decl));
+            return;
+        }
+
+        if (decl.visibility != ast::Visibility::Public) {
+            return;
+        }
+
+        std::unordered_set<std::string> type_params;
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl: {
+            const auto &node = static_cast<const ast::ConstDecl &>(decl);
+            if (node.type) {
+                check_public_type(decl, *node.type, type_params);
+            }
+            return;
+        }
+        case ast::NodeKind::TypeAliasDecl: {
+            const auto &node = static_cast<const ast::TypeAliasDecl &>(decl);
+            check_public_type_params(decl, node.type_params, type_params);
+            if (node.aliased_type) {
+                check_public_type(decl, *node.aliased_type, type_params);
+            }
+            return;
+        }
+        case ast::NodeKind::StructDecl: {
+            const auto &node = static_cast<const ast::StructDecl &>(decl);
+            check_public_type_params(decl, node.type_params, type_params);
+            for (const auto &field : node.fields) {
+                if (field->type) {
+                    check_public_type(decl, *field->type, type_params);
+                }
+            }
+            check_public_where_clause(decl, node.where_clause, type_params);
+            return;
+        }
+        case ast::NodeKind::EnumDecl: {
+            const auto &node = static_cast<const ast::EnumDecl &>(decl);
+            check_public_type_params(decl, node.type_params, type_params);
+            for (const auto &variant : node.variants) {
+                for (const auto &payload : variant->payload) {
+                    if (payload) {
+                        check_public_type(decl, *payload, type_params);
+                    }
+                }
+            }
+            check_public_where_clause(decl, node.where_clause, type_params);
+            return;
+        }
+        case ast::NodeKind::CapabilityDecl: {
+            const auto &node = static_cast<const ast::CapabilityDecl &>(decl);
+            for (const auto &param : node.params) {
+                if (param->type) {
+                    check_public_type(decl, *param->type, type_params);
+                }
+            }
+            if (node.return_type) {
+                check_public_type(decl, *node.return_type, type_params);
+            }
+            return;
+        }
+        case ast::NodeKind::PredicateDecl: {
+            const auto &node = static_cast<const ast::PredicateDecl &>(decl);
+            for (const auto &param : node.params) {
+                if (param->type) {
+                    check_public_type(decl, *param->type, type_params);
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::AgentDecl: {
+            const auto &node = static_cast<const ast::AgentDecl &>(decl);
+            if (node.input_type) {
+                check_public_type(decl, *node.input_type, type_params);
+            }
+            if (node.context_type) {
+                check_public_type(decl, *node.context_type, type_params);
+            }
+            if (node.output_type) {
+                check_public_type(decl, *node.output_type, type_params);
+            }
+            return;
+        }
+        case ast::NodeKind::WorkflowDecl: {
+            const auto &node = static_cast<const ast::WorkflowDecl &>(decl);
+            if (node.input_type) {
+                check_public_type(decl, *node.input_type, type_params);
+            }
+            if (node.output_type) {
+                check_public_type(decl, *node.output_type, type_params);
+            }
+            for (const auto &workflow_node : node.nodes) {
+                if (workflow_node->target) {
+                    check_public_symbol_reference(decl,
+                                                  SymbolNamespace::Agents,
+                                                  *workflow_node->target,
+                                                  "agent");
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::FnDecl:
+            check_public_fn_signature(decl, static_cast<const ast::FnDecl &>(decl));
+            return;
+        case ast::NodeKind::TraitDecl: {
+            const auto &node = static_cast<const ast::TraitDecl &>(decl);
+            check_public_type_params(decl, node.type_params, type_params);
+            type_params.insert("Self");
+            for (const auto &super_trait : node.super_traits) {
+                if (super_trait) {
+                    check_public_type(decl, *super_trait, type_params);
+                }
+            }
+            check_public_where_clause(decl, node.where_clause, type_params);
+            for (const auto &item : node.items) {
+                for (const auto &param : item->type_params) {
+                    type_params.insert(param->name);
+                }
+                for (const auto &param : item->params) {
+                    if (param->type) {
+                        check_public_type(decl, *param->type, type_params);
+                    }
+                }
+                if (item->return_type) {
+                    check_public_type(decl, *item->return_type, type_params);
+                }
+                check_public_where_clause(decl, item->where_clause, type_params);
+                check_public_effect_clause(decl, item->effect_clause);
+                if (item->assoc_type) {
+                    for (const auto &bound : item->assoc_type->bounds) {
+                        if (bound) {
+                            check_public_type(decl, *bound, type_params);
+                        }
+                    }
+                    if (item->assoc_type->default_type) {
+                        check_public_type(decl, *item->assoc_type->default_type, type_params);
+                    }
+                }
+                if (item->assoc_const && item->assoc_const->type) {
+                    check_public_type(decl, *item->assoc_const->type, type_params);
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::UseDecl:
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::FlowDecl:
+        case ast::NodeKind::ImplDecl:
+        case ast::NodeKind::Program:
+            return;
+        }
+    }
+
+    void validate_impl_visibility(const ast::ImplDecl &node) {
+        const bool trait_impl = node.trait_ref != nullptr;
+        for (const auto &item : node.items) {
+            if (trait_impl && item->visibility == ast::Visibility::Public) {
+                emit_error(error_codes::resolve::InvalidVisibilityPlacement,
+                           messages::resolve::InvalidVisibilityPlacement,
+                           current_source_,
+                           item->range,
+                           "trait impl item");
+            }
+        }
+
+        if (trait_impl) {
+            return;
+        }
+
+        bool has_public_item = false;
+        for (const auto &method : node.methods) {
+            if (method->visibility == ast::Visibility::Public) {
+                has_public_item = true;
+                break;
+            }
+        }
+        if (!has_public_item) {
+            for (const auto &assoc : node.assoc_items) {
+                if (assoc->visibility == ast::Visibility::Public) {
+                    has_public_item = true;
+                    break;
+                }
+            }
+        }
+        if (!has_public_item) {
+            for (const auto &assoc_const : node.const_items) {
+                if (assoc_const->visibility == ast::Visibility::Public) {
+                    has_public_item = true;
+                    break;
+                }
+            }
+        }
+        if (!has_public_item) {
+            return;
+        }
+
+        std::unordered_set<std::string> type_params;
+        check_public_type_params(node, node.type_params, type_params);
+        type_params.insert("Self");
+        if (node.target_type) {
+            check_public_type(node, *node.target_type, type_params);
+        }
+        check_public_where_clause(node, node.where_clause, type_params);
+        for (const auto &method : node.methods) {
+            if (method->visibility == ast::Visibility::Public) {
+                check_public_fn_signature(node, *method, type_params);
+            }
+        }
+        for (const auto &assoc : node.assoc_items) {
+            if (assoc->visibility == ast::Visibility::Public && assoc->type) {
+                check_public_type(node, *assoc->type, type_params);
+            }
+        }
+        for (const auto &assoc_const : node.const_items) {
+            if (assoc_const->visibility == ast::Visibility::Public && assoc_const->type) {
+                check_public_type(node, *assoc_const->type, type_params);
+            }
+        }
+    }
+
+    void validate_public_surface(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
+            validate_public_declaration(*declaration);
+        }
     }
 
     void enter_source(const SourceUnit &source) {
@@ -923,6 +1498,45 @@ class ResolverPass final {
         }
 
         return std::nullopt;
+    }
+
+    [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for_module(std::string_view module_name) const {
+        if (source_graph_ == nullptr) {
+            return std::nullopt;
+        }
+        if (const auto iter = source_graph_->module_to_source.find(std::string(module_name));
+            iter != source_graph_->module_to_source.end()) {
+            return source_unit_for(iter->second);
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::string package_prefix_of(const Symbol &symbol) const {
+        if (!symbol.source_id.has_value()) {
+            return {};
+        }
+        if (const auto source = source_unit_for(*symbol.source_id); source.has_value()) {
+            return source->get().package_prefix;
+        }
+        return {};
+    }
+
+    [[nodiscard]] bool same_package_as_current_source(const Symbol &symbol) const {
+        if (!source_graph_mode_ || current_source_ == nullptr) {
+            return true;
+        }
+        const auto target_package = package_prefix_of(symbol);
+        if (current_source_->package_prefix.empty() || target_package.empty()) {
+            return true;
+        }
+        return current_source_->package_prefix == target_package;
+    }
+
+    [[nodiscard]] bool symbol_visible_from_current_source(const Symbol &symbol) const {
+        if (same_package_as_current_source(symbol)) {
+            return true;
+        }
+        return symbol.visibility == ast::Visibility::Public;
     }
 
     void emit_error(ErrorCode<DiagnosticCategory::Resolve> code,
@@ -997,18 +1611,30 @@ class ResolverPass final {
                 .source(source->source)
                 .emit();
         } else {
-            result_.diagnostics.note()
-                .code(code)
-                .message(std::string(message))
-                .range(range)
-                .emit();
+            result_.diagnostics.note().code(code).message(std::string(message)).range(range).emit();
         }
     }
 
     [[nodiscard]] std::optional<SymbolId> register_symbol(SymbolNamespace name_space,
                                                           SymbolKind kind,
                                                           std::string_view local_name,
-                                                          SourceRange range) {
+                                                          SourceRange range,
+                                                          ast::Visibility visibility) {
+        if (name_space == SymbolNamespace::Types && is_primitive_type_name(local_name)) {
+            auto builder =
+                result_.diagnostics.error()
+                    .code("E::primitive_shadowing_forbidden")
+                    .message(MessageTemplate{"user declarations cannot shadow primitive type '{}'"},
+                             std::string(local_name))
+                    .range(range);
+            if (current_source_ != nullptr) {
+                std::move(builder).source(current_source_->source).emit();
+            } else {
+                std::move(builder).emit();
+            }
+            return std::nullopt;
+        }
+
         auto &index = result_.symbol_table.index(name_space);
         auto &module_index = index.module_local_names[module_name_.value_or("")];
 
@@ -1040,6 +1666,7 @@ class ResolverPass final {
             .id = symbol_id,
             .name_space = name_space,
             .kind = kind,
+            .visibility = visibility,
             .local_name = std::string(local_name),
             .canonical_name = canonical_name_for(local_name),
             .module_name = module_name_.value_or(""),
@@ -1088,6 +1715,185 @@ class ResolverPass final {
         }
 
         return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<SymbolId>
+    find_canonical_symbol(SymbolNamespace name_space, std::string_view canonical_name) const {
+        const auto &index = result_.symbol_table.index(name_space);
+        if (const auto iter = index.canonical_names.find(std::string(canonical_name));
+            iter != index.canonical_names.end()) {
+            return iter->second;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::vector<std::pair<SymbolNamespace, SymbolId>>
+    find_use_target_candidates(const ast::UseDecl &node) const {
+        std::vector<std::pair<SymbolNamespace, SymbolId>> candidates;
+        if (node.path == nullptr) {
+            return candidates;
+        }
+
+        constexpr std::array<SymbolNamespace, 8> kNamespaces = {{
+            SymbolNamespace::Types,
+            SymbolNamespace::Consts,
+            SymbolNamespace::Capabilities,
+            SymbolNamespace::Predicates,
+            SymbolNamespace::Agents,
+            SymbolNamespace::Workflows,
+            SymbolNamespace::Functions,
+            SymbolNamespace::Traits,
+        }};
+
+        const auto canonical_name = node.path->spelling();
+        for (const auto name_space : kNamespaces) {
+            if (const auto symbol_id = find_canonical_symbol(name_space, canonical_name);
+                symbol_id.has_value()) {
+                candidates.emplace_back(name_space, *symbol_id);
+            }
+        }
+        return candidates;
+    }
+
+    [[nodiscard]] bool alias_name_available(SymbolNamespace name_space,
+                                            std::string_view alias,
+                                            SourceRange range,
+                                            bool public_alias) {
+        auto &index = result_.symbol_table.index(name_space);
+        const auto module_key = module_name_.value_or("");
+        auto &module_index = index.module_local_names[module_key];
+
+        if (const auto existing = module_index.find(std::string(alias));
+            existing != module_index.end()) {
+            const auto previous_symbol = result_.symbol_table.get(existing->second);
+            emit_error(error_codes::resolve::DuplicateSymbol,
+                       messages::resolve::DuplicateSymbol,
+                       current_source_,
+                       range,
+                       namespace_name(name_space),
+                       std::string(alias));
+            if (previous_symbol.has_value()) {
+                if (auto src = source_unit_for(*previous_symbol->get().source_id);
+                    src.has_value()) {
+                    emit_note(error_codes::resolve::DuplicateSymbol,
+                              messages::resolve::PreviousDeclarationHere,
+                              &src->get(),
+                              previous_symbol->get().declaration_range);
+                }
+            }
+            return false;
+        }
+
+        if (!public_alias) {
+            return true;
+        }
+
+        const auto canonical_alias = canonical_name_for(alias);
+        if (const auto existing = index.canonical_names.find(canonical_alias);
+            existing != index.canonical_names.end()) {
+            const auto previous_symbol = result_.symbol_table.get(existing->second);
+            emit_error(error_codes::resolve::DuplicateSymbol,
+                       messages::resolve::DuplicateSymbol,
+                       current_source_,
+                       range,
+                       namespace_name(name_space),
+                       canonical_alias);
+            if (previous_symbol.has_value()) {
+                if (auto src = source_unit_for(*previous_symbol->get().source_id);
+                    src.has_value()) {
+                    emit_note(error_codes::resolve::DuplicateSymbol,
+                              messages::resolve::PreviousDeclarationHere,
+                              &src->get(),
+                              previous_symbol->get().declaration_range);
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    void register_symbol_alias(SymbolNamespace name_space,
+                               SymbolId target,
+                               std::string_view alias,
+                               SourceRange range,
+                               bool public_alias) {
+        if (alias.empty()) {
+            emit_error(error_codes::resolve::UnknownSymbol,
+                       MessageTemplate{"use declaration must name a non-empty alias"},
+                       current_source_,
+                       range);
+            return;
+        }
+        if (!alias_name_available(name_space, alias, range, public_alias)) {
+            return;
+        }
+
+        auto &index = result_.symbol_table.index(name_space);
+        auto &module_index = index.module_local_names[module_name_.value_or("")];
+        module_index.emplace(std::string(alias), target);
+        if (public_alias) {
+            index.canonical_names.emplace(canonical_name_for(alias), target);
+        }
+    }
+
+    void register_use_alias(const ast::UseDecl &node) {
+        if (node.path == nullptr || node.path->segments.size() < 2) {
+            emit_error(error_codes::resolve::UnknownSymbol,
+                       MessageTemplate{"use declarations must target module::Symbol"},
+                       current_source_,
+                       node.range);
+            return;
+        }
+
+        const auto target_module = use_target_module(node);
+        const auto target_name = use_target_name(node);
+        if (!target_module.has_value() || !target_name.has_value()) {
+            emit_error(error_codes::resolve::UnknownSymbol,
+                       MessageTemplate{"use declarations must target module::Symbol"},
+                       current_source_,
+                       node.range);
+            return;
+        }
+
+        const auto candidates = find_use_target_candidates(node);
+        if (candidates.empty()) {
+            emit_error(error_codes::resolve::UnknownSymbol,
+                       messages::resolve::UnknownSymbol,
+                       current_source_,
+                       node.path->range,
+                       "symbol",
+                       node.path->spelling());
+            return;
+        }
+
+        const auto alias = default_use_alias(node);
+        const bool public_alias = node.visibility == ast::Visibility::Public;
+        for (const auto &[name_space, symbol_id] : candidates) {
+            const auto symbol = result_.symbol_table.get(symbol_id);
+            if (!symbol.has_value()) {
+                continue;
+            }
+            if (!symbol_visible_from_current_source(symbol->get())) {
+                emit_error(error_codes::resolve::PrivateSymbol,
+                           messages::resolve::PrivateSymbol,
+                           current_source_,
+                           node.path->range,
+                           node.path->spelling(),
+                           package_prefix_of(symbol->get()));
+                continue;
+            }
+            if (public_alias && symbol->get().visibility != ast::Visibility::Public) {
+                emit_error(error_codes::resolve::PrivateSymbol,
+                           messages::resolve::PrivateSymbol,
+                           current_source_,
+                           node.path->range,
+                           node.path->spelling(),
+                           package_prefix_of(symbol->get()));
+                continue;
+            }
+            register_symbol_alias(name_space, symbol_id, alias, node.range, public_alias);
+        }
     }
 
     void push_value_scope() {
@@ -1170,8 +1976,56 @@ class ResolverPass final {
         return name.spelling();
     }
 
-    [[nodiscard]] std::optional<SymbolId> lookup(SymbolNamespace name_space,
-                                                 const ast::QualifiedName &name) const {
+    [[nodiscard]] bool module_imported_in_current_source(std::string_view module_name) const {
+        for (const auto &binding : result_.imports()) {
+            if (binding.source_id != current_source_id_) {
+                continue;
+            }
+            if (binding.target_module == module_name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::optional<std::string>
+    direct_module_name_for_qualified_symbol(const ast::QualifiedName &name) const {
+        if (name.segments.size() <= 1) {
+            return std::nullopt;
+        }
+        std::vector<std::string> module_segments{name.segments.begin(), name.segments.end() - 1};
+        return join_segments(module_segments);
+    }
+
+    [[nodiscard]] bool module_accessible_in_current_source(std::string_view module_name) const {
+        if (!source_graph_mode_ || current_source_ == nullptr || module_name.empty()) {
+            return true;
+        }
+        if (module_name == module_name_.value_or("")) {
+            return true;
+        }
+        return module_imported_in_current_source(module_name);
+    }
+
+    [[nodiscard]] bool qualified_symbol_accessible_by_spelling(
+        const ast::QualifiedName &name) const {
+        if (name.segments.size() <= 1) {
+            return true;
+        }
+        if (import_aliases_.contains(name.segments.front())) {
+            return true;
+        }
+        const auto module_name = direct_module_name_for_qualified_symbol(name);
+        return !module_name.has_value() || module_accessible_in_current_source(*module_name);
+    }
+
+    [[nodiscard]] bool symbol_id_visible(SymbolId symbol_id) const {
+        const auto symbol = result_.symbol_table.get(symbol_id);
+        return symbol.has_value() && symbol_visible_from_current_source(symbol->get());
+    }
+
+    [[nodiscard]] std::optional<SymbolId> find_unfiltered_candidate(
+        SymbolNamespace name_space, const ast::QualifiedName &name) const {
         const auto &index = result_.symbol_table.index(name_space);
 
         if (name.segments.size() == 1) {
@@ -1184,10 +2038,6 @@ class ResolverPass final {
             }
         }
 
-        // Prelude bare-name fallback: only resolves when std::prelude is
-        // actually loaded (inject_prelude=true in ProjectInput, or an explicit
-        // import). When prelude is not injected, the module won't be in the
-        // index and this returns nullopt.
         if (const auto prelude = lookup_prelude_symbol(index, name); prelude.has_value()) {
             return prelude;
         }
@@ -1210,18 +2060,95 @@ class ResolverPass final {
         return std::nullopt;
     }
 
+    [[nodiscard]] std::optional<SymbolId> lookup(SymbolNamespace name_space,
+                                                 const ast::QualifiedName &name) const {
+        const auto &index = result_.symbol_table.index(name_space);
+
+        if (name.segments.size() == 1) {
+            if (const auto module_iter = index.module_local_names.find(module_name_.value_or(""));
+                module_iter != index.module_local_names.end()) {
+                if (const auto local = module_iter->second.find(name.spelling());
+                    local != module_iter->second.end()) {
+                    return symbol_id_visible(local->second) ? std::optional<SymbolId>{local->second}
+                                                            : std::nullopt;
+                }
+            }
+        }
+
+        // Prelude bare-name fallback: only resolves when std::prelude is
+        // actually loaded (inject_prelude=true in ProjectInput, or an explicit
+        // import). When prelude is not injected, the module won't be in the
+        // index and this returns nullopt.
+        if (const auto prelude = lookup_prelude_symbol(index, name); prelude.has_value()) {
+            return symbol_id_visible(*prelude) ? prelude : std::nullopt;
+        }
+
+        if (qualified_symbol_accessible_by_spelling(name)) {
+            if (const auto canonical = index.canonical_names.find(name.spelling());
+                canonical != index.canonical_names.end()) {
+                return symbol_id_visible(canonical->second)
+                           ? std::optional<SymbolId>{canonical->second}
+                           : std::nullopt;
+            }
+        }
+
+        const auto normalized_name = normalize_name(name);
+        if (normalized_name == name.spelling()) {
+            return std::nullopt;
+        }
+
+        if (const auto canonical = index.canonical_names.find(normalized_name);
+            canonical != index.canonical_names.end()) {
+            return symbol_id_visible(canonical->second)
+                       ? std::optional<SymbolId>{canonical->second}
+                       : std::nullopt;
+        }
+
+        return std::nullopt;
+    }
+
+    void emit_lookup_failure(SymbolNamespace name_space,
+                             const ast::QualifiedName &name,
+                             std::string_view expected_name) {
+        const auto candidate = find_unfiltered_candidate(name_space, name);
+        if (candidate.has_value()) {
+            const auto symbol = result_.symbol_table.get(*candidate);
+            if (symbol.has_value() && !symbol_visible_from_current_source(symbol->get())) {
+                emit_error(error_codes::resolve::PrivateSymbol,
+                           messages::resolve::PrivateSymbol,
+                           current_source_,
+                           name.range,
+                           name.spelling(),
+                           package_prefix_of(symbol->get()));
+                return;
+            }
+            if (!qualified_symbol_accessible_by_spelling(name)) {
+                const auto module_name = direct_module_name_for_qualified_symbol(name);
+                emit_error(error_codes::resolve::MissingImport,
+                           messages::resolve::MissingImport,
+                           current_source_,
+                           name.range,
+                           name.spelling(),
+                           module_name.value_or(std::string{}));
+                return;
+            }
+        }
+
+        emit_error(error_codes::resolve::UnknownSymbol,
+                   messages::resolve::UnknownSymbol,
+                   current_source_,
+                   name.range,
+                   std::string(expected_name),
+                   std::string(name.spelling()));
+    }
+
     [[nodiscard]] std::optional<SymbolId> resolve_reference(SymbolNamespace name_space,
                                                             const ast::QualifiedName &name,
                                                             ReferenceKind kind,
                                                             std::string_view expected_name) {
         const auto resolved = lookup(name_space, name);
         if (!resolved.has_value()) {
-            emit_error(error_codes::resolve::UnknownSymbol,
-                       messages::resolve::UnknownSymbol,
-                       current_source_,
-                       name.range,
-                       std::string(expected_name),
-                       std::string(name.spelling()));
+            emit_lookup_failure(name_space, name, expected_name);
             return std::nullopt;
         }
 
@@ -1433,69 +2360,6 @@ class ResolverPass final {
                         }
                         return;
                     }
-                    // P5.5 (TypeSyntax desugaring): a bare single-segment
-                    // name with generic arguments used to be handled by a
-                    // dedicated AST node (OptionalType / ListType / etc.).
-                    // Those nodes have been removed; the bare name now
-                    // resolves like any other nominal type. When the stdlib
-                    // is loaded, Optional/List/Set/Map are real enum/struct
-                    // declarations in the symbol table and must produce a
-                    // TypeName reference. resolve_std_container_type in
-                    // type_resolver.cpp handles the fallback case where no
-                    // such declaration exists (stdlib-less pipelines).
-                    //
-                    // P5.6a integration fix: the four recognised container
-                    // names (Optional / List / Set / Map) are allowed to
-                    // remain unresolved at the Resolver phase. The actual
-                    // diagnostic (`stdlib container type unavailable`) is
-                    // emitted later by the TypeResolver so stdlib-less
-                    // pipelines surface a targeted message rather than a
-                    // generic "unknown type".
-                    if (t.name->segments.size() == 1 && !t.type_args.empty()) {
-                        const auto &head = t.name->segments.front();
-                        if (head == "Option" || head == "Optional" ||
-                            head == "List" || head == "Set" || head == "Map" ||
-                            head == "Result" || head == "Ordering") {
-                            // Silent lookup first — only record a symbol
-                            // reference if the symbol actually exists. Do not
-                            // call resolve_reference() because it emits an
-                            // "unknown type" diagnostic on miss.
-                            const auto pre_existing =
-                                lookup(SymbolNamespace::Types, *t.name);
-                            if (!pre_existing.has_value()) {
-                                for (const auto &arg : t.type_args) {
-                                    if (arg) {
-                                        resolve_type(*arg);
-                                    }
-                                }
-                                return;
-                            }
-                            // Container symbol IS available: register the
-                            // reference and type-alias dependency tracking.
-                            result_.add_reference(ResolvedReference{
-                                .kind = ReferenceKind::TypeName,
-                                .text = t.name->spelling(),
-                                .source_id = current_source_id_,
-                                .range = t.name->range,
-                                .target = *pre_existing,
-                            });
-                            if (current_type_alias_.has_value()) {
-                                const auto symbol =
-                                    result_.symbol_table.get(*pre_existing);
-                                if (symbol.has_value() &&
-                                    symbol->get().kind == SymbolKind::TypeAlias) {
-                                    type_alias_dependencies_[current_type_alias_->value]
-                                        .push_back(*pre_existing);
-                                }
-                            }
-                            for (const auto &arg : t.type_args) {
-                                if (arg) {
-                                    resolve_type(*arg);
-                                }
-                            }
-                            return;
-                        }
-                    }
                     // C-2 (Wave-24): try Types namespace first, then Traits.
                     // Do silent lookups first so we don't emit "unknown type"
                     // for a trait name that happens to be used in a type
@@ -1582,129 +2446,127 @@ class ResolverPass final {
     }
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
-        std::visit(Overloaded{
-                       [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
-                       [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
-                       [&](const ast::BinaryExpr &e) {
-                           resolve_declaration_expr(*e.lhs);
-                           resolve_declaration_expr(*e.rhs);
-                       },
-                       [&](const ast::IndexAccessExpr &e) {
-                           resolve_declaration_expr(*e.base);
-                           resolve_declaration_expr(*e.index);
-                       },
-                       [&](const ast::CallExpr &e) {
-                           (void)resolve_callable_reference(*e.callee);
-                           for (const auto &type_arg : e.type_args) {
-                               resolve_type(*type_arg);
-                           }
-                           for (const auto &arg : e.arguments) {
-                               resolve_declaration_expr(*arg);
-                           }
-                       },
-                       [&](const ast::MethodCallExpr &e) {
-                           resolve_declaration_expr(*e.receiver);
-                           for (const auto &type_arg : e.type_args) {
-                               resolve_type(*type_arg);
-                           }
-                           for (const auto &arg : e.arguments) {
-                               resolve_declaration_expr(*arg);
-                           }
-                       },
-                       [&](const ast::StructLiteralExpr &e) {
-                           (void)resolve_reference(SymbolNamespace::Types,
-                                                   *e.type_name,
-                                                   ReferenceKind::TypeName,
-                                                   "type");
-                           for (const auto &field : e.fields) {
-                               resolve_declaration_expr(*field->value);
-                           }
-                       },
-                       [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },
-                       [&](const ast::MatchExpr &e) {
-                           // P1b (RFC §1.6): match is a regular expression,
-                           // so the scrutinee and each arm's guard/body must be
-                           // resolved too — otherwise qualified enum variants
-                           // used as an arm body (e.g. `Some(_) => Option::None`)
-                           // never get a QualifiedValueOwnerType reference and
-                           // the typecheck pass reports UNKNOWN_QUALIFIED_VALUE.
-                           resolve_declaration_expr(*e.scrutinee);
-                           for (const auto &arm : e.arms) {
-                               if (arm->guard) {
-                                   resolve_declaration_expr(*arm->guard);
-                               }
-                               if (arm->body) {
-                                   resolve_declaration_expr(*arm->body);
-                               }
-                           }
-                       },
-                       [&](const ast::LambdaExpr &e) {
-                           // P2 (RFC §6): a closure body is an expression;
-                           // resolve it so free-variable references inside the
-                           // closure are recorded. Parameter type annotations
-                           // are resolved by the fn typecheck pass which owns
-                           // the typed environment for generic instantiation.
-                           if (!e.capture_list.empty()) {
-                               result_.captured_names_by_expr.insert_or_assign(
-                                   expr.node_id, e.capture_list);
-                           }
-                           for (std::size_t index = 0; index < e.capture_list.size(); ++index) {
-                               const auto &capture = e.capture_list[index];
-                               if (value_binding_visible(capture)) {
-                                   continue;
-                               }
-                               const auto range = index < e.capture_ranges.size()
-                                                      ? std::optional<SourceRange>{
-                                                            e.capture_ranges[index]}
-                                                      : std::nullopt;
-                               emit_error(error_codes::resolve::UnknownSymbol,
-                                          messages::resolve::UnknownSymbol,
-                                          current_source_,
-                                          range,
-                                          "value",
-                                          capture);
-                           }
-                           for (const auto &param : e.params) {
-                               if (param->type) {
-                                   resolve_type(*param->type);
-                               }
-                           }
-                           if (e.body) {
-                               resolve_declaration_expr(*e.body);
-                           }
-                       },
-                       // P4-02: unwrap(e) — the operand is the only child
-                       // expression; its qualified-value / callable references
-                       // must be registered before typecheck.
-                       [&](const ast::UnwrapExprSyntax &e) {
-                           if (e.operand) {
-                               resolve_declaration_expr(*e.operand);
-                           }
-                       },
-                       [&](const ast::QualifiedValueExpr &e) {
-                           if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
-                               resolved.has_value()) {
-                               result_.add_reference(ResolvedReference{
-                                   .kind = ReferenceKind::ConstValue,
-                                   .text = e.name->spelling(),
-                                   .source_id = current_source_id_,
-                                   .range = e.name->range,
-                                   .target = *resolved,
-                               });
-                               return;
-                           }
+        std::visit(
+            Overloaded{
+                [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
+                [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
+                [&](const ast::BinaryExpr &e) {
+                    resolve_declaration_expr(*e.lhs);
+                    resolve_declaration_expr(*e.rhs);
+                },
+                [&](const ast::IndexAccessExpr &e) {
+                    resolve_declaration_expr(*e.base);
+                    resolve_declaration_expr(*e.index);
+                },
+                [&](const ast::CallExpr &e) {
+                    (void)resolve_callable_reference(*e.callee);
+                    for (const auto &type_arg : e.type_args) {
+                        resolve_type(*type_arg);
+                    }
+                    for (const auto &arg : e.arguments) {
+                        resolve_declaration_expr(*arg);
+                    }
+                },
+                [&](const ast::MethodCallExpr &e) {
+                    resolve_declaration_expr(*e.receiver);
+                    for (const auto &type_arg : e.type_args) {
+                        resolve_type(*type_arg);
+                    }
+                    for (const auto &arg : e.arguments) {
+                        resolve_declaration_expr(*arg);
+                    }
+                },
+                [&](const ast::StructLiteralExpr &e) {
+                    (void)resolve_reference(
+                        SymbolNamespace::Types, *e.type_name, ReferenceKind::TypeName, "type");
+                    for (const auto &field : e.fields) {
+                        resolve_declaration_expr(*field->value);
+                    }
+                },
+                [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },
+                [&](const ast::MatchExpr &e) {
+                    // P1b (RFC §1.6): match is a regular expression,
+                    // so the scrutinee and each arm's guard/body must be
+                    // resolved too — otherwise qualified enum variants
+                    // used as an arm body (e.g. `Some(_) => Option::None`)
+                    // never get a QualifiedValueOwnerType reference and
+                    // the typecheck pass reports UNKNOWN_QUALIFIED_VALUE.
+                    resolve_declaration_expr(*e.scrutinee);
+                    for (const auto &arm : e.arms) {
+                        if (arm->guard) {
+                            resolve_declaration_expr(*arm->guard);
+                        }
+                        if (arm->body) {
+                            resolve_declaration_expr(*arm->body);
+                        }
+                    }
+                },
+                [&](const ast::LambdaExpr &e) {
+                    // P2 (RFC §6): a closure body is an expression;
+                    // resolve it so free-variable references inside the
+                    // closure are recorded. Parameter type annotations
+                    // are resolved by the fn typecheck pass which owns
+                    // the typed environment for generic instantiation.
+                    if (!e.capture_list.empty()) {
+                        result_.captured_names_by_expr.insert_or_assign(expr.node_id,
+                                                                        e.capture_list);
+                    }
+                    for (std::size_t index = 0; index < e.capture_list.size(); ++index) {
+                        const auto &capture = e.capture_list[index];
+                        if (value_binding_visible(capture)) {
+                            continue;
+                        }
+                        const auto range = index < e.capture_ranges.size()
+                                               ? std::optional<SourceRange>{e.capture_ranges[index]}
+                                               : std::nullopt;
+                        emit_error(error_codes::resolve::UnknownSymbol,
+                                   messages::resolve::UnknownSymbol,
+                                   current_source_,
+                                   range,
+                                   "value",
+                                   capture);
+                    }
+                    for (const auto &param : e.params) {
+                        if (param->type) {
+                            resolve_type(*param->type);
+                        }
+                    }
+                    if (e.body) {
+                        resolve_declaration_expr(*e.body);
+                    }
+                },
+                // P4-02: unwrap(e) — the operand is the only child
+                // expression; its qualified-value / callable references
+                // must be registered before typecheck.
+                [&](const ast::UnwrapExprSyntax &e) {
+                    if (e.operand) {
+                        resolve_declaration_expr(*e.operand);
+                    }
+                },
+                [&](const ast::QualifiedValueExpr &e) {
+                    if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
+                        resolved.has_value()) {
+                        result_.add_reference(ResolvedReference{
+                            .kind = ReferenceKind::ConstValue,
+                            .text = e.name->spelling(),
+                            .source_id = current_source_id_,
+                            .range = e.name->range,
+                            .target = *resolved,
+                        });
+                        return;
+                    }
 
-                           if (e.name->segments.size() > 1) {
-                               const auto owner = owner_name_of(*e.name);
-                               (void)resolve_reference(SymbolNamespace::Types,
-                                                       owner,
-                                                       ReferenceKind::QualifiedValueOwnerType,
-                                                       "type");
-                           }
-                       },
-                       [](const auto &) { /* leaf expressions: nothing to resolve */ },
-                   },
-                   expr.node);
+                    if (e.name->segments.size() > 1) {
+                        const auto owner = owner_name_of(*e.name);
+                        (void)resolve_reference(SymbolNamespace::Types,
+                                                owner,
+                                                ReferenceKind::QualifiedValueOwnerType,
+                                                "type");
+                    }
+                },
+                [](const auto &) { /* leaf expressions: nothing to resolve */ },
+            },
+            expr.node);
     }
 
     void resolve_block_types(const ast::BlockSyntax &block) {
@@ -1927,8 +2789,10 @@ class ResolverPass final {
             // warnings purely because List/Map/Option exist in multiple
             // stdlib namespaces.
             const auto is_stdlib_module = [](std::string_view mod) -> bool {
-                if (mod.empty()) return false;
-                if (mod.substr(0, 5) == "std::") return true;
+                if (mod.empty())
+                    return false;
+                if (mod.substr(0, 5) == "std::")
+                    return true;
                 return false;
             };
 
@@ -1968,8 +2832,7 @@ class ResolverPass final {
                     // Exemption: all ids come from the same module — the
                     // earlier DuplicateSymbol / ExactSchemaMismatch
                     // diagnostic already covered this case.
-                    const auto first_opt =
-                        result_.symbol_table.get(kind_ids.front());
+                    const auto first_opt = result_.symbol_table.get(kind_ids.front());
                     if (!first_opt.has_value()) {
                         continue;
                     }
@@ -1988,36 +2851,32 @@ class ResolverPass final {
 
                     // Stable sort by (module_name, begin_offset) to match
                     // find_all_local's documented ordering.
-                    std::sort(kind_ids.begin(), kind_ids.end(),
-                              [&](SymbolId a, SymbolId b) {
-                                  const auto sa = result_.symbol_table.get(a);
-                                  const auto sb = result_.symbol_table.get(b);
-                                  if (!sa.has_value() || !sb.has_value()) {
-                                      return a.value < b.value;
-                                  }
-                                  if (sa->get().module_name != sb->get().module_name) {
-                                      return sa->get().module_name < sb->get().module_name;
-                                  }
-                                  return sa->get().declaration_range.begin_offset <
-                                         sb->get().declaration_range.begin_offset;
-                              });
+                    std::sort(kind_ids.begin(), kind_ids.end(), [&](SymbolId a, SymbolId b) {
+                        const auto sa = result_.symbol_table.get(a);
+                        const auto sb = result_.symbol_table.get(b);
+                        if (!sa.has_value() || !sb.has_value()) {
+                            return a.value < b.value;
+                        }
+                        if (sa->get().module_name != sb->get().module_name) {
+                            return sa->get().module_name < sb->get().module_name;
+                        }
+                        return sa->get().declaration_range.begin_offset <
+                               sb->get().declaration_range.begin_offset;
+                    });
 
                     const auto n_str = std::to_string(kind_ids.size());
                     const auto kind_str = std::string(nominal_kind_label(kind));
-                    const auto message =
-                        messages::lint::DuplicateStructName.format_with(
-                            kind_str, local_name, n_str);
+                    const auto message = messages::lint::DuplicateStructName.format_with(
+                        kind_str, local_name, n_str);
 
-                    const auto primary_sym_opt =
-                        result_.symbol_table.get(kind_ids.front());
+                    const auto primary_sym_opt = result_.symbol_table.get(kind_ids.front());
                     if (!primary_sym_opt.has_value()) {
                         continue;
                     }
                     const Symbol &primary_sym = primary_sym_opt->get();
-                    const auto primary_src =
-                        primary_sym.source_id.has_value()
-                            ? source_unit_for(*primary_sym.source_id)
-                            : std::nullopt;
+                    const auto primary_src = primary_sym.source_id.has_value()
+                                                 ? source_unit_for(*primary_sym.source_id)
+                                                 : std::nullopt;
                     const SourceUnit *primary_src_ptr =
                         primary_src.has_value() ? &primary_src->get() : nullptr;
 
@@ -2029,8 +2888,7 @@ class ResolverPass final {
                     Diagnostic diag;
                     diag.severity = DiagnosticSeverity::Warning;
                     diag.message = message;
-                    diag.code =
-                        error_codes::lint::DuplicateStructName.full_code();
+                    diag.code = error_codes::lint::DuplicateStructName.full_code();
                     diag.range = primary_sym.declaration_range;
                     if (primary_src_ptr != nullptr) {
                         diag.source_name = primary_src_ptr->source.display_name;
@@ -2106,8 +2964,7 @@ class ResolverPass final {
         // SourceId has no default std::hash, so we key by the underlying
         // std::size_t value — equivalent and cheaper than defining a new
         // hash struct.
-        std::unordered_map<std::size_t,
-                           std::unordered_set<std::string_view>>
+        std::unordered_map<std::size_t, std::unordered_set<std::string_view>>
             ref_prefixes_per_source;
         std::unordered_map<std::size_t, std::vector<SymbolId>> ref_targets_per_source;
         for (const auto &ref : result_.references()) {
@@ -2121,8 +2978,7 @@ class ResolverPass final {
         // Helper: does any reference text for `sid` begin with alias,
         // either as an exact match (single-segment use) or followed by "::"
         // (multi-segment use)?
-        const auto alias_is_used = [&](SourceId sid,
-                                       std::string_view alias) -> bool {
+        const auto alias_is_used = [&](SourceId sid, std::string_view alias) -> bool {
             const auto it = ref_prefixes_per_source.find(sid.value);
             if (it == ref_prefixes_per_source.end()) {
                 return false;
@@ -2138,8 +2994,7 @@ class ResolverPass final {
             // scan is acceptable.
             const std::string prefix = std::string(alias) + "::";
             for (const auto t : texts) {
-                if (t.size() >= prefix.size() &&
-                    t.compare(0, prefix.size(), prefix) == 0) {
+                if (t.size() >= prefix.size() && t.compare(0, prefix.size(), prefix) == 0) {
                     return true;
                 }
             }
@@ -2176,8 +3031,8 @@ class ResolverPass final {
                 continue;
             }
 
-            auto message = messages::lint::UnusedImport.format_with(
-                binding.alias, binding.target_module);
+            auto message =
+                messages::lint::UnusedImport.format_with(binding.alias, binding.target_module);
             auto src_unit_opt = source_unit_for(*binding.source_id);
             Diagnostic diag;
             diag.severity = DiagnosticSeverity::Warning;
@@ -2187,19 +3042,16 @@ class ResolverPass final {
             if (src_unit_opt.has_value()) {
                 const auto &src_unit = src_unit_opt->get();
                 diag.source_name = src_unit.source.display_name;
-                diag.position = src_unit.source.locate(
-                    binding.declaration_range.begin_offset);
+                diag.position = src_unit.source.locate(binding.declaration_range.begin_offset);
                 diag.related.push_back(Diagnostic::Related{
-                    .message = std::string(
-                        messages::lint::ImportDeclarationHere.format),
+                    .message = std::string(messages::lint::ImportDeclarationHere.format),
                     .range = binding.declaration_range,
                     .source_id = binding.source_id,
                     .source_name = src_unit.source.display_name,
                 });
             } else {
                 diag.related.push_back(Diagnostic::Related{
-                    .message = std::string(
-                        messages::lint::ImportDeclarationHere.format),
+                    .message = std::string(messages::lint::ImportDeclarationHere.format),
                     .range = binding.declaration_range,
                     .source_id = binding.source_id,
                     .source_name = std::nullopt,
@@ -2245,7 +3097,8 @@ class ResolverPass final {
             builder << (symbol.has_value() ? symbol->get().local_name : "<alias>");
         }
 
-        const auto message = std::string(messages::resolve::CyclicTypeAlias.format_with(builder.str()));
+        const auto message =
+            std::string(messages::resolve::CyclicTypeAlias.format_with(builder.str()));
 
         for (std::size_t index = 0; index + 1 < cycle.size(); ++index) {
             if (const auto symbol = result_.symbol_table.get(cycle[index]); symbol.has_value()) {
@@ -2368,6 +3221,23 @@ MaybeCRef<Symbol> SymbolTable::find_canonical(SymbolNamespace name_space,
     }
 
     return std::nullopt;
+}
+
+bool SymbolTable::module_exports_symbol(SymbolNamespace name_space,
+                                        std::string_view module_name,
+                                        SymbolId id) const {
+    const auto &name_index = index(name_space);
+    const auto module_iter = name_index.module_local_names.find(std::string(module_name));
+    if (module_iter == name_index.module_local_names.end()) {
+        return false;
+    }
+    for (const auto &[local_name, symbol_id] : module_iter->second) {
+        (void)local_name;
+        if (symbol_id == id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<SymbolId> SymbolTable::find_all_local(SymbolNamespace name_space,

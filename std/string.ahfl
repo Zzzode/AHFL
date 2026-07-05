@@ -60,7 +60,7 @@ fn string_parse_uuid(s: String) -> option::Option<UUID> effect Pure;
 // ===========================================================================
 
 impl String {
-    fn is_empty(self) -> Bool effect Pure decreases 0 {
+    pub fn is_empty(self) -> Bool effect Pure decreases 0 {
         return string_raw_length(self) == 0;
     }
 
@@ -70,65 +70,65 @@ impl String {
     // directly to the C++ builtin hook without routing through the
     // module-level string_raw_length wrapper. The module-level prototype is
     // kept for one release cycle (deprecated-call-site compatibility).
-    @builtin("string_raw_length")
+    pub @builtin("string_raw_length")
     fn length(self) -> Int effect Pure decreases 0;
 
-    fn contains(self, needle: String) -> Bool effect Pure decreases 0 {
+    pub fn contains(self, needle: String) -> Bool effect Pure decreases 0 {
         return string_contains(self, needle);
     }
 
-    fn starts_with(self, prefix: String) -> Bool effect Pure decreases 0 {
+    pub fn starts_with(self, prefix: String) -> Bool effect Pure decreases 0 {
         return string_starts_with(self, prefix);
     }
 
-    fn ends_with(self, suffix: String) -> Bool effect Pure decreases 0 {
+    pub fn ends_with(self, suffix: String) -> Bool effect Pure decreases 0 {
         return string_ends_with(self, suffix);
     }
 
-    fn trim(self) -> String effect Pure decreases 0 {
+    pub fn trim(self) -> String effect Pure decreases 0 {
         return string_trim(self);
     }
 
-    fn trim_start(self) -> String effect Pure decreases 0 {
+    pub fn trim_start(self) -> String effect Pure decreases 0 {
         return string_trim_start(self);
     }
 
-    fn trim_end(self) -> String effect Pure decreases 0 {
+    pub fn trim_end(self) -> String effect Pure decreases 0 {
         return string_trim_end(self);
     }
 
-    fn replace(self, from: String, to: String) -> String effect Pure decreases 0 {
+    pub fn replace(self, from: String, to: String) -> String effect Pure decreases 0 {
         return string_replace(self, from, to);
     }
 
-    fn split(self, sep: String) -> collections::List<String> effect Pure decreases 0 {
+    pub fn split(self, sep: String) -> collections::List<String> effect Pure decreases 0 {
         return string_split(self, sep);
     }
 
-    fn parse_int(self) -> option::Option<Int> effect Pure decreases 0 {
+    pub fn parse_int(self) -> option::Option<Int> effect Pure decreases 0 {
         return string_parse_int(self);
     }
 
-    fn split_whitespace(self) -> collections::List<String> effect Pure decreases 0 {
+    pub fn split_whitespace(self) -> collections::List<String> effect Pure decreases 0 {
         return string_split_whitespace(self);
     }
 
-    fn parse_float(self) -> option::Option<Float> effect Pure decreases 0 {
+    pub fn parse_float(self) -> option::Option<Float> effect Pure decreases 0 {
         return string_parse_float(self);
     }
 
-    fn concat(self, other: String) -> String effect Pure decreases 0 {
+    pub fn concat(self, other: String) -> String effect Pure decreases 0 {
         return string_raw_concat(self, other);
     }
 
-    fn substring(self, start: Int, end: Int) -> String effect Pure decreases 0 {
+    pub fn substring(self, start: Int, end: Int) -> String effect Pure decreases 0 {
         return string_raw_substring(self, start, end);
     }
 
     /// Blocker 5 (归属歧义): `parse` originally lived in std::uuid with a
     /// `self: String` receiver. Per the orphan rule it now lives here on
     /// the String primitive impl; std::uuid::parse(s) forwards to it.
-    fn parse_uuid(self) -> option::Option<UUID> effect Pure decreases 0 {
+    pub fn parse_uuid(self) -> option::Option<UUID> effect Pure decreases 0 {
         return string_parse_uuid(self);
     }
 
@@ -142,7 +142,7 @@ impl String {
 
     // repeat (M1-4, P0): self concatenated n times. Pure AHFL over
     // string_raw_concat (no new builtin hook). n <= 0 yields the empty string.
-    fn repeat(self, n: Int) -> String effect Pure decreases 0 {
+    pub fn repeat(self, n: Int) -> String effect Pure decreases 0 {
         if n <= 0 {
             return "";
         }
@@ -154,7 +154,7 @@ impl String {
 // Module-level helpers (original surface; preserved for one release cycle).
 // ===========================================================================
 
-fn concat(left: String, right: String) -> String effect Pure decreases 0 {
+pub fn concat(left: String, right: String) -> String effect Pure decreases 0 {
     return string_raw_concat(left, right);
 }
 
@@ -171,55 +171,55 @@ fn raw_substring(s: String, start: Int, end: Int) -> String effect Pure decrease
     return string_raw_substring(s, start, end);
 }
 
-fn is_empty(self: String) -> Bool effect Pure decreases 0 {
+pub fn is_empty(self: String) -> Bool effect Pure decreases 0 {
     return self.is_empty();
 }
 
-fn length(self: String) -> Int effect Pure decreases 0 {
+pub fn length(self: String) -> Int effect Pure decreases 0 {
     return self.length();
 }
 
-fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
+pub fn starts_with(self: String, prefix: String) -> Bool effect Pure decreases 0 {
     return self.starts_with(prefix);
 }
 
-fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
+pub fn ends_with(self: String, suffix: String) -> Bool effect Pure decreases 0 {
     return self.ends_with(suffix);
 }
 
-fn trim(self: String) -> String effect Pure decreases 0 {
+pub fn trim(self: String) -> String effect Pure decreases 0 {
     return self.trim();
 }
 
-fn trim_start(self: String) -> String effect Pure decreases 0 {
+pub fn trim_start(self: String) -> String effect Pure decreases 0 {
     return self.trim_start();
 }
 
-fn trim_end(self: String) -> String effect Pure decreases 0 {
+pub fn trim_end(self: String) -> String effect Pure decreases 0 {
     return self.trim_end();
 }
 
-fn replace(self: String, from: String, to: String) -> String effect Pure decreases 0 {
+pub fn replace(self: String, from: String, to: String) -> String effect Pure decreases 0 {
     return self.replace(from, to);
 }
 
-fn split(self: String, sep: String) -> collections::List<String> effect Pure decreases 0 {
+pub fn split(self: String, sep: String) -> collections::List<String> effect Pure decreases 0 {
     return self.split(sep);
 }
 
-fn parse_int(self: String) -> option::Option<Int> effect Pure decreases 0 {
+pub fn parse_int(self: String) -> option::Option<Int> effect Pure decreases 0 {
     return self.parse_int();
 }
 
-fn split_whitespace(self: String) -> collections::List<String> effect Pure decreases 0 {
+pub fn split_whitespace(self: String) -> collections::List<String> effect Pure decreases 0 {
     return self.split_whitespace();
 }
 
-fn parse_float(self: String) -> option::Option<Float> effect Pure decreases 0 {
+pub fn parse_float(self: String) -> option::Option<Float> effect Pure decreases 0 {
     return self.parse_float();
 }
 
-fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {
+pub fn contains(self: String, needle: String) -> Bool effect Pure decreases 0 {
     return self.contains(needle);
 }
 
@@ -233,7 +233,7 @@ fn string_repeat_step(s: String, n: Int, i: Int, buf: String) -> String effect P
 }
 
 // repeat (M1-4): UFCS surface for s.repeat(n).
-fn repeat(self: String, n: Int) -> String effect Pure decreases 0 {
+pub fn repeat(self: String, n: Int) -> String effect Pure decreases 0 {
     return self.repeat(n);
 }
 
@@ -281,7 +281,7 @@ fn string_join_step(
 // because its receiver is a *list* of Strings, not a single String.
 // ===========================================================================
 
-fn join(strings: collections::List<String>, sep: String) -> String effect Pure
+pub fn join(strings: collections::List<String>, sep: String) -> String effect Pure
     decreases collections::list_raw_length<String>(strings)
 {
     let n: Int = collections::list_raw_length<String>(strings);

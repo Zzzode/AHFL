@@ -19,6 +19,13 @@ namespace {
 
 using Json = json::JsonValue;
 
+[[nodiscard]] ast::Visibility visibility_from_string(std::string_view value) noexcept {
+    if (value == "Public") {
+        return ast::Visibility::Public;
+    }
+    return ast::Visibility::PackageInternal;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_int(std::uint64_t value) {
     return Json::make_int(static_cast<std::int64_t>(value));
 }
@@ -656,6 +663,7 @@ template <typename E>
             auto mj = Json::make_object();
             mj->set("name", Json::make_string(m.name));
             mj->set("symbol", j_symbol_id(m.symbol));
+            mj->set("visibility", Json::make_string(std::string(ast::to_string(m.visibility))));
             auto mp = Json::make_array();
             for (const auto &p : m.params) mp->push(j_param(p));
             mj->set("params", std::move(mp));
@@ -675,6 +683,7 @@ template <typename E>
             auto aj = Json::make_object();
             aj->set("name", Json::make_string(a.name));
             aj->set("type", j_type(a.type));
+            aj->set("visibility", Json::make_string(std::string(ast::to_string(a.visibility))));
             aj->set("declaration_range", j_range(a.declaration_range));
             assoc->push(std::move(aj));
         }
@@ -682,6 +691,7 @@ template <typename E>
         value->set("declaration_range", j_range(info->declaration_range));
         value->set("trait_ref_range", j_range(info->trait_ref_range));
         value->set("target_type_range", j_range(info->target_type_range));
+        value->set("package_prefix", Json::make_string(info->package_prefix));
         value->set("module_name", Json::make_string(info->module_name));
         object->set("kind", Json::make_string("Impl"));
         object->set("value", std::move(value));
@@ -1801,6 +1811,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .trait_ref_range = reader.range_field(*value, "trait_ref_range"),
             .target_type_range = reader.range_field(*value, "target_type_range"),
             .source_id = std::nullopt,
+            .package_prefix = reader.optional_string_field(*value, "package_prefix").value_or(""),
             .module_name = reader.optional_string_field(*value, "module_name").value_or(""),
         };
         if (const auto *tps = reader.field(*value, "type_param_names");
@@ -1814,6 +1825,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ImplMethodInfo m;
                 m.name = reader.string_field(*item, "name");
                 m.symbol = reader.symbol_id_field(*item, "symbol");
+                m.visibility = visibility_from_string(
+                    reader.optional_string_field(*item, "visibility").value_or(""));
                 m.return_type = reader.type_field(*item, "return_type");
                 m.return_type_range = reader.range_field(*item, "return_type_range");
                 m.has_body = reader.optional_bool_field(*item, "has_body", false);
@@ -1846,6 +1859,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ImplAssocItemInfo a;
                 a.name = reader.string_field(*item, "name");
                 a.type = reader.type_field(*item, "type");
+                a.visibility = visibility_from_string(
+                    reader.optional_string_field(*item, "visibility").value_or(""));
                 a.declaration_range = reader.range_field(*item, "declaration_range");
                 info.assoc_items.push_back(std::move(a));
             }

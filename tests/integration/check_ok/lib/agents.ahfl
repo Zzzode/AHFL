@@ -1,9 +1,9 @@
 module lib::agents;
 import lib::types as types;
 
-capability Echo(request: types::RequestAlias) -> types::ResponseAlias;
+pub capability Echo(request: types::RequestAlias) -> types::ResponseAlias;
 
-agent AliasAgent {
+pub agent AliasAgent {
     input: types::RequestAlias;
     context: types::ContextAlias;
     output: types::ResponseAlias;

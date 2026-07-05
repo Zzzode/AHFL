@@ -3,13 +3,13 @@ module std::json;
 import std::collections as collections;
 import std::option as option;
 
-type List<T> = collections::List<T>;
-type Maybe<T> = option::Option<T>;
+pub type List<T> = collections::List<T>;
+pub type Maybe<T> = option::Option<T>;
 
-struct JsonArray {
+pub struct JsonArray {
     values: List<Int>;
 }
 
-struct JsonNumber {
+pub struct JsonNumber {
     value: Maybe<Int>;
 }

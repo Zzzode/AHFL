@@ -6,8 +6,8 @@ import std::string;
 
 // Local aliases — P3 resolution does not always accept qualified names in
 // generics / function return types so we alias to the unqualified form.
-type List<T> = collections::List<T>;
-type Option<T> = option::Option<T>;
+pub type List<T> = collections::List<T>;
+pub type Option<T> = option::Option<T>;
 
 // ===========================================================================
 // Compiler-internal builtin hooks for primitive-to-string conversion.
@@ -34,7 +34,7 @@ fn float_to_string(x: Float) -> String effect Pure;
 // lands in PHASE B.
 // ===========================================================================
 
-struct DisplayValue {}
+pub struct DisplayValue {}
 
 // Internal: reconstruct DisplayValue from rendered string.
 // NOTE: the real RFC shape is `struct DisplayValue { rendered: String }`,
@@ -42,7 +42,7 @@ struct DisplayValue {}
 // (field syntax is PHASE B). We store state externally in P6a and use the
 // constructor function below as the single producer of DisplayValues.
 
-fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
+pub fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
     // TODO(PHASE-B-fmt): store rendered inside DisplayValue struct.
     return DisplayValue {};
 }
@@ -61,7 +61,7 @@ fn display(rendered: String) -> DisplayValue effect Pure decreases 0 {
 //   `{name}`  named placeholder (only resolved from FromJson contexts)
 // ===========================================================================
 
-fn format(template: String, args: List<DisplayValue>)
+pub fn format(template: String, args: List<DisplayValue>)
     -> String effect Pure decreases 0
 {
     // TODO(PHASE-B-fmt): positional/indexed/named placeholder expansion using
@@ -69,7 +69,7 @@ fn format(template: String, args: List<DisplayValue>)
     return template;
 }
 
-fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
+pub fn format_to(buf: List<String>, template: String, args: List<DisplayValue>)
     -> List<String> effect Pure decreases 0
 {
     // TODO(PHASE-B-fmt): append format(template, args) to buf via List append.
@@ -130,7 +130,7 @@ fn format_template_step(
     return string::string_raw_concat(ch, rest);
 }
 
-fn format_template(template: String, args: List<String>)
+pub fn format_template(template: String, args: List<String>)
     -> String effect Pure decreases 0
 {
     return format_template_step(template, 0, args, 0);
@@ -157,25 +157,25 @@ fn format_template(template: String, args: List<String>)
 // ===========================================================================
 
 impl Bool {
-    fn fmt(self: Bool) -> String effect Pure decreases 0 {
+    pub fn fmt(self: Bool) -> String effect Pure decreases 0 {
         return bool_to_string(self);
     }
 }
 
 impl Int {
-    fn fmt(self: Int) -> String effect Pure decreases 0 {
+    pub fn fmt(self: Int) -> String effect Pure decreases 0 {
         return int_to_string(self);
     }
 }
 
 impl Float {
-    fn fmt(self: Float) -> String effect Pure decreases 0 {
+    pub fn fmt(self: Float) -> String effect Pure decreases 0 {
         return float_to_string(self);
     }
 }
 
 impl String {
-    fn fmt(self: String) -> String effect Pure decreases 0 {
+    pub fn fmt(self: String) -> String effect Pure decreases 0 {
         return self;
     }
 }

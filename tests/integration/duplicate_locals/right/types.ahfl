@@ -1,5 +1,5 @@
 module right::types;
 
-struct Request {
+pub struct Request {
     value: String;
 }

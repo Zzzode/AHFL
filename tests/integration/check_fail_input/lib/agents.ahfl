@@ -1,7 +1,7 @@
 module lib::agents;
 import lib::types as types;
 
-agent AliasAgent {
+pub agent AliasAgent {
     input: types::RequestAlias;
     context: types::ContextAlias;
     output: types::ResponseAlias;

@@ -1,7 +1,8 @@
 module app::main;
 import lib::types as types;
+import std::option as option;
 
 struct UsesRequest {
     request: types::Request;
-    maybe: Option<Int>;
+    maybe: option::Option<Int>;
 }

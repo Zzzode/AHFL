@@ -115,6 +115,7 @@ class ExpressionSemaDelegate {
 struct ExpressionSemaServices {
     const ResolveResult *resolve_result{nullptr};
     std::optional<SourceId> current_source_id;
+    std::string current_package_prefix;
     const TypeEnvironment *environment{nullptr};
     TypeContext *types{nullptr};
     TypeRelationContext *relations{nullptr};

@@ -20,7 +20,7 @@ fn cmp_raw_compare<T>(left: T, right: T) -> Ordering effect Pure;
 // have to import std::cmp explicitly.
 // ===========================================================================
 
-enum Ordering {
+pub enum Ordering {
     Less,
     Equal,
     Greater,
@@ -31,20 +31,20 @@ enum Ordering {
 // ===========================================================================
 
 impl Ordering {
-    fn is_less(self) -> Bool effect Pure decreases 0 {
+    pub fn is_less(self) -> Bool effect Pure decreases 0 {
         return self == Ordering::Less;
     }
 
-    fn is_equal(self) -> Bool effect Pure decreases 0 {
+    pub fn is_equal(self) -> Bool effect Pure decreases 0 {
         return self == Ordering::Equal;
     }
 
-    fn is_greater(self) -> Bool effect Pure decreases 0 {
+    pub fn is_greater(self) -> Bool effect Pure decreases 0 {
         return self == Ordering::Greater;
     }
 
     // Reverse a three-way comparison result: Less<->Greater, Equal unchanged.
-    fn reverse(self) -> Ordering effect Pure decreases 0 {
+    pub fn reverse(self) -> Ordering effect Pure decreases 0 {
         return match self {
             Less => Ordering::Greater,
             Equal => Ordering::Equal,
@@ -70,38 +70,38 @@ impl Ordering {
 // dispatch once trait impl on primitives lands (P6a-01 / PHASE 4b).
 // ===========================================================================
 
-fn is_less(self: Ordering) -> Bool effect Pure decreases 0 {
+pub fn is_less(self: Ordering) -> Bool effect Pure decreases 0 {
     return self.is_less();
 }
 
-fn is_equal(self: Ordering) -> Bool effect Pure decreases 0 {
+pub fn is_equal(self: Ordering) -> Bool effect Pure decreases 0 {
     return self.is_equal();
 }
 
-fn is_greater(self: Ordering) -> Bool effect Pure decreases 0 {
+pub fn is_greater(self: Ordering) -> Bool effect Pure decreases 0 {
     return self.is_greater();
 }
 
-fn reverse(self: Ordering) -> Ordering effect Pure decreases 0 {
+pub fn reverse(self: Ordering) -> Ordering effect Pure decreases 0 {
     return self.reverse();
 }
 
-fn compare<T>(left: T, right: T) -> Ordering effect Pure decreases 0 {
+pub fn compare<T>(left: T, right: T) -> Ordering effect Pure decreases 0 {
     return cmp_raw_compare<T>(left, right);
 }
 
-fn min<T>(left: T, right: T) -> T effect Pure decreases 0 {
+pub fn min<T>(left: T, right: T) -> T effect Pure decreases 0 {
     let ord: Ordering = compare<T>(left, right);
     if (ord == Ordering::Greater) { return right; }
     return left;
 }
 
-fn max<T>(left: T, right: T) -> T effect Pure decreases 0 {
+pub fn max<T>(left: T, right: T) -> T effect Pure decreases 0 {
     let ord: Ordering = compare<T>(left, right);
     if (ord == Ordering::Less) { return right; }
     return left;
 }
 
-fn clamp<T>(value: T, lo: T, hi: T) -> T effect Pure decreases 0 {
+pub fn clamp<T>(value: T, lo: T, hi: T) -> T effect Pure decreases 0 {
     return min<T>(hi, max<T>(value, lo));
 }

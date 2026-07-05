@@ -82,7 +82,7 @@ struct ProgramFixture {
 
         // A dummy struct type used as a concrete CapabilityDecl return type so
         // build_capability_types() has something to resolve.
-        auto return_struct = make_owned<StructDecl>("Unit");
+        auto return_struct = make_owned<StructDecl>("Empty");
         program->declarations.push_back(std::move(return_struct));
 
         for (auto &d : nominal_decls) {
@@ -138,7 +138,7 @@ TEST_CASE("CapabilityDecl (fn-like) where_clause propagates to CapabilityTypeInf
     std::vector<Owned<Decl>> decls;
 
     auto cap = make_owned<CapabilityDecl>("f");
-    cap->return_type = make_named_type("Unit");
+    cap->return_type = make_named_type("Empty");
     cap->where_clause = make_single_bound_where("T", "Eq");
     decls.push_back(std::move(cap));
 
@@ -249,7 +249,7 @@ TEST_CASE("Declarations without where_clause keep default WhereClauseInfo") {
     decls.push_back(std::move(e));
 
     auto cap = make_owned<CapabilityDecl>("noop");
-    cap->return_type = make_named_type("Unit");
+    cap->return_type = make_named_type("Empty");
     decls.push_back(std::move(cap));
 
     ProgramFixture fixture(std::move(decls));

@@ -653,6 +653,7 @@ class TypeCheckPass final {
     // matcher. module_name_of resolves an impl source-id to its defining
     // module via the SourceGraph; module_of_symbol reads Symbol::module_name.
     [[nodiscard]] std::string module_name_of(std::optional<SourceId> source_id) const;
+    [[nodiscard]] std::string package_prefix_of(std::optional<SourceId> source_id) const;
     [[nodiscard]] std::string module_of_symbol(SymbolId id) const;
     // Find an impl method by name (linear; impl methods are few).
     [[nodiscard]] MaybeCRef<ImplMethodInfo> find_impl_method(const ImplTypeInfo &impl,

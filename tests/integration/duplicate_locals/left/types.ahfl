@@ -1,5 +1,5 @@
 module left::types;
 
-struct Request {
+pub struct Request {
     value: String;
 }

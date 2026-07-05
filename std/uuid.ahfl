@@ -17,20 +17,20 @@ fn uuid_to_string(u: UUID) -> String effect Pure;
 // ===========================================================================
 
 impl UUID {
-    fn to_string(self) -> String effect Pure decreases 0 {
+    pub fn to_string(self) -> String effect Pure decreases 0 {
         return uuid_to_string(self);
     }
 }
 
 // Module-level surface.
-fn new_v4() -> UUID effect Nondet {
+pub fn new_v4() -> UUID effect Nondet {
     return uuid_new_v4();
 }
 
-fn parse(s: String) -> option::Option<UUID> effect Pure decreases 0 {
+pub fn parse(s: String) -> option::Option<UUID> effect Pure decreases 0 {
     return uuid_parse(s);
 }
 
-fn to_string(self: UUID) -> String effect Pure decreases 0 {
+pub fn to_string(self: UUID) -> String effect Pure decreases 0 {
     return self.to_string();
 }

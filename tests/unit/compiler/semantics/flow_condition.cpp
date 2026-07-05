@@ -68,6 +68,8 @@ range_of_nth(std::string_view source, std::string_view needle, std::size_t n) {
 //                        invalidation).
 // Both share the same Context.payload structure so &&-chain tests work.
 constexpr std::string_view kSkeletonPreamble = R"AHFL(
+import std::option;
+
 struct Request {
     fallback: String;
 }

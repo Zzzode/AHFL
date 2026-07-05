@@ -3,11 +3,11 @@ module refund_audit::main;
 import audit_core::lib as core;
 import std::option as option;
 
-struct RefundAuditInput {
+pub struct RefundAuditInput {
     order_id: String;
 }
 
-struct RefundAuditOutput {
+pub struct RefundAuditOutput {
     accepted: Bool;
 }
 
@@ -16,7 +16,7 @@ struct Envelope {
     maybe_score: option::Option<Int>;
 }
 
-workflow RefundAuditWorkflow {
+pub workflow RefundAuditWorkflow {
     input: RefundAuditInput;
     output: RefundAuditOutput;
     return: RefundAuditOutput {
