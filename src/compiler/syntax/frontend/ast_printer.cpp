@@ -141,6 +141,10 @@ class AstPrinter final {
         line(1, "- " + node.headline());
     }
 
+    void visit(const ast::UseDecl &node) {
+        line(1, "- " + node.headline());
+    }
+
     void visit(const ast::ConstDecl &node) {
         line(1, "- " + node.headline());
         print_type_field("type", node.type.get(), 2);
@@ -646,6 +650,9 @@ class AstPrinter final {
             return;
         case ast::NodeKind::ImportDecl:
             visit(static_cast<const ast::ImportDecl &>(declaration));
+            return;
+        case ast::NodeKind::UseDecl:
+            visit(static_cast<const ast::UseDecl &>(declaration));
             return;
         case ast::NodeKind::ConstDecl:
             visit(static_cast<const ast::ConstDecl &>(declaration));

@@ -16,6 +16,10 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     diagnostics.render(std::cout);
 }
 
+void print_diagnostics(const std::vector<ahfl::package_graph::Diagnostic> &diagnostics) {
+    ahfl::test_support::print_package_graph_diagnostics(diagnostics, std::cout);
+}
+
 [[nodiscard]] std::string render_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     std::ostringstream out;
     diagnostics.render(out);
@@ -27,9 +31,15 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 }
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root, "ok-app", entry, ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto parse_result = ahfl::parse_project(frontend, *input.input);
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -47,8 +57,6 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
         !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
                                                     "lib::types::Request") ||
         !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
-                                                    "std::prelude::Option") ||
-        !resolve_result.symbol_table.find_canonical(ahfl::SymbolNamespace::Types,
                                                     "std::option::Option")) {
         std::cerr << "missing expected canonical type symbols\n";
         return 1;
@@ -58,9 +66,18 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 }
 
 int run_ok_duplicate_locals(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root,
+        "duplicate-locals-app",
+        entry,
+        ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto parse_result = ahfl::parse_project(frontend, *input.input);
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;
@@ -85,9 +102,18 @@ int run_ok_duplicate_locals(const std::filesystem::path &entry, const std::files
 }
 
 int run_fail_unknown_type(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root,
+        "resolve-error-app",
+        entry,
+        ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto parse_result =
-        ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto parse_result = ahfl::parse_project(frontend, *input.input);
     if (parse_result.has_errors()) {
         print_diagnostics(parse_result.diagnostics);
         return 1;

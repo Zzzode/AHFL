@@ -1,0 +1,22 @@
+manifest_version = 1
+
+[package]
+name = "check-fail-state-app"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "app"
+root = "."
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "app::main::BadWorkflow"
+exports = [{ kind = "workflow", name = "app::main::BadWorkflow" }]
+
+[dependencies]
+lib = { source = "workspace" }

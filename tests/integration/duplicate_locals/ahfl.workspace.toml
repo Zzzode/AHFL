@@ -1,0 +1,8 @@
+manifest_version = 1
+
+[workspace]
+name = "duplicate-locals-workspace"
+members = ["app", "left", "right"]
+
+[resolver]
+version = 1

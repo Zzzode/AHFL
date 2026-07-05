@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "import-alias"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "resolver"
+root = "."
+
+[exports]
+modules = ["ok", "duplicate", "foo", "baz"]
+
+[targets.ok]
+kind = "library"
+entry = "ok.ahfl"
+
+[targets.duplicate]
+kind = "library"
+entry = "duplicate.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }

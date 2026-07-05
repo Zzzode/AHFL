@@ -148,8 +148,7 @@ inline constexpr ErrorCode<DiagnosticCategory::Parse> UnterminatedString{"UNTERM
 // Wave-21 A-1: fired when ANTLR visitor recursion (tuple/paren/block/type nesting)
 // exceeds the ProgramBuilder::kMaxRecursionDepth (256) safety limit. Prevents
 // the native stack overflow observed in fuzz batch 2026-06-22 (deep parentheses).
-inline constexpr ErrorCode<DiagnosticCategory::Parse> ParserStackOverflow{
-    "PARSER_STACK_OVERFLOW"};
+inline constexpr ErrorCode<DiagnosticCategory::Parse> ParserStackOverflow{"PARSER_STACK_OVERFLOW"};
 } // namespace parse
 
 namespace resolve {
@@ -160,6 +159,11 @@ inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousReference{"AMBI
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownCallable{"UNKNOWN_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousCallable{"AMBIGUOUS_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateImport{"DUPLICATE_IMPORT"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> PrivateSymbol{"PRIVATE_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> MissingImport{"MISSING_IMPORT"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> PrivateInPublic{"PRIVATE_IN_PUBLIC"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> InvalidVisibilityPlacement{
+    "INVALID_VISIBILITY_PLACEMENT"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> ModuleBoundaryMismatch{
     "MODULE_BOUNDARY_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclarations{
@@ -289,8 +293,7 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InherentTraitConflict{
 // (trait, normalized_type) key. Surfaces in build_impl_types after the
 // shared impls_conflict_for_type() comparison (also used by orphan-rule
 // diagnostics so the equivalence relation is defined in one place).
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CoherenceConflict{
-    "COHERENCE_CONFLICT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CoherenceConflict{"COHERENCE_CONFLICT"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // diagnostics. Surfaced by the P4a effect-judgement + verified-subset checks.
 //   effect_not_pure          — pure-context call resolved to a non-Pure effect
@@ -325,11 +328,9 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesExpectsPure{
     "DECREASES_EXPECTS_PURE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesIllegalOwner{
     "DECREASES_ILLEGAL_OWNER"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesDuplicate{
-    "DECREASES_DUPLICATE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesDuplicate{"DECREASES_DUPLICATE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InNonPure{"IN_NON_PURE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{
-    "SHADOWED_RECEIVER"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{"SHADOWED_RECEIVER"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesShadowedReceiver{
     "DECREASES_SHADOWED_RECEIVER"};
 } // namespace typecheck
@@ -338,8 +339,7 @@ namespace resolve {
 // Deduplicated, single-source-of-truth orphan-rule error code. Trait/Impl
 // orphan-reject diagnostics are surfaced during resolution and re-used by
 // downstream passes via the same identifier.
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> TraitOrphanImpl{
-    "TRAIT_ORPHAN_IMPL"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> TraitOrphanImpl{"TRAIT_ORPHAN_IMPL"};
 } // namespace resolve
 
 namespace validation {
@@ -362,8 +362,7 @@ inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNo
     "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNotProven{
     "DECREASES_NOT_PROVEN"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNonLex{
-    "DECREASES_NON_LEX"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNonLex{"DECREASES_NON_LEX"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesWildcardInvalid{
     "DECREASES_WILDCARD_INVALID"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesEmpty{"DECREASES_EMPTY"};
@@ -400,8 +399,7 @@ namespace lint {
 // L1: a nominal type (struct / enum / type alias / contract / trait) is
 // declared under the same local name in 2+ modules. Cross-module only —
 // same-module duplicates are already reported as DuplicateSymbol.
-inline constexpr ErrorCode<DiagnosticCategory::Lint> DuplicateStructName{
-    "DUPLICATE_STRUCT_NAME"};
+inline constexpr ErrorCode<DiagnosticCategory::Lint> DuplicateStructName{"DUPLICATE_STRUCT_NAME"};
 // L2: a name collides across different symbol kinds (e.g. struct Foo vs
 // capability Foo). Kept for completeness; only fires when a single user
 // namespace carries multiple kinds with the same local spelling.
@@ -425,7 +423,8 @@ namespace parse {
 // {1} = current numeric depth
 // {2} = limit (always 256 in current implementation)
 inline constexpr MessageTemplate ParserStackOverflow{
-    "parser recursion too deep ({} nesting = {}; hard limit = {}). Simplify this expression or split it into smaller named declarations."};
+    "parser recursion too deep ({} nesting = {}; hard limit = {}). Simplify this expression or "
+    "split it into smaller named declarations."};
 } // namespace parse
 namespace resolve {
 inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};
@@ -434,11 +433,19 @@ inline constexpr MessageTemplate AmbiguousCallable{
     "ambiguous callable '{}' matches both a capability and a predicate"};
 inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"};
 inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
+inline constexpr MessageTemplate PrivateSymbol{"symbol '{}' is private to package '{}'"};
+inline constexpr MessageTemplate MissingImport{
+    "symbol '{}' is in module '{}' but that module is not imported in this source"};
+inline constexpr MessageTemplate PrivateInPublic{
+    "public {} '{}' exposes package-internal {} '{}'"};
+inline constexpr MessageTemplate InvalidVisibilityPlacement{
+    "'pub' is not allowed on {}"};
 inline constexpr MessageTemplate ModuleBoundaryMismatch{
     "source unit module boundary does not match graph owner"};
 // ---- Trait / Impl messages ----
 inline constexpr MessageTemplate TraitOrphanImpl{
-    "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is local to this module"};
+    "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is "
+    "local to this module"};
 // ---- Structured notes (shared error code with the primary diagnostic; distinguished by message text) ----
 inline constexpr MessageTemplate UnknownCallable{"unknown callable '{}'"};
 inline constexpr MessageTemplate PreviousDeclarationHere{"previous declaration is here"};
@@ -559,9 +566,11 @@ inline constexpr MessageTemplate UnknownCapabilityInAgent{
 // Wave-20 QW-4: message templates for the two optional-clause warning codes
 // (see diagnostics.hpp AGENT_CONTEXT_OMITTED / AGENT_CAPABILITIES_OMITTED).
 inline constexpr MessageTemplate AgentContextMissingNote{
-    "agent '{}' omits the optional `context` clause (stateless agents are allowed but discouraged for evolvability)"};
+    "agent '{}' omits the optional `context` clause (stateless agents are allowed but discouraged "
+    "for evolvability)"};
 inline constexpr MessageTemplate AgentCapabilitiesMissingNote{
-    "agent '{}' declares no `capabilities` clause (insert an empty `capabilities: [];` to silence)"};
+    "agent '{}' declares no `capabilities` clause (insert an empty `capabilities: [];` to "
+    "silence)"};
 inline constexpr MessageTemplate CapabilityNotAllowed{
     "capability call '{}' is not allowed in this context"};
 inline constexpr MessageTemplate CapabilityNotDeclared{
@@ -622,12 +631,10 @@ inline constexpr MessageTemplate TraitSelfNotYetSupported{
 // P3c.S6 additional Trait/Impl diagnostic messages: extended signature
 // mismatch (named impl/trait context), inherent-vs-trait conflict and the
 // method/assoc lookup variants used by the Trait/Impl smoke suite.
-inline constexpr MessageTemplate MethodNotFound{
-    "method '{}' not found on type '{}'"};
+inline constexpr MessageTemplate MethodNotFound{"method '{}' not found on type '{}'"};
 inline constexpr MessageTemplate MethodSignatureMismatch{
     "method '{}' signature mismatch on impl '{}' of trait '{}': expected '{}', got '{}'"};
-inline constexpr MessageTemplate AssocTypeNotFound{
-    "associated type '{}' not found on trait '{}'"};
+inline constexpr MessageTemplate AssocTypeNotFound{"associated type '{}' not found on trait '{}'"};
 inline constexpr MessageTemplate InherentTraitConflict{
     "member '{}' on '{}' conflicts between inherent impl and trait impl of '{}'"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
@@ -650,7 +657,8 @@ inline constexpr MessageTemplate EffectOnPredicate{
 inline constexpr MessageTemplate NondetInInvariant{
     "non-deterministic expression in invariant/safety/liveness formula: {}"};
 inline constexpr MessageTemplate MonomorphizationBudgetExceeded{
-    "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: {})"};
+    "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: "
+    "{})"};
 // --- DECREASES / termination clause messages (P4 contract hardening) ---
 inline constexpr MessageTemplate DecreasesExpectsNumeric{
     "DECREASES measure must have numeric type (Int, Decimal, or Duration), got {}"};
@@ -663,7 +671,8 @@ inline constexpr MessageTemplate DecreasesDuplicate{
 inline constexpr MessageTemplate InNonPure{
     "invariant body must be a pure expression, but contains {}"};
 inline constexpr MessageTemplate ShadowedReceiver{
-    "let binding '{}' shadows receiver '{}' used for termination; termination check may be imprecise"};
+    "let binding '{}' shadows receiver '{}' used for termination; termination check may be "
+    "imprecise"};
 } // namespace typecheck
 
 namespace validation {
@@ -747,8 +756,7 @@ inline constexpr MessageTemplate NameCollisionAcrossKinds{
     "{} '{}' collides with {} with same name"};
 inline constexpr MessageTemplate UnusedImport{
     "import '{}' from module '{}' is never used; remove to silence"};
-inline constexpr MessageTemplate OtherDefinitionInModule{
-    "other definition in module '{}'"};
+inline constexpr MessageTemplate OtherDefinitionInModule{"other definition in module '{}'"};
 inline constexpr MessageTemplate ImportDeclarationHere{"import declaration is here"};
 } // namespace lint
 } // namespace messages
@@ -825,6 +833,11 @@ class DiagnosticBuilder {
     // Set structured error code
     template <DiagnosticCategory Cat> DiagnosticBuilder &&code(ErrorCode<Cat> err_code) && {
         code_ = err_code.full_code();
+        return std::move(*this);
+    }
+
+    DiagnosticBuilder &&code(std::string code_value) && {
+        code_ = std::move(code_value);
         return std::move(*this);
     }
 

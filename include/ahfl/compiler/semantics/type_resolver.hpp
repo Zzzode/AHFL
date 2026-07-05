@@ -68,9 +68,6 @@ class TypeResolver final {
                                              std::vector<TypePtr> args,
                                              SourceRange use_range);
     [[nodiscard]] TypePtr make_error_type() const;
-    [[nodiscard]] TypePtr resolve_std_container_type(std::string_view canonical_name,
-                                                     std::vector<TypePtr> arguments,
-                                                     SourceRange use_range);
     [[nodiscard]] EffectJudgement
     resolve_effect_judgement(ast::EffectClauseKind kind,
                              const std::vector<Owned<ast::QualifiedName>> &capabilities);

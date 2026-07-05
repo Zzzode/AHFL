@@ -21,6 +21,10 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     diagnostics.render(std::cout);
 }
 
+void print_diagnostics(const std::vector<ahfl::package_graph::Diagnostic> &diagnostics) {
+    ahfl::test_support::print_package_graph_diagnostics(diagnostics, std::cout);
+}
+
 [[nodiscard]] std::string render_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     std::ostringstream out;
     diagnostics.render(out);
@@ -31,6 +35,16 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
                                     std::string_view needle) {
     for (const auto &entry : diagnostics.entries()) {
         if (entry.message.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+[[nodiscard]] bool contains_code(const ahfl::DiagnosticBag &diagnostics, std::string_view code) {
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == code) {
             return true;
         }
     }
@@ -104,8 +118,15 @@ int run_source_file_position_smoke() {
 }
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root, "ok-app", entry, ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto result = ahfl::parse_project(frontend, *input.input);
 
     if (result.has_errors()) {
         print_diagnostics(result.diagnostics);
@@ -121,8 +142,8 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
     // spot-check of required modules preserves the intent of the test (the
     // graph is non-trivial and contains everything the app needs) without
     // being fragile in that way.
-    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() < 6 ||
-        result.graph.import_edges.size() < 8) {
+    if (result.graph.entry_sources.size() != 1 || result.graph.sources.size() < 3 ||
+        result.graph.import_edges.size() < 2) {
         std::cerr << "unexpected source graph shape: entries=" << result.graph.entry_sources.size()
                   << " sources=" << result.graph.sources.size()
                   << " imports=" << result.graph.import_edges.size() << '\n';
@@ -131,13 +152,7 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 
     if (!result.graph.module_to_source.contains("app::main") ||
         !result.graph.module_to_source.contains("lib::types") ||
-        !result.graph.module_to_source.contains("std::prelude") ||
-        !result.graph.module_to_source.contains("std::option") ||
-        !result.graph.module_to_source.contains("std::result") ||
-        !result.graph.module_to_source.contains("std::collections") ||
-        !result.graph.module_to_source.contains("std::string") ||
-        !result.graph.module_to_source.contains("std::cmp") ||
-        !result.graph.module_to_source.contains("std::fmt")) {
+        !result.graph.module_to_source.contains("std::option")) {
         std::cerr << "missing expected module ownership entries\n";
         return 1;
     }
@@ -146,8 +161,15 @@ int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path
 }
 
 int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root, "missing-app", entry, ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto result = ahfl::parse_project(frontend, *input.input);
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -167,8 +189,15 @@ int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::
 }
 
 int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root, "mismatch-app", entry, ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto result = ahfl::parse_project(frontend, *input.input);
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -190,8 +219,15 @@ int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem:
 }
 
 int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem::path &root) {
+    auto input = ahfl::test_support::project_input_from_workspace(
+        root, "no-module-app", entry, ahfl::test_support::repo_root_from_integration_root(root));
+    if (input.has_errors()) {
+        print_diagnostics(input.diagnostics);
+        return 1;
+    }
+
     const ahfl::Frontend frontend;
-    const auto result = ahfl::parse_project(frontend, project_input_with_repo_std(entry, root));
+    const auto result = ahfl::parse_project(frontend, *input.input);
 
     if (!result.has_errors()) {
         std::cerr << "expected project parse failure\n";
@@ -313,6 +349,7 @@ int run_package_dependency_gates_imports(const std::filesystem::path &workspace_
     const ahfl::Frontend frontend;
     const auto missing_dependency = ahfl::parse_project(frontend, make_input({}));
     if (!missing_dependency.has_errors() ||
+        !contains_code(missing_dependency.diagnostics, "E::package_dependency_missing") ||
         !contains_message(missing_dependency.diagnostics,
                           "package prefix 'app' does not depend on package prefix 'lib'")) {
         print_diagnostics(missing_dependency.diagnostics);
@@ -329,6 +366,75 @@ int run_package_dependency_gates_imports(const std::filesystem::path &workspace_
     if (!declared_dependency.graph.module_to_source.contains("app::main") ||
         !declared_dependency.graph.module_to_source.contains("lib::api")) {
         std::cerr << "expected declared dependency import to load both modules\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_std_package_dependency_gates_imports(const std::filesystem::path &workspace_root) {
+    const auto app_root = workspace_root / "app";
+    const auto std_root = workspace_root / "std";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!std::filesystem::create_directories(app_root, error) || error ||
+        !std::filesystem::create_directories(std_root, error) || error) {
+        std::cerr << "failed to create std dependency fixture: " << workspace_root << '\n';
+        return 1;
+    }
+
+    const auto app_main = app_root / "main.ahfl";
+    if (!write_text_file(app_main,
+                         "module app::main;\n"
+                         "import std::collections as collections;\n"
+                         "struct UsesStd { value: collections::List<Int>; }\n") ||
+        !write_text_file(std_root / "collections.ahfl",
+                         "module std::collections;\n"
+                         "struct List<T> {}\n")) {
+        std::cerr << "failed to write std dependency fixture\n";
+        return 1;
+    }
+
+    const auto make_input = [&](std::vector<std::string> app_dependencies) {
+        ahfl::ProjectInput input;
+        input.entry_files.push_back(app_main);
+        input.inject_prelude = false;
+        input.enforce_package_dependencies = true;
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "app",
+            .root = app_root,
+            .exported_modules = {"main"},
+            .dependency_prefixes = std::move(app_dependencies),
+        });
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "std",
+            .root = std_root,
+            .exported_modules = {"collections"},
+        });
+        return input;
+    };
+
+    const ahfl::Frontend frontend;
+    const auto missing_std_dependency = ahfl::parse_project(frontend, make_input({}));
+    if (!missing_std_dependency.has_errors() ||
+        !contains_code(missing_std_dependency.diagnostics, "E::package_dependency_missing") ||
+        !contains_message(missing_std_dependency.diagnostics,
+                          "package prefix 'app' does not depend on package prefix 'std'")) {
+        print_diagnostics(missing_std_dependency.diagnostics);
+        std::cerr << "expected missing std dependency diagnostic\n";
+        return 1;
+    }
+
+    const auto declared_std_dependency = ahfl::parse_project(frontend, make_input({"std"}));
+    if (declared_std_dependency.has_errors()) {
+        print_diagnostics(declared_std_dependency.diagnostics);
+        return 1;
+    }
+
+    if (!declared_std_dependency.graph.module_to_source.contains("app::main") ||
+        !declared_std_dependency.graph.module_to_source.contains("std::collections")) {
+        std::cerr << "expected declared std dependency import to load both modules\n";
         return 1;
     }
 
@@ -374,6 +480,10 @@ int main(int argc, char **argv) {
 
     if (test_case == "package-dependency-gates-imports") {
         return run_package_dependency_gates_imports(entry);
+    }
+
+    if (test_case == "std-package-dependency-gates-imports") {
+        return run_std_package_dependency_gates_imports(entry);
     }
 
     if (test_case == "diagnostics-support-metadata-smoke") {

@@ -123,11 +123,38 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
     return std::nullopt;
 }
 
-[[nodiscard]] bool has_module_declaration(const ahfl::ast::Program &program) noexcept {
-    return std::any_of(
-        program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
-            return decl && decl->kind == ahfl::ast::NodeKind::ModuleDecl;
-        });
+[[nodiscard]] std::string qualified_name_text(const ahfl::ast::QualifiedName &name) {
+    return name.spelling();
+}
+
+[[nodiscard]] ahfl::DiagnosticBag
+detached_source_unit_diagnostics(const ahfl::ast::Program &program,
+                                 const ahfl::SourceFile &source) {
+    ahfl::DiagnosticBag diagnostics;
+    diagnostics
+        .note(ahfl::SourceRange{.begin_offset = 0,
+                                .end_offset = std::min<std::size_t>(source.content.size(), 1)})
+        .code("N::detached_source_unit")
+        .message("this file is not part of an AHFL package")
+        .with_note("create ahfl.toml or pass --manifest to enable std imports and workspace "
+                   "navigation")
+        .emit();
+
+    for (const auto &declaration : program.declarations) {
+        if (!declaration || declaration->kind != ahfl::ast::NodeKind::ImportDecl) {
+            continue;
+        }
+        const auto &import_decl = static_cast<const ahfl::ast::ImportDecl &>(*declaration);
+        diagnostics.error(import_decl.range)
+            .code("E::detached_import")
+            .message("import declarations require an AHFL package manifest")
+            .with_note("import: " +
+                       (import_decl.path ? qualified_name_text(*import_decl.path) : std::string{}))
+            .with_note("add ahfl.toml, or run ahflc with --manifest")
+            .emit();
+    }
+
+    return diagnostics;
 }
 
 [[nodiscard]] std::filesystem::path normalize_manifest_path(const std::filesystem::path &path) {
@@ -1755,7 +1782,8 @@ ExitCode CliDriver::execute() {
             }
             return run_package_graph_package(discovery.invocation->graph);
         }
-        if (options_.target_name.has_value() || options_.sysroot_path.has_value()) {
+        if (options_.target_name.has_value() ||
+            (options_.sysroot_path.has_value() && effective_command_ != CommandKind::Check)) {
             std::cerr << "error: failed to discover ahfl.toml from input file; pass --manifest or "
                          "--workspace\n";
             return ExitCode::UsageError;
@@ -1779,21 +1807,14 @@ ExitCode CliDriver::execute() {
     if (parse_result.has_errors() || !parse_result.program) {
         return parse_result.has_errors() ? ExitCode::CompileError : ExitCode::Success;
     }
-    if (!has_module_declaration(*parse_result.program)) {
-        return run_analysis(*parse_result.program, std::cref(parse_result.source));
-    }
-
-    ahfl::ProjectInput input;
-    input.entry_files.push_back(std::string(options_.positional.front()));
-    input.inject_prelude = false;
-
-    auto project_result = ahfl::parse_project(frontend_, input);
-    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
-    if (project_result.has_errors()) {
+    const auto detached_diagnostics =
+        detached_source_unit_diagnostics(*parse_result.program, parse_result.source);
+    diag_consumer_->consume(detached_diagnostics, std::cref(parse_result.source));
+    if (detached_diagnostics.has_error()) {
         return ExitCode::CompileError;
     }
 
-    return run_analysis(project_result.graph, std::nullopt);
+    return run_analysis(*parse_result.program, std::cref(parse_result.source));
 }
 
 ExitCode CliDriver::run_manifest_package() {

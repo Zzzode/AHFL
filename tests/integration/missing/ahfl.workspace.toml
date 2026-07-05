@@ -1,0 +1,8 @@
+manifest_version = 1
+
+[workspace]
+name = "missing-workspace"
+members = ["app"]
+
+[resolver]
+version = 1

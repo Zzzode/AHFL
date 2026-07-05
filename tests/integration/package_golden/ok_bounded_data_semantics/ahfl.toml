@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "bounded-data-semantics"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "formal"
+root = "formal"
+
+[exports]
+modules = ["bounded_data_semantics"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "formal::bounded_data_semantics::BoundedWorkflow"
+exports = [
+  { kind = "workflow", name = "formal::bounded_data_semantics::BoundedWorkflow" },
+  { kind = "agent", name = "formal::bounded_data_semantics::BoundedAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

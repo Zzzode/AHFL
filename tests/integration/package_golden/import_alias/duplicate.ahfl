@@ -1,0 +1,7 @@
+module resolver::duplicate;
+import resolver::foo as shared;
+import resolver::baz as shared;
+
+struct Payload {
+    value: String;
+}

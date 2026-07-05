@@ -18,6 +18,7 @@
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"
+#include "tooling/lsp/sysroot_primitive_index.hpp"
 #include "tooling/lsp/workspace_index.hpp"
 
 namespace ahfl::lsp {
@@ -30,7 +31,14 @@ struct LspSourceSnapshot {
     std::optional<SourceId> source_id{};
 };
 
+enum class LspAnalysisMode {
+    PackageGraph,
+    SourceSysroot,
+    DetachedSourceUnit,
+};
+
 struct LspToolchainCacheKey {
+    std::string analysis_mode;
     std::string workspace_folder_uri;
     std::string root_manifest;
     std::string workspace_manifest;
@@ -53,6 +61,7 @@ struct LspAnalysisSnapshot {
     std::uint64_t workspace_revision{0};
     std::string open_document_overlay_revision_set;
     std::optional<LspToolchainCacheKey> toolchain_cache_key;
+    LspAnalysisMode analysis_mode{LspAnalysisMode::DetachedSourceUnit};
     bool project_aware{false};
     std::optional<std::filesystem::path> package_graph_manifest;
     std::vector<LspDiagnostic> project_diagnostics;
@@ -89,6 +98,8 @@ class AnalysisService {
     void invalidate_paths(const std::vector<std::filesystem::path> &paths);
 
     [[nodiscard]] const LspAnalysisSnapshot *snapshot_for_uri(const std::string &uri);
+    [[nodiscard]] const SysrootPrimitiveIndex *
+    sysroot_primitive_index_for_uri(const std::string &uri);
     [[nodiscard]] const LspWorkspaceIndex *sysroot_index_for_uri(const std::string &uri);
     [[nodiscard]] std::vector<const LspWorkspaceIndex *> workspace_root_indices();
     [[nodiscard]] std::vector<const LspAnalysisSnapshot *> workspace_snapshots();
@@ -112,6 +123,8 @@ class AnalysisService {
     std::vector<std::filesystem::path> workspace_folders_;
     project_discovery::ToolchainProfileSet toolchain_profiles_;
     std::unordered_map<std::string, std::unique_ptr<LspAnalysisSnapshot>> cache_;
+    std::unordered_map<std::string, std::unique_ptr<SysrootPrimitiveIndex>>
+        sysroot_primitive_index_cache_;
     std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> sysroot_index_cache_;
     std::unordered_map<std::string, std::unique_ptr<LspWorkspaceIndex>> workspace_root_index_cache_;
     std::unordered_map<std::string, SourceUnitId> extra_source_unit_ids_by_path_;

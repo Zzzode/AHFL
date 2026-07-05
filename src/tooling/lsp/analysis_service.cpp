@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <limits>
 #include <system_error>
+#include <type_traits>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 namespace ahfl::lsp {
@@ -21,6 +23,12 @@ namespace {
 constexpr std::string_view kWorkspaceIndexSchemaVersion = "lsp-workspace-index-v1";
 constexpr std::string_view kWorkspaceIndexIdentitySchemaVersion = "lsp-workspace-index-identity-v1";
 constexpr std::size_t kExtraSourceUnitIdBase = std::size_t{1} << 48U;
+constexpr std::string_view kDiagnosticDetachedSourceUnit = "N::detached_source_unit";
+constexpr std::string_view kDiagnosticDetachedImport = "E::detached_import";
+constexpr std::string_view kDiagnosticDetachedUnknownNominalType =
+    "E::detached_unknown_nominal_type";
+constexpr std::string_view kDiagnosticPrimitiveHomeUnavailable =
+    "W::primitive_home_unavailable";
 
 [[nodiscard]] bool is_hex(char ch) noexcept {
     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
@@ -98,6 +106,31 @@ toolchain_scope_name(project_discovery::ToolchainProfileScope scope) noexcept {
     return "global-default";
 }
 
+[[nodiscard]] LspAnalysisMode
+analysis_mode_from_discovery(project_discovery::AnalysisContextKind kind) noexcept {
+    switch (kind) {
+    case project_discovery::AnalysisContextKind::PackageGraph:
+        return LspAnalysisMode::PackageGraph;
+    case project_discovery::AnalysisContextKind::SourceSysroot:
+        return LspAnalysisMode::SourceSysroot;
+    case project_discovery::AnalysisContextKind::DetachedSourceUnit:
+        return LspAnalysisMode::DetachedSourceUnit;
+    }
+    return LspAnalysisMode::DetachedSourceUnit;
+}
+
+[[nodiscard]] std::string_view analysis_mode_name(LspAnalysisMode mode) noexcept {
+    switch (mode) {
+    case LspAnalysisMode::PackageGraph:
+        return "package-graph";
+    case LspAnalysisMode::SourceSysroot:
+        return "source-sysroot";
+    case LspAnalysisMode::DetachedSourceUnit:
+        return "detached-source-unit";
+    }
+    return "detached-source-unit";
+}
+
 [[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
     const auto pos = source.locate(offset);
     return Position{
@@ -121,6 +154,461 @@ toolchain_scope_name(project_discovery::ToolchainProfileScope scope) noexcept {
         .begin_offset = 0,
         .end_offset = std::min<std::size_t>(source.content.size(), 1),
     };
+}
+
+struct PrimitiveTypeUse {
+    PrimitiveKind kind;
+    SourceRange range;
+};
+
+void collect_primitive_type_uses(const ast::TypeSyntax *type,
+                                 std::vector<PrimitiveTypeUse> &uses);
+void collect_primitive_type_uses(const ast::ExprSyntax *expr,
+                                 std::vector<PrimitiveTypeUse> &uses);
+void collect_primitive_type_uses(const ast::BlockSyntax *block,
+                                 std::vector<PrimitiveTypeUse> &uses);
+
+void add_primitive_type_use(std::vector<PrimitiveTypeUse> &uses,
+                            PrimitiveKind kind,
+                            SourceRange range) {
+    const auto duplicate =
+        std::find_if(uses.begin(), uses.end(), [&](const PrimitiveTypeUse &existing) {
+            return existing.kind == kind;
+        });
+    if (duplicate == uses.end()) {
+        uses.push_back(PrimitiveTypeUse{.kind = kind, .range = range});
+    }
+}
+
+void collect_primitive_type_uses(const ast::TypeParamSyntax *param,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (param == nullptr) {
+        return;
+    }
+    for (const auto &bound : param->bounds) {
+        collect_primitive_type_uses(bound.get(), uses);
+    }
+}
+
+void collect_primitive_type_uses(const ast::WhereClauseSyntax *where_clause,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (where_clause == nullptr) {
+        return;
+    }
+    for (const auto &constraint : where_clause->constraints) {
+        if (constraint == nullptr) {
+            continue;
+        }
+        collect_primitive_type_uses(constraint->subject.get(), uses);
+        for (const auto &argument : constraint->arguments) {
+            collect_primitive_type_uses(argument.get(), uses);
+        }
+        for (const auto &bound : constraint->bounds) {
+            collect_primitive_type_uses(bound.get(), uses);
+        }
+    }
+}
+
+void collect_primitive_type_uses(const std::vector<Owned<ast::TypeParamSyntax>> &params,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    for (const auto &param : params) {
+        collect_primitive_type_uses(param.get(), uses);
+    }
+}
+
+void collect_primitive_type_uses(const std::vector<Owned<ast::ParamDeclSyntax>> &params,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    for (const auto &param : params) {
+        if (param != nullptr) {
+            collect_primitive_type_uses(param->type.get(), uses);
+        }
+    }
+}
+
+void collect_primitive_type_uses(const ast::EffectClauseSyntax *effect,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (effect == nullptr) {
+        return;
+    }
+    collect_primitive_type_uses(effect->decreases_expr.get(), uses);
+}
+
+void collect_primitive_type_uses(const ast::TypeSyntax *type,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (type == nullptr) {
+        return;
+    }
+
+    std::visit(
+        [&](const auto &node) {
+            using Node = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<Node, ast::UnitType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Unit, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::BoolType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Bool, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::IntType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Int, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::FloatType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Float, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::StringType> ||
+                                 std::is_same_v<Node, ast::BoundedStringType>) {
+                add_primitive_type_use(uses, PrimitiveKind::String, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::UuidType>) {
+                add_primitive_type_use(uses, PrimitiveKind::UUID, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::TimestampType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Timestamp, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::DurationType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Duration, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::DecimalType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Decimal, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::NamedType>) {
+                for (const auto &arg : node.type_args) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+            } else if constexpr (std::is_same_v<Node, ast::FnType>) {
+                for (const auto &param : node.params) {
+                    collect_primitive_type_uses(param.get(), uses);
+                }
+                collect_primitive_type_uses(node.return_type.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::AppType>) {
+                for (const auto &arg : node.arguments) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+            }
+        },
+        type->node);
+}
+
+void collect_primitive_type_uses(const ast::StatementSyntax *statement,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (statement == nullptr) {
+        return;
+    }
+    if (statement->let_stmt != nullptr) {
+        collect_primitive_type_uses(statement->let_stmt->type.get(), uses);
+        collect_primitive_type_uses(statement->let_stmt->initializer.get(), uses);
+    }
+    if (statement->assign_stmt != nullptr) {
+        collect_primitive_type_uses(statement->assign_stmt->value.get(), uses);
+    }
+    if (statement->if_stmt != nullptr) {
+        collect_primitive_type_uses(statement->if_stmt->condition.get(), uses);
+        collect_primitive_type_uses(statement->if_stmt->then_block.get(), uses);
+        collect_primitive_type_uses(statement->if_stmt->else_block.get(), uses);
+    }
+    if (statement->if_let_stmt != nullptr) {
+        collect_primitive_type_uses(statement->if_let_stmt->scrutinee.get(), uses);
+        collect_primitive_type_uses(statement->if_let_stmt->then_block.get(), uses);
+        collect_primitive_type_uses(statement->if_let_stmt->else_block.get(), uses);
+    }
+    if (statement->return_stmt != nullptr) {
+        collect_primitive_type_uses(statement->return_stmt->value.get(), uses);
+    }
+    if (statement->assert_stmt != nullptr) {
+        collect_primitive_type_uses(statement->assert_stmt->condition.get(), uses);
+        collect_primitive_type_uses(statement->assert_stmt->message.get(), uses);
+    }
+    if (statement->unwrap_stmt != nullptr) {
+        collect_primitive_type_uses(statement->unwrap_stmt->operand.get(), uses);
+    }
+    if (statement->requires_stmt != nullptr) {
+        collect_primitive_type_uses(statement->requires_stmt->condition.get(), uses);
+        collect_primitive_type_uses(statement->requires_stmt->message.get(), uses);
+    }
+    if (statement->unreachable_stmt != nullptr) {
+        collect_primitive_type_uses(statement->unreachable_stmt->message.get(), uses);
+    }
+    if (statement->expr_stmt != nullptr) {
+        collect_primitive_type_uses(statement->expr_stmt->expr.get(), uses);
+    }
+}
+
+void collect_primitive_type_uses(const ast::BlockSyntax *block,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (block == nullptr) {
+        return;
+    }
+    for (const auto &statement : block->statements) {
+        collect_primitive_type_uses(statement.get(), uses);
+    }
+}
+
+void collect_primitive_type_uses(const ast::ExprSyntax *expr,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (expr == nullptr) {
+        return;
+    }
+
+    std::visit(
+        [&](const auto &node) {
+            using Node = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<Node, ast::CallExpr>) {
+                for (const auto &arg : node.type_args) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+                for (const auto &arg : node.arguments) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+            } else if constexpr (std::is_same_v<Node, ast::MethodCallExpr>) {
+                collect_primitive_type_uses(node.receiver.get(), uses);
+                for (const auto &arg : node.type_args) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+                for (const auto &arg : node.arguments) {
+                    collect_primitive_type_uses(arg.get(), uses);
+                }
+            } else if constexpr (std::is_same_v<Node, ast::StructLiteralExpr>) {
+                for (const auto &field : node.fields) {
+                    if (field != nullptr) {
+                        collect_primitive_type_uses(field->value.get(), uses);
+                    }
+                }
+            } else if constexpr (std::is_same_v<Node, ast::UnaryExpr>) {
+                collect_primitive_type_uses(node.operand.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::BinaryExpr>) {
+                collect_primitive_type_uses(node.lhs.get(), uses);
+                collect_primitive_type_uses(node.rhs.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::MemberAccessExpr>) {
+                collect_primitive_type_uses(node.base.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::IndexAccessExpr>) {
+                collect_primitive_type_uses(node.base.get(), uses);
+                collect_primitive_type_uses(node.index.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::GroupExpr>) {
+                collect_primitive_type_uses(node.inner.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::MatchExpr>) {
+                collect_primitive_type_uses(node.scrutinee.get(), uses);
+                for (const auto &arm : node.arms) {
+                    if (arm != nullptr) {
+                        collect_primitive_type_uses(arm->guard.get(), uses);
+                        collect_primitive_type_uses(arm->body.get(), uses);
+                    }
+                }
+            } else if constexpr (std::is_same_v<Node, ast::LambdaExpr>) {
+                for (const auto &param : node.params) {
+                    if (param != nullptr) {
+                        collect_primitive_type_uses(param->type.get(), uses);
+                    }
+                }
+                collect_primitive_type_uses(node.body.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::UnwrapExprSyntax>) {
+                collect_primitive_type_uses(node.operand.get(), uses);
+            }
+        },
+        expr->node);
+}
+
+void collect_primitive_type_uses(const ast::TemporalExprSyntax *expr,
+                                 std::vector<PrimitiveTypeUse> &uses) {
+    if (expr == nullptr) {
+        return;
+    }
+    std::visit(
+        [&](const auto &node) {
+            using Node = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<Node, ast::EmbeddedTemporalExpr>) {
+                collect_primitive_type_uses(node.expr.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::UnaryTemporalExpr>) {
+                collect_primitive_type_uses(node.operand.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::BinaryTemporalExpr>) {
+                collect_primitive_type_uses(node.lhs.get(), uses);
+                collect_primitive_type_uses(node.rhs.get(), uses);
+            }
+        },
+        expr->node);
+}
+
+std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program &program) {
+    std::vector<PrimitiveTypeUse> uses;
+    for (const auto &decl : program.declarations) {
+        if (decl == nullptr) {
+            continue;
+        }
+
+        switch (decl->kind) {
+        case ast::NodeKind::Program:
+            break;
+        case ast::NodeKind::ConstDecl: {
+            const auto &typed = static_cast<const ast::ConstDecl &>(*decl);
+            collect_primitive_type_uses(typed.type.get(), uses);
+            collect_primitive_type_uses(typed.value.get(), uses);
+            break;
+        }
+        case ast::NodeKind::TypeAliasDecl: {
+            const auto &typed = static_cast<const ast::TypeAliasDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            collect_primitive_type_uses(typed.aliased_type.get(), uses);
+            break;
+        }
+        case ast::NodeKind::StructDecl: {
+            const auto &typed = static_cast<const ast::StructDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            for (const auto &field : typed.fields) {
+                if (field != nullptr) {
+                    collect_primitive_type_uses(field->type.get(), uses);
+                    collect_primitive_type_uses(field->default_value.get(), uses);
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::EnumDecl: {
+            const auto &typed = static_cast<const ast::EnumDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            for (const auto &variant : typed.variants) {
+                if (variant == nullptr) {
+                    continue;
+                }
+                for (const auto &payload : variant->payload) {
+                    collect_primitive_type_uses(payload.get(), uses);
+                }
+                for (const auto &field : variant->named_fields) {
+                    if (field != nullptr) {
+                        collect_primitive_type_uses(field->type.get(), uses);
+                        collect_primitive_type_uses(field->default_value.get(), uses);
+                    }
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::CapabilityDecl: {
+            const auto &typed = static_cast<const ast::CapabilityDecl &>(*decl);
+            collect_primitive_type_uses(typed.params, uses);
+            collect_primitive_type_uses(typed.return_type.get(), uses);
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            break;
+        }
+        case ast::NodeKind::PredicateDecl: {
+            const auto &typed = static_cast<const ast::PredicateDecl &>(*decl);
+            collect_primitive_type_uses(typed.params, uses);
+            collect_primitive_type_uses(typed.effect_clause.get(), uses);
+            break;
+        }
+        case ast::NodeKind::AgentDecl: {
+            const auto &typed = static_cast<const ast::AgentDecl &>(*decl);
+            collect_primitive_type_uses(typed.input_type.get(), uses);
+            collect_primitive_type_uses(typed.context_type.get(), uses);
+            collect_primitive_type_uses(typed.output_type.get(), uses);
+            break;
+        }
+        case ast::NodeKind::ContractDecl: {
+            const auto &typed = static_cast<const ast::ContractDecl &>(*decl);
+            for (const auto &clause : typed.clauses) {
+                if (clause != nullptr) {
+                    collect_primitive_type_uses(clause->expr.get(), uses);
+                    collect_primitive_type_uses(clause->temporal_expr.get(), uses);
+                    if (clause->decreases != nullptr) {
+                        for (const auto &term : clause->decreases->decreases_exprs) {
+                            collect_primitive_type_uses(term.get(), uses);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::FlowDecl: {
+            const auto &typed = static_cast<const ast::FlowDecl &>(*decl);
+            for (const auto &handler : typed.state_handlers) {
+                if (handler != nullptr) {
+                    collect_primitive_type_uses(handler->body.get(), uses);
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::WorkflowDecl: {
+            const auto &typed = static_cast<const ast::WorkflowDecl &>(*decl);
+            collect_primitive_type_uses(typed.input_type.get(), uses);
+            collect_primitive_type_uses(typed.output_type.get(), uses);
+            for (const auto &node : typed.nodes) {
+                if (node != nullptr) {
+                    collect_primitive_type_uses(node->input.get(), uses);
+                }
+            }
+            for (const auto &safety : typed.safety) {
+                collect_primitive_type_uses(safety.get(), uses);
+            }
+            for (const auto &liveness : typed.liveness) {
+                collect_primitive_type_uses(liveness.get(), uses);
+            }
+            collect_primitive_type_uses(typed.return_value.get(), uses);
+            break;
+        }
+        case ast::NodeKind::FnDecl: {
+            const auto &typed = static_cast<const ast::FnDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            collect_primitive_type_uses(typed.params, uses);
+            collect_primitive_type_uses(typed.return_type.get(), uses);
+            collect_primitive_type_uses(typed.effect_clause.get(), uses);
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            collect_primitive_type_uses(typed.body.get(), uses);
+            break;
+        }
+        case ast::NodeKind::TraitDecl: {
+            const auto &typed = static_cast<const ast::TraitDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            for (const auto &super_trait : typed.super_traits) {
+                collect_primitive_type_uses(super_trait.get(), uses);
+            }
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            for (const auto &item : typed.items) {
+                if (item == nullptr) {
+                    continue;
+                }
+                collect_primitive_type_uses(item->type_params, uses);
+                collect_primitive_type_uses(item->params, uses);
+                collect_primitive_type_uses(item->return_type.get(), uses);
+                collect_primitive_type_uses(item->effect_clause.get(), uses);
+                collect_primitive_type_uses(item->where_clause.get(), uses);
+                if (item->assoc_type != nullptr) {
+                    collect_primitive_type_uses(item->assoc_type->type_params, uses);
+                    for (const auto &bound : item->assoc_type->bounds) {
+                        collect_primitive_type_uses(bound.get(), uses);
+                    }
+                    collect_primitive_type_uses(item->assoc_type->default_type.get(), uses);
+                }
+                if (item->assoc_const != nullptr) {
+                    collect_primitive_type_uses(item->assoc_const->type.get(), uses);
+                    collect_primitive_type_uses(item->assoc_const->default_value.get(), uses);
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::ImplDecl: {
+            const auto &typed = static_cast<const ast::ImplDecl &>(*decl);
+            collect_primitive_type_uses(typed.type_params, uses);
+            collect_primitive_type_uses(typed.trait_ref.get(), uses);
+            collect_primitive_type_uses(typed.target_type.get(), uses);
+            collect_primitive_type_uses(typed.where_clause.get(), uses);
+            for (const auto &method : typed.methods) {
+                if (method != nullptr) {
+                    collect_primitive_type_uses(method->type_params, uses);
+                    collect_primitive_type_uses(method->params, uses);
+                    collect_primitive_type_uses(method->return_type.get(), uses);
+                    collect_primitive_type_uses(method->effect_clause.get(), uses);
+                    collect_primitive_type_uses(method->where_clause.get(), uses);
+                    collect_primitive_type_uses(method->body.get(), uses);
+                }
+            }
+            for (const auto &item : typed.assoc_items) {
+                if (item != nullptr) {
+                    collect_primitive_type_uses(item->type.get(), uses);
+                }
+            }
+            for (const auto &item : typed.const_items) {
+                if (item != nullptr) {
+                    collect_primitive_type_uses(item->type.get(), uses);
+                    collect_primitive_type_uses(item->value.get(), uses);
+                }
+            }
+            break;
+        }
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::UseDecl:
+            break;
+        }
+    }
+    return uses;
 }
 
 [[nodiscard]] const package_graph::PackageNode *
@@ -264,13 +752,19 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
     return roots;
 }
 
+[[nodiscard]] std::string sysroot_primitive_index_cache_key(const LspToolchainCacheKey &key) {
+    return key.std_manifest + "#" + key.std_identity + "#" +
+           std::string{kSysrootPrimitiveHomeSchemaVersion};
+}
+
 [[nodiscard]] std::string
 sysroot_index_cache_key(const LspToolchainCacheKey &key,
                         std::string_view open_document_overlay_revision_set) {
-    return key.workspace_folder_uri + "#" + key.root_manifest + "#" + key.workspace_manifest + "#" +
-           key.package_graph_identity + "#" + key.std_manifest + "#" + key.std_identity + "#" +
-           key.scope + "#" + key.index_schema_version + "#" + key.index_identity_schema_version +
-           "#" + std::string{open_document_overlay_revision_set};
+    return key.analysis_mode + "#" + key.workspace_folder_uri + "#" + key.root_manifest + "#" +
+           key.workspace_manifest + "#" + key.package_graph_identity + "#" + key.std_manifest +
+           "#" + key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
+           key.index_identity_schema_version + "#" +
+           std::string{open_document_overlay_revision_set};
 }
 
 [[nodiscard]] std::string package_graph_identity(const package_graph::PackageGraph &graph) {
@@ -536,6 +1030,11 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     result.severity = to_lsp_severity(diagnostic.severity);
     result.message = diagnostic.message;
     result.code = diagnostic.code.value_or(std::string(fallback_code));
+    if (snapshot.analysis_mode == LspAnalysisMode::DetachedSourceUnit &&
+        result.code == error_codes::resolve::UnknownSymbol.full_code() &&
+        result.message.starts_with("unknown type")) {
+        result.code = std::string{kDiagnosticDetachedUnknownNominalType};
+    }
     result.source = "ahfl";
     const auto range = diagnostic.range.value_or(fallback_range(*source.source));
     result.range = to_lsp_range(*source.source, range);
@@ -629,6 +1128,81 @@ void append_project_diagnostics(LspAnalysisSnapshot &snapshot,
     snapshot.project_diagnostics.reserve(snapshot.project_diagnostics.size() + diagnostics.size());
     for (const auto &diagnostic : diagnostics) {
         snapshot.project_diagnostics.push_back(project_discovery_diagnostic(diagnostic, *source));
+    }
+}
+
+void append_detached_source_unit_diagnostics(LspAnalysisSnapshot &snapshot,
+                                             const std::string &uri,
+                                             const SysrootPrimitiveIndex *primitive_index,
+                                             bool has_toolchain_profile) {
+    const auto *source = snapshot.source_for_uri(uri);
+    if (source == nullptr || source->source == nullptr) {
+        return;
+    }
+
+    snapshot.project_diagnostics.push_back(LspDiagnostic{
+        .range = to_lsp_range(*source->source, fallback_range(*source->source)),
+        .severity = DiagnosticSeverity::Information,
+        .code = std::string{kDiagnosticDetachedSourceUnit},
+        .source = "ahfl",
+        .message = "this file is not part of an AHFL package; create ahfl.toml or open a "
+                   "workspace containing one to enable std imports and workspace navigation",
+    });
+
+    if (source->program == nullptr) {
+        return;
+    }
+
+    const auto primitive_uses = primitive_type_uses_in_program(*source->program);
+    if (!primitive_uses.empty() && !has_toolchain_profile) {
+        snapshot.project_diagnostics.push_back(LspDiagnostic{
+            .range = to_lsp_range(*source->source, primitive_uses.front().range),
+            .severity = DiagnosticSeverity::Warning,
+            .code = std::string{kDiagnosticPrimitiveHomeUnavailable},
+            .source = "ahfl",
+            .message = "active AHFL toolchain profile is unavailable; primitive canonical home "
+                       "navigation is disabled",
+        });
+    } else if (primitive_index != nullptr) {
+        for (const auto &use : primitive_uses) {
+            if (primitive_index->home_location_for_primitive(use.kind).has_value()) {
+                continue;
+            }
+            std::string message = "active sysroot does not provide canonical home for primitive ";
+            message += primitive_kind_name(use.kind);
+            if (const auto expected = primitive_index->missing_home_path_for_primitive(use.kind);
+                expected.has_value()) {
+                message += " at '";
+                message += expected->generic_string();
+                message += "'";
+            }
+            message += "; primitive navigation may use a virtual home or be unavailable";
+            snapshot.project_diagnostics.push_back(LspDiagnostic{
+                .range = to_lsp_range(*source->source, use.range),
+                .severity = DiagnosticSeverity::Warning,
+                .code = std::string{kDiagnosticPrimitiveHomeUnavailable},
+                .source = "ahfl",
+                .message = std::move(message),
+            });
+        }
+    }
+
+    for (const auto &decl : source->program->declarations) {
+        if (decl == nullptr || decl->kind != ast::NodeKind::ImportDecl) {
+            continue;
+        }
+        const auto &import_decl = static_cast<const ast::ImportDecl &>(*decl);
+        std::string message = "import declarations require an AHFL package manifest";
+        if (import_decl.path != nullptr) {
+            message += ": " + import_decl.path->spelling();
+        }
+        snapshot.project_diagnostics.push_back(LspDiagnostic{
+            .range = to_lsp_range(*source->source, import_decl.range),
+            .severity = DiagnosticSeverity::Error,
+            .code = std::string{kDiagnosticDetachedImport},
+            .source = "ahfl",
+            .message = std::move(message),
+        });
     }
 }
 
@@ -769,6 +1343,7 @@ void AnalysisService::set_toolchain_profiles(project_discovery::ToolchainProfile
 
 void AnalysisService::invalidate_all() {
     cache_.clear();
+    sysroot_primitive_index_cache_.clear();
     sysroot_index_cache_.clear();
     workspace_root_index_cache_.clear();
 }
@@ -787,6 +1362,7 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
     if (path_keys.empty()) {
         return;
     }
+    sysroot_primitive_index_cache_.clear();
 
     for (auto iter = cache_.begin(); iter != cache_.end();) {
         if (iter->second != nullptr && snapshot_references_path(*iter->second, path_keys)) {
@@ -804,7 +1380,8 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
         }
     }
 
-    for (auto iter = workspace_root_index_cache_.begin(); iter != workspace_root_index_cache_.end();) {
+    for (auto iter = workspace_root_index_cache_.begin();
+         iter != workspace_root_index_cache_.end();) {
         if (iter->second != nullptr && source_units_reference_path(*iter->second, path_keys)) {
             iter = workspace_root_index_cache_.erase(iter);
         } else {
@@ -846,6 +1423,26 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     return snapshot_ptr;
 }
 
+const SysrootPrimitiveIndex *
+AnalysisService::sysroot_primitive_index_for_uri(const std::string &uri) {
+    const auto key = toolchain_cache_key_for_uri(uri);
+    if (!key.has_value() || key->std_manifest.empty()) {
+        return nullptr;
+    }
+
+    const auto cache_key = sysroot_primitive_index_cache_key(*key);
+    if (const auto existing = sysroot_primitive_index_cache_.find(cache_key);
+        existing != sysroot_primitive_index_cache_.end()) {
+        return existing->second.get();
+    }
+
+    auto index = std::make_unique<SysrootPrimitiveIndex>(build_sysroot_primitive_index(
+        SysrootPrimitiveIndexInput{.std_manifest = std::filesystem::path(key->std_manifest)}));
+    const auto *result = index.get();
+    sysroot_primitive_index_cache_[cache_key] = std::move(index);
+    return result;
+}
+
 const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::string &uri) {
     const auto key = toolchain_cache_key_for_uri(uri);
     if (!key.has_value()) {
@@ -864,38 +1461,30 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         return nullptr;
     }
 
-    std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
-    workspace_boundaries.reserve(workspace_folders_.size());
-    for (const auto &root : workspace_folders_) {
-        workspace_boundaries.push_back(project_discovery::WorkspaceBoundary{.root = root});
-    }
-
-    auto project_context =
-        project_discovery::discover_project_context(project_discovery::ProjectDiscoveryInput{
-            .document_path = *document_path,
-            .workspace_boundaries = std::move(workspace_boundaries),
-            .toolchains = toolchain_profiles_,
+    auto graph_result =
+        package_graph::build_package_graph_from_sysroot(package_graph::SysrootBuildInput{
+            .sysroot_manifest_path = std::filesystem::path(key->std_manifest),
         });
-    if (!project_context.context.has_value()) {
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
         return nullptr;
     }
+    auto &graph = *graph_result.graph;
 
     Frontend frontend;
     NavigationScopeKindMap sysroot_scope_kinds;
     auto index_input = LspWorkspaceIndexInput{
-        .project = project_input_from_package_graph(project_context.context->graph,
+        .project = project_input_from_package_graph(graph,
                                                     *document_path,
                                                     open_document_overlays(),
                                                     LspProjectInputMode::SysrootIndex,
                                                     &sysroot_scope_kinds),
         .scope =
             NavigationIndexScope{
-                .package_roots = index_package_roots_from_graph(project_context.context->graph),
-                .source_units =
-                    index_source_units_from_scope_kinds(project_context.context->graph,
-                                                        sysroot_scope_kinds,
-                                                        extra_source_unit_ids_by_path_,
-                                                        next_extra_source_unit_id_),
+                .package_roots = index_package_roots_from_graph(graph),
+                .source_units = index_source_units_from_scope_kinds(graph,
+                                                                    sysroot_scope_kinds,
+                                                                    extra_source_unit_ids_by_path_,
+                                                                    next_extra_source_unit_id_),
             },
         .metadata =
             NavigationIndexMetadata{
@@ -1058,19 +1647,26 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
             .workspace_boundaries = workspace_boundaries,
             .toolchains = toolchain_profiles_,
         });
-    if (!project_context.context.has_value()) {
-        return std::nullopt;
+    auto analysis_mode = LspAnalysisMode::DetachedSourceUnit;
+    if (project_context.analysis_context.has_value()) {
+        analysis_mode = analysis_mode_from_discovery(project_context.analysis_context->kind);
     }
 
     return LspToolchainCacheKey{
+        .analysis_mode = std::string{analysis_mode_name(analysis_mode)},
         .workspace_folder_uri =
             workspace_root.has_value() ? uri_from_path(*workspace_root) : std::string{},
-        .root_manifest = normalized_path_key(project_context.context->package_manifest_path),
+        .root_manifest = project_context.context.has_value()
+                             ? normalized_path_key(project_context.context->package_manifest_path)
+                             : std::string{},
         .workspace_manifest =
-            project_context.context->workspace_manifest_path.has_value()
+            project_context.context.has_value() &&
+                    project_context.context->workspace_manifest_path.has_value()
                 ? normalized_path_key(*project_context.context->workspace_manifest_path)
                 : std::string{},
-        .package_graph_identity = package_graph_identity(project_context.context->graph),
+        .package_graph_identity = project_context.context.has_value()
+                                      ? package_graph_identity(project_context.context->graph)
+                                      : std::string{},
         .std_manifest = normalized_path_key(selection->profile.std_manifest),
         .std_identity = selection->profile.std_identity,
         .scope = std::string{toolchain_scope_name(selection->profile.scope)},
@@ -1118,6 +1714,10 @@ AnalysisService::build_snapshot(const std::string &uri,
                 .workspace_boundaries = std::move(workspace_boundaries),
                 .toolchains = toolchain_profiles_,
             });
+        if (project_context.analysis_context.has_value()) {
+            snapshot->analysis_mode =
+                analysis_mode_from_discovery(project_context.analysis_context->kind);
+        }
         if (project_context.context.has_value()) {
             snapshot->project_aware = true;
             snapshot->package_graph_manifest = project_context.context->graph_manifest_path;
@@ -1138,11 +1738,11 @@ AnalysisService::build_snapshot(const std::string &uri,
                     NavigationIndexScope{
                         .package_roots =
                             index_package_roots_from_graph(project_context.context->graph),
-                        .source_units = index_source_units_from_scope_kinds(
-                            project_context.context->graph,
-                            workspace_scope_kinds,
-                            extra_source_unit_ids_by_path_,
-                            next_extra_source_unit_id_),
+                        .source_units =
+                            index_source_units_from_scope_kinds(project_context.context->graph,
+                                                                workspace_scope_kinds,
+                                                                extra_source_unit_ids_by_path_,
+                                                                next_extra_source_unit_id_),
                     },
                 .metadata =
                     NavigationIndexMetadata{
@@ -1216,10 +1816,18 @@ AnalysisService::build_snapshot(const std::string &uri,
     index_source(*snapshot,
                  LspSourceSnapshot{
                      .uri = uri,
+                     .path = document_path.value_or(std::filesystem::path{}),
                      .source = &snapshot->parse_result->source,
                      .program = snapshot->parse_result->program.get(),
                      .source_id = std::nullopt,
                  });
+    if (snapshot->analysis_mode == LspAnalysisMode::DetachedSourceUnit) {
+        const auto *primitive_index =
+            snapshot->toolchain_cache_key.has_value() ? sysroot_primitive_index_for_uri(uri)
+                                                      : nullptr;
+        append_detached_source_unit_diagnostics(
+            *snapshot, uri, primitive_index, snapshot->toolchain_cache_key.has_value());
+    }
 
     if (!snapshot->parse_result->has_errors() && snapshot->parse_result->program) {
         snapshot->resolve_result = resolver.resolve(*snapshot->parse_result->program);

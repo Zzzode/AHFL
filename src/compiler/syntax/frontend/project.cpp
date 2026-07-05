@@ -24,6 +24,21 @@ struct ProgramImports {
     std::vector<ImportRequest> imports;
 };
 
+[[nodiscard]] std::optional<std::string> use_target_module(const ast::UseDecl &use_decl) {
+    if (use_decl.path == nullptr || use_decl.path->segments.size() < 2) {
+        return std::nullopt;
+    }
+
+    std::string module_name;
+    for (std::size_t index = 0; index + 1 < use_decl.path->segments.size(); ++index) {
+        if (!module_name.empty()) {
+            module_name += "::";
+        }
+        module_name += use_decl.path->segments[index];
+    }
+    return module_name;
+}
+
 [[nodiscard]] ProgramImports collect_program_imports(const ast::Program &program) {
     ProgramImports result;
 
@@ -40,6 +55,16 @@ struct ProgramImports {
                 .module_name = import.path ? import.path->spelling() : "",
                 .alias = import.alias,
                 .range = import.range,
+            });
+            break;
+        }
+        case ast::NodeKind::UseDecl: {
+            const auto &use_decl = static_cast<const ast::UseDecl &>(*declaration);
+            const auto module_name = use_target_module(use_decl);
+            result.imports.push_back(ImportRequest{
+                .module_name = module_name.value_or(std::string{}),
+                .alias = "",
+                .range = use_decl.range,
             });
             break;
         }
@@ -178,10 +203,6 @@ find_module_root(std::string_view module_name,
 
 [[nodiscard]] bool module_dependency_allowed(const ProjectInput::ModuleRoot &importer,
                                              const ProjectInput::ModuleRoot &imported) {
-    if (imported.prefix == "std") {
-        return true;
-    }
-
     return std::find(importer.dependency_prefixes.begin(),
                      importer.dependency_prefixes.end(),
                      imported.prefix) != importer.dependency_prefixes.end();
@@ -206,6 +227,7 @@ find_module_root(std::string_view module_name,
     if (enforce_package_dependencies &&
         !module_dependency_allowed(*importer_root, *imported_root)) {
         diagnostics.error()
+            .code("E::package_dependency_missing")
             .message("package prefix '" + importer_root->prefix +
                      "' does not depend on package prefix '" + imported_root->prefix +
                      "' required by import '" + import_request.module_name + "'")
@@ -463,6 +485,12 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                         .id = source_id,
                         .path = path,
                         .module_name = module_name,
+                        .package_prefix = module_root == nullptr ? std::string{} : module_root->prefix,
+                        .module_exported =
+                            module_root == nullptr ? false : module_is_exported(module_name, *module_root),
+                        .dependency_prefixes =
+                            module_root == nullptr ? std::vector<std::string>{}
+                                                   : module_root->dependency_prefixes,
                         .module_range = imports.modules.front().second,
                         .compiler_intrinsics_allow = module_root == nullptr
                                                          ? std::nullopt

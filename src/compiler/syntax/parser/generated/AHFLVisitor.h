@@ -27,6 +27,10 @@ public:
 
     virtual std::any visitImportDecl(AHFLParser::ImportDeclContext *context) = 0;
 
+    virtual std::any visitVisibilityModifier(AHFLParser::VisibilityModifierContext *context) = 0;
+
+    virtual std::any visitUseDecl(AHFLParser::UseDeclContext *context) = 0;
+
     virtual std::any visitIdentifier(AHFLParser::IdentifierContext *context) = 0;
 
     virtual std::any visitQualifiedIdent(AHFLParser::QualifiedIdentContext *context) = 0;

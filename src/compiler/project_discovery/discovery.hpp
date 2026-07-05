@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace ahfl::project_discovery {
@@ -16,6 +17,17 @@ enum class ProjectContextKind {
     Package,
     WorkspaceMember,
     SysrootPackage,
+};
+
+enum class AnalysisContextKind {
+    PackageGraph,
+    SourceSysroot,
+    DetachedSourceUnit,
+};
+
+enum class DetachedSourceUnitReason {
+    NoWorkspaceFolder,
+    NoManifestInWorkspace,
 };
 
 enum class ToolchainProfileOrigin {
@@ -56,6 +68,7 @@ struct ToolchainProfileSet {
     std::optional<ToolchainProfile> default_profile;
     std::vector<WorkspaceToolchainProfile> workspace_profiles;
     std::vector<package_graph::Diagnostic> diagnostics;
+    bool allow_compile_default{true};
 };
 
 struct ToolchainProfileResult {
@@ -89,8 +102,35 @@ struct ProjectContext {
     std::filesystem::path sysroot_manifest_path;
 };
 
+struct DetachedSourceUnit {
+    std::filesystem::path source_path;
+    std::optional<std::filesystem::path> workspace_folder;
+    std::optional<ToolchainProfileSelection> toolchain_profile;
+    DetachedSourceUnitReason reason{DetachedSourceUnitReason::NoWorkspaceFolder};
+};
+
+struct AnalysisContext {
+    AnalysisContextKind kind{AnalysisContextKind::DetachedSourceUnit};
+    std::optional<DetachedSourceUnit> detached;
+
+    [[nodiscard]] static AnalysisContext from_project(ProjectContextKind context_kind) {
+        const auto kind = context_kind == ProjectContextKind::SysrootPackage
+                              ? AnalysisContextKind::SourceSysroot
+                              : AnalysisContextKind::PackageGraph;
+        return AnalysisContext{.kind = kind};
+    }
+
+    [[nodiscard]] static AnalysisContext from_detached(DetachedSourceUnit detached_unit) {
+        return AnalysisContext{
+            .kind = AnalysisContextKind::DetachedSourceUnit,
+            .detached = std::move(detached_unit),
+        };
+    }
+};
+
 struct ProjectDiscoveryResult {
     std::optional<ProjectContext> context;
+    std::optional<AnalysisContext> analysis_context;
     std::vector<package_graph::Diagnostic> diagnostics;
     bool project_manifest_found{false};
 

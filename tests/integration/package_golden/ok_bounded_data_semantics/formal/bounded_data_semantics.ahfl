@@ -1,0 +1,54 @@
+module formal::bounded_data_semantics;
+
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+agent BoundedAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for BoundedAgent {
+    requires: true;
+    ensures: 1 + 1 == 2;
+    invariant: always (true and (2 > 1));
+}
+
+flow for BoundedAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow BoundedWorkflow {
+    input: Request;
+    output: Response;
+
+    node run: BoundedAgent(input);
+
+    safety: always (not running(run) or (1 + 1 == 2));
+    liveness: eventually completed(run, Done);
+
+    return: run;
+}

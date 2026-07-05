@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[package]
+name = "mismatch-app"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "app"
+root = "."
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "main.ahfl"
+
+[dependencies]
+lib = { source = "workspace" }

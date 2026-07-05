@@ -1,11 +1,15 @@
 #pragma once
 
+#include "compiler/package_graph/package_graph.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
+#include <ostream>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace ahfl::test_support {
@@ -151,6 +155,116 @@ inline void append_repo_std_module_root(ProjectInput &input,
         .exported_modules = repo_std_exports(),
         .compiler_intrinsics_allow = repo_std_intrinsics_allow(),
     });
+}
+
+struct PackageProjectInputResult {
+    std::optional<ProjectInput> input;
+    std::vector<package_graph::Diagnostic> diagnostics;
+
+    [[nodiscard]] bool has_errors() const {
+        return !diagnostics.empty() || !input.has_value();
+    }
+};
+
+inline void print_package_graph_diagnostics(
+    const std::vector<package_graph::Diagnostic> &diagnostics,
+    std::ostream &out) {
+    for (const auto &diagnostic : diagnostics) {
+        out << "error";
+        if (!diagnostic.code.empty()) {
+            out << " [" << diagnostic.code << "]";
+        }
+        out << ": " << diagnostic.message << '\n';
+        for (const auto &related : diagnostic.related) {
+            out << "  note: " << related.path.generic_string() << ": " << related.message << '\n';
+        }
+    }
+}
+
+[[nodiscard]] inline std::vector<std::string>
+dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
+                                package_graph::PackageId package_id) {
+    std::vector<std::string> prefixes;
+    for (const auto &dependency : graph.dependencies) {
+        if (dependency.from != package_id) {
+            continue;
+        }
+        const auto *target = graph.find_package(dependency.to);
+        if (target != nullptr) {
+            prefixes.push_back(target->module_prefix);
+        }
+    }
+
+    std::sort(prefixes.begin(), prefixes.end());
+    prefixes.erase(std::unique(prefixes.begin(), prefixes.end()), prefixes.end());
+    return prefixes;
+}
+
+[[nodiscard]] inline ProjectInput
+project_input_from_package_graph(const package_graph::PackageGraph &graph,
+                                 std::vector<std::filesystem::path> entry_files) {
+    ProjectInput input;
+    input.entry_files = std::move(entry_files);
+    input.inject_prelude = false;
+    input.enforce_package_dependencies = true;
+    input.module_roots.reserve(graph.module_roots.size());
+    for (const auto &root : graph.module_roots) {
+        const auto *package = graph.find_package(root.package);
+        input.module_roots.push_back(ProjectInput::ModuleRoot{
+            .prefix = root.prefix,
+            .root = root.root,
+            .exported_modules =
+                package != nullptr ? package->exported_modules : std::vector<std::string>{},
+            .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
+            .compiler_intrinsics_allow =
+                package == nullptr
+                    ? std::nullopt
+                    : std::optional<std::vector<std::string>>{package->compiler_intrinsics_allow},
+        });
+    }
+    return input;
+}
+
+[[nodiscard]] inline ProjectInput
+project_input_from_package_graph(const package_graph::PackageGraph &graph,
+                                 const std::filesystem::path &entry_file) {
+    return project_input_from_package_graph(graph, std::vector<std::filesystem::path>{entry_file});
+}
+
+[[nodiscard]] inline PackageProjectInputResult project_input_from_workspace(
+    const std::filesystem::path &workspace_root,
+    std::string package_name,
+    const std::filesystem::path &entry_file,
+    const std::filesystem::path &repo_root) {
+    auto graph_result = package_graph::build_package_graph_from_workspace(
+        package_graph::WorkspaceBuildInput{
+            .workspace_manifest_path = workspace_root / "ahfl.workspace.toml",
+            .package_name = std::move(package_name),
+            .sysroot_manifest_path = repo_root / "std" / "ahfl.toml",
+        });
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        return PackageProjectInputResult{.diagnostics = std::move(graph_result.diagnostics)};
+    }
+    return PackageProjectInputResult{
+        .input = project_input_from_package_graph(*graph_result.graph, entry_file),
+    };
+}
+
+[[nodiscard]] inline PackageProjectInputResult project_input_from_manifest(
+    const std::filesystem::path &manifest_path,
+    const std::filesystem::path &entry_file,
+    const std::filesystem::path &repo_root) {
+    auto graph_result = package_graph::build_package_graph_from_manifests(
+        package_graph::ManifestBuildInput{
+            .root_manifest_path = manifest_path,
+            .sysroot_manifest_path = repo_root / "std" / "ahfl.toml",
+        });
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        return PackageProjectInputResult{.diagnostics = std::move(graph_result.diagnostics)};
+    }
+    return PackageProjectInputResult{
+        .input = project_input_from_package_graph(*graph_result.graph, entry_file),
+    };
 }
 
 [[nodiscard]] inline ProjectInput project_input_with_repo_std(const std::filesystem::path &entry,

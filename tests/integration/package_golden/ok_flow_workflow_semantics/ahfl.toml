@@ -1,0 +1,25 @@
+manifest_version = 1
+
+[package]
+name = "flow-workflow-semantics"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "formal"
+root = "formal"
+
+[exports]
+modules = ["flow_workflow"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "formal::flow_workflow::ReviewWorkflow"
+exports = [
+  { kind = "workflow", name = "formal::flow_workflow::ReviewWorkflow" },
+  { kind = "agent", name = "formal::flow_workflow::ReviewAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

@@ -34,6 +34,7 @@ namespace ahfl::ast {
 //   └── Decl (abstract) — base of all declarations
 //       ├── ModuleDecl      — module declaration
 //       ├── ImportDecl      — import declaration
+//       ├── UseDecl         — source-local / public symbol alias declaration
 //       ├── ConstDecl       — constant declaration
 //       ├── TypeAliasDecl   — type alias
 //       ├── StructDecl      — struct definition
@@ -56,6 +57,7 @@ enum class NodeKind {
     Program,
     ModuleDecl,
     ImportDecl,
+    UseDecl,
     ConstDecl,
     TypeAliasDecl,
     StructDecl,
@@ -72,6 +74,13 @@ enum class NodeKind {
 };
 
 [[nodiscard]] std::string_view to_string(NodeKind kind) noexcept;
+
+enum class Visibility {
+    PackageInternal,
+    Public,
+};
+
+[[nodiscard]] std::string_view to_string(Visibility visibility) noexcept;
 
 /// Contract clause kinds
 /// - Requires: precondition (must hold before a call)
@@ -1222,6 +1231,8 @@ struct Node {
 
 /// Declaration base class (common base for all top-level declarations)
 struct Decl : Node {
+    Visibility visibility{Visibility::PackageInternal};
+
     Decl(NodeKind kind, ahfl::SourceRange range = {});
     ~Decl() override = default;
 
@@ -1264,6 +1275,20 @@ struct ImportDecl final : Decl {
     std::string alias;         // optional alias
 
     ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
+    void accept(Visitor &visitor) override;
+    [[nodiscard]] std::string headline() const override;
+};
+
+/// Use declaration: use module::Symbol [as Alias]; / pub use module::Symbol [as Alias];
+///
+/// The parser stores the full user-written target path. Semantic analysis
+/// splits it into module prefix + top-level symbol name and decides the
+/// namespace of the alias target.
+struct UseDecl final : Decl {
+    Owned<QualifiedName> path;
+    std::string alias;
+
+    UseDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -1575,11 +1600,13 @@ enum class ImplItemKind {
 struct ImplItemSyntax {
     ahfl::SourceRange range;
     ImplItemKind kind{ImplItemKind::Fn};
+    Visibility visibility{Visibility::PackageInternal};
 
     FnDecl* fn_def{nullptr};
 
     struct AssocTypeDef {
         ahfl::SourceRange range;
+        Visibility visibility{Visibility::PackageInternal};
         std::string name;
         Owned<TypeSyntax> type;
     };
@@ -1587,6 +1614,7 @@ struct ImplItemSyntax {
 
     struct AssocConstDef {
         ahfl::SourceRange range;
+        Visibility visibility{Visibility::PackageInternal};
         std::string name;
         Owned<TypeSyntax> type;
         Owned<ExprSyntax> value;
@@ -1641,6 +1669,7 @@ class Visitor {
     virtual void visit(Program &node) = 0;
     virtual void visit(ModuleDecl &node) = 0;
     virtual void visit(ImportDecl &node) = 0;
+    virtual void visit(UseDecl &node) = 0;
     virtual void visit(ConstDecl &node) = 0;
     virtual void visit(TypeAliasDecl &node) = 0;
     virtual void visit(StructDecl &node) = 0;
@@ -1663,6 +1692,7 @@ class RecursiveVisitor : public Visitor {
     void visit(Program &node) override;
     void visit(ModuleDecl &node) override;
     void visit(ImportDecl &node) override;
+    void visit(UseDecl &node) override;
     void visit(ConstDecl &node) override;
     void visit(TypeAliasDecl &node) override;
     void visit(StructDecl &node) override;

@@ -2,6 +2,9 @@ set(AHFL_STDLIB_UNITS_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_units/ahfl.
 set(AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST
     "${AHFL_TESTS_DIR}/integration/package_golden/container_variance_failures/ahfl.toml"
 )
+set(AHFL_IMPORT_ALIAS_MANIFEST
+    "${AHFL_TESTS_DIR}/integration/package_golden/import_alias/ahfl.toml"
+)
 set(AHFL_REFUND_AUDIT_EXAMPLE_SOURCE "${AHFL_EXAMPLES_DIR}/refund/audit.ahfl")
 
 ahfl_add_check_test(
@@ -189,11 +192,12 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/ir/refund_audit.ir"
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_ir.alias_const
     "emit ir"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
+    "ok_alias_const"
     "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ir"
+    PACKAGE_ONLY
 )
 
 ahfl_add_output_test(
@@ -203,25 +207,28 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ir"
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_ir.flow_workflow_semantics
     "emit ir"
-    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "ok_flow_workflow_semantics"
     "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.ir"
+    PACKAGE_ONLY
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_ir.workflow_value_flow
     "emit ir"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "ok_workflow_value_flow"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ir"
+    PACKAGE_ONLY
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_summary.workflow_value_flow
     "emit summary"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "ok_workflow_value_flow"
     "${AHFL_TESTS_DIR}/golden/summary/ok_workflow_value_flow.summary"
+    PACKAGE_ONLY
 )
 
 ahfl_add_output_test(
@@ -418,11 +425,12 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.opt-ir.optimized.json"
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_smv.alias_const
     "emit smv"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
+    "ok_alias_const"
     "${AHFL_TESTS_DIR}/golden/formal/ok_alias_const.smv"
+    PACKAGE_ONLY
 )
 
 ahfl_add_output_test(
@@ -432,18 +440,20 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/formal/ok_expr_temporal.smv"
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_smv.flow_workflow_semantics
     "emit smv"
-    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "ok_flow_workflow_semantics"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.smv"
+    PACKAGE_ONLY
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_smv.bounded_data_semantics
     "emit smv"
-    "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+    "ok_bounded_data_semantics"
     "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.smv"
+    PACKAGE_ONLY
 )
 
 ahfl_add_check_test(
@@ -601,25 +611,28 @@ if(AHFL_SMV_CHECKER)
     )
 endif()
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics
     "emit ir-json"
-    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "ok_flow_workflow_semantics"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.json"
+    PACKAGE_ONLY
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_ir_json.workflow_value_flow
     "emit ir-json"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "ok_workflow_value_flow"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.json"
+    PACKAGE_ONLY
 )
 
-ahfl_add_output_test(
+ahfl_add_package_output_test(
     ahflc.emit_native_json.workflow_value_flow
     "emit native-json"
-    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
-    "${AHFL_TESTS_DIR}/golden/native/ok_workflow_value_flow.native.json"
+    "ok_workflow_value_flow"
+    "${AHFL_TESTS_DIR}/golden/native/ok_workflow_value_flow.with_package.native.json"
+    PACKAGE_ONLY
 )
 
 # Auto-discover and register all with_package golden tests.
@@ -634,9 +647,10 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/golden/native/ok_expr_temporal.native.json"
 )
 
-ahfl_add_check_test(
+ahfl_add_manifest_check_test(
     ahflc.check.import_alias
-    "${AHFL_TESTS_DIR}/golden/resolver/ok_import_alias_self.ahfl"
+    "${AHFL_IMPORT_ALIAS_MANIFEST}"
+    ok
 )
 
 add_test(NAME ahflc.dump_types.alias_schema
@@ -665,9 +679,10 @@ ahfl_add_check_fail_test(
     "type alias cycle detected"
 )
 
-ahfl_add_check_fail_test(
+ahfl_add_manifest_check_fail_test(
     ahflc.fail.duplicate_import_alias
-    "${AHFL_TESTS_DIR}/golden/resolver/duplicate_import_alias.ahfl"
+    "${AHFL_IMPORT_ALIAS_MANIFEST}"
+    duplicate
     "duplicate import alias"
 )
 

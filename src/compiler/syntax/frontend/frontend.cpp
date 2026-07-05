@@ -494,8 +494,48 @@ class ProgramBuilder {
                 : std::string{});
     }
 
+    [[nodiscard]] Owned<ast::Decl> build_use_decl(AHFLParser::UseDeclContext &context) const {
+        auto declaration = make_decl<ast::UseDecl>(
+            source_,
+            context,
+            build_qualified_name(require(context.qualifiedIdent(), "use path is missing")),
+            context.identifier() != nullptr
+                ? identifier_text(*context.identifier())
+                : std::string{});
+        if (context.visibilityModifier() != nullptr) {
+            declaration->visibility = ast::Visibility::Public;
+        }
+        return declaration;
+    }
+
+    template <typename DeclT>
+    [[nodiscard]] Owned<DeclT> with_visibility(Owned<DeclT> declaration, bool is_public) const {
+        if (is_public) {
+            declaration->visibility = ast::Visibility::Public;
+        }
+        return declaration;
+    }
+
+    [[nodiscard]] bool has_visibility_modifier(AHFLParser::TopLevelDeclContext &context) const {
+        return context.visibilityModifier() != nullptr;
+    }
+
+    [[nodiscard]] bool has_visibility_modifier(AHFLParser::FnDeclContext &context) const {
+        return context.visibilityModifier() != nullptr;
+    }
+
+    [[nodiscard]] bool has_visibility_modifier(AHFLParser::TraitDeclContext &context) const {
+        return context.visibilityModifier() != nullptr;
+    }
+
+    [[nodiscard]] bool has_visibility_modifier(AHFLParser::ImplItemContext &context) const {
+        return context.visibilityModifier() != nullptr;
+    }
+
     [[nodiscard]] Owned<ast::Decl>
     build_top_level_decl(AHFLParser::TopLevelDeclContext &context) const {
+        const bool is_public = has_visibility_modifier(context);
+
         if (const auto const_decl = borrow(context.constDecl())) {
             auto declaration = make_decl<ast::ConstDecl>(
                 source_,
@@ -505,7 +545,7 @@ class ProgramBuilder {
                 build_type_syntax(require(const_decl->get().type_(), "const type is missing"));
             declaration->value =
                 build_expr_syntax(require(const_decl->get().constExpr(), "const value is missing"));
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto type_alias_decl = borrow(context.typeAliasDecl())) {
@@ -519,7 +559,7 @@ class ProgramBuilder {
             }
             declaration->aliased_type = build_type_syntax(
                 require(type_alias_decl->get().type_(), "type alias target is missing"));
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto struct_decl = borrow(context.structDecl())) {
@@ -535,7 +575,7 @@ class ProgramBuilder {
                 declaration->fields.push_back(
                     build_struct_field_decl(require(field_context, "struct field is missing")));
             }
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto enum_decl = borrow(context.enumDecl())) {
@@ -550,7 +590,7 @@ class ProgramBuilder {
                 declaration->variants.push_back(
                     build_enum_variant_decl(require(variant_context, "enum variant is missing")));
             }
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto capability_decl = borrow(context.capabilityDecl())) {
@@ -564,7 +604,7 @@ class ProgramBuilder {
             if (const auto effect = borrow(capability_decl->get().capabilityEffectBlock())) {
                 declaration->effect = build_capability_effect(effect->get());
             }
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto predicate_decl = borrow(context.predicateDecl())) {
@@ -573,7 +613,7 @@ class ProgramBuilder {
                 predicate_decl->get(),
                 text_of(require(predicate_decl->get().IDENT(), "predicate name is missing")));
             declaration->params = build_param_list(borrow(predicate_decl->get().paramList()));
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto agent_decl = borrow(context.agentDecl())) {
@@ -635,7 +675,7 @@ class ProgramBuilder {
                 declaration->transitions.push_back(
                     build_transition_decl(require(transition_context, "transition is missing")));
             }
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto contract_decl = borrow(context.contractDecl())) {
@@ -707,19 +747,33 @@ class ProgramBuilder {
                 require(workflow_decl->get().workflowReturnDecl(), "workflow return is missing")
                     .expr(),
                 "workflow return expression is missing"));
-            return declaration;
+            return with_visibility(std::move(declaration), is_public);
         }
 
         if (const auto fn_decl = borrow(context.fnDecl())) {
-            return build_fn_decl(fn_decl->get());
+            auto declaration = build_fn_decl(fn_decl->get());
+            declaration->visibility =
+                (is_public || has_visibility_modifier(fn_decl->get()))
+                    ? ast::Visibility::Public
+                    : declaration->visibility;
+            return declaration;
         }
 
         if (const auto trait_decl = borrow(context.traitDecl())) {
-            return build_trait_decl(trait_decl->get());
+            auto declaration = build_trait_decl(trait_decl->get());
+            declaration->visibility =
+                (is_public || has_visibility_modifier(trait_decl->get()))
+                    ? ast::Visibility::Public
+                    : declaration->visibility;
+            return declaration;
         }
 
         if (const auto impl_decl = borrow(context.implDecl())) {
             return build_impl_decl(impl_decl->get());
+        }
+
+        if (const auto use_decl = borrow(context.useDecl())) {
+            return build_use_decl(use_decl->get());
         }
 
         throw std::logic_error(
@@ -932,17 +986,27 @@ class ProgramBuilder {
         for (auto *impl_item_context_raw : context.implItem()) {
             auto &impl_item_context = require(
                 impl_item_context_raw, "impl item is missing");
+            const bool item_is_public = has_visibility_modifier(impl_item_context);
             auto item = make_owned<ast::ImplItemSyntax>();
             item->range = context_range(impl_item_context, source_);
+            if (item_is_public) {
+                item->visibility = ast::Visibility::Public;
+            }
 
             if (const auto fn_ctx = borrow(impl_item_context.implFnItem())) {
                 auto fn_def = build_impl_fn_item(fn_ctx->get());
+                if (item_is_public) {
+                    fn_def->visibility = ast::Visibility::Public;
+                }
                 item->kind = ast::ImplItemKind::Fn;
                 item->fn_def = fn_def.get();
                 declaration->methods.push_back(std::move(fn_def));
             } else if (const auto atd_ctx = borrow(impl_item_context.assocTypeDef())) {
                 auto assoc_type = make_owned<ast::ImplItemSyntax::AssocTypeDef>();
                 assoc_type->range = context_range(atd_ctx->get(), source_);
+                if (item_is_public) {
+                    assoc_type->visibility = ast::Visibility::Public;
+                }
                 assoc_type->name = identifier_text(require(
                     atd_ctx->get().identifier(), "impl assoc type name is missing"));
                 assoc_type->type = build_type_syntax(require(
@@ -953,6 +1017,9 @@ class ProgramBuilder {
             } else if (const auto acd_ctx = borrow(impl_item_context.assocConstDef())) {
                 auto assoc_const = make_owned<ast::ImplItemSyntax::AssocConstDef>();
                 assoc_const->range = context_range(acd_ctx->get(), source_);
+                if (item_is_public) {
+                    assoc_const->visibility = ast::Visibility::Public;
+                }
                 assoc_const->name = identifier_text(require(
                     acd_ctx->get().identifier(), "impl assoc const name is missing"));
                 assoc_const->type = build_type_syntax(require(

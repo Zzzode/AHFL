@@ -36,8 +36,8 @@ void add_error(std::vector<package_graph::Diagnostic> &diagnostics,
     add_error_with_code(diagnostics, kProjectDiscovery, std::move(message), range);
 }
 
-[[nodiscard]] package_graph::Diagnostic::Related
-related_path(std::filesystem::path path, std::string message) {
+[[nodiscard]] package_graph::Diagnostic::Related related_path(std::filesystem::path path,
+                                                              std::string message) {
     return package_graph::Diagnostic::Related{
         .path = normalize_project_path(std::move(path)),
         .message = std::move(message),
@@ -200,7 +200,11 @@ select_toolchain_profile_impl(const ToolchainProfileSet &toolchains,
         profile.scope = ToolchainProfileScope::GlobalDefault;
         return ToolchainProfileSelection{.profile = std::move(profile)};
     }
-    if (auto profile = default_toolchain_profile_from_compile_default(); profile.has_value()) {
+    if (toolchains.allow_compile_default) {
+        auto profile = default_toolchain_profile_from_compile_default();
+        if (!profile.has_value()) {
+            return std::nullopt;
+        }
         profile->scope = ToolchainProfileScope::GlobalDefault;
         return ToolchainProfileSelection{.profile = std::move(*profile)};
     }
@@ -363,6 +367,7 @@ void reject_cross_profile_package_graph(ProjectDiscoveryResult &discovery,
                              "active sysroot selected for the current document"),
             });
         discovery.context.reset();
+        discovery.analysis_context.reset();
         return;
     }
 }
@@ -388,6 +393,7 @@ build_sysroot_context(const std::filesystem::path &sysroot_manifest_path) {
         .package_manifest_path = manifest,
         .sysroot_manifest_path = manifest,
     };
+    discovery.analysis_context = AnalysisContext::from_project(discovery.context->kind);
     return discovery;
 }
 
@@ -414,6 +420,7 @@ build_manifest_context(const std::filesystem::path &package_manifest_path,
         .package_manifest_path = normalize_project_path(package_manifest_path),
         .sysroot_manifest_path = normalize_project_path(sysroot_manifest_path),
     };
+    discovery.analysis_context = AnalysisContext::from_project(discovery.context->kind);
     return discovery;
 }
 
@@ -444,6 +451,7 @@ build_workspace_context(const std::filesystem::path &workspace_manifest_path,
         .workspace_manifest_path = normalize_project_path(workspace_manifest_path),
         .sysroot_manifest_path = normalize_project_path(sysroot_manifest_path),
     };
+    discovery.analysis_context = AnalysisContext::from_project(discovery.context->kind);
     return discovery;
 }
 
@@ -536,6 +544,14 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
                   normalize_project_path(*input.explicit_manifest_path))
             : find_nearest_named_file_bounded(start, "ahfl.toml", boundary);
     if (!package_manifest_path.has_value()) {
+        discovery.analysis_context = AnalysisContext::from_detached(DetachedSourceUnit{
+            .source_path = document_path,
+            .workspace_folder = boundary,
+            .toolchain_profile =
+                select_toolchain_profile_for_document(input.toolchains, document_path),
+            .reason = boundary.has_value() ? DetachedSourceUnitReason::NoManifestInWorkspace
+                                           : DetachedSourceUnitReason::NoWorkspaceFolder,
+        });
         return discovery;
     }
     discovery.project_manifest_found = true;
@@ -567,11 +583,10 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
                 "'",
             {},
             {
-                related_path(active_selection->profile.std_manifest,
-                             "active std manifest from profile origin '" +
-                                 std::string{
-                                     toolchain_origin_name(active_selection->profile.origin)} +
-                                 "'"),
+                related_path(
+                    active_selection->profile.std_manifest,
+                    "active std manifest from profile origin '" +
+                        std::string{toolchain_origin_name(active_selection->profile.origin)} + "'"),
             });
         return discovery;
     }
@@ -589,27 +604,25 @@ ProjectDiscoveryResult discover_project_context(const ProjectDiscoveryInput &inp
         return discovery;
     }
     if (declares_std_identity(*package_manifest)) {
-        add_error_with_code(discovery.diagnostics,
-                            kToolchainSysrootMismatch,
-                            "this standard-library package is not the active AHFL sysroot; "
-                            "active sysroot is '" +
-                                normalized_sysroot_manifest.generic_string() +
-                                "', opened package is '" +
-                                normalized_package_manifest.generic_string() +
-                                "'; help: configure ahfl.toolchain.sysroot to '" +
-                                normalized_package_manifest.parent_path().parent_path()
-                                    .generic_string() +
-                                "' when developing corelib",
-                            {},
-                            {
-                                related_path(normalized_package_manifest,
-                                             "opened standard-library package manifest"),
-                                related_path(normalized_sysroot_manifest,
-                                             "active std manifest from profile origin '" +
-                                                 std::string{toolchain_origin_name(
-                                                     active_selection->profile.origin)} +
-                                                 "'"),
-                            });
+        add_error_with_code(
+            discovery.diagnostics,
+            kToolchainSysrootMismatch,
+            "this standard-library package is not the active AHFL sysroot; "
+            "active sysroot is '" +
+                normalized_sysroot_manifest.generic_string() + "', opened package is '" +
+                normalized_package_manifest.generic_string() +
+                "'; help: configure ahfl.toolchain.sysroot to '" +
+                normalized_package_manifest.parent_path().parent_path().generic_string() +
+                "' when developing corelib",
+            {},
+            {
+                related_path(normalized_package_manifest,
+                             "opened standard-library package manifest"),
+                related_path(
+                    normalized_sysroot_manifest,
+                    "active std manifest from profile origin '" +
+                        std::string{toolchain_origin_name(active_selection->profile.origin)} + "'"),
+            });
         return discovery;
     }
 

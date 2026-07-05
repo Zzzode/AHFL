@@ -31,6 +31,14 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitVisibilityModifier(AHFLParser::VisibilityModifierContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUseDecl(AHFLParser::UseDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitIdentifier(AHFLParser::IdentifierContext *ctx) override {
     return visitChildren(ctx);
   }

@@ -63,6 +63,12 @@ add_test(NAME ahfl.frontend.project.package_dependency_gates_imports
             "${CMAKE_BINARY_DIR}/package_dependency_gates_imports"
 )
 
+add_test(NAME ahfl.frontend.project.std_package_dependency_gates_imports
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            std-package-dependency-gates-imports
+            "${CMAKE_BINARY_DIR}/std_package_dependency_gates_imports"
+)
+
 add_test(NAME ahfl.frontend.project.std_import_requires_explicit_module_root
     COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}"
             $<TARGET_FILE:ahfl_project_parse_tests>
@@ -143,6 +149,27 @@ add_test(NAME ahfl.check.project.ok_trait_runtime_dispatch
             ok-trait-runtime-dispatch
             "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke/app/main.ahfl"
             "${AHFL_TESTS_DIR}/integration/trait_runtime_smoke"
+)
+
+add_test(NAME ahfl.check.project.primitive_shadowing_forbidden
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            primitive-shadowing-forbidden
+            "${CMAKE_BINARY_DIR}/primitive_shadowing_forbidden"
+            "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahfl.check.project.primitive_facade_method_visibility
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            primitive-facade-method-visibility
+            "${CMAKE_BINARY_DIR}/primitive_facade_method_visibility"
+            "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahfl.check.project.inherent_method_visibility
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            inherent-method-visibility
+            "${CMAKE_BINARY_DIR}/inherent_method_visibility"
+            "${PROJECT_SOURCE_DIR}"
 )
 
 add_test(NAME ahfl.ir.identity_visitor
@@ -2319,14 +2346,24 @@ add_test(NAME ahflc.check.search_root_removed
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.check.single_file_std_import_requires_manifest_sysroot
+add_test(NAME ahflc.check.detached_import_rejected
     COMMAND ${CMAKE_COMMAND} -E chdir "${PROJECT_SOURCE_DIR}/.."
             ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/single_file_std_import/main.ahfl"
-            "-DAHFLC_ARGS=check\;${AHFL_TESTS_DIR}/integration/single_file_std_import/main.ahfl"
-            "-DEXPECTED_REGEX=failed to resolve imported module 'std::option'"
+            "-DAHFLC_ARGS=check\;--sysroot\;${PROJECT_SOURCE_DIR}\;${AHFL_TESTS_DIR}/integration/single_file_std_import/main.ahfl"
+            "-DEXPECTED_REGEX=E::detached_import"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.detached_primitive_only
+    COMMAND $<TARGET_FILE:ahflc>
+            check
+            --sysroot "${PROJECT_SOURCE_DIR}"
+            "${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+)
+set_tests_properties(ahflc.check.detached_primitive_only PROPERTIES
+    PASS_REGULAR_EXPRESSION "N::detached_source_unit"
 )
 
 add_test(NAME ahflc.dump_project.removed
@@ -2666,7 +2703,7 @@ add_test(NAME ahflc.check.workspace_basic
             --sysroot "${PROJECT_SOURCE_DIR}"
 )
 set_tests_properties(ahflc.check.workspace_basic PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
 add_test(NAME ahflc.check.workspace_requires_target_for_multi_target_package
@@ -2725,7 +2762,7 @@ add_test(NAME ahflc.check.discover_workspace_basic
             --sysroot "${PROJECT_SOURCE_DIR}"
 )
 set_tests_properties(ahflc.check.discover_workspace_basic PROPERTIES
-    PASS_REGULAR_EXPRESSION "ok: checked 4 source\\(s\\)"
+    PASS_REGULAR_EXPRESSION "ok: checked 3 source\\(s\\)"
 )
 
 add_test(NAME ahflc.check.workspace_private_import_rejected

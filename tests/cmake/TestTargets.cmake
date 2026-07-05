@@ -3,6 +3,7 @@ add_executable(ahfl_project_parse_tests
 )
 target_link_libraries(ahfl_project_parse_tests
     PRIVATE
+        ahfl_compiler_package_graph
         ahfl_compiler_syntax
 )
 target_include_directories(ahfl_project_parse_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
@@ -14,6 +15,7 @@ add_executable(ahfl_project_resolve_tests
 )
 target_link_libraries(ahfl_project_resolve_tests
     PRIVATE
+        ahfl_compiler_package_graph
         ahfl_compiler_semantics
 )
 target_include_directories(ahfl_project_resolve_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
@@ -25,6 +27,7 @@ add_executable(ahfl_project_check_tests
 )
 target_link_libraries(ahfl_project_check_tests
     PRIVATE
+        ahfl_compiler_package_graph
         ahfl_compiler_ir
         ahfl_runtime_evaluator
 )

@@ -4,7 +4,6 @@
 #include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
-#include "compiler/semantics/std_container_types.hpp"
 
 #include <utility>
 
@@ -74,46 +73,6 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
 TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
                                          std::vector<TypePtr> args,
                                          SourceRange use_range) {
-    // Dispatch the built-in parameterised types that used to have dedicated
-    // syntax nodes (Option/List/Set/Map). Any other type with generic
-    // arguments is treated as an implicit AppType (the NamedType + type_args
-    // representation chosen by P5.5 unifies the syntactic forms).
-    if (name.segments.size() == 1 && !args.empty()) {
-        const auto &head = name.segments.front();
-        std::string_view canonical_name;
-        std::size_t expected_arity = 0;
-        if (head == "Option" || head == "Optional") {
-            canonical_name = stdlib_bridge::kOptionType;
-            expected_arity = 1;
-        } else if (head == "List") {
-            canonical_name = stdlib_bridge::kListType;
-            expected_arity = 1;
-        } else if (head == "Set") {
-            canonical_name = stdlib_bridge::kSetType;
-            expected_arity = 1;
-        } else if (head == "Map") {
-            canonical_name = stdlib_bridge::kMapType;
-            expected_arity = 2;
-        }
-        if (!canonical_name.empty()) {
-            if (args.size() == expected_arity) {
-                if (TypePtr nominal =
-                        resolve_std_container_type(canonical_name, args, use_range);
-                    nominal != nullptr) {
-                    return nominal;
-                }
-                diagnose_(
-                    error_codes::typecheck::InvalidTypeReference,
-                    messages::typecheck::StdContainerTypeUnavailable.format_with(canonical_name),
-                    use_range);
-                return make_error_type();
-            }
-            // Arity mismatch falls through to the generic application path
-            // below, which will diagnose the mismatch against the declaration
-            // (consistent with how AppType reports it).
-        }
-    }
-
     if (!args.empty()) {
         // P5.5: `name<T1, T2, ...>` with a single-segment name is the new
         // unified syntactic form for generic application. Any type that is
@@ -387,50 +346,6 @@ TypePtr TypeResolver::resolve_app_type(const ast::AppType &app, SourceRange app_
 
 TypePtr TypeResolver::make_error_type() const {
     return types_.error_type();
-}
-
-TypePtr TypeResolver::resolve_std_container_type(std::string_view canonical_name,
-                                                 std::vector<TypePtr> arguments,
-                                                 SourceRange use_range) {
-    const auto symbol =
-        resolve_result_.symbol_table.find_canonical(SymbolNamespace::Types, canonical_name);
-    if (!symbol.has_value()) {
-        return nullptr;
-    }
-
-    std::size_t expected_arity = arguments.size();
-    if (type_param_info_) {
-        if (const auto params = type_param_info_(symbol->get().id); params.has_value()) {
-            expected_arity = params->size();
-        }
-    }
-    if (arguments.size() != expected_arity) {
-        return nullptr;
-    }
-
-    switch (symbol->get().kind) {
-    case SymbolKind::Struct:
-        return types_.struct_type(
-            symbol->get().canonical_name, symbol->get().id, std::move(arguments));
-    case SymbolKind::Enum:
-        return types_.enum_type(
-            symbol->get().canonical_name, symbol->get().id, std::move(arguments));
-    case SymbolKind::TypeAlias: {
-        TypeSubstitutionMap subst{arguments.begin(), arguments.end()};
-        TypePtr aliased = resolve_type_alias(symbol->get().id, use_range);
-        return substitute_type(aliased, subst, types_);
-    }
-    case SymbolKind::Const:
-    case SymbolKind::Capability:
-    case SymbolKind::Predicate:
-    case SymbolKind::Agent:
-    case SymbolKind::Workflow:
-    case SymbolKind::Function:
-    case SymbolKind::Trait:
-        return nullptr;
-    }
-
-    return nullptr;
 }
 
 EffectJudgement

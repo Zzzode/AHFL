@@ -707,6 +707,11 @@ class AstInvariantValidator final {
             validate_qualified_name(node.path.get(), node.range, "ImportDecl.path");
             break;
         }
+        case NodeKind::UseDecl: {
+            const auto &node = static_cast<const UseDecl &>(declaration);
+            validate_qualified_name(node.path.get(), node.range, "UseDecl.path");
+            break;
+        }
         case NodeKind::ConstDecl: {
             const auto &node = static_cast<const ConstDecl &>(declaration);
             require(!node.name.empty(), node.range, "ConstDecl is missing name");
@@ -1269,6 +1274,8 @@ std::string_view to_string(NodeKind kind) noexcept {
         return "ModuleDecl";
     case NodeKind::ImportDecl:
         return "ImportDecl";
+    case NodeKind::UseDecl:
+        return "UseDecl";
     case NodeKind::ConstDecl:
         return "ConstDecl";
     case NodeKind::TypeAliasDecl:
@@ -1298,6 +1305,17 @@ std::string_view to_string(NodeKind kind) noexcept {
     }
 
     return "Unknown";
+}
+
+std::string_view to_string(Visibility visibility) noexcept {
+    switch (visibility) {
+    case Visibility::PackageInternal:
+        return "PackageInternal";
+    case Visibility::Public:
+        return "Public";
+    }
+
+    return "PackageInternal";
 }
 
 std::string_view to_string(ImplItemKind kind) noexcept {
@@ -1532,6 +1550,22 @@ std::string ImportDecl::headline() const {
     }
 
     return "import " + path->spelling() + " as " + alias;
+}
+
+UseDecl::UseDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range)
+    : Decl(NodeKind::UseDecl, range), path(std::move(path)), alias(std::move(alias)) {}
+
+void UseDecl::accept(Visitor &visitor) {
+    visitor.visit(*this);
+}
+
+std::string UseDecl::headline() const {
+    const std::string prefix = visibility == Visibility::Public ? "pub use " : "use ";
+    if (alias.empty()) {
+        return with_name(prefix, path->spelling());
+    }
+
+    return prefix + path->spelling() + " as " + alias;
 }
 
 ConstDecl::ConstDecl(std::string name, ahfl::SourceRange range)
@@ -1784,6 +1818,8 @@ void RecursiveVisitor::visit(Program &node) {
 void RecursiveVisitor::visit(ModuleDecl &) {}
 
 void RecursiveVisitor::visit(ImportDecl &) {}
+
+void RecursiveVisitor::visit(UseDecl &) {}
 
 void RecursiveVisitor::visit(ConstDecl &) {}
 

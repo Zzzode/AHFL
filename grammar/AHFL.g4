@@ -11,25 +11,51 @@ grammar AHFL;
 program: (moduleDecl | importDecl | topLevelDecl)* EOF;
 
 topLevelDecl:
-	constDecl
-	| typeAliasDecl
-	| structDecl
-	| enumDecl
-	| capabilityDecl
-	| predicateDecl
-	| agentDecl
+	visibilityModifier? constDecl
+	| visibilityModifier? typeAliasDecl
+	| visibilityModifier? structDecl
+	| visibilityModifier? enumDecl
+	| visibilityModifier? capabilityDecl
+	| visibilityModifier? predicateDecl
+	| visibilityModifier? agentDecl
 	| contractDecl
 	| flowDecl
-	| workflowDecl
-	| fnDecl
-	| traitDecl
-	| implDecl;
+	| visibilityModifier? workflowDecl
+	| visibilityModifier? fnDecl
+	| visibilityModifier? traitDecl
+	| implDecl
+	| useDecl;
 
 moduleDecl: 'module' qualifiedIdent ';';
 
 importDecl: 'import' qualifiedIdent ('as' identifier)? ';';
 
-identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self' | 'unwrap' | 'requires' | 'unreachable';
+visibilityModifier: 'pub';
+
+useDecl: visibilityModifier? 'use' qualifiedIdent ('as' identifier)? ';';
+
+identifier:
+	IDENT
+	| 'Optional'
+	| 'List'
+	| 'Set'
+	| 'Map'
+	| 'Fn'
+	| 'Unit'
+	| 'Bool'
+	| 'Int'
+	| 'Float'
+	| 'String'
+	| 'UUID'
+	| 'Timestamp'
+	| 'Duration'
+	| 'Decimal'
+	| 'map'
+	| 'set'
+	| 'self'
+	| 'unwrap'
+	| 'requires'
+	| 'unreachable';
 
 qualifiedIdent: identifier ('::' identifier)*;
 
@@ -260,7 +286,7 @@ builtinAttr: '@builtin' '(' STRING_LITERAL ')';
 // The grammar models syntax only: purity/effect enforcement and where-clause
 // evaluation are deferred to the typecheck pass (P2b).
 fnDecl:
-	DOC_COMMENT? builtinAttr? 'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	DOC_COMMENT? visibilityModifier? builtinAttr? 'fn' identifier typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 		whereClause? (fnBody | ';');
 
 typeParams: '<' typeParam (',' typeParam)* ','? '>';
@@ -331,7 +357,7 @@ lambdaParam: IDENT (':' type_)?;
 //   trait Name<T>: Super { fn method<U>(p: T) -> Ret [effect] [where ...]; type Assoc; }
 //   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type Assoc = T; }
 traitDecl:
-	DOC_COMMENT? 'trait' IDENT typeParams? (':' typeBoundList)? whereClause? '{' traitItem* '}';
+	DOC_COMMENT? visibilityModifier? 'trait' IDENT typeParams? (':' typeBoundList)? whereClause? '{' traitItem* '}';
 
 traitItem: traitFnItem | assocTypeItem | assocConstItem;
 
@@ -362,7 +388,7 @@ traitRef: type_;
 // fn + assoc-type + assoc-const into one `implItem` rule lets future item
 // kinds be added in a single place, and mirrors the `traitItem` pattern used
 // above.
-implItem: implFnItem | assocTypeDef | assocConstDef;
+implItem: visibilityModifier? implFnItem | visibilityModifier? assocTypeDef | visibilityModifier? assocConstDef;
 
 // Method definition inside an impl block: same surface as fnDecl. Body is
 // mandatory for normal methods; @builtin facade methods may use the ";"
