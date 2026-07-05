@@ -170,15 +170,26 @@ TypeAliasDecl   ::= "type" Ident "=" Type ";" ;
 StructDecl      ::= "struct" Ident "{" { StructFieldDecl } "}" ;
 StructFieldDecl ::= Ident ":" Type [ "=" ConstExpr ] ";" ;
 
-EnumDecl        ::= "enum" Ident "{" EnumVariant { "," EnumVariant } [ "," ] "}" ;
-EnumVariant     ::= Ident ;
+EnumDecl        ::= "enum" Ident [ TypeParams ] "{" EnumVariant { "," EnumVariant } [ "," ] "}" ;
+EnumVariant     ::= Ident
+                  | Ident "(" Type { "," Type } [ "," ] ")"
+                  | Ident "{" EnumVariantField { "," EnumVariantField } [ "," ] "}" ;
+EnumVariantField ::= Ident ":" Type [ "=" ConstExpr ] ;
 ```
 
 约束：
 
 1. `struct` 字段名在同一结构体内唯一
 2. `enum` 变体名在同一枚举内唯一
-3. 若某个 `struct` 被用作 agent `context` 类型，则其所有字段必须提供默认值
+3. enum variant payload shape 是语义身份的一部分：
+   - `Name` 是 unit variant
+   - `Name(T1, T2, ...)` 是 tuple variant
+   - `Name { f1: T1, f2: T2, ... }` 是 struct variant
+4. struct variant 字段名在同一 variant 内唯一；字段默认值必须是 const 表达式，且类型可赋给字段声明类型
+5. 同一 module 内，variant 名不得与 `struct`、`enum` 或 `type alias` 的类型名冲突
+6. pattern 与构造语法必须匹配 variant payload shape；tuple/struct/unit 之间不得互换使用
+7. struct variant pattern 若未写 `..`，必须覆盖全部字段；构造表达式可省略有默认值的字段
+8. 若某个 `struct` 被用作 agent `context` 类型，则其所有字段必须提供默认值
 
 ### 3.4 capability 与 predicate 声明
 
@@ -412,6 +423,7 @@ PrimaryExpr         ::= Literal
                       | ListLiteral
                       | SetLiteral
                       | MapLiteral
+                      | MatchExpr
                       | "some" "(" Expr ")"
                       | "none"
                       | "(" Expr ")" ;
@@ -441,8 +453,38 @@ StructLiteral       ::= QualifiedIdent "{"
 StructInitList      ::= StructInit { "," StructInit } [ "," ] ;
 StructInit          ::= Ident ":" Expr ;
 
+MatchExpr           ::= "match" Expr "{" { MatchArm } "}" ;
+MatchArm            ::= Pattern [ "if" Expr ] "=>" Expr [ "," ] ;
+
+Pattern             ::= OrPattern ;
+OrPattern           ::= PrimaryPattern { "|" PrimaryPattern } ;
+PrimaryPattern      ::= "_"
+                      | Literal
+                      | VariantPattern
+                      | BindingPattern
+                      | TuplePattern ;
+VariantPattern      ::= QualifiedIdent
+                      | QualifiedIdent "(" PatternList ")"
+                      | QualifiedIdent "{" [ PatternFieldList ] "}"
+                      | Ident "(" PatternList ")"
+                      | Ident "{" [ PatternFieldList ] "}" ;
+PatternList         ::= Pattern { "," Pattern } [ "," ] ;
+PatternFieldList    ::= PatternField { "," PatternField } [ "," ] ;
+PatternField        ::= Ident ":" Pattern | Ident | ".." ;
+BindingPattern      ::= [ "mut" ] Ident [ "@" Pattern ] ;
+TuplePattern        ::= "(" [ PatternList ] ")" ;
+
 ConstExpr           ::= Expr ;
 ```
+
+语义约束：
+
+1. `Enum::TupleVariant(a, b)` 使用 tuple constructor；实参数量与类型必须匹配 variant payload。
+2. `Enum::StructVariant { field: value }` 使用 struct variant constructor；字段名必须存在，必填字段不得缺失，重复字段禁止。
+3. `Enum::UnitVariant` 是 unit variant value；对非 unit variant 省略 payload 是错误。
+4. match scrutinee 必须是 enum；没有 `_` 或 binding pattern 时，match 必须覆盖所有 variant。
+5. variant pattern 的 payload shape 必须与声明一致；`Some(x)`、`Data { code }` 与 `Empty` 不能互换。
+6. struct variant pattern 支持字段 shorthand、`field: pattern` 与 `..`；未使用 `..` 时必须覆盖全部字段。
 
 ### 3.11 时序表达式
 

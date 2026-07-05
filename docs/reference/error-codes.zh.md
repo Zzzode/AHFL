@@ -6,17 +6,17 @@
 | Status | 草稿 · 可审查 |
 | SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::typecheck` + `messages::typecheck` 命名空间） |
 | Created | 2026-06-28 |
-| Updated | 2026-07-05 |
+| Updated | 2026-07-06 |
 | Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
 
 ## 分组分布
 
 ```mermaid
-pie title Stable Error-Code 分组分布（76 total entries / 75 unique codes）
-    "Type System" : 25
+pie title Stable Error-Code 分组分布
+    "Type System" : 27
     "Callable & Arity" : 9
     "Effects & Contracts + Trait/Impl" : 28
-    "Struct/Enum Literals" : 9
+    "Struct/Enum Literals" : 14
     "Agent/Flow/Pipeline" : 2
     "Backend SMV/BMC" : 1
     "Linting & Migration" : 2
@@ -642,6 +642,59 @@ enum E { A, B, A }
 - 若 enum 来自 import，避免与本地定义重名或使用别名。
 
 **Related codes**：`UNKNOWN_ENUM_VARIANT`、`MATCH_UNKNOWN_VARIANT`、`DUPLICATE_FIELD`。
+
+---
+
+### DUPLICATE_VARIANT_FIELD
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.DUPLICATE_VARIANT_FIELD` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `duplicate field '{}' in enum variant '{}'` |
+
+**触发条件**：struct-form enum variant 声明中，同一字段名出现多次。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Packet {
+    Data { code: Int, code: String },
+}
+```
+
+**常见修复**：
+- 删除重复字段，或把两个字段改成语义清晰的不同名字。
+- 若需要两个同类型位置值，使用 tuple variant `Data(Int, String)`；若需要命名字段，字段名必须唯一。
+
+**Related codes**：`DUPLICATE_VARIANT`、`INVALID_ENUM_VARIANT_SHAPE`、`TYPE_MISMATCH`。
+
+---
+
+### VARIANT_NAME_SHADOWS_TYPE
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `resolve.VARIANT_NAME_SHADOWS_TYPE` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `enum variant '{}' in enum '{}' conflicts with type '{}' in the same module` |
+
+**触发条件**：同一 module 内，enum variant 名与 `struct` / `enum` / `type alias` 的类型名冲突。
+
+**最小复现**：
+```ahfl
+module repro;
+struct Data { code: Int; }
+enum Packet {
+    Data { code: Int },
+}
+```
+
+**常见修复**：
+- 重命名 variant，例如 `DataPacket` / `WithData`。
+- 或重命名同 module 的类型，保持类型命名空间和 variant pattern 命名空间不会在用户阅读与 LSP 跳转中混淆。
+
+**Related codes**：`DUPLICATE_SYMBOL`、`DUPLICATE_VARIANT`、`UNKNOWN_ENUM_VARIANT`。
 
 ---
 
@@ -2003,6 +2056,124 @@ fn f(t: T) -> Int effect Pure decreases 0 {
 - 若要忽略整个 payload，写 `T.A(...)`（若支持）或匹配同名 variant 不展开。
 
 **Related codes**：`MATCH_UNKNOWN_VARIANT`、`MATCH_ARM_TYPE_MISMATCH`、`MATCH_DUPLICATE_BINDING`。
+
+---
+
+### INVALID_ENUM_VARIANT_SHAPE
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.INVALID_ENUM_VARIANT_SHAPE` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax` / `... constructor uses ... syntax` |
+
+**触发条件**：variant 声明为 unit / tuple / struct 中的一种，但 pattern 或构造表达式使用了另一种 payload shape。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Packet {
+    Empty,
+    Data { code: Int },
+}
+fn f(p: Packet) -> Int effect Pure decreases 0 {
+    return match p {
+        Data(code) => code,
+        Empty => 0,
+    };
+}
+```
+
+**常见修复**：
+- tuple variant 使用 `V(x, y)`；struct variant 使用 `V { field }` 或 `Enum::V { field: value }`。
+- unit variant 不带 payload；不要写 `Empty()` 或 `Empty {}`。
+
+**Related codes**：`MATCH_VARIANT_PAYLOAD_ARITY`、`MISSING_VARIANT_FIELD`、`UNEXPECTED_VARIANT_FIELD`。
+
+---
+
+### MISSING_VARIANT_FIELD
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MISSING_VARIANT_FIELD` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `struct variant pattern for '{}' is missing field '{}'` |
+
+**触发条件**：struct variant pattern 没有使用 `..`，但未列出某个声明字段。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Packet {
+    Data { code: Int, label: String },
+}
+fn f(p: Packet) -> Int effect Pure decreases 0 {
+    return match p {
+        Data { code } => code,
+    };
+}
+```
+
+**常见修复**：
+- 补齐缺失字段，例如 `Data { code, label }`。
+- 若有意忽略剩余字段，使用 `Data { code, .. }`。
+
+**Related codes**：`UNEXPECTED_VARIANT_FIELD`、`INVALID_ENUM_VARIANT_SHAPE`、`MATCH_NOT_EXHAUSTIVE`。
+
+---
+
+### UNEXPECTED_VARIANT_FIELD
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.UNEXPECTED_VARIANT_FIELD` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `struct variant '{}' has no field '{}'` |
+
+**触发条件**：struct variant pattern 或 struct-form variant constructor 使用了未声明字段。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Packet {
+    Data { code: Int },
+}
+const p: Packet = Packet::Data { code: 1, extra: 2 };
+```
+
+**常见修复**：
+- 删除多余字段，或在 variant 声明中正式添加该字段。
+- 检查字段拼写和大小写。
+
+**Related codes**：`MISSING_VARIANT_FIELD`、`DUPLICATE_VARIANT_FIELD`、`UNKNOWN_FIELD`。
+
+---
+
+### MISSING_VARIANT_FIELD_IN_CONSTRUCTOR
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MISSING_VARIANT_FIELD_IN_CONSTRUCTOR` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `struct variant constructor '{}' is missing required field '{}'` |
+
+**触发条件**：构造 struct-form enum variant 时，没有提供某个无默认值的必填字段。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Packet {
+    Data { code: Int, label: String },
+}
+const p: Packet = Packet::Data { code: 1 };
+```
+
+**常见修复**：
+- 在 constructor 中补齐必填字段。
+- 或在 variant 字段声明上提供 const 默认值，使该字段可省略。
+
+**Related codes**：`UNEXPECTED_VARIANT_FIELD`、`INVALID_ENUM_VARIANT_SHAPE`、`TYPE_MISMATCH`。
 
 ---
 
