@@ -368,7 +368,7 @@ void test_struct_literal() {
     fields.push_back(StructFieldInit{"name", make_expr_ptr(StringLiteralExpr{"Alice"})});
     fields.push_back(StructFieldInit{"age", make_expr_ptr(IntegerLiteralExpr{"30"})});
 
-    auto expr = make_expr(StructLiteralExpr{"Person", std::move(fields)});
+    auto expr = make_expr(StructLiteralExpr{.type_name = "Person", .fields = std::move(fields)});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "struct_literal.no_error");
     auto *sv = std::get_if<StructValue>(&result.value.node);
@@ -720,6 +720,7 @@ void test_match_expr_result_payload_binding() {
 
     VariantPattern ok_variant;
     ok_variant.path = "Ok";
+    ok_variant.kind = VariantPatternKind::Tuple;
     ok_variant.subpatterns.push_back(make_owned<MatchPattern>(MatchPattern{
         .node = BindingPattern{.name = "value"},
         .source_range = std::nullopt,
@@ -740,6 +741,7 @@ void test_match_expr_result_payload_binding() {
 
     VariantPattern err_variant;
     err_variant.path = "Err";
+    err_variant.kind = VariantPatternKind::Tuple;
     err_variant.subpatterns.push_back(make_owned<MatchPattern>(MatchPattern{
         .node = WildcardPattern{},
         .source_range = std::nullopt,

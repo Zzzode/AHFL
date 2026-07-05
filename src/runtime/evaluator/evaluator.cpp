@@ -250,7 +250,25 @@ using PatternBindings = std::unordered_map<std::string, Value>;
     if (enum_value == nullptr || enum_value->variant != variant_name) {
         return false;
     }
-    if (pattern.subpatterns.empty()) {
+    if (pattern.kind == ir::VariantPatternKind::Unit) {
+        return true;
+    }
+    if (pattern.kind == ir::VariantPatternKind::Struct) {
+        if (enum_value->named_payload.empty()) {
+            return false;
+        }
+        for (const auto &field : pattern.fields) {
+            if (field.is_rest) {
+                continue;
+            }
+            const auto iter = enum_value->named_payload.find(field.name);
+            if (iter == enum_value->named_payload.end() || !iter->second || !field.pattern) {
+                return false;
+            }
+            if (!match_pattern(*field.pattern, *iter->second, bindings)) {
+                return false;
+            }
+        }
         return true;
     }
     // P3 match payloads are stored two ways in evaluator EnumValues:
@@ -1277,6 +1295,12 @@ EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr,
 
     if (diagnostics.has_error()) {
         return EvalResult{make_none(), std::move(diagnostics)};
+    }
+    if (expr.is_enum_variant) {
+        return EvalResult{
+            make_enum(expr.enum_name, expr.variant_name, std::move(fields)),
+            std::move(diagnostics),
+        };
     }
     return EvalResult{make_struct(expr.type_name, std::move(fields)), std::move(diagnostics)};
 }

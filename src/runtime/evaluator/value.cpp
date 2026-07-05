@@ -95,6 +95,35 @@ int compare_values(const Value &lhs, const Value &rhs) {
                         return c;
                     }
                 }
+                if (inner.named_payload.size() != r->named_payload.size()) {
+                    return inner.named_payload.size() < r->named_payload.size() ? -1 : 1;
+                }
+                std::vector<std::string> names;
+                names.reserve(inner.named_payload.size());
+                for (const auto &[name, _] : inner.named_payload) {
+                    names.push_back(name);
+                }
+                std::sort(names.begin(), names.end());
+                for (const auto &name : names) {
+                    const auto rhs_it = r->named_payload.find(name);
+                    if (rhs_it == r->named_payload.end()) {
+                        return 1;
+                    }
+                    const auto &lhs_value = inner.named_payload.at(name);
+                    const auto &rhs_value = rhs_it->second;
+                    if (!lhs_value && !rhs_value) {
+                        continue;
+                    }
+                    if (!lhs_value) {
+                        return -1;
+                    }
+                    if (!rhs_value) {
+                        return 1;
+                    }
+                    if (int c = compare_values(*lhs_value, *rhs_value); c != 0) {
+                        return c;
+                    }
+                }
                 return 0;
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 const auto *r = std::get_if<CallableValue>(&rhs.node);
@@ -195,6 +224,24 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                         return false;
                     }
                     if (!structurally_equal(*inner.payload[i], *r->payload[i])) {
+                        return false;
+                    }
+                }
+                if (inner.named_payload.size() != r->named_payload.size()) {
+                    return false;
+                }
+                for (const auto &[name, value] : inner.named_payload) {
+                    const auto rhs_it = r->named_payload.find(name);
+                    if (rhs_it == r->named_payload.end()) {
+                        return false;
+                    }
+                    if (!value && !rhs_it->second) {
+                        continue;
+                    }
+                    if (!value || !rhs_it->second) {
+                        return false;
+                    }
+                    if (!structurally_equal(*value, *rhs_it->second)) {
                         return false;
                     }
                 }
@@ -375,6 +422,28 @@ void print_value(const Value &v, std::ostream &out) {
                         out << "(";
                         print_value(*inner.associated, out);
                         out << ")";
+                    } else if (!inner.named_payload.empty()) {
+                        out << " { ";
+                        std::vector<std::string> names;
+                        names.reserve(inner.named_payload.size());
+                        for (const auto &[name, _] : inner.named_payload) {
+                            names.push_back(name);
+                        }
+                        std::sort(names.begin(), names.end());
+                        for (std::size_t i = 0; i < names.size(); ++i) {
+                            if (i > 0) {
+                                out << ", ";
+                            }
+                            const auto &name = names[i];
+                            out << name << ": ";
+                            if (const auto iter = inner.named_payload.find(name);
+                                iter != inner.named_payload.end() && iter->second) {
+                                print_value(*iter->second, out);
+                            } else {
+                                out << "<null>";
+                            }
+                        }
+                        out << " }";
                     }
                 }
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
@@ -464,6 +533,18 @@ Value make_enum(std::string enum_name, std::string variant, std::vector<Value> p
     ev.payload.reserve(payload.size());
     for (auto &item : payload) {
         ev.payload.push_back(std::make_unique<Value>(std::move(item)));
+    }
+    return Value{std::move(ev)};
+}
+
+Value make_enum(std::string enum_name,
+                std::string variant,
+                std::unordered_map<std::string, Value> named_payload) {
+    EnumValue ev;
+    ev.enum_name = std::move(enum_name);
+    ev.variant = std::move(variant);
+    for (auto &[name, item] : named_payload) {
+        ev.named_payload.emplace(std::move(name), std::make_unique<Value>(std::move(item)));
     }
     return Value{std::move(ev)};
 }
@@ -611,6 +692,13 @@ Value clone_value(const Value &v) {
                         ev.payload.push_back(std::make_unique<Value>(clone_value(*item)));
                     } else {
                         ev.payload.push_back(nullptr);
+                    }
+                }
+                for (const auto &[name, value] : inner.named_payload) {
+                    if (value) {
+                        ev.named_payload.emplace(name, std::make_unique<Value>(clone_value(*value)));
+                    } else {
+                        ev.named_payload.emplace(name, nullptr);
                     }
                 }
                 if (inner.associated) {

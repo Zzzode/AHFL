@@ -58,9 +58,9 @@ TEST_CASE("Enum struct variants: 1-field / 2-field / 3-field with default (round
     // reproduce the source verbatim.
     const std::string source = R"AHFL(enum Geometry {
     Origin,
-    Point(x: Int, y: Int),
-    Single(name: String),
-    Box(width: Int, height: Int, label: String = "box"),
+    Point { x: Int, y: Int },
+    Single { name: String },
+    Box { width: Int, height: Int, label: String = "box" },
 }
 )AHFL";
 
@@ -80,7 +80,7 @@ TEST_CASE("Enum struct variants: 1-field / 2-field / 3-field with default (round
         CHECK(v->named_fields.empty());
     }
 
-    // 3. 2-field struct variant — Point(x: Int, y: Int).
+    // 3. 2-field struct variant — Point { x: Int, y: Int }.
     {
         const auto &v = geometry->variants[1];
         CHECK(v->name == "Point");
@@ -96,7 +96,7 @@ TEST_CASE("Enum struct variants: 1-field / 2-field / 3-field with default (round
         CHECK(v->named_fields[1]->default_value == nullptr);
     }
 
-    // 4. 1-field struct variant — Single(name: String).
+    // 4. 1-field struct variant — Single { name: String }.
     {
         const auto &v = geometry->variants[2];
         CHECK(v->name == "Single");
@@ -153,13 +153,13 @@ TEST_CASE("Enum struct variants: 1-field / 2-field / 3-field with default (round
 
 TEST_CASE("Enum struct variants coexist with positional (tuple) variants") {
     // Ensures the grammar labelled alternatives disambiguate correctly:
-    //   * `Value(Int, Int)`    — tuple payload, no `:` after any IDENT
-    //   * `Named(a: Int, b: Int)` — struct payload
+    //   * `Value(Int, Int)`    — tuple payload
+    //   * `Named { a: Int, b: Int }` — struct payload
     //   * `Empty`              — unit variant
     const std::string source = R"AHFL(enum Mixed {
     Empty,
     Tuple(Int, String),
-    Named(a: Int, b: String),
+    Named { a: Int, b: String },
 }
 )AHFL";
 

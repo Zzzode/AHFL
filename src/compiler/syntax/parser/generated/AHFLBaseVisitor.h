@@ -99,15 +99,15 @@ public:
     return visitChildren(ctx);
   }
 
-  virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *ctx) override {
-    return visitChildren(ctx);
-  }
-
   virtual std::any visitStructEnumVariant(AHFLParser::StructEnumVariantContext *ctx) override {
     return visitChildren(ctx);
   }
 
   virtual std::any visitTupleEnumVariant(AHFLParser::TupleEnumVariantContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -532,6 +532,18 @@ public:
   }
 
   virtual std::any visitVariantPattern(AHFLParser::VariantPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitQualifiedVariantName(AHFLParser::QualifiedVariantNameContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitPatternFieldList(AHFLParser::PatternFieldListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitPatternField(AHFLParser::PatternFieldContext *ctx) override {
     return visitChildren(ctx);
   }
 

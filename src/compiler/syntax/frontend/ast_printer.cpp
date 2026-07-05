@@ -242,7 +242,7 @@ class AstPrinter final {
                 }
                 label += ")";
             } else if (!variant->named_fields.empty()) {
-                label += " (";
+                label += " { ";
                 for (std::size_t i = 0; i < variant->named_fields.size(); ++i) {
                     if (i != 0) {
                         label += ", ";
@@ -253,7 +253,7 @@ class AstPrinter final {
                         label += " = " + f->default_value->text;
                     }
                 }
-                label += ")";
+                label += " }";
             }
             line(2, label);
         }
@@ -936,6 +936,19 @@ class AstPrinter final {
                     for (std::size_t index = 0; index < p.subpatterns.size(); ++index) {
                         line(indent_level + 1, "sub " + std::to_string(index));
                         print_pattern(*p.subpatterns[index], indent_level + 2);
+                    }
+                    for (const auto &field : p.fields) {
+                        if (!field) {
+                            continue;
+                        }
+                        if (field->is_rest) {
+                            line(indent_level + 1, "field ..");
+                            continue;
+                        }
+                        line(indent_level + 1, "field " + field->name);
+                        if (field->pattern) {
+                            print_pattern(*field->pattern, indent_level + 2);
+                        }
                     }
                 },
                 [&](const ast::WildcardPattern &) { line(indent_level, "pattern_wildcard"); },

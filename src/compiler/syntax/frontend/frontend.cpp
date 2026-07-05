@@ -2108,16 +2108,60 @@ class ProgramBuilder {
         pattern->text = source_text(source_, pattern->range);
         pattern->node = ast::VariantPattern{};
         auto &variant_node = std::get<ast::VariantPattern>(pattern->node);
-        variant_node.path = build_qualified_name(context.IDENT(), pattern->range);
+        if (const auto qualified = borrow(context.qualifiedVariantName())) {
+            variant_node.path = build_qualified_name(qualified->get().IDENT(), pattern->range);
+        } else {
+            auto *segment = context.IDENT();
+            (void)require(segment, "variant pattern name is missing");
+            variant_node.path =
+                build_qualified_name(std::vector<antlr4::tree::TerminalNode *>{segment},
+                                     pattern->range);
+        }
 
-        // Optional positional sub-patterns: `Some(x, _)`.
         if (const auto pattern_list = borrow(context.patternList())) {
+            variant_node.payload_kind = ast::EnumVariantPayloadKind::Tuple;
             for (auto *sub_context : pattern_list->get().pattern()) {
                 variant_node.subpatterns.push_back(
                     build_pattern(require(sub_context, "variant sub-pattern is missing")));
             }
+        } else if (pattern->text.find('{') != std::string::npos) {
+            variant_node.payload_kind = ast::EnumVariantPayloadKind::Struct;
+            if (const auto field_list = borrow(context.patternFieldList())) {
+                for (auto *field_context : field_list->get().patternField()) {
+                    variant_node.fields.push_back(
+                        build_variant_pattern_field(
+                            require(field_context, "variant pattern field is missing")));
+                }
+            }
+        } else {
+            variant_node.payload_kind = ast::EnumVariantPayloadKind::Unit;
         }
         return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::VariantPatternField>
+    build_variant_pattern_field(AHFLParser::PatternFieldContext &context) const {
+        auto field = make_owned<ast::VariantPatternField>();
+        field->range = context_range(context, source_);
+        if (context.getText() == "..") {
+            field->is_rest = true;
+            return field;
+        }
+
+        auto &name_token = require(context.IDENT(), "variant pattern field name is missing");
+        field->name = text_of(name_token);
+
+        if (const auto nested = borrow(context.pattern())) {
+            field->pattern = build_pattern(nested->get());
+            return field;
+        }
+
+        auto shorthand = make_owned<ast::PatternSyntax>();
+        shorthand->range = terminal_range(name_token, source_);
+        shorthand->text = field->name;
+        shorthand->node = ast::BindingPattern{.name = field->name};
+        field->pattern = std::move(shorthand);
+        return field;
     }
 
     [[nodiscard]] Owned<ast::PatternSyntax>
@@ -3046,6 +3090,7 @@ class ProgramBuilder {
 
         if (auto *tuple = dynamic_cast<AHFLParser::TupleEnumVariantContext *>(&context)) {
             variant->name = text_of(require(tuple->IDENT(), "enum variant name is missing"));
+            variant->payload_kind = ast::EnumVariantPayloadKind::Tuple;
             // P1 (ADT, RFC §1.5): optional positional tuple payload, e.g.
             // `Some(T)`, `Err(E)`.
             if (const auto type_list = borrow(tuple->typeList())) {
@@ -3059,8 +3104,9 @@ class ProgramBuilder {
 
         if (auto *strct = dynamic_cast<AHFLParser::StructEnumVariantContext *>(&context)) {
             variant->name = text_of(require(strct->IDENT(), "enum variant name is missing"));
-            // RFC d-1 minimal POC: struct-form enum variant with named fields,
-            // e.g. `Point(x: Int, y: Int)`.
+            variant->payload_kind = ast::EnumVariantPayloadKind::Struct;
+            // RFC 0001: struct-form enum variant with named fields,
+            // e.g. `Point { x: Int, y: Int }`.
             if (const auto field_list = borrow(strct->variantFieldList())) {
                 for (auto *field_ctx : field_list->get().variantFieldDecl()) {
                     auto field = make_owned<ast::EnumVariantFieldSyntax>();

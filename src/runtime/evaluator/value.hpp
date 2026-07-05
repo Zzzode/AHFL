@@ -65,6 +65,8 @@ struct EnumValue {
     std::string variant;
     // Vector payload: Result-style multi-field variants (base HEAD convention).
     std::vector<std::unique_ptr<Value>> payload;
+    // Named payload: RFC 0001 struct enum variants.
+    std::unordered_map<std::string, std::unique_ptr<Value>> named_payload;
     // Associated single payload: nominal Option::Some & similar single-data
     // variants (P5.11a evaluator-internal construction).
     std::unique_ptr<Value> associated; // nullable
@@ -291,28 +293,44 @@ void print_value(const Value &v, std::ostream &out);
 }
 
 [[nodiscard]] inline Value make_enum(std::string enum_name, std::string variant) {
-    return Value{EnumValue{std::move(enum_name), std::move(variant), {}, nullptr}};
+    return Value{EnumValue{
+        .enum_name = std::move(enum_name),
+        .variant = std::move(variant),
+    }};
 }
 
 [[nodiscard]] Value
 make_enum(std::string enum_name, std::string variant, std::vector<Value> payload);
 
+[[nodiscard]] Value
+make_enum(std::string enum_name,
+          std::string variant,
+          std::unordered_map<std::string, Value> named_payload);
+
 [[nodiscard]] inline Value make_enum(std::string enum_name,
                                      std::string variant,
                                      std::unique_ptr<Value> associated) {
-    return Value{EnumValue{std::move(enum_name), std::move(variant), {}, std::move(associated)}};
+    return Value{EnumValue{
+        .enum_name = std::move(enum_name),
+        .variant = std::move(variant),
+        .associated = std::move(associated),
+    }};
 }
 
 // Nominal option constructors (evaluator-internal representation)
 [[nodiscard]] inline Value make_option_some(Value inner) {
-    return Value{EnumValue{"std::option::Option",
-                           "Some",
-                           {},
-                           std::make_unique<Value>(std::move(inner))}};
+    return Value{EnumValue{
+        .enum_name = "std::option::Option",
+        .variant = "Some",
+        .associated = std::make_unique<Value>(std::move(inner)),
+    }};
 }
 
 [[nodiscard]] inline Value make_option_none() {
-    return Value{EnumValue{"std::option::Option", "None", {}, nullptr}};
+    return Value{EnumValue{
+        .enum_name = "std::option::Option",
+        .variant = "None",
+    }};
 }
 
 // Legacy constructors — kept for external JSON/compatibility consumers (P5.11b)

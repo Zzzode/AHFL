@@ -258,6 +258,38 @@ template <typename E>
     return object;
 }
 
+[[nodiscard]] std::string enum_variant_payload_kind_name(EnumVariantPayloadKind kind) {
+    switch (kind) {
+    case EnumVariantPayloadKind::Unit:
+        return "unit";
+    case EnumVariantPayloadKind::Tuple:
+        return "tuple";
+    case EnumVariantPayloadKind::Struct:
+        return "struct";
+    }
+    return "unit";
+}
+
+[[nodiscard]] EnumVariantPayloadKind enum_variant_payload_kind_from_name(std::string_view name) {
+    if (name == "tuple") {
+        return EnumVariantPayloadKind::Tuple;
+    }
+    if (name == "struct") {
+        return EnumVariantPayloadKind::Struct;
+    }
+    return EnumVariantPayloadKind::Unit;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_enum_variant_field(const EnumVariantFieldInfo &field) {
+    auto object = Json::make_object();
+    object->set("name", Json::make_string(field.name));
+    object->set("type", j_type(field.type));
+    object->set("has_default", Json::make_bool(field.has_default));
+    object->set("default_value_range", j_range(field.default_value_range));
+    object->set("declaration_range", j_range(field.declaration_range));
+    return object;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_param(const ParamTypeInfo &param) {
     auto object = Json::make_object();
     object->set("name", Json::make_string(param.name));
@@ -369,13 +401,19 @@ template <typename E>
         for (const auto &variant : info->variants) {
             auto variant_json = Json::make_object();
             variant_json->set("name", Json::make_string(variant.name));
-            // P1 (ADT): positional payload type list. Empty for legacy
-            // payload-less variants; round-trips with the read side below.
+            variant_json->set("payload_kind",
+                              Json::make_string(enum_variant_payload_kind_name(
+                                  variant.payload_kind)));
             auto payload_json = Json::make_array();
             for (const auto slot : variant.payload) {
                 payload_json->push(j_type(slot));
             }
             variant_json->set("payload", std::move(payload_json));
+            auto fields_json = Json::make_array();
+            for (const auto &field : variant.fields) {
+                fields_json->push(j_enum_variant_field(field));
+            }
+            variant_json->set("fields", std::move(fields_json));
             variant_json->set("declaration_range", j_range(variant.declaration_range));
             variants->push(std::move(variant_json));
         }
@@ -1443,8 +1481,11 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                     .name = reader.string_field(*item, "name"),
                     .declaration_range = reader.range_field(*item, "declaration_range"),
                 };
-                // P1 (ADT): read optional positional payload list. Absent for
-                // legacy serialized enums (treated as no payload).
+                if (const auto *kind = reader.field(*item, "payload_kind");
+                    kind != nullptr && kind->kind == json::Kind::String) {
+                    variant.payload_kind =
+                        enum_variant_payload_kind_from_name(kind->string_val);
+                }
                 if (const auto *payload = reader.field(*item, "payload");
                     payload != nullptr && payload->kind == json::Kind::Array) {
                     variant.payload.reserve(payload->array_items.size());
@@ -1452,6 +1493,29 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                         variant.payload.push_back(reader.type_value(slot.get()));
                     }
                 }
+                if (const auto *fields = reader.field(*item, "fields");
+                    fields != nullptr && fields->kind == json::Kind::Array) {
+                    variant.fields.reserve(fields->array_items.size());
+                    for (const auto &field_item : fields->array_items) {
+                        variant.fields.push_back(EnumVariantFieldInfo{
+                            .name = reader.string_field(*field_item, "name"),
+                            .type = reader.type_field(*field_item, "type"),
+                            .has_default = reader.bool_field(*field_item, "has_default"),
+                            .default_value_range =
+                                reader.range_field(*field_item, "default_value_range"),
+                            .declaration_range =
+                                reader.range_field(*field_item, "declaration_range"),
+                        });
+                    }
+                }
+                if (reader.field(*item, "payload_kind") == nullptr) {
+                    variant.payload_kind =
+                        !variant.fields.empty()
+                            ? EnumVariantPayloadKind::Struct
+                            : (!variant.payload.empty() ? EnumVariantPayloadKind::Tuple
+                                                        : EnumVariantPayloadKind::Unit);
+                }
+                variant.rebuild_field_index();
                 info.variants.push_back(std::move(variant));
             }
         }

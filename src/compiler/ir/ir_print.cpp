@@ -391,14 +391,31 @@ class IrProgramPrinter final {
             Overloaded{
                 [](const ir::LiteralPattern &value) { return value.spelling; },
                 [this](const ir::VariantPattern &value) {
+                    if (value.kind == ir::VariantPatternKind::Unit) {
+                        return value.path;
+                    }
+                    if (value.kind == ir::VariantPatternKind::Struct) {
+                        std::vector<std::string> fields;
+                        fields.reserve(value.fields.size());
+                        for (const auto &field : value.fields) {
+                            if (field.is_rest) {
+                                fields.push_back("..");
+                                continue;
+                            }
+                            if (field.pattern) {
+                                fields.push_back(field.name + ": " +
+                                                 render_pattern(*field.pattern));
+                            } else {
+                                fields.push_back(field.name);
+                            }
+                        }
+                        return value.path + " { " + join(fields, ", ") + " }";
+                    }
                     std::vector<std::string> subpatterns;
                     subpatterns.reserve(value.subpatterns.size());
                     for (const auto &subpattern : value.subpatterns) {
                         subpatterns.push_back(subpattern ? render_pattern(*subpattern)
                                                           : std::string{"_"});
-                    }
-                    if (subpatterns.empty()) {
-                        return value.path;
                     }
                     return value.path + "(" + join(subpatterns, ", ") + ")";
                 },
@@ -467,7 +484,12 @@ class IrProgramPrinter final {
                         fields.push_back(field.name + ": " + render_expr(*field.value));
                     }
 
-                    return value.type_name + " { " + join(fields, ", ") + " }";
+                    const auto target =
+                        value.is_enum_variant && !value.enum_name.empty() &&
+                                !value.variant_name.empty()
+                            ? value.enum_name + "::" + value.variant_name
+                            : value.type_name;
+                    return target + " { " + join(fields, ", ") + " }";
                 },
                 [this](const ir::UnaryExpr &value) {
                     return "(" + expr_unary_op_name(value.op) + render_expr(*value.operand) + ")";

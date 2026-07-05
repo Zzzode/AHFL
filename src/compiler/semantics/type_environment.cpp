@@ -79,6 +79,32 @@ void StructTypeInfo::rebuild_field_index() {
     }
 }
 
+MaybeCRef<EnumVariantFieldInfo> EnumVariantInfo::find_field(std::string_view name) const {
+    if (!field_index_.empty()) {
+        const auto iter = field_index_.find(std::string(name));
+        if (iter != field_index_.end() && iter->second < fields.size()) {
+            return std::cref(fields[iter->second]);
+        }
+        return std::nullopt;
+    }
+
+    for (const auto &field : fields) {
+        if (field.name == name) {
+            return std::cref(field);
+        }
+    }
+
+    return std::nullopt;
+}
+
+void EnumVariantInfo::rebuild_field_index() {
+    field_index_.clear();
+    field_index_.reserve(fields.size());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        field_index_.emplace(fields[i].name, i);
+    }
+}
+
 bool EnumTypeInfo::has_variant(std::string_view name) const noexcept {
     // Use the hash set when available; fall back to linear scan for
     // callers that build an EnumTypeInfo without calling rebuild_variant_index().
@@ -98,8 +124,9 @@ bool EnumTypeInfo::has_variant(std::string_view name) const noexcept {
 void EnumTypeInfo::rebuild_variant_index() {
     variant_set_.clear();
     variant_set_.reserve(variants.size());
-    for (const auto &v : variants) {
+    for (auto &v : variants) {
         variant_set_.insert(v.name);
+        v.rebuild_field_index();
     }
 }
 

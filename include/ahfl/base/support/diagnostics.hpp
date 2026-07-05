@@ -245,6 +245,14 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
     "MATCH_DUPLICATE_BINDING"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
     "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidEnumVariantShape{
+    "INVALID_ENUM_VARIANT_SHAPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingVariantField{
+    "MISSING_VARIANT_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnexpectedVariantField{
+    "UNEXPECTED_VARIANT_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingVariantFieldInConstructor{
+    "MISSING_VARIANT_FIELD_IN_CONSTRUCTOR"};
 // P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers so a
 // lambda never silently type-checks to the wrong shape before its pass exists.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> LambdaNotYetSupported{
@@ -534,6 +542,16 @@ inline constexpr MessageTemplate MatchArmTypeMismatch{
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
 inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
     "match binding '{}' expects type {}, got payload slot type {}"};
+inline constexpr MessageTemplate InvalidEnumVariantShape{
+    "variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax"};
+inline constexpr MessageTemplate InvalidEnumVariantConstructorShape{
+    "variant '{}' of enum '{}' is declared as {}, but constructor uses {} syntax"};
+inline constexpr MessageTemplate MissingVariantField{
+    "struct variant pattern for '{}' is missing field '{}'"};
+inline constexpr MessageTemplate UnexpectedVariantField{
+    "struct variant '{}' has no field '{}'"};
+inline constexpr MessageTemplate MissingVariantFieldInConstructor{
+    "struct variant constructor '{}' is missing required field '{}'"};
 // P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers.
 inline constexpr MessageTemplate LambdaNotYetSupported{
     "'lambda' expressions are not yet type-checked (closure support is in progress)"};

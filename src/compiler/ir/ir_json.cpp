@@ -641,6 +641,19 @@ class IrJsonPrinter final {
 	                        field("kind", [&]() { write_string("variant"); });
 	                        print_match_pattern_common(field, pattern, indent_level + 1);
 	                        field("path", [&]() { write_string(value.path); });
+	                        field("payload_kind", [&]() {
+	                            switch (value.kind) {
+	                            case ir::VariantPatternKind::Unit:
+	                                write_string("unit");
+	                                break;
+	                            case ir::VariantPatternKind::Tuple:
+	                                write_string("tuple");
+	                                break;
+	                            case ir::VariantPatternKind::Struct:
+	                                write_string("struct");
+	                                break;
+	                            }
+	                        });
 	                        field("subpatterns", [&]() {
 	                            print_array(indent_level + 1, [&](const auto &item) {
 	                                for (const auto &subpattern : value.subpatterns) {
@@ -650,6 +663,31 @@ class IrJsonPrinter final {
 	                                        } else {
 	                                            write_null();
 	                                        }
+	                                    });
+	                                }
+	                            });
+	                        });
+	                        field("fields", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &variant_field : value.fields) {
+	                                    item([&]() {
+	                                        print_object(indent_level + 2, [&](const auto &entry) {
+	                                            entry("name",
+	                                                  [&]() { write_string(variant_field.name); });
+	                                            entry("is_rest",
+	                                                  [&]() {
+	                                                      out_ << (variant_field.is_rest ? "true"
+	                                                                                    : "false");
+	                                                  });
+	                                            entry("pattern", [&]() {
+	                                                if (variant_field.pattern) {
+	                                                    print_match_pattern(*variant_field.pattern,
+	                                                                        indent_level + 3);
+	                                                } else {
+	                                                    out_ << "null";
+	                                                }
+	                                            });
+	                                        });
 	                                    });
 	                                }
 	                            });
@@ -812,14 +850,19 @@ class IrJsonPrinter final {
                         });
                     });
                 },
-                [&](const ir::StructLiteralExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("struct_literal"); });
-                        print_expr_common_fields(field, expr, indent_level + 1);
-                        field("type_name", [&]() { write_string(value.type_name); });
-                        field("fields", [&]() {
-                            print_array(indent_level + 1, [&](const auto &item) {
-                                for (const auto &struct_field : value.fields) {
+	                [&](const ir::StructLiteralExpr &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("struct_literal"); });
+	                        print_expr_common_fields(field, expr, indent_level + 1);
+	                        field("type_name", [&]() { write_string(value.type_name); });
+	                        if (value.is_enum_variant) {
+	                            field("is_enum_variant", [&]() { out_ << "true"; });
+	                            field("enum_name", [&]() { write_string(value.enum_name); });
+	                            field("variant_name", [&]() { write_string(value.variant_name); });
+	                        }
+	                        field("fields", [&]() {
+	                            print_array(indent_level + 1, [&](const auto &item) {
+	                                for (const auto &struct_field : value.fields) {
                                     item([&]() {
                                         print_object(indent_level + 2, [&](const auto &entry) {
                                             entry("name",

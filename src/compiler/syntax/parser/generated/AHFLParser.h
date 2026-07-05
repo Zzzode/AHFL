@@ -36,9 +36,9 @@ public:
     T__124 = 125, T__125 = 126, T__126 = 127, T__127 = 128, T__128 = 129,
     T__129 = 130, T__130 = 131, T__131 = 132, T__132 = 133, T__133 = 134,
     T__134 = 135, T__135 = 136, T__136 = 137, T__137 = 138, T__138 = 139,
-    DURATION_LITERAL = 140, DECIMAL_LITERAL = 141, FLOAT_LITERAL = 142,
-    INT_LITERAL = 143, BACKSLASH = 144, STRING_LITERAL = 145, IDENT = 146,
-    DOC_COMMENT = 147, LINE_COMMENT = 148, BLOCK_COMMENT = 149, WS = 150
+    T__139 = 140, DURATION_LITERAL = 141, DECIMAL_LITERAL = 142, FLOAT_LITERAL = 143,
+    INT_LITERAL = 144, BACKSLASH = 145, STRING_LITERAL = 146, IDENT = 147,
+    DOC_COMMENT = 148, LINE_COMMENT = 149, BLOCK_COMMENT = 150, WS = 151
   };
 
   enum {
@@ -78,16 +78,17 @@ public:
     RulePostfixExpr = 118, RulePrimaryExpr = 119, RuleUnwrapExpr = 120,
     RuleMatchExpr = 121, RuleMatchArm = 122, RulePattern = 123, RuleOrPattern = 124,
     RuleConcatPattern = 125, RuleLiteralPattern = 126, RuleVariantPattern = 127,
-    RuleWildcardPattern = 128, RuleBindingPattern = 129, RuleTuplePattern = 130,
-    RulePatternList = 131, RulePathExpr = 132, RulePathRoot = 133, RuleQualifiedValueExpr = 134,
-    RuleCallExpr = 135, RuleExprList = 136, RuleLiteral = 137, RuleIntegerLiteral = 138,
-    RuleFloatLiteral = 139, RuleDecimalLiteral = 140, RuleStringLiteral = 141,
-    RuleDurationLiteral = 142, RuleStructLiteral = 143, RuleListLiteral = 144,
-    RuleSetLiteral = 145, RuleMapLiteral = 146, RuleMapEntryList = 147,
-    RuleMapEntry = 148, RuleStructInitList = 149, RuleStructInit = 150,
-    RuleConstExpr = 151, RuleTemporalExpr = 152, RuleWorkflowTemporalExpr = 153,
-    RuleTemporalImpliesExpr = 154, RuleTemporalOrExpr = 155, RuleTemporalAndExpr = 156,
-    RuleTemporalUntilExpr = 157, RuleTemporalUnaryExpr = 158, RuleTemporalAtom = 159
+    RuleQualifiedVariantName = 128, RulePatternFieldList = 129, RulePatternField = 130,
+    RuleWildcardPattern = 131, RuleBindingPattern = 132, RuleTuplePattern = 133,
+    RulePatternList = 134, RulePathExpr = 135, RulePathRoot = 136, RuleQualifiedValueExpr = 137,
+    RuleCallExpr = 138, RuleExprList = 139, RuleLiteral = 140, RuleIntegerLiteral = 141,
+    RuleFloatLiteral = 142, RuleDecimalLiteral = 143, RuleStringLiteral = 144,
+    RuleDurationLiteral = 145, RuleStructLiteral = 146, RuleListLiteral = 147,
+    RuleSetLiteral = 148, RuleMapLiteral = 149, RuleMapEntryList = 150,
+    RuleMapEntry = 151, RuleStructInitList = 152, RuleStructInit = 153,
+    RuleConstExpr = 154, RuleTemporalExpr = 155, RuleWorkflowTemporalExpr = 156,
+    RuleTemporalImpliesExpr = 157, RuleTemporalOrExpr = 158, RuleTemporalAndExpr = 159,
+    RuleTemporalUntilExpr = 160, RuleTemporalUnaryExpr = 161, RuleTemporalAtom = 162
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -235,6 +236,9 @@ public:
   class ConcatPatternContext;
   class LiteralPatternContext;
   class VariantPatternContext;
+  class QualifiedVariantNameContext;
+  class PatternFieldListContext;
+  class PatternFieldContext;
   class WildcardPatternContext;
   class BindingPatternContext;
   class TuplePatternContext;
@@ -2172,9 +2176,10 @@ public:
   public:
     VariantPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
-    std::vector<antlr4::tree::TerminalNode *> IDENT();
-    antlr4::tree::TerminalNode* IDENT(size_t i);
+    QualifiedVariantNameContext *qualifiedVariantName();
     PatternListContext *patternList();
+    PatternFieldListContext *patternFieldList();
+    antlr4::tree::TerminalNode *IDENT();
 
 
     virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
@@ -2182,6 +2187,48 @@ public:
   };
 
   VariantPatternContext* variantPattern();
+
+  class  QualifiedVariantNameContext : public antlr4::ParserRuleContext {
+  public:
+    QualifiedVariantNameContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<antlr4::tree::TerminalNode *> IDENT();
+    antlr4::tree::TerminalNode* IDENT(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  QualifiedVariantNameContext* qualifiedVariantName();
+
+  class  PatternFieldListContext : public antlr4::ParserRuleContext {
+  public:
+    PatternFieldListContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<PatternFieldContext *> patternField();
+    PatternFieldContext* patternField(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  PatternFieldListContext* patternFieldList();
+
+  class  PatternFieldContext : public antlr4::ParserRuleContext {
+  public:
+    PatternFieldContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    antlr4::tree::TerminalNode *IDENT();
+    PatternContext *pattern();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  PatternFieldContext* patternField();
 
   class  WildcardPatternContext : public antlr4::ParserRuleContext {
   public:

@@ -538,14 +538,35 @@ struct LiteralPattern {
     std::string spelling; // original literal text ("true", "42", "\"s\"", "none")
 };
 
-/// Variant (ADT constructor) pattern: `Option::Some(x)`, `Some(x)`, `Err(_)`.
+enum class EnumVariantPayloadKind {
+    Unit,
+    Tuple,
+    Struct,
+};
+
+/// Field entry inside a struct enum-variant pattern.
 ///
-/// `path` carries the qualified variant name; `subpatterns` carries the
-/// optional positional sub-patterns. When `subpatterns` is empty, the variant
-/// is matched without inspecting its payload.
+/// `is_rest` represents `..`; otherwise `name` is the declared field name and
+/// `pattern` is either an explicit nested pattern (`field: pat`) or the
+/// shorthand binding pattern created for `field`.
+struct VariantPatternField {
+    ahfl::SourceRange range;
+    std::string name;
+    Owned<PatternSyntax> pattern;
+    bool is_rest{false};
+};
+
+/// Variant (ADT constructor) pattern: `Option::Some(x)`, `Some(x)`,
+/// `Err { code, .. }`.
+///
+/// `path` carries the qualified variant name. `payload_kind` is the source
+/// shape from RFC 0001; tuple patterns use `subpatterns`, struct patterns use
+/// `fields`, and unit patterns keep both vectors empty.
 struct VariantPattern {
     Owned<QualifiedName> path;
+    EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
     std::vector<Owned<PatternSyntax>> subpatterns;
+    std::vector<Owned<VariantPatternField>> fields;
 };
 
 /// Wildcard pattern: `_`. Always matches; binds nothing.
@@ -1073,12 +1094,10 @@ struct StructFieldDeclSyntax {
 
 /// Enum variant alternative declaration.
 ///
-/// P1 (ADT, RFC §1.5): a variant optionally carries a payload:
+/// RFC 0001: a variant carries one explicit payload shape:
 ///   * `payload` (positional tuple) — `Some(T)`, `Err(E)`
-///   * `named_fields` (struct form, RFC d-1 minimal POC) —
-///     `Point(x: Int, y: Int)`. A variant may have at most one kind of
-///     payload; both vectors empty means the classic payload-less form
-///     (`None`), preserving full backward compatibility.
+///   * `named_fields` (struct form) — `Point { x: Int, y: Int }`
+///   * no payload — `None`
 struct EnumVariantFieldSyntax {
     ahfl::SourceRange range;
     std::string name;
@@ -1089,6 +1108,7 @@ struct EnumVariantFieldSyntax {
 struct EnumVariantDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
+    EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
     std::vector<Owned<TypeSyntax>> payload;           // positional tuple payload
     std::vector<Owned<EnumVariantFieldSyntax>> named_fields; // struct variant payload
 };

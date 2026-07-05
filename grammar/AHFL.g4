@@ -108,24 +108,19 @@ structFieldDecl: IDENT ':' type_ ('=' constExpr)? ';';
 enumDecl:
 	'enum' identifier typeParams? '{' enumVariant (',' enumVariant)* ','? '}';
 
-// P1 (ADT): an enum variant optionally carries a payload, one of:
+// RFC 0001: an enum variant carries one explicit payload shape:
 //   * absent — classic payload-less variant (e.g. `None`)
 //   * positional tuple — `IDENT ( typeList )` (e.g. `Some(T)`, `Err(E)`)
-//   * struct (named fields) — `IDENT ( variantFieldList )` (RFC d-1 POC,
-//     e.g. `Point(x: Int, y: Int)`). Absence vs tuple vs struct is
-//     disambiguated by the first token after `(`: if the second token is
-//     `:` it is a struct variant; otherwise a positional tuple is assumed.
-//     Backward compatibility with payload-less variants is preserved.
+//   * struct (named fields) — `IDENT { variantFieldList }`
 enumVariant
-    : IDENT                                                              # unitEnumVariant
-    | IDENT '(' variantFieldList ')'                                     # structEnumVariant
+    : IDENT '{' variantFieldList '}'                                     # structEnumVariant
     | IDENT '(' typeList ')'                                             # tupleEnumVariant
+    | IDENT                                                              # unitEnumVariant
     ;
 
-// Named-field payload for a struct enum variant (RFC d-1 minimal POC).
+// Named-field payload for a struct enum variant.
 // Mirrors the surface syntax of fn param declarations / struct field
-// declarations but without the trailing semicolon and with an optional
-// default-initialiser, matching struct-field grammar.
+// declarations but without the trailing semicolon.
 variantFieldDecl: IDENT ':' type_ ('=' constExpr)?;
 
 variantFieldList: variantFieldDecl (',' variantFieldDecl)* ','?;
@@ -551,15 +546,22 @@ literalPattern:
 	| stringLiteral
 	| 'none';
 
-// Variant pattern: an ADT variant optionally carrying sub-patterns.
-// Two forms per RFC §1.6:
-//   - Fully qualified: `Ident '::' Ident ...` (e.g. Option::Some, Option::Some(x))
-//   - Short form: a bare `Ident` followed by a payload list (e.g. `Some(x)`).
-// The short form requires `(` so a bare `IDENT` (no payload) unambiguously
-// parses as `bindingPattern`.
+// Variant pattern: RFC 0001 distinguishes unit, tuple, and struct payload
+// syntax. Bare short unit variants still parse through bindingPattern and are
+// disambiguated semantically in an enum scrutinee context.
 variantPattern:
-	IDENT '::' IDENT ('::' IDENT)* ('(' patternList ')')?
-	| IDENT '(' patternList ')';
+	qualifiedVariantName ('(' patternList ')' | '{' patternFieldList? '}')?
+	| IDENT '(' patternList ')'
+	| IDENT '{' patternFieldList? '}';
+
+qualifiedVariantName: IDENT '::' IDENT ('::' IDENT)*;
+
+patternFieldList: patternField (',' patternField)* ','?;
+
+patternField:
+	IDENT ':' pattern
+	| IDENT
+	| '..';
 
 wildcardPattern: '_';
 

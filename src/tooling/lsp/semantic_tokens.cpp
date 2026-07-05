@@ -457,6 +457,21 @@ void collect_pattern_tokens(const ast::PatternSyntax &pattern,
                                collect_pattern_tokens(*subpattern, source, tokens);
                            }
                        }
+                       for (const auto &field : p.fields) {
+                           if (field == nullptr) {
+                               continue;
+                           }
+                           if (!field->is_rest) {
+                               add_token_for_name(tokens,
+                                                  source,
+                                                  field->range,
+                                                  field->name,
+                                                  SemanticTokenType::Property);
+                           }
+                           if (field->pattern != nullptr) {
+                               collect_pattern_tokens(*field->pattern, source, tokens);
+                           }
+                       }
                    },
                    [&](const ast::WildcardPattern &) {
                        add_token_for_name(tokens, source, pattern.range, "_", SemanticTokenType::Variable);

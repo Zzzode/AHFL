@@ -103,9 +103,23 @@ struct LiteralPattern {
 };
 
 /// Variant pattern: Result::Ok(value), Some(_), Err(error).
+enum class VariantPatternKind {
+    Unit,
+    Tuple,
+    Struct,
+};
+
+struct VariantPatternField {
+    std::string name;
+    Owned<MatchPattern> pattern;
+    bool is_rest{false};
+};
+
 struct VariantPattern {
     std::string path;
+    VariantPatternKind kind{VariantPatternKind::Unit};
     std::vector<Owned<MatchPattern>> subpatterns;
+    std::vector<VariantPatternField> fields;
 };
 
 /// Wildcard pattern: _.
@@ -208,6 +222,9 @@ struct StructFieldInit {
 struct StructLiteralExpr {
     std::string type_name;               // Type name
     std::vector<StructFieldInit> fields; // Field initializer list
+    bool is_enum_variant{false};
+    std::string enum_name;
+    std::string variant_name;
 };
 
 /// Unary expression: !expr, -expr

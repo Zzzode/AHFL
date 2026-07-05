@@ -104,14 +104,35 @@ struct StructTypeInfo {
     std::unordered_map<std::string, std::size_t> field_index_;
 };
 
+enum class EnumVariantPayloadKind {
+    Unit,
+    Tuple,
+    Struct,
+};
+
+struct EnumVariantFieldInfo {
+    std::string name;
+    TypePtr type;
+    bool has_default{false};
+    SourceRange default_value_range;
+    SourceRange declaration_range;
+};
+
 struct EnumVariantInfo {
     std::string name;
-    // P1 (ADT, RFC §1.5): positional tuple payload types. Empty for the legacy
-    // payload-less `enumDecl: IDENT` form, preserving full backward compatibility.
-    // Resolved once by the typecheck pass (see build_enum_types) and consumed by
-    // match arm narrowing (binding positions to payload slot types).
+    EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
+    // RFC 0001: positional tuple payload types. Non-empty iff
+    // payload_kind == Tuple.
     std::vector<TypePtr> payload;
+    // RFC 0001: named struct payload fields. Non-empty iff
+    // payload_kind == Struct.
+    std::vector<EnumVariantFieldInfo> fields;
     SourceRange declaration_range;
+
+    [[nodiscard]] MaybeCRef<EnumVariantFieldInfo> find_field(std::string_view name) const;
+    void rebuild_field_index();
+
+    std::unordered_map<std::string, std::size_t> field_index_;
 };
 
 struct EnumTypeInfo {

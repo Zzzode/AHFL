@@ -634,16 +634,40 @@ void TypeCheckPass::build_enum_types() {
                         variant->range);
                 }
 
-                // P1 (ADT, RFC §1.5): resolve the variant's optional positional
-                // payload. Empty for the legacy payload-less enum form.
                 EnumVariantInfo variant_info{
                     .name = variant->name,
+                    .payload_kind =
+                        variant->payload_kind == ast::EnumVariantPayloadKind::Tuple
+                            ? EnumVariantPayloadKind::Tuple
+                            : (variant->payload_kind == ast::EnumVariantPayloadKind::Struct
+                                   ? EnumVariantPayloadKind::Struct
+                                   : EnumVariantPayloadKind::Unit),
                     .declaration_range = variant->range,
                 };
                 variant_info.payload.reserve(variant->payload.size());
                 for (const auto &slot : variant->payload) {
                     variant_info.payload.push_back(resolve_type(*slot));
                 }
+                std::unordered_set<std::string> seen_fields;
+                variant_info.fields.reserve(variant->named_fields.size());
+                for (const auto &field : variant->named_fields) {
+                    if (!seen_fields.insert(field->name).second) {
+                        typecheck_error_here(
+                            error_codes::typecheck::DuplicateField,
+                            messages::typecheck::DuplicateStructField.format_with(field->name),
+                            field->range);
+                    }
+                    variant_info.fields.push_back(EnumVariantFieldInfo{
+                        .name = field->name,
+                        .type = resolve_type(*field->type),
+                        .has_default = field->default_value != nullptr,
+                        .default_value_range =
+                            field->default_value != nullptr ? field->default_value->range
+                                                            : SourceRange{},
+                        .declaration_range = field->range,
+                    });
+                }
+                variant_info.rebuild_field_index();
 
                 info.variants.push_back(std::move(variant_info));
             }

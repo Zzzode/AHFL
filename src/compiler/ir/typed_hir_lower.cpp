@@ -792,13 +792,37 @@ class TypedIrLowerer final {
                            [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
                                ir::VariantPattern variant{
                                    .path = value.path ? value.path->spelling() : std::string{},
+                                   .kind = value.payload_kind == ast::EnumVariantPayloadKind::Tuple
+                                               ? ir::VariantPatternKind::Tuple
+                                               : (value.payload_kind ==
+                                                          ast::EnumVariantPayloadKind::Struct
+                                                      ? ir::VariantPatternKind::Struct
+                                                      : ir::VariantPatternKind::Unit),
                                    .subpatterns = {},
+                                   .fields = {},
                                };
                                variant.subpatterns.reserve(value.subpatterns.size());
                                for (const auto &subpattern : value.subpatterns) {
                                    variant.subpatterns.push_back(
                                        make_owned<ir::MatchPattern>(
                                            lower_pattern(subpattern.get())));
+                               }
+                               variant.fields.reserve(value.fields.size());
+                               for (const auto &field : value.fields) {
+                                   if (!field) {
+                                       continue;
+                                   }
+                                   ir::VariantPatternField lowered_field{
+                                       .name = field->name,
+                                       .pattern = nullptr,
+                                       .is_rest = field->is_rest,
+                                   };
+                                   if (field->pattern) {
+                                       lowered_field.pattern =
+                                           make_owned<ir::MatchPattern>(
+                                               lower_pattern(field->pattern.get()));
+                                   }
+                                   variant.fields.push_back(std::move(lowered_field));
                                }
                                return variant;
                            },
@@ -1414,6 +1438,15 @@ class TypedIrLowerer final {
         }
         ir::ExprRef visit_struct_literal(const TypedExpr &e) const {
             ir::StructLiteralExpr literal{.type_name = self.render_struct_target(e), .fields = {}};
+            if (const auto *variant_type = e.type != nullptr ? e.type->get_if<types::EnumVariantT>()
+                                                             : nullptr;
+                variant_type != nullptr) {
+                literal.is_enum_variant = true;
+                literal.enum_name = variant_type->canonical_name;
+                literal.variant_name = variant_type->variant_name;
+                literal.type_name = variant_type->canonical_name + "::" +
+                                    variant_type->variant_name;
+            }
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::StructFieldValue)
                     continue;

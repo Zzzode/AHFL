@@ -64,6 +64,31 @@ template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
     return ExprEffect::Pure;
 }
 
+[[nodiscard]] std::string_view payload_kind_spelling(EnumVariantPayloadKind kind) noexcept {
+    switch (kind) {
+    case EnumVariantPayloadKind::Unit:
+        return "unit";
+    case EnumVariantPayloadKind::Tuple:
+        return "tuple";
+    case EnumVariantPayloadKind::Struct:
+        return "struct";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] EnumVariantPayloadKind
+semantic_payload_kind(ast::EnumVariantPayloadKind kind) noexcept {
+    switch (kind) {
+    case ast::EnumVariantPayloadKind::Unit:
+        return EnumVariantPayloadKind::Unit;
+    case ast::EnumVariantPayloadKind::Tuple:
+        return EnumVariantPayloadKind::Tuple;
+    case ast::EnumVariantPayloadKind::Struct:
+        return EnumVariantPayloadKind::Struct;
+    }
+    return EnumVariantPayloadKind::Unit;
+}
+
 struct MethodCandidate {
     const ImplTypeInfo *impl{nullptr};
     const ImplMethodInfo *method{nullptr};
@@ -978,6 +1003,12 @@ class ExpressionChecker final {
                         slot = substitute_type(slot, subst, services_.types());
                     }
                 }
+                for (auto &field : variant.fields) {
+                    if (field.type != nullptr) {
+                        field.type = substitute_type(field.type, subst, services_.types());
+                    }
+                }
+                variant.rebuild_field_index();
             }
             substituted_enum_info_storage.emplace(std::move(substituted));
             enum_info = std::cref(*substituted_enum_info_storage);
@@ -1213,6 +1244,20 @@ class ExpressionChecker final {
                     // irrefutable binding (catch-all).
                     if (enum_info.has_value() && !binding.nested &&
                         enum_info->get().has_variant(binding.name)) {
+                        const auto variant = enum_info->get().find_variant(binding.name);
+                        if (variant.has_value() &&
+                            variant->get().payload_kind != EnumVariantPayloadKind::Unit) {
+                            services_.typecheck_error_here(
+                                error_codes::typecheck::InvalidEnumVariantShape,
+                                messages::typecheck::InvalidEnumVariantShape.format_with(
+                                    binding.name,
+                                    enum_info->get().canonical_name,
+                                    std::string(
+                                        payload_kind_spelling(variant->get().payload_kind)),
+                                    std::string(payload_kind_spelling(
+                                        EnumVariantPayloadKind::Unit))),
+                                range);
+                        }
                         covered_variants.insert(std::string(binding.name));
                         return false;
                     }
@@ -1289,26 +1334,95 @@ class ExpressionChecker final {
 
                     covered_variants.insert(std::string(variant_name));
 
-                    const auto &payload = variant_info->get().payload;
-                    if (variant.subpatterns.size() != payload.size()) {
+                    const auto pattern_kind = semantic_payload_kind(variant.payload_kind);
+                    if (pattern_kind != variant_info->get().payload_kind) {
                         services_.typecheck_error_here(
-                            error_codes::typecheck::MatchVariantPayloadArity,
-                            messages::typecheck::MatchVariantPayloadArity.format_with(
+                            error_codes::typecheck::InvalidEnumVariantShape,
+                            messages::typecheck::InvalidEnumVariantShape.format_with(
                                 std::string(variant_name),
                                 enum_info->get().canonical_name,
-                                std::to_string(payload.size()),
-                                std::to_string(variant.subpatterns.size())),
+                                std::string(payload_kind_spelling(variant_info->get().payload_kind)),
+                                std::string(payload_kind_spelling(pattern_kind))),
                             range);
+                        return false;
                     }
 
-                    const std::size_t limit = std::min(variant.subpatterns.size(), payload.size());
-                    for (std::size_t index = 0; index < limit; ++index) {
-                        (void)lower_pattern(*variant.subpatterns[index],
-                                            payload[index],
-                                            std::nullopt,
-                                            bindings,
-                                            covered_variants,
-                                            variant.subpatterns[index]->range);
+                    if (variant_info->get().payload_kind == EnumVariantPayloadKind::Tuple) {
+                        const auto &payload = variant_info->get().payload;
+                        if (variant.subpatterns.size() != payload.size()) {
+                            services_.typecheck_error_here(
+                                error_codes::typecheck::MatchVariantPayloadArity,
+                                messages::typecheck::MatchVariantPayloadArity.format_with(
+                                    std::string(variant_name),
+                                    enum_info->get().canonical_name,
+                                    std::to_string(payload.size()),
+                                    std::to_string(variant.subpatterns.size())),
+                                range);
+                        }
+
+                        const std::size_t limit =
+                            std::min(variant.subpatterns.size(), payload.size());
+                        for (std::size_t index = 0; index < limit; ++index) {
+                            (void)lower_pattern(*variant.subpatterns[index],
+                                                payload[index],
+                                                std::nullopt,
+                                                bindings,
+                                                covered_variants,
+                                                variant.subpatterns[index]->range);
+                        }
+                        return false;
+                    }
+
+                    if (variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
+                        std::unordered_set<std::string> seen_fields;
+                        std::unordered_set<std::string> matched_fields;
+                        bool has_rest = false;
+                        for (const auto &field_pattern : variant.fields) {
+                            if (!field_pattern) {
+                                continue;
+                            }
+                            if (field_pattern->is_rest) {
+                                has_rest = true;
+                                continue;
+                            }
+                            if (!seen_fields.insert(field_pattern->name).second) {
+                                services_.typecheck_error_here(
+                                    error_codes::typecheck::DuplicateField,
+                                    messages::typecheck::DuplicateField.format_with(
+                                        field_pattern->name),
+                                    field_pattern->range);
+                                continue;
+                            }
+                            const auto field = variant_info->get().find_field(field_pattern->name);
+                            if (!field.has_value()) {
+                                services_.typecheck_error_here(
+                                    error_codes::typecheck::UnexpectedVariantField,
+                                    messages::typecheck::UnexpectedVariantField.format_with(
+                                        std::string(variant_name), field_pattern->name),
+                                    field_pattern->range);
+                                continue;
+                            }
+                            matched_fields.insert(field_pattern->name);
+                            if (field_pattern->pattern) {
+                                (void)lower_pattern(*field_pattern->pattern,
+                                                    field->get().type,
+                                                    std::nullopt,
+                                                    bindings,
+                                                    covered_variants,
+                                                    field_pattern->pattern->range);
+                            }
+                        }
+                        if (!has_rest) {
+                            for (const auto &field : variant_info->get().fields) {
+                                if (!matched_fields.contains(field.name)) {
+                                    services_.typecheck_error_here(
+                                        error_codes::typecheck::MissingVariantField,
+                                        messages::typecheck::MissingVariantField.format_with(
+                                            std::string(variant_name), field.name),
+                                        range);
+                                }
+                            }
+                        }
                     }
                     return false;
                 },
@@ -1383,7 +1497,9 @@ class ExpressionChecker final {
         }
 
         const auto &segments = qualified.name->segments;
-        if (segments.empty() || !enum_info->get().has_variant(segments.back())) {
+        const auto variant =
+            !segments.empty() ? enum_info->get().find_variant(segments.back()) : std::nullopt;
+        if (!variant.has_value()) {
             std::string message =
                 messages::typecheck::UnknownEnumVariant.format_with(qualified.name->spelling());
             if (!segments.empty()) {
@@ -1399,6 +1515,17 @@ class ExpressionChecker final {
             }
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownEnumVariant, std::move(message), expr.range);
+            return values_.error_typed();
+        }
+        if (variant->get().payload_kind != EnumVariantPayloadKind::Unit) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidEnumVariantShape,
+                messages::typecheck::InvalidEnumVariantConstructorShape.format_with(
+                    segments.back(),
+                    enum_info->get().canonical_name,
+                    std::string(payload_kind_spelling(variant->get().payload_kind)),
+                    std::string(payload_kind_spelling(EnumVariantPayloadKind::Unit))),
+                expr.range);
             return values_.error_typed();
         }
 
@@ -1438,6 +1565,10 @@ class ExpressionChecker final {
         }
 
         auto struct_type = services_.resolve_type_symbol(reference->get().target, expr.range);
+        if (struct_type && struct_type->holds<types::EnumT>() &&
+            struct_lit.type_name->segments.size() > 1) {
+            return check_enum_struct_variant_constructor(expr, reference->get().target);
+        }
         if (!struct_type || !struct_type->holds<types::StructT>()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::InvalidStructLiteralTarget,
@@ -1511,6 +1642,160 @@ class ExpressionChecker final {
         }
 
         return values_.typed_effect(std::move(struct_type), effect);
+    }
+
+    [[nodiscard]] TypedValue check_enum_struct_variant_constructor(const ast::ExprSyntax &expr,
+                                                                   SymbolId enum_symbol) const {
+        const auto &literal = expr.as<ast::StructLiteralExpr>();
+        auto owner_type = services_.resolve_type_symbol(enum_symbol, expr.range);
+        if (!owner_type || !owner_type->holds<types::EnumT>()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidStructLiteralTarget,
+                messages::typecheck::StructLiteralTargetRequiresStruct.format_with(
+                    literal.type_name->spelling()),
+                expr.range);
+            return values_.error_typed();
+        }
+
+        const auto enum_info = services_.get_enum(*owner_type);
+        if (!enum_info.has_value()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::MissingTypeMetadata,
+                messages::typecheck::EnumTypeInfoMissing.format_with(owner_type->describe()),
+                expr.range);
+            return values_.error_typed();
+        }
+
+        const auto &segments = literal.type_name->segments;
+        const auto variant_name = segments.empty() ? std::string{} : segments.back();
+        const auto variant = enum_info->get().find_variant(variant_name);
+        if (!variant.has_value()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::UnknownEnumVariant,
+                messages::typecheck::UnknownEnumVariant.format_with(literal.type_name->spelling()),
+                expr.range);
+            return values_.error_typed();
+        }
+        if (variant->get().payload_kind != EnumVariantPayloadKind::Struct) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidEnumVariantShape,
+                messages::typecheck::InvalidEnumVariantConstructorShape.format_with(
+                    variant_name,
+                    enum_info->get().canonical_name,
+                    std::string(payload_kind_spelling(variant->get().payload_kind)),
+                    std::string(payload_kind_spelling(EnumVariantPayloadKind::Struct))),
+                expr.range);
+            return values_.error_typed();
+        }
+
+        const bool is_generic = !enum_info->get().type_param_names.empty();
+        TypeSubstitutionMap subst;
+        if (is_generic) {
+            subst.assign(enum_info->get().type_param_names.size(), nullptr);
+            if (expected_type_.has_value()) {
+                const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+                const auto *owner_enum = owner_type->get_if<types::EnumT>();
+                if (expected_enum != nullptr && owner_enum != nullptr &&
+                    expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
+                    *expected_enum->symbol == *owner_enum->symbol &&
+                    expected_enum->type_args.size() == subst.size()) {
+                    for (std::size_t index = 0; index < subst.size(); ++index) {
+                        subst[index] = expected_enum->type_args[index];
+                    }
+                }
+            }
+        }
+
+        struct CheckedField {
+            const ast::StructInitSyntax *syntax{nullptr};
+            const EnumVariantFieldInfo *field{nullptr};
+            TypePtr actual{nullptr};
+        };
+
+        std::unordered_set<std::string> seen_fields;
+        std::vector<CheckedField> checked_fields;
+        ExprEffect effect = ExprEffect::Pure;
+        for (const auto &field_init : literal.fields) {
+            if (!seen_fields.insert(field_init->field_name).second) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::DuplicateField,
+                    messages::typecheck::DuplicateField.format_with(field_init->field_name),
+                    field_init->range);
+                continue;
+            }
+            const auto field = variant->get().find_field(field_init->field_name);
+            if (!field.has_value()) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::UnexpectedVariantField,
+                    messages::typecheck::UnexpectedVariantField.format_with(
+                        variant_name, field_init->field_name),
+                    field_init->range);
+                continue;
+            }
+            const auto expected =
+                is_generic ? substitute_type(field->get().type, subst, services_.types())
+                           : field->get().type;
+            const auto expectation = TypeExpectation{
+                .expected = expected,
+                .origin_kind = TypeExpectationOriginKind::StructField,
+                .origin_range = field->get().declaration_range,
+                .description = "enum variant field '" + field->get().name + "'",
+            };
+            const auto value = services_.check_expr(*field_init->value, context_, expectation);
+            effect = join_effects(effect, value.effect);
+            if (is_generic && field->get().type != nullptr && value.type != nullptr) {
+                unify_param_with_arg(*field->get().type, *value.type, subst);
+            }
+            checked_fields.push_back(
+                CheckedField{.syntax = field_init.get(), .field = &field->get(), .actual = value.type});
+        }
+
+        for (const auto &field : variant->get().fields) {
+            if (!seen_fields.contains(field.name) && !field.has_default) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::MissingVariantFieldInConstructor,
+                    messages::typecheck::MissingVariantFieldInConstructor.format_with(
+                        literal.type_name->spelling(), field.name),
+                    expr.range);
+            }
+        }
+
+        for (const auto &checked : checked_fields) {
+            if (checked.syntax == nullptr || checked.field == nullptr ||
+                checked.field->type == nullptr || checked.actual == nullptr) {
+                continue;
+            }
+            const auto effective_type =
+                is_generic ? substitute_type(checked.field->type, subst, services_.types())
+                           : checked.field->type;
+            const auto expectation = TypeExpectation{
+                .expected = effective_type,
+                .origin_kind = TypeExpectationOriginKind::StructField,
+                .origin_range = checked.field->declaration_range,
+                .description = "enum variant field '" + checked.field->name + "'",
+            };
+            (void)services_.check_assignable(*checked.actual,
+                                             *effective_type,
+                                             checked.syntax->value->range,
+                                             "enum variant field",
+                                             expectation);
+        }
+
+        const auto *owner_enum = owner_type->get_if<types::EnumT>();
+        const auto canonical_name =
+            owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
+        const auto result_type =
+            services_.types().enum_variant_type(canonical_name, variant_name, enum_symbol, subst);
+        if (expected_type_.has_value()) {
+            const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+            if (expected_enum != nullptr && owner_enum != nullptr &&
+                expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
+                *expected_enum->symbol == *owner_enum->symbol) {
+                return values_.typed_effect(expected_type_->get().clone(), effect);
+            }
+        }
+
+        return values_.typed_effect(std::move(result_type), effect);
     }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
@@ -2265,6 +2550,17 @@ class ExpressionChecker final {
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownEnumVariant,
                 messages::typecheck::UnknownEnumVariant.format_with(call.callee->spelling()),
+                expr.range);
+            return values_.error_typed(false);
+        }
+        if (variant->get().payload_kind != EnumVariantPayloadKind::Tuple) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidEnumVariantShape,
+                messages::typecheck::InvalidEnumVariantConstructorShape.format_with(
+                    std::string(segments.back()),
+                    enum_info->get().canonical_name,
+                    std::string(payload_kind_spelling(variant->get().payload_kind)),
+                    std::string(payload_kind_spelling(EnumVariantPayloadKind::Tuple))),
                 expr.range);
             return values_.error_typed(false);
         }

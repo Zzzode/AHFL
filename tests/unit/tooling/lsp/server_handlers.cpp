@@ -804,7 +804,7 @@ pub struct Msg<T> {
 pub enum Choice<T> {
     None,
     Some(T),
-    Pair(left: Int = 1, right: String),
+    Pair { left: Int = 1, right: String },
 }
 
 pub capability Call(req: Msg<Int>) -> Bool {
@@ -4137,7 +4137,7 @@ void test_definition_targets_source_sysroot_primitive_home_modules() {
                                     "    EFloat(Float),\n"
                                     "    EText(String),\n"
                                     "    EId(UUID),\n"
-                                    "    ERecord(flag: Bool, label: String),\n"
+                                    "    ERecord { flag: Bool, label: String },\n"
                                     "}\n"
                                     "\n"
                                     "impl UUID {}\n";

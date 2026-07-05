@@ -411,6 +411,14 @@ class ResolverPass final {
                 for (const auto &payload_type : variant->payload) {
                     resolve_type(*payload_type);
                 }
+                for (const auto &field : variant->named_fields) {
+                    if (field->type) {
+                        resolve_type(*field->type);
+                    }
+                    if (field->default_value) {
+                        resolve_declaration_expr(*field->default_value);
+                    }
+                }
             }
             if (node.where_clause) {
                 for (const auto &constraint : node.where_clause->constraints) {
@@ -1272,6 +1280,11 @@ class ResolverPass final {
                 for (const auto &payload : variant->payload) {
                     if (payload) {
                         check_public_type(decl, *payload, type_params);
+                    }
+                }
+                for (const auto &field : variant->named_fields) {
+                    if (field->type) {
+                        check_public_type(decl, *field->type, type_params);
                     }
                 }
             }
@@ -2477,8 +2490,36 @@ class ResolverPass final {
                     }
                 },
                 [&](const ast::StructLiteralExpr &e) {
-                    (void)resolve_reference(
-                        SymbolNamespace::Types, *e.type_name, ReferenceKind::TypeName, "type");
+                    if (e.type_name != nullptr && e.type_name->segments.size() > 1) {
+                        const auto owner = owner_name_of(*e.type_name);
+                        if (const auto owner_id = lookup(SymbolNamespace::Types, owner);
+                            owner_id.has_value()) {
+                            const auto owner_symbol = result_.symbol_table.get(*owner_id);
+                            if (owner_symbol.has_value() &&
+                                owner_symbol->get().kind == SymbolKind::Enum) {
+                                result_.add_reference(ResolvedReference{
+                                    .kind = ReferenceKind::TypeName,
+                                    .text = e.type_name->spelling(),
+                                    .source_id = current_source_id_,
+                                    .range = e.type_name->range,
+                                    .target = *owner_id,
+                                });
+                            } else {
+                                (void)resolve_reference(SymbolNamespace::Types,
+                                                        *e.type_name,
+                                                        ReferenceKind::TypeName,
+                                                        "type");
+                            }
+                        } else {
+                            (void)resolve_reference(SymbolNamespace::Types,
+                                                    *e.type_name,
+                                                    ReferenceKind::TypeName,
+                                                    "type");
+                        }
+                    } else {
+                        (void)resolve_reference(
+                            SymbolNamespace::Types, *e.type_name, ReferenceKind::TypeName, "type");
+                    }
                     for (const auto &field : e.fields) {
                         resolve_declaration_expr(*field->value);
                     }

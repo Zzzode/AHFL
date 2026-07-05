@@ -354,11 +354,51 @@ class AstInvariantValidator final {
                 },
                 [&](const VariantPattern &p) {
                     validate_qualified_name(p.path.get(), pattern.range, "VariantPattern.path");
-                    for (const auto &sub : p.subpatterns) {
-                        require(sub != nullptr, pattern.range, "VariantPattern.subpatterns null");
-                        if (sub) {
-                            validate_pattern(*sub);
+                    switch (p.payload_kind) {
+                    case EnumVariantPayloadKind::Unit:
+                        require(p.subpatterns.empty(),
+                                pattern.range,
+                                "unit VariantPattern cannot carry tuple subpatterns");
+                        require(p.fields.empty(),
+                                pattern.range,
+                                "unit VariantPattern cannot carry struct fields");
+                        break;
+                    case EnumVariantPayloadKind::Tuple:
+                        require(p.fields.empty(),
+                                pattern.range,
+                                "tuple VariantPattern cannot carry struct fields");
+                        for (const auto &sub : p.subpatterns) {
+                            require(
+                                sub != nullptr, pattern.range, "VariantPattern.subpatterns null");
+                            if (sub) {
+                                validate_pattern(*sub);
+                            }
                         }
+                        break;
+                    case EnumVariantPayloadKind::Struct:
+                        require(p.subpatterns.empty(),
+                                pattern.range,
+                                "struct VariantPattern cannot carry tuple subpatterns");
+                        for (const auto &field : p.fields) {
+                            require(field != nullptr,
+                                    pattern.range,
+                                    "VariantPattern.fields contains null");
+                            if (!field) {
+                                continue;
+                            }
+                            if (!field->is_rest) {
+                                require(!field->name.empty(),
+                                        field->range,
+                                        "VariantPatternField is missing name");
+                                require(field->pattern != nullptr,
+                                        field->range,
+                                        "VariantPatternField is missing pattern");
+                            }
+                            if (field->pattern) {
+                                validate_pattern(*field->pattern);
+                            }
+                        }
+                        break;
                     }
                 },
                 [&](const WildcardPattern &) {},
@@ -804,9 +844,32 @@ class AstInvariantValidator final {
                     require(!variant->name.empty(),
                             variant->range,
                             "EnumVariantDeclSyntax is missing name");
-                    require(variant->payload.empty() || variant->named_fields.empty(),
-                            variant->range,
-                            "EnumVariantDeclSyntax cannot carry both tuple and struct payloads");
+                    switch (variant->payload_kind) {
+                    case EnumVariantPayloadKind::Unit:
+                        require(variant->payload.empty(),
+                                variant->range,
+                                "unit EnumVariantDeclSyntax cannot carry tuple payload");
+                        require(variant->named_fields.empty(),
+                                variant->range,
+                                "unit EnumVariantDeclSyntax cannot carry struct payload");
+                        break;
+                    case EnumVariantPayloadKind::Tuple:
+                        require(!variant->payload.empty(),
+                                variant->range,
+                                "tuple EnumVariantDeclSyntax requires tuple payload");
+                        require(variant->named_fields.empty(),
+                                variant->range,
+                                "tuple EnumVariantDeclSyntax cannot carry struct payload");
+                        break;
+                    case EnumVariantPayloadKind::Struct:
+                        require(variant->payload.empty(),
+                                variant->range,
+                                "struct EnumVariantDeclSyntax cannot carry tuple payload");
+                        require(!variant->named_fields.empty(),
+                                variant->range,
+                                "struct EnumVariantDeclSyntax requires struct payload");
+                        break;
+                    }
                     // P1 (ADT): validate the optional positional payload types.
                     for (const auto &payload_type : variant->payload) {
                         require(payload_type != nullptr,

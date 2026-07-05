@@ -1,5 +1,6 @@
 #include "runtime/evaluator/value_json.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -103,6 +104,33 @@ void write_json_impl(const Value &v, std::ostream &out) {
                         }
                     }
                     out << ']';
+                }
+                if (!inner.named_payload.empty()) {
+                    out << ',';
+                    ahfl::write_escaped_json_string(out, "_named_payload");
+                    out << ':';
+                    out << '{';
+                    std::vector<std::string> names;
+                    names.reserve(inner.named_payload.size());
+                    for (const auto &[name, _] : inner.named_payload) {
+                        names.push_back(name);
+                    }
+                    std::sort(names.begin(), names.end());
+                    for (std::size_t i = 0; i < names.size(); ++i) {
+                        if (i > 0) {
+                            out << ',';
+                        }
+                        const auto &name = names[i];
+                        ahfl::write_escaped_json_string(out, name);
+                        out << ':';
+                        if (const auto iter = inner.named_payload.find(name);
+                            iter != inner.named_payload.end() && iter->second) {
+                            write_json_impl(*iter->second, out);
+                        } else {
+                            out << "null";
+                        }
+                    }
+                    out << '}';
                 }
                 out << '}';
             } else if constexpr (std::is_same_v<T, CallableValue>) {
@@ -248,6 +276,22 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
                     return std::nullopt;
                 }
                 enum_value.payload.push_back(std::make_unique<Value>(std::move(*item_value)));
+            }
+        }
+        if (const auto *named_payload = object.get("_named_payload")) {
+            if (named_payload->kind != ahfl::json::Kind::Object) {
+                return std::nullopt;
+            }
+            for (const auto &[field_name, json_item] : named_payload->object_fields) {
+                if (!json_item) {
+                    return std::nullopt;
+                }
+                auto item_value = value_from_json_value(*json_item);
+                if (!item_value.has_value()) {
+                    return std::nullopt;
+                }
+                enum_value.named_payload.emplace(
+                    field_name, std::make_unique<Value>(std::move(*item_value)));
             }
         }
         return Value{std::move(enum_value)};

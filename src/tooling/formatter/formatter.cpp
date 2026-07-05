@@ -646,7 +646,7 @@ class AstFormatter {
                 }
                 text += ")";
             } else if (!variant->named_fields.empty()) {
-                text += "(";
+                text += " { ";
                 for (std::size_t i = 0; i < variant->named_fields.size(); ++i) {
                     if (i > 0) {
                         text += ", ";
@@ -657,7 +657,7 @@ class AstFormatter {
                         text += " = " + f->default_value->text;
                     }
                 }
-                text += ")";
+                text += " }";
             }
             text += ",";
             write(std::move(text));
@@ -1289,7 +1289,7 @@ class AstFormatter {
                            if (p.path) {
                                write(p.path->spelling());
                            }
-                           if (!p.subpatterns.empty()) {
+                           if (p.payload_kind == ahfl::ast::EnumVariantPayloadKind::Tuple) {
                                write("(");
                                for (std::size_t i = 0; i < p.subpatterns.size(); ++i) {
                                    if (i > 0) {
@@ -1300,6 +1300,28 @@ class AstFormatter {
                                    }
                                }
                                write(")");
+                           } else if (p.payload_kind == ahfl::ast::EnumVariantPayloadKind::Struct) {
+                               write(" { ");
+                               for (std::size_t i = 0; i < p.fields.size(); ++i) {
+                                   if (i > 0) {
+                                       out_ << ", ";
+                                   }
+                                   const auto &field = p.fields[i];
+                                   if (!field) {
+                                       continue;
+                                   }
+                                   if (field->is_rest) {
+                                       out_ << "..";
+                                       continue;
+                                   }
+                                   out_ << field->name;
+                                   if (field->pattern != nullptr &&
+                                       field->pattern->text != field->name) {
+                                       out_ << ": ";
+                                       format_pattern(*field->pattern);
+                                   }
+                               }
+                               write(" }");
                            }
                        },
                        [&](const ahfl::ast::WildcardPattern &) { write("_"); },

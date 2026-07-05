@@ -61,11 +61,11 @@ public:
 
     virtual std::any visitEnumDecl(AHFLParser::EnumDeclContext *context) = 0;
 
-    virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *context) = 0;
-
     virtual std::any visitStructEnumVariant(AHFLParser::StructEnumVariantContext *context) = 0;
 
     virtual std::any visitTupleEnumVariant(AHFLParser::TupleEnumVariantContext *context) = 0;
+
+    virtual std::any visitUnitEnumVariant(AHFLParser::UnitEnumVariantContext *context) = 0;
 
     virtual std::any visitVariantFieldDecl(AHFLParser::VariantFieldDeclContext *context) = 0;
 
@@ -278,6 +278,12 @@ public:
     virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *context) = 0;
 
     virtual std::any visitVariantPattern(AHFLParser::VariantPatternContext *context) = 0;
+
+    virtual std::any visitQualifiedVariantName(AHFLParser::QualifiedVariantNameContext *context) = 0;
+
+    virtual std::any visitPatternFieldList(AHFLParser::PatternFieldListContext *context) = 0;
+
+    virtual std::any visitPatternField(AHFLParser::PatternFieldContext *context) = 0;
 
     virtual std::any visitWildcardPattern(AHFLParser::WildcardPatternContext *context) = 0;
 

@@ -5,10 +5,13 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
+#include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -311,6 +314,123 @@ enum Maybe { Some(Int), None, }
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "MATCH_VARIANT_PAYLOAD_ARITY"));
+}
+
+TEST_CASE("struct variant pattern binds named fields") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data { code, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+
+    const auto enum_it = std::find_if(result.typed_program.declarations.begin(),
+                                      result.typed_program.declarations.end(),
+                                      [](const ahfl::TypedDecl &decl) {
+                                          const auto *info =
+                                              std::get_if<ahfl::EnumTypeInfo>(&decl.payload);
+                                          return info != nullptr &&
+                                                 info->canonical_name == "adt_match::Packet";
+                                      });
+    REQUIRE(enum_it != result.typed_program.declarations.end());
+    const auto &packet = std::get<ahfl::EnumTypeInfo>(enum_it->payload);
+    const auto data = packet.find_variant("Data");
+    REQUIRE(data.has_value());
+    CHECK(data->get().payload_kind == ahfl::EnumVariantPayloadKind::Struct);
+    REQUIRE(data->get().fields.size() == 2);
+    CHECK(data->get().fields[0].name == "code");
+    CHECK(data->get().fields[0].type->describe() == "Int");
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    const auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE("struct variant pattern missing field reports MISSING_VARIANT_FIELD") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data { code } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "MISSING_VARIANT_FIELD"));
+}
+
+TEST_CASE("struct variant pattern unexpected field reports UNEXPECTED_VARIANT_FIELD") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data { code, extra, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "UNEXPECTED_VARIANT_FIELD"));
+}
+
+TEST_CASE("tuple pattern on struct variant reports INVALID_ENUM_VARIANT_SHAPE") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data(code) => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
+}
+
+TEST_CASE("struct pattern on tuple variant reports INVALID_ENUM_VARIANT_SHAPE") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data(Int),
+}
+)AHFL",
+        "Packet",
+        "Packet::Empty",
+        "match ctx.value { Data { code } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
+}
+
+TEST_CASE("struct variant constructor missing required field reports diagnostic") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7 })AHFL",
+        "match ctx.value { Data { code, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "MISSING_VARIANT_FIELD_IN_CONSTRUCTOR"));
 }
 
 // ---------------------------------------------------------------------------
