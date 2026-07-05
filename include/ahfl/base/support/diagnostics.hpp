@@ -168,6 +168,8 @@ inline constexpr ErrorCode<DiagnosticCategory::Resolve> ModuleBoundaryMismatch{
     "MODULE_BOUNDARY_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclarations{
     "MULTIPLE_MODULE_DECLARATIONS"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> VariantNameShadowsType{
+    "VARIANT_NAME_SHADOWS_TYPE"};
 } // namespace resolve
 
 namespace typecheck {
@@ -207,6 +209,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingField{"MISSING_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateField{"DUPLICATE_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateVariant{"DUPLICATE_VARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateVariantField{
+    "DUPLICATE_VARIANT_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidIndexAccess{
     "INVALID_INDEX_ACCESS"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoneWithoutContext{
@@ -444,12 +448,12 @@ inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
 inline constexpr MessageTemplate PrivateSymbol{"symbol '{}' is private to package '{}'"};
 inline constexpr MessageTemplate MissingImport{
     "symbol '{}' is in module '{}' but that module is not imported in this source"};
-inline constexpr MessageTemplate PrivateInPublic{
-    "public {} '{}' exposes package-internal {} '{}'"};
-inline constexpr MessageTemplate InvalidVisibilityPlacement{
-    "'pub' is not allowed on {}"};
+inline constexpr MessageTemplate PrivateInPublic{"public {} '{}' exposes package-internal {} '{}'"};
+inline constexpr MessageTemplate InvalidVisibilityPlacement{"'pub' is not allowed on {}"};
 inline constexpr MessageTemplate ModuleBoundaryMismatch{
     "source unit module boundary does not match graph owner"};
+inline constexpr MessageTemplate VariantNameShadowsType{
+    "enum variant '{}' in enum '{}' conflicts with type '{}' in the same module"};
 // ---- Trait / Impl messages ----
 inline constexpr MessageTemplate TraitOrphanImpl{
     "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is "
@@ -508,6 +512,8 @@ inline constexpr MessageTemplate MissingField{"missing field '{}' in struct lite
 inline constexpr MessageTemplate DuplicateField{"duplicate field '{}' in struct literal"};
 inline constexpr MessageTemplate DuplicateStructField{"duplicate struct field '{}'"};
 inline constexpr MessageTemplate DuplicateEnumVariant{"duplicate enum variant '{}'"};
+inline constexpr MessageTemplate DuplicateEnumVariantField{
+    "duplicate field '{}' in enum variant '{}'"};
 inline constexpr MessageTemplate MissingAgentContextDefault{
     "agent context field '{}' must declare a default value"};
 inline constexpr MessageTemplate InvalidOperator{"operator '{}' is not defined for {} and {}"};
@@ -548,8 +554,7 @@ inline constexpr MessageTemplate InvalidEnumVariantConstructorShape{
     "variant '{}' of enum '{}' is declared as {}, but constructor uses {} syntax"};
 inline constexpr MessageTemplate MissingVariantField{
     "struct variant pattern for '{}' is missing field '{}'"};
-inline constexpr MessageTemplate UnexpectedVariantField{
-    "struct variant '{}' has no field '{}'"};
+inline constexpr MessageTemplate UnexpectedVariantField{"struct variant '{}' has no field '{}'"};
 inline constexpr MessageTemplate MissingVariantFieldInConstructor{
     "struct variant constructor '{}' is missing required field '{}'"};
 // P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers.

@@ -294,11 +294,8 @@ class ResolverPass final {
 
     void visit(const ast::ConstDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Consts,
-                                  SymbolKind::Const,
-                                  node.name,
-                                  node.range,
-                                  node.visibility);
+            (void)register_symbol(
+                SymbolNamespace::Consts, SymbolKind::Const, node.name, node.range, node.visibility);
             return;
         }
 
@@ -337,11 +334,8 @@ class ResolverPass final {
 
     void visit(const ast::StructDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Types,
-                                  SymbolKind::Struct,
-                                  node.name,
-                                  node.range,
-                                  node.visibility);
+            (void)register_symbol(
+                SymbolNamespace::Types, SymbolKind::Struct, node.name, node.range, node.visibility);
             return;
         }
 
@@ -391,6 +385,8 @@ class ResolverPass final {
         }
 
         if (current_pass_ == Pass::ResolveReferences) {
+            validate_enum_variant_name_scope(node);
+
             // Register type parameters so that variant payload types (e.g.
             // `List<T>` on a generic enum variant) can resolve their tparam
             // references during the same resolve-type walk.
@@ -475,11 +471,8 @@ class ResolverPass final {
 
     void visit(const ast::AgentDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Agents,
-                                  SymbolKind::Agent,
-                                  node.name,
-                                  node.range,
-                                  node.visibility);
+            (void)register_symbol(
+                SymbolNamespace::Agents, SymbolKind::Agent, node.name, node.range, node.visibility);
             return;
         }
 
@@ -734,11 +727,8 @@ class ResolverPass final {
         // (`impl Ord for T`) resolve the trait name via the dedicated
         // TraitBound reference kind.
         if (current_pass_ == Pass::RegisterSymbols) {
-            (void)register_symbol(SymbolNamespace::Traits,
-                                  SymbolKind::Trait,
-                                  node.name,
-                                  node.range,
-                                  node.visibility);
+            (void)register_symbol(
+                SymbolNamespace::Traits, SymbolKind::Trait, node.name, node.range, node.visibility);
             return;
         }
 
@@ -1057,13 +1047,11 @@ class ResolverPass final {
         return "<unnamed>";
     }
 
-    [[nodiscard]] std::string report_key(const ast::Decl &owner,
-                                         SymbolId leaked_symbol,
-                                         SourceRange range) const {
+    [[nodiscard]] std::string
+    report_key(const ast::Decl &owner, SymbolId leaked_symbol, SourceRange range) const {
         return std::to_string(owner.range.begin_offset) + ":" +
-               std::to_string(owner.range.end_offset) + ":" +
-               std::to_string(leaked_symbol.value) + ":" +
-               std::to_string(range.begin_offset) + ":" + std::to_string(range.end_offset);
+               std::to_string(owner.range.end_offset) + ":" + std::to_string(leaked_symbol.value) +
+               ":" + std::to_string(range.begin_offset) + ":" + std::to_string(range.end_offset);
     }
 
     void emit_private_in_public(const ast::Decl &owner,
@@ -1149,10 +1137,8 @@ class ResolverPass final {
                                check_public_type(owner, *fn.return_type, type_params);
                            }
                            for (const auto &capability : fn.effect_capabilities) {
-                               check_public_symbol_reference(owner,
-                                                             SymbolNamespace::Capabilities,
-                                                             *capability,
-                                                             "capability");
+                               check_public_symbol_reference(
+                                   owner, SymbolNamespace::Capabilities, *capability, "capability");
                            }
                        },
                        [&](const ast::AppType &app) {
@@ -1212,10 +1198,8 @@ class ResolverPass final {
             return;
         }
         for (const auto &capability : effect_clause->capabilities) {
-            check_public_symbol_reference(owner,
-                                          SymbolNamespace::Capabilities,
-                                          *capability,
-                                          "capability");
+            check_public_symbol_reference(
+                owner, SymbolNamespace::Capabilities, *capability, "capability");
         }
     }
 
@@ -1335,10 +1319,8 @@ class ResolverPass final {
             }
             for (const auto &workflow_node : node.nodes) {
                 if (workflow_node->target) {
-                    check_public_symbol_reference(decl,
-                                                  SymbolNamespace::Agents,
-                                                  *workflow_node->target,
-                                                  "agent");
+                    check_public_symbol_reference(
+                        decl, SymbolNamespace::Agents, *workflow_node->target, "agent");
                 }
             }
             return;
@@ -1730,6 +1712,40 @@ class ResolverPass final {
         return std::nullopt;
     }
 
+    void validate_enum_variant_name_scope(const ast::EnumDecl &node) {
+        for (const auto &variant : node.variants) {
+            if (variant == nullptr) {
+                continue;
+            }
+            const auto type_symbol_id =
+                find_registered_symbol(SymbolNamespace::Types, variant->name);
+            if (!type_symbol_id.has_value()) {
+                continue;
+            }
+            const auto type_symbol = result_.symbol_table.get(*type_symbol_id);
+            if (!type_symbol.has_value()) {
+                continue;
+            }
+
+            emit_error(error_codes::resolve::VariantNameShadowsType,
+                       messages::resolve::VariantNameShadowsType,
+                       current_source_,
+                       variant->range,
+                       variant->name,
+                       node.name,
+                       type_symbol->get().canonical_name);
+
+            if (type_symbol->get().source_id.has_value()) {
+                if (auto src = source_unit_for(*type_symbol->get().source_id); src.has_value()) {
+                    emit_note(error_codes::resolve::VariantNameShadowsType,
+                              messages::resolve::PreviousDeclarationHere,
+                              &src->get(),
+                              type_symbol->get().declaration_range);
+                }
+            }
+        }
+    }
+
     [[nodiscard]] std::optional<SymbolId>
     find_canonical_symbol(SymbolNamespace name_space, std::string_view canonical_name) const {
         const auto &index = result_.symbol_table.index(name_space);
@@ -2020,8 +2036,8 @@ class ResolverPass final {
         return module_imported_in_current_source(module_name);
     }
 
-    [[nodiscard]] bool qualified_symbol_accessible_by_spelling(
-        const ast::QualifiedName &name) const {
+    [[nodiscard]] bool
+    qualified_symbol_accessible_by_spelling(const ast::QualifiedName &name) const {
         if (name.segments.size() <= 1) {
             return true;
         }
@@ -2037,8 +2053,8 @@ class ResolverPass final {
         return symbol.has_value() && symbol_visible_from_current_source(symbol->get());
     }
 
-    [[nodiscard]] std::optional<SymbolId> find_unfiltered_candidate(
-        SymbolNamespace name_space, const ast::QualifiedName &name) const {
+    [[nodiscard]] std::optional<SymbolId>
+    find_unfiltered_candidate(SymbolNamespace name_space, const ast::QualifiedName &name) const {
         const auto &index = result_.symbol_table.index(name_space);
 
         if (name.segments.size() == 1) {
@@ -2112,9 +2128,8 @@ class ResolverPass final {
 
         if (const auto canonical = index.canonical_names.find(normalized_name);
             canonical != index.canonical_names.end()) {
-            return symbol_id_visible(canonical->second)
-                       ? std::optional<SymbolId>{canonical->second}
-                       : std::nullopt;
+            return symbol_id_visible(canonical->second) ? std::optional<SymbolId>{canonical->second}
+                                                        : std::nullopt;
         }
 
         return std::nullopt;

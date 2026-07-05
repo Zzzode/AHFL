@@ -69,14 +69,35 @@ module adt_match;
     return result;
 }
 
-[[nodiscard]] bool has_diagnostic_code(const ahfl::TypeCheckResult &result,
+[[nodiscard]] ahfl::ResolveResult resolve_source(const std::string &source) {
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("adt_match.ahfl", source);
+    if (parse_result.has_errors()) {
+        MESSAGE("parse errors detected");
+        for (const auto &entry : parse_result.diagnostics.entries()) {
+            MESSAGE("  parse: " << entry.message);
+        }
+    }
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    return resolver.resolve(*parse_result.program);
+}
+
+[[nodiscard]] bool has_diagnostic_code(const ahfl::DiagnosticBag &diagnostics,
                                        std::string_view code_substring) {
-    for (const auto &entry : result.diagnostics.entries()) {
+    for (const auto &entry : diagnostics.entries()) {
         if (entry.code.has_value() && entry.code->find(code_substring) != std::string::npos) {
             return true;
         }
     }
     return false;
+}
+
+[[nodiscard]] bool has_diagnostic_code(const ahfl::TypeCheckResult &result,
+                                       std::string_view code_substring) {
+    return has_diagnostic_code(result.diagnostics, code_substring);
 }
 
 // Match lives inside a flow state body. The harness below wraps a `match`
@@ -94,10 +115,12 @@ module adt_match;
 struct Response {
     value: Int;
 }
-)AHFL"} + std::string{enum_decls} + std::string{R"AHFL(
+)AHFL"} + std::string{enum_decls} +
+           std::string{R"AHFL(
 struct Context {
-    value: )AHFL"} + std::string{context_type} + std::string{R"AHFL( = )AHFL"} +
-           std::string{default_value} + std::string{R"AHFL(;
+    value: )AHFL"} +
+           std::string{context_type} + std::string{R"AHFL( = )AHFL"} + std::string{default_value} +
+           std::string{R"AHFL(;
 }
 
 agent MatchAgent {
@@ -112,7 +135,8 @@ agent MatchAgent {
 
 flow for MatchAgent {
     state Done {
-        let r = )AHFL"} + std::string{match_expr} + std::string{R"AHFL(;
+        let r = )AHFL"} +
+           std::string{match_expr} + std::string{R"AHFL(;
         return Response { value: r };
     }
 }
@@ -272,11 +296,7 @@ enum Light { Red, Green, Blue, }
 // ---------------------------------------------------------------------------
 TEST_CASE("non-enum scrutinee reports MATCH_SCRUTINEE_REQUIRES_ENUM") {
     // Provide an Int-typed context field and match against it.
-    const auto source = wrap_in_flow(
-        "",
-        "Int",
-        "0",
-        "match ctx.value { _ => 0 }");
+    const auto source = wrap_in_flow("", "Int", "0", "match ctx.value { _ => 0 }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "MATCH_SCRUTINEE_REQUIRES_ENUM"));
@@ -316,6 +336,33 @@ enum Maybe { Some(Int), None, }
     CHECK(has_diagnostic_code(result, "MATCH_VARIANT_PAYLOAD_ARITY"));
 }
 
+TEST_CASE("enum variant name cannot shadow a module type name") {
+    const auto source = module_preamble() + R"AHFL(
+struct Data {
+    code: Int;
+}
+
+enum Packet {
+    Empty,
+    Data { code: Int },
+}
+)AHFL";
+    const auto result = resolve_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result.diagnostics, "VARIANT_NAME_SHADOWS_TYPE"));
+}
+
+TEST_CASE("struct variant duplicate field reports DUPLICATE_VARIANT_FIELD") {
+    const auto source = module_preamble() + R"AHFL(
+enum Packet {
+    Data { code: Int, code: String },
+}
+)AHFL";
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
+}
+
 TEST_CASE("struct variant pattern binds named fields") {
     const auto source = wrap_in_flow(
         R"AHFL(
@@ -330,14 +377,13 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK_FALSE(result.has_errors());
 
-    const auto enum_it = std::find_if(result.typed_program.declarations.begin(),
-                                      result.typed_program.declarations.end(),
-                                      [](const ahfl::TypedDecl &decl) {
-                                          const auto *info =
-                                              std::get_if<ahfl::EnumTypeInfo>(&decl.payload);
-                                          return info != nullptr &&
-                                                 info->canonical_name == "adt_match::Packet";
-                                      });
+    const auto enum_it =
+        std::find_if(result.typed_program.declarations.begin(),
+                     result.typed_program.declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         const auto *info = std::get_if<ahfl::EnumTypeInfo>(&decl.payload);
+                         return info != nullptr && info->canonical_name == "adt_match::Packet";
+                     });
     REQUIRE(enum_it != result.typed_program.declarations.end());
     const auto &packet = std::get<ahfl::EnumTypeInfo>(enum_it->payload);
     const auto data = packet.find_variant("Data");
@@ -351,6 +397,32 @@ enum Packet {
     const auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE("struct variant constructor may omit defaulted field") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String = "ok" },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7 })AHFL",
+        "match ctx.value { Data { code, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("struct variant default field value must match declared type") {
+    const auto source = module_preamble() + R"AHFL(
+enum Packet {
+    Data { code: Int = "bad" },
+}
+)AHFL";
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
 }
 
 TEST_CASE("struct variant pattern missing field reports MISSING_VARIANT_FIELD") {
@@ -417,6 +489,22 @@ enum Packet {
     CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
 }
 
+TEST_CASE("tuple pattern on unit variant reports INVALID_ENUM_VARIANT_SHAPE") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data(Int),
+}
+)AHFL",
+        "Packet",
+        "Packet::Empty",
+        "match ctx.value { Empty(x) => x, Data(code) => code }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
+}
+
 TEST_CASE("struct variant constructor missing required field reports diagnostic") {
     const auto source = wrap_in_flow(
         R"AHFL(
@@ -431,6 +519,22 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "MISSING_VARIANT_FIELD_IN_CONSTRUCTOR"));
+}
+
+TEST_CASE("struct variant constructor unexpected field reports UNEXPECTED_VARIANT_FIELD") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, extra: 9 })AHFL",
+        "match ctx.value { Data { code } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "UNEXPECTED_VARIANT_FIELD"));
 }
 
 // ---------------------------------------------------------------------------

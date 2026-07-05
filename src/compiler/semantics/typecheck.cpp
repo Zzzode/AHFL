@@ -5,8 +5,8 @@
 #include "ahfl/compiler/semantics/condition_facts.hpp"
 #include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
-#include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/type_expectation.hpp"
+#include "ahfl/compiler/semantics/type_relations.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
@@ -235,11 +235,8 @@ void append_typed_child(std::vector<TypedExprChild> &children,
             // expression record is already appended by the normal recursion.
             [&](const ast::UnwrapExprSyntax &e) {
                 if (e.operand) {
-                    append_typed_child(children,
-                                       program,
-                                       e.operand.get(),
-                                       source_id,
-                                       TypedExprChildRole::Operand);
+                    append_typed_child(
+                        children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
                 }
             },
         },
@@ -461,10 +458,10 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         expr.node);
 }
 
-[[nodiscard]] std::optional<TypedCallTargetKind> call_target_kind_for(
-    const ast::ExprSyntax &expr,
-    const ResolveResult &resolve_result,
-    std::optional<SourceId> source_id) {
+[[nodiscard]] std::optional<TypedCallTargetKind>
+call_target_kind_for(const ast::ExprSyntax &expr,
+                     const ResolveResult &resolve_result,
+                     std::optional<SourceId> source_id) {
     if (!std::holds_alternative<ast::CallExpr>(expr.node)) {
         return std::nullopt;
     }
@@ -795,6 +792,7 @@ void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck
 void ConstSema::run() {
     check_agent_context_defaults();
     check_const_initializers();
+    check_enum_variant_defaults();
     check_struct_defaults();
 }
 
@@ -880,8 +878,7 @@ TypeCheckResult TypeCheckPass::run() {
         // declarations once; ImplTypeInfo payloads carry their own .index.
         std::unordered_map<std::size_t, std::uint32_t> env_index_to_decl_index;
         for (std::uint32_t i = 0; i < tp.declarations.size(); ++i) {
-            if (const auto *impl_info =
-                    std::get_if<ImplTypeInfo>(&tp.declarations[i].payload)) {
+            if (const auto *impl_info = std::get_if<ImplTypeInfo>(&tp.declarations[i].payload)) {
                 env_index_to_decl_index.emplace(impl_info->index, i);
             }
         }
@@ -957,8 +954,7 @@ MaybeCRef<Symbol> TypeCheckPass::find_local_here(SymbolNamespace name_space,
     return resolve_result_.symbol_table.find_local(name_space, name);
 }
 
-namespace {
-} // namespace
+namespace {} // namespace
 
 MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind kind,
                                                                 SourceRange range) const {
@@ -1464,14 +1460,11 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     if (implemented) {
         return true;
     }
-    const std::string nominal_name = nominal_target.has_value()
-                                         ? nominal_describe(subject_type)
-                                         : std::string{"<type>"};
+    const std::string nominal_name =
+        nominal_target.has_value() ? nominal_describe(subject_type) : std::string{"<type>"};
     typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
                          messages::typecheck::TraitBoundNotSatisfied.format_with(
-                             nominal_name,
-                             std::string{trait_name},
-                             subject_type.describe()),
+                             nominal_name, std::string{trait_name}, subject_type.describe()),
                          range);
     return false;
 }
@@ -1691,20 +1684,28 @@ bool TypeCheckPass::check_assignable(const Type &source,
     // declaration sites when either side of the mismatch is a nominal type
     // declared in more than one module.
     append_multi_declaration_notes(
-        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-        target.describe(), "expected type");
+        notes,
+        collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(),
+        "expected type");
     append_multi_declaration_notes(
-        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-        source.describe(), "actual type");
+        notes,
+        collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(),
+        "actual type");
     // g-1 Phase 2: single-declaration nominal counterpart — when a type is
     // declared exactly once, append a direct "declared here" note pointing at
     // its definition site so the user can jump to it from either side.
     append_nominal_declared_here_note(
-        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-        target.describe(), "expected type");
+        notes,
+        collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(),
+        "expected type");
     append_nominal_declared_here_note(
-        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-        source.describe(), "actual type");
+        notes,
+        collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(),
+        "actual type");
     typecheck_error_here(error_codes::typecheck::TypeMismatch,
                          messages::typecheck::TypeMismatch.format_with(
                              context_label, target.describe(), source.describe()),
@@ -1739,18 +1740,26 @@ bool TypeCheckPass::check_assignable(const Type &source,
     // declaration sites when either side of the mismatch is a nominal type
     // declared in more than one module.
     append_multi_declaration_notes(
-        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-        target.describe(), "expected type");
+        notes,
+        collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(),
+        "expected type");
     append_multi_declaration_notes(
-        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-        source.describe(), "actual type");
+        notes,
+        collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(),
+        "actual type");
     // g-1 Phase 2: single-declaration nominal counterpart.
     append_nominal_declared_here_note(
-        notes, collect_nominal_declarations(target, resolve_result_.symbol_table),
-        target.describe(), "expected type");
+        notes,
+        collect_nominal_declarations(target, resolve_result_.symbol_table),
+        target.describe(),
+        "expected type");
     append_nominal_declared_here_note(
-        notes, collect_nominal_declarations(source, resolve_result_.symbol_table),
-        source.describe(), "actual type");
+        notes,
+        collect_nominal_declarations(source, resolve_result_.symbol_table),
+        source.describe(),
+        "actual type");
     typecheck_error_here(error_codes::typecheck::TypeMismatch,
                          messages::typecheck::TypeMismatch.format_with(
                              context_label, target.describe(), source.describe()),
@@ -1978,13 +1987,11 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
             // encoding. Container membership is tested via SemanticType
             // holds() against ListT / SetT / MapT (R-05: no string
             // matching against type names).
-            TypePtr global_self = driver_->clone_or_any(
-                std::cref(*agent_info->get().context_type));
+            TypePtr global_self = driver_->clone_or_any(std::cref(*agent_info->get().context_type));
             if (global_self == nullptr || is_error_type(*global_self)) {
                 global_self = driver_->make_type(TypeKind::Any);
             }
-            const auto classify_decreases =
-                [&]() -> std::tuple<bool, bool, TypePtr> {
+            const auto classify_decreases = [&]() -> std::tuple<bool, bool, TypePtr> {
                 // Two AST shapes match the `self.length` pattern because the
                 // frontend flattens dotted identifiers into PathExpr while
                 // dotted access on arbitrary expressions uses MemberAccessExpr.
@@ -1996,31 +2003,27 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                     if (const auto *member_access =
                             std::get_if<ast::MemberAccessExpr>(&clause->expr->node);
                         member_access != nullptr) {
-                        if (member_access->member == "length" &&
-                            member_access->base != nullptr &&
-                            std::holds_alternative<ast::PathExpr>(
-                                member_access->base->node)) {
+                        if (member_access->member == "length" && member_access->base != nullptr &&
+                            std::holds_alternative<ast::PathExpr>(member_access->base->node)) {
                             const auto &base_path =
                                 std::get<ast::PathExpr>(member_access->base->node);
-                            is_self_length =
-                                base_path.path != nullptr &&
-                                base_path.path->root_name == "self" &&
-                                base_path.path->members.empty();
+                            is_self_length = base_path.path != nullptr &&
+                                             base_path.path->root_name == "self" &&
+                                             base_path.path->members.empty();
                             if (is_self_length) {
-                                bound_self = driver_->clone_or_any(std::cref(
-                                    *agent_info->get().context_type));
+                                bound_self = driver_->clone_or_any(
+                                    std::cref(*agent_info->get().context_type));
                             }
                         }
                     } else if (const auto *path_expr =
                                    std::get_if<ast::PathExpr>(&clause->expr->node);
                                path_expr != nullptr && path_expr->path != nullptr) {
-                        is_self_length =
-                            path_expr->path->root_name == "self" &&
-                            path_expr->path->members.size() == 1 &&
-                            path_expr->path->members.front() == "length";
+                        is_self_length = path_expr->path->root_name == "self" &&
+                                         path_expr->path->members.size() == 1 &&
+                                         path_expr->path->members.front() == "length";
                         if (is_self_length) {
-                            bound_self = driver_->clone_or_any(std::cref(
-                                *agent_info->get().context_type));
+                            bound_self =
+                                driver_->clone_or_any(std::cref(*agent_info->get().context_type));
                         }
                     }
                 }
@@ -2028,8 +2031,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                     if (bound_self == nullptr) {
                         return false;
                     }
-                    const auto container =
-                        stdlib_bridge::std_container_type_view(*bound_self);
+                    const auto container = stdlib_bridge::std_container_type_view(*bound_self);
                     if (!container.has_value()) {
                         return false;
                     }
@@ -2045,8 +2047,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 }();
                 return {is_self_length, container_self, bound_self};
             };
-            const auto [is_self_length, self_is_container, pre_bound_self] =
-                classify_decreases();
+            const auto [is_self_length, self_is_container, pre_bound_self] = classify_decreases();
 
             if (clause->kind == ast::ContractClauseKind::Decreases) {
                 if (clause->is_wildcard) {
@@ -2073,13 +2074,12 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 }
                 decreases_context.bindings.emplace("self", std::move(self_type));
 
-                const auto value = driver_->check_expr(
-                    *clause->expr, decreases_context, std::cref(*int_type));
+                const auto value =
+                    driver_->check_expr(*clause->expr, decreases_context, std::cref(*int_type));
                 if (!value.type->holds<types::IntT>() && !is_error_type(*value.type)) {
                     driver_->typecheck_error_here(
                         error_codes::typecheck::TypeMismatch,
-                        messages::typecheck::IntExpressionRequired.format_with(
-                            "decreases clause"),
+                        messages::typecheck::IntExpressionRequired.format_with("decreases clause"),
                         clause->expr->range,
                         std::vector<Diagnostic::Related>{Diagnostic::Related{
                             .message = actual_type_note(*value.type),
@@ -2096,28 +2096,22 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 // whenever `decreases: self.length` is present on a struct or
                 // container context whose flow handler introduced a shadow.
                 const bool is_shadowed =
-                    driver_->flow_self_shadowing_.contains(
-                        target->get().target.value);
+                    driver_->flow_self_shadowing_.contains(target->get().target.value);
                 if (is_self_length && is_shadowed) {
                     const auto describe_shadow =
-                        driver_->flow_self_shadowing_.at(
-                            target->get().target.value);
+                        driver_->flow_self_shadowing_.at(target->get().target.value);
                     if (driver_->current_source_ != nullptr) {
                         driver_->result_.diagnostics.warning()
-                            .code(error_codes::typecheck::
-                                      DecreasesShadowedReceiver)
-                            .message(messages::typecheck::
-                                         DecreasesShadowedReceiver,
+                            .code(error_codes::typecheck::DecreasesShadowedReceiver)
+                            .message(messages::typecheck::DecreasesShadowedReceiver,
                                      describe_shadow)
                             .range(clause->expr->range)
                             .source(driver_->current_source_->source)
                             .emit();
                     } else {
                         driver_->result_.diagnostics.warning()
-                            .code(error_codes::typecheck::
-                                      DecreasesShadowedReceiver)
-                            .message(messages::typecheck::
-                                         DecreasesShadowedReceiver,
+                            .code(error_codes::typecheck::DecreasesShadowedReceiver)
+                            .message(messages::typecheck::DecreasesShadowedReceiver,
                                      describe_shadow)
                             .range(clause->expr->range)
                             .emit();
@@ -2363,11 +2357,9 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                     if (stmt == nullptr) {
                         continue;
                     }
-                    if (stmt->kind == ast::StatementSyntaxKind::Let &&
-                        stmt->let_stmt != nullptr &&
+                    if (stmt->kind == ast::StatementSyntaxKind::Let && stmt->let_stmt != nullptr &&
                         stmt->let_stmt->name == "self") {
-                        if (stmt->let_stmt->type != nullptr &&
-                            shadow_desc.empty()) {
+                        if (stmt->let_stmt->type != nullptr && shadow_desc.empty()) {
                             shadow_desc = stmt->let_stmt->type->spelling();
                             if (shadow_desc.empty()) {
                                 shadow_desc = "Any";
@@ -2431,8 +2423,8 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                                  handler->state_name,
                                  agent_info->get().output_type_range);
             if (!shadow_desc.empty()) {
-                driver_->flow_self_shadowing_.try_emplace(
-                    target->get().target.value, std::move(shadow_desc));
+                driver_->flow_self_shadowing_.try_emplace(target->get().target.value,
+                                                          std::move(shadow_desc));
             }
         }
     }
@@ -2824,16 +2816,17 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
     // derived bounds, super-trait carry-over) — never reordering the prefix.
     // -------------------------------------------------------------------------
     std::vector<std::string> type_param_names = method_info.type_param_names;
-    type_param_names.reserve(type_param_names.size() +
-                             impl_info.type_param_names.size() + 4);
+    type_param_names.reserve(type_param_names.size() + impl_info.type_param_names.size() + 4);
     auto dedup_push = [&](std::string_view name) {
         for (const auto &existing : type_param_names) {
-            if (existing == name) return;
+            if (existing == name)
+                return;
         }
         type_param_names.emplace_back(name);
     };
     auto dedup_push_range = [&](const std::vector<std::string> &names) {
-        for (const auto &n : names) dedup_push(n);
+        for (const auto &n : names)
+            dedup_push(n);
     };
 
     // Trait-level scope — append-only. Self + trait tparams should already be
@@ -3035,11 +3028,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                      std::string_view display_name,
                                                      std::string_view expected_range_str,
                                                      std::size_t actual_count) {
-        typecheck_error_here(error_codes::typecheck::WrongArity,
-                             messages::typecheck::WrongArity.format_with(
-                                 std::string{kind_spelling}, std::string{display_name},
-                                 std::string{expected_range_str}, std::to_string(actual_count)),
-                             statement.range);
+        typecheck_error_here(
+            error_codes::typecheck::WrongArity,
+            messages::typecheck::WrongArity.format_with(std::string{kind_spelling},
+                                                        std::string{display_name},
+                                                        std::string{expected_range_str},
+                                                        std::to_string(actual_count)),
+            statement.range);
     };
 
     switch (statement.kind) {
@@ -3340,12 +3335,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                         : std::vector<std::uint32_t>{UINT32_MAX},
                 .target_name = {},
                 .goto_target_state = {},
-                .then_block_index = ifl->then_block
-                                        ? find_block_index_by_range(*ifl->then_block)
-                                        : UINT32_MAX,
-                .else_block_index = ifl->else_block
-                                        ? find_block_index_by_range(*ifl->else_block)
-                                        : UINT32_MAX,
+                .then_block_index =
+                    ifl->then_block ? find_block_index_by_range(*ifl->then_block) : UINT32_MAX,
+                .else_block_index =
+                    ifl->else_block ? find_block_index_by_range(*ifl->else_block) : UINT32_MAX,
                 .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
                 .let_type = nullptr,
                 .assign_target_root_kind = AssignTargetRootKind::Identifier,
@@ -3453,8 +3446,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         // well-formed inputs and is used here so out-of-range arguments (e.g.
         // `assert(a, b, c)`) still produce the correct WRONG_ARITY diagnostic
         // even when only the first two slots are materialised on the AST node.
-        const std::size_t arity =
-            statement.assert_stmt ? statement.assert_stmt->raw_arg_count : 0;
+        const std::size_t arity = statement.assert_stmt ? statement.assert_stmt->raw_arg_count : 0;
         if (arity == 0) {
             emit_wrong_arity("statement:assert", "assert", "1 or 2", 0);
             break;
@@ -3505,8 +3497,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                      std::move(notes));
             }
             if (!msg_expr.is_pure) {
-                non_pure_error_here("assert message", msg_expr.effect,
-                                    statement.assert_stmt->message->range);
+                non_pure_error_here(
+                    "assert message", msg_expr.effect, statement.assert_stmt->message->range);
             }
             children.push_back(resolve_payload_expr_index(*statement.assert_stmt->message));
         }
@@ -3535,8 +3527,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         // `UnwrapStmtSyntax::raw_arg_count` is used as the arity value so
         // malformed inputs like `unwrap()` still surface the correct
         // WRONG_ARITY diagnostic.
-        const std::size_t arity =
-            statement.unwrap_stmt ? statement.unwrap_stmt->raw_arg_count : 0;
+        const std::size_t arity = statement.unwrap_stmt ? statement.unwrap_stmt->raw_arg_count : 0;
         if (arity != 1) {
             emit_wrong_arity("statement:unwrap", "unwrap", "1", arity);
             break;
@@ -3553,7 +3544,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         // Any other concrete type is a TYPE_MISMATCH; error types are tolerated
         // to avoid cascading diagnostics.
         const bool is_optional = [&] {
-            if (is_error_type(*operand.type)) return true;
+            if (is_error_type(*operand.type))
+                return true;
             const auto view = stdlib_bridge::std_container_type_view(*operand.type);
             return view.has_value() && view->kind == stdlib_bridge::StdContainerKind::Option;
         }();
@@ -3651,8 +3643,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                      std::move(notes));
             }
             if (!msg_expr.is_pure) {
-                non_pure_error_here("requires message", msg_expr.effect,
-                                    statement.requires_stmt->message->range);
+                non_pure_error_here(
+                    "requires message", msg_expr.effect, statement.requires_stmt->message->range);
             }
             children.push_back(resolve_payload_expr_index(*statement.requires_stmt->message));
         }
@@ -3706,14 +3698,16 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .message = actual_type_note(*msg_expr.type),
                     .range = statement.unreachable_stmt->message->range,
                 });
-                typecheck_error_here(error_codes::typecheck::TypeMismatch,
-                                     messages::typecheck::TypeMismatch.format_with(
-                                         "unreachable message", "String", msg_expr.type->describe()),
-                                     statement.unreachable_stmt->message->range,
-                                     std::move(notes));
+                typecheck_error_here(
+                    error_codes::typecheck::TypeMismatch,
+                    messages::typecheck::TypeMismatch.format_with(
+                        "unreachable message", "String", msg_expr.type->describe()),
+                    statement.unreachable_stmt->message->range,
+                    std::move(notes));
             }
             if (!msg_expr.is_pure) {
-                non_pure_error_here("unreachable message", msg_expr.effect,
+                non_pure_error_here("unreachable message",
+                                    msg_expr.effect,
                                     statement.unreachable_stmt->message->range);
             }
             children.push_back(resolve_payload_expr_index(*statement.unreachable_stmt->message));

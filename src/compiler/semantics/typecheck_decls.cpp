@@ -76,7 +76,8 @@ WhereClauseInfo build_where_clause_info(const Owned<ast::WhereClauseSyntax> &syn
             // NamedType whose qualified name spelling is the trait.
             bound_info.trait_names.reserve(constraint->bounds.size());
             for (const auto &bound : constraint->bounds) {
-                if (!bound) continue;
+                if (!bound)
+                    continue;
                 if (bound->is<ast::NamedType>()) {
                     const auto &named = bound->as<ast::NamedType>();
                     if (named.name) {
@@ -653,17 +654,18 @@ void TypeCheckPass::build_enum_types() {
                 for (const auto &field : variant->named_fields) {
                     if (!seen_fields.insert(field->name).second) {
                         typecheck_error_here(
-                            error_codes::typecheck::DuplicateField,
-                            messages::typecheck::DuplicateStructField.format_with(field->name),
+                            error_codes::typecheck::DuplicateVariantField,
+                            messages::typecheck::DuplicateEnumVariantField.format_with(
+                                field->name, variant->name),
                             field->range);
                     }
                     variant_info.fields.push_back(EnumVariantFieldInfo{
                         .name = field->name,
                         .type = resolve_type(*field->type),
                         .has_default = field->default_value != nullptr,
-                        .default_value_range =
-                            field->default_value != nullptr ? field->default_value->range
-                                                            : SourceRange{},
+                        .default_value_range = field->default_value != nullptr
+                                                   ? field->default_value->range
+                                                   : SourceRange{},
                         .declaration_range = field->range,
                     });
                 }
@@ -816,40 +818,32 @@ void TypeCheckPass::build_agent_types() {
             // friendly semantic-level note.
             if (decl.get().context_type == nullptr) {
                 auto builder =
-                    result_.diagnostics
-                        .warning()
+                    result_.diagnostics.warning()
                         .code(error_codes::typecheck::AgentContextOmitted)
-                        .message(messages::typecheck::AgentContextMissingNote,
-                                 info.canonical_name)
+                        .message(messages::typecheck::AgentContextMissingNote, info.canonical_name)
                         .range(decl.get().range)
-                        .with_note(
-                            "hint: insert `context: StructType;` between `input` and `output` sections to give this agent mutable state",
-                            decl.get().range);
+                        .with_note("hint: insert `context: StructType;` between `input` and "
+                                   "`output` sections to give this agent mutable state",
+                                   decl.get().range);
                 if (current_source_ != nullptr) {
                     std::move(builder).source(current_source_->source).emit();
                 } else {
                     std::move(builder).emit();
                 }
             }
-            if (decl.get().capabilities.empty() &&
-                decl.get().capabilities_range.empty()) {
+            if (decl.get().capabilities.empty() && decl.get().capabilities_range.empty()) {
                 auto builder =
-                    result_.diagnostics
-                        .warning()
-                        .code(error_codes::typecheck::
-                                     AgentCapabilitiesOmitted)
-                        .message(
-                            messages::typecheck::
-                                AgentCapabilitiesMissingNote,
-                            info.canonical_name)
+                    result_.diagnostics.warning()
+                        .code(error_codes::typecheck::AgentCapabilitiesOmitted)
+                        .message(messages::typecheck::AgentCapabilitiesMissingNote,
+                                 info.canonical_name)
                         .range(decl.get().range)
                         .with_note(
-                            "hint: insert `capabilities: [Cap1, Cap2];` (or `capabilities: [];` for none explicitly) between `final` and first `transition`",
+                            "hint: insert `capabilities: [Cap1, Cap2];` (or `capabilities: [];` "
+                            "for none explicitly) between `final` and first `transition`",
                             decl.get().range);
                 if (current_source_ != nullptr) {
-                    std::move(builder)
-                        .source(current_source_->source)
-                        .emit();
+                    std::move(builder).source(current_source_->source).emit();
                 } else {
                     std::move(builder).emit();
                 }
@@ -860,11 +854,11 @@ void TypeCheckPass::build_agent_types() {
             // Wave-20 QW-4: when `context` is omitted (QW-4 grammar relaxed) we
             // pass the synthetic empty struct type and the agent's whole range
             // as the diagnostic anchor so warnings don't reference nullptr.
-            check_schema_boundary_decl_type(
-                info.context_type,
-                SchemaBoundaryKind::AgentContextDefault,
-                decl.get().context_type != nullptr ? decl.get().context_type->range
-                                                    : decl.get().range);
+            check_schema_boundary_decl_type(info.context_type,
+                                            SchemaBoundaryKind::AgentContextDefault,
+                                            decl.get().context_type != nullptr
+                                                ? decl.get().context_type->range
+                                                : decl.get().range);
             check_schema_boundary_decl_type(
                 info.output_type, SchemaBoundaryKind::AgentOutput, decl.get().output_type->range);
 
@@ -998,8 +992,7 @@ void TypeCheckPass::build_workflow_types() {
 }
 
 bool TypeCheckPass::builtin_hook_allowed_by_current_source(std::string_view hook) const {
-    if (current_source_ == nullptr ||
-        !current_source_->compiler_intrinsics_allow.has_value()) {
+    if (current_source_ == nullptr || !current_source_->compiler_intrinsics_allow.has_value()) {
         return true;
     }
 
@@ -1346,8 +1339,7 @@ void TypeCheckPass::build_trait_types() {
                 if (!super_id.has_value()) {
                     // Fallback 2: direct namespace lookup — try Traits first,
                     // then Types (legacy).
-                    const auto super_spelling =
-                        super_type->as<ast::NamedType>().name->spelling();
+                    const auto super_spelling = super_type->as<ast::NamedType>().name->spelling();
                     auto fb = find_local_here(SymbolNamespace::Traits, super_spelling);
                     if (!fb.has_value()) {
                         fb = find_local_here(SymbolNamespace::Types, super_spelling);
@@ -1452,11 +1444,11 @@ void TypeCheckPass::build_impl_types() {
                     existing.target_type ? nominal_describe(*existing.target_type) : target_name),
                 .range = existing.declaration_range,
             });
-            typecheck_error_here(error_codes::typecheck::CoherenceConflict,
-                                 messages::typecheck::CoherenceConflict.format_with(
-                                     trait_name, target_name),
-                                 candidate.declaration_range,
-                                 std::move(notes));
+            typecheck_error_here(
+                error_codes::typecheck::CoherenceConflict,
+                messages::typecheck::CoherenceConflict.format_with(trait_name, target_name),
+                candidate.declaration_range,
+                std::move(notes));
             return true;
         }
         return false;
@@ -1521,10 +1513,9 @@ void TypeCheckPass::build_impl_types() {
             // of impl/method tparams embedded in method signatures.
             std::vector<std::string> impl_and_method_tparams;
             impl_and_method_tparams.reserve(info.type_param_names.size() + 16);
-            impl_and_method_tparams.insert(
-                impl_and_method_tparams.end(),
-                info.type_param_names.begin(),
-                info.type_param_names.end());
+            impl_and_method_tparams.insert(impl_and_method_tparams.end(),
+                                           info.type_param_names.begin(),
+                                           info.type_param_names.end());
             current_type_param_names_ = &impl_and_method_tparams;
 
             // Resolve target type. RFC §1.4 TypeRef must resolve to a nominal
@@ -1748,8 +1739,7 @@ void TypeCheckPass::build_impl_types() {
             // Record whether the impl is a non-inherent trait impl *before*
             // moving `info` into the environment map, so the value is well
             // defined when we push onto the coherence seen-impls list below.
-            const bool register_as_trait_impl =
-                !info.is_inherent && info.trait_symbol.has_value();
+            const bool register_as_trait_impl = !info.is_inherent && info.trait_symbol.has_value();
 
             environment().impls_.emplace(impl_index, std::move(info));
             // P3c.S5a: register the impl into the declaration-layer impl_index
@@ -1905,17 +1895,19 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
                 // decreases annotations on requires/ensures/invariant. Merge
                 // both flags so typed_hir_lower and the assurance counter
                 // derive the same "total decreases expressions" count.
-                .decreases_is_wildcard = [&]() {
-                    if (clause->kind == ast::ContractClauseKind::Decreases) {
-                        return clause->is_wildcard;
-                    }
-                    return clause->decreases ? clause->decreases->decreases_is_wildcard : false;
-                }(),
+                .decreases_is_wildcard =
+                    [&]() {
+                        if (clause->kind == ast::ContractClauseKind::Decreases) {
+                            return clause->is_wildcard;
+                        }
+                        return clause->decreases ? clause->decreases->decreases_is_wildcard : false;
+                    }(),
                 .decreases_range = clause->decreases ? clause->decreases->range : SourceRange{},
             };
             if (clause->decreases) {
                 clause_info.decreases_exprs.reserve(clause->decreases->decreases_exprs.size());
-                clause_info.decreases_expr_ranges.reserve(clause->decreases->decreases_exprs.size());
+                clause_info.decreases_expr_ranges.reserve(
+                    clause->decreases->decreases_exprs.size());
                 for (const auto &decr_expr : clause->decreases->decreases_exprs) {
                     const SourceRange range = decr_expr ? decr_expr->range : SourceRange{};
                     clause_info.decreases_exprs.push_back(DecreasesExprInfo{.expr_range = range});
@@ -1997,6 +1989,70 @@ void ConstSema::check_struct_defaults() {
                                                            *field_info.type,
                                                            field_decl->default_value->range,
                                                            default_policy);
+            }
+        });
+    }
+}
+
+void ConstSema::check_enum_variant_defaults() {
+    for (const auto &[id, decl] : driver_->enum_decls_) {
+        driver_->with_symbol_context(SymbolId{id}, [&]() {
+            const auto enum_info = driver_->environment().get_enum(SymbolId{id});
+            if (!enum_info.has_value()) {
+                return;
+            }
+
+            for (std::size_t variant_index = 0; variant_index < decl.get().variants.size();
+                 ++variant_index) {
+                const auto &variant_decl = decl.get().variants[variant_index];
+                if (variant_decl == nullptr || variant_index >= enum_info->get().variants.size()) {
+                    continue;
+                }
+                const auto &variant_info = enum_info->get().variants[variant_index];
+                for (std::size_t field_index = 0; field_index < variant_decl->named_fields.size();
+                     ++field_index) {
+                    const auto &field_decl = variant_decl->named_fields[field_index];
+                    if (field_decl == nullptr || field_decl->default_value == nullptr ||
+                        field_index >= variant_info.fields.size()) {
+                        continue;
+                    }
+
+                    const auto &field_info = variant_info.fields[field_index];
+                    if (field_info.type == nullptr) {
+                        continue;
+                    }
+
+                    const ValueContext context;
+                    auto value = check_const_expr(*field_decl->default_value,
+                                                  context,
+                                                  std::cref(*field_info.type),
+                                                  "enum variant field default");
+                    if (value.checked_expr.type == nullptr) {
+                        continue;
+                    }
+
+                    ConstTypeRelationValidator const_relations{
+                        driver_->relations_,
+                        ConstDiagnosticEmitter{
+                            driver_->result_.diagnostics,
+                            driver_->current_source_ != nullptr ? &driver_->current_source_->source
+                                                                : nullptr,
+                        },
+                        &driver_->resolve_result_.symbol_table,
+                    };
+                    const auto expectation = TypeExpectation{
+                        .expected = field_info.type->clone(),
+                        .origin_kind = TypeExpectationOriginKind::Annotation,
+                        .origin_range = field_info.declaration_range,
+                        .description = "enum variant field default '" + variant_info.name + "." +
+                                       field_info.name + "'",
+                    };
+                    (void)const_relations.check_assignable(*value.checked_expr.type,
+                                                           *field_info.type,
+                                                           field_decl->default_value->range,
+                                                           "enum variant field default",
+                                                           expectation);
+                }
             }
         });
     }

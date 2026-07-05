@@ -319,8 +319,7 @@ class AstInvariantValidator final {
                 // P4-02: unwrap(e) — identical operand invariants to the
                 // statement-level unwrap, but expressed as an expression child.
                 [&](const UnwrapExprSyntax &e) {
-                    require(e.operand != nullptr, expr.range,
-                            "UnwrapExpr is missing operand");
+                    require(e.operand != nullptr, expr.range, "UnwrapExpr is missing operand");
                     if (e.operand) {
                         validate_expr(*e.operand);
                     }
@@ -697,9 +696,7 @@ class AstInvariantValidator final {
             // impl/trait target during semantic analysis (P3b). Other
             // parameters must carry an explicit type.
             if (!param->is_self) {
-                require(param->type != nullptr,
-                        param->range,
-                        "ParamDeclSyntax is missing type");
+                require(param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
             }
             if (param->type) {
                 validate_type(*param->type);
@@ -879,7 +876,7 @@ class AstInvariantValidator final {
                             validate_type(*payload_type);
                         }
                     }
-                    // RFC d-1 POC: validate struct (named-field) payload.
+                    // RFC 0001: validate struct-form named-field payload.
                     for (const auto &field : variant->named_fields) {
                         require(field != nullptr,
                                 variant->range,
@@ -1256,9 +1253,7 @@ class AstInvariantValidator final {
                 }
             }
             for (const auto &assoc_const : node.const_items) {
-                require(assoc_const != nullptr,
-                        node.range,
-                        "ImplDecl.const_items contains null");
+                require(assoc_const != nullptr, node.range, "ImplDecl.const_items contains null");
                 if (assoc_const) {
                     require(!assoc_const->name.empty(),
                             assoc_const->range,

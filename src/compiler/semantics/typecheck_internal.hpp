@@ -241,6 +241,7 @@ class ConstSema {
                      std::optional<SymbolId> source_const = std::nullopt);
     void check_const_initializers_in_program(const ast::Program &program);
     void check_const_initializers();
+    void check_enum_variant_defaults();
     void check_struct_defaults();
     void check_agent_context_defaults();
 };
@@ -419,8 +420,7 @@ class TypeCheckPass final {
     // helper lets integration tests exercise the DECREASES_SHADOWED_RECEIVER
     // warning branch without relying on a `let self: ...` binding, a form that
     // the grammar reserves from appearing as a user-level let identifier.
-    void inject_flow_self_shadowing_for_test(std::size_t agent_symbol_value,
-                                             std::string describe) {
+    void inject_flow_self_shadowing_for_test(std::size_t agent_symbol_value, std::string describe) {
         flow_self_shadowing_.emplace(agent_symbol_value, std::move(describe));
     }
 
@@ -484,9 +484,8 @@ class TypeCheckPass final {
     [[nodiscard]] std::uint32_t
     find_block_index_by_range(const ast::BlockSyntax &block) const noexcept;
     [[nodiscard]] bool builtin_hook_allowed_by_current_source(std::string_view hook) const;
-    void validate_builtin_attribute(std::string_view hook,
-                                    bool has_effect_clause,
-                                    SourceRange range);
+    void
+    validate_builtin_attribute(std::string_view hook, bool has_effect_clause, SourceRange range);
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
         &type_alias_decls_;
@@ -677,9 +676,8 @@ class TypeCheckPass final {
     // Super-trait coverage is applied transitively per the trait's super_traits
     // list so a bound on a super-trait is satisfied when the target type
     // implements any sub-trait in the environment (§2.4).
-    [[nodiscard]] bool check_bound(const Type &subject_type,
-                                   std::string_view trait_name,
-                                   SourceRange range);
+    [[nodiscard]] bool
+    check_bound(const Type &subject_type, std::string_view trait_name, SourceRange range);
 
     [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
 

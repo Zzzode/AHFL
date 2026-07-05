@@ -35,20 +35,24 @@ class ParserStackOverflowException : public std::runtime_error {
                                  std::size_t limit,
                                  SourceRange where)
         : std::runtime_error(build_what(nesting_kind, depth, limit)),
-          nesting_kind_(std::move(nesting_kind)),
-          depth_(depth),
-          limit_(limit),
-          where_(where) {}
+          nesting_kind_(std::move(nesting_kind)), depth_(depth), limit_(limit), where_(where) {}
 
-    [[nodiscard]] const std::string &nesting_kind() const noexcept { return nesting_kind_; }
-    [[nodiscard]] std::size_t depth() const noexcept { return depth_; }
-    [[nodiscard]] std::size_t limit() const noexcept { return limit_; }
-    [[nodiscard]] SourceRange where() const noexcept { return where_; }
+    [[nodiscard]] const std::string &nesting_kind() const noexcept {
+        return nesting_kind_;
+    }
+    [[nodiscard]] std::size_t depth() const noexcept {
+        return depth_;
+    }
+    [[nodiscard]] std::size_t limit() const noexcept {
+        return limit_;
+    }
+    [[nodiscard]] SourceRange where() const noexcept {
+        return where_;
+    }
 
   private:
-    static std::string build_what(const std::string &nesting_kind,
-                                  std::size_t depth,
-                                  std::size_t limit) {
+    static std::string
+    build_what(const std::string &nesting_kind, std::size_t depth, std::size_t limit) {
         std::ostringstream oss;
         oss << "parser recursion too deep (" << nesting_kind << " nesting = " << depth
             << "; hard limit = " << limit
@@ -136,8 +140,8 @@ template <typename T> struct is_reference_wrapper : std::false_type {};
 template <typename T> struct is_reference_wrapper<std::reference_wrapper<T>> : std::true_type {};
 } // namespace detail_is_rw_impl_
 template <typename T>
-struct detail_is_reference_wrapper
-    : detail_is_rw_impl_::is_reference_wrapper<std::remove_cv_t<T>> {};
+struct detail_is_reference_wrapper : detail_is_rw_impl_::is_reference_wrapper<std::remove_cv_t<T>> {
+};
 
 template <typename ContextT>
 [[nodiscard]] SourceRange context_range(ContextT &context, const SourceFile &source) {
@@ -456,14 +460,13 @@ class ProgramBuilder {
             ++builder_.recursion_depth_;
             if (builder_.recursion_depth_ > kMaxRecursionDepth) {
                 throw ParserStackOverflowException(
-                    nesting_kind_,
-                    builder_.recursion_depth_,
-                    kMaxRecursionDepth,
-                    at_range);
+                    nesting_kind_, builder_.recursion_depth_, kMaxRecursionDepth, at_range);
             }
         }
 
-        ~RecursionDepthGuard() { --builder_.recursion_depth_; }
+        ~RecursionDepthGuard() {
+            --builder_.recursion_depth_;
+        }
 
         RecursionDepthGuard(const RecursionDepthGuard &) = delete;
         RecursionDepthGuard &operator=(const RecursionDepthGuard &) = delete;
@@ -489,9 +492,7 @@ class ProgramBuilder {
             source_,
             context,
             build_qualified_name(require(context.qualifiedIdent(), "import path is missing")),
-            context.identifier() != nullptr
-                ? text_of(*context.identifier())
-                : std::string{});
+            context.identifier() != nullptr ? text_of(*context.identifier()) : std::string{});
     }
 
     [[nodiscard]] Owned<ast::Decl> build_use_decl(AHFLParser::UseDeclContext &context) const {
@@ -499,9 +500,8 @@ class ProgramBuilder {
             source_,
             context,
             build_qualified_name(require(context.qualifiedIdent(), "use path is missing")),
-            context.identifier() != nullptr
-                ? identifier_text(*context.identifier())
-                : std::string{});
+            context.identifier() != nullptr ? identifier_text(*context.identifier())
+                                            : std::string{});
         if (context.visibilityModifier() != nullptr) {
             declaration->visibility = ast::Visibility::Public;
         }
@@ -660,7 +660,8 @@ class ProgramBuilder {
             // requires capability `Foo` but declares none") can point the
             // user at the agent's opening keyword range with a helpful note.
             if (const auto caps_decl = borrow(agent_decl->get().capabilitiesDecl())) {
-                declaration->capabilities = build_ident_list_opt(borrow(caps_decl->get().identListOpt()));
+                declaration->capabilities =
+                    build_ident_list_opt(borrow(caps_decl->get().identListOpt()));
                 declaration->capabilities_range = context_range(*caps_decl, source_);
             } else {
                 declaration->capabilities.clear();
@@ -752,19 +753,17 @@ class ProgramBuilder {
 
         if (const auto fn_decl = borrow(context.fnDecl())) {
             auto declaration = build_fn_decl(fn_decl->get());
-            declaration->visibility =
-                (is_public || has_visibility_modifier(fn_decl->get()))
-                    ? ast::Visibility::Public
-                    : declaration->visibility;
+            declaration->visibility = (is_public || has_visibility_modifier(fn_decl->get()))
+                                          ? ast::Visibility::Public
+                                          : declaration->visibility;
             return declaration;
         }
 
         if (const auto trait_decl = borrow(context.traitDecl())) {
             auto declaration = build_trait_decl(trait_decl->get());
-            declaration->visibility =
-                (is_public || has_visibility_modifier(trait_decl->get()))
-                    ? ast::Visibility::Public
-                    : declaration->visibility;
+            declaration->visibility = (is_public || has_visibility_modifier(trait_decl->get()))
+                                          ? ast::Visibility::Public
+                                          : declaration->visibility;
             return declaration;
         }
 
@@ -885,8 +884,7 @@ class ProgramBuilder {
             return item;
         }
 
-        throw std::logic_error(
-            "trait item did not match trait fn, assoc type, or assoc const");
+        throw std::logic_error("trait item did not match trait fn, assoc type, or assoc const");
     }
 
     void populate_trait_fn_item(ast::TraitItemSyntax &item,
@@ -948,7 +946,8 @@ class ProgramBuilder {
         auto assoc_const = make_owned<ast::TraitItemSyntax::AssocConstDecl>();
         assoc_const->range = context_range(context, source_);
         assoc_const->name = item.name;
-        assoc_const->type = build_type_syntax(require(context.type_(), "assoc const type is missing"));
+        assoc_const->type =
+            build_type_syntax(require(context.type_(), "assoc const type is missing"));
         if (const auto default_value = borrow(context.constExpr())) {
             // constExpr reuses the expr parser; build as plain ExprSyntax (const
             // validation is deferred to semantic analysis P3b).
@@ -984,8 +983,7 @@ class ProgramBuilder {
         // the unique owners of each child; the unified `items` dispatcher
         // stores non-owning pointers into the same elements.
         for (auto *impl_item_context_raw : context.implItem()) {
-            auto &impl_item_context = require(
-                impl_item_context_raw, "impl item is missing");
+            auto &impl_item_context = require(impl_item_context_raw, "impl item is missing");
             const bool item_is_public = has_visibility_modifier(impl_item_context);
             auto item = make_owned<ast::ImplItemSyntax>();
             item->range = context_range(impl_item_context, source_);
@@ -1007,10 +1005,10 @@ class ProgramBuilder {
                 if (item_is_public) {
                     assoc_type->visibility = ast::Visibility::Public;
                 }
-                assoc_type->name = identifier_text(require(
-                    atd_ctx->get().identifier(), "impl assoc type name is missing"));
-                assoc_type->type = build_type_syntax(require(
-                    atd_ctx->get().type_(), "impl assoc type is missing"));
+                assoc_type->name = identifier_text(
+                    require(atd_ctx->get().identifier(), "impl assoc type name is missing"));
+                assoc_type->type = build_type_syntax(
+                    require(atd_ctx->get().type_(), "impl assoc type is missing"));
                 item->kind = ast::ImplItemKind::AssocType;
                 item->assoc_type = assoc_type.get();
                 declaration->assoc_items.push_back(std::move(assoc_type));
@@ -1020,19 +1018,18 @@ class ProgramBuilder {
                 if (item_is_public) {
                     assoc_const->visibility = ast::Visibility::Public;
                 }
-                assoc_const->name = identifier_text(require(
-                    acd_ctx->get().identifier(), "impl assoc const name is missing"));
-                assoc_const->type = build_type_syntax(require(
-                    acd_ctx->get().type_(), "impl assoc const type is missing"));
-                auto &def_value = require(
-                    acd_ctx->get().constExpr(), "impl assoc const value is missing");
+                assoc_const->name = identifier_text(
+                    require(acd_ctx->get().identifier(), "impl assoc const name is missing"));
+                assoc_const->type = build_type_syntax(
+                    require(acd_ctx->get().type_(), "impl assoc const type is missing"));
+                auto &def_value =
+                    require(acd_ctx->get().constExpr(), "impl assoc const value is missing");
                 assoc_const->value = build_expr_syntax(def_value);
                 item->kind = ast::ImplItemKind::AssocConst;
                 item->assoc_const = assoc_const.get();
                 declaration->const_items.push_back(std::move(assoc_const));
             } else {
-                throw std::logic_error(
-                    "impl item did not match fn, assoc type, or assoc const");
+                throw std::logic_error("impl item did not match fn, assoc type, or assoc const");
             }
 
             declaration->items.push_back(std::move(item));
@@ -1087,8 +1084,8 @@ class ProgramBuilder {
         // attribute so the compiler can synthesise lowering to the C++ hook
         // directly (matching module-level `@builtin(...) fn name(...);`).
         if (const auto body = borrow(context.fnBody())) {
-            declaration->body = build_block_syntax(
-                require(body->get().block(), "impl fn body block is missing"));
+            declaration->body =
+                build_block_syntax(require(body->get().block(), "impl fn body block is missing"));
         } else {
             // Optional semicolon alternative: body is left nullptr so the
             // semantic pass can unambiguously detect the prototype-shape
@@ -1237,7 +1234,8 @@ class ProgramBuilder {
     // member-access (`.method`) on something.
     [[nodiscard]] Owned<ast::ExprSyntax>
     rewrite_diamond_ambiguity(Owned<ast::ExprSyntax> expr) const {
-        if (expr == nullptr) return expr;
+        if (expr == nullptr)
+            return expr;
 
         // Recurse first so children are repaired before we inspect them.
 
@@ -1282,24 +1280,32 @@ class ProgramBuilder {
         //     outer = Binary(Greater, inner, Group(value))
         //     inner = Binary(Less,    lhs_member_or_path, type_expr)
         // which we rewrite into MethodCall(receiver, method, [Type], [value]).
-        if (!expr->is<ast::BinaryExpr>()) return expr;
+        if (!expr->is<ast::BinaryExpr>())
+            return expr;
         auto &outer = expr->as<ast::BinaryExpr>();
-        if (outer.op != ast::ExprBinaryOp::Greater) return expr;
+        if (outer.op != ast::ExprBinaryOp::Greater)
+            return expr;
 
-        if (outer.lhs == nullptr || !outer.lhs->is<ast::BinaryExpr>()) return expr;
+        if (outer.lhs == nullptr || !outer.lhs->is<ast::BinaryExpr>())
+            return expr;
         auto &inner = outer.lhs->as<ast::BinaryExpr>();
-        if (inner.op != ast::ExprBinaryOp::Less) return expr;
+        if (inner.op != ast::ExprBinaryOp::Less)
+            return expr;
 
-        if (outer.rhs == nullptr || !outer.rhs->is<ast::GroupExpr>()) return expr;
+        if (outer.rhs == nullptr || !outer.rhs->is<ast::GroupExpr>())
+            return expr;
         auto &group = outer.rhs->as<ast::GroupExpr>();
-        if (group.inner == nullptr) return expr;
+        if (group.inner == nullptr)
+            return expr;
 
         // The LHS of the inner `<` (the type argument expression) must be a PathExpr
         // (a simple identifier path, possibly qualified, that we can reinterpret as a
         // NamedType in the type-argument slot).
-        if (inner.rhs == nullptr || !inner.rhs->is<ast::PathExpr>()) return expr;
+        if (inner.rhs == nullptr || !inner.rhs->is<ast::PathExpr>())
+            return expr;
         auto &type_path = inner.rhs->as<ast::PathExpr>();
-        if (type_path.path == nullptr) return expr;
+        if (type_path.path == nullptr)
+            return expr;
 
         // Convert the PathSyntax into a NamedType.
         auto type_syntax = make_owned<ast::TypeSyntax>();
@@ -1317,7 +1323,8 @@ class ProgramBuilder {
         // consumed the method name on the expression side).
         if (inner.lhs != nullptr && inner.lhs->is<ast::MemberAccessExpr>()) {
             auto &member = inner.lhs->as<ast::MemberAccessExpr>();
-            if (member.base == nullptr) return expr;
+            if (member.base == nullptr)
+                return expr;
             auto method_call = make_expr_syntax(ast::ExprSyntaxKind::MethodCall,
                                                 span_range(inner.lhs->range, outer.rhs->range));
             auto &call = method_call->as<ast::MethodCallExpr>();
@@ -1335,9 +1342,11 @@ class ProgramBuilder {
         // receiver PathExpr.
         if (inner.lhs != nullptr && inner.lhs->is<ast::PathExpr>()) {
             auto &lhs_path = inner.lhs->as<ast::PathExpr>();
-            if (lhs_path.path == nullptr) return expr;
+            if (lhs_path.path == nullptr)
+                return expr;
             const std::size_t member_count = lhs_path.path->members.size();
-            if (member_count == 0) return expr; // bare identifier: no `.` → not a method call
+            if (member_count == 0)
+                return expr; // bare identifier: no `.` → not a method call
 
             Owned<ast::ExprSyntax> receiver;
             if (member_count == 1) {
@@ -2113,9 +2122,8 @@ class ProgramBuilder {
         } else {
             auto *segment = context.IDENT();
             (void)require(segment, "variant pattern name is missing");
-            variant_node.path =
-                build_qualified_name(std::vector<antlr4::tree::TerminalNode *>{segment},
-                                     pattern->range);
+            variant_node.path = build_qualified_name(
+                std::vector<antlr4::tree::TerminalNode *>{segment}, pattern->range);
         }
 
         if (const auto pattern_list = borrow(context.patternList())) {
@@ -2128,9 +2136,8 @@ class ProgramBuilder {
             variant_node.payload_kind = ast::EnumVariantPayloadKind::Struct;
             if (const auto field_list = borrow(context.patternFieldList())) {
                 for (auto *field_context : field_list->get().patternField()) {
-                    variant_node.fields.push_back(
-                        build_variant_pattern_field(
-                            require(field_context, "variant pattern field is missing")));
+                    variant_node.fields.push_back(build_variant_pattern_field(
+                        require(field_context, "variant pattern field is missing")));
                 }
             }
         } else {
@@ -2393,7 +2400,8 @@ class ProgramBuilder {
     build_if_let_pattern(AHFLParser::IfLetPatternContext &context) const {
         auto pattern = make_owned<ast::IfLetPatternSyntax>();
         pattern->range = context_range(context, source_);
-        pattern->variant_name = text_of(require(context.variant, "if let pattern variant is missing"));
+        pattern->variant_name =
+            text_of(require(context.variant, "if let pattern variant is missing"));
         for (const auto &var_ctx : context.ifLetPatternVar()) {
             if (!var_ctx) {
                 continue;
@@ -2412,11 +2420,11 @@ class ProgramBuilder {
             require(context.iflet_pattern, "if let pattern section is missing"));
         statement->scrutinee =
             build_expr_syntax(require(context.expr(), "if let scrutinee is missing"));
-        statement->then_block = build_block_syntax(
-            require(context.thenBlock, "if let then block is missing"));
+        statement->then_block =
+            build_block_syntax(require(context.thenBlock, "if let then block is missing"));
         if (context.elseBlock != nullptr) {
-            statement->else_block = build_block_syntax(
-                require(context.elseBlock, "if let else block is missing"));
+            statement->else_block =
+                build_block_syntax(require(context.elseBlock, "if let else block is missing"));
         }
         return statement;
     }
@@ -2451,10 +2459,12 @@ class ProgramBuilder {
             const auto exprs = list->get().expr();
             statement->raw_arg_count = exprs.size();
             if (!exprs.empty()) {
-                statement->condition = build_expr_syntax(require(exprs[0], "assert condition is missing"));
+                statement->condition =
+                    build_expr_syntax(require(exprs[0], "assert condition is missing"));
             }
             if (exprs.size() >= 2) {
-                statement->message = build_expr_syntax(require(exprs[1], "assert message is missing"));
+                statement->message =
+                    build_expr_syntax(require(exprs[1], "assert message is missing"));
             }
             // 3+ arguments are intentionally preserved as-is (via raw_arg_count)
             // so the typechecker emits a WrongArity diagnostic referencing the
@@ -2475,7 +2485,8 @@ class ProgramBuilder {
             const auto exprs = list->get().expr();
             statement->raw_arg_count = exprs.size();
             if (!exprs.empty()) {
-                statement->operand = build_expr_syntax(require(exprs[0], "unwrap operand is missing"));
+                statement->operand =
+                    build_expr_syntax(require(exprs[0], "unwrap operand is missing"));
             }
         }
         return statement;
@@ -2486,11 +2497,10 @@ class ProgramBuilder {
     // produces a T-typed right-hand side instead of discarding the payload.
     [[nodiscard]] Owned<ast::ExprSyntax>
     build_unwrap_expr(AHFLParser::UnwrapExprContext &context) const {
-        auto expr = make_expr_syntax(ast::ExprSyntaxKind::UnwrapExpr,
-                                     context_range(context, source_));
+        auto expr =
+            make_expr_syntax(ast::ExprSyntaxKind::UnwrapExpr, context_range(context, source_));
         auto &unwrap = std::get<ast::UnwrapExprSyntax>(expr->node);
-        unwrap.operand =
-            build_expr_syntax(require(context.expr(), "unwrap operand is missing"));
+        unwrap.operand = build_expr_syntax(require(context.expr(), "unwrap operand is missing"));
         return expr;
     }
 
@@ -2502,10 +2512,12 @@ class ProgramBuilder {
             const auto exprs = list->get().expr();
             statement->raw_arg_count = exprs.size();
             if (!exprs.empty()) {
-                statement->condition = build_expr_syntax(require(exprs[0], "requires condition is missing"));
+                statement->condition =
+                    build_expr_syntax(require(exprs[0], "requires condition is missing"));
             }
             if (exprs.size() >= 2) {
-                statement->message = build_expr_syntax(require(exprs[1], "requires message is missing"));
+                statement->message =
+                    build_expr_syntax(require(exprs[1], "requires message is missing"));
             }
         }
         return statement;
@@ -2519,7 +2531,8 @@ class ProgramBuilder {
             const auto exprs = list->get().expr();
             statement->raw_arg_count = exprs.size();
             if (!exprs.empty()) {
-                statement->message = build_expr_syntax(require(exprs[0], "unreachable message is missing"));
+                statement->message =
+                    build_expr_syntax(require(exprs[0], "unreachable message is missing"));
             }
         }
         // `unreachable;` (no parentheses) reaches here with exprList()==nullptr
@@ -2680,8 +2693,7 @@ class ProgramBuilder {
         auto type = make_owned<ast::TypeSyntax>();
         type->range = context_range(context, source_);
 
-        const auto qualified_name =
-            borrow(context.qualifiedIdent());
+        const auto qualified_name = borrow(context.qualifiedIdent());
         if (!qualified_name) {
             throw std::logic_error("type did not match any supported AHFL type syntax kind");
         }
@@ -2690,8 +2702,8 @@ class ProgramBuilder {
         const auto &child_types = context.type_();
         named.type_args.reserve(child_types.size());
         for (auto *child : child_types) {
-            named.type_args.push_back(build_type_syntax(
-                require(child, "generic type argument is missing")));
+            named.type_args.push_back(
+                build_type_syntax(require(child, "generic type argument is missing")));
         }
         type->node = std::move(named);
         return type;
@@ -3078,7 +3090,7 @@ class ProgramBuilder {
         // The grammar defines three labelled alternatives for enumVariant:
         //   * unitEnumVariant   — bare IDENT (no payload)
         //   * tupleEnumVariant  — IDENT ( typeList )
-        //   * structEnumVariant — IDENT ( variantFieldList )  [RFC d-1 POC]
+        //   * structEnumVariant — IDENT { variantFieldList }
         //
         // We downcast to the concrete context type so each arm reads the
         // appropriate children without ambiguity.
@@ -3110,8 +3122,10 @@ class ProgramBuilder {
             if (const auto field_list = borrow(strct->variantFieldList())) {
                 for (auto *field_ctx : field_list->get().variantFieldDecl()) {
                     auto field = make_owned<ast::EnumVariantFieldSyntax>();
-                    field->range = context_range(require(field_ctx, "struct variant field missing"), source_);
-                    field->name = text_of(require(field_ctx->IDENT(), "struct variant field name missing"));
+                    field->range =
+                        context_range(require(field_ctx, "struct variant field missing"), source_);
+                    field->name =
+                        text_of(require(field_ctx->IDENT(), "struct variant field name missing"));
                     field->type = build_type_syntax(
                         require(field_ctx->type_(), "struct variant field type missing"));
                     if (const auto def = borrow(field_ctx->constExpr())) {
