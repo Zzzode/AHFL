@@ -1,6 +1,7 @@
 #include "tooling/lsp/analysis_service.hpp"
 #include "tooling/lsp/code_action.hpp"
 #include "tooling/lsp/hover_service.hpp"
+#include "tooling/lsp/semantic_tokens.hpp"
 #include "tooling/lsp/server.hpp"
 
 #include "compiler/syntax/frontend/project.hpp"
@@ -17,6 +18,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <vector>
@@ -128,6 +130,10 @@ bool index_has_diagnostic(const LspWorkspaceIndex &index,
                           diagnostic->code.rfind(code_prefix, 0) == 0 &&
                           !diagnostic->message.empty();
                }) != diagnostics.end();
+}
+
+bool diagnostic_response_has_error(std::string_view response) {
+    return response.find(R"("severity":1)") != std::string_view::npos;
 }
 
 bool source_unit_has_scope_kind(const SourceUnitFact &source, LspNavigationIndexSourceKind kind) {
@@ -339,6 +345,55 @@ position_of(const std::string &source, const std::string &needle, std::size_t oc
         }
     }
     return pos;
+}
+
+struct DecodedSemanticToken {
+    std::uint32_t line{0};
+    std::uint32_t start{0};
+    std::uint32_t length{0};
+    SemanticTokenType type{SemanticTokenType::Namespace};
+    std::uint32_t modifiers{0};
+};
+
+std::vector<DecodedSemanticToken> decode_semantic_tokens(const SemanticTokens &tokens) {
+    std::vector<DecodedSemanticToken> decoded;
+    decoded.reserve(tokens.data.size());
+
+    std::uint32_t line = 0;
+    std::uint32_t start = 0;
+    for (const auto &token : tokens.data) {
+        line += token.delta_line;
+        start = token.delta_line == 0 ? start + token.delta_start : token.delta_start;
+        decoded.push_back(DecodedSemanticToken{
+            .line = line,
+            .start = start,
+            .length = token.length,
+            .type = static_cast<SemanticTokenType>(token.token_type),
+            .modifiers = token.token_modifiers,
+        });
+    }
+
+    return decoded;
+}
+
+bool has_semantic_token_at(const std::vector<DecodedSemanticToken> &tokens,
+                           Position position,
+                           SemanticTokenType type) {
+    return std::any_of(tokens.begin(), tokens.end(), [&](const DecodedSemanticToken &token) {
+        return token.line == position.line && token.start == position.character &&
+               token.type == type;
+    });
+}
+
+void check_semantic_token_at(const std::vector<DecodedSemanticToken> &tokens,
+                             const std::string &source,
+                             std::string_view test_name,
+                             const std::string &needle,
+                             SemanticTokenType type,
+                             std::size_t occurrence = 0) {
+    const auto position = position_of(source, needle, occurrence);
+    check(has_semantic_token_at(tokens, position, type),
+          "semanticTokens." + std::string(test_name));
 }
 
 std::string hover_params_at(const std::string &uri, Position position) {
@@ -613,7 +668,7 @@ void write_minimal_std_package(const std::filesystem::path &sysroot_std_root,
     write_file(sysroot_std_root / "collections.ahfl",
                "module std::collections;\n"
                "\n"
-               "struct List<T> {}\n");
+               "pub struct List<T> {}\n");
     write_file(sysroot_std_root / "prelude.ahfl",
                "module std::prelude;\n"
                "// " +
@@ -729,6 +784,177 @@ std::string diagnostics_output_for_source(const std::string &source) {
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
     return response_body_for_id(full_output, 2);
+}
+
+void test_semantic_tokens_cover_current_syntax_surface() {
+    const auto root = make_temp_project("semantic_tokens_current_syntax");
+    const auto main_path = root / "src" / "main.ahfl";
+    write_package_manifest(root, "lsp-semantic-tokens", "app", "\"main\"");
+
+    const std::string source = R"(module app::main;
+pub use app::main::Msg as PublicMsg;
+
+pub const LIMIT: Int = 42;
+
+pub struct Msg<T> {
+    value: String;
+    flag: Bool = true;
+}
+
+pub enum Choice<T> {
+    None,
+    Some(T),
+    Pair(left: Int = 1, right: String),
+}
+
+pub capability Call(req: Msg<Int>) -> Bool {
+    effect: read;
+    domain: app::main;
+    idempotency: req.value;
+    receipt: optional;
+    retry: safe;
+    timeout: 5s;
+    compensation: app::main::Recover;
+    policy: [app::main::Policy];
+}
+
+pub predicate ok(req: Msg<Int>) -> Bool;
+
+pub agent A {
+    input: Msg<Int>;
+    context: Msg<Int>;
+    output: Msg<Int>;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Call];
+    quota: { max_tool_calls: 3; max_execution_time: 1s; }
+    transition Init -> Done;
+}
+
+contract for A {
+    requires: input.flag;
+    ensures: output.flag;
+    invariant: always(in_state(Init) or eventually(called(Call)));
+    forbid: completed(first, Done);
+    decreases: 0;
+}
+
+flow for A {
+    state Init with { retry: 2; retry_on: [app::main::Failure]; timeout: 1s; } {
+        let local: Msg<Int> = Msg { value: "x", flag: true };
+        goto Done;
+    }
+    state Done {
+        return output;
+    }
+}
+
+pub workflow W {
+    input: Msg<Int>;
+    output: Msg<Int>;
+    node first: A(input);
+    safety: always(running(first) => eventually(completed(first, Done)));
+    liveness: next(called(Call));
+    return: input;
+}
+
+pub fn compute<T: Msg<Int>>(f: Fn(Int) -> Bool effect Pure, x: Int) -> Int effect Pure decreases x where T: Msg<Int> {
+    let y: Int = 1;
+    let z: Int = match Some(x) { Some(v) if v > 0 => v, _ => 0, };
+    let captured: Fn(Int) -> Int = \[y] (p: Int) -> p + y;
+    assert(z > 0, "z");
+    requires(true);
+    unwrap(Some(z));
+    if let Some(inner) = Some(z) { return inner; } else { return z; }
+}
+
+pub trait Fold<T>: Msg<Int> {
+    fn fold(self: T, seed: Int) -> Int effect Pure decreases seed;
+    type Item: Msg<Int> = Msg<Int>;
+    const DEFAULT: Int = 0;
+}
+
+impl Msg<Int> {
+    pub fn get(self) -> String effect Pure decreases 0 { return self.value; }
+    pub type Item = Int;
+    pub const DEFAULT: Int = 1;
+}
+
+impl Fold<Msg<Int>> for Msg<Int> {
+    fn fold(self: Msg<Int>, seed: Int) -> Int effect Pure decreases seed { return seed; }
+    type Item = Int;
+    const DEFAULT: Int = 0;
+}
+)";
+    write_file(main_path, source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto tokens = decode_semantic_tokens(compute_semantic_tokens(main_uri, analysis));
+    check(!tokens.empty(), "semanticTokens.non_empty");
+
+    check_semantic_token_at(tokens, source, "module_path", "app::main", SemanticTokenType::Namespace);
+    check_semantic_token_at(tokens, source, "use_alias", "PublicMsg", SemanticTokenType::Namespace);
+    check_semantic_token_at(tokens, source, "const_name", "LIMIT", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "const_type", "Int = 42", SemanticTokenType::Type);
+    check_semantic_token_at(tokens, source, "const_number", "42", SemanticTokenType::Number);
+    check_semantic_token_at(tokens, source, "struct_name", "Msg<T>", SemanticTokenType::Struct);
+    check_semantic_token_at(tokens, source, "struct_type_param", "T>", SemanticTokenType::TypeParameter);
+    check_semantic_token_at(tokens, source, "struct_field", "value: String", SemanticTokenType::Property);
+    check_semantic_token_at(tokens, source, "primitive_string", "String;", SemanticTokenType::Type);
+    check_semantic_token_at(tokens, source, "primitive_bool", "Bool = true", SemanticTokenType::Type);
+    check_semantic_token_at(tokens, source, "bool_literal", "true;", SemanticTokenType::Keyword);
+    check_semantic_token_at(tokens, source, "enum_name", "Choice<T>", SemanticTokenType::Enum);
+    check_semantic_token_at(tokens, source, "enum_variant", "Some(T)", SemanticTokenType::EnumMember);
+    check_semantic_token_at(tokens, source, "enum_named_field", "left: Int", SemanticTokenType::Property);
+    check_semantic_token_at(tokens, source, "capability_name", "Call(req", SemanticTokenType::Interface);
+    check_semantic_token_at(tokens, source, "capability_param", "req: Msg", SemanticTokenType::Parameter);
+    check_semantic_token_at(tokens, source, "capability_effect", "read;", SemanticTokenType::Keyword);
+    check_semantic_token_at(tokens, source, "capability_duration", "5s", SemanticTokenType::Number);
+    check_semantic_token_at(tokens, source, "predicate_name", "ok(req", SemanticTokenType::Function);
+    check_semantic_token_at(tokens, source, "agent_name", "A {", SemanticTokenType::Class);
+    check_semantic_token_at(tokens, source, "agent_state", "Init, Done", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "contract_target", "A {\n    requires", SemanticTokenType::Class);
+    check_semantic_token_at(tokens, source, "temporal_called", "Call)));", SemanticTokenType::Interface);
+    check_semantic_token_at(tokens, source, "flow_state", "Init with", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "flow_string", "\"x\"", SemanticTokenType::String);
+    check_semantic_token_at(tokens, source, "workflow_name", "W {", SemanticTokenType::Class);
+    check_semantic_token_at(tokens, source, "workflow_node", "first: A", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "function_name", "compute<T", SemanticTokenType::Function);
+    check_semantic_token_at(tokens, source, "fn_type", "Fn(Int)", SemanticTokenType::Type);
+    check_semantic_token_at(tokens, source, "fn_param", "x: Int", SemanticTokenType::Parameter);
+    check_semantic_token_at(tokens, source, "match_variant", "Some(v)", SemanticTokenType::EnumMember);
+    check_semantic_token_at(tokens, source, "match_binding", "v) if", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "lambda_capture", "y] (p", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "lambda_param", "p: Int", SemanticTokenType::Parameter);
+    check_semantic_token_at(tokens, source, "trait_name", "Fold<T>", SemanticTokenType::Interface);
+    check_semantic_token_at(tokens, source, "trait_method", "fold(self", SemanticTokenType::Method);
+    check_semantic_token_at(tokens, source, "assoc_type", "Item: Msg", SemanticTokenType::Type);
+    check_semantic_token_at(tokens, source, "assoc_const", "DEFAULT: Int", SemanticTokenType::Variable);
+    check_semantic_token_at(tokens, source, "impl_method", "get(self", SemanticTokenType::Method);
+}
+
+void test_semantic_tokens_request_uses_document_uri() {
+    const std::string source = "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    const std::string params = R"({"textDocument":{"uri":"file:///test.ahfl"}})";
+    const auto output = run_handler_request(source, "textDocument/semanticTokens/full", params);
+    const auto response = response_body_for_id(output, 2);
+    check(response.find(R"("data":[)") != std::string::npos,
+          "semanticTokens.request_has_data_array");
+    check(response.find(R"("data":[])") == std::string::npos,
+          "semanticTokens.request_data_is_non_empty");
 }
 
 void test_document_symbol_lists_all() {
@@ -929,8 +1155,9 @@ void test_diagnostics_reflect_document_version() {
     const auto fixed_response = response_body_for_id(fixed_output, 2);
     check(fixed_response.find("\"kind\":\"full\"") != std::string::npos,
           "diagnostics.version_2_full_report");
-    check(fixed_response.find("\"items\":[]") != std::string::npos,
-          "diagnostics.version_2_no_errors");
+    check(!diagnostic_response_has_error(fixed_response), "diagnostics.version_2_no_errors");
+    check(fixed_response.find("N::detached_source_unit") != std::string::npos,
+          "diagnostics.version_2_detached_note");
 }
 
 void test_text_document_diagnostic_pull_report() {
@@ -981,8 +1208,10 @@ void test_text_document_diagnostic_pull_report() {
     const auto fixed_response = response_body_for_id(fixed_output, 2);
     check(fixed_response.find("\"kind\":\"full\"") != std::string::npos,
           "textDocumentDiagnostic.recovery_full_report");
-    check(fixed_response.find("\"items\":[]") != std::string::npos,
-          "textDocumentDiagnostic.recovery_empty_items");
+    check(!diagnostic_response_has_error(fixed_response),
+          "textDocumentDiagnostic.recovery_no_error_items");
+    check(fixed_response.find("N::detached_source_unit") != std::string::npos,
+          "textDocumentDiagnostic.recovery_detached_note");
 }
 
 void test_diagnostic_refresh_notifications_on_document_changes() {
@@ -1688,7 +1917,8 @@ void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
 
     const auto resolve_output =
         diagnostics_output_for_source("struct Envelope {\n    payload: Missing;\n}\n");
-    check(resolve_output.find("resolve.") != std::string::npos, "diagnostics.resolve_code");
+    check(resolve_output.find("E::detached_unknown_nominal_type") != std::string::npos,
+          "diagnostics.resolve_code");
 
     const std::string type_source = "struct Request {\n"
                                     "    value: String;\n"
@@ -2071,12 +2301,12 @@ void test_user_package_references_include_lazy_sysroot_index() {
     write_file(collections_path,
                "module std::collections;\n"
                "\n"
-               "struct List<T> {}\n");
+               "pub struct List<T> {}\n");
     write_file(json_path,
                "module std::json;\n"
                "import std::collections as collections;\n"
                "\n"
-               "struct JsonList {\n"
+               "pub struct JsonList {\n"
                "    payload: collections::List<Int>;\n"
                "}\n");
 
@@ -3384,7 +3614,7 @@ void test_package_graph_workspace_selects_member_dependency_source() {
                                     "}\n";
     const std::string lib_source = "module shared_types::lib;\n"
                                    "\n"
-                                   "struct Msg {\n"
+                                   "pub struct Msg {\n"
                                    "    value: String;\n"
                                    "}\n";
     write_file(main_path, main_source);
@@ -3473,7 +3703,8 @@ void test_workspace_index_includes_path_dependency_exports() {
                 check(std::find_if(path_symbols.begin(),
                                    path_symbols.end(),
                                    [&](const SymbolFact *symbol) {
-                                       return symbol != nullptr && symbol->location.uri == types_uri;
+                                       return symbol != nullptr &&
+                                              symbol->location.uri == types_uri;
                                    }) != path_symbols.end(),
                       "workspace_index.path_dependency.symbol_fact_exists");
             }
@@ -4013,11 +4244,11 @@ void test_definition_discovers_primitive_home_from_exported_impl_facts() {
     const auto root = make_temp_project("definition_primitive_home_from_impl_facts");
     const auto std_root = root / "std";
     const auto int_home_path = std_root / "numbers" / "int_home.ahfl";
-    const auto use_path = std_root / "use.ahfl";
+    const auto use_path = std_root / "consumer.ahfl";
     const std::string int_home_source = "module std::numbers::int_home;\n"
                                         "\n"
                                         "impl Int {}\n";
-    const std::string use_source = "module std::use;\n"
+    const std::string use_source = "module std::consumer;\n"
                                    "\n"
                                    "@builtin(\"primitive_use\")\n"
                                    "fn primitive_use(x: Int) -> Int effect Pure;\n";
@@ -4036,7 +4267,7 @@ void test_definition_discovers_primitive_home_from_exported_impl_facts() {
                "root = \".\"\n"
                "\n"
                "[exports]\n"
-               "modules = [\"prelude\", \"numbers/int_home\", \"use\"]\n"
+               "modules = [\"prelude\", \"numbers/int_home\", \"consumer\"]\n"
                "\n"
                "[prelude]\n"
                "module = \"std::prelude\"\n"
@@ -4656,6 +4887,226 @@ void test_user_package_lazy_sysroot_index_feeds_primitive_candidates() {
           "lazy_sysroot.workspace_symbol_includes_fmt");
     check(workspace_symbol_response.find("format_int") != std::string::npos,
           "lazy_sysroot.workspace_symbol_includes_fmt_name");
+}
+
+void write_detached_primitive_home_std_package(const std::filesystem::path &std_root) {
+    write_file(std_root / "ahfl.toml",
+               "manifest_version = 1\n"
+               "\n"
+               "[package]\n"
+               "name = \"std\"\n"
+               "version = \"0.1.0\"\n"
+               "edition = \"2026\"\n"
+               "kind = \"standard-library\"\n"
+               "\n"
+               "[module]\n"
+               "prefix = \"std\"\n"
+               "root = \".\"\n"
+               "\n"
+               "[exports]\n"
+               "modules = [\"prelude\", \"bool\", \"int\", \"string\", \"time\"]\n"
+               "\n"
+               "[prelude]\n"
+               "module = \"std::prelude\"\n"
+               "injection = \"explicit\"\n"
+               "\n"
+               "[compiler_intrinsics]\n"
+               "allow = [\"primitive_*\", \"string_*\", \"time_*\"]\n");
+    write_file(std_root / "prelude.ahfl", "module std::prelude;\n");
+    write_file(std_root / "bool.ahfl", "module std::bool;\n\nimpl Bool {}\n");
+    write_file(std_root / "int.ahfl", "module std::int;\n\nimpl Int {}\n");
+    write_file(std_root / "string.ahfl",
+               "module std::string;\n\nimpl String {\n"
+               "    fn length(self) -> Int effect Pure decreases 0 { return 0; }\n"
+               "}\n");
+    write_file(std_root / "time.ahfl",
+               "module std::time;\n\nimpl Timestamp {}\nimpl Duration {}\n");
+}
+
+void test_detached_file_uses_sysroot_primitive_home_only() {
+    const auto root = make_temp_project("detached_primitive_home");
+    const auto std_root = root / "std";
+    const auto scratch_path = root / "scratch" / "loose.ahfl";
+    write_detached_primitive_home_std_package(std_root);
+
+    const std::string source = "struct Scratch {\n"
+                               "    title: String;\n"
+                               "    ok: Bool;\n"
+                               "    delay: Duration;\n"
+                               "    values: List<Int>;\n"
+                               "}\n";
+    const auto scratch_uri = AnalysisService::uri_from_path(scratch_path);
+    const auto string_uri = AnalysisService::uri_from_path(std_root / "string.ahfl");
+    const auto bool_uri = AnalysisService::uri_from_path(std_root / "bool.ahfl");
+    const auto time_uri = AnalysisService::uri_from_path(std_root / "time.ahfl");
+
+    {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = scratch_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = source,
+        });
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(workspace_toolchain_profile_set_for_sysroot(root, root));
+
+        const auto *snapshot = analysis.snapshot_for_uri(scratch_uri);
+        check(snapshot != nullptr, "detached_primitive_home.snapshot_exists");
+        if (snapshot != nullptr) {
+            check(snapshot->analysis_mode == LspAnalysisMode::DetachedSourceUnit,
+                  "detached_primitive_home.analysis_mode");
+            check(!snapshot->project_aware, "detached_primitive_home.not_project_aware");
+        }
+
+        const auto *primitive_index = analysis.sysroot_primitive_index_for_uri(scratch_uri);
+        check(primitive_index != nullptr, "detached_primitive_home.primitive_index_exists");
+        if (primitive_index != nullptr) {
+            const auto home = primitive_index->home_location_for_type(TypeKey{
+                .kind = TypeKey::Kind::Primitive,
+                .primitive = PrimitiveKind::String,
+            });
+            check(home.has_value() && home->uri == string_uri,
+                  "detached_primitive_home.primitive_index_targets_string");
+        }
+    }
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(scratch_uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":)" +
+            hover_params_at(scratch_uri, position_of(source, "String")) + R"(})",
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/typeDefinition","params":)" +
+            hover_params_at(scratch_uri, position_of(source, "Bool")) + R"(})",
+        R"({"jsonrpc":"2.0","id":4,"method":"textDocument/definition","params":)" +
+            hover_params_at(scratch_uri, position_of(source, "Duration")) + R"(})",
+        R"({"jsonrpc":"2.0","id":5,"method":"textDocument/implementation","params":)" +
+            hover_params_at(scratch_uri, position_of(source, "String")) + R"(})",
+        R"({"jsonrpc":"2.0","id":6,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            scratch_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":7,"method":"shutdown","params":{}})",
+    });
+
+    const auto string_definition = response_body_for_id(output, 2);
+    const auto bool_type_definition = response_body_for_id(output, 3);
+    const auto duration_definition = response_body_for_id(output, 4);
+    const auto implementation = response_body_for_id(output, 5);
+    const auto diagnostics = response_body_for_id(output, 6);
+
+    check(string_definition.find(string_uri) != std::string::npos,
+          "detached_primitive_home.definition_targets_string");
+    check(bool_type_definition.find(bool_uri) != std::string::npos,
+          "detached_primitive_home.type_definition_targets_bool");
+    check(duration_definition.find(time_uri) != std::string::npos,
+          "detached_primitive_home.definition_targets_duration");
+    check(implementation.find(R"("result":[])") != std::string::npos,
+          "detached_primitive_home.implementation_empty");
+    check(implementation.find(string_uri) == std::string::npos,
+          "detached_primitive_home.implementation_excludes_std_impl");
+    check(diagnostics.find("N::detached_source_unit") != std::string::npos,
+          "detached_primitive_home.diagnostic_has_detached_note");
+    check(diagnostics.find("E::detached_unknown_nominal_type") != std::string::npos,
+          "detached_primitive_home.diagnostic_has_unknown_nominal");
+}
+
+void test_detached_file_warns_when_used_primitive_home_is_missing() {
+    const auto root = make_temp_project("detached_missing_primitive_home");
+    const auto std_root = root / "std";
+    const auto scratch_path = root / "scratch" / "loose.ahfl";
+    write_detached_primitive_home_std_package(std_root);
+
+    const std::string source = "struct Scratch {\n"
+                               "    value: Unit;\n"
+                               "}\n";
+    const auto scratch_uri = AnalysisService::uri_from_path(scratch_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(scratch_uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            scratch_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto diagnostics = response_body_for_id(output, 2);
+    check(diagnostics.find("W::primitive_home_unavailable") != std::string::npos,
+          "detached_missing_primitive_home.warns");
+    check(diagnostics.find("Unit") != std::string::npos,
+          "detached_missing_primitive_home.names_primitive");
+    check(diagnostics.find("unit.ahfl") != std::string::npos,
+          "detached_missing_primitive_home.names_expected_file");
+}
+
+void test_detached_file_warns_without_toolchain_profile() {
+    const auto root = make_temp_project("detached_no_toolchain_profile");
+    const auto scratch_path = root / "scratch" / "loose.ahfl";
+    const auto scratch_uri = AnalysisService::uri_from_path(scratch_path);
+    const std::string source = "struct Scratch {\n"
+                               "    title: String;\n"
+                               "}\n";
+
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = scratch_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+    AnalysisService analysis(store);
+    project_discovery::ToolchainProfileSet profiles;
+    profiles.allow_compile_default = false;
+    analysis.set_toolchain_profiles(std::move(profiles));
+
+    const auto *snapshot = analysis.snapshot_for_uri(scratch_uri);
+    check(snapshot != nullptr, "detached_no_toolchain.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+    check(snapshot->analysis_mode == LspAnalysisMode::DetachedSourceUnit,
+          "detached_no_toolchain.analysis_mode");
+    const auto diagnostics = snapshot->diagnostics_for_uri(scratch_uri);
+    const auto warning =
+        std::find_if(diagnostics.begin(), diagnostics.end(), [](const LspDiagnostic &diagnostic) {
+            return diagnostic.code == "W::primitive_home_unavailable" &&
+                   diagnostic.message.find("toolchain profile") != std::string::npos;
+        });
+    check(warning != diagnostics.end(), "detached_no_toolchain.warns_primitive_home_unavailable");
+}
+
+void test_detached_file_rejects_imports_and_import_code_actions() {
+    const auto root = make_temp_project("detached_import_code_actions");
+    const auto std_root = root / "std";
+    const auto scratch_path = root / "scratch" / "imports.ahfl";
+    write_detached_primitive_home_std_package(std_root);
+
+    const std::string source = "import std::collections as collections;\n"
+                               "\n"
+                               "struct Scratch {\n"
+                               "    values: collections::List<Int>;\n"
+                               "}\n";
+    const auto scratch_uri = AnalysisService::uri_from_path(scratch_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body_with_sysroot(root, root),
+        did_open_body(scratch_uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            scratch_uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":{"textDocument":{"uri":")" +
+            scratch_uri +
+            R"("},"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":38}}}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
+
+    const auto diagnostics = response_body_for_id(output, 2);
+    const auto code_actions = response_body_for_id(output, 3);
+
+    check(diagnostics.find("E::detached_import") != std::string::npos,
+          "detached_imports.diagnostic_has_detached_import");
+    check(code_actions.find("Organize Imports") == std::string::npos,
+          "detached_imports.no_organize_imports_action");
+    check(code_actions.find("Remove unused import") == std::string::npos,
+          "detached_imports.no_remove_unused_import_action");
 }
 
 void test_watched_sysroot_file_change_refreshes_primitive_candidates() {
@@ -7575,6 +8026,8 @@ void test_hover_struct_literal_shows_construct_summary() {
 
 int main() {
     test_analysis_snapshot_reuse_and_invalidation();
+    test_semantic_tokens_cover_current_syntax_surface();
+    test_semantic_tokens_request_uses_document_uri();
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();
@@ -7632,6 +8085,10 @@ int main() {
     test_implementation_uses_nominal_def_index_for_generic_impls();
     test_std_exported_impl_modules_feed_primitive_candidates();
     test_user_package_lazy_sysroot_index_feeds_primitive_candidates();
+    test_detached_file_uses_sysroot_primitive_home_only();
+    test_detached_file_warns_when_used_primitive_home_is_missing();
+    test_detached_file_warns_without_toolchain_profile();
+    test_detached_file_rejects_imports_and_import_code_actions();
     test_watched_sysroot_file_change_refreshes_primitive_candidates();
     test_open_sysroot_overlay_feeds_primitive_implementation_candidates();
     test_sysroot_std_manifest_detected_when_workspace_root_is_std_directory();

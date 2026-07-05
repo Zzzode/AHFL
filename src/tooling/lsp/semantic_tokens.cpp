@@ -67,6 +67,41 @@ find_name_in_range(const SourceFile &source, SourceRange outer_range, std::strin
     return {};
 }
 
+[[nodiscard]] SourceRange find_name_in_range_from(const SourceFile &source,
+                                                  SourceRange outer_range,
+                                                  std::string_view name,
+                                                  std::size_t &cursor) {
+    if (name.empty() || outer_range.empty()) {
+        return {};
+    }
+
+    const auto &content = source.content;
+    const auto begin = std::min(outer_range.begin_offset, content.size());
+    const auto end = std::max(begin, std::min(outer_range.end_offset, content.size()));
+    cursor = std::max(cursor, begin);
+
+    while (cursor < end) {
+        const auto found = content.find(name, cursor);
+        if (found == std::string::npos || found + name.size() > end) {
+            cursor = end;
+            return {};
+        }
+
+        const auto before_ok = found == 0 || !is_identifier_char(content[found - 1]);
+        const auto after = found + name.size();
+        const auto after_ok = after >= content.size() || !is_identifier_char(content[after]);
+        cursor = found + name.size();
+        if (before_ok && after_ok) {
+            return SourceRange{
+                .begin_offset = found,
+                .end_offset = after,
+            };
+        }
+    }
+
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Token entry (absolute position, pre-sort)
 // ---------------------------------------------------------------------------
@@ -124,10 +159,36 @@ void add_token_for_name(std::vector<TokenEntry> &tokens,
     add_token_from_range(tokens, source, name_range, type, modifiers);
 }
 
+void add_token_for_name_in_order(std::vector<TokenEntry> &tokens,
+                                 const SourceFile &source,
+                                 SourceRange range,
+                                 std::size_t &cursor,
+                                 std::string_view name,
+                                 SemanticTokenType type,
+                                 std::uint32_t modifiers = 0) {
+    const auto name_range = find_name_in_range_from(source, range, name, cursor);
+    add_token_from_range(tokens, source, name_range, type, modifiers);
+}
+
 // Forward declarations
 void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                                 const SourceFile &source,
                                 std::vector<TokenEntry> &tokens);
+void collect_type_param_tokens(const ast::TypeParamSyntax &param,
+                               const SourceFile &source,
+                               std::vector<TokenEntry> &tokens);
+void collect_where_clause_tokens(const ast::WhereClauseSyntax &where,
+                                 const SourceFile &source,
+                                 std::vector<TokenEntry> &tokens);
+void collect_effect_clause_tokens(const ast::EffectClauseSyntax &effect,
+                                  const SourceFile &source,
+                                  std::vector<TokenEntry> &tokens);
+void collect_pattern_tokens(const ast::PatternSyntax &pattern,
+                            const SourceFile &source,
+                            std::vector<TokenEntry> &tokens);
+void collect_temporal_tokens(const ast::TemporalExprSyntax &expr,
+                             const SourceFile &source,
+                             std::vector<TokenEntry> &tokens);
 void collect_expr_tokens(const ast::ExprSyntax &expr,
                          const SourceFile &source,
                          std::vector<TokenEntry> &tokens);
@@ -149,7 +210,64 @@ void collect_qualified_name_tokens(const ast::QualifiedName &qname,
     add_token_from_range(tokens, source, qname.range, type);
 }
 
+void collect_path_tokens(const ast::PathSyntax &path,
+                         const SourceFile &source,
+                         std::vector<TokenEntry> &tokens) {
+    std::size_t cursor = path.range.begin_offset;
+    add_token_for_name_in_order(
+        tokens, source, path.range, cursor, path.root_name, SemanticTokenType::Variable);
+    for (const auto &member : path.members) {
+        add_token_for_name_in_order(
+            tokens, source, path.range, cursor, member, SemanticTokenType::Property);
+    }
+}
+
+void collect_integer_tokens(const ast::IntegerSyntax &integer,
+                            const SourceFile &source,
+                            std::vector<TokenEntry> &tokens) {
+    add_token_from_range(tokens, source, integer.range, SemanticTokenType::Number);
+}
+
+void collect_duration_tokens(const ast::DurationSyntax &duration,
+                             const SourceFile &source,
+                             std::vector<TokenEntry> &tokens) {
+    add_token_from_range(tokens, source, duration.range, SemanticTokenType::Number);
+}
+
+void collect_type_list_tokens(const std::vector<Owned<ast::TypeSyntax>> &types,
+                              const SourceFile &source,
+                              std::vector<TokenEntry> &tokens) {
+    for (const auto &type : types) {
+        if (type != nullptr) {
+            collect_type_syntax_tokens(*type, source, tokens);
+        }
+    }
+}
+
+void collect_param_list_tokens(const std::vector<Owned<ast::ParamDeclSyntax>> &params,
+                               const SourceFile &source,
+                               std::vector<TokenEntry> &tokens) {
+    for (const auto &param : params) {
+        if (param != nullptr) {
+            add_token_for_name(tokens, source, param->range, param->name, SemanticTokenType::Parameter);
+            if (param->is_self_mut) {
+                add_token_for_name(tokens, source, param->range, "mut", SemanticTokenType::Modifier);
+            }
+            if (param->type != nullptr) {
+                collect_type_syntax_tokens(*param->type, source, tokens);
+            }
+        }
+    }
+}
+
 // ---- TypeSyntax ----
+
+void collect_primitive_type_token(const ast::TypeSyntax &type,
+                                  const SourceFile &source,
+                                  std::vector<TokenEntry> &tokens,
+                                  std::string_view spelling) {
+    add_token_for_name(tokens, source, type.range, spelling, SemanticTokenType::Type);
+}
 
 void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                                 const SourceFile &source,
@@ -167,6 +285,7 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                 }
             },
             [&](const ast::FnType &t) {
+                add_token_for_name(tokens, source, type.range, "Fn", SemanticTokenType::Type);
                 for (const auto &param : t.params) {
                     if (param != nullptr) {
                         collect_type_syntax_tokens(*param, source, tokens);
@@ -174,6 +293,20 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                 }
                 if (t.return_type != nullptr) {
                     collect_type_syntax_tokens(*t.return_type, source, tokens);
+                }
+                if (t.has_effect_clause) {
+                    if (t.effect_kind == ast::EffectClauseKind::Pure) {
+                        add_token_for_name(tokens, source, type.range, "Pure", SemanticTokenType::Modifier);
+                    } else if (t.effect_kind == ast::EffectClauseKind::Nondet) {
+                        add_token_for_name(tokens, source, type.range, "Nondet", SemanticTokenType::Modifier);
+                    } else {
+                        for (const auto &capability : t.effect_capabilities) {
+                            if (capability != nullptr) {
+                                collect_qualified_name_tokens(
+                                    *capability, source, tokens, SemanticTokenType::Interface);
+                            }
+                        }
+                    }
                 }
             },
             [&](const ast::AppType &t) {
@@ -186,21 +319,83 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                     }
                 }
             },
-            [](const auto &) {
-                // Built-in types — no tokens for now (could add Keyword/Type later)
+            [&](const ast::UnitType &) { collect_primitive_type_token(type, source, tokens, "Unit"); },
+            [&](const ast::BoolType &) { collect_primitive_type_token(type, source, tokens, "Bool"); },
+            [&](const ast::IntType &) { collect_primitive_type_token(type, source, tokens, "Int"); },
+            [&](const ast::FloatType &) { collect_primitive_type_token(type, source, tokens, "Float"); },
+            [&](const ast::StringType &) {
+                collect_primitive_type_token(type, source, tokens, "String");
+            },
+            [&](const ast::BoundedStringType &) {
+                collect_primitive_type_token(type, source, tokens, "String");
+            },
+            [&](const ast::UuidType &) { collect_primitive_type_token(type, source, tokens, "UUID"); },
+            [&](const ast::TimestampType &) {
+                collect_primitive_type_token(type, source, tokens, "Timestamp");
+            },
+            [&](const ast::DurationType &) {
+                collect_primitive_type_token(type, source, tokens, "Duration");
+            },
+            [&](const ast::DecimalType &) {
+                collect_primitive_type_token(type, source, tokens, "Decimal");
             },
         },
         type.node);
 }
 
-// ---- Parameters ----
+void collect_type_param_tokens(const ast::TypeParamSyntax &param,
+                               const SourceFile &source,
+                               std::vector<TokenEntry> &tokens) {
+    add_token_for_name(tokens, source, param.range, param.name, SemanticTokenType::TypeParameter);
+    collect_type_list_tokens(param.bounds, source, tokens);
+}
 
-void collect_param_tokens(const ast::ParamDeclSyntax &param,
-                          const SourceFile &source,
-                          std::vector<TokenEntry> &tokens) {
-    add_token_for_name(tokens, source, param.range, param.name, SemanticTokenType::Parameter);
-    if (param.type != nullptr) {
-        collect_type_syntax_tokens(*param.type, source, tokens);
+void collect_type_params_tokens(const std::vector<Owned<ast::TypeParamSyntax>> &params,
+                                const SourceFile &source,
+                                std::vector<TokenEntry> &tokens) {
+    for (const auto &param : params) {
+        if (param != nullptr) {
+            collect_type_param_tokens(*param, source, tokens);
+        }
+    }
+}
+
+void collect_where_clause_tokens(const ast::WhereClauseSyntax &where,
+                                 const SourceFile &source,
+                                 std::vector<TokenEntry> &tokens) {
+    for (const auto &constraint : where.constraints) {
+        if (constraint == nullptr) {
+            continue;
+        }
+        if (constraint->subject != nullptr) {
+            collect_type_syntax_tokens(*constraint->subject, source, tokens);
+        }
+        if (constraint->is_predicate) {
+            add_token_for_name(
+                tokens, source, constraint->range, constraint->trait_name, SemanticTokenType::Interface);
+            collect_type_list_tokens(constraint->arguments, source, tokens);
+        } else {
+            collect_type_list_tokens(constraint->bounds, source, tokens);
+        }
+    }
+}
+
+void collect_effect_clause_tokens(const ast::EffectClauseSyntax &effect,
+                                  const SourceFile &source,
+                                  std::vector<TokenEntry> &tokens) {
+    if (effect.kind == ast::EffectClauseKind::Pure) {
+        add_token_for_name(tokens, source, effect.range, "Pure", SemanticTokenType::Modifier);
+    } else if (effect.kind == ast::EffectClauseKind::Nondet) {
+        add_token_for_name(tokens, source, effect.range, "Nondet", SemanticTokenType::Modifier);
+    } else {
+        for (const auto &capability : effect.capabilities) {
+            if (capability != nullptr) {
+                collect_qualified_name_tokens(*capability, source, tokens, SemanticTokenType::Interface);
+            }
+        }
+    }
+    if (effect.decreases_expr != nullptr) {
+        collect_expr_tokens(*effect.decreases_expr, source, tokens);
     }
 }
 
@@ -224,6 +419,138 @@ void collect_enum_variant_tokens(const ast::EnumVariantDeclSyntax &variant,
                                  const SourceFile &source,
                                  std::vector<TokenEntry> &tokens) {
     add_token_for_name(tokens, source, variant.range, variant.name, SemanticTokenType::EnumMember);
+    collect_type_list_tokens(variant.payload, source, tokens);
+    for (const auto &field : variant.named_fields) {
+        if (field == nullptr) {
+            continue;
+        }
+        add_token_for_name(tokens, source, field->range, field->name, SemanticTokenType::Property);
+        if (field->type != nullptr) {
+            collect_type_syntax_tokens(*field->type, source, tokens);
+        }
+        if (field->default_value != nullptr) {
+            collect_expr_tokens(*field->default_value, source, tokens);
+        }
+    }
+}
+
+void collect_pattern_tokens(const ast::PatternSyntax &pattern,
+                            const SourceFile &source,
+                            std::vector<TokenEntry> &tokens) {
+    std::visit(Overloaded{
+                   [&](const ast::LiteralPattern &p) {
+                       if (p.spelling == "true" || p.spelling == "false" || p.spelling == "none") {
+                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Keyword);
+                       } else if (!p.spelling.empty() && p.spelling.front() == '"') {
+                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::String);
+                       } else {
+                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Number);
+                       }
+                   },
+                   [&](const ast::VariantPattern &p) {
+                       if (p.path != nullptr) {
+                           collect_qualified_name_tokens(
+                               *p.path, source, tokens, SemanticTokenType::EnumMember);
+                       }
+                       for (const auto &subpattern : p.subpatterns) {
+                           if (subpattern != nullptr) {
+                               collect_pattern_tokens(*subpattern, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::WildcardPattern &) {
+                       add_token_for_name(tokens, source, pattern.range, "_", SemanticTokenType::Variable);
+                   },
+                   [&](const ast::BindingPattern &p) {
+                       if (p.is_mut) {
+                           add_token_for_name(tokens, source, pattern.range, "mut", SemanticTokenType::Modifier);
+                       }
+                       add_token_for_name(tokens, source, pattern.range, p.name, SemanticTokenType::Variable);
+                       if (p.nested != nullptr) {
+                           collect_pattern_tokens(*p.nested, source, tokens);
+                       }
+                   },
+                   [&](const ast::TuplePattern &p) {
+                       for (const auto &element : p.elements) {
+                           if (element != nullptr) {
+                               collect_pattern_tokens(*element, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::OrPattern &p) {
+                       for (const auto &branch : p.branches) {
+                           if (branch != nullptr) {
+                               collect_pattern_tokens(*branch, source, tokens);
+                           }
+                       }
+                   },
+               },
+               pattern.node);
+}
+
+void collect_temporal_tokens(const ast::TemporalExprSyntax &expr,
+                             const SourceFile &source,
+                             std::vector<TokenEntry> &tokens) {
+    std::visit(Overloaded{
+                   [&](const ast::EmbeddedTemporalExpr &e) {
+                       if (e.expr != nullptr) {
+                           collect_expr_tokens(*e.expr, source, tokens);
+                       }
+                   },
+                   [&](const ast::CalledTemporalExpr &e) {
+                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Interface);
+                   },
+                   [&](const ast::InStateTemporalExpr &e) {
+                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
+                   },
+                   [&](const ast::RunningTemporalExpr &e) {
+                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
+                   },
+                   [&](const ast::CompletedTemporalExpr &e) {
+                       std::size_t cursor = expr.range.begin_offset;
+                       add_token_for_name_in_order(
+                           tokens, source, expr.range, cursor, e.name, SemanticTokenType::Variable);
+                       if (e.state_name.has_value()) {
+                           add_token_for_name_in_order(tokens,
+                                                       source,
+                                                       expr.range,
+                                                       cursor,
+                                                       *e.state_name,
+                                                       SemanticTokenType::Variable);
+                       }
+                   },
+                   [&](const ast::UnaryTemporalExpr &e) {
+                       const auto op = [&] {
+                           switch (e.op) {
+                           case ast::TemporalUnaryOp::Always:
+                               return std::string_view{"always"};
+                           case ast::TemporalUnaryOp::Eventually:
+                               return std::string_view{"eventually"};
+                           case ast::TemporalUnaryOp::Next:
+                               return std::string_view{"next"};
+                           case ast::TemporalUnaryOp::Not:
+                               return std::string_view{"not"};
+                           }
+                           return std::string_view{};
+                       }();
+                       add_token_for_name(tokens, source, expr.range, op, SemanticTokenType::Keyword);
+                       if (e.operand != nullptr) {
+                           collect_temporal_tokens(*e.operand, source, tokens);
+                       }
+                   },
+                   [&](const ast::BinaryTemporalExpr &e) {
+                       if (e.op == ast::TemporalBinaryOp::Until) {
+                           add_token_for_name(tokens, source, expr.range, "until", SemanticTokenType::Keyword);
+                       }
+                       if (e.lhs != nullptr) {
+                           collect_temporal_tokens(*e.lhs, source, tokens);
+                       }
+                       if (e.rhs != nullptr) {
+                           collect_temporal_tokens(*e.rhs, source, tokens);
+                       }
+                   },
+               },
+               expr.node);
 }
 
 // ---- Expressions ----
@@ -233,31 +560,34 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                          std::vector<TokenEntry> &tokens) {
     std::visit(Overloaded{
                    [&](const ast::BoolLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Keyword);
                    },
-                   [&](const ast::IntegerLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                   [&](const ast::IntegerLiteralExpr &e) {
+                       if (e.literal != nullptr) {
+                           collect_integer_tokens(*e.literal, source, tokens);
+                       } else {
+                           add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+                       }
                    },
                    [&](const ast::FloatLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
                    },
                    [&](const ast::DecimalLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
                    },
                    [&](const ast::StringLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::String);
                    },
-                   [&](const ast::DurationLiteralExpr &) {
-                       // no tokens for literals (could add later)
+                   [&](const ast::DurationLiteralExpr &e) {
+                       if (e.literal != nullptr) {
+                           collect_duration_tokens(*e.literal, source, tokens);
+                       } else {
+                           add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+                       }
                    },
                    [&](const ast::PathExpr &e) {
-                       // Path root identifier — treated as variable reference
                        if (e.path != nullptr) {
-                           add_token_for_name(tokens,
-                                              source,
-                                              e.path->range,
-                                              e.path->root_name,
-                                              SemanticTokenType::Variable);
+                           collect_path_tokens(*e.path, source, tokens);
                        }
                    },
                    [&](const ast::QualifiedValueExpr &e) {
@@ -290,7 +620,7 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                            collect_expr_tokens(*e.receiver, source, tokens);
                        }
                        add_token_for_name(
-                           tokens, source, expr.range, e.method, SemanticTokenType::Function);
+                           tokens, source, expr.range, e.method, SemanticTokenType::Method);
                        for (const auto &type_arg : e.type_args) {
                            if (type_arg != nullptr) {
                                collect_type_syntax_tokens(*type_arg, source, tokens);
@@ -354,15 +684,15 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                        }
                    },
                    [&](const ast::MatchExpr &e) {
-                       // P1 (ADT): walk the scrutinee; arm patterns/guards/bodies
-                       // are tokenized at a coarse level here (full semantic
-                       // highlighting of patterns lands with the match typecheck pass).
                        if (e.scrutinee != nullptr) {
                            collect_expr_tokens(*e.scrutinee, source, tokens);
                        }
                        for (const auto &arm : e.arms) {
                            if (arm == nullptr) {
                                continue;
+                           }
+                           if (arm->pattern != nullptr) {
+                               collect_pattern_tokens(*arm->pattern, source, tokens);
                            }
                            if (arm->guard != nullptr) {
                                collect_expr_tokens(*arm->guard, source, tokens);
@@ -440,11 +770,7 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
     case ast::StatementSyntaxKind::Assign:
         if (stmt.assign_stmt != nullptr) {
             if (stmt.assign_stmt->target != nullptr) {
-                add_token_for_name(tokens,
-                                   source,
-                                   stmt.assign_stmt->target->range,
-                                   stmt.assign_stmt->target->root_name,
-                                   SemanticTokenType::Variable);
+                collect_path_tokens(*stmt.assign_stmt->target, source, tokens);
             }
             if (stmt.assign_stmt->value != nullptr) {
                 collect_expr_tokens(*stmt.assign_stmt->value, source, tokens);
@@ -558,6 +884,214 @@ void collect_block_tokens(const ast::BlockSyntax &block,
     }
 }
 
+void collect_fn_tokens(const ast::FnDecl &fn,
+                       const SourceFile &source,
+                       std::vector<TokenEntry> &tokens,
+                       SemanticTokenType name_type) {
+    if (fn.builtin_name.has_value()) {
+        add_token_for_name(tokens, source, fn.range, "builtin", SemanticTokenType::Decorator);
+        add_token_for_name(tokens, source, fn.range, *fn.builtin_name, SemanticTokenType::String);
+    }
+    add_token_for_name(tokens, source, fn.range, fn.name, name_type);
+    collect_type_params_tokens(fn.type_params, source, tokens);
+    collect_param_list_tokens(fn.params, source, tokens);
+    if (fn.return_type != nullptr) {
+        collect_type_syntax_tokens(*fn.return_type, source, tokens);
+    }
+    if (fn.effect_clause != nullptr) {
+        collect_effect_clause_tokens(*fn.effect_clause, source, tokens);
+    }
+    if (fn.where_clause != nullptr) {
+        collect_where_clause_tokens(*fn.where_clause, source, tokens);
+    }
+    if (fn.body != nullptr) {
+        collect_block_tokens(*fn.body, source, tokens);
+    }
+}
+
+void collect_capability_effect_tokens(const ast::CapabilityEffectSyntax &effect,
+                                      const SourceFile &source,
+                                      std::vector<TokenEntry> &tokens) {
+    add_token_for_name(
+        tokens, source, effect.range, std::string(to_string(effect.effect_kind)), SemanticTokenType::Keyword);
+    if (effect.domain != nullptr) {
+        collect_qualified_name_tokens(*effect.domain, source, tokens, SemanticTokenType::Namespace);
+    }
+    if (effect.idempotency_key != nullptr) {
+        collect_path_tokens(*effect.idempotency_key, source, tokens);
+    }
+    add_token_for_name(
+        tokens, source, effect.range, std::string(to_string(effect.receipt_mode)), SemanticTokenType::Keyword);
+    add_token_for_name(
+        tokens, source, effect.range, std::string(to_string(effect.retry_mode)), SemanticTokenType::Keyword);
+    if (effect.timeout != nullptr) {
+        collect_duration_tokens(*effect.timeout, source, tokens);
+    }
+    if (effect.compensation != nullptr) {
+        collect_qualified_name_tokens(*effect.compensation, source, tokens, SemanticTokenType::Function);
+    }
+    for (const auto &policy : effect.policies) {
+        if (policy != nullptr) {
+            collect_qualified_name_tokens(*policy, source, tokens, SemanticTokenType::Namespace);
+        }
+    }
+}
+
+void collect_contract_decreases_tokens(const ast::ContractDecreasesSyntax &decreases,
+                                       const SourceFile &source,
+                                       std::vector<TokenEntry> &tokens) {
+    for (const auto &term : decreases.decreases_exprs) {
+        if (term != nullptr) {
+            collect_expr_tokens(*term, source, tokens);
+        }
+    }
+}
+
+void collect_contract_clause_tokens(const ast::ContractClauseSyntax &clause,
+                                    const SourceFile &source,
+                                    std::vector<TokenEntry> &tokens) {
+    add_token_for_name(
+        tokens, source, clause.range, std::string(to_string(clause.kind)), SemanticTokenType::Keyword);
+    if (clause.expr != nullptr) {
+        collect_expr_tokens(*clause.expr, source, tokens);
+    }
+    if (clause.temporal_expr != nullptr) {
+        collect_temporal_tokens(*clause.temporal_expr, source, tokens);
+    }
+    if (clause.decreases != nullptr) {
+        collect_contract_decreases_tokens(*clause.decreases, source, tokens);
+    }
+}
+
+void collect_agent_quota_tokens(const ast::AgentQuotaSyntax &quota,
+                                const SourceFile &source,
+                                std::vector<TokenEntry> &tokens) {
+    for (const auto &item : quota.items) {
+        if (item == nullptr) {
+            continue;
+        }
+        if (item->integer_value != nullptr) {
+            collect_integer_tokens(*item->integer_value, source, tokens);
+        }
+        if (item->duration_value != nullptr) {
+            collect_duration_tokens(*item->duration_value, source, tokens);
+        }
+    }
+}
+
+void collect_state_policy_tokens(const ast::StatePolicySyntax &policy,
+                                 const SourceFile &source,
+                                 std::vector<TokenEntry> &tokens) {
+    for (const auto &item : policy.items) {
+        if (item == nullptr) {
+            continue;
+        }
+        if (item->retry_limit != nullptr) {
+            collect_integer_tokens(*item->retry_limit, source, tokens);
+        }
+        for (const auto &retry_on : item->retry_on) {
+            if (retry_on != nullptr) {
+                collect_qualified_name_tokens(*retry_on, source, tokens, SemanticTokenType::Type);
+            }
+        }
+        if (item->timeout != nullptr) {
+            collect_duration_tokens(*item->timeout, source, tokens);
+        }
+    }
+}
+
+void collect_trait_item_tokens(const ast::TraitItemSyntax &item,
+                               const SourceFile &source,
+                               std::vector<TokenEntry> &tokens) {
+    switch (item.kind) {
+    case ast::TraitItemKind::Fn:
+        add_token_for_name(tokens, source, item.range, item.name, SemanticTokenType::Method);
+        collect_type_params_tokens(item.type_params, source, tokens);
+        collect_param_list_tokens(item.params, source, tokens);
+        if (item.return_type != nullptr) {
+            collect_type_syntax_tokens(*item.return_type, source, tokens);
+        }
+        if (item.effect_clause != nullptr) {
+            collect_effect_clause_tokens(*item.effect_clause, source, tokens);
+        }
+        if (item.where_clause != nullptr) {
+            collect_where_clause_tokens(*item.where_clause, source, tokens);
+        }
+        break;
+    case ast::TraitItemKind::AssocType:
+        if (item.assoc_type != nullptr) {
+            add_token_for_name(
+                tokens, source, item.assoc_type->range, item.assoc_type->name, SemanticTokenType::Type);
+            collect_type_params_tokens(item.assoc_type->type_params, source, tokens);
+            collect_type_list_tokens(item.assoc_type->bounds, source, tokens);
+            if (item.assoc_type->default_type != nullptr) {
+                collect_type_syntax_tokens(*item.assoc_type->default_type, source, tokens);
+            }
+        }
+        break;
+    case ast::TraitItemKind::AssocConst:
+        if (item.assoc_const != nullptr) {
+            const auto readonly_mod =
+                static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
+            add_token_for_name(tokens,
+                               source,
+                               item.assoc_const->range,
+                               item.assoc_const->name,
+                               SemanticTokenType::Variable,
+                               readonly_mod);
+            if (item.assoc_const->type != nullptr) {
+                collect_type_syntax_tokens(*item.assoc_const->type, source, tokens);
+            }
+            if (item.assoc_const->default_value != nullptr) {
+                collect_expr_tokens(*item.assoc_const->default_value, source, tokens);
+            }
+        }
+        break;
+    }
+}
+
+void collect_impl_item_tokens(const ast::ImplItemSyntax &item,
+                              const SourceFile &source,
+                              std::vector<TokenEntry> &tokens) {
+    switch (item.kind) {
+    case ast::ImplItemKind::Fn:
+        if (item.fn_def != nullptr) {
+            collect_fn_tokens(*item.fn_def, source, tokens, SemanticTokenType::Method);
+        }
+        break;
+    case ast::ImplItemKind::AssocType:
+        if (item.assoc_type != nullptr) {
+            add_token_for_name(tokens,
+                               source,
+                               item.assoc_type->range,
+                               item.assoc_type->name,
+                               SemanticTokenType::Type);
+            if (item.assoc_type->type != nullptr) {
+                collect_type_syntax_tokens(*item.assoc_type->type, source, tokens);
+            }
+        }
+        break;
+    case ast::ImplItemKind::AssocConst:
+        if (item.assoc_const != nullptr) {
+            const auto readonly_mod =
+                static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
+            add_token_for_name(tokens,
+                               source,
+                               item.assoc_const->range,
+                               item.assoc_const->name,
+                               SemanticTokenType::Variable,
+                               readonly_mod);
+            if (item.assoc_const->type != nullptr) {
+                collect_type_syntax_tokens(*item.assoc_const->type, source, tokens);
+            }
+            if (item.assoc_const->value != nullptr) {
+                collect_expr_tokens(*item.assoc_const->value, source, tokens);
+            }
+        }
+        break;
+    }
+}
+
 // ---- Declarations ----
 
 void collect_decl_tokens(const ast::Decl &decl,
@@ -578,6 +1112,16 @@ void collect_decl_tokens(const ast::Decl &decl,
         }
         if (!imp.alias.empty()) {
             add_token_for_name(tokens, source, imp.range, imp.alias, SemanticTokenType::Namespace);
+        }
+        break;
+    }
+    case ast::NodeKind::UseDecl: {
+        const auto &use = static_cast<const ast::UseDecl &>(decl);
+        if (use.path != nullptr) {
+            collect_qualified_name_tokens(*use.path, source, tokens, SemanticTokenType::Namespace);
+        }
+        if (!use.alias.empty()) {
+            add_token_for_name(tokens, source, use.range, use.alias, SemanticTokenType::Namespace);
         }
         break;
     }
@@ -605,43 +1149,52 @@ void collect_decl_tokens(const ast::Decl &decl,
     case ast::NodeKind::StructDecl: {
         const auto &str = static_cast<const ast::StructDecl &>(decl);
         add_token_for_name(tokens, source, str.range, str.name, SemanticTokenType::Struct);
+        collect_type_params_tokens(str.type_params, source, tokens);
         for (const auto &field : str.fields) {
             if (field != nullptr) {
                 collect_struct_field_tokens(*field, source, tokens);
             }
+        }
+        if (str.where_clause != nullptr) {
+            collect_where_clause_tokens(*str.where_clause, source, tokens);
         }
         break;
     }
     case ast::NodeKind::EnumDecl: {
         const auto &en = static_cast<const ast::EnumDecl &>(decl);
         add_token_for_name(tokens, source, en.range, en.name, SemanticTokenType::Enum);
+        collect_type_params_tokens(en.type_params, source, tokens);
         for (const auto &variant : en.variants) {
             if (variant != nullptr) {
                 collect_enum_variant_tokens(*variant, source, tokens);
             }
+        }
+        if (en.where_clause != nullptr) {
+            collect_where_clause_tokens(*en.where_clause, source, tokens);
         }
         break;
     }
     case ast::NodeKind::CapabilityDecl: {
         const auto &cap = static_cast<const ast::CapabilityDecl &>(decl);
         add_token_for_name(tokens, source, cap.range, cap.name, SemanticTokenType::Interface);
-        for (const auto &param : cap.params) {
-            if (param != nullptr) {
-                collect_param_tokens(*param, source, tokens);
-            }
-        }
+        collect_param_list_tokens(cap.params, source, tokens);
         if (cap.return_type != nullptr) {
             collect_type_syntax_tokens(*cap.return_type, source, tokens);
+        }
+        if (cap.effect != nullptr) {
+            collect_capability_effect_tokens(*cap.effect, source, tokens);
+        }
+        if (cap.where_clause != nullptr) {
+            collect_where_clause_tokens(*cap.where_clause, source, tokens);
         }
         break;
     }
     case ast::NodeKind::PredicateDecl: {
         const auto &pred = static_cast<const ast::PredicateDecl &>(decl);
         add_token_for_name(tokens, source, pred.range, pred.name, SemanticTokenType::Function);
-        for (const auto &param : pred.params) {
-            if (param != nullptr) {
-                collect_param_tokens(*param, source, tokens);
-            }
+        collect_param_list_tokens(pred.params, source, tokens);
+        if (pred.effect_clause != nullptr) {
+            collect_effect_clause_tokens(*pred.effect_clause, source, tokens);
         }
         break;
     }
@@ -656,6 +1209,50 @@ void collect_decl_tokens(const ast::Decl &decl,
         }
         if (agent.output_type != nullptr) {
             collect_type_syntax_tokens(*agent.output_type, source, tokens);
+        }
+        for (const auto &state : agent.states) {
+            add_token_for_name(
+                tokens, source, agent.states_range, state, SemanticTokenType::Variable);
+        }
+        add_token_for_name(tokens,
+                           source,
+                           agent.initial_state_range,
+                           agent.initial_state,
+                           SemanticTokenType::Variable);
+        for (const auto &state : agent.final_states) {
+            add_token_for_name(tokens,
+                               source,
+                               agent.final_states_range,
+                               state,
+                               SemanticTokenType::Variable);
+        }
+        for (const auto &capability : agent.capabilities) {
+            add_token_for_name(tokens,
+                               source,
+                               agent.capabilities_range,
+                               capability,
+                               SemanticTokenType::Interface);
+        }
+        if (agent.quota != nullptr) {
+            collect_agent_quota_tokens(*agent.quota, source, tokens);
+        }
+        for (const auto &transition : agent.transitions) {
+            if (transition == nullptr) {
+                continue;
+            }
+            std::size_t cursor = transition->range.begin_offset;
+            add_token_for_name_in_order(tokens,
+                                        source,
+                                        transition->range,
+                                        cursor,
+                                        transition->from_state,
+                                        SemanticTokenType::Variable);
+            add_token_for_name_in_order(tokens,
+                                        source,
+                                        transition->range,
+                                        cursor,
+                                        transition->to_state,
+                                        SemanticTokenType::Variable);
         }
         break;
     }
@@ -679,6 +1276,19 @@ void collect_decl_tokens(const ast::Decl &decl,
                 if (node->input != nullptr) {
                     collect_expr_tokens(*node->input, source, tokens);
                 }
+                for (const auto &dep : node->after) {
+                    add_token_for_name(tokens, source, node->range, dep, SemanticTokenType::Variable);
+                }
+            }
+        }
+        for (const auto &formula : wf.safety) {
+            if (formula != nullptr) {
+                collect_temporal_tokens(*formula, source, tokens);
+            }
+        }
+        for (const auto &formula : wf.liveness) {
+            if (formula != nullptr) {
+                collect_temporal_tokens(*formula, source, tokens);
             }
         }
         if (wf.return_value != nullptr) {
@@ -691,6 +1301,11 @@ void collect_decl_tokens(const ast::Decl &decl,
         if (contract.target != nullptr) {
             collect_qualified_name_tokens(
                 *contract.target, source, tokens, SemanticTokenType::Class);
+        }
+        for (const auto &clause : contract.clauses) {
+            if (clause != nullptr) {
+                collect_contract_clause_tokens(*clause, source, tokens);
+            }
         }
         break;
     }
@@ -706,6 +1321,9 @@ void collect_decl_tokens(const ast::Decl &decl,
                                    handler->range,
                                    handler->state_name,
                                    SemanticTokenType::Variable);
+                if (handler->policy != nullptr) {
+                    collect_state_policy_tokens(*handler->policy, source, tokens);
+                }
                 if (handler->body != nullptr) {
                     collect_block_tokens(*handler->body, source, tokens);
                 }
@@ -717,27 +1335,42 @@ void collect_decl_tokens(const ast::Decl &decl,
         // Not a decl — should not reach here
         break;
     case ast::NodeKind::FnDecl: {
-        // P2 (RFC §3.2.2): fn-declaration semantic tokens (name as Function,
-        // type params, return type, effect/where clauses) land in P2b once
-        // fn symbols are registered. P2a highlights the fn name as a function
-        // token so the parse surface round-trips through the LSP.
         const auto &fn = static_cast<const ast::FnDecl &>(decl);
-        add_token_for_name(tokens, source, fn.range, fn.name, SemanticTokenType::Function);
+        collect_fn_tokens(fn, source, tokens, SemanticTokenType::Function);
         break;
     }
     case ast::NodeKind::TraitDecl: {
-        // P3 (RFC §3.2.2 / type-system §1.3): trait-declaration semantic
-        // tokens (super-traits, item names, assoc types) land in P3b once
-        // trait symbols are registered. P3a highlights the trait name so the
-        // parse surface round-trips through the LSP.
         const auto &trait = static_cast<const ast::TraitDecl &>(decl);
         add_token_for_name(tokens, source, trait.range, trait.name, SemanticTokenType::Interface);
+        collect_type_params_tokens(trait.type_params, source, tokens);
+        collect_type_list_tokens(trait.super_traits, source, tokens);
+        if (trait.where_clause != nullptr) {
+            collect_where_clause_tokens(*trait.where_clause, source, tokens);
+        }
+        for (const auto &item : trait.items) {
+            if (item != nullptr) {
+                collect_trait_item_tokens(*item, source, tokens);
+            }
+        }
         break;
     }
     case ast::NodeKind::ImplDecl: {
-        // P3 (RFC §3.2.2 / type-system §1.4): impl-block semantic tokens land
-        // in P3b. P3a emits no tokens (impl headers carry no name token; the
-        // `impl` keyword is handled by the lexer token stream, not the AST).
+        const auto &impl = static_cast<const ast::ImplDecl &>(decl);
+        collect_type_params_tokens(impl.type_params, source, tokens);
+        if (impl.trait_ref != nullptr) {
+            collect_type_syntax_tokens(*impl.trait_ref, source, tokens);
+        }
+        if (impl.target_type != nullptr) {
+            collect_type_syntax_tokens(*impl.target_type, source, tokens);
+        }
+        if (impl.where_clause != nullptr) {
+            collect_where_clause_tokens(*impl.where_clause, source, tokens);
+        }
+        for (const auto &item : impl.items) {
+            if (item != nullptr) {
+                collect_impl_item_tokens(*item, source, tokens);
+            }
+        }
         break;
     }
     }

@@ -670,6 +670,10 @@ void push_impl_location(std::vector<OrderedLocation> &locations,
 primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
                                    const LspSourceSnapshot &source,
                                    const TypeKey &primitive_type) {
+    if (snapshot.analysis_mode == LspAnalysisMode::DetachedSourceUnit) {
+        return {};
+    }
+
     if (snapshot.workspace_index != nullptr) {
         return snapshot.workspace_index->implementation_locations_for_type(primitive_type);
     }
@@ -704,12 +708,12 @@ primitive_implementation_locations(const LspAnalysisSnapshot &snapshot,
 }
 
 void append_primitive_type_definition_locations_from_index(std::vector<Location> &locations,
-                                                           const LspWorkspaceIndex *index,
+                                                           const SysrootPrimitiveIndex *index,
                                                            const TypeKey &type) {
     if (index == nullptr) {
         return;
     }
-    if (const auto home = index->primitive_home_location_for_type(type); home.has_value()) {
+    if (const auto home = index->home_location_for_type(type); home.has_value()) {
         push_unique_location(locations, *home);
     }
 }
@@ -2174,7 +2178,7 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
             if (const auto type = primitive_type_key_at(*snapshot, *source, offset);
                 type.has_value()) {
                 append_primitive_type_definition_locations_from_index(
-                    locations, analysis_.sysroot_index_for_uri(uri), *type);
+                    locations, analysis_.sysroot_primitive_index_for_uri(uri), *type);
             }
         }
         if (!locations.empty()) {
@@ -2233,7 +2237,7 @@ void LspServer::handle_type_definition(const JsonRpcRequest &req) {
     if (primitive_locations.empty()) {
         if (const auto type = primitive_type_key_at(*snapshot, *source, offset); type.has_value()) {
             append_primitive_type_definition_locations_from_index(
-                primitive_locations, analysis_.sysroot_index_for_uri(uri), *type);
+                primitive_locations, analysis_.sysroot_primitive_index_for_uri(uri), *type);
         }
     }
     if (!primitive_locations.empty()) {
@@ -2312,6 +2316,7 @@ void LspServer::handle_implementation(const JsonRpcRequest &req) {
                primitive_type.has_value()) {
         locations = primitive_implementation_locations(*snapshot, *source, *primitive_type);
         if (const auto *sysroot_index = analysis_.sysroot_index_for_uri(uri);
+            snapshot->analysis_mode != LspAnalysisMode::DetachedSourceUnit &&
             sysroot_index != nullptr) {
             for (const auto &location :
                  sysroot_index->implementation_locations_for_type(*primitive_type)) {
@@ -3017,7 +3022,7 @@ void LspServer::handle_semantic_tokens_full(const JsonRpcRequest &req) {
         return;
     }
 
-    auto tokens = compute_semantic_tokens(source->source->content, analysis_);
+    auto tokens = compute_semantic_tokens(uri, analysis_);
     JsonRpcResponse resp;
     resp.id = req.id;
     resp.result = serialize_semantic_tokens(tokens);
@@ -3056,6 +3061,17 @@ void LspServer::handle_code_action(const JsonRpcRequest &req) {
     }
 
     auto actions = compute_code_actions(document->text, range, diagnostics);
+    if (snapshot != nullptr && snapshot->analysis_mode == LspAnalysisMode::DetachedSourceUnit) {
+        actions.erase(std::remove_if(actions.begin(),
+                                     actions.end(),
+                                     [](const CodeAction &action) {
+                                         if (action.kind == CodeActionKind::SourceOrganizeImports) {
+                                             return true;
+                                         }
+                                         return action.title == "Remove unused import";
+                                     }),
+                      actions.end());
+    }
 
     // compute_code_actions uses "" as a sentinel URI in WorkspaceEdit::changes;
     // substitute it with the actual document URI here (single-document edits).

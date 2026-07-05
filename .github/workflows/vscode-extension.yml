@@ -78,6 +78,10 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           test -x node_modules/.bin/vsce
 
+      - name: Verify TextMate grammar coverage
+        working-directory: tools/vscode
+        run: pnpm run test:syntax-grammar
+
       - name: Package platform VSIX with release LSP
         run: scripts/package-vscode-vsix-release.sh
 

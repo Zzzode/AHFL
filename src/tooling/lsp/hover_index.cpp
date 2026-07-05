@@ -1354,6 +1354,23 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         }
         return;
     }
+    case ast::NodeKind::UseDecl: {
+        const auto &use = static_cast<const ast::UseDecl &>(declaration);
+        if (use.path) {
+            add_qualified_name_targets(
+                index, source, *use.path, HoverTargetKind::ImportPath, use.path->spelling());
+        }
+        if (!use.alias.empty()) {
+            add_named_range_target(index,
+                                   source,
+                                   HoverTargetKind::ImportAlias,
+                                   use.range,
+                                   use.alias,
+                                   std::nullopt,
+                                   use.path ? use.path->spelling() : std::string{});
+        }
+        return;
+    }
     case ast::NodeKind::StructDecl: {
         const auto &decl = static_cast<const ast::StructDecl &>(declaration);
         const auto symbol =
