@@ -473,6 +473,41 @@ enum Packet {
     CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
 }
 
+TEST_CASE("variant shape diagnostic points to variant declaration") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data(code) => code, Empty => 0 }");
+    const auto variant_offset = source.find("Data { code");
+    REQUIRE(variant_offset != std::string::npos);
+
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+
+    bool saw_shape_diagnostic = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (!entry.code.has_value() ||
+            entry.code->find("INVALID_ENUM_VARIANT_SHAPE") == std::string::npos) {
+            continue;
+        }
+        saw_shape_diagnostic = true;
+        REQUIRE_FALSE(entry.related.empty());
+        CHECK(entry.related.front().message == "variant 'Data' declared here");
+        REQUIRE(entry.related.front().range.has_value());
+        CHECK(entry.related.front().range->begin_offset == variant_offset);
+        REQUIRE(entry.related.front().source_name.has_value());
+        CHECK(*entry.related.front().source_name == "module 'adt_match'");
+        break;
+    }
+    CHECK(saw_shape_diagnostic);
+}
+
 TEST_CASE("struct pattern on tuple variant reports INVALID_ENUM_VARIANT_SHAPE") {
     const auto source = wrap_in_flow(
         R"AHFL(

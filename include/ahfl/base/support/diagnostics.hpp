@@ -552,6 +552,7 @@ inline constexpr MessageTemplate InvalidEnumVariantShape{
     "variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax"};
 inline constexpr MessageTemplate InvalidEnumVariantConstructorShape{
     "variant '{}' of enum '{}' is declared as {}, but constructor uses {} syntax"};
+inline constexpr MessageTemplate EnumVariantDeclaredHere{"variant '{}' declared here"};
 inline constexpr MessageTemplate MissingVariantField{
     "struct variant pattern for '{}' is missing field '{}'"};
 inline constexpr MessageTemplate UnexpectedVariantField{"struct variant '{}' has no field '{}'"};
