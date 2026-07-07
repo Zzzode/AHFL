@@ -1,18 +1,18 @@
 module formal::bounded_data_semantics;
 
-struct Request {
+pub struct Request {
     value: Int;
 }
 
-struct Context {
+pub struct Context {
     value: Int = 0;
 }
 
-struct Response {
+pub struct Response {
     ok: Bool;
 }
 
-agent BoundedAgent {
+pub agent BoundedAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -41,7 +41,7 @@ flow for BoundedAgent {
     }
 }
 
-workflow BoundedWorkflow {
+pub workflow BoundedWorkflow {
     input: Request;
     output: Response;
 

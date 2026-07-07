@@ -42,6 +42,7 @@ struct SourceUnit {
     std::string module_name;
     std::string package_prefix;
     bool module_exported{false};
+    std::vector<std::string> artifact_exports;
     std::vector<std::string> dependency_prefixes;
     SourceRange module_range;
     std::optional<std::vector<std::string>> compiler_intrinsics_allow;

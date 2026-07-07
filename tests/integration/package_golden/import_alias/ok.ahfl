@@ -1,24 +1,24 @@
 module resolver::ok;
 import resolver::ok as self;
 
-struct Request {
+pub struct Request {
     value: String;
 }
 
-struct Context {
+pub struct Context {
     value: String = "pending";
 }
 
-struct Response {
+pub struct Response {
     value: String;
 }
 
-type RequestAlias = self::Request;
+pub type RequestAlias = self::Request;
 
 capability Echo(request: RequestAlias) -> Response;
 predicate non_empty(value: String) -> Bool;
 
-agent EchoAgent {
+pub agent EchoAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -48,7 +48,7 @@ flow for self::EchoAgent {
     }
 }
 
-workflow EchoWorkflow {
+pub workflow EchoWorkflow {
     input: Request;
     output: Response;
     node run: self::EchoAgent(input);

@@ -4,7 +4,7 @@
 | --- | --- |
 | Doc type | 错误码速查（Diagnostic Catalogue） |
 | Status | 草稿 · 可审查 |
-| SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::typecheck` + `messages::typecheck` 命名空间） |
+| SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::*` + `messages::*` 命名空间） |
 | Created | 2026-06-28 |
 | Updated | 2026-07-06 |
 | Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
@@ -2459,7 +2459,29 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 ---
 
-## 8. Project / Tooling Diagnostics
+## 8. Visibility Diagnostics
+
+这些 code 来自 RFC 0009 的 symbol visibility 与 public API surface 语义。
+
+| Code | Severity | Source | 触发条件 |
+| --- | --- | --- | --- |
+| `visibility.PRIVATE_SYMBOL` | error | Resolver | 跨 package 引用 package-internal symbol。 |
+| `visibility.PRIVATE_MODULE` | error | Project loader / Resolver | 跨 package import/reference 进入 non-exported module，且没有 API-reachable facade。 |
+| `visibility.MISSING_IMPORT` | error | Resolver | 目标 public API 存在，但当前 source 没有 import 暴露它的 module/facade。 |
+| `visibility.PRIVATE_IN_PUBLIC` | error | Resolver public-surface pass | `pub` declaration 的 public signature 泄漏 package-internal 或 non-API-reachable symbol。 |
+| `visibility.UNREACHABLE_PUBLIC` | warning | Resolver effective-visibility pass | `pub` symbol 既不是 API-reachable，也不是 artifact-reachable。 |
+| `visibility.REEXPORT_MISSING_DEPENDENCY` | error | Resolver `pub use` pass | `pub use` 尝试 re-export 当前 package 未依赖的外部 package symbol。 |
+| `visibility.REEXPORT_PRIVATE_SYMBOL` | error | Resolver `pub use` pass | `pub use` 尝试暴露非 `pub` target symbol。 |
+| `visibility.HANDOFF_EXPORT_PRIVATE_SYMBOL` | error | Resolver artifact-reachability pass | handoff target export 引用非 `pub` source symbol。 |
+| `visibility.PUBLIC_IMPL_PRIVATE_RECEIVER` | error | Resolver impl-visibility pass | public inherent impl item 暴露对依赖方不可见的 receiver type。 |
+| `visibility.DUPLICATE_VISIBILITY_MODIFIER` | error | Resolver syntax-surface validation | declaration 同时携带多于一个 `pub` marker，例如 `pub pub fn`。 |
+
+**常见修复**：
+- 对稳定 API 加 `pub`，并确保其所在 module 被 `[exports].modules` 导出，或通过 exported module 中的 `pub use` facade 暴露。
+- 对只服务 handoff artifact 的 symbol，加 `pub` 并在 target exports 中引用；这不会让它自动成为 source-importable API。
+- 修复 `PRIVATE_IN_PUBLIC` 时，不只给外层 declaration 加 `pub`，还要让 signature 中出现的 named types/traits/capabilities 同样 API-reachable。
+
+## 9. Project / Tooling Diagnostics
 
 这些 code 来自 project discovery、CLI 和 LSP 层，不一定对应
 `messages::typecheck` 模板。
@@ -2549,7 +2571,7 @@ canonical home，或没有可用 default ToolchainProfile。
 - 配置 `ahfl.toolchain.sysroot` 或 LSP default sysroot。
 - 修复 sysroot，使 `std/string.ahfl`、`std/bool.ahfl` 等 primitive home 文件存在。
 
-## 9. TBD
+## 10. TBD
 
 暂无"已登记但尚未归类"的稳定错误码。
 

@@ -10,7 +10,7 @@ struct NoDepsOutput {
     accepted: Bool;
 }
 
-workflow NoDepsWorkflow {
+pub workflow NoDepsWorkflow {
     input: NoDepsInput;
     output: NoDepsOutput;
     return: NoDepsOutput {

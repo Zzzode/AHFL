@@ -1248,6 +1248,7 @@ struct Node {
 /// Declaration base class (common base for all top-level declarations)
 struct Decl : Node {
     Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
 
     Decl(NodeKind kind, ahfl::SourceRange range = {});
     ~Decl() override = default;

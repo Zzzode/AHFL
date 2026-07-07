@@ -56,7 +56,7 @@ AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳�
 ### 2.2 保留关键字
 
 ```text
-module import as
+module import use as pub
 const type struct enum
 capability predicate
 agent contract flow workflow for
@@ -124,20 +124,44 @@ EscapeSequence  ::= "\\" ( "\"" | "\\" | "n" | "r" | "t" ) ;
 ```ebnf
 Program         ::= { ModuleDecl | ImportDecl | TopLevelDecl } EOF ;
 
-TopLevelDecl    ::= ConstDecl
-                  | TypeAliasDecl
-                  | StructDecl
-                  | EnumDecl
-                  | CapabilityDecl
-                  | PredicateDecl
-                  | AgentDecl
+Visibility      ::= "pub" ;
+
+TopLevelDecl    ::= [ Visibility ] ConstDecl
+                  | [ Visibility ] TypeAliasDecl
+                  | [ Visibility ] StructDecl
+                  | [ Visibility ] EnumDecl
+                  | [ Visibility ] CapabilityDecl
+                  | [ Visibility ] PredicateDecl
+                  | [ Visibility ] AgentDecl
                   | ContractDecl
                   | FlowDecl
-                  | WorkflowDecl ;
+                  | [ Visibility ] WorkflowDecl
+                  | [ Visibility ] FnDecl
+                  | [ Visibility ] TraitDecl
+                  | UseDecl ;
 
 ModuleDecl      ::= "module" QualifiedIdent ";" ;
 ImportDecl      ::= "import" QualifiedIdent [ "as" Ident ] ";" ;
+UseDecl         ::= [ Visibility ] "use" QualifiedIdent [ "as" Ident ] ";" ;
 ```
+
+### 3.1.1 符号可见性
+
+顶层命名 declaration 默认是 package-internal；同 package 内可按正常
+`import`/name lookup 使用，跨 package 不可见。`pub` 表示 source-level public
+intent，但跨 package 使用还必须同时满足 dependency、module export 或
+API-reachable `pub use` facade、当前 source 显式 import、以及 public signature
+well-formedness。
+
+`pub use` 是独立的 public alias declaration。它拥有自己的 source range 与
+navigation identity，但类型等价、method receiver identity 和 trait matching
+仍使用 target declaration identity。`pub use` 不支持 enum variant、impl item、
+associated item 或 trait conformance re-export。
+
+位于非 exported module 且未被 API-reachable facade 或 handoff artifact export
+触达的 `pub` symbol 会产生 `visibility.UNREACHABLE_PUBLIC` warning。handoff
+target export 只能引用 `pub` source symbol；否则必须产生
+`visibility.HANDOFF_EXPORT_PRIVATE_SYMBOL`。
 
 ### 3.2 类型定义
 

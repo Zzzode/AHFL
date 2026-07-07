@@ -1,14 +1,14 @@
 module parent_pkg::main;
 
-struct ParentInput {
+pub struct ParentInput {
     subject: String;
 }
 
-struct ParentOutput {
+pub struct ParentOutput {
     accepted: Bool;
 }
 
-workflow ParentWorkflow {
+pub workflow ParentWorkflow {
     input: ParentInput;
     output: ParentOutput;
     return: ParentOutput {

@@ -1,6 +1,9 @@
 module stdlib_units::prelude_ut;
 
 import std::prelude;
+import std::collections;
+import std::option;
+import std::result;
 
 // ===========================================================================
 // B-12 P6 prelude 显式导入验收 (Wave-23 Group B 收尾)
@@ -73,7 +76,7 @@ fn prelude_ut() -> Int effect Pure decreases 0 {
     assert(is_some<Int>(a3));
     let hit:  Int = get_or_insert<Int>(a3, 99);
     assert(hit == 5);
-    // Option inherent map (prelude exports Option<T> type, inherent impl resolves)
+    // Option inherent map requires the defining impl module to be imported.
     let doubled: Option<Int> = a.map<Int>(\x: Int -> x * 2);
     assert(get_or_insert<Int>(doubled, 0) == 2);
 

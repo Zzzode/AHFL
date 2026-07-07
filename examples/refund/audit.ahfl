@@ -2,19 +2,19 @@ module refund::audit;
 
 import std::option as option;
 
-struct RefundRequest {
+pub struct RefundRequest {
     order_id: String;
     user_id: String;
     refund_amount: Decimal(2);
 }
 
-struct RefundContext {
+pub struct RefundContext {
     result: AuditResult = AuditResult::Reject;
     reason: String = "pending";
     ticket_id: option::Option<String> = option::Option::None;
 }
 
-struct RefundDecision {
+pub struct RefundDecision {
     result: AuditResult;
     reason: String;
     ticket_id: option::Option<String>;
@@ -32,7 +32,7 @@ struct AuditReply {
     need_ticket: Bool;
 }
 
-enum AuditResult {
+pub enum AuditResult {
     Approve,
     Reject,
 }
@@ -48,7 +48,7 @@ predicate order_belongs_to_user(order_id: String, user_id: String) -> Bool;
 predicate refund_amount_within_total(order_id: String, amount: Decimal(2)) -> Bool;
 predicate non_empty(value: String) -> Bool;
 
-agent RefundAudit {
+pub agent RefundAudit {
     input: RefundRequest;
     context: RefundContext;
     output: RefundDecision;
@@ -119,7 +119,7 @@ flow for RefundAudit {
     }
 }
 
-workflow RefundAuditWorkflow {
+pub workflow RefundAuditWorkflow {
     input: RefundRequest;
     output: RefundDecision;
 

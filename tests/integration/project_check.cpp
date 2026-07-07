@@ -574,6 +574,9 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
     const auto lib_root = workspace_root / "lib";
     const auto app_entry = app_root / "main.ahfl";
     const auto lib_entry = lib_root / "types.ahfl";
+    const auto facade_app_entry = app_root / "facade_main.ahfl";
+    const auto lib_internal_entry = lib_root / "internal.ahfl";
+    const auto lib_facade_entry = lib_root / "facade.ahfl";
 
     std::error_code error;
     std::filesystem::remove_all(workspace_root, error);
@@ -599,6 +602,28 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
                          "fn check(w: types::Widget) -> Int effect Pure decreases 0 {\n"
                          "    let ok: Int = w.visible();\n"
                          "    return ok + w.hidden();\n"
+                         "}\n") ||
+        !write_text_file(lib_internal_entry,
+                         "module lib::internal;\n"
+                         "\n"
+                         "pub struct FacadeWidget {}\n"
+                         "\n"
+                         "impl FacadeWidget {\n"
+                         "    pub fn visible(self) -> Int effect Pure decreases 0 {\n"
+                         "        return 1;\n"
+                         "    }\n"
+                         "}\n") ||
+        !write_text_file(lib_facade_entry,
+                         "module lib::facade;\n"
+                         "\n"
+                         "pub use lib::internal::FacadeWidget;\n") ||
+        !write_text_file(facade_app_entry,
+                         "module app::facade_main;\n"
+                         "\n"
+                         "import lib::facade as facade;\n"
+                         "\n"
+                         "fn check(w: facade::FacadeWidget) -> Int effect Pure decreases 0 {\n"
+                         "    return w.visible();\n"
                          "}\n")) {
         std::cerr << "failed to write inherent method visibility fixture\n";
         return 1;
@@ -643,6 +668,264 @@ int run_inherent_method_visibility(const std::filesystem::path &workspace_root) 
         contains_text(rendered, "lib::types::Widget.visible")) {
         print_diagnostics(type_check_result.diagnostics);
         std::cerr << "expected cross-package hidden inherent method to be rejected\n";
+        return 1;
+    }
+
+    ahfl::ProjectInput facade_input;
+    facade_input.entry_files.push_back(facade_app_entry);
+    facade_input.inject_prelude = false;
+    facade_input.enforce_package_dependencies = true;
+    facade_input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = app_root,
+        .exported_modules = {"facade_main"},
+        .dependency_prefixes = {"lib"},
+    });
+    facade_input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "lib",
+        .root = lib_root,
+        .exported_modules = {"facade"},
+    });
+
+    const auto facade_parse_result = ahfl::parse_project(frontend, facade_input);
+    if (facade_parse_result.has_errors()) {
+        print_diagnostics(facade_parse_result.diagnostics);
+        return 1;
+    }
+
+    const auto facade_resolve_result = resolver.resolve(facade_parse_result.graph);
+    if (facade_resolve_result.has_errors()) {
+        print_diagnostics(facade_resolve_result.diagnostics);
+        return 1;
+    }
+
+    const auto facade_type_check_result =
+        type_checker.check(facade_parse_result.graph, facade_resolve_result);
+    const auto facade_rendered = render_diagnostics(facade_type_check_result.diagnostics);
+    if (!facade_type_check_result.has_errors() ||
+        !contains_code(facade_type_check_result.diagnostics, "typecheck.UNKNOWN_CALLABLE") ||
+        !contains_text(facade_rendered, "lib::internal::FacadeWidget.visible")) {
+        print_diagnostics(facade_type_check_result.diagnostics);
+        std::cerr << "expected type facade not to re-export inherent impl methods\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_symbol_visibility_api_reachability(const std::filesystem::path &workspace_root) {
+    const auto app_root = workspace_root / "app";
+    const auto lib_root = workspace_root / "lib";
+    const auto app_entry = app_root / "main.ahfl";
+    const auto lib_facade = lib_root / "facade.ahfl";
+    const auto lib_internal = lib_root / "internal.ahfl";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!write_text_file(lib_internal,
+                         "module lib::internal;\n"
+                         "\n"
+                         "pub struct Token {}\n"
+                         "\n"
+                         "pub struct Request {\n"
+                         "    token: Token;\n"
+                         "}\n") ||
+        !write_text_file(lib_facade,
+                         "module lib::facade;\n"
+                         "\n"
+                         "pub use lib::internal::Request;\n") ||
+        !write_text_file(app_entry,
+                         "module app::main;\n"
+                         "\n"
+                         "import lib::facade as facade;\n"
+                         "\n"
+                         "fn accept(request: facade::Request) -> Int effect Pure decreases 0 {\n"
+                         "    return 1;\n"
+                         "}\n")) {
+        std::cerr << "failed to write symbol visibility API reachability fixture\n";
+        return 1;
+    }
+
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(app_entry);
+    input.inject_prelude = false;
+    input.enforce_package_dependencies = true;
+    input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = app_root,
+        .exported_modules = {"main"},
+        .dependency_prefixes = {"lib"},
+    });
+    input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "lib",
+        .root = lib_root,
+        .exported_modules = {"facade"},
+    });
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = ahfl::parse_project(frontend, input);
+    if (parse_result.has_errors()) {
+        print_diagnostics(parse_result.diagnostics);
+        return 1;
+    }
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    if (!resolve_result.has_errors() ||
+        !contains_code(resolve_result.diagnostics, "visibility.PRIVATE_IN_PUBLIC")) {
+        print_diagnostics(resolve_result.diagnostics);
+        std::cerr << "expected API-reachable public facade to reject non-API-reachable field type\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_symbol_visibility_unreachable_public(const std::filesystem::path &workspace_root) {
+    const auto lib_root = workspace_root / "lib";
+    const auto lib_internal = lib_root / "internal.ahfl";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!write_text_file(lib_internal,
+                         "module lib::internal;\n"
+                         "\n"
+                         "pub struct Hidden {}\n")) {
+        std::cerr << "failed to write unreachable public fixture\n";
+        return 1;
+    }
+
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(lib_internal);
+    input.inject_prelude = false;
+    input.enforce_package_dependencies = true;
+    input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "lib",
+        .root = lib_root,
+        .exported_modules = {"facade"},
+    });
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = ahfl::parse_project(frontend, input);
+    if (parse_result.has_errors()) {
+        print_diagnostics(parse_result.diagnostics);
+        return 1;
+    }
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    if (resolve_result.has_errors() ||
+        !contains_code(resolve_result.diagnostics, "visibility.UNREACHABLE_PUBLIC")) {
+        print_diagnostics(resolve_result.diagnostics);
+        std::cerr << "expected non-exported public symbol to warn as unreachable public\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_symbol_visibility_duplicate_modifier(const std::filesystem::path &workspace_root) {
+    const auto app_root = workspace_root / "app";
+    const auto app_entry = app_root / "main.ahfl";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!write_text_file(app_entry,
+                         "module app::main;\n"
+                         "\n"
+                         "pub pub fn visible() -> Int effect Pure decreases 0;\n")) {
+        std::cerr << "failed to write duplicate visibility fixture\n";
+        return 1;
+    }
+
+    ahfl::ProjectInput input;
+    input.entry_files.push_back(app_entry);
+    input.inject_prelude = false;
+    input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+        .prefix = "app",
+        .root = app_root,
+        .exported_modules = {"main"},
+    });
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = ahfl::parse_project(frontend, input);
+    if (parse_result.has_errors()) {
+        print_diagnostics(parse_result.diagnostics);
+        return 1;
+    }
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(parse_result.graph);
+    if (!resolve_result.has_errors() ||
+        !contains_code(resolve_result.diagnostics,
+                       "visibility.DUPLICATE_VISIBILITY_MODIFIER")) {
+        print_diagnostics(resolve_result.diagnostics);
+        std::cerr << "expected duplicate pub modifier diagnostic\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_symbol_visibility_handoff_export(const std::filesystem::path &workspace_root) {
+    const auto app_root = workspace_root / "app";
+    const auto private_entry = app_root / "private_export.ahfl";
+    const auto public_entry = app_root / "public_export.ahfl";
+
+    std::error_code error;
+    std::filesystem::remove_all(workspace_root, error);
+    if (!write_text_file(private_entry,
+                         "module app::private_export;\n"
+                         "\n"
+                         "fn hidden() -> Int effect Pure decreases 0;\n") ||
+        !write_text_file(public_entry,
+                         "module app::public_export;\n"
+                         "\n"
+                         "pub struct Payload {}\n"
+                         "\n"
+                         "pub fn visible(payload: Payload) -> Int effect Pure decreases 0;\n")) {
+        std::cerr << "failed to write handoff export visibility fixture\n";
+        return 1;
+    }
+
+    const auto resolve_entry = [&](const std::filesystem::path &entry,
+                                   std::string artifact_export) -> ahfl::ResolveResult {
+        ahfl::ProjectInput input;
+        input.entry_files.push_back(entry);
+        input.inject_prelude = false;
+        input.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "app",
+            .root = app_root,
+            .artifact_exports = {std::move(artifact_export)},
+        });
+
+        const ahfl::Frontend frontend;
+        const auto parse_result = ahfl::parse_project(frontend, input);
+        if (parse_result.has_errors()) {
+            ahfl::ResolveResult result;
+            result.diagnostics = parse_result.diagnostics;
+            return result;
+        }
+        const ahfl::Resolver resolver;
+        return resolver.resolve(parse_result.graph);
+    };
+
+    const auto private_result =
+        resolve_entry(private_entry, "app::private_export::hidden");
+    if (!private_result.has_errors() ||
+        !contains_code(private_result.diagnostics,
+                       "visibility.HANDOFF_EXPORT_PRIVATE_SYMBOL")) {
+        print_diagnostics(private_result.diagnostics);
+        std::cerr << "expected private handoff export diagnostic\n";
+        return 1;
+    }
+
+    const auto public_result =
+        resolve_entry(public_entry, "app::public_export::visible");
+    if (public_result.has_errors() ||
+        contains_code(public_result.diagnostics, "visibility.UNREACHABLE_PUBLIC")) {
+        print_diagnostics(public_result.diagnostics);
+        std::cerr << "expected public handoff export to be artifact-reachable\n";
         return 1;
     }
 
@@ -695,6 +978,22 @@ int main(int argc, char **argv) {
 
     if (test_case == "inherent-method-visibility") {
         return run_inherent_method_visibility(entry);
+    }
+
+    if (test_case == "symbol-visibility-api-reachability") {
+        return run_symbol_visibility_api_reachability(entry);
+    }
+
+    if (test_case == "symbol-visibility-unreachable-public") {
+        return run_symbol_visibility_unreachable_public(entry);
+    }
+
+    if (test_case == "symbol-visibility-duplicate-modifier") {
+        return run_symbol_visibility_duplicate_modifier(entry);
+    }
+
+    if (test_case == "symbol-visibility-handoff-export") {
+        return run_symbol_visibility_handoff_export(entry);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

@@ -2,7 +2,7 @@ module formal::decreases_length_self;
 
 import std::collections as collections;
 
-struct Item {
+pub struct Item {
     id: Int;
 }
 
@@ -12,20 +12,20 @@ struct Item {
 // for plain dotted identifiers). To keep the model tractable and still
 // exercise the bounded-rank branch, the Context itself exposes a `length`
 // Int field directly.
-struct Context {
+pub struct Context {
     items: collections::List<Item> = collections::list_from_array<Item>();
     length: Int = 0;
 }
 
-struct Request {
+pub struct Request {
     items: collections::List<Item>;
 }
 
-struct Response {
+pub struct Response {
     remaining: Int;
 }
 
-agent WorkerAgent {
+pub agent WorkerAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -55,7 +55,7 @@ flow for WorkerAgent {
     }
 }
 
-workflow WorkerWorkflow {
+pub workflow WorkerWorkflow {
     input: Request;
     output: Response;
 

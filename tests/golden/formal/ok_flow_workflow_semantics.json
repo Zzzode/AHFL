@@ -31,8 +31,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 31,
-          "end_offset": 77
+          "begin_offset": 35,
+          "end_offset": 81
         }
       },
       "name": "formal::flow_workflow::Request",
@@ -51,13 +51,13 @@
             "kind": "bool",
             "display_name": "Bool",
             "source_range": {
-              "begin_offset": 52,
-              "end_offset": 75
+              "begin_offset": 56,
+              "end_offset": 79
             }
           },
           "source_range": {
-            "begin_offset": 52,
-            "end_offset": 75
+            "begin_offset": 56,
+            "end_offset": 79
           },
           "default_value": null
         }
@@ -69,8 +69,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 79,
-          "end_offset": 123
+          "begin_offset": 87,
+          "end_offset": 131
         }
       },
       "name": "formal::flow_workflow::Context",
@@ -89,20 +89,20 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 100,
-              "end_offset": 121
+              "begin_offset": 108,
+              "end_offset": 129
             }
           },
           "source_range": {
-            "begin_offset": 100,
-            "end_offset": 121
+            "begin_offset": 108,
+            "end_offset": 129
           },
           "default_value": {
             "kind": "string_literal",
             "id": 0,
             "source_range": {
-              "begin_offset": 114,
-              "end_offset": 120
+              "begin_offset": 122,
+              "end_offset": 128
             },
             "resolved_type": {
               "kind": "string",
@@ -119,8 +119,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 125,
-          "end_offset": 161
+          "begin_offset": 137,
+          "end_offset": 173
         }
       },
       "name": "formal::flow_workflow::Response",
@@ -139,13 +139,13 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 147,
-              "end_offset": 159
+              "begin_offset": 159,
+              "end_offset": 171
             }
           },
           "source_range": {
-            "begin_offset": 147,
-            "end_offset": 159
+            "begin_offset": 159,
+            "end_offset": 171
           },
           "default_value": null
         }
@@ -157,8 +157,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 163,
-          "end_offset": 512
+          "begin_offset": 179,
+          "end_offset": 528
         }
       },
       "name": "formal::flow_workflow::ReviewAgent",
@@ -175,8 +175,8 @@
         "display_name": "formal::flow_workflow::Request",
         "canonical_name": "formal::flow_workflow::Request",
         "source_range": {
-          "begin_offset": 163,
-          "end_offset": 512
+          "begin_offset": 179,
+          "end_offset": 528
         }
       },
       "context_type": "formal::flow_workflow::Context",
@@ -185,8 +185,8 @@
         "display_name": "formal::flow_workflow::Context",
         "canonical_name": "formal::flow_workflow::Context",
         "source_range": {
-          "begin_offset": 163,
-          "end_offset": 512
+          "begin_offset": 179,
+          "end_offset": 528
         }
       },
       "output_type": "formal::flow_workflow::Response",
@@ -195,8 +195,8 @@
         "display_name": "formal::flow_workflow::Response",
         "canonical_name": "formal::flow_workflow::Response",
         "source_range": {
-          "begin_offset": 163,
-          "end_offset": 512
+          "begin_offset": 179,
+          "end_offset": 528
         }
       },
       "states": [
@@ -240,8 +240,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 514,
-          "end_offset": 857
+          "begin_offset": 530,
+          "end_offset": 873
         }
       },
       "target": "formal::flow_workflow::ReviewAgent",
@@ -256,8 +256,8 @@
         {
           "state_name": "Init",
           "source_range": {
-            "begin_offset": 541,
-            "end_offset": 675
+            "begin_offset": 557,
+            "end_offset": 691
           },
           "policy": [],
           "summary": {
@@ -273,22 +273,22 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 552,
-              "end_offset": 675
+              "begin_offset": 568,
+              "end_offset": 691
             },
             "statements": [
               {
                 "kind": "if",
                 "source_range": {
-                  "begin_offset": 562,
-                  "end_offset": 669
+                  "begin_offset": 578,
+                  "end_offset": 685
                 },
                 "condition": {
                   "kind": "path",
                   "id": 1,
                   "source_range": {
-                    "begin_offset": 565,
-                    "end_offset": 587
+                    "begin_offset": 581,
+                    "end_offset": 603
                   },
                   "resolved_type": {
                     "kind": "bool",
@@ -304,15 +304,15 @@
                 },
                 "then_block": {
                   "source_range": {
-                    "begin_offset": 588,
-                    "end_offset": 627
+                    "begin_offset": 604,
+                    "end_offset": 643
                   },
                   "statements": [
                     {
                       "kind": "goto",
                       "source_range": {
-                        "begin_offset": 602,
-                        "end_offset": 617
+                        "begin_offset": 618,
+                        "end_offset": 633
                       },
                       "target_state": "FastTrack"
                     }
@@ -320,15 +320,15 @@
                 },
                 "else_block": {
                   "source_range": {
-                    "begin_offset": 633,
-                    "end_offset": 669
+                    "begin_offset": 649,
+                    "end_offset": 685
                   },
                   "statements": [
                     {
                       "kind": "goto",
                       "source_range": {
-                        "begin_offset": 647,
-                        "end_offset": 659
+                        "begin_offset": 663,
+                        "end_offset": 675
                       },
                       "target_state": "Review"
                     }
@@ -341,8 +341,8 @@
         {
           "state_name": "FastTrack",
           "source_range": {
-            "begin_offset": 681,
-            "end_offset": 723
+            "begin_offset": 697,
+            "end_offset": 739
           },
           "policy": [],
           "summary": {
@@ -357,15 +357,15 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 697,
-              "end_offset": 723
+              "begin_offset": 713,
+              "end_offset": 739
             },
             "statements": [
               {
                 "kind": "goto",
                 "source_range": {
-                  "begin_offset": 707,
-                  "end_offset": 717
+                  "begin_offset": 723,
+                  "end_offset": 733
                 },
                 "target_state": "Done"
               }
@@ -375,8 +375,8 @@
         {
           "state_name": "Review",
           "source_range": {
-            "begin_offset": 729,
-            "end_offset": 768
+            "begin_offset": 745,
+            "end_offset": 784
           },
           "policy": [],
           "summary": {
@@ -391,15 +391,15 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 742,
-              "end_offset": 768
+              "begin_offset": 758,
+              "end_offset": 784
             },
             "statements": [
               {
                 "kind": "goto",
                 "source_range": {
-                  "begin_offset": 752,
-                  "end_offset": 762
+                  "begin_offset": 768,
+                  "end_offset": 778
                 },
                 "target_state": "Done"
               }
@@ -409,8 +409,8 @@
         {
           "state_name": "Done",
           "source_range": {
-            "begin_offset": 774,
-            "end_offset": 855
+            "begin_offset": 790,
+            "end_offset": 871
           },
           "policy": [],
           "summary": {
@@ -423,22 +423,22 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 785,
-              "end_offset": 855
+              "begin_offset": 801,
+              "end_offset": 871
             },
             "statements": [
               {
                 "kind": "return",
                 "source_range": {
-                  "begin_offset": 795,
-                  "end_offset": 849
+                  "begin_offset": 811,
+                  "end_offset": 865
                 },
                 "value": {
                   "kind": "struct_literal",
                   "id": 3,
                   "source_range": {
-                    "begin_offset": 802,
-                    "end_offset": 848
+                    "begin_offset": 818,
+                    "end_offset": 864
                   },
                   "resolved_type": {
                     "kind": "struct",
@@ -453,8 +453,8 @@
                         "kind": "path",
                         "id": 2,
                         "source_range": {
-                          "begin_offset": 830,
-                          "end_offset": 837
+                          "begin_offset": 846,
+                          "end_offset": 853
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -483,8 +483,8 @@
         "module_name": "formal::flow_workflow",
         "source_path": "formal/flow_workflow.ahfl",
         "source_range": {
-          "begin_offset": 859,
-          "end_offset": 1217
+          "begin_offset": 879,
+          "end_offset": 1237
         }
       },
       "name": "formal::flow_workflow::ReviewWorkflow",
@@ -501,8 +501,8 @@
         "display_name": "formal::flow_workflow::Request",
         "canonical_name": "formal::flow_workflow::Request",
         "source_range": {
-          "begin_offset": 859,
-          "end_offset": 1217
+          "begin_offset": 879,
+          "end_offset": 1237
         }
       },
       "output_type": "formal::flow_workflow::Response",
@@ -511,16 +511,16 @@
         "display_name": "formal::flow_workflow::Response",
         "canonical_name": "formal::flow_workflow::Response",
         "source_range": {
-          "begin_offset": 859,
-          "end_offset": 1217
+          "begin_offset": 879,
+          "end_offset": 1237
         }
       },
       "nodes": [
         {
           "name": "first",
           "source_range": {
-            "begin_offset": 932,
-            "end_offset": 963
+            "begin_offset": 952,
+            "end_offset": 983
           },
           "target": "formal::flow_workflow::ReviewAgent",
           "target_ref": {
@@ -534,8 +534,8 @@
             "kind": "path",
             "id": 5,
             "source_range": {
-              "begin_offset": 956,
-              "end_offset": 961
+              "begin_offset": 976,
+              "end_offset": 981
             },
             "resolved_type": {
               "kind": "struct",
@@ -562,8 +562,8 @@
         {
           "name": "second",
           "source_range": {
-            "begin_offset": 968,
-            "end_offset": 1014
+            "begin_offset": 988,
+            "end_offset": 1034
           },
           "target": "formal::flow_workflow::ReviewAgent",
           "target_ref": {
@@ -577,8 +577,8 @@
             "kind": "path",
             "id": 6,
             "source_range": {
-              "begin_offset": 993,
-              "end_offset": 998
+              "begin_offset": 1013,
+              "end_offset": 1018
             },
             "resolved_type": {
               "kind": "struct",
@@ -609,29 +609,29 @@
         {
           "kind": "unary",
           "source_range": {
-            "begin_offset": 1028,
-            "end_offset": 1076
+            "begin_offset": 1048,
+            "end_offset": 1096
           },
           "op": "always",
           "operand": {
             "kind": "binary",
             "source_range": {
-              "begin_offset": 1036,
-              "end_offset": 1075
+              "begin_offset": 1056,
+              "end_offset": 1095
             },
             "op": "or",
             "lhs": {
               "kind": "unary",
               "source_range": {
-                "begin_offset": 1036,
-                "end_offset": 1055
+                "begin_offset": 1056,
+                "end_offset": 1075
               },
               "op": "not",
               "operand": {
                 "kind": "running",
                 "source_range": {
-                  "begin_offset": 1040,
-                  "end_offset": 1055
+                  "begin_offset": 1060,
+                  "end_offset": 1075
                 },
                 "node": "second"
               }
@@ -639,8 +639,8 @@
             "rhs": {
               "kind": "completed",
               "source_range": {
-                "begin_offset": 1059,
-                "end_offset": 1075
+                "begin_offset": 1079,
+                "end_offset": 1095
               },
               "node": "first",
               "state_name": null
@@ -650,29 +650,29 @@
         {
           "kind": "unary",
           "source_range": {
-            "begin_offset": 1090,
-            "end_offset": 1143
+            "begin_offset": 1110,
+            "end_offset": 1163
           },
           "op": "always",
           "operand": {
             "kind": "binary",
             "source_range": {
-              "begin_offset": 1098,
-              "end_offset": 1142
+              "begin_offset": 1118,
+              "end_offset": 1162
             },
             "op": "or",
             "lhs": {
               "kind": "unary",
               "source_range": {
-                "begin_offset": 1098,
-                "end_offset": 1116
+                "begin_offset": 1118,
+                "end_offset": 1136
               },
               "op": "not",
               "operand": {
                 "kind": "running",
                 "source_range": {
-                  "begin_offset": 1102,
-                  "end_offset": 1116
+                  "begin_offset": 1122,
+                  "end_offset": 1136
                 },
                 "node": "first"
               }
@@ -680,15 +680,15 @@
             "rhs": {
               "kind": "embedded_expr",
               "source_range": {
-                "begin_offset": 1120,
-                "end_offset": 1142
+                "begin_offset": 1140,
+                "end_offset": 1162
               },
               "expr": {
                 "kind": "path",
                 "id": 7,
                 "source_range": {
-                  "begin_offset": 1120,
-                  "end_offset": 1142
+                  "begin_offset": 1140,
+                  "end_offset": 1162
                 },
                 "resolved_type": {
                   "kind": "bool",
@@ -710,15 +710,15 @@
         {
           "kind": "unary",
           "source_range": {
-            "begin_offset": 1159,
-            "end_offset": 1193
+            "begin_offset": 1179,
+            "end_offset": 1213
           },
           "op": "eventually",
           "operand": {
             "kind": "completed",
             "source_range": {
-              "begin_offset": 1170,
-              "end_offset": 1193
+              "begin_offset": 1190,
+              "end_offset": 1213
             },
             "node": "second",
             "state_name": "Done"
@@ -738,8 +738,8 @@
         "kind": "path",
         "id": 4,
         "source_range": {
-          "begin_offset": 1208,
-          "end_offset": 1214
+          "begin_offset": 1228,
+          "end_offset": 1234
         },
         "resolved_type": {
           "kind": "struct",
@@ -759,8 +759,8 @@
         "module_name": "",
         "source_path": "",
         "source_range": {
-          "begin_offset": 932,
-          "end_offset": 963
+          "begin_offset": 952,
+          "end_offset": 983
         }
       },
       "name": "_inst_af653a39ba9228fe_formal_flow_X5fworkflow_ReviewAgent_formal_flow_X5fworkflow_Request_formal_flow_X5fworkflow_Context_formal_flow_X5fworkflow_Response",
@@ -778,8 +778,8 @@
           "display_name": "formal::flow_workflow::Request",
           "canonical_name": "formal::flow_workflow::Request",
           "source_range": {
-            "begin_offset": 932,
-            "end_offset": 963
+            "begin_offset": 952,
+            "end_offset": 983
           }
         },
         {
@@ -787,8 +787,8 @@
           "display_name": "formal::flow_workflow::Context",
           "canonical_name": "formal::flow_workflow::Context",
           "source_range": {
-            "begin_offset": 932,
-            "end_offset": 963
+            "begin_offset": 952,
+            "end_offset": 983
           }
         },
         {
@@ -796,8 +796,8 @@
           "display_name": "formal::flow_workflow::Response",
           "canonical_name": "formal::flow_workflow::Response",
           "source_range": {
-            "begin_offset": 932,
-            "end_offset": 963
+            "begin_offset": 952,
+            "end_offset": 983
           }
         }
       ],
@@ -807,8 +807,8 @@
         "display_name": "formal::flow_workflow::Request",
         "canonical_name": "formal::flow_workflow::Request",
         "source_range": {
-          "begin_offset": 194,
-          "end_offset": 201
+          "begin_offset": 210,
+          "end_offset": 217
         }
       },
       "agent_context_type": "formal::flow_workflow::Context",
@@ -817,8 +817,8 @@
         "display_name": "formal::flow_workflow::Context",
         "canonical_name": "formal::flow_workflow::Context",
         "source_range": {
-          "begin_offset": 216,
-          "end_offset": 223
+          "begin_offset": 232,
+          "end_offset": 239
         }
       },
       "agent_output_type": "formal::flow_workflow::Response",
@@ -827,8 +827,8 @@
         "display_name": "formal::flow_workflow::Response",
         "canonical_name": "formal::flow_workflow::Response",
         "source_range": {
-          "begin_offset": 237,
-          "end_offset": 245
+          "begin_offset": 253,
+          "end_offset": 261
         }
       }
     }

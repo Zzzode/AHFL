@@ -16,6 +16,7 @@ struct ProjectInput {
         std::string prefix;
         std::filesystem::path root;
         std::vector<std::string> exported_modules;
+        std::vector<std::string> artifact_exports;
         std::vector<std::string> dependency_prefixes;
         std::optional<std::vector<std::string>> compiler_intrinsics_allow;
     };

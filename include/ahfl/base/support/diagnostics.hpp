@@ -43,6 +43,7 @@ enum class DiagnosticSeverity {
 enum class DiagnosticCategory {
     Parse,
     Resolve,
+    Visibility,
     TypeCheck,
     Validation,
     Runtime,
@@ -62,6 +63,8 @@ enum class DiagnosticCategory {
         return "parse";
     case DiagnosticCategory::Resolve:
         return "resolve";
+    case DiagnosticCategory::Visibility:
+        return "visibility";
     case DiagnosticCategory::TypeCheck:
         return "typecheck";
     case DiagnosticCategory::Validation:
@@ -159,11 +162,6 @@ inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousReference{"AMBI
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownCallable{"UNKNOWN_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousCallable{"AMBIGUOUS_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateImport{"DUPLICATE_IMPORT"};
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> PrivateSymbol{"PRIVATE_SYMBOL"};
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> MissingImport{"MISSING_IMPORT"};
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> PrivateInPublic{"PRIVATE_IN_PUBLIC"};
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> InvalidVisibilityPlacement{
-    "INVALID_VISIBILITY_PLACEMENT"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> ModuleBoundaryMismatch{
     "MODULE_BOUNDARY_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclarations{
@@ -171,6 +169,27 @@ inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclaratio
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> VariantNameShadowsType{
     "VARIANT_NAME_SHADOWS_TYPE"};
 } // namespace resolve
+
+namespace visibility {
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> PrivateSymbol{"PRIVATE_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> PrivateModule{"PRIVATE_MODULE"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> MissingImport{"MISSING_IMPORT"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> PrivateInPublic{"PRIVATE_IN_PUBLIC"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> UnreachablePublic{
+    "UNREACHABLE_PUBLIC"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> ReexportMissingDependency{
+    "REEXPORT_MISSING_DEPENDENCY"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> ReexportPrivateSymbol{
+    "REEXPORT_PRIVATE_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> HandoffExportPrivateSymbol{
+    "HANDOFF_EXPORT_PRIVATE_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> PublicImplPrivateReceiver{
+    "PUBLIC_IMPL_PRIVATE_RECEIVER"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> DuplicateVisibilityModifier{
+    "DUPLICATE_VISIBILITY_MODIFIER"};
+inline constexpr ErrorCode<DiagnosticCategory::Visibility> InvalidVisibilityPlacement{
+    "INVALID_VISIBILITY_PLACEMENT"};
+} // namespace visibility
 
 namespace typecheck {
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TypeMismatch{"TYPE_MISMATCH"};
@@ -448,11 +467,6 @@ inline constexpr MessageTemplate AmbiguousCallable{
     "ambiguous callable '{}' matches both a capability and a predicate"};
 inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"};
 inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
-inline constexpr MessageTemplate PrivateSymbol{"symbol '{}' is private to package '{}'"};
-inline constexpr MessageTemplate MissingImport{
-    "symbol '{}' is in module '{}' but that module is not imported in this source"};
-inline constexpr MessageTemplate PrivateInPublic{"public {} '{}' exposes package-internal {} '{}'"};
-inline constexpr MessageTemplate InvalidVisibilityPlacement{"'pub' is not allowed on {}"};
 inline constexpr MessageTemplate ModuleBoundaryMismatch{
     "source unit module boundary does not match graph owner"};
 inline constexpr MessageTemplate VariantNameShadowsType{
@@ -469,6 +483,30 @@ inline constexpr MessageTemplate FirstModuleDeclarationHere{"first module declar
 inline constexpr MessageTemplate CapabilityDeclarationHere{"capability declaration is here"};
 inline constexpr MessageTemplate PredicateDeclarationHere{"predicate declaration is here"};
 } // namespace resolve
+
+namespace visibility {
+inline constexpr MessageTemplate PrivateSymbol{"symbol '{}' is private to package '{}'"};
+inline constexpr MessageTemplate PrivateModule{
+    "module '{}' is private to package '{}'"};
+inline constexpr MessageTemplate MissingImport{
+    "symbol '{}' is in module '{}' but that module or facade is not imported in this source"};
+inline constexpr MessageTemplate PrivateInPublic{"public {} '{}' exposes package-internal {} '{}'"};
+inline constexpr MessageTemplate PrivateInApiPublic{
+    "public API {} '{}' exposes {} '{}' that is not API-reachable"};
+inline constexpr MessageTemplate UnreachablePublic{
+    "public {} '{}' is not reachable from any exported module, public facade, or artifact export"};
+inline constexpr MessageTemplate ReexportMissingDependency{
+    "public re-export '{}' requires missing dependency package '{}'"};
+inline constexpr MessageTemplate ReexportPrivateSymbol{
+    "public re-export '{}' exposes non-public symbol '{}'"};
+inline constexpr MessageTemplate HandoffExportPrivateSymbol{
+    "handoff export '{}' references non-public symbol '{}'"};
+inline constexpr MessageTemplate PublicImplPrivateReceiver{
+    "public impl item exposes receiver type '{}' that is not public to dependents"};
+inline constexpr MessageTemplate DuplicateVisibilityModifier{
+    "declaration '{}' contains more than one 'pub' visibility modifier"};
+inline constexpr MessageTemplate InvalidVisibilityPlacement{"'pub' is not allowed on {}"};
+} // namespace visibility
 
 namespace typecheck {
 inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};

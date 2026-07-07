@@ -14,7 +14,7 @@ flow for agents::AliasAgent {
     }
 }
 
-workflow ValueFlowWorkflow {
+pub workflow ValueFlowWorkflow {
     input: types::RequestAlias;
     output: types::ResponseAlias;
 

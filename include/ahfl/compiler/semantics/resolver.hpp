@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,12 @@ struct SymbolId {
     [[nodiscard]] friend bool operator==(SymbolId lhs, SymbolId rhs) noexcept = default;
 };
 
+struct AliasDefId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(AliasDefId lhs, AliasDefId rhs) noexcept = default;
+};
+
 struct Symbol {
     SymbolId id;
     SymbolNamespace name_space{SymbolNamespace::Types};
@@ -105,6 +112,18 @@ struct Symbol {
     std::string module_name;
     std::optional<SourceId> source_id;
     SourceRange declaration_range;
+};
+
+struct PublicAlias {
+    AliasDefId id;
+    SymbolNamespace name_space{SymbolNamespace::Types};
+    ast::Visibility visibility{ast::Visibility::PackageInternal};
+    std::string local_name;
+    std::string canonical_name;
+    std::string module_name;
+    std::optional<SourceId> source_id;
+    SourceRange declaration_range;
+    SymbolId target;
 };
 
 struct ResolvedReference {
@@ -134,9 +153,6 @@ class SymbolTable {
                                                std::string_view module_name = "") const;
     [[nodiscard]] MaybeCRef<Symbol> find_canonical(SymbolNamespace name_space,
                                                    std::string_view name) const;
-    [[nodiscard]] bool module_exports_symbol(SymbolNamespace name_space,
-                                             std::string_view module_name,
-                                             SymbolId id) const;
     // Returns every symbol in the given namespace whose `local_name` matches
     // `name`, regardless of which module owns it. Used by diagnostics that
     // want to surface "declared in N locations" context when a name is
@@ -197,8 +213,22 @@ struct ResolveResult {
         return imports_;
     }
 
+    [[nodiscard]] const std::vector<PublicAlias> &public_aliases() const noexcept {
+        return public_aliases_;
+    }
+
+    [[nodiscard]] bool is_api_reachable(SymbolId symbol) const;
+    [[nodiscard]] bool is_artifact_reachable(SymbolId symbol) const;
+    [[nodiscard]] bool is_api_reachable(AliasDefId alias) const;
+    [[nodiscard]] bool is_artifact_reachable(AliasDefId alias) const;
+
     void add_reference(ResolvedReference reference);
     void add_import(ImportBinding binding);
+    void add_public_alias(PublicAlias alias);
+    void mark_api_reachable(SymbolId symbol);
+    void mark_artifact_reachable(SymbolId symbol);
+    void mark_api_reachable(AliasDefId alias);
+    void mark_artifact_reachable(AliasDefId alias);
 
     [[nodiscard]] MaybeCRef<ResolvedReference>
     find_reference(ReferenceKind kind,
@@ -240,6 +270,11 @@ struct ResolveResult {
 
     std::vector<ResolvedReference> references_;
     std::vector<ImportBinding> imports_;
+    std::vector<PublicAlias> public_aliases_;
+    std::unordered_set<std::size_t> api_reachable_symbols_;
+    std::unordered_set<std::size_t> artifact_reachable_symbols_;
+    std::unordered_set<std::size_t> api_reachable_aliases_;
+    std::unordered_set<std::size_t> artifact_reachable_aliases_;
 
     mutable std::unordered_map<ReferenceLookupKey, std::size_t, ReferenceLookupKeyHash>
         reference_lookup_cache_;

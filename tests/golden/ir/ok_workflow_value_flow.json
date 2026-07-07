@@ -20,8 +20,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 33,
-          "end_offset": 70
+          "begin_offset": 37,
+          "end_offset": 74
         }
       },
       "name": "ir::workflow_value_flow::Request",
@@ -40,13 +40,13 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 54,
-              "end_offset": 68
+              "begin_offset": 58,
+              "end_offset": 72
             }
           },
           "source_range": {
-            "begin_offset": 54,
-            "end_offset": 68
+            "begin_offset": 58,
+            "end_offset": 72
           },
           "default_value": null
         }
@@ -58,8 +58,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 72,
-          "end_offset": 118
+          "begin_offset": 80,
+          "end_offset": 126
         }
       },
       "name": "ir::workflow_value_flow::Context",
@@ -78,20 +78,20 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 93,
-              "end_offset": 116
+              "begin_offset": 101,
+              "end_offset": 124
             }
           },
           "source_range": {
-            "begin_offset": 93,
-            "end_offset": 116
+            "begin_offset": 101,
+            "end_offset": 124
           },
           "default_value": {
             "kind": "string_literal",
             "id": 0,
             "source_range": {
-              "begin_offset": 109,
-              "end_offset": 115
+              "begin_offset": 117,
+              "end_offset": 123
             },
             "resolved_type": {
               "kind": "string",
@@ -108,8 +108,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 120,
-          "end_offset": 158
+          "begin_offset": 132,
+          "end_offset": 170
         }
       },
       "name": "ir::workflow_value_flow::Response",
@@ -128,13 +128,13 @@
             "kind": "string",
             "display_name": "String",
             "source_range": {
-              "begin_offset": 142,
-              "end_offset": 156
+              "begin_offset": 154,
+              "end_offset": 168
             }
           },
           "source_range": {
-            "begin_offset": 142,
-            "end_offset": 156
+            "begin_offset": 154,
+            "end_offset": 168
           },
           "default_value": null
         }
@@ -146,8 +146,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 160,
-          "end_offset": 358
+          "begin_offset": 176,
+          "end_offset": 374
         }
       },
       "name": "ir::workflow_value_flow::EchoAgent",
@@ -164,8 +164,8 @@
         "display_name": "ir::workflow_value_flow::Request",
         "canonical_name": "ir::workflow_value_flow::Request",
         "source_range": {
-          "begin_offset": 160,
-          "end_offset": 358
+          "begin_offset": 176,
+          "end_offset": 374
         }
       },
       "context_type": "ir::workflow_value_flow::Context",
@@ -174,8 +174,8 @@
         "display_name": "ir::workflow_value_flow::Context",
         "canonical_name": "ir::workflow_value_flow::Context",
         "source_range": {
-          "begin_offset": 160,
-          "end_offset": 358
+          "begin_offset": 176,
+          "end_offset": 374
         }
       },
       "output_type": "ir::workflow_value_flow::Response",
@@ -184,8 +184,8 @@
         "display_name": "ir::workflow_value_flow::Response",
         "canonical_name": "ir::workflow_value_flow::Response",
         "source_range": {
-          "begin_offset": 160,
-          "end_offset": 358
+          "begin_offset": 176,
+          "end_offset": 374
         }
       },
       "states": [
@@ -211,8 +211,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 360,
-          "end_offset": 517
+          "begin_offset": 376,
+          "end_offset": 533
         }
       },
       "target": "ir::workflow_value_flow::EchoAgent",
@@ -227,8 +227,8 @@
         {
           "state_name": "Init",
           "source_range": {
-            "begin_offset": 385,
-            "end_offset": 422
+            "begin_offset": 401,
+            "end_offset": 438
           },
           "policy": [],
           "summary": {
@@ -243,15 +243,15 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 396,
-              "end_offset": 422
+              "begin_offset": 412,
+              "end_offset": 438
             },
             "statements": [
               {
                 "kind": "goto",
                 "source_range": {
-                  "begin_offset": 406,
-                  "end_offset": 416
+                  "begin_offset": 422,
+                  "end_offset": 432
                 },
                 "target_state": "Done"
               }
@@ -261,8 +261,8 @@
         {
           "state_name": "Done",
           "source_range": {
-            "begin_offset": 428,
-            "end_offset": 515
+            "begin_offset": 444,
+            "end_offset": 531
           },
           "policy": [],
           "summary": {
@@ -275,22 +275,22 @@
           },
           "body": {
             "source_range": {
-              "begin_offset": 439,
-              "end_offset": 515
+              "begin_offset": 455,
+              "end_offset": 531
             },
             "statements": [
               {
                 "kind": "return",
                 "source_range": {
-                  "begin_offset": 449,
-                  "end_offset": 509
+                  "begin_offset": 465,
+                  "end_offset": 525
                 },
                 "value": {
                   "kind": "struct_literal",
                   "id": 2,
                   "source_range": {
-                    "begin_offset": 456,
-                    "end_offset": 508
+                    "begin_offset": 472,
+                    "end_offset": 524
                   },
                   "resolved_type": {
                     "kind": "struct",
@@ -305,8 +305,8 @@
                         "kind": "path",
                         "id": 1,
                         "source_range": {
-                          "begin_offset": 486,
-                          "end_offset": 497
+                          "begin_offset": 502,
+                          "end_offset": 513
                         },
                         "resolved_type": {
                           "kind": "string",
@@ -335,8 +335,8 @@
         "module_name": "ir::workflow_value_flow",
         "source_path": "ir/workflow_value_flow.ahfl",
         "source_range": {
-          "begin_offset": 519,
-          "end_offset": 747
+          "begin_offset": 539,
+          "end_offset": 767
         }
       },
       "name": "ir::workflow_value_flow::ValueFlowWorkflow",
@@ -353,8 +353,8 @@
         "display_name": "ir::workflow_value_flow::Request",
         "canonical_name": "ir::workflow_value_flow::Request",
         "source_range": {
-          "begin_offset": 519,
-          "end_offset": 747
+          "begin_offset": 539,
+          "end_offset": 767
         }
       },
       "output_type": "ir::workflow_value_flow::Response",
@@ -363,16 +363,16 @@
         "display_name": "ir::workflow_value_flow::Response",
         "canonical_name": "ir::workflow_value_flow::Response",
         "source_range": {
-          "begin_offset": 519,
-          "end_offset": 747
+          "begin_offset": 539,
+          "end_offset": 767
         }
       },
       "nodes": [
         {
           "name": "first",
           "source_range": {
-            "begin_offset": 595,
-            "end_offset": 624
+            "begin_offset": 615,
+            "end_offset": 644
           },
           "target": "ir::workflow_value_flow::EchoAgent",
           "target_ref": {
@@ -386,8 +386,8 @@
             "kind": "path",
             "id": 5,
             "source_range": {
-              "begin_offset": 617,
-              "end_offset": 622
+              "begin_offset": 637,
+              "end_offset": 642
             },
             "resolved_type": {
               "kind": "struct",
@@ -414,8 +414,8 @@
         {
           "name": "second",
           "source_range": {
-            "begin_offset": 629,
-            "end_offset": 698
+            "begin_offset": 649,
+            "end_offset": 718
           },
           "target": "ir::workflow_value_flow::EchoAgent",
           "target_ref": {
@@ -429,8 +429,8 @@
             "kind": "struct_literal",
             "id": 7,
             "source_range": {
-              "begin_offset": 652,
-              "end_offset": 682
+              "begin_offset": 672,
+              "end_offset": 702
             },
             "resolved_type": {
               "kind": "struct",
@@ -445,8 +445,8 @@
                   "kind": "path",
                   "id": 6,
                   "source_range": {
-                    "begin_offset": 669,
-                    "end_offset": 680
+                    "begin_offset": 689,
+                    "end_offset": 700
                   },
                   "resolved_type": {
                     "kind": "string",
@@ -496,8 +496,8 @@
         "kind": "struct_literal",
         "id": 4,
         "source_range": {
-          "begin_offset": 712,
-          "end_offset": 744
+          "begin_offset": 732,
+          "end_offset": 764
         },
         "resolved_type": {
           "kind": "struct",
@@ -512,8 +512,8 @@
               "kind": "path",
               "id": 3,
               "source_range": {
-                "begin_offset": 730,
-                "end_offset": 742
+                "begin_offset": 750,
+                "end_offset": 762
               },
               "resolved_type": {
                 "kind": "string",
@@ -537,8 +537,8 @@
         "module_name": "",
         "source_path": "",
         "source_range": {
-          "begin_offset": 595,
-          "end_offset": 624
+          "begin_offset": 615,
+          "end_offset": 644
         }
       },
       "name": "_inst_73ab6db432dbe745_ir_workflow_X5fvalue_X5fflow_EchoAgent_ir_workflow_X5fvalue_X5fflow_Request_ir_workflow_X5fvalue_X5fflow_Context_ir_workflow_X5fvalue_X5fflow_Response",
@@ -556,8 +556,8 @@
           "display_name": "ir::workflow_value_flow::Request",
           "canonical_name": "ir::workflow_value_flow::Request",
           "source_range": {
-            "begin_offset": 595,
-            "end_offset": 624
+            "begin_offset": 615,
+            "end_offset": 644
           }
         },
         {
@@ -565,8 +565,8 @@
           "display_name": "ir::workflow_value_flow::Context",
           "canonical_name": "ir::workflow_value_flow::Context",
           "source_range": {
-            "begin_offset": 595,
-            "end_offset": 624
+            "begin_offset": 615,
+            "end_offset": 644
           }
         },
         {
@@ -574,8 +574,8 @@
           "display_name": "ir::workflow_value_flow::Response",
           "canonical_name": "ir::workflow_value_flow::Response",
           "source_range": {
-            "begin_offset": 595,
-            "end_offset": 624
+            "begin_offset": 615,
+            "end_offset": 644
           }
         }
       ],
@@ -585,8 +585,8 @@
         "display_name": "ir::workflow_value_flow::Request",
         "canonical_name": "ir::workflow_value_flow::Request",
         "source_range": {
-          "begin_offset": 189,
-          "end_offset": 196
+          "begin_offset": 205,
+          "end_offset": 212
         }
       },
       "agent_context_type": "ir::workflow_value_flow::Context",
@@ -595,8 +595,8 @@
         "display_name": "ir::workflow_value_flow::Context",
         "canonical_name": "ir::workflow_value_flow::Context",
         "source_range": {
-          "begin_offset": 211,
-          "end_offset": 218
+          "begin_offset": 227,
+          "end_offset": 234
         }
       },
       "agent_output_type": "ir::workflow_value_flow::Response",
@@ -605,8 +605,8 @@
         "display_name": "ir::workflow_value_flow::Response",
         "canonical_name": "ir::workflow_value_flow::Response",
         "source_range": {
-          "begin_offset": 232,
-          "end_offset": 240
+          "begin_offset": 248,
+          "end_offset": 256
         }
       }
     }

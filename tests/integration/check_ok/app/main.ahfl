@@ -14,7 +14,7 @@ flow for agents::AliasAgent {
     }
 }
 
-workflow MainWorkflow {
+pub workflow MainWorkflow {
     input: types::RequestAlias;
     output: types::ResponseAlias;
     node run: agents::AliasAgent(input);

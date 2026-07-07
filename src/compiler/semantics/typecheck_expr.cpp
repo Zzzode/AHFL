@@ -896,9 +896,6 @@ class ExpressionCheckerServices final {
                 continue;
             }
             if (binding.target_module == impl.module_name ||
-                (impl.target_symbol.has_value() &&
-                 resolve_result_.symbol_table.module_exports_symbol(
-                     SymbolNamespace::Types, binding.target_module, *impl.target_symbol)) ||
                 (binding.target_module == "std::prelude" &&
                  std_prelude_reexports_primitive_impl_module(impl.module_name))) {
                 return true;

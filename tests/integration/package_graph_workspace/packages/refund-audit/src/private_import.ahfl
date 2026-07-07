@@ -10,7 +10,7 @@ struct RefundAuditOutput {
     tag: internal::InternalTag;
 }
 
-workflow BadPrivateImportWorkflow {
+pub workflow BadPrivateImportWorkflow {
     input: RefundAuditInput;
     output: RefundAuditOutput;
     return: RefundAuditOutput {

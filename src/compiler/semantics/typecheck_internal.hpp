@@ -662,6 +662,8 @@ class TypeCheckPass final {
     [[nodiscard]] std::string module_name_of(std::optional<SourceId> source_id) const;
     [[nodiscard]] std::string package_prefix_of(std::optional<SourceId> source_id) const;
     [[nodiscard]] std::string module_of_symbol(SymbolId id) const;
+    [[nodiscard]] bool same_package_as_current_source(const ImplTypeInfo &impl) const;
+    [[nodiscard]] bool impl_visible_for_trait_conformance(const ImplTypeInfo &impl) const;
     // Find an impl method by name (linear; impl methods are few).
     [[nodiscard]] MaybeCRef<ImplMethodInfo> find_impl_method(const ImplTypeInfo &impl,
                                                              std::string_view name) const;

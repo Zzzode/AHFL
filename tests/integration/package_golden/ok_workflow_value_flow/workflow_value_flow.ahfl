@@ -1,18 +1,18 @@
 module ir::workflow_value_flow;
 
-struct Request {
+pub struct Request {
     value: String;
 }
 
-struct Context {
+pub struct Context {
     value: String = "seed";
 }
 
-struct Response {
+pub struct Response {
     value: String;
 }
 
-agent EchoAgent {
+pub agent EchoAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -35,7 +35,7 @@ flow for EchoAgent {
     }
 }
 
-workflow ValueFlowWorkflow {
+pub workflow ValueFlowWorkflow {
     input: Request;
     output: Response;
 

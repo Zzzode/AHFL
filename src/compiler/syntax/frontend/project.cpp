@@ -160,6 +160,7 @@ effective_module_roots(const ProjectInput &input) {
                 .prefix = root.prefix,
                 .root = normalized,
                 .exported_modules = root.exported_modules,
+                .artifact_exports = root.artifact_exports,
                 .dependency_prefixes = root.dependency_prefixes,
                 .compiler_intrinsics_allow = root.compiler_intrinsics_allow,
             });
@@ -242,6 +243,7 @@ find_module_root(std::string_view module_name,
     }
 
     diagnostics.error()
+        .code(error_codes::visibility::PrivateModule)
         .message("imported module '" + import_request.module_name +
                  "' is private to package prefix '" + imported_root->prefix + "'")
         .range(import_request.range)
@@ -488,6 +490,9 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                         .package_prefix = module_root == nullptr ? std::string{} : module_root->prefix,
                         .module_exported =
                             module_root == nullptr ? false : module_is_exported(module_name, *module_root),
+                        .artifact_exports =
+                            module_root == nullptr ? std::vector<std::string>{}
+                                                   : module_root->artifact_exports,
                         .dependency_prefixes =
                             module_root == nullptr ? std::vector<std::string>{}
                                                    : module_root->dependency_prefixes,

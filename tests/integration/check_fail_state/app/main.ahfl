@@ -2,7 +2,7 @@ module app::main;
 import lib::types as types;
 import lib::agents as agents;
 
-workflow BadWorkflow {
+pub workflow BadWorkflow {
     input: types::RequestAlias;
     output: types::ResponseAlias;
     node run: agents::AliasAgent(input);

@@ -753,6 +753,8 @@ class ProgramBuilder {
 
         if (const auto fn_decl = borrow(context.fnDecl())) {
             auto declaration = build_fn_decl(fn_decl->get());
+            declaration->duplicate_visibility_modifier =
+                is_public && has_visibility_modifier(fn_decl->get());
             declaration->visibility = (is_public || has_visibility_modifier(fn_decl->get()))
                                           ? ast::Visibility::Public
                                           : declaration->visibility;
@@ -761,6 +763,8 @@ class ProgramBuilder {
 
         if (const auto trait_decl = borrow(context.traitDecl())) {
             auto declaration = build_trait_decl(trait_decl->get());
+            declaration->duplicate_visibility_modifier =
+                is_public && has_visibility_modifier(trait_decl->get());
             declaration->visibility = (is_public || has_visibility_modifier(trait_decl->get()))
                                           ? ast::Visibility::Public
                                           : declaration->visibility;

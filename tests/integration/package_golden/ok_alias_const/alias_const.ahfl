@@ -1,26 +1,26 @@
 module ir::alias_const;
 import ir::alias_const as self;
 
-const DEFAULT_STATUS: String = "pending";
+pub const DEFAULT_STATUS: String = "pending";
 
-struct Request {
+pub struct Request {
     value: String;
 }
 
-struct Context {
+pub struct Context {
     value: String = self::DEFAULT_STATUS;
 }
 
-struct Response {
+pub struct Response {
     value: String;
 }
 
-type RequestAlias = self::Request;
+pub type RequestAlias = self::Request;
 
 capability Echo(request: RequestAlias) -> Response;
 predicate non_empty(value: String) -> Bool;
 
-agent EchoAgent {
+pub agent EchoAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -50,7 +50,7 @@ flow for self::EchoAgent {
     }
 }
 
-workflow EchoWorkflow {
+pub workflow EchoWorkflow {
     input: Request;
     output: Response;
     node run: self::EchoAgent(input);

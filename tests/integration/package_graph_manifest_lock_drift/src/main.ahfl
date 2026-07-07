@@ -16,7 +16,7 @@ struct Envelope {
     maybe_score: option::Option<Int>;
 }
 
-workflow RefundAuditWorkflow {
+pub workflow RefundAuditWorkflow {
     input: RefundAuditInput;
     output: RefundAuditOutput;
     return: RefundAuditOutput {

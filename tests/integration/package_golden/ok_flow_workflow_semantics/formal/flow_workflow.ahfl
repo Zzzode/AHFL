@@ -1,18 +1,18 @@
 module formal::flow_workflow;
 
-struct Request {
+pub struct Request {
     allow_fast_track: Bool;
 }
 
-struct Context {
+pub struct Context {
     tag: String = "seed";
 }
 
-struct Response {
+pub struct Response {
     tag: String;
 }
 
-agent ReviewAgent {
+pub agent ReviewAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -51,7 +51,7 @@ flow for ReviewAgent {
     }
 }
 
-workflow ReviewWorkflow {
+pub workflow ReviewWorkflow {
     input: Request;
     output: Response;
 

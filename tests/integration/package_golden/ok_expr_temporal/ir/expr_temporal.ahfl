@@ -3,14 +3,14 @@ import ir::expr_temporal as self;
 import std::collections as collections;
 import std::option as option;
 
-const DEFAULT_NOTE: String = "seed";
+pub const DEFAULT_NOTE: String = "seed";
 
-struct Request {
+pub struct Request {
     values: collections::List<Int>;
     attrs: collections::Map<String, String>;
 }
 
-struct Context {
+pub struct Context {
     note: String = self::DEFAULT_NOTE;
     numbers: collections::List<Int> = collections::list_from_array<Int>(1, 2, 3);
     labels: collections::Set<String> = collections::set_from_array<String>("alpha", "beta");
@@ -24,12 +24,12 @@ struct Context {
     maybe_note: option::Option<String> = option::Option::Some(self::DEFAULT_NOTE);
 }
 
-struct Response {
+pub struct Response {
     note: String;
     result: Status;
 }
 
-enum Status {
+pub enum Status {
     Pending,
     Approved,
     Rejected,
@@ -38,7 +38,7 @@ enum Status {
 capability Decide(request: Request) -> Response;
 predicate ready(value: String) -> Bool;
 
-agent ExprAgent {
+pub agent ExprAgent {
     input: Request;
     context: Context;
     output: Response;
@@ -82,7 +82,7 @@ flow for self::ExprAgent {
     }
 }
 
-workflow ExprWorkflow {
+pub workflow ExprWorkflow {
     input: Request;
     output: Response;
     node run: self::ExprAgent(input);

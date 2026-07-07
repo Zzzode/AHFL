@@ -18,7 +18,7 @@ flow for one::OneAgent {
     }
 }
 
-workflow MainWorkflow {
+pub workflow MainWorkflow {
     input: types::OneReq;
     output: types::OneRes;
     node first: one::OneAgent(input);

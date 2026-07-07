@@ -1229,6 +1229,40 @@ std::string TypeCheckPass::package_prefix_of(std::optional<SourceId> source_id) 
     return {};
 }
 
+bool TypeCheckPass::same_package_as_current_source(const ImplTypeInfo &impl) const {
+    const auto current_package = package_prefix_of(current_source_id_);
+    if (current_package.empty() || impl.package_prefix.empty()) {
+        return true;
+    }
+    return current_package == impl.package_prefix;
+}
+
+namespace {
+[[nodiscard]] bool std_prelude_reexports_primitive_impl_module(std::string_view module_name) {
+    return module_name == "std::string";
+}
+} // namespace
+
+bool TypeCheckPass::impl_visible_for_trait_conformance(const ImplTypeInfo &impl) const {
+    if (same_package_as_current_source(impl)) {
+        return true;
+    }
+    if (current_source_id_.has_value() && impl.source_id == current_source_id_) {
+        return true;
+    }
+    for (const auto &binding : resolve_result_.imports()) {
+        if (binding.source_id != current_source_id_) {
+            continue;
+        }
+        if (binding.target_module == impl.module_name ||
+            (binding.target_module == "std::prelude" &&
+             std_prelude_reexports_primitive_impl_module(impl.module_name))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void TypeCheckPass::check_impl_coherence(const ImplTypeInfo &impl) {
     // RFC §2.2 strict orphan rule: an `impl Trait for Type` must live in the
     // module that defines Trait or the module that defines Type. Only enforced
@@ -1438,12 +1472,14 @@ bool impl_matches_target(const ImplTypeInfo &impl,
     return TypeEnvironment::normalize_type_key(*impl.target_type) == normalized_target;
 }
 
+template <typename ImplVisible>
 bool trait_chain_implements(SymbolId nominal_target,
                             std::string_view normalized_target,
                             bool use_nominal,
                             SymbolId trait_id,
                             const TypeEnvironment &env,
-                            std::unordered_set<std::size_t> &visited) {
+                            std::unordered_set<std::size_t> &visited,
+                            const ImplVisible &impl_visible) {
     const auto [_, inserted] = visited.insert(trait_id.value);
     if (!inserted) {
         return false; // break cycles in the super-trait DAG
@@ -1452,6 +1488,9 @@ bool trait_chain_implements(SymbolId nominal_target,
     for (const auto &[index, impl] : env.impls()) {
         (void)index;
         if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait_id) {
+            continue;
+        }
+        if (!impl_visible(impl)) {
             continue;
         }
         if (impl_matches_target(impl, nominal_target, normalized_target, use_nominal)) {
@@ -1470,7 +1509,8 @@ bool trait_chain_implements(SymbolId nominal_target,
                                            use_nominal,
                                            SymbolId{x_id},
                                            env,
-                                           visited)) {
+                                           visited,
+                                           impl_visible)) {
                     return true;
                 }
                 break; // each child trait is recursed into at most once
@@ -1517,6 +1557,9 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     // stage-3 bound gate for primitive-trait method dispatch).
     const auto nominal_target = nominal_symbol_of(subject_type);
     std::unordered_set<std::size_t> visited;
+    const auto impl_visible = [this](const ImplTypeInfo &impl) {
+        return impl_visible_for_trait_conformance(impl);
+    };
     const bool implemented = [&]() -> bool {
         if (nominal_target.has_value()) {
             return trait_chain_implements(*nominal_target,
@@ -1524,7 +1567,8 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
                                           /*use_nominal=*/true,
                                           trait_info->get().symbol,
                                           environment(),
-                                          visited);
+                                          visited,
+                                          impl_visible);
         }
         const std::string key = TypeEnvironment::normalize_type_key(subject_type);
         return trait_chain_implements(SymbolId{0},
@@ -1532,7 +1576,8 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
                                       /*use_nominal=*/false,
                                       trait_info->get().symbol,
                                       environment(),
-                                      visited);
+                                      visited,
+                                      impl_visible);
     }();
     if (implemented) {
         return true;

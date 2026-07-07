@@ -129,6 +129,7 @@ class ResolverPass final {
   public:
     [[nodiscard]] ResolveResult run(const ast::Program &program) {
         run_program(program);
+        build_standalone_api_reachability();
         validate_public_surface(program);
 
         detect_type_alias_cycles();
@@ -143,8 +144,11 @@ class ResolverPass final {
         run_source_graph_pass(graph, Pass::CollectImports);
         run_source_graph_pass(graph, Pass::RegisterSymbols);
         run_source_graph_pass(graph, Pass::RegisterAliases);
+        build_effective_api_reachability(graph);
         run_source_graph_pass(graph, Pass::ResolveReferences);
+        run_artifact_reachability_closure_pass(graph);
         run_public_surface_pass(graph);
+        warn_unreachable_public_symbols();
 
         detect_type_alias_cycles();
         run_lint_pass();
@@ -919,6 +923,7 @@ class ResolverPass final {
     std::unordered_set<std::string> generic_type_params_;
     std::vector<std::unordered_set<std::string>> value_scopes_;
     std::unordered_set<std::string> private_in_public_reports_;
+    std::unordered_set<std::string> visibility_reported_symbols_;
 
     [[nodiscard]] std::string canonical_name_for(std::string_view local_name) const {
         if (!module_name_.has_value() || module_name_->empty()) {
@@ -967,6 +972,119 @@ class ResolverPass final {
 
         current_pass_ = Pass::ResolveReferences;
         visit(program);
+    }
+
+    [[nodiscard]] bool source_is_exported(std::optional<SourceId> source_id) const {
+        if (!source_graph_mode_) {
+            return true;
+        }
+        if (!source_id.has_value()) {
+            return false;
+        }
+        if (const auto source = source_unit_for(*source_id); source.has_value()) {
+            return source->get().module_exported;
+        }
+        return false;
+    }
+
+    void build_standalone_api_reachability() {
+        for (const auto &symbol : result_.symbol_table.symbols()) {
+            if (symbol.visibility == ast::Visibility::Public) {
+                result_.mark_api_reachable(symbol.id);
+            }
+        }
+        for (const auto &alias : result_.public_aliases()) {
+            if (alias.visibility == ast::Visibility::Public) {
+                result_.mark_api_reachable(alias.id);
+                result_.mark_api_reachable(alias.target);
+            }
+        }
+    }
+
+    void build_effective_api_reachability(const SourceGraph &graph) {
+        (void)graph;
+        for (const auto &symbol : result_.symbol_table.symbols()) {
+            if (symbol.visibility == ast::Visibility::Public && source_is_exported(symbol.source_id)) {
+                result_.mark_api_reachable(symbol.id);
+            }
+            if (symbol_is_artifact_export_root(symbol)) {
+                if (symbol.visibility == ast::Visibility::Public) {
+                    result_.mark_artifact_reachable(symbol.id);
+                } else {
+                    emit_handoff_export_private_symbol(symbol);
+                }
+            }
+        }
+
+        for (const auto &alias : result_.public_aliases()) {
+            if (alias.visibility != ast::Visibility::Public || !source_is_exported(alias.source_id)) {
+                continue;
+            }
+            result_.mark_api_reachable(alias.id);
+            result_.mark_api_reachable(alias.target);
+        }
+
+    }
+
+    [[nodiscard]] bool symbol_is_artifact_export_root(const Symbol &symbol) const {
+        if (!source_graph_mode_ || !symbol.source_id.has_value()) {
+            return false;
+        }
+        const auto source = source_unit_for(*symbol.source_id);
+        if (!source.has_value()) {
+            return false;
+        }
+        const auto &exports = source->get().artifact_exports;
+        return std::find(exports.begin(), exports.end(), symbol.canonical_name) != exports.end();
+    }
+
+    void emit_handoff_export_private_symbol(const Symbol &symbol) {
+        const auto key = "handoff-private:" + std::to_string(symbol.id.value);
+        if (!visibility_reported_symbols_.insert(key).second) {
+            return;
+        }
+        const SourceUnit *source = nullptr;
+        if (symbol.source_id.has_value()) {
+            if (auto unit = source_unit_for(*symbol.source_id); unit.has_value()) {
+                source = &unit->get();
+            }
+        }
+        emit_error(error_codes::visibility::HandoffExportPrivateSymbol,
+                   messages::visibility::HandoffExportPrivateSymbol,
+                   source,
+                   symbol.declaration_range,
+                   symbol.canonical_name,
+                   symbol.canonical_name);
+    }
+
+    void warn_unreachable_public_symbols() {
+        if (!source_graph_mode_) {
+            return;
+        }
+        for (const auto &symbol : result_.symbol_table.symbols()) {
+            if (symbol.visibility != ast::Visibility::Public) {
+                continue;
+            }
+            if (result_.is_api_reachable(symbol.id) || result_.is_artifact_reachable(symbol.id)) {
+                continue;
+            }
+            const auto key = "unreachable:" + std::to_string(symbol.id.value);
+            if (!visibility_reported_symbols_.insert(key).second) {
+                continue;
+            }
+            const SourceUnit *source = nullptr;
+            if (symbol.source_id.has_value()) {
+                if (auto unit = source_unit_for(*symbol.source_id); unit.has_value()) {
+                    source = &unit->get();
+                }
+            }
+            emit_warning(error_codes::visibility::UnreachablePublic,
+                         messages::visibility::UnreachablePublic,
+                         source,
+                         symbol.declaration_range,
+                         namespace_name(symbol.name_space),
+                         symbol.canonical_name);
+        }
     }
 
     [[nodiscard]] static std::string declaration_kind_label(const ast::Decl &decl) {
@@ -1057,13 +1175,15 @@ class ResolverPass final {
     void emit_private_in_public(const ast::Decl &owner,
                                 const Symbol &leaked,
                                 std::string_view leaked_kind,
-                                SourceRange range) {
+                                SourceRange range,
+                                bool api_reachability_leak = false) {
         const auto key = report_key(owner, leaked.id, range);
         if (!private_in_public_reports_.insert(key).second) {
             return;
         }
-        emit_error(error_codes::resolve::PrivateInPublic,
-                   messages::resolve::PrivateInPublic,
+        emit_error(error_codes::visibility::PrivateInPublic,
+                   api_reachability_leak ? messages::visibility::PrivateInApiPublic
+                                         : messages::visibility::PrivateInPublic,
                    current_source_,
                    range,
                    declaration_kind_label(owner),
@@ -1075,7 +1195,8 @@ class ResolverPass final {
     void check_public_symbol_reference(const ast::Decl &owner,
                                        SymbolNamespace name_space,
                                        const ast::QualifiedName &name,
-                                       std::string_view expected_kind) {
+                                       std::string_view expected_kind,
+                                       bool owner_api_reachable) {
         const auto symbol_id = lookup(name_space, name);
         if (!symbol_id.has_value()) {
             return;
@@ -1086,12 +1207,17 @@ class ResolverPass final {
         }
         if (symbol->get().visibility != ast::Visibility::Public) {
             emit_private_in_public(owner, symbol->get(), expected_kind, name.range);
+            return;
+        }
+        if (owner_api_reachable && !result_.is_api_reachable(symbol->get().id)) {
+            emit_private_in_public(owner, symbol->get(), expected_kind, name.range, true);
         }
     }
 
     void check_public_type_name(const ast::Decl &owner,
                                 const ast::QualifiedName &name,
-                                const std::unordered_set<std::string> &type_params) {
+                                const std::unordered_set<std::string> &type_params,
+                                bool owner_api_reachable) {
         if (name.segments.size() == 1) {
             const auto spelling = name.spelling();
             if (type_params.contains(spelling) || is_primitive_type_name(spelling)) {
@@ -1103,6 +1229,9 @@ class ResolverPass final {
             const auto symbol = result_.symbol_table.get(*type_id);
             if (symbol.has_value() && symbol->get().visibility != ast::Visibility::Public) {
                 emit_private_in_public(owner, symbol->get(), "type", name.range);
+            } else if (symbol.has_value() && owner_api_reachable &&
+                       !result_.is_api_reachable(symbol->get().id)) {
+                emit_private_in_public(owner, symbol->get(), "type", name.range, true);
             }
             return;
         }
@@ -1111,41 +1240,54 @@ class ResolverPass final {
             const auto symbol = result_.symbol_table.get(*trait_id);
             if (symbol.has_value() && symbol->get().visibility != ast::Visibility::Public) {
                 emit_private_in_public(owner, symbol->get(), "trait", name.range);
+            } else if (symbol.has_value() && owner_api_reachable &&
+                       !result_.is_api_reachable(symbol->get().id)) {
+                emit_private_in_public(owner, symbol->get(), "trait", name.range, true);
             }
         }
     }
 
     void check_public_type(const ast::Decl &owner,
                            const ast::TypeSyntax &type,
-                           const std::unordered_set<std::string> &type_params) {
+                           const std::unordered_set<std::string> &type_params,
+                           bool owner_api_reachable) {
         std::visit(Overloaded{
                        [&](const ast::NamedType &named) {
-                           check_public_type_name(owner, *named.name, type_params);
+                           check_public_type_name(
+                               owner, *named.name, type_params, owner_api_reachable);
                            for (const auto &arg : named.type_args) {
                                if (arg) {
-                                   check_public_type(owner, *arg, type_params);
+                                   check_public_type(
+                                       owner, *arg, type_params, owner_api_reachable);
                                }
                            }
                        },
                        [&](const ast::FnType &fn) {
                            for (const auto &param : fn.params) {
                                if (param) {
-                                   check_public_type(owner, *param, type_params);
+                                   check_public_type(
+                                       owner, *param, type_params, owner_api_reachable);
                                }
                            }
                            if (fn.return_type) {
-                               check_public_type(owner, *fn.return_type, type_params);
+                               check_public_type(
+                                   owner, *fn.return_type, type_params, owner_api_reachable);
                            }
                            for (const auto &capability : fn.effect_capabilities) {
-                               check_public_symbol_reference(
-                                   owner, SymbolNamespace::Capabilities, *capability, "capability");
+                               check_public_symbol_reference(owner,
+                                                             SymbolNamespace::Capabilities,
+                                                             *capability,
+                                                             "capability",
+                                                             owner_api_reachable);
                            }
                        },
                        [&](const ast::AppType &app) {
-                           check_public_type_name(owner, *app.name, type_params);
+                           check_public_type_name(
+                               owner, *app.name, type_params, owner_api_reachable);
                            for (const auto &arg : app.arguments) {
                                if (arg) {
-                                   check_public_type(owner, *arg, type_params);
+                                   check_public_type(
+                                       owner, *arg, type_params, owner_api_reachable);
                                }
                            }
                        },
@@ -1156,14 +1298,15 @@ class ResolverPass final {
 
     void check_public_type_params(const ast::Decl &owner,
                                   const std::vector<Owned<ast::TypeParamSyntax>> &params,
-                                  std::unordered_set<std::string> &type_params) {
+                                  std::unordered_set<std::string> &type_params,
+                                  bool owner_api_reachable) {
         for (const auto &param : params) {
             type_params.insert(param->name);
         }
         for (const auto &param : params) {
             for (const auto &bound : param->bounds) {
                 if (bound) {
-                    check_public_type(owner, *bound, type_params);
+                    check_public_type(owner, *bound, type_params, owner_api_reachable);
                 }
             }
         }
@@ -1171,55 +1314,599 @@ class ResolverPass final {
 
     void check_public_where_clause(const ast::Decl &owner,
                                    const Owned<ast::WhereClauseSyntax> &where_clause,
-                                   const std::unordered_set<std::string> &type_params) {
+                                   const std::unordered_set<std::string> &type_params,
+                                   bool owner_api_reachable) {
         if (!where_clause) {
             return;
         }
         for (const auto &constraint : where_clause->constraints) {
             if (constraint->subject) {
-                check_public_type(owner, *constraint->subject, type_params);
+                check_public_type(owner, *constraint->subject, type_params, owner_api_reachable);
             }
             for (const auto &argument : constraint->arguments) {
                 if (argument) {
-                    check_public_type(owner, *argument, type_params);
+                    check_public_type(owner, *argument, type_params, owner_api_reachable);
                 }
             }
             for (const auto &bound : constraint->bounds) {
                 if (bound) {
-                    check_public_type(owner, *bound, type_params);
+                    check_public_type(owner, *bound, type_params, owner_api_reachable);
                 }
             }
         }
     }
 
     void check_public_effect_clause(const ast::Decl &owner,
-                                    const Owned<ast::EffectClauseSyntax> &effect_clause) {
+                                    const Owned<ast::EffectClauseSyntax> &effect_clause,
+                                    bool owner_api_reachable) {
         if (!effect_clause || effect_clause->kind != ast::EffectClauseKind::Capability) {
             return;
         }
         for (const auto &capability : effect_clause->capabilities) {
-            check_public_symbol_reference(
-                owner, SymbolNamespace::Capabilities, *capability, "capability");
+            check_public_symbol_reference(owner,
+                                          SymbolNamespace::Capabilities,
+                                          *capability,
+                                          "capability",
+                                          owner_api_reachable);
         }
     }
 
     void check_public_fn_signature(const ast::Decl &owner,
                                    const ast::FnDecl &fn,
-                                   std::unordered_set<std::string> type_params = {}) {
-        check_public_type_params(owner, fn.type_params, type_params);
+                                   std::unordered_set<std::string> type_params = {},
+                                   bool owner_api_reachable = false) {
+        check_public_type_params(owner, fn.type_params, type_params, owner_api_reachable);
         for (const auto &param : fn.params) {
             if (param->type) {
-                check_public_type(owner, *param->type, type_params);
+                check_public_type(owner, *param->type, type_params, owner_api_reachable);
             }
         }
         if (fn.return_type) {
-            check_public_type(owner, *fn.return_type, type_params);
+            check_public_type(owner, *fn.return_type, type_params, owner_api_reachable);
         }
-        check_public_where_clause(owner, fn.where_clause, type_params);
-        check_public_effect_clause(owner, fn.effect_clause);
+        check_public_where_clause(owner, fn.where_clause, type_params, owner_api_reachable);
+        check_public_effect_clause(owner, fn.effect_clause, owner_api_reachable);
+    }
+
+    [[nodiscard]] std::optional<std::pair<SymbolNamespace, std::string_view>>
+    declaration_symbol_key(const ast::Decl &decl) const {
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl:
+            return std::pair{SymbolNamespace::Consts,
+                             std::string_view(static_cast<const ast::ConstDecl &>(decl).name)};
+        case ast::NodeKind::TypeAliasDecl:
+            return std::pair{SymbolNamespace::Types,
+                             std::string_view(static_cast<const ast::TypeAliasDecl &>(decl).name)};
+        case ast::NodeKind::StructDecl:
+            return std::pair{SymbolNamespace::Types,
+                             std::string_view(static_cast<const ast::StructDecl &>(decl).name)};
+        case ast::NodeKind::EnumDecl:
+            return std::pair{SymbolNamespace::Types,
+                             std::string_view(static_cast<const ast::EnumDecl &>(decl).name)};
+        case ast::NodeKind::CapabilityDecl:
+            return std::pair{SymbolNamespace::Capabilities,
+                             std::string_view(static_cast<const ast::CapabilityDecl &>(decl).name)};
+        case ast::NodeKind::PredicateDecl:
+            return std::pair{SymbolNamespace::Predicates,
+                             std::string_view(static_cast<const ast::PredicateDecl &>(decl).name)};
+        case ast::NodeKind::AgentDecl:
+            return std::pair{SymbolNamespace::Agents,
+                             std::string_view(static_cast<const ast::AgentDecl &>(decl).name)};
+        case ast::NodeKind::WorkflowDecl:
+            return std::pair{SymbolNamespace::Workflows,
+                             std::string_view(static_cast<const ast::WorkflowDecl &>(decl).name)};
+        case ast::NodeKind::FnDecl:
+            return std::pair{SymbolNamespace::Functions,
+                             std::string_view(static_cast<const ast::FnDecl &>(decl).name)};
+        case ast::NodeKind::TraitDecl:
+            return std::pair{SymbolNamespace::Traits,
+                             std::string_view(static_cast<const ast::TraitDecl &>(decl).name)};
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::UseDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::FlowDecl:
+        case ast::NodeKind::ImplDecl:
+        case ast::NodeKind::Program:
+            return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<SymbolId> symbol_id_for_declaration(const ast::Decl &decl) const {
+        const auto key = declaration_symbol_key(decl);
+        if (!key.has_value()) {
+            return std::nullopt;
+        }
+        return find_registered_symbol(key->first, key->second);
+    }
+
+    [[nodiscard]] bool declaration_is_api_reachable(const ast::Decl &decl) const {
+        const auto symbol_id = symbol_id_for_declaration(decl);
+        return symbol_id.has_value() && result_.is_api_reachable(*symbol_id);
+    }
+
+    [[nodiscard]] bool declaration_is_artifact_reachable(const ast::Decl &decl) const {
+        const auto symbol_id = symbol_id_for_declaration(decl);
+        return symbol_id.has_value() && result_.is_artifact_reachable(*symbol_id);
+    }
+
+    bool mark_artifact_symbol_dependency(SymbolNamespace name_space,
+                                         const ast::QualifiedName &name,
+                                         const std::unordered_set<std::string> &type_params) {
+        if (name.segments.size() == 1) {
+            const auto spelling = name.spelling();
+            if (type_params.contains(spelling) || is_primitive_type_name(spelling)) {
+                return false;
+            }
+        }
+
+        const auto symbol_id = lookup(name_space, name);
+        if (!symbol_id.has_value()) {
+            return false;
+        }
+        const auto symbol = result_.symbol_table.get(*symbol_id);
+        if (!symbol.has_value() || symbol->get().visibility != ast::Visibility::Public) {
+            return false;
+        }
+        if (result_.is_artifact_reachable(symbol->get().id)) {
+            return false;
+        }
+        result_.mark_artifact_reachable(symbol->get().id);
+        return true;
+    }
+
+    bool mark_artifact_type_name_dependencies(
+        const ast::QualifiedName &name, const std::unordered_set<std::string> &type_params) {
+        if (name.segments.size() == 1) {
+            const auto spelling = name.spelling();
+            if (type_params.contains(spelling) || is_primitive_type_name(spelling)) {
+                return false;
+            }
+        }
+
+        const auto mark_symbol = [&](SymbolId symbol_id) {
+            const auto symbol = result_.symbol_table.get(symbol_id);
+            if (!symbol.has_value() || symbol->get().visibility != ast::Visibility::Public) {
+                return false;
+            }
+            if (result_.is_artifact_reachable(symbol->get().id)) {
+                return false;
+            }
+            result_.mark_artifact_reachable(symbol->get().id);
+            return true;
+        };
+
+        if (const auto type_id = lookup(SymbolNamespace::Types, name); type_id.has_value()) {
+            return mark_symbol(*type_id);
+        }
+        if (const auto trait_id = lookup(SymbolNamespace::Traits, name); trait_id.has_value()) {
+            return mark_symbol(*trait_id);
+        }
+        return false;
+    }
+
+    bool mark_artifact_type_dependencies(const ast::TypeSyntax &type,
+                                         const std::unordered_set<std::string> &type_params) {
+        bool changed = false;
+        std::visit(Overloaded{
+                       [&](const ast::NamedType &named) {
+                           changed =
+                               mark_artifact_type_name_dependencies(*named.name, type_params) ||
+                               changed;
+                           for (const auto &arg : named.type_args) {
+                               if (arg) {
+                                   changed =
+                                       mark_artifact_type_dependencies(*arg, type_params) ||
+                                       changed;
+                               }
+                           }
+                       },
+                       [&](const ast::FnType &fn) {
+                           for (const auto &param : fn.params) {
+                               if (param) {
+                                   changed =
+                                       mark_artifact_type_dependencies(*param, type_params) ||
+                                       changed;
+                               }
+                           }
+                           if (fn.return_type) {
+                               changed =
+                                   mark_artifact_type_dependencies(*fn.return_type, type_params) ||
+                                   changed;
+                           }
+                           for (const auto &capability : fn.effect_capabilities) {
+                               changed = mark_artifact_symbol_dependency(
+                                             SymbolNamespace::Capabilities,
+                                             *capability,
+                                             type_params) ||
+                                         changed;
+                           }
+                       },
+                       [&](const ast::AppType &app) {
+                           changed =
+                               mark_artifact_type_name_dependencies(*app.name, type_params) ||
+                               changed;
+                           for (const auto &arg : app.arguments) {
+                               if (arg) {
+                                   changed =
+                                       mark_artifact_type_dependencies(*arg, type_params) ||
+                                       changed;
+                               }
+                           }
+                       },
+                       [](const auto &) {},
+                   },
+                   type.node);
+        return changed;
+    }
+
+    bool mark_artifact_type_param_dependencies(
+        const std::vector<Owned<ast::TypeParamSyntax>> &params,
+        std::unordered_set<std::string> &type_params) {
+        bool changed = false;
+        for (const auto &param : params) {
+            type_params.insert(param->name);
+        }
+        for (const auto &param : params) {
+            for (const auto &bound : param->bounds) {
+                if (bound) {
+                    changed = mark_artifact_type_dependencies(*bound, type_params) || changed;
+                }
+            }
+        }
+        return changed;
+    }
+
+    bool mark_artifact_where_clause_dependencies(
+        const Owned<ast::WhereClauseSyntax> &where_clause,
+        const std::unordered_set<std::string> &type_params) {
+        if (!where_clause) {
+            return false;
+        }
+        bool changed = false;
+        for (const auto &constraint : where_clause->constraints) {
+            if (constraint->subject) {
+                changed =
+                    mark_artifact_type_dependencies(*constraint->subject, type_params) || changed;
+            }
+            for (const auto &argument : constraint->arguments) {
+                if (argument) {
+                    changed = mark_artifact_type_dependencies(*argument, type_params) || changed;
+                }
+            }
+            for (const auto &bound : constraint->bounds) {
+                if (bound) {
+                    changed = mark_artifact_type_dependencies(*bound, type_params) || changed;
+                }
+            }
+        }
+        return changed;
+    }
+
+    bool mark_artifact_effect_clause_dependencies(
+        const Owned<ast::EffectClauseSyntax> &effect_clause,
+        const std::unordered_set<std::string> &type_params) {
+        if (!effect_clause || effect_clause->kind != ast::EffectClauseKind::Capability) {
+            return false;
+        }
+        bool changed = false;
+        for (const auto &capability : effect_clause->capabilities) {
+            changed = mark_artifact_symbol_dependency(
+                          SymbolNamespace::Capabilities, *capability, type_params) ||
+                      changed;
+        }
+        return changed;
+    }
+
+    bool mark_artifact_fn_signature_dependencies(
+        const ast::FnDecl &fn, std::unordered_set<std::string> type_params = {}) {
+        bool changed = mark_artifact_type_param_dependencies(fn.type_params, type_params);
+        for (const auto &param : fn.params) {
+            if (param->type) {
+                changed = mark_artifact_type_dependencies(*param->type, type_params) || changed;
+            }
+        }
+        if (fn.return_type) {
+            changed = mark_artifact_type_dependencies(*fn.return_type, type_params) || changed;
+        }
+        changed = mark_artifact_where_clause_dependencies(fn.where_clause, type_params) || changed;
+        changed =
+            mark_artifact_effect_clause_dependencies(fn.effect_clause, type_params) || changed;
+        return changed;
+    }
+
+    bool mark_artifact_signature_dependencies(const ast::Decl &decl) {
+        if (decl.visibility != ast::Visibility::Public || !declaration_is_artifact_reachable(decl)) {
+            return false;
+        }
+
+        bool changed = false;
+        std::unordered_set<std::string> type_params;
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl: {
+            const auto &node = static_cast<const ast::ConstDecl &>(decl);
+            if (node.type) {
+                changed = mark_artifact_type_dependencies(*node.type, type_params) || changed;
+            }
+            return changed;
+        }
+        case ast::NodeKind::TypeAliasDecl: {
+            const auto &node = static_cast<const ast::TypeAliasDecl &>(decl);
+            changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
+                      changed;
+            if (node.aliased_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.aliased_type, type_params) || changed;
+            }
+            return changed;
+        }
+        case ast::NodeKind::StructDecl: {
+            const auto &node = static_cast<const ast::StructDecl &>(decl);
+            changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
+                      changed;
+            for (const auto &field : node.fields) {
+                if (field->type) {
+                    changed =
+                        mark_artifact_type_dependencies(*field->type, type_params) || changed;
+                }
+            }
+            changed =
+                mark_artifact_where_clause_dependencies(node.where_clause, type_params) || changed;
+            return changed;
+        }
+        case ast::NodeKind::EnumDecl: {
+            const auto &node = static_cast<const ast::EnumDecl &>(decl);
+            changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
+                      changed;
+            for (const auto &variant : node.variants) {
+                for (const auto &payload : variant->payload) {
+                    if (payload) {
+                        changed =
+                            mark_artifact_type_dependencies(*payload, type_params) || changed;
+                    }
+                }
+                for (const auto &field : variant->named_fields) {
+                    if (field->type) {
+                        changed =
+                            mark_artifact_type_dependencies(*field->type, type_params) || changed;
+                    }
+                }
+            }
+            changed =
+                mark_artifact_where_clause_dependencies(node.where_clause, type_params) || changed;
+            return changed;
+        }
+        case ast::NodeKind::CapabilityDecl: {
+            const auto &node = static_cast<const ast::CapabilityDecl &>(decl);
+            for (const auto &param : node.params) {
+                if (param->type) {
+                    changed =
+                        mark_artifact_type_dependencies(*param->type, type_params) || changed;
+                }
+            }
+            if (node.return_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.return_type, type_params) || changed;
+            }
+            return changed;
+        }
+        case ast::NodeKind::PredicateDecl: {
+            const auto &node = static_cast<const ast::PredicateDecl &>(decl);
+            for (const auto &param : node.params) {
+                if (param->type) {
+                    changed =
+                        mark_artifact_type_dependencies(*param->type, type_params) || changed;
+                }
+            }
+            return changed;
+        }
+        case ast::NodeKind::AgentDecl: {
+            const auto &node = static_cast<const ast::AgentDecl &>(decl);
+            if (node.input_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.input_type, type_params) || changed;
+            }
+            if (node.context_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.context_type, type_params) || changed;
+            }
+            if (node.output_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.output_type, type_params) || changed;
+            }
+            return changed;
+        }
+        case ast::NodeKind::WorkflowDecl: {
+            const auto &node = static_cast<const ast::WorkflowDecl &>(decl);
+            if (node.input_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.input_type, type_params) || changed;
+            }
+            if (node.output_type) {
+                changed =
+                    mark_artifact_type_dependencies(*node.output_type, type_params) || changed;
+            }
+            for (const auto &workflow_node : node.nodes) {
+                if (workflow_node->target) {
+                    changed = mark_artifact_symbol_dependency(SymbolNamespace::Agents,
+                                                              *workflow_node->target,
+                                                              type_params) ||
+                              changed;
+                }
+            }
+            return changed;
+        }
+        case ast::NodeKind::FnDecl:
+            return mark_artifact_fn_signature_dependencies(
+                static_cast<const ast::FnDecl &>(decl), {});
+        case ast::NodeKind::TraitDecl: {
+            const auto &node = static_cast<const ast::TraitDecl &>(decl);
+            changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
+                      changed;
+            type_params.insert("Self");
+            for (const auto &super_trait : node.super_traits) {
+                if (super_trait) {
+                    changed =
+                        mark_artifact_type_dependencies(*super_trait, type_params) || changed;
+                }
+            }
+            changed =
+                mark_artifact_where_clause_dependencies(node.where_clause, type_params) || changed;
+            for (const auto &item : node.items) {
+                std::unordered_set<std::string> item_type_params = type_params;
+                for (const auto &param : item->type_params) {
+                    item_type_params.insert(param->name);
+                }
+                for (const auto &param : item->params) {
+                    if (param->type) {
+                        changed =
+                            mark_artifact_type_dependencies(*param->type, item_type_params) ||
+                            changed;
+                    }
+                }
+                if (item->return_type) {
+                    changed =
+                        mark_artifact_type_dependencies(*item->return_type, item_type_params) ||
+                        changed;
+                }
+                changed =
+                    mark_artifact_where_clause_dependencies(item->where_clause,
+                                                           item_type_params) ||
+                    changed;
+                changed =
+                    mark_artifact_effect_clause_dependencies(item->effect_clause,
+                                                            item_type_params) ||
+                    changed;
+                if (item->assoc_type) {
+                    for (const auto &bound : item->assoc_type->bounds) {
+                        if (bound) {
+                            changed =
+                                mark_artifact_type_dependencies(*bound, item_type_params) ||
+                                changed;
+                        }
+                    }
+                    if (item->assoc_type->default_type) {
+                        changed = mark_artifact_type_dependencies(
+                                      *item->assoc_type->default_type, item_type_params) ||
+                                  changed;
+                    }
+                }
+                if (item->assoc_const && item->assoc_const->type) {
+                    changed = mark_artifact_type_dependencies(*item->assoc_const->type,
+                                                              item_type_params) ||
+                              changed;
+                }
+            }
+            return changed;
+        }
+        case ast::NodeKind::UseDecl:
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::FlowDecl:
+        case ast::NodeKind::ImplDecl:
+        case ast::NodeKind::Program:
+            return false;
+        }
+        return false;
+    }
+
+    bool mark_artifact_dependencies_in_program(const ast::Program &program) {
+        bool changed = false;
+        for (const auto &declaration : program.declarations) {
+            changed = mark_artifact_signature_dependencies(*declaration) || changed;
+        }
+        return changed;
+    }
+
+    void run_artifact_reachability_closure_pass(const SourceGraph &graph) {
+        if (!source_graph_mode_) {
+            return;
+        }
+
+        bool changed = false;
+        do {
+            changed = false;
+            for (const auto &source : graph.sources) {
+                const auto &program =
+                    require(source.program.get(), "source graph program must exist before resolution");
+                enter_source(source);
+                changed = mark_artifact_dependencies_in_program(program) || changed;
+                leave_source();
+            }
+        } while (changed);
+    }
+
+    void check_public_impl_receiver(const ast::Decl &owner,
+                                    const ast::TypeSyntax &type,
+                                    const std::unordered_set<std::string> &type_params,
+                                    bool owner_api_reachable) {
+        std::visit(Overloaded{
+                       [&](const ast::NamedType &named) {
+                           const auto symbol_id = lookup(SymbolNamespace::Types, *named.name);
+                           if (symbol_id.has_value()) {
+                               const auto symbol = result_.symbol_table.get(*symbol_id);
+                               if (symbol.has_value() &&
+                                   symbol->get().visibility != ast::Visibility::Public) {
+                                   emit_error(
+                                       error_codes::visibility::PublicImplPrivateReceiver,
+                                       messages::visibility::PublicImplPrivateReceiver,
+                                       current_source_,
+                                       named.name->range,
+                                       symbol->get().canonical_name);
+                               } else if (symbol.has_value() && owner_api_reachable &&
+                                          !result_.is_api_reachable(symbol->get().id)) {
+                                   emit_error(
+                                       error_codes::visibility::PublicImplPrivateReceiver,
+                                       messages::visibility::PublicImplPrivateReceiver,
+                                       current_source_,
+                                       named.name->range,
+                                       symbol->get().canonical_name);
+                               }
+                           }
+                           check_public_type(owner, type, type_params, owner_api_reachable);
+                       },
+                       [&](const ast::AppType &app) {
+                           const auto symbol_id = lookup(SymbolNamespace::Types, *app.name);
+                           if (symbol_id.has_value()) {
+                               const auto symbol = result_.symbol_table.get(*symbol_id);
+                               if (symbol.has_value() &&
+                                   symbol->get().visibility != ast::Visibility::Public) {
+                                   emit_error(
+                                       error_codes::visibility::PublicImplPrivateReceiver,
+                                       messages::visibility::PublicImplPrivateReceiver,
+                                       current_source_,
+                                       app.name->range,
+                                       symbol->get().canonical_name);
+                               } else if (symbol.has_value() && owner_api_reachable &&
+                                          !result_.is_api_reachable(symbol->get().id)) {
+                                   emit_error(
+                                       error_codes::visibility::PublicImplPrivateReceiver,
+                                       messages::visibility::PublicImplPrivateReceiver,
+                                       current_source_,
+                                       app.name->range,
+                                       symbol->get().canonical_name);
+                               }
+                           }
+                           check_public_type(owner, type, type_params, owner_api_reachable);
+                       },
+                       [&](const auto &) {
+                           check_public_type(owner, type, type_params, owner_api_reachable);
+                       },
+                   },
+                   type.node);
     }
 
     void validate_public_declaration(const ast::Decl &decl) {
+        if (decl.duplicate_visibility_modifier) {
+            emit_error(error_codes::visibility::DuplicateVisibilityModifier,
+                       messages::visibility::DuplicateVisibilityModifier,
+                       current_source_,
+                       decl.range,
+                       declaration_name(decl));
+        }
+
         if (decl.kind == ast::NodeKind::ImplDecl) {
             validate_impl_visibility(static_cast<const ast::ImplDecl &>(decl));
             return;
@@ -1229,61 +1916,62 @@ class ResolverPass final {
             return;
         }
 
+        const bool owner_api_reachable = declaration_is_api_reachable(decl);
         std::unordered_set<std::string> type_params;
         switch (decl.kind) {
         case ast::NodeKind::ConstDecl: {
             const auto &node = static_cast<const ast::ConstDecl &>(decl);
             if (node.type) {
-                check_public_type(decl, *node.type, type_params);
+                check_public_type(decl, *node.type, type_params, owner_api_reachable);
             }
             return;
         }
         case ast::NodeKind::TypeAliasDecl: {
             const auto &node = static_cast<const ast::TypeAliasDecl &>(decl);
-            check_public_type_params(decl, node.type_params, type_params);
+            check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             if (node.aliased_type) {
-                check_public_type(decl, *node.aliased_type, type_params);
+                check_public_type(decl, *node.aliased_type, type_params, owner_api_reachable);
             }
             return;
         }
         case ast::NodeKind::StructDecl: {
             const auto &node = static_cast<const ast::StructDecl &>(decl);
-            check_public_type_params(decl, node.type_params, type_params);
+            check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             for (const auto &field : node.fields) {
                 if (field->type) {
-                    check_public_type(decl, *field->type, type_params);
+                    check_public_type(decl, *field->type, type_params, owner_api_reachable);
                 }
             }
-            check_public_where_clause(decl, node.where_clause, type_params);
+            check_public_where_clause(decl, node.where_clause, type_params, owner_api_reachable);
             return;
         }
         case ast::NodeKind::EnumDecl: {
             const auto &node = static_cast<const ast::EnumDecl &>(decl);
-            check_public_type_params(decl, node.type_params, type_params);
+            check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             for (const auto &variant : node.variants) {
                 for (const auto &payload : variant->payload) {
                     if (payload) {
-                        check_public_type(decl, *payload, type_params);
+                        check_public_type(decl, *payload, type_params, owner_api_reachable);
                     }
                 }
                 for (const auto &field : variant->named_fields) {
                     if (field->type) {
-                        check_public_type(decl, *field->type, type_params);
+                        check_public_type(decl, *field->type, type_params, owner_api_reachable);
                     }
                 }
             }
-            check_public_where_clause(decl, node.where_clause, type_params);
+            check_public_where_clause(decl, node.where_clause, type_params, owner_api_reachable);
             return;
         }
         case ast::NodeKind::CapabilityDecl: {
             const auto &node = static_cast<const ast::CapabilityDecl &>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
-                    check_public_type(decl, *param->type, type_params);
+                    check_public_type(decl, *param->type, type_params, owner_api_reachable);
                 }
             }
             if (node.return_type) {
-                check_public_type(decl, *node.return_type, type_params);
+                check_public_type(decl, *node.return_type, type_params, owner_api_reachable);
             }
             return;
         }
@@ -1291,7 +1979,7 @@ class ResolverPass final {
             const auto &node = static_cast<const ast::PredicateDecl &>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
-                    check_public_type(decl, *param->type, type_params);
+                    check_public_type(decl, *param->type, type_params, owner_api_reachable);
                 }
             }
             return;
@@ -1299,71 +1987,80 @@ class ResolverPass final {
         case ast::NodeKind::AgentDecl: {
             const auto &node = static_cast<const ast::AgentDecl &>(decl);
             if (node.input_type) {
-                check_public_type(decl, *node.input_type, type_params);
+                check_public_type(decl, *node.input_type, type_params, owner_api_reachable);
             }
             if (node.context_type) {
-                check_public_type(decl, *node.context_type, type_params);
+                check_public_type(decl, *node.context_type, type_params, owner_api_reachable);
             }
             if (node.output_type) {
-                check_public_type(decl, *node.output_type, type_params);
+                check_public_type(decl, *node.output_type, type_params, owner_api_reachable);
             }
             return;
         }
         case ast::NodeKind::WorkflowDecl: {
             const auto &node = static_cast<const ast::WorkflowDecl &>(decl);
             if (node.input_type) {
-                check_public_type(decl, *node.input_type, type_params);
+                check_public_type(decl, *node.input_type, type_params, owner_api_reachable);
             }
             if (node.output_type) {
-                check_public_type(decl, *node.output_type, type_params);
+                check_public_type(decl, *node.output_type, type_params, owner_api_reachable);
             }
             for (const auto &workflow_node : node.nodes) {
                 if (workflow_node->target) {
-                    check_public_symbol_reference(
-                        decl, SymbolNamespace::Agents, *workflow_node->target, "agent");
+                    check_public_symbol_reference(decl,
+                                                  SymbolNamespace::Agents,
+                                                  *workflow_node->target,
+                                                  "agent",
+                                                  owner_api_reachable);
                 }
             }
             return;
         }
         case ast::NodeKind::FnDecl:
-            check_public_fn_signature(decl, static_cast<const ast::FnDecl &>(decl));
+            check_public_fn_signature(
+                decl, static_cast<const ast::FnDecl &>(decl), {}, owner_api_reachable);
             return;
         case ast::NodeKind::TraitDecl: {
             const auto &node = static_cast<const ast::TraitDecl &>(decl);
-            check_public_type_params(decl, node.type_params, type_params);
+            check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             type_params.insert("Self");
             for (const auto &super_trait : node.super_traits) {
                 if (super_trait) {
-                    check_public_type(decl, *super_trait, type_params);
+                    check_public_type(decl, *super_trait, type_params, owner_api_reachable);
                 }
             }
-            check_public_where_clause(decl, node.where_clause, type_params);
+            check_public_where_clause(decl, node.where_clause, type_params, owner_api_reachable);
             for (const auto &item : node.items) {
                 for (const auto &param : item->type_params) {
                     type_params.insert(param->name);
                 }
                 for (const auto &param : item->params) {
                     if (param->type) {
-                        check_public_type(decl, *param->type, type_params);
+                        check_public_type(decl, *param->type, type_params, owner_api_reachable);
                     }
                 }
                 if (item->return_type) {
-                    check_public_type(decl, *item->return_type, type_params);
+                    check_public_type(decl, *item->return_type, type_params, owner_api_reachable);
                 }
-                check_public_where_clause(decl, item->where_clause, type_params);
-                check_public_effect_clause(decl, item->effect_clause);
+                check_public_where_clause(
+                    decl, item->where_clause, type_params, owner_api_reachable);
+                check_public_effect_clause(decl, item->effect_clause, owner_api_reachable);
                 if (item->assoc_type) {
                     for (const auto &bound : item->assoc_type->bounds) {
                         if (bound) {
-                            check_public_type(decl, *bound, type_params);
+                            check_public_type(decl, *bound, type_params, owner_api_reachable);
                         }
                     }
                     if (item->assoc_type->default_type) {
-                        check_public_type(decl, *item->assoc_type->default_type, type_params);
+                        check_public_type(decl,
+                                          *item->assoc_type->default_type,
+                                          type_params,
+                                          owner_api_reachable);
                     }
                 }
                 if (item->assoc_const && item->assoc_const->type) {
-                    check_public_type(decl, *item->assoc_const->type, type_params);
+                    check_public_type(
+                        decl, *item->assoc_const->type, type_params, owner_api_reachable);
                 }
             }
             return;
@@ -1383,8 +2080,8 @@ class ResolverPass final {
         const bool trait_impl = node.trait_ref != nullptr;
         for (const auto &item : node.items) {
             if (trait_impl && item->visibility == ast::Visibility::Public) {
-                emit_error(error_codes::resolve::InvalidVisibilityPlacement,
-                           messages::resolve::InvalidVisibilityPlacement,
+                emit_error(error_codes::visibility::InvalidVisibilityPlacement,
+                           messages::visibility::InvalidVisibilityPlacement,
                            current_source_,
                            item->range,
                            "trait impl item");
@@ -1423,25 +2120,26 @@ class ResolverPass final {
         }
 
         std::unordered_set<std::string> type_params;
-        check_public_type_params(node, node.type_params, type_params);
+        const bool owner_api_reachable = source_is_exported(current_source_id_);
+        check_public_type_params(node, node.type_params, type_params, owner_api_reachable);
         type_params.insert("Self");
         if (node.target_type) {
-            check_public_type(node, *node.target_type, type_params);
+            check_public_impl_receiver(node, *node.target_type, type_params, owner_api_reachable);
         }
-        check_public_where_clause(node, node.where_clause, type_params);
+        check_public_where_clause(node, node.where_clause, type_params, owner_api_reachable);
         for (const auto &method : node.methods) {
             if (method->visibility == ast::Visibility::Public) {
-                check_public_fn_signature(node, *method, type_params);
+                check_public_fn_signature(node, *method, type_params, owner_api_reachable);
             }
         }
         for (const auto &assoc : node.assoc_items) {
             if (assoc->visibility == ast::Visibility::Public && assoc->type) {
-                check_public_type(node, *assoc->type, type_params);
+                check_public_type(node, *assoc->type, type_params, owner_api_reachable);
             }
         }
         for (const auto &assoc_const : node.const_items) {
             if (assoc_const->visibility == ast::Visibility::Public && assoc_const->type) {
-                check_public_type(node, *assoc_const->type, type_params);
+                check_public_type(node, *assoc_const->type, type_params, owner_api_reachable);
             }
         }
     }
@@ -1527,14 +2225,31 @@ class ResolverPass final {
         return current_source_->package_prefix == target_package;
     }
 
+    [[nodiscard]] bool dependency_allowed_from_current_source(const Symbol &symbol) const {
+        if (!source_graph_mode_ || current_source_ == nullptr || same_package_as_current_source(symbol)) {
+            return true;
+        }
+        const auto target_package = package_prefix_of(symbol);
+        return std::find(current_source_->dependency_prefixes.begin(),
+                         current_source_->dependency_prefixes.end(),
+                         target_package) != current_source_->dependency_prefixes.end();
+    }
+
     [[nodiscard]] bool symbol_visible_from_current_source(const Symbol &symbol) const {
         if (same_package_as_current_source(symbol)) {
             return true;
         }
-        return symbol.visibility == ast::Visibility::Public;
+        if (symbol.visibility != ast::Visibility::Public) {
+            return false;
+        }
+        if (current_pass_ == Pass::RegisterAliases) {
+            return true;
+        }
+        return result_.is_api_reachable(symbol.id);
     }
 
-    void emit_error(ErrorCode<DiagnosticCategory::Resolve> code,
+    template <DiagnosticCategory Cat>
+    void emit_error(ErrorCode<Cat> code,
                     MessageTemplate message_template,
                     const SourceUnit *source,
                     std::optional<SourceRange> range = std::nullopt) {
@@ -1551,8 +2266,8 @@ class ResolverPass final {
         }
     }
 
-    template <typename... Args>
-    void emit_error(ErrorCode<DiagnosticCategory::Resolve> code,
+    template <DiagnosticCategory Cat, typename... Args>
+    void emit_error(ErrorCode<Cat> code,
                     const MessageTemplate &message_template,
                     const SourceUnit *source,
                     std::optional<SourceRange> range,
@@ -1574,7 +2289,8 @@ class ResolverPass final {
         }
     }
 
-    void emit_note(ErrorCode<DiagnosticCategory::Resolve> code,
+    template <DiagnosticCategory Cat>
+    void emit_note(ErrorCode<Cat> code,
                    MessageTemplate message_template,
                    const SourceUnit *source,
                    std::optional<SourceRange> range = std::nullopt) {
@@ -1591,8 +2307,8 @@ class ResolverPass final {
         }
     }
 
-    template <typename... Args>
-    void emit_note(ErrorCode<DiagnosticCategory::Resolve> code,
+    template <DiagnosticCategory Cat, typename... Args>
+    void emit_note(ErrorCode<Cat> code,
                    const MessageTemplate &message_template,
                    const SourceUnit *source,
                    std::optional<SourceRange> range,
@@ -1607,6 +2323,29 @@ class ResolverPass final {
                 .emit();
         } else {
             result_.diagnostics.note().code(code).message(std::string(message)).range(range).emit();
+        }
+    }
+
+    template <DiagnosticCategory Cat, typename... Args>
+    void emit_warning(ErrorCode<Cat> code,
+                      const MessageTemplate &message_template,
+                      const SourceUnit *source,
+                      std::optional<SourceRange> range,
+                      Args &&...args) {
+        const auto message = message_template.format_with(std::forward<Args>(args)...);
+        if (source != nullptr) {
+            result_.diagnostics.warning()
+                .code(code)
+                .message(std::string(message))
+                .range(range)
+                .source(source->source)
+                .emit();
+        } else {
+            result_.diagnostics.warning()
+                .code(code)
+                .message(std::string(message))
+                .range(range)
+                .emit();
         }
     }
 
@@ -1862,7 +2601,19 @@ class ResolverPass final {
         auto &module_index = index.module_local_names[module_name_.value_or("")];
         module_index.emplace(std::string(alias), target);
         if (public_alias) {
-            index.canonical_names.emplace(canonical_name_for(alias), target);
+            const auto canonical_alias = canonical_name_for(alias);
+            index.canonical_names.emplace(canonical_alias, target);
+            result_.add_public_alias(PublicAlias{
+                .id = AliasDefId{result_.public_aliases().size()},
+                .name_space = name_space,
+                .visibility = ast::Visibility::Public,
+                .local_name = std::string(alias),
+                .canonical_name = canonical_alias,
+                .module_name = module_name_.value_or(""),
+                .source_id = current_source_id_,
+                .declaration_range = range,
+                .target = target,
+            });
         }
     }
 
@@ -1903,9 +2654,9 @@ class ResolverPass final {
             if (!symbol.has_value()) {
                 continue;
             }
-            if (!symbol_visible_from_current_source(symbol->get())) {
-                emit_error(error_codes::resolve::PrivateSymbol,
-                           messages::resolve::PrivateSymbol,
+            if (public_alias && !dependency_allowed_from_current_source(symbol->get())) {
+                emit_error(error_codes::visibility::ReexportMissingDependency,
+                           messages::visibility::ReexportMissingDependency,
                            current_source_,
                            node.path->range,
                            node.path->spelling(),
@@ -1913,8 +2664,17 @@ class ResolverPass final {
                 continue;
             }
             if (public_alias && symbol->get().visibility != ast::Visibility::Public) {
-                emit_error(error_codes::resolve::PrivateSymbol,
-                           messages::resolve::PrivateSymbol,
+                emit_error(error_codes::visibility::ReexportPrivateSymbol,
+                           messages::visibility::ReexportPrivateSymbol,
+                           current_source_,
+                           node.path->range,
+                           node.path->spelling(),
+                           symbol->get().canonical_name);
+                continue;
+            }
+            if (!symbol_visible_from_current_source(symbol->get())) {
+                emit_error(error_codes::visibility::PrivateSymbol,
+                           messages::visibility::PrivateSymbol,
                            current_source_,
                            node.path->range,
                            node.path->spelling(),
@@ -2141,9 +2901,20 @@ class ResolverPass final {
         const auto candidate = find_unfiltered_candidate(name_space, name);
         if (candidate.has_value()) {
             const auto symbol = result_.symbol_table.get(*candidate);
+            if (symbol.has_value() && !same_package_as_current_source(symbol->get()) &&
+                symbol->get().visibility == ast::Visibility::Public &&
+                !result_.is_api_reachable(symbol->get().id)) {
+                emit_error(error_codes::visibility::PrivateModule,
+                           messages::visibility::PrivateModule,
+                           current_source_,
+                           name.range,
+                           symbol->get().module_name,
+                           package_prefix_of(symbol->get()));
+                return;
+            }
             if (symbol.has_value() && !symbol_visible_from_current_source(symbol->get())) {
-                emit_error(error_codes::resolve::PrivateSymbol,
-                           messages::resolve::PrivateSymbol,
+                emit_error(error_codes::visibility::PrivateSymbol,
+                           messages::visibility::PrivateSymbol,
                            current_source_,
                            name.range,
                            name.spelling(),
@@ -2152,8 +2923,8 @@ class ResolverPass final {
             }
             if (!qualified_symbol_accessible_by_spelling(name)) {
                 const auto module_name = direct_module_name_for_qualified_symbol(name);
-                emit_error(error_codes::resolve::MissingImport,
-                           messages::resolve::MissingImport,
+                emit_error(error_codes::visibility::MissingImport,
+                           messages::visibility::MissingImport,
                            current_source_,
                            name.range,
                            name.spelling(),
@@ -3183,7 +3954,11 @@ class ResolverPass final {
 ResolveResult::ResolveResult(const ResolveResult &other)
     : symbol_table(other.symbol_table), diagnostics(other.diagnostics),
       captured_names_by_expr(other.captured_names_by_expr), references_(other.references_),
-      imports_(other.imports_) {
+      imports_(other.imports_), public_aliases_(other.public_aliases_),
+      api_reachable_symbols_(other.api_reachable_symbols_),
+      artifact_reachable_symbols_(other.artifact_reachable_symbols_),
+      api_reachable_aliases_(other.api_reachable_aliases_),
+      artifact_reachable_aliases_(other.artifact_reachable_aliases_) {
     invalidate_reference_lookup_cache();
 }
 
@@ -3197,6 +3972,11 @@ ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
     captured_names_by_expr = other.captured_names_by_expr;
     references_ = other.references_;
     imports_ = other.imports_;
+    public_aliases_ = other.public_aliases_;
+    api_reachable_symbols_ = other.api_reachable_symbols_;
+    artifact_reachable_symbols_ = other.artifact_reachable_symbols_;
+    api_reachable_aliases_ = other.api_reachable_aliases_;
+    artifact_reachable_aliases_ = other.artifact_reachable_aliases_;
     invalidate_reference_lookup_cache();
     return *this;
 }
@@ -3204,7 +3984,12 @@ ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
 ResolveResult::ResolveResult(ResolveResult &&other) noexcept
     : symbol_table(std::move(other.symbol_table)), diagnostics(std::move(other.diagnostics)),
       captured_names_by_expr(std::move(other.captured_names_by_expr)),
-      references_(std::move(other.references_)), imports_(std::move(other.imports_)) {
+      references_(std::move(other.references_)), imports_(std::move(other.imports_)),
+      public_aliases_(std::move(other.public_aliases_)),
+      api_reachable_symbols_(std::move(other.api_reachable_symbols_)),
+      artifact_reachable_symbols_(std::move(other.artifact_reachable_symbols_)),
+      api_reachable_aliases_(std::move(other.api_reachable_aliases_)),
+      artifact_reachable_aliases_(std::move(other.artifact_reachable_aliases_)) {
     invalidate_reference_lookup_cache();
     other.invalidate_reference_lookup_cache();
 }
@@ -3219,6 +4004,11 @@ ResolveResult &ResolveResult::operator=(ResolveResult &&other) noexcept {
     captured_names_by_expr = std::move(other.captured_names_by_expr);
     references_ = std::move(other.references_);
     imports_ = std::move(other.imports_);
+    public_aliases_ = std::move(other.public_aliases_);
+    api_reachable_symbols_ = std::move(other.api_reachable_symbols_);
+    artifact_reachable_symbols_ = std::move(other.artifact_reachable_symbols_);
+    api_reachable_aliases_ = std::move(other.api_reachable_aliases_);
+    artifact_reachable_aliases_ = std::move(other.artifact_reachable_aliases_);
     invalidate_reference_lookup_cache();
     other.invalidate_reference_lookup_cache();
     return *this;
@@ -3276,23 +4066,6 @@ MaybeCRef<Symbol> SymbolTable::find_canonical(SymbolNamespace name_space,
     }
 
     return std::nullopt;
-}
-
-bool SymbolTable::module_exports_symbol(SymbolNamespace name_space,
-                                        std::string_view module_name,
-                                        SymbolId id) const {
-    const auto &name_index = index(name_space);
-    const auto module_iter = name_index.module_local_names.find(std::string(module_name));
-    if (module_iter == name_index.module_local_names.end()) {
-        return false;
-    }
-    for (const auto &[local_name, symbol_id] : module_iter->second) {
-        (void)local_name;
-        if (symbol_id == id) {
-            return true;
-        }
-    }
-    return false;
 }
 
 std::vector<SymbolId> SymbolTable::find_all_local(SymbolNamespace name_space,
@@ -3392,6 +4165,42 @@ void ResolveResult::add_reference(ResolvedReference reference) {
 
 void ResolveResult::add_import(ImportBinding binding) {
     imports_.push_back(std::move(binding));
+}
+
+void ResolveResult::add_public_alias(PublicAlias alias) {
+    public_aliases_.push_back(std::move(alias));
+}
+
+void ResolveResult::mark_api_reachable(SymbolId symbol) {
+    api_reachable_symbols_.insert(symbol.value);
+}
+
+void ResolveResult::mark_artifact_reachable(SymbolId symbol) {
+    artifact_reachable_symbols_.insert(symbol.value);
+}
+
+void ResolveResult::mark_api_reachable(AliasDefId alias) {
+    api_reachable_aliases_.insert(alias.value);
+}
+
+void ResolveResult::mark_artifact_reachable(AliasDefId alias) {
+    artifact_reachable_aliases_.insert(alias.value);
+}
+
+bool ResolveResult::is_api_reachable(SymbolId symbol) const {
+    return api_reachable_symbols_.contains(symbol.value);
+}
+
+bool ResolveResult::is_artifact_reachable(SymbolId symbol) const {
+    return artifact_reachable_symbols_.contains(symbol.value);
+}
+
+bool ResolveResult::is_api_reachable(AliasDefId alias) const {
+    return api_reachable_aliases_.contains(alias.value);
+}
+
+bool ResolveResult::is_artifact_reachable(AliasDefId alias) const {
+    return artifact_reachable_aliases_.contains(alias.value);
 }
 
 std::size_t ResolveResult::ReferenceLookupKeyHash::operator()(
