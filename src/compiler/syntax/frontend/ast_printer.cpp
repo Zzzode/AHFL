@@ -109,11 +109,9 @@ class AstPrinter final {
     // same indent + expr formatting helpers without duplicating them.  This is
     // a deliberately narrow entry point: DecreasesClauseSyntax is NOT a Node
     // and MUST NOT be dispatched through visit_declaration / NodeKind (R-09).
-    void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
-                                int indent_level) {
+    void print_decreases_clause(const ast::DecreasesClauseSyntax &clause, int indent_level) {
         line(indent_level, "decreases");
-        line(indent_level + 1,
-             clause.is_wildcard ? "wildcard: true" : "wildcard: false");
+        line(indent_level + 1, clause.is_wildcard ? "wildcard: true" : "wildcard: false");
         for (std::size_t i = 0; i < clause.terms.size(); ++i) {
             const auto *term = clause.terms[i].get();
             line(indent_level + 1, "term " + std::to_string(i));
@@ -757,7 +755,8 @@ class AstPrinter final {
                 [&](const ast::NamedType &t) {
                     line(indent_level, "named " + t.name->spelling());
                     if (!t.type_args.empty()) {
-                        line(indent_level, "type_arguments(" + std::to_string(t.type_args.size()) + ")");
+                        line(indent_level,
+                             "type_arguments(" + std::to_string(t.type_args.size()) + ")");
                         for (const auto &arg : t.type_args) {
                             print_type(*arg, indent_level + 1);
                         }
@@ -1010,10 +1009,8 @@ class AstPrinter final {
             }
             break;
         case ast::StatementSyntaxKind::IfLet: {
-            // RFC e-1 minimal POC: mirrors the `if` printer shape with an
-            // additional `pattern` section that serializes variant(binding*).
-            // Roundtripping the textual surface is handled by the formatter;
-            // this printer is for developer/debug consumption.
+            // RFC 0002: include the matched variant pattern next to the
+            // scrutinee and branch blocks for developer/debug dumps.
             line(indent_level, "if_let");
             std::ostringstream pattern_builder;
             if (statement.if_let_stmt && statement.if_let_stmt->pattern) {
@@ -1065,15 +1062,18 @@ class AstPrinter final {
             break;
         case ast::StatementSyntaxKind::Requires:
             line(indent_level, "requires");
-            print_expr_field("condition", statement.requires_stmt->condition.get(), indent_level + 1);
+            print_expr_field(
+                "condition", statement.requires_stmt->condition.get(), indent_level + 1);
             if (statement.requires_stmt->message) {
-                print_expr_field("message", statement.requires_stmt->message.get(), indent_level + 1);
+                print_expr_field(
+                    "message", statement.requires_stmt->message.get(), indent_level + 1);
             }
             break;
         case ast::StatementSyntaxKind::Unreachable:
             line(indent_level, "unreachable");
             if (statement.unreachable_stmt && statement.unreachable_stmt->message) {
-                print_expr_field("message", statement.unreachable_stmt->message.get(), indent_level + 1);
+                print_expr_field(
+                    "message", statement.unreachable_stmt->message.get(), indent_level + 1);
             }
             break;
         case ast::StatementSyntaxKind::Expr:
@@ -1157,8 +1157,7 @@ void dump_source_graph_ast_outline(const SourceGraph &graph, std::ostream &out) 
         std::count_if(graph.import_edges.begin(), graph.import_edges.end(), visible_import);
 
     out << "project_ast (" << graph.entry_sources.size() << " entry, " << source_count
-        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s")
-        << ")\n";
+        << " sources, " << import_count << " import" << (import_count == 1 ? "" : "s") << ")\n";
 
     std::unordered_set<std::size_t> entry_ids;
     entry_ids.reserve(graph.entry_sources.size());

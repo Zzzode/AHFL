@@ -35,6 +35,7 @@ class EvalContext {
 
     // --- Local scope ---
     void bind_local(const std::string &name, Value value);
+    void erase_local(const std::string &name);
     [[nodiscard]] std::optional<Value> get_local(const std::string &name) const;
 
     // --- Path lookup ---

@@ -254,8 +254,7 @@ class AstFormatter {
     // for the inline (short) rendering and by format_where_clause to collect
     // the textual width of each bound before deciding whether to emit the
     // whole clause on one line or break each constraint onto its own line.
-    std::string
-    render_where_constraint(const ahfl::ast::WhereConstraintSyntax &constraint) {
+    std::string render_where_constraint(const ahfl::ast::WhereConstraintSyntax &constraint) {
         std::ostringstream out;
         if (constraint.subject) {
             out << constraint.subject->spelling();
@@ -958,17 +957,16 @@ class AstFormatter {
             }
             break;
         case Kind::IfLet:
-            // RFC e-1 minimal POC: `if let Variant(x[, y]*) = scrutinee {`
-            // with optional `} else {`.  Formatting mirrors regular `if` so
-            // downstream code-style tooling keeps working.
+            // RFC 0002: format `if let Variant(x[, y]*) = scrutinee { ... }`
+            // with the same branch layout as regular `if`.
             if (stmt.if_let_stmt) {
                 out_ << "if let ";
                 if (stmt.if_let_stmt->pattern) {
                     out_ << stmt.if_let_stmt->pattern->variant_name;
                     if (!stmt.if_let_stmt->pattern->bindings.empty()) {
                         out_ << "(";
-                        for (std::size_t i = 0;
-                             i < stmt.if_let_stmt->pattern->bindings.size(); ++i) {
+                        for (std::size_t i = 0; i < stmt.if_let_stmt->pattern->bindings.size();
+                             ++i) {
                             if (i != 0) {
                                 out_ << ", ";
                             }

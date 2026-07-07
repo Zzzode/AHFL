@@ -3118,6 +3118,81 @@ fn inc(x: Int) -> Int effect Pure decreases 0 {
     CHECK(std::get_if<ahfl::ir::ReturnStatement>(&fn->body->statements[1]->node) != nullptr);
 }
 
+TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0002 lowered IR preserves if-let pattern statement") {
+    const std::string source = R"AHFL(
+module typed::iflet_ir;
+
+enum Maybe {
+    Some(Int),
+    None,
+}
+
+fn choose(v: Maybe) -> Int effect Pure decreases 0 {
+    if let Some(x) = v {
+        return x;
+    } else {
+        return 0;
+    }
+}
+)AHFL";
+
+    const auto parse = frontend.parse_text("typed_hir_iflet_ir.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+
+    ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    const auto lowered = ahfl::lower_typed_program(tc.typed_program, *parse.program);
+    CHECK_FALSE(ahfl::ir::verify_ir_program(lowered).has_errors());
+
+    const ahfl::ir::FnDecl *fn = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        const auto *candidate = std::get_if<ahfl::ir::FnDecl>(&decl);
+        if (candidate == nullptr) {
+            continue;
+        }
+        if (candidate->name == "choose" ||
+            candidate->symbol_ref.canonical_name == "typed::iflet_ir::choose") {
+            fn = candidate;
+            break;
+        }
+    }
+    REQUIRE(fn != nullptr);
+    REQUIRE(fn->body != nullptr);
+    REQUIRE_FALSE(fn->body->statements.empty());
+
+    const auto *if_let =
+        std::get_if<ahfl::ir::IfLetStatement>(&fn->body->statements.front()->node);
+    REQUIRE(if_let != nullptr);
+    REQUIRE(if_let->scrutinee != nullptr);
+    REQUIRE(if_let->then_block != nullptr);
+    REQUIRE(if_let->else_block != nullptr);
+
+    const auto *variant = std::get_if<ahfl::ir::VariantPattern>(&if_let->pattern.node);
+    REQUIRE(variant != nullptr);
+    CHECK(variant->path == "Some");
+    CHECK(variant->kind == ahfl::ir::VariantPatternKind::Tuple);
+    REQUIRE(variant->subpatterns.size() == 1);
+    const auto *binding =
+        std::get_if<ahfl::ir::BindingPattern>(&variant->subpatterns.front()->node);
+    REQUIRE(binding != nullptr);
+    CHECK(binding->name == "x");
+
+    std::ostringstream json;
+    ahfl::print_program_ir_json(lowered, json);
+    CHECK(json.str().find(R"("kind": "if_let")") != std::string::npos);
+
+    std::ostringstream text;
+    ahfl::print_program_ir(lowered, text);
+    CHECK(text.str().find("if let Some(x) =") != std::string::npos);
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
     const auto root = make_temp_project("snapshot_project");
@@ -3320,6 +3395,111 @@ workflow RunWorker {
     REQUIRE(flow_info != nullptr);
     CHECK(flow_info->target_name == "Worker");
     CHECK(flow_info->state_handlers.size() == 2);
+}
+
+TEST_CASE("Typed HIR enum variant payload_kind is mandatory canonical schema") {
+    TypedHIRFixture fixture;
+    const auto result = fixture.check(R"AHFL(
+module typed::enum_payload_schema;
+
+enum Packet {
+    Empty,
+    Pair(Int, String),
+    Data { code: Int, label: String = "ok" },
+}
+
+const P: Packet = Packet::Data { code: 7 };
+)AHFL");
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    constexpr std::string_view payload_kind = R"("payload_kind":"struct")";
+    REQUIRE(snapshot.find(payload_kind) != std::string::npos);
+
+    auto missing_payload_kind = ahfl::deserialize_typed_program_json(
+        replace_first(snapshot, std::string{payload_kind}, R"("payload_kind_missing":"struct")"));
+    CHECK_FALSE(missing_payload_kind.has_value());
+
+    auto invalid_payload_kind_type = ahfl::deserialize_typed_program_json(
+        replace_first(snapshot, std::string{payload_kind}, R"("payload_kind":7)"));
+    CHECK_FALSE(invalid_payload_kind_type.has_value());
+
+    auto unknown_payload_kind = ahfl::deserialize_typed_program_json(
+        replace_first(snapshot, std::string{payload_kind}, R"("payload_kind":"record")"));
+    CHECK_FALSE(unknown_payload_kind.has_value());
+}
+
+TEST_CASE("IR enum declarations preserve variant payload shapes") {
+    const std::string source = R"AHFL(
+module typed::ir_enum_payload;
+
+enum Packet {
+    Empty,
+    Pair(Int, String),
+    Data { code: Int, label: String = "ok" },
+}
+
+const P: Packet = Packet::Data { code: 7 };
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("ir_enum_payload.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    const auto lowered = ahfl::lower_program_ir(*parse.program, resolve, tc);
+    CHECK_FALSE(ahfl::ir::verify_ir_program(lowered).has_errors());
+
+    const ahfl::ir::EnumDecl *packet = nullptr;
+    for (const auto &decl : lowered.declarations) {
+        if (const auto *candidate = std::get_if<ahfl::ir::EnumDecl>(&decl);
+            candidate != nullptr && candidate->name == "typed::ir_enum_payload::Packet") {
+            packet = candidate;
+            break;
+        }
+    }
+    REQUIRE(packet != nullptr);
+    REQUIRE(packet->variants.size() == 3);
+
+    CHECK(packet->variants[0].name == "Empty");
+    CHECK(packet->variants[0].payload_kind == ahfl::ir::EnumVariantPayloadKind::Unit);
+    CHECK(packet->variants[0].payload.empty());
+    CHECK(packet->variants[0].fields.empty());
+
+    CHECK(packet->variants[1].name == "Pair");
+    CHECK(packet->variants[1].payload_kind == ahfl::ir::EnumVariantPayloadKind::Tuple);
+    REQUIRE(packet->variants[1].payload.size() == 2);
+    CHECK(packet->variants[1].payload[0].kind == ahfl::ir::TypeRefKind::Int);
+    CHECK(packet->variants[1].payload[1].kind == ahfl::ir::TypeRefKind::String);
+
+    CHECK(packet->variants[2].name == "Data");
+    CHECK(packet->variants[2].payload_kind == ahfl::ir::EnumVariantPayloadKind::Struct);
+    CHECK(packet->variants[2].payload.empty());
+    REQUIRE(packet->variants[2].fields.size() == 2);
+    CHECK(packet->variants[2].fields[0].name == "code");
+    CHECK(packet->variants[2].fields[0].type_ref.kind == ahfl::ir::TypeRefKind::Int);
+    CHECK(packet->variants[2].fields[0].default_value == nullptr);
+    CHECK(packet->variants[2].fields[1].name == "label");
+    CHECK(packet->variants[2].fields[1].type_ref.kind == ahfl::ir::TypeRefKind::String);
+    CHECK(packet->variants[2].fields[1].default_value != nullptr);
+
+    std::ostringstream json;
+    ahfl::print_program_ir_json(lowered, json);
+    CHECK(json.str().find(R"("payload_kind": "struct")") != std::string::npos);
+    CHECK(json.str().find(R"("fields")") != std::string::npos);
+    CHECK(json.str().find(R"("default_value")") != std::string::npos);
+
+    std::ostringstream text;
+    ahfl::print_program_ir(lowered, text);
+    CHECK(text.str().find(R"(variant Data { code: Int, label: String = "ok" })") !=
+          std::string::npos);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture,

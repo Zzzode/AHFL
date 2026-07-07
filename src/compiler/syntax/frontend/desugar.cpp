@@ -190,7 +190,8 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
         break;
     case ast::StatementSyntaxKind::Requires:
         if (stmt.requires_stmt->condition) {
-            stmt.requires_stmt->condition = desugar_expr_node(std::move(stmt.requires_stmt->condition));
+            stmt.requires_stmt->condition =
+                desugar_expr_node(std::move(stmt.requires_stmt->condition));
         }
         if (stmt.requires_stmt->message) {
             stmt.requires_stmt->message = desugar_expr_node(std::move(stmt.requires_stmt->message));
@@ -198,7 +199,8 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
         break;
     case ast::StatementSyntaxKind::Unreachable:
         if (stmt.unreachable_stmt->message) {
-            stmt.unreachable_stmt->message = desugar_expr_node(std::move(stmt.unreachable_stmt->message));
+            stmt.unreachable_stmt->message =
+                desugar_expr_node(std::move(stmt.unreachable_stmt->message));
         }
         break;
     case ast::StatementSyntaxKind::Expr:
@@ -207,12 +209,11 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
     case ast::StatementSyntaxKind::Goto:
         break; // no expressions
     case ast::StatementSyntaxKind::IfLet:
-        // IfLet (RFC e-1, Wave-19 Lane 3b) – no named struct variant payload
-        // to desugar inside the pattern at this phase; pattern fields are
-        // identifiers. The scrutinee and both branches are still desugared.
+        // RFC 0002 if-let patterns contain variant names plus identifier
+        // bindings; the scrutinee and branch blocks still need expression
+        // desugaring.
         if (stmt.if_let_stmt->scrutinee) {
-            stmt.if_let_stmt->scrutinee =
-                desugar_expr_node(std::move(stmt.if_let_stmt->scrutinee));
+            stmt.if_let_stmt->scrutinee = desugar_expr_node(std::move(stmt.if_let_stmt->scrutinee));
         }
         desugar_block_node(*stmt.if_let_stmt->then_block);
         if (stmt.if_let_stmt->else_block) {
@@ -313,8 +314,7 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
                 }
             } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
                 if (item->assoc_const->type) {
-                    item->assoc_const->type =
-                        desugar_type_node(std::move(item->assoc_const->type));
+                    item->assoc_const->type = desugar_type_node(std::move(item->assoc_const->type));
                 }
                 if (item->assoc_const->default_value) {
                     item->assoc_const->default_value =
@@ -338,7 +338,8 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
             }
         }
         for (auto &assoc_const : d->const_items) {
-            if (!assoc_const) continue;
+            if (!assoc_const)
+                continue;
             if (assoc_const->type) {
                 assoc_const->type = desugar_type_node(std::move(assoc_const->type));
             }
@@ -423,7 +424,8 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
             }
         } else if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
             for (auto &bound : item->assoc_type->bounds) {
-                if (bound) bound = desugar_type_node(std::move(bound));
+                if (bound)
+                    bound = desugar_type_node(std::move(bound));
             }
             if (item->assoc_type->default_type) {
                 item->assoc_type->default_type =
@@ -431,8 +433,7 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
             }
         } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
             if (item->assoc_const->type) {
-                item->assoc_const->type =
-                    desugar_type_node(std::move(item->assoc_const->type));
+                item->assoc_const->type = desugar_type_node(std::move(item->assoc_const->type));
             }
             if (item->assoc_const->default_value) {
                 item->assoc_const->default_value =
@@ -456,7 +457,8 @@ void DesugarPass::desugar_impl_decl(ast::ImplDecl &decl) {
         }
     }
     for (auto &assoc_const : decl.const_items) {
-        if (!assoc_const) continue;
+        if (!assoc_const)
+            continue;
         if (assoc_const->type) {
             assoc_const->type = desugar_type_node(std::move(assoc_const->type));
         }

@@ -89,6 +89,21 @@ void ProgramVisitor::visit_decl(const Decl &declaration) {
                            }
                        }
                    },
+                   [&](const EnumDecl &value) {
+                       for (const auto &variant : value.variants) {
+                           for (const auto &field : variant.fields) {
+                               if (aborted_) {
+                                   break;
+                               }
+                               if (field.default_value) {
+                                   visit_expr(*field.default_value);
+                               }
+                           }
+                           if (aborted_) {
+                               break;
+                           }
+                       }
+                   },
                    [&](const CapabilityDecl &) {},
                    [&](const PredicateDecl &) {},
                    [&](const AgentDecl &) {},
@@ -345,6 +360,17 @@ void ProgramVisitor::visit_statement(const Statement &statement) {
                            visit_block(*value.else_block);
                        }
                    },
+                   [&](const IfLetStatement &value) {
+                       if (value.scrutinee) {
+                           visit_expr(*value.scrutinee);
+                       }
+                       if (!aborted_ && value.then_block) {
+                           visit_block(*value.then_block);
+                       }
+                       if (!aborted_ && value.else_block) {
+                           visit_block(*value.else_block);
+                       }
+                   },
                    [](const GotoStatement &) {},
                    [&](const ReturnStatement &value) {
                        if (value.value) {
@@ -486,100 +512,115 @@ bool ProgramRewriter::rewrite_decl(Decl &declaration) {
         return modified;
     }
 
-    modified = std::visit(Overloaded{
-                              [&](ConstDecl &value) {
-                                  return value.value != nullptr && rewrite_expr(*value.value);
-                              },
-                              [&](StructDecl &value) {
-                                  bool changed = false;
-                                  for (auto &field : value.fields) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (field.default_value) {
-                                          changed = rewrite_expr(*field.default_value) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [](CapabilityDecl &) { return false; },
-                              [](PredicateDecl &) { return false; },
-                              [](AgentDecl &) { return false; },
-                              [&](ContractDecl &value) {
-                                  bool changed = false;
-                                  for (auto &clause : value.clauses) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (auto *expr = std::get_if<ExprRef>(&clause.value);
-                                          expr != nullptr && *expr) {
-                                          changed = rewrite_expr(**expr) || changed;
-                                      } else if (auto *temporal =
-                                                     std::get_if<TemporalExprPtr>(&clause.value);
-                                                 temporal != nullptr && *temporal) {
-                                          changed = rewrite_temporal_expr(**temporal) || changed;
-                                      }
-                                  }
-                                  return changed;
-                              },
-                              [&](FlowDecl &value) {
-                                  bool changed = false;
-                                  for (auto &handler : value.state_handlers) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      changed = rewrite_block(handler.body) || changed;
-                                  }
-                                  return changed;
-                              },
-                              [&](WorkflowDecl &value) {
-                                  bool changed = false;
-                                  for (auto &node : value.nodes) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      auto [node_action, node_modified] =
-                                          rewrite_workflow_node_pre(node);
-                                      changed = node_modified || changed;
-                                      if (node_action == VisitAction::Abort) {
-                                          aborted_ = true;
-                                          break;
-                                      }
-                                      if (node_action == VisitAction::Continue && node.input) {
-                                          changed = rewrite_expr(*node.input) || changed;
-                                      }
-                                      if (!aborted_) {
-                                          changed = rewrite_workflow_node_post(node) || changed;
-                                      }
-                                  }
-                                  for (auto &expr : value.safety) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (expr) {
-                                          changed = rewrite_temporal_expr(*expr) || changed;
-                                      }
-                                  }
-                                  for (auto &expr : value.liveness) {
-                                      if (aborted_) {
-                                          break;
-                                      }
-                                      if (expr) {
-                                          changed = rewrite_temporal_expr(*expr) || changed;
-                                      }
-                                  }
-                                  if (!aborted_ && value.return_value) {
-                                      changed = rewrite_expr(*value.return_value) || changed;
-                                  }
-                                  return changed;
-                              },
-                              [&](FnDecl &value) {
-                                  return value.body != nullptr && rewrite_block(*value.body);
-                              },
-                              [](auto &) { return false; },
-                          },
-                          declaration) ||
-               modified;
+    modified =
+        std::visit(
+            Overloaded{
+                [&](ConstDecl &value) {
+                    return value.value != nullptr && rewrite_expr(*value.value);
+                },
+                [&](StructDecl &value) {
+                    bool changed = false;
+                    for (auto &field : value.fields) {
+                        if (aborted_) {
+                            break;
+                        }
+                        if (field.default_value) {
+                            changed = rewrite_expr(*field.default_value) || changed;
+                        }
+                    }
+                    return changed;
+                },
+                [&](EnumDecl &value) {
+                    bool changed = false;
+                    for (auto &variant : value.variants) {
+                        for (auto &field : variant.fields) {
+                            if (aborted_) {
+                                break;
+                            }
+                            if (field.default_value) {
+                                changed = rewrite_expr(*field.default_value) || changed;
+                            }
+                        }
+                        if (aborted_) {
+                            break;
+                        }
+                    }
+                    return changed;
+                },
+                [](CapabilityDecl &) { return false; },
+                [](PredicateDecl &) { return false; },
+                [](AgentDecl &) { return false; },
+                [&](ContractDecl &value) {
+                    bool changed = false;
+                    for (auto &clause : value.clauses) {
+                        if (aborted_) {
+                            break;
+                        }
+                        if (auto *expr = std::get_if<ExprRef>(&clause.value);
+                            expr != nullptr && *expr) {
+                            changed = rewrite_expr(**expr) || changed;
+                        } else if (auto *temporal = std::get_if<TemporalExprPtr>(&clause.value);
+                                   temporal != nullptr && *temporal) {
+                            changed = rewrite_temporal_expr(**temporal) || changed;
+                        }
+                    }
+                    return changed;
+                },
+                [&](FlowDecl &value) {
+                    bool changed = false;
+                    for (auto &handler : value.state_handlers) {
+                        if (aborted_) {
+                            break;
+                        }
+                        changed = rewrite_block(handler.body) || changed;
+                    }
+                    return changed;
+                },
+                [&](WorkflowDecl &value) {
+                    bool changed = false;
+                    for (auto &node : value.nodes) {
+                        if (aborted_) {
+                            break;
+                        }
+                        auto [node_action, node_modified] = rewrite_workflow_node_pre(node);
+                        changed = node_modified || changed;
+                        if (node_action == VisitAction::Abort) {
+                            aborted_ = true;
+                            break;
+                        }
+                        if (node_action == VisitAction::Continue && node.input) {
+                            changed = rewrite_expr(*node.input) || changed;
+                        }
+                        if (!aborted_) {
+                            changed = rewrite_workflow_node_post(node) || changed;
+                        }
+                    }
+                    for (auto &expr : value.safety) {
+                        if (aborted_) {
+                            break;
+                        }
+                        if (expr) {
+                            changed = rewrite_temporal_expr(*expr) || changed;
+                        }
+                    }
+                    for (auto &expr : value.liveness) {
+                        if (aborted_) {
+                            break;
+                        }
+                        if (expr) {
+                            changed = rewrite_temporal_expr(*expr) || changed;
+                        }
+                    }
+                    if (!aborted_ && value.return_value) {
+                        changed = rewrite_expr(*value.return_value) || changed;
+                    }
+                    return changed;
+                },
+                [&](FnDecl &value) { return value.body != nullptr && rewrite_block(*value.body); },
+                [](auto &) { return false; },
+            },
+            declaration) ||
+        modified;
 
     if (!aborted_) {
         modified = rewrite_decl_post(declaration) || modified;
@@ -765,6 +806,19 @@ bool ProgramRewriter::rewrite_statement(Statement &statement) {
                            bool changed = false;
                            if (value.condition) {
                                changed = rewrite_expr(*value.condition) || changed;
+                           }
+                           if (!aborted_ && value.then_block) {
+                               changed = rewrite_block(*value.then_block) || changed;
+                           }
+                           if (!aborted_ && value.else_block) {
+                               changed = rewrite_block(*value.else_block) || changed;
+                           }
+                           return changed;
+                       },
+                       [&](IfLetStatement &value) {
+                           bool changed = false;
+                           if (value.scrutinee) {
+                               changed = rewrite_expr(*value.scrutinee) || changed;
                            }
                            if (!aborted_ && value.then_block) {
                                changed = rewrite_block(*value.then_block) || changed;

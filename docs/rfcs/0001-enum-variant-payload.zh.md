@@ -1,7 +1,7 @@
 ---
 rfc: "0001"
 title: "Enum Variant Payload Forms"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler"]
 stability: "stable-language"
 created: "2026-06-28"
@@ -213,6 +213,7 @@ The feature is covered by:
 - syntax tests for unit, tuple, and struct variants
 - semantic tests for shape mismatch, missing fields, unexpected fields, duplicate fields, defaults, constructor validation, and related declaration notes
 - runtime tests for default materialization
+- WorkflowRuntime E2E coverage for struct-form enum variant construction, default materialization, and struct-pattern destructuring
 - Typed HIR serialization round-trip tests
 - formatter round-trip coverage through the existing formatter suite
 - full repository `ctest --preset test-dev --output-on-failure`
@@ -221,14 +222,20 @@ The current implementation intentionally does not include tests for legacy compa
 
 ## Rollout and Stabilization
 
-The feature is implemented without feature gating. Stabilization requires keeping the following evidence green:
+The feature is stabilized without feature gating. Ongoing stabilization requires keeping the following evidence green:
 
 1. `python3 scripts/check-rfc.py`
 2. `cmake --build --preset build-dev`
 3. `ctest --preset test-dev --output-on-failure`
 4. RFC, spec, and reference docs remain synchronized when diagnostic wording or payload semantics change.
 
-The RFC should move from `implemented` to `stabilized` only when release evidence records those gates and any public migration note has been archived.
+Stabilization evidence for the 2026-07-06 status transition:
+
+- `python3 scripts/check-rfc.py`
+- `cmake --build --preset build-dev`
+- `ctest --preset test-dev --output-on-failure`
+- `ctest --preset test-dev --output-on-failure -R '^ahfl\.runtime\.enum_variant_e2e$'`
+- RFC 0001 diagnostic-code contract was reconciled so struct-variant declaration, pattern, and constructor duplicate fields all use `typecheck.DUPLICATE_VARIANT_FIELD`, while ordinary struct literals retain `typecheck.DUPLICATE_FIELD`.
 
 ## Alternatives
 
@@ -246,3 +253,5 @@ There are no open design questions for RFC 0001. Future changes to exhaustivenes
 - 2026-06-28: Initial draft created for enum variant payload shape.
 - 2026-07-02: RFC assigned canonical ID 0001.
 - 2026-07-06: RFC updated to implemented status, aligned with the repository no-legacy policy, and synchronized with the landed compiler behavior.
+- 2026-07-06: RFC stabilized after the duplicate-field diagnostic contract was made consistent across enum struct-variant declarations, patterns, and constructors.
+- 2026-07-06: Added WorkflowRuntime E2E coverage for struct-form enum variant construction, default field materialization, and struct-pattern destructuring.

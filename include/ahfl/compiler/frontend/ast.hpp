@@ -214,7 +214,7 @@ enum class StatementSyntaxKind {
     Let,         // let x: Type = expr;
     Assign,      // ctx.field = expr;
     If,          // if (cond) { ... } else { ... }
-    IfLet,       // if let Variant(x) = expr { ... } else { ... }  (RFC e-1, Wave-19 Lane 3b)
+    IfLet,       // if let Variant(x) = expr { ... } else { ... }
     Goto,        // goto StateName;
     Return,      // return expr;
     Assert,      // assert(cond); / assert(cond, "msg"); / legacy: assert cond;
@@ -855,22 +855,18 @@ struct IfStmtSyntax {
     Owned<BlockSyntax> else_block; // else branch (optional)
 };
 
-/// Minimal POC pattern for `if let` (RFC e-1, Wave-19 Lane 3b F2).
+/// Pattern form accepted by `if let`.
 /// Only variant forms are accepted: `VariantName` (unit variant) or
-/// `VariantName(x[, y]*)` (tuple-like).  Narrowing / exhaustive-pattern
-/// semantics are intentionally deferred; this struct stores exactly the
-/// source shape the grammar accepts.
+/// `VariantName(x[, y]*)` (tuple-like).
 struct IfLetPatternSyntax {
     ahfl::SourceRange range;
     std::string variant_name;            // e.g. "Some"
     std::vector<std::string> bindings;   // e.g. {"x"} for `Some(x)`
 };
 
-/// `if let` pattern-match statement (RFC e-1, Wave-19 Lane 3b F2, minimal POC).
+/// `if let` pattern-match statement.
 /// Pattern match against `scrutinee`; on success execute `then_block` with
 /// bindings in scope, otherwise fall through to `else_block` (when present).
-/// Type narrowing / TypedHIR lowering are NOT implemented in this POC — this
-/// node exists only at the syntax layer (parse + AST + printer + formatter).
 struct IfLetStmtSyntax {
     ahfl::SourceRange range;
     Owned<IfLetPatternSyntax> pattern;   // variant pattern on the left of `=`
@@ -954,7 +950,7 @@ struct StatementSyntax {
     Owned<LetStmtSyntax> let_stmt;
     Owned<AssignStmtSyntax> assign_stmt;
     Owned<IfStmtSyntax> if_stmt;
-    Owned<IfLetStmtSyntax> if_let_stmt;       // RFC e-1, Wave-19 Lane 3b: if let Variant(x) = e { }
+    Owned<IfLetStmtSyntax> if_let_stmt;       // if let Variant(x) = e { }
     Owned<GotoStmtSyntax> goto_stmt;
     Owned<ReturnStmtSyntax> return_stmt;
     Owned<AssertStmtSyntax> assert_stmt;

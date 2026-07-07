@@ -411,6 +411,14 @@ struct IfStatement {
     Owned<Block> else_block; // else branch (optional)
 };
 
+/// Pattern conditional statement: if let Pattern = scrutinee { then } else { else }
+struct IfLetStatement {
+    MatchPattern pattern;
+    ExprRef scrutinee;
+    Owned<Block> then_block;
+    Owned<Block> else_block;
+};
+
 /// State jump statement: goto StateName;
 struct GotoStatement {
     std::string target_state; // Target state name
@@ -458,10 +466,11 @@ struct ExprStatement {
     ExprRef expr;
 };
 
-/// Statement node (11 variant alternatives)
+/// Statement node (12 variant alternatives)
 using StatementNode = std::variant<LetStatement,
                                    AssignStatement,
                                    IfStatement,
+                                   IfLetStatement,
                                    GotoStatement,
                                    ReturnStatement,
                                    AssertStatement,

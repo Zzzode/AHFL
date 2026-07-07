@@ -102,7 +102,7 @@ ResponseParseResult ResponseParser::parse_primitive(const std::string &value_str
     if (const auto *enum_decl = find_enum(type_name)) {
         // Validate whether the variant is legal
         for (const auto &variant : enum_decl->variants) {
-            if (variant == value_str) {
+            if (variant.name == value_str) {
                 return parse_success(evaluator::make_enum(type_name, value_str));
             }
         }

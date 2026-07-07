@@ -100,6 +100,53 @@ module adt_match;
     return has_diagnostic_code(result.diagnostics, code_substring);
 }
 
+[[nodiscard]] const ahfl::Diagnostic *
+find_diagnostic_with_code(const ahfl::DiagnosticBag &diagnostics, std::string_view code_substring) {
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && entry.code->find(code_substring) != std::string::npos) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::size_t diagnostic_count_with_code(const ahfl::DiagnosticBag &diagnostics,
+                                                     std::string_view code_substring) {
+    return static_cast<std::size_t>(
+        std::count_if(diagnostics.entries().begin(),
+                      diagnostics.entries().end(),
+                      [&](const ahfl::Diagnostic &entry) {
+                          return entry.code.has_value() &&
+                                 entry.code->find(code_substring) != std::string::npos;
+                      }));
+}
+
+[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
+                                       std::string_view message_substring) {
+    return std::any_of(diagnostics.entries().begin(),
+                       diagnostics.entries().end(),
+                       [&](const ahfl::Diagnostic &entry) {
+                           if (entry.message.find(message_substring) != std::string::npos) {
+                               return true;
+                           }
+                           return std::any_of(entry.related.begin(),
+                                              entry.related.end(),
+                                              [&](const ahfl::Diagnostic::Related &related) {
+                                                  return related.message.find(message_substring) !=
+                                                         std::string::npos;
+                                              });
+                       });
+}
+
+[[nodiscard]] bool related_contains(const ahfl::Diagnostic &diagnostic,
+                                    std::string_view message_substring) {
+    return std::any_of(diagnostic.related.begin(),
+                       diagnostic.related.end(),
+                       [&](const ahfl::Diagnostic::Related &related) {
+                           return related.message.find(message_substring) != std::string::npos;
+                       });
+}
+
 // Match lives inside a flow state body. The harness below wraps a `match`
 // expression inside a minimal agent + flow whose context exposes an
 // enum-typed field, so the scrutinee `ctx.value` resolves to the enum type
@@ -195,9 +242,9 @@ enum Light { Red, Green, Blue, }
 }
 
 // ---------------------------------------------------------------------------
-// Exhaustiveness: a missing variant reports MATCH_NOT_EXHAUSTIVE.
+// Exhaustiveness: a missing variant reports MATCH_MISSING_PATTERNS.
 // ---------------------------------------------------------------------------
-TEST_CASE("non-exhaustive match reports MATCH_NOT_EXHAUSTIVE") {
+TEST_CASE("non-exhaustive match reports MATCH_MISSING_PATTERNS with related notes") {
     const auto source = wrap_in_flow(
         R"AHFL(
 enum Light { Red, Green, Blue, }
@@ -208,11 +255,17 @@ enum Light { Red, Green, Blue, }
         "match ctx.value { Red => 1, Green => 2 }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
-    CHECK(has_diagnostic_code(result, "MATCH_NOT_EXHAUSTIVE"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->severity == ahfl::DiagnosticSeverity::Error);
+    CHECK(diagnostic->message.find("Blue") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "enum 'adt_match::Light' declared here"));
+    CHECK(related_contains(*diagnostic, "missing variant 'Blue' declared here"));
 }
 
 // ---------------------------------------------------------------------------
-// Wildcard arm makes any match exhaustive (no MATCH_NOT_EXHAUSTIVE).
+// Wildcard arm makes any match exhaustive.
 // ---------------------------------------------------------------------------
 TEST_CASE("wildcard arm satisfies exhaustiveness") {
     const auto source = wrap_in_flow(
@@ -241,6 +294,141 @@ enum Light { Red, Green, Blue, }
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("wildcard followed by variants reports overlap and unreachable warnings") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { _ => 0, Red => 1, Green => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 2);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 2);
+    const auto *unreachable =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM");
+    REQUIRE(unreachable != nullptr);
+    CHECK(unreachable->severity == ahfl::DiagnosticSeverity::Warning);
+    CHECK(related_contains(*unreachable, "previously covered by arm #1"));
+}
+
+TEST_CASE("duplicate variant arm reports overlap and unreachable warnings") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red => 1, Red => 2, Green => 3, Blue => 4 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
+    const auto *overlap = find_diagnostic_with_code(result.diagnostics, "MATCH_OVERLAP");
+    REQUIRE(overlap != nullptr);
+    CHECK(overlap->severity == ahfl::DiagnosticSeverity::Warning);
+    CHECK(overlap->message.find("arm #1") != std::string::npos);
+    CHECK(related_contains(*overlap, "overlaps with previous arm #1"));
+}
+
+TEST_CASE("catch-all after full variant coverage reports unreachable warning") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red => 1, Green => 2, Blue => 3, _ => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 3);
+    const auto *unreachable =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM");
+    REQUIRE(unreachable != nullptr);
+    CHECK(related_contains(*unreachable, "previously covered by arm #1"));
+    CHECK(related_contains(*unreachable, "previously covered by arm #2"));
+    CHECK(related_contains(*unreachable, "previously covered by arm #3"));
+}
+
+TEST_CASE("guarded arm does not satisfy exhaustiveness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red if true => 1, Green => 2, Blue => 3 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Red") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "missing variant 'Red' declared here"));
+}
+
+TEST_CASE("guarded arm does not make later same variant unreachable") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red if true => 1, Red => 2, Green => 3, Blue => 4 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
+}
+
+TEST_CASE("empty coverage pattern does not overlap wildcard") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { 1 => 0, _ => 1 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 0);
+}
+
+TEST_CASE("match guard must be Bool") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red if 1 => 1, Red => 2, Green => 3, Blue => 4 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+    CHECK(diagnostics_contain(result.diagnostics, "match guard must have type Bool"));
+}
+
+TEST_CASE("match guard must be pure") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Light { Red, Green, Blue, }
+
+fn nondet_guard() -> Bool effect Nondet {
+    return true;
+}
+)AHFL",
+        "Light",
+        "Light::Red",
+        "match ctx.value { Red if nondet_guard() => 1, Red => 2, Green => 3, Blue => 4 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "NON_PURE_EXPRESSION"));
+    CHECK(diagnostics_contain(result.diagnostics, "match guard must be pure"));
+}
+
 // ---------------------------------------------------------------------------
 // Exhaustiveness over a payload enum: covering both Some and None compiles.
 // ---------------------------------------------------------------------------
@@ -259,7 +447,7 @@ enum Maybe { Some(Int), None, }
 // ---------------------------------------------------------------------------
 // Narrowing: a variant pattern with a payload binding narrows the binding to
 // the payload slot type. Body referencing the binding must type-check against
-// that type (Int). Skipping a variant reports MATCH_NOT_EXHAUSTIVE.
+// that type (Int). Skipping a variant reports MATCH_MISSING_PATTERNS.
 // ---------------------------------------------------------------------------
 TEST_CASE("variant pattern binds payload slot type") {
     const auto source = wrap_in_flow(
@@ -363,6 +551,23 @@ enum Packet {
     CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
 }
 
+TEST_CASE("struct variant pattern duplicate field reports DUPLICATE_VARIANT_FIELD") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, label: "ok" })AHFL",
+        "match ctx.value { Data { code, code: _, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
+    CHECK_FALSE(has_diagnostic_code(result, "DUPLICATE_FIELD"));
+}
+
 TEST_CASE("struct variant pattern binds named fields") {
     const auto source = wrap_in_flow(
         R"AHFL(
@@ -397,6 +602,21 @@ enum Packet {
     const auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE("struct variant pattern supports explicit field pattern and constructor field order") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { label: "ok", code: 7 })AHFL",
+        "match ctx.value { Data { label: _, code: captured } => captured, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
 }
 
 TEST_CASE("struct variant constructor may omit defaulted field") {
@@ -556,6 +776,23 @@ enum Packet {
     CHECK(has_diagnostic_code(result, "MISSING_VARIANT_FIELD_IN_CONSTRUCTOR"));
 }
 
+TEST_CASE("struct variant constructor duplicate field reports DUPLICATE_VARIANT_FIELD") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+)AHFL",
+        "Packet",
+        R"AHFL(Packet::Data { code: 7, code: 8, label: "ok" })AHFL",
+        "match ctx.value { Data { code, .. } => code, Empty => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
+    CHECK_FALSE(has_diagnostic_code(result, "DUPLICATE_FIELD"));
+}
+
 TEST_CASE("struct variant constructor unexpected field reports UNEXPECTED_VARIANT_FIELD") {
     const auto source = wrap_in_flow(
         R"AHFL(
@@ -582,9 +819,15 @@ enum Result_ { Ok(Int), Err(Int), Initial, }
 )AHFL",
         "Result_",
         "Result_::Initial",
-        // Err/Initial not covered -> MATCH_NOT_EXHAUSTIVE.
+        // Err/Initial not covered -> MATCH_MISSING_PATTERNS.
         "match ctx.value { Ok(v) => v }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
-    CHECK(has_diagnostic_code(result, "MATCH_NOT_EXHAUSTIVE"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Err") != std::string::npos);
+    CHECK(diagnostic->message.find("Initial") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "missing variant 'Err' declared here"));
+    CHECK(related_contains(*diagnostic, "missing variant 'Initial' declared here"));
 }

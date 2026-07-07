@@ -184,8 +184,10 @@ TypePtr apply_expression_flow_narrowing(TypePtr type,
     };
 
     if (positive_variant != nullptr && variant_exists(positive_variant->variant_name)) {
-        return types.enum_variant_type(
-            enum_type->canonical_name, positive_variant->variant_name, enum_type->symbol);
+        return types.enum_variant_type(enum_type->canonical_name,
+                                       positive_variant->variant_name,
+                                       enum_type->symbol,
+                                       std::vector<TypePtr>(enum_type->type_args));
     }
 
     if (!enum_info.has_value() || excluded_variants.empty()) {
@@ -205,8 +207,10 @@ TypePtr apply_expression_flow_narrowing(TypePtr type,
     }
 
     if (remaining != nullptr) {
-        return types.enum_variant_type(
-            enum_type->canonical_name, remaining->name, enum_type->symbol);
+        return types.enum_variant_type(enum_type->canonical_name,
+                                       remaining->name,
+                                       enum_type->symbol,
+                                       std::vector<TypePtr>(enum_type->type_args));
     }
 
     return type;

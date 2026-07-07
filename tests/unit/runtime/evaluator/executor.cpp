@@ -54,6 +54,30 @@ TypeRef make_int_type_ref() {
     };
 }
 
+ExprRef make_local_path_expr(std::string name) {
+    PathExpr path_expr;
+    path_expr.path.root_kind = PathRootKind::Local;
+    path_expr.path.root_name = std::move(name);
+    return make_expr_ptr(std::move(path_expr));
+}
+
+MatchPattern make_some_binding_pattern(std::string binding_name) {
+    VariantPattern variant;
+    variant.path = "Some";
+    variant.kind = VariantPatternKind::Tuple;
+    const auto pattern_text = binding_name;
+    variant.subpatterns.push_back(std::make_unique<MatchPattern>(MatchPattern{
+        .node = BindingPattern{.name = std::move(binding_name), .is_mut = false, .nested = nullptr},
+        .source_range = std::nullopt,
+        .text = pattern_text,
+    }));
+    return MatchPattern{
+        .node = std::move(variant),
+        .source_range = std::nullopt,
+        .text = "Some(" + pattern_text + ")",
+    };
+}
+
 // ============================================================================
 // LetStatement Tests
 // ============================================================================
@@ -167,6 +191,88 @@ void test_if_condition_not_bool_error() {
                                       nullptr});
     auto result = exec_statement(stmt, ctx);
     check(result.has_errors(), "if_not_bool.has_error");
+}
+
+void test_if_let_some_binds_payload_for_then_branch() {
+    ExecContext ctx;
+    std::vector<Value> payload;
+    payload.push_back(make_int(7));
+    ctx.eval_ctx.bind_local("maybe", make_enum("std::option::Option", "Some", std::move(payload)));
+
+    Block then_block;
+    then_block.statements.push_back(make_stmt_ptr(ReturnStatement{make_local_path_expr("x")}));
+    Block else_block;
+    else_block.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(IntegerLiteralExpr{"0"})}));
+
+    auto stmt = make_stmt(IfLetStatement{
+        .pattern = make_some_binding_pattern("x"),
+        .scrutinee = make_local_path_expr("maybe"),
+        .then_block = std::make_unique<Block>(std::move(then_block)),
+        .else_block = std::make_unique<Block>(std::move(else_block)),
+    });
+    auto result = exec_statement(stmt, ctx);
+    check(!result.has_errors(), "if_let_some.no_error");
+    auto *ret = std::get_if<ExecReturn>(&result.outcome);
+    check(ret != nullptr, "if_let_some.returns");
+    auto *iv = ret != nullptr ? std::get_if<IntValue>(&ret->value.node) : nullptr;
+    check(iv != nullptr && iv->value == 7, "if_let_some.payload_returned");
+    check(!ctx.eval_ctx.get_local("x").has_value(), "if_let_some.payload_not_leaked");
+}
+
+void test_if_let_non_matching_variant_runs_else_branch() {
+    ExecContext ctx;
+    ctx.eval_ctx.bind_local("maybe", make_enum("std::option::Option", "None"));
+
+    Block then_block;
+    then_block.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(IntegerLiteralExpr{"1"})}));
+    Block else_block;
+    else_block.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(IntegerLiteralExpr{"0"})}));
+
+    auto stmt = make_stmt(IfLetStatement{
+        .pattern = make_some_binding_pattern("x"),
+        .scrutinee = make_local_path_expr("maybe"),
+        .then_block = std::make_unique<Block>(std::move(then_block)),
+        .else_block = std::make_unique<Block>(std::move(else_block)),
+    });
+    auto result = exec_statement(stmt, ctx);
+    check(!result.has_errors(), "if_let_else.no_error");
+    auto *ret = std::get_if<ExecReturn>(&result.outcome);
+    check(ret != nullptr, "if_let_else.returns");
+    auto *iv = ret != nullptr ? std::get_if<IntValue>(&ret->value.node) : nullptr;
+    check(iv != nullptr && iv->value == 0, "if_let_else.else_returned");
+    check(!ctx.eval_ctx.get_local("x").has_value(), "if_let_else.no_payload_binding");
+}
+
+void test_if_let_restores_only_payload_bindings() {
+    ExecContext ctx;
+    std::vector<Value> payload;
+    payload.push_back(make_int(7));
+    ctx.eval_ctx.bind_local("maybe", make_enum("std::option::Option", "Some", std::move(payload)));
+    ctx.eval_ctx.bind_local("keep", make_int(1));
+
+    Block then_block;
+    then_block.statements.push_back(make_stmt_ptr(LetStatement{
+        .name = "keep",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+    }));
+
+    auto stmt = make_stmt(IfLetStatement{
+        .pattern = make_some_binding_pattern("x"),
+        .scrutinee = make_local_path_expr("maybe"),
+        .then_block = std::make_unique<Block>(std::move(then_block)),
+        .else_block = nullptr,
+    });
+    auto result = exec_statement(stmt, ctx);
+    check(!result.has_errors(), "if_let_scope.no_error");
+    check(std::holds_alternative<ExecContinue>(result.outcome), "if_let_scope.continues");
+    auto keep = ctx.eval_ctx.get_local("keep");
+    auto *iv = keep.has_value() ? std::get_if<IntValue>(&keep->node) : nullptr;
+    check(iv != nullptr && iv->value == 2, "if_let_scope.keep_updated");
+    check(!ctx.eval_ctx.get_local("x").has_value(), "if_let_scope.payload_not_leaked");
 }
 
 // ============================================================================
@@ -320,6 +426,9 @@ int main() {
     test_if_false_branch_no_else();
     test_if_false_with_else_block();
     test_if_condition_not_bool_error();
+    test_if_let_some_binds_payload_for_then_branch();
+    test_if_let_non_matching_variant_runs_else_branch();
+    test_if_let_restores_only_payload_bindings();
     test_goto_statement();
     test_return_statement_with_value();
     test_assert_pass();

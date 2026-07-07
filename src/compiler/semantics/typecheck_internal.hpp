@@ -140,6 +140,10 @@ class DiagnosticReporter {
                          std::string message,
                          SourceRange range,
                          std::vector<Diagnostic::Related> notes);
+    void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                           std::string message,
+                           SourceRange range,
+                           std::vector<Diagnostic::Related> notes);
 
   private:
     DiagnosticBag *diagnostics_{nullptr};
@@ -612,6 +616,10 @@ class TypeCheckPass final {
                               std::string message,
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes);
+    void typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                std::string message,
+                                SourceRange range,
+                                std::vector<Diagnostic::Related> notes);
     void non_pure_error_here(std::string_view context_label, ExprEffect effect, SourceRange range);
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypeResolver make_type_resolver();

@@ -392,7 +392,11 @@ namespace {
             if (decl == nullptr) {
                 return SchemaValidationResult::ok();
             }
-            if (std::ranges::find(decl->variants, ev->variant) == decl->variants.end()) {
+            const auto variant_exists =
+                std::ranges::any_of(decl->variants, [&](const ir::EnumVariantDecl &variant) {
+                    return variant.name == ev->variant;
+                });
+            if (!variant_exists) {
                 return SchemaValidationResult::fail(at_path(path,
                                                             "unknown enum variant '" + ev->variant +
                                                                 "' for enum '" + decl->name + "'"));

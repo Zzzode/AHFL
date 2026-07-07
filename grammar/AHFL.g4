@@ -424,9 +424,7 @@ assignStmt: lValue '=' expr ';';
 
 ifStmt: 'if' expr block ('else' block)?;
 
-// RFC e-1 (Wave-19 Lane 3b F2): optional narrowing surface syntax, minimal POC.
-// Only VariantName(ident[, ident]*) patterns are accepted at this stage.
-// Narrowing semantics / typecheck integration are deliberately deferred.
+// RFC 0002: if-let statement with unit or tuple variant binding pattern.
 ifLetStmt: 'if' 'let' iflet_pattern=ifLetPattern '=' expr thenBlock=block ('else' elseBlock=block)?;
 ifLetPattern: variant=IDENT ('(' ifLetPatternVar (',' ifLetPatternVar)* ','? ')')?;
 ifLetPatternVar: IDENT;

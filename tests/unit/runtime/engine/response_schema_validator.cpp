@@ -117,7 +117,8 @@ Program build_schema_program() {
 
     EnumDecl priority;
     priority.name = "Priority";
-    priority.variants = {"Low", "High"};
+    priority.variants.push_back(EnumVariantDecl{.name = "Low"});
+    priority.variants.push_back(EnumVariantDecl{.name = "High"});
     program.declarations.push_back(std::move(priority));
 
     StructDecl request;

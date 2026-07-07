@@ -100,6 +100,10 @@ void EvalContext::bind_local(const std::string &name, Value value) {
     local_scope_.insert_or_assign(name, std::move(value));
 }
 
+void EvalContext::erase_local(const std::string &name) {
+    local_scope_.erase(name);
+}
+
 std::optional<Value> EvalContext::get_local(const std::string &name) const {
     auto it = local_scope_.find(name);
     if (it == local_scope_.end())

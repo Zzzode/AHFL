@@ -259,6 +259,16 @@ void check_std_string_option(ahfl::TypePtr type) {
     CHECK(type->describe() == "std::option::Option<String>");
 }
 
+[[nodiscard]] bool has_diagnostic_code(const ahfl::TypeCheckResult &result,
+                                       std::string_view code_substring) {
+    return std::any_of(result.diagnostics.entries().begin(),
+                       result.diagnostics.entries().end(),
+                       [&](const ahfl::Diagnostic &entry) {
+                           return entry.code.has_value() &&
+                                  entry.code->find(code_substring) != std::string::npos;
+                       });
+}
+
 // Deep recursive AST walker that finds the top-level binary NotEqual node
 // inside an expression subtree. Lives at namespace scope (local classes may
 // not contain templates, but the visitor overloads are non-template member
@@ -399,6 +409,346 @@ TEST_CASE("Optional flow narrowing unwraps std nominal Option") {
         ahfl::apply_expression_flow_narrowing(option_type, token_place, facts, environment, types);
     REQUIRE(narrowed != nullptr);
     CHECK(narrowed->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("If-let Some narrows scrutinee and introduces payload binding") {
+    const std::string body = "        if let Some(value) = ctx.token {\n"
+                             "            return Response { value: value };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
+    const auto source = render_body(body, kSkeletonString);
+
+    const auto project = typecheck_project_source(source, "if_let_some_narrow_project");
+
+    const auto *scrutinee = find_project_expr_by_nth(project, "ctx.token", 1);
+    REQUIRE(scrutinee != nullptr);
+    check_std_string_option(scrutinee->type);
+
+    const auto payload_binding =
+        std::find_if(project.typecheck.typed_program.expressions.begin(),
+                     project.typecheck.typed_program.expressions.end(),
+                     [source_id = project.app_source_id](const ahfl::TypedExpr &expr) {
+                         return expr.semantic_name == "value" && expr.source_id == source_id &&
+                                expr.type != nullptr && expr.type->holds<ahfl::types::StringT>();
+                     });
+    REQUIRE(payload_binding != project.typecheck.typed_program.expressions.end());
+}
+
+TEST_CASE("If-let Some narrows original scrutinee path on then branch") {
+    const std::string body = "        if let Some(value) = ctx.token {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
+    const auto source = render_body(body, kSkeletonString);
+
+    const auto project = typecheck_project_source(source, "if_let_some_scrutinee_narrow_project");
+
+    const auto *then_use = find_project_expr_by_nth(project, "ctx.token", 2);
+    REQUIRE(then_use != nullptr);
+    REQUIRE(then_use->type != nullptr);
+    CHECK(then_use->type->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("If-let None exposes non-none complement in else branch") {
+    const std::string body = "        if let None = ctx.token {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        } else {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        }\n";
+    const auto source = render_body(body, kSkeletonString);
+
+    const auto project = typecheck_project_source(source, "if_let_none_else_narrow_project");
+
+    const auto *scrutinee = find_project_expr_by_nth(project, "ctx.token", 1);
+    REQUIRE(scrutinee != nullptr);
+    check_std_string_option(scrutinee->type);
+
+    const auto *else_use = find_project_expr_by_nth(project, "ctx.token", 2);
+    REQUIRE(else_use != nullptr);
+    REQUIRE(else_use->type != nullptr);
+    CHECK(else_use->type->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("Option is_some method narrows receiver to non-none on then branch") {
+    const std::string body = "        if ctx.token.is_some() {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        } else {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        }\n";
+    const auto source = render_body(body, kSkeletonString);
+
+    const auto project = typecheck_project_source(source, "option_is_some_narrow_project");
+
+    const auto *then_use = find_project_expr_by_nth(project, "ctx.token", 2);
+    REQUIRE(then_use != nullptr);
+    REQUIRE(then_use->type != nullptr);
+    CHECK(then_use->type->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("Option is_none method narrows receiver to non-none on else branch") {
+    const std::string body = "        if ctx.token.is_none() {\n"
+                             "            return Response { value: input.fallback };\n"
+                             "        } else {\n"
+                             "            return Response { value: ctx.token };\n"
+                             "        }\n";
+    const auto source = render_body(body, kSkeletonString);
+
+    const auto project = typecheck_project_source(source, "option_is_none_narrow_project");
+
+    const auto *else_use = find_project_expr_by_nth(project, "ctx.token", 2);
+    REQUIRE(else_use != nullptr);
+    REQUIRE(else_use->type != nullptr);
+    CHECK(else_use->type->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("Result is_ok method narrows receiver to Ok variant on then branch") {
+    const std::string source = R"AHFL(
+import std::option;
+import std::result;
+
+struct Context {
+    token: option::Option<String> = option::Option::None;
+}
+
+fn keep(answer: result::Result<Int, String>) -> result::Result<Int, String> {
+    if answer.is_ok() {
+        return answer;
+    } else {
+        return result::Result::Err("bad");
+    }
+}
+)AHFL";
+
+    const auto project = typecheck_project_source(source, "result_is_ok_narrow_project");
+
+    const auto then_use =
+        std::find_if(project.typecheck.typed_program.expressions.begin(),
+                     project.typecheck.typed_program.expressions.end(),
+                     [source_id = project.app_source_id](const ahfl::TypedExpr &expr) {
+                         return expr.semantic_name == "answer" && expr.source_id == source_id &&
+                                expr.type != nullptr &&
+                                expr.type->holds<ahfl::types::EnumVariantT>();
+                     });
+    REQUIRE(then_use != project.typecheck.typed_program.expressions.end());
+    const auto *variant = then_use->type->get_if<ahfl::types::EnumVariantT>();
+    REQUIRE(variant != nullptr);
+    CHECK(variant->canonical_name == "std::result::Result");
+    CHECK(variant->variant_name == "Ok");
+    CHECK(variant->type_args.size() == 2);
+    REQUIRE(variant->type_args[0] != nullptr);
+    REQUIRE(variant->type_args[1] != nullptr);
+    CHECK(variant->type_args[0]->holds<ahfl::types::IntT>());
+    CHECK(variant->type_args[1]->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("Result is_err method narrows receiver to Err variant on then branch") {
+    const std::string source = R"AHFL(
+import std::option;
+import std::result;
+
+struct Context {
+    token: option::Option<String> = option::Option::None;
+}
+
+fn keep(answer: result::Result<Int, String>) -> result::Result<Int, String> {
+    if answer.is_err() {
+        return answer;
+    } else {
+        return result::Result::Ok(1);
+    }
+}
+)AHFL";
+
+    const auto project = typecheck_project_source(source, "result_is_err_narrow_project");
+
+    const auto then_use =
+        std::find_if(project.typecheck.typed_program.expressions.begin(),
+                     project.typecheck.typed_program.expressions.end(),
+                     [source_id = project.app_source_id](const ahfl::TypedExpr &expr) {
+                         return expr.semantic_name == "answer" && expr.source_id == source_id &&
+                                expr.type != nullptr &&
+                                expr.type->holds<ahfl::types::EnumVariantT>();
+                     });
+    REQUIRE(then_use != project.typecheck.typed_program.expressions.end());
+    const auto *variant = then_use->type->get_if<ahfl::types::EnumVariantT>();
+    REQUIRE(variant != nullptr);
+    CHECK(variant->canonical_name == "std::result::Result");
+    CHECK(variant->variant_name == "Err");
+    CHECK(variant->type_args.size() == 2);
+    REQUIRE(variant->type_args[0] != nullptr);
+    REQUIRE(variant->type_args[1] != nullptr);
+    CHECK(variant->type_args[0]->holds<ahfl::types::IntT>());
+    CHECK(variant->type_args[1]->holds<ahfl::types::StringT>());
+}
+
+TEST_CASE("Match arm narrows scrutinee path to selected enum variant") {
+    const std::string source = R"AHFL(
+module match_narrowing;
+
+enum Priority {
+    Low,
+    High,
+}
+
+fn keep(level: Priority) -> Priority {
+    return match level {
+        High => level,
+        Low => Priority::Low,
+    };
+}
+)AHFL";
+
+    const auto result = typecheck_source(source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *arm_use = find_expr_by_nth(source, result, "level", 3);
+    REQUIRE(arm_use != nullptr);
+    REQUIRE(arm_use->type != nullptr);
+    const auto *variant = arm_use->type->get_if<ahfl::types::EnumVariantT>();
+    REQUIRE(variant != nullptr);
+    CHECK(variant->canonical_name == "match_narrowing::Priority");
+    CHECK(variant->variant_name == "High");
+}
+
+TEST_CASE("If-let rejects unknown variant and tuple payload arity mismatch") {
+    const std::string unknown_variant = R"AHFL(
+module iflet_negative;
+
+enum Choice {
+    A,
+    B(Int),
+}
+
+fn pick(value: Choice) -> Int {
+    if let Missing = value {
+        return 1;
+    }
+    return 0;
+}
+)AHFL";
+
+    const auto unknown = typecheck_source(unknown_variant);
+    CHECK(unknown.has_errors());
+    CHECK(has_diagnostic_code(unknown, "MATCH_UNKNOWN_VARIANT"));
+
+    const std::string wrong_arity = R"AHFL(
+module iflet_negative;
+
+enum Choice {
+    A,
+    B(Int),
+}
+
+fn pick(value: Choice) -> Int {
+    if let B(left, right) = value {
+        return left;
+    }
+    return 0;
+}
+)AHFL";
+
+    const auto arity = typecheck_source(wrong_arity);
+    CHECK(arity.has_errors());
+    CHECK(has_diagnostic_code(arity, "MATCH_VARIANT_PAYLOAD_ARITY"));
+}
+
+TEST_CASE("If-let rejects non-enum scrutinee, shape mismatch, and duplicate bindings") {
+    const std::string non_enum_scrutinee = R"AHFL(
+module iflet_negative;
+
+fn pick(value: Int) -> Int {
+    if let Some(x) = value {
+        return x;
+    }
+    return 0;
+}
+)AHFL";
+
+    const auto non_enum = typecheck_source(non_enum_scrutinee);
+    CHECK(non_enum.has_errors());
+    CHECK(has_diagnostic_code(non_enum, "MATCH_SCRUTINEE_REQUIRES_ENUM"));
+
+    const std::string shape_mismatch = R"AHFL(
+module iflet_negative;
+
+enum Choice {
+    A,
+    B(Int),
+}
+
+fn pick(value: Choice) -> Int {
+    if let B = value {
+        return 1;
+    }
+    return 0;
+}
+)AHFL";
+
+    const auto shape = typecheck_source(shape_mismatch);
+    CHECK(shape.has_errors());
+    CHECK(has_diagnostic_code(shape, "INVALID_ENUM_VARIANT_SHAPE"));
+
+    const std::string duplicate_binding = R"AHFL(
+module iflet_negative;
+
+enum Choice {
+    A,
+    B(Int, Int),
+}
+
+fn pick(value: Choice) -> Int {
+    if let B(left, left) = value {
+        return left;
+    }
+    return 0;
+}
+)AHFL";
+
+    const auto duplicate = typecheck_source(duplicate_binding);
+    CHECK(duplicate.has_errors());
+    CHECK(has_diagnostic_code(duplicate, "MATCH_DUPLICATE_BINDING"));
+}
+
+TEST_CASE("If-let rejects non-pure scrutinee") {
+    const std::string source = R"AHFL(
+capability Fetch() -> Choice;
+
+enum Choice {
+    A,
+    B(Int),
+}
+
+struct Request {}
+struct Context {}
+struct Response {
+    value: Int;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Fetch];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if let A = Fetch() {
+            return Response { value: 1 };
+        }
+        return Response { value: 0 };
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "NON_PURE_EXPRESSION"));
 }
 
 // ---------------------------------------------------------------------------

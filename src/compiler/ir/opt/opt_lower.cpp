@@ -1,7 +1,11 @@
 #include "compiler/ir/opt/opt_lower.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
+
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -84,6 +88,13 @@ struct RootTypeHints {
     TypeRef type;
     type.kind = TypeRefKind::String;
     type.display_name = "String";
+    return type;
+}
+
+[[nodiscard]] TypeRef bool_type_ref() {
+    TypeRef type;
+    type.kind = TypeRefKind::Bool;
+    type.display_name = "Bool";
     return type;
 }
 
@@ -538,12 +549,17 @@ void lower_block(LoweringContext &ctx, const ir::Block &block);
 void lower_stmt_node(LoweringContext &ctx, const ir::LetStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::AssignStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::IfStatement &s, const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx, const ir::IfLetStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::GotoStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::ReturnStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::AssertStatement &s, const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::UnwrapStatement &s, const ir::Statement &stmt);
-void lower_stmt_node(LoweringContext &ctx, const ir::RequiresStatement &s, const ir::Statement &stmt);
-void lower_stmt_node(LoweringContext &ctx, const ir::UnreachableStatement &s, const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx,
+                     const ir::RequiresStatement &s,
+                     const ir::Statement &stmt);
+void lower_stmt_node(LoweringContext &ctx,
+                     const ir::UnreachableStatement &s,
+                     const ir::Statement &stmt);
 void lower_stmt_node(LoweringContext &ctx, const ir::ExprStatement &s, const ir::Statement &stmt);
 
 void lower_statement(LoweringContext &ctx, const ir::Statement &stmt) {
@@ -557,6 +573,54 @@ void lower_statement(LoweringContext &ctx, const ir::Statement &stmt) {
         name += member;
     }
     return name;
+}
+
+void push_pattern_binding_name(std::vector<std::string> &bindings, const std::string &name) {
+    if (name.empty() || name == "_") {
+        return;
+    }
+    if (std::find(bindings.begin(), bindings.end(), name) == bindings.end()) {
+        bindings.push_back(name);
+    }
+}
+
+void collect_pattern_bindings(const ir::MatchPattern &pattern, std::vector<std::string> &bindings);
+
+void collect_pattern_bindings(const std::unique_ptr<ir::MatchPattern> &pattern,
+                              std::vector<std::string> &bindings) {
+    if (pattern) {
+        collect_pattern_bindings(*pattern, bindings);
+    }
+}
+
+void collect_pattern_bindings(const ir::MatchPattern &pattern, std::vector<std::string> &bindings) {
+    std::visit(ahfl::Overloaded{
+                   [&](const ir::BindingPattern &binding) {
+                       push_pattern_binding_name(bindings, binding.name);
+                       collect_pattern_bindings(binding.nested, bindings);
+                   },
+                   [&](const ir::VariantPattern &variant) {
+                       for (const auto &subpattern : variant.subpatterns) {
+                           collect_pattern_bindings(subpattern, bindings);
+                       }
+                       for (const auto &field : variant.fields) {
+                           collect_pattern_bindings(field.pattern, bindings);
+                       }
+                   },
+                   [&](const ir::TuplePattern &tuple) {
+                       for (const auto &element : tuple.elements) {
+                           collect_pattern_bindings(element, bindings);
+                       }
+                   },
+                   [&](const ir::OrPattern &pattern_or) {
+                       for (const auto &branch : pattern_or.branches) {
+                           collect_pattern_bindings(branch, bindings);
+                       }
+                   },
+                   [](const ir::LiteralPattern &) {},
+                   [](const ir::WildcardPattern &) {},
+               },
+               pattern.node);
 }
 
 void lower_stmt_node(LoweringContext &ctx, const ir::LetStatement &s, const ir::Statement &stmt) {
@@ -652,6 +716,89 @@ void lower_stmt_node(LoweringContext &ctx, const ir::IfStatement &s, const ir::S
     ctx.set_current_block(merge_block);
 }
 
+void lower_stmt_node(LoweringContext &ctx, const ir::IfLetStatement &s, const ir::Statement &stmt) {
+    const auto scrutinee_range = s.scrutinee ? s.scrutinee->source_range : stmt.source_range;
+    const auto scrutinee_type = type_or_unresolved(s.scrutinee.get());
+    const auto scrutinee_local = ctx.new_temp(clone_type_ref(scrutinee_type), scrutinee_range);
+    {
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.result_type = clone_type_ref(scrutinee_type);
+        rv.operands.push_back(ctx.lower_expr(s.scrutinee.get()));
+        ctx.emit_assign(scrutinee_local, std::move(rv), scrutinee_range);
+    }
+
+    const auto bool_type = bool_type_ref();
+    const auto cond_local = ctx.new_temp(clone_type_ref(bool_type), stmt.source_range);
+    {
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Call;
+        rv.callee = s.pattern.text.empty() ? "__ahfl_if_let_match"
+                                           : "__ahfl_if_let_match:" + s.pattern.text;
+        rv.result_type = clone_type_ref(bool_type);
+        Operand scrutinee_operand;
+        scrutinee_operand.kind = Operand::Kind::Local;
+        scrutinee_operand.local = scrutinee_local;
+        rv.operands.push_back(scrutinee_operand);
+        ctx.emit_assign(cond_local, std::move(rv), stmt.source_range);
+    }
+
+    auto then_block = ctx.new_block("iflet.then");
+    auto else_block = ctx.new_block("iflet.else");
+    auto merge_block = ctx.new_block("iflet.merge");
+
+    Terminator term;
+    term.kind = Terminator::Kind::SwitchBool;
+    term.condition = cond_local;
+    term.then_block = then_block;
+    term.else_block = else_block;
+    term.source_range = stmt.source_range;
+    ctx.set_terminator(std::move(term));
+
+    ctx.set_current_block(then_block);
+    std::vector<std::string> payload_bindings;
+    collect_pattern_bindings(s.pattern, payload_bindings);
+    for (const auto &binding : payload_bindings) {
+        auto local = ctx.find_local(binding);
+        if (local == kNoLocal) {
+            local = ctx.new_local(binding, {}, /*is_temp=*/false, s.pattern.source_range);
+        }
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Call;
+        rv.callee = "__ahfl_if_let_payload:" + binding;
+        rv.result_type = {};
+        Operand scrutinee_operand;
+        scrutinee_operand.kind = Operand::Kind::Local;
+        scrutinee_operand.local = scrutinee_local;
+        rv.operands.push_back(scrutinee_operand);
+        ctx.emit_assign(local, std::move(rv), s.pattern.source_range);
+    }
+    if (s.then_block) {
+        lower_block(ctx, *s.then_block);
+    }
+    if (ctx.current_block().terminator.kind == Terminator::Kind::Unreachable) {
+        Terminator goto_merge;
+        goto_merge.kind = Terminator::Kind::Goto;
+        goto_merge.target = merge_block;
+        goto_merge.source_range = stmt.source_range;
+        ctx.set_terminator(std::move(goto_merge));
+    }
+
+    ctx.set_current_block(else_block);
+    if (s.else_block) {
+        lower_block(ctx, *s.else_block);
+    }
+    if (ctx.current_block().terminator.kind == Terminator::Kind::Unreachable) {
+        Terminator goto_merge;
+        goto_merge.kind = Terminator::Kind::Goto;
+        goto_merge.target = merge_block;
+        goto_merge.source_range = stmt.source_range;
+        ctx.set_terminator(std::move(goto_merge));
+    }
+
+    ctx.set_current_block(merge_block);
+}
+
 void lower_stmt_node(LoweringContext &ctx, const ir::GotoStatement &s, const ir::Statement &stmt) {
     // Goto translates to a Return terminator carrying the state name as a
     // string constant in a temporary (the runtime uses this to dispatch).
@@ -741,11 +888,9 @@ void lower_stmt_node(LoweringContext &ctx,
     // P4-01 conservative lower: unwrap is an assertion that the operand is
     // truthy (equivalent to `assert(e)`). The CFG does not extract T; value
     // extraction is a P4-02 follow-up.
-    const auto operand_range =
-        s.operand ? s.operand->source_range : stmt.source_range;
+    const auto operand_range = s.operand ? s.operand->source_range : stmt.source_range;
     const auto operand_type = type_or_unresolved(s.operand.get());
-    const auto operand_local =
-        ctx.new_temp(clone_type_ref(operand_type), operand_range);
+    const auto operand_local = ctx.new_temp(clone_type_ref(operand_type), operand_range);
     if (s.operand) {
         Rvalue rv;
         rv.kind = Rvalue::Kind::Use;
@@ -767,8 +912,7 @@ void lower_stmt_node(LoweringContext &ctx,
                      const ir::RequiresStatement &s,
                      const ir::Statement &stmt) {
     // Mirrors AssertStatement; BMC/opt treat requires as an assertion.
-    const auto cond_range =
-        s.condition ? s.condition->source_range : stmt.source_range;
+    const auto cond_range = s.condition ? s.condition->source_range : stmt.source_range;
     const auto cond_type = type_or_unresolved(s.condition.get());
     const auto cond_local = ctx.new_temp(clone_type_ref(cond_type), cond_range);
     if (s.condition) {

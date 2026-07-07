@@ -241,8 +241,11 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchUnknownVariant{
     "MATCH_UNKNOWN_VARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchVariantPayloadArity{
     "MATCH_VARIANT_PAYLOAD_ARITY"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchNotExhaustive{
-    "MATCH_NOT_EXHAUSTIVE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchMissingPatterns{
+    "MATCH_MISSING_PATTERNS"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchUnreachableArm{
+    "MATCH_UNREACHABLE_ARM"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchOverlap{"MATCH_OVERLAP"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchArmTypeMismatch{
     "MATCH_ARM_TYPE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
@@ -541,8 +544,10 @@ inline constexpr MessageTemplate MatchUnknownVariant{
     "match arm references unknown variant '{}' of enum '{}'"};
 inline constexpr MessageTemplate MatchVariantPayloadArity{
     "variant '{}' of enum '{}' expects {} payload slot(s), got {} in pattern"};
-inline constexpr MessageTemplate MatchNotExhaustive{
-    "match is not exhaustive: variant(s) not covered: {}"};
+inline constexpr MessageTemplate MatchMissingPatterns{
+    "non-exhaustive match: missing patterns [{}]"};
+inline constexpr MessageTemplate MatchUnreachableArm{"this match arm is unreachable"};
+inline constexpr MessageTemplate MatchOverlap{"pattern overlaps with arm #{}"};
 inline constexpr MessageTemplate MatchArmTypeMismatch{
     "match arm body type mismatch: expected {}, got {}"};
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};

@@ -220,6 +220,18 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "invalid";
 }
 
+[[nodiscard]] std::string_view enum_variant_payload_kind_name(ir::EnumVariantPayloadKind kind) {
+    switch (kind) {
+    case ir::EnumVariantPayloadKind::Unit:
+        return "unit";
+    case ir::EnumVariantPayloadKind::Tuple:
+        return "tuple";
+    case ir::EnumVariantPayloadKind::Struct:
+        return "struct";
+    }
+    return "invalid";
+}
+
 [[nodiscard]] std::string type_name(const ir::TypeRef &ref) {
     return std::string(ir::type_display_name(ref, "Any"));
 }
@@ -1067,6 +1079,25 @@ class IrJsonPrinter final {
                         });
                     });
                 },
+                [&](const ir::IfLetStatement &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("if_let"); });
+                        print_source_range_field(field, statement.source_range, indent_level + 1);
+                        field("pattern",
+                              [&]() { print_match_pattern(value.pattern, indent_level + 1); });
+                        field("scrutinee",
+                              [&]() { print_expr(*value.scrutinee, indent_level + 1); });
+                        field("then_block",
+                              [&]() { print_block(*value.then_block, indent_level + 1); });
+                        field("else_block", [&]() {
+                            if (value.else_block) {
+                                print_block(*value.else_block, indent_level + 1);
+                            } else {
+                                write_null();
+                            }
+                        });
+                    });
+                },
                 [&](const ir::GotoStatement &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("goto"); });
@@ -1350,8 +1381,101 @@ class IrJsonPrinter final {
                             field("symbol_ref",
                                   [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
                         }
-                        field("variants",
-                              [&]() { write_string_array(value.variants, indent_level + 1); });
+                        field("variants", [&]() {
+                            print_array(indent_level + 1, [&](const auto &item) {
+                                for (const auto &variant : value.variants) {
+                                    item([&]() {
+                                        print_object(indent_level + 2, [&](const auto &entry) {
+                                            entry("name", [&]() { write_string(variant.name); });
+                                            entry("payload_kind", [&]() {
+                                                write_string(enum_variant_payload_kind_name(
+                                                    variant.payload_kind));
+                                            });
+                                            print_source_range_field(
+                                                entry, variant.source_range, indent_level + 3);
+                                            entry("payload", [&]() {
+                                                print_array(
+                                                    indent_level + 3,
+                                                    [&](const auto &payload_item) {
+                                                        for (const auto &slot : variant.payload) {
+                                                            payload_item([&]() {
+                                                                print_object(
+                                                                    indent_level + 4,
+                                                                    [&](const auto &payload_entry) {
+                                                                        payload_entry(
+                                                                            "type", [&]() {
+                                                                                write_string(
+                                                                                    type_name(
+                                                                                        slot));
+                                                                            });
+                                                                        if (has_type_ref(slot)) {
+                                                                            payload_entry(
+                                                                                "type_ref", [&]() {
+                                                                                    print_type_ref(
+                                                                                        slot,
+                                                                                        indent_level +
+                                                                                            5);
+                                                                                });
+                                                                        }
+                                                                    });
+                                                            });
+                                                        }
+                                                    });
+                                            });
+                                            entry("fields", [&]() {
+                                                print_array(indent_level + 3, [&](const auto &field_item) {
+                                                    for (const auto &variant_field :
+                                                         variant.fields) {
+                                                        field_item([&]() {
+                                                            print_object(
+                                                                indent_level + 4,
+                                                                [&](const auto &field_entry) {
+                                                                    field_entry("name", [&]() {
+                                                                        write_string(
+                                                                            variant_field.name);
+                                                                    });
+                                                                    field_entry("type", [&]() {
+                                                                        write_string(type_name(
+                                                                            variant_field
+                                                                                .type_ref));
+                                                                    });
+                                                                    if (has_type_ref(
+                                                                            variant_field
+                                                                                .type_ref)) {
+                                                                        field_entry(
+                                                                            "type_ref", [&]() {
+                                                                                print_type_ref(
+                                                                                    variant_field
+                                                                                        .type_ref,
+                                                                                    indent_level +
+                                                                                        5);
+                                                                            });
+                                                                    }
+                                                                    print_source_range_field(
+                                                                        field_entry,
+                                                                        variant_field.source_range,
+                                                                        indent_level + 5);
+                                                                    field_entry("default_value", [&]() {
+                                                                        if (variant_field
+                                                                                .default_value) {
+                                                                            print_expr(
+                                                                                *variant_field
+                                                                                     .default_value,
+                                                                                indent_level + 5);
+                                                                        } else {
+                                                                            write_null();
+                                                                        }
+                                                                    });
+                                                                });
+                                                        });
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    });
+                                }
+                            });
+                        });
                     });
                 },
                 [&](const ir::CapabilityDecl &value) {

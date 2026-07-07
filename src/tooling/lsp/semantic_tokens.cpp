@@ -249,9 +249,11 @@ void collect_param_list_tokens(const std::vector<Owned<ast::ParamDeclSyntax>> &p
                                std::vector<TokenEntry> &tokens) {
     for (const auto &param : params) {
         if (param != nullptr) {
-            add_token_for_name(tokens, source, param->range, param->name, SemanticTokenType::Parameter);
+            add_token_for_name(
+                tokens, source, param->range, param->name, SemanticTokenType::Parameter);
             if (param->is_self_mut) {
-                add_token_for_name(tokens, source, param->range, "mut", SemanticTokenType::Modifier);
+                add_token_for_name(
+                    tokens, source, param->range, "mut", SemanticTokenType::Modifier);
             }
             if (param->type != nullptr) {
                 collect_type_syntax_tokens(*param->type, source, tokens);
@@ -296,9 +298,11 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                 }
                 if (t.has_effect_clause) {
                     if (t.effect_kind == ast::EffectClauseKind::Pure) {
-                        add_token_for_name(tokens, source, type.range, "Pure", SemanticTokenType::Modifier);
+                        add_token_for_name(
+                            tokens, source, type.range, "Pure", SemanticTokenType::Modifier);
                     } else if (t.effect_kind == ast::EffectClauseKind::Nondet) {
-                        add_token_for_name(tokens, source, type.range, "Nondet", SemanticTokenType::Modifier);
+                        add_token_for_name(
+                            tokens, source, type.range, "Nondet", SemanticTokenType::Modifier);
                     } else {
                         for (const auto &capability : t.effect_capabilities) {
                             if (capability != nullptr) {
@@ -319,17 +323,27 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                     }
                 }
             },
-            [&](const ast::UnitType &) { collect_primitive_type_token(type, source, tokens, "Unit"); },
-            [&](const ast::BoolType &) { collect_primitive_type_token(type, source, tokens, "Bool"); },
-            [&](const ast::IntType &) { collect_primitive_type_token(type, source, tokens, "Int"); },
-            [&](const ast::FloatType &) { collect_primitive_type_token(type, source, tokens, "Float"); },
+            [&](const ast::UnitType &) {
+                collect_primitive_type_token(type, source, tokens, "Unit");
+            },
+            [&](const ast::BoolType &) {
+                collect_primitive_type_token(type, source, tokens, "Bool");
+            },
+            [&](const ast::IntType &) {
+                collect_primitive_type_token(type, source, tokens, "Int");
+            },
+            [&](const ast::FloatType &) {
+                collect_primitive_type_token(type, source, tokens, "Float");
+            },
             [&](const ast::StringType &) {
                 collect_primitive_type_token(type, source, tokens, "String");
             },
             [&](const ast::BoundedStringType &) {
                 collect_primitive_type_token(type, source, tokens, "String");
             },
-            [&](const ast::UuidType &) { collect_primitive_type_token(type, source, tokens, "UUID"); },
+            [&](const ast::UuidType &) {
+                collect_primitive_type_token(type, source, tokens, "UUID");
+            },
             [&](const ast::TimestampType &) {
                 collect_primitive_type_token(type, source, tokens, "Timestamp");
             },
@@ -371,8 +385,11 @@ void collect_where_clause_tokens(const ast::WhereClauseSyntax &where,
             collect_type_syntax_tokens(*constraint->subject, source, tokens);
         }
         if (constraint->is_predicate) {
-            add_token_for_name(
-                tokens, source, constraint->range, constraint->trait_name, SemanticTokenType::Interface);
+            add_token_for_name(tokens,
+                               source,
+                               constraint->range,
+                               constraint->trait_name,
+                               SemanticTokenType::Interface);
             collect_type_list_tokens(constraint->arguments, source, tokens);
         } else {
             collect_type_list_tokens(constraint->bounds, source, tokens);
@@ -390,7 +407,8 @@ void collect_effect_clause_tokens(const ast::EffectClauseSyntax &effect,
     } else {
         for (const auto &capability : effect.capabilities) {
             if (capability != nullptr) {
-                collect_qualified_name_tokens(*capability, source, tokens, SemanticTokenType::Interface);
+                collect_qualified_name_tokens(
+                    *capability, source, tokens, SemanticTokenType::Interface);
             }
         }
     }
@@ -437,135 +455,138 @@ void collect_enum_variant_tokens(const ast::EnumVariantDeclSyntax &variant,
 void collect_pattern_tokens(const ast::PatternSyntax &pattern,
                             const SourceFile &source,
                             std::vector<TokenEntry> &tokens) {
-    std::visit(Overloaded{
-                   [&](const ast::LiteralPattern &p) {
-                       if (p.spelling == "true" || p.spelling == "false" || p.spelling == "none") {
-                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Keyword);
-                       } else if (!p.spelling.empty() && p.spelling.front() == '"') {
-                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::String);
-                       } else {
-                           add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Number);
-                       }
-                   },
-                   [&](const ast::VariantPattern &p) {
-                       if (p.path != nullptr) {
-                           collect_qualified_name_tokens(
-                               *p.path, source, tokens, SemanticTokenType::EnumMember);
-                       }
-                       for (const auto &subpattern : p.subpatterns) {
-                           if (subpattern != nullptr) {
-                               collect_pattern_tokens(*subpattern, source, tokens);
-                           }
-                       }
-                       for (const auto &field : p.fields) {
-                           if (field == nullptr) {
-                               continue;
-                           }
-                           if (!field->is_rest) {
-                               add_token_for_name(tokens,
-                                                  source,
-                                                  field->range,
-                                                  field->name,
-                                                  SemanticTokenType::Property);
-                           }
-                           if (field->pattern != nullptr) {
-                               collect_pattern_tokens(*field->pattern, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::WildcardPattern &) {
-                       add_token_for_name(tokens, source, pattern.range, "_", SemanticTokenType::Variable);
-                   },
-                   [&](const ast::BindingPattern &p) {
-                       if (p.is_mut) {
-                           add_token_for_name(tokens, source, pattern.range, "mut", SemanticTokenType::Modifier);
-                       }
-                       add_token_for_name(tokens, source, pattern.range, p.name, SemanticTokenType::Variable);
-                       if (p.nested != nullptr) {
-                           collect_pattern_tokens(*p.nested, source, tokens);
-                       }
-                   },
-                   [&](const ast::TuplePattern &p) {
-                       for (const auto &element : p.elements) {
-                           if (element != nullptr) {
-                               collect_pattern_tokens(*element, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::OrPattern &p) {
-                       for (const auto &branch : p.branches) {
-                           if (branch != nullptr) {
-                               collect_pattern_tokens(*branch, source, tokens);
-                           }
-                       }
-                   },
-               },
-               pattern.node);
+    std::visit(
+        Overloaded{
+            [&](const ast::LiteralPattern &p) {
+                if (p.spelling == "true" || p.spelling == "false" || p.spelling == "none") {
+                    add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Keyword);
+                } else if (!p.spelling.empty() && p.spelling.front() == '"') {
+                    add_token_from_range(tokens, source, pattern.range, SemanticTokenType::String);
+                } else {
+                    add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Number);
+                }
+            },
+            [&](const ast::VariantPattern &p) {
+                if (p.path != nullptr) {
+                    collect_qualified_name_tokens(
+                        *p.path, source, tokens, SemanticTokenType::EnumMember);
+                }
+                for (const auto &subpattern : p.subpatterns) {
+                    if (subpattern != nullptr) {
+                        collect_pattern_tokens(*subpattern, source, tokens);
+                    }
+                }
+                for (const auto &field : p.fields) {
+                    if (field == nullptr) {
+                        continue;
+                    }
+                    if (!field->is_rest) {
+                        add_token_for_name(
+                            tokens, source, field->range, field->name, SemanticTokenType::Property);
+                    }
+                    if (field->pattern != nullptr) {
+                        collect_pattern_tokens(*field->pattern, source, tokens);
+                    }
+                }
+            },
+            [&](const ast::WildcardPattern &) {
+                add_token_for_name(tokens, source, pattern.range, "_", SemanticTokenType::Variable);
+            },
+            [&](const ast::BindingPattern &p) {
+                if (p.is_mut) {
+                    add_token_for_name(
+                        tokens, source, pattern.range, "mut", SemanticTokenType::Modifier);
+                }
+                add_token_for_name(
+                    tokens, source, pattern.range, p.name, SemanticTokenType::Variable);
+                if (p.nested != nullptr) {
+                    collect_pattern_tokens(*p.nested, source, tokens);
+                }
+            },
+            [&](const ast::TuplePattern &p) {
+                for (const auto &element : p.elements) {
+                    if (element != nullptr) {
+                        collect_pattern_tokens(*element, source, tokens);
+                    }
+                }
+            },
+            [&](const ast::OrPattern &p) {
+                for (const auto &branch : p.branches) {
+                    if (branch != nullptr) {
+                        collect_pattern_tokens(*branch, source, tokens);
+                    }
+                }
+            },
+        },
+        pattern.node);
 }
 
 void collect_temporal_tokens(const ast::TemporalExprSyntax &expr,
                              const SourceFile &source,
                              std::vector<TokenEntry> &tokens) {
-    std::visit(Overloaded{
-                   [&](const ast::EmbeddedTemporalExpr &e) {
-                       if (e.expr != nullptr) {
-                           collect_expr_tokens(*e.expr, source, tokens);
-                       }
-                   },
-                   [&](const ast::CalledTemporalExpr &e) {
-                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Interface);
-                   },
-                   [&](const ast::InStateTemporalExpr &e) {
-                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
-                   },
-                   [&](const ast::RunningTemporalExpr &e) {
-                       add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
-                   },
-                   [&](const ast::CompletedTemporalExpr &e) {
-                       std::size_t cursor = expr.range.begin_offset;
-                       add_token_for_name_in_order(
-                           tokens, source, expr.range, cursor, e.name, SemanticTokenType::Variable);
-                       if (e.state_name.has_value()) {
-                           add_token_for_name_in_order(tokens,
-                                                       source,
-                                                       expr.range,
-                                                       cursor,
-                                                       *e.state_name,
-                                                       SemanticTokenType::Variable);
-                       }
-                   },
-                   [&](const ast::UnaryTemporalExpr &e) {
-                       const auto op = [&] {
-                           switch (e.op) {
-                           case ast::TemporalUnaryOp::Always:
-                               return std::string_view{"always"};
-                           case ast::TemporalUnaryOp::Eventually:
-                               return std::string_view{"eventually"};
-                           case ast::TemporalUnaryOp::Next:
-                               return std::string_view{"next"};
-                           case ast::TemporalUnaryOp::Not:
-                               return std::string_view{"not"};
-                           }
-                           return std::string_view{};
-                       }();
-                       add_token_for_name(tokens, source, expr.range, op, SemanticTokenType::Keyword);
-                       if (e.operand != nullptr) {
-                           collect_temporal_tokens(*e.operand, source, tokens);
-                       }
-                   },
-                   [&](const ast::BinaryTemporalExpr &e) {
-                       if (e.op == ast::TemporalBinaryOp::Until) {
-                           add_token_for_name(tokens, source, expr.range, "until", SemanticTokenType::Keyword);
-                       }
-                       if (e.lhs != nullptr) {
-                           collect_temporal_tokens(*e.lhs, source, tokens);
-                       }
-                       if (e.rhs != nullptr) {
-                           collect_temporal_tokens(*e.rhs, source, tokens);
-                       }
-                   },
-               },
-               expr.node);
+    std::visit(
+        Overloaded{
+            [&](const ast::EmbeddedTemporalExpr &e) {
+                if (e.expr != nullptr) {
+                    collect_expr_tokens(*e.expr, source, tokens);
+                }
+            },
+            [&](const ast::CalledTemporalExpr &e) {
+                add_token_for_name(
+                    tokens, source, expr.range, e.name, SemanticTokenType::Interface);
+            },
+            [&](const ast::InStateTemporalExpr &e) {
+                add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
+            },
+            [&](const ast::RunningTemporalExpr &e) {
+                add_token_for_name(tokens, source, expr.range, e.name, SemanticTokenType::Variable);
+            },
+            [&](const ast::CompletedTemporalExpr &e) {
+                std::size_t cursor = expr.range.begin_offset;
+                add_token_for_name_in_order(
+                    tokens, source, expr.range, cursor, e.name, SemanticTokenType::Variable);
+                if (e.state_name.has_value()) {
+                    add_token_for_name_in_order(tokens,
+                                                source,
+                                                expr.range,
+                                                cursor,
+                                                *e.state_name,
+                                                SemanticTokenType::Variable);
+                }
+            },
+            [&](const ast::UnaryTemporalExpr &e) {
+                const auto op = [&] {
+                    switch (e.op) {
+                    case ast::TemporalUnaryOp::Always:
+                        return std::string_view{"always"};
+                    case ast::TemporalUnaryOp::Eventually:
+                        return std::string_view{"eventually"};
+                    case ast::TemporalUnaryOp::Next:
+                        return std::string_view{"next"};
+                    case ast::TemporalUnaryOp::Not:
+                        return std::string_view{"not"};
+                    }
+                    return std::string_view{};
+                }();
+                add_token_for_name(tokens, source, expr.range, op, SemanticTokenType::Keyword);
+                if (e.operand != nullptr) {
+                    collect_temporal_tokens(*e.operand, source, tokens);
+                }
+            },
+            [&](const ast::BinaryTemporalExpr &e) {
+                if (e.op == ast::TemporalBinaryOp::Until) {
+                    add_token_for_name(
+                        tokens, source, expr.range, "until", SemanticTokenType::Keyword);
+                }
+                if (e.lhs != nullptr) {
+                    collect_temporal_tokens(*e.lhs, source, tokens);
+                }
+                if (e.rhs != nullptr) {
+                    collect_temporal_tokens(*e.rhs, source, tokens);
+                }
+            },
+        },
+        expr.node);
 }
 
 // ---- Expressions ----
@@ -573,192 +594,188 @@ void collect_temporal_tokens(const ast::TemporalExprSyntax &expr,
 void collect_expr_tokens(const ast::ExprSyntax &expr,
                          const SourceFile &source,
                          std::vector<TokenEntry> &tokens) {
-    std::visit(Overloaded{
-                   [&](const ast::BoolLiteralExpr &) {
-                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Keyword);
-                   },
-                   [&](const ast::IntegerLiteralExpr &e) {
-                       if (e.literal != nullptr) {
-                           collect_integer_tokens(*e.literal, source, tokens);
-                       } else {
-                           add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
-                       }
-                   },
-                   [&](const ast::FloatLiteralExpr &) {
-                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
-                   },
-                   [&](const ast::DecimalLiteralExpr &) {
-                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
-                   },
-                   [&](const ast::StringLiteralExpr &) {
-                       add_token_from_range(tokens, source, expr.range, SemanticTokenType::String);
-                   },
-                   [&](const ast::DurationLiteralExpr &e) {
-                       if (e.literal != nullptr) {
-                           collect_duration_tokens(*e.literal, source, tokens);
-                       } else {
-                           add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
-                       }
-                   },
-                   [&](const ast::PathExpr &e) {
-                       if (e.path != nullptr) {
-                           collect_path_tokens(*e.path, source, tokens);
-                       }
-                   },
-                   [&](const ast::QualifiedValueExpr &e) {
-                       if (e.name != nullptr) {
-                           collect_qualified_name_tokens(
-                               *e.name, source, tokens, SemanticTokenType::EnumMember);
-                       }
-                   },
-                   [&](const ast::CallExpr &e) {
-                       // Call target name — could be a capability or predicate
-                       // Without semantic resolution we mark it as Function; the analysis
-                       // service could refine this later.
-                       if (e.callee != nullptr) {
-                           collect_qualified_name_tokens(
-                               *e.callee, source, tokens, SemanticTokenType::Function);
-                       }
-                       for (const auto &type_arg : e.type_args) {
-                           if (type_arg != nullptr) {
-                               collect_type_syntax_tokens(*type_arg, source, tokens);
-                           }
-                       }
-                       for (const auto &arg : e.arguments) {
-                           if (arg != nullptr) {
-                               collect_expr_tokens(*arg, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::MethodCallExpr &e) {
-                       if (e.receiver != nullptr) {
-                           collect_expr_tokens(*e.receiver, source, tokens);
-                       }
-                       add_token_for_name(
-                           tokens, source, expr.range, e.method, SemanticTokenType::Method);
-                       for (const auto &type_arg : e.type_args) {
-                           if (type_arg != nullptr) {
-                               collect_type_syntax_tokens(*type_arg, source, tokens);
-                           }
-                       }
-                       for (const auto &arg : e.arguments) {
-                           if (arg != nullptr) {
-                               collect_expr_tokens(*arg, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::StructLiteralExpr &e) {
-                       if (e.type_name != nullptr) {
-                           collect_qualified_name_tokens(
-                               *e.type_name, source, tokens, SemanticTokenType::Type);
-                       }
-                       for (const auto &field : e.fields) {
-                           if (field != nullptr) {
-                               add_token_for_name(tokens,
-                                                  source,
-                                                  field->range,
-                                                  field->field_name,
-                                                  SemanticTokenType::Property);
-                               if (field->value != nullptr) {
-                                   collect_expr_tokens(*field->value, source, tokens);
-                               }
-                           }
-                       }
-                   },
-                   [&](const ast::UnaryExpr &e) {
-                       if (e.operand != nullptr) {
-                           collect_expr_tokens(*e.operand, source, tokens);
-                       }
-                   },
-                   [&](const ast::BinaryExpr &e) {
-                       if (e.lhs != nullptr) {
-                           collect_expr_tokens(*e.lhs, source, tokens);
-                       }
-                       if (e.rhs != nullptr) {
-                           collect_expr_tokens(*e.rhs, source, tokens);
-                       }
-                   },
-                   [&](const ast::MemberAccessExpr &e) {
-                       if (e.base != nullptr) {
-                           collect_expr_tokens(*e.base, source, tokens);
-                       }
-                       add_token_for_name(
-                           tokens, source, expr.range, e.member, SemanticTokenType::Property);
-                   },
-                   [&](const ast::IndexAccessExpr &e) {
-                       if (e.base != nullptr) {
-                           collect_expr_tokens(*e.base, source, tokens);
-                       }
-                       if (e.index != nullptr) {
-                           collect_expr_tokens(*e.index, source, tokens);
-                       }
-                   },
-                   [&](const ast::GroupExpr &e) {
-                       if (e.inner != nullptr) {
-                           collect_expr_tokens(*e.inner, source, tokens);
-                       }
-                   },
-                   [&](const ast::MatchExpr &e) {
-                       if (e.scrutinee != nullptr) {
-                           collect_expr_tokens(*e.scrutinee, source, tokens);
-                       }
-                       for (const auto &arm : e.arms) {
-                           if (arm == nullptr) {
-                               continue;
-                           }
-                           if (arm->pattern != nullptr) {
-                               collect_pattern_tokens(*arm->pattern, source, tokens);
-                           }
-                           if (arm->guard != nullptr) {
-                               collect_expr_tokens(*arm->guard, source, tokens);
-                           }
-                           if (arm->body != nullptr) {
-                               collect_expr_tokens(*arm->body, source, tokens);
-                           }
-                       }
-                   },
-                   [&](const ast::LambdaExpr &e) {
-                       // P2 (RFC §6): tokenize lambda params (names) and walk
-                       // the body. Param type annotations are tokenized via
-                       // collect_type_syntax_tokens.
-                       //
-                       // C-4 (Wave-24): explicit capture list entries are
-                       // outer-variable references bound by name, so they
-                       // render as VARIABLE tokens anchored to the
-                       // per-capture SourceRange stored on the AST node.
-                       for (std::size_t i = 0; i < e.capture_list.size(); ++i) {
-                           const auto range =
-                               i < e.capture_ranges.size() ? e.capture_ranges[i]
-                                                           : SourceRange{};
-                           add_token_for_name(tokens,
-                                              source,
-                                              range,
-                                              e.capture_list[i],
-                                              SemanticTokenType::Variable);
-                       }
-                       for (const auto &param : e.params) {
-                           if (param != nullptr) {
-                               add_token_for_name(tokens,
-                                                  source,
-                                                  param->range,
-                                                  param->name,
-                                                  SemanticTokenType::Parameter);
-                               if (param->type != nullptr) {
-                                   collect_type_syntax_tokens(*param->type, source, tokens);
-                               }
-                           }
-                       }
-                       if (e.body != nullptr) {
-                           collect_expr_tokens(*e.body, source, tokens);
-                       }
-                   },
-                   [&](const ast::UnwrapExprSyntax &e) {
-                       if (e.operand != nullptr) {
-                           collect_expr_tokens(*e.operand, source, tokens);
-                       }
-                   },
-               },
-               expr.node);
+    std::visit(
+        Overloaded{
+            [&](const ast::BoolLiteralExpr &) {
+                add_token_from_range(tokens, source, expr.range, SemanticTokenType::Keyword);
+            },
+            [&](const ast::IntegerLiteralExpr &e) {
+                if (e.literal != nullptr) {
+                    collect_integer_tokens(*e.literal, source, tokens);
+                } else {
+                    add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+                }
+            },
+            [&](const ast::FloatLiteralExpr &) {
+                add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+            },
+            [&](const ast::DecimalLiteralExpr &) {
+                add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+            },
+            [&](const ast::StringLiteralExpr &) {
+                add_token_from_range(tokens, source, expr.range, SemanticTokenType::String);
+            },
+            [&](const ast::DurationLiteralExpr &e) {
+                if (e.literal != nullptr) {
+                    collect_duration_tokens(*e.literal, source, tokens);
+                } else {
+                    add_token_from_range(tokens, source, expr.range, SemanticTokenType::Number);
+                }
+            },
+            [&](const ast::PathExpr &e) {
+                if (e.path != nullptr) {
+                    collect_path_tokens(*e.path, source, tokens);
+                }
+            },
+            [&](const ast::QualifiedValueExpr &e) {
+                if (e.name != nullptr) {
+                    collect_qualified_name_tokens(
+                        *e.name, source, tokens, SemanticTokenType::EnumMember);
+                }
+            },
+            [&](const ast::CallExpr &e) {
+                // Call target name — could be a capability or predicate
+                // Without semantic resolution we mark it as Function; the analysis
+                // service could refine this later.
+                if (e.callee != nullptr) {
+                    collect_qualified_name_tokens(
+                        *e.callee, source, tokens, SemanticTokenType::Function);
+                }
+                for (const auto &type_arg : e.type_args) {
+                    if (type_arg != nullptr) {
+                        collect_type_syntax_tokens(*type_arg, source, tokens);
+                    }
+                }
+                for (const auto &arg : e.arguments) {
+                    if (arg != nullptr) {
+                        collect_expr_tokens(*arg, source, tokens);
+                    }
+                }
+            },
+            [&](const ast::MethodCallExpr &e) {
+                if (e.receiver != nullptr) {
+                    collect_expr_tokens(*e.receiver, source, tokens);
+                }
+                add_token_for_name(tokens, source, expr.range, e.method, SemanticTokenType::Method);
+                for (const auto &type_arg : e.type_args) {
+                    if (type_arg != nullptr) {
+                        collect_type_syntax_tokens(*type_arg, source, tokens);
+                    }
+                }
+                for (const auto &arg : e.arguments) {
+                    if (arg != nullptr) {
+                        collect_expr_tokens(*arg, source, tokens);
+                    }
+                }
+            },
+            [&](const ast::StructLiteralExpr &e) {
+                if (e.type_name != nullptr) {
+                    collect_qualified_name_tokens(
+                        *e.type_name, source, tokens, SemanticTokenType::Type);
+                }
+                for (const auto &field : e.fields) {
+                    if (field != nullptr) {
+                        add_token_for_name(tokens,
+                                           source,
+                                           field->range,
+                                           field->field_name,
+                                           SemanticTokenType::Property);
+                        if (field->value != nullptr) {
+                            collect_expr_tokens(*field->value, source, tokens);
+                        }
+                    }
+                }
+            },
+            [&](const ast::UnaryExpr &e) {
+                if (e.operand != nullptr) {
+                    collect_expr_tokens(*e.operand, source, tokens);
+                }
+            },
+            [&](const ast::BinaryExpr &e) {
+                if (e.lhs != nullptr) {
+                    collect_expr_tokens(*e.lhs, source, tokens);
+                }
+                if (e.rhs != nullptr) {
+                    collect_expr_tokens(*e.rhs, source, tokens);
+                }
+            },
+            [&](const ast::MemberAccessExpr &e) {
+                if (e.base != nullptr) {
+                    collect_expr_tokens(*e.base, source, tokens);
+                }
+                add_token_for_name(
+                    tokens, source, expr.range, e.member, SemanticTokenType::Property);
+            },
+            [&](const ast::IndexAccessExpr &e) {
+                if (e.base != nullptr) {
+                    collect_expr_tokens(*e.base, source, tokens);
+                }
+                if (e.index != nullptr) {
+                    collect_expr_tokens(*e.index, source, tokens);
+                }
+            },
+            [&](const ast::GroupExpr &e) {
+                if (e.inner != nullptr) {
+                    collect_expr_tokens(*e.inner, source, tokens);
+                }
+            },
+            [&](const ast::MatchExpr &e) {
+                if (e.scrutinee != nullptr) {
+                    collect_expr_tokens(*e.scrutinee, source, tokens);
+                }
+                for (const auto &arm : e.arms) {
+                    if (arm == nullptr) {
+                        continue;
+                    }
+                    if (arm->pattern != nullptr) {
+                        collect_pattern_tokens(*arm->pattern, source, tokens);
+                    }
+                    if (arm->guard != nullptr) {
+                        collect_expr_tokens(*arm->guard, source, tokens);
+                    }
+                    if (arm->body != nullptr) {
+                        collect_expr_tokens(*arm->body, source, tokens);
+                    }
+                }
+            },
+            [&](const ast::LambdaExpr &e) {
+                // P2 (RFC §6): tokenize lambda params (names) and walk
+                // the body. Param type annotations are tokenized via
+                // collect_type_syntax_tokens.
+                //
+                // C-4 (Wave-24): explicit capture list entries are
+                // outer-variable references bound by name, so they
+                // render as VARIABLE tokens anchored to the
+                // per-capture SourceRange stored on the AST node.
+                for (std::size_t i = 0; i < e.capture_list.size(); ++i) {
+                    const auto range =
+                        i < e.capture_ranges.size() ? e.capture_ranges[i] : SourceRange{};
+                    add_token_for_name(
+                        tokens, source, range, e.capture_list[i], SemanticTokenType::Variable);
+                }
+                for (const auto &param : e.params) {
+                    if (param != nullptr) {
+                        add_token_for_name(tokens,
+                                           source,
+                                           param->range,
+                                           param->name,
+                                           SemanticTokenType::Parameter);
+                        if (param->type != nullptr) {
+                            collect_type_syntax_tokens(*param->type, source, tokens);
+                        }
+                    }
+                }
+                if (e.body != nullptr) {
+                    collect_expr_tokens(*e.body, source, tokens);
+                }
+            },
+            [&](const ast::UnwrapExprSyntax &e) {
+                if (e.operand != nullptr) {
+                    collect_expr_tokens(*e.operand, source, tokens);
+                }
+            },
+        },
+        expr.node);
 }
 
 // ---- Statements ----
@@ -806,9 +823,8 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
         }
         break;
     case ast::StatementSyntaxKind::IfLet:
-        // RFC e-1 minimal POC: tag pattern bindings as Variables so the LSP
-        // client renders them like regular `let` bindings.  Narrowing and
-        // symbol-resolution integration are deliberately deferred.
+        // RFC 0002: tag pattern bindings as variables so editors render them
+        // consistently with branch-local `let` bindings.
         if (stmt.if_let_stmt != nullptr) {
             if (stmt.if_let_stmt->pattern != nullptr) {
                 if (!stmt.if_let_stmt->pattern->variant_name.empty()) {
@@ -927,23 +943,33 @@ void collect_fn_tokens(const ast::FnDecl &fn,
 void collect_capability_effect_tokens(const ast::CapabilityEffectSyntax &effect,
                                       const SourceFile &source,
                                       std::vector<TokenEntry> &tokens) {
-    add_token_for_name(
-        tokens, source, effect.range, std::string(to_string(effect.effect_kind)), SemanticTokenType::Keyword);
+    add_token_for_name(tokens,
+                       source,
+                       effect.range,
+                       std::string(to_string(effect.effect_kind)),
+                       SemanticTokenType::Keyword);
     if (effect.domain != nullptr) {
         collect_qualified_name_tokens(*effect.domain, source, tokens, SemanticTokenType::Namespace);
     }
     if (effect.idempotency_key != nullptr) {
         collect_path_tokens(*effect.idempotency_key, source, tokens);
     }
-    add_token_for_name(
-        tokens, source, effect.range, std::string(to_string(effect.receipt_mode)), SemanticTokenType::Keyword);
-    add_token_for_name(
-        tokens, source, effect.range, std::string(to_string(effect.retry_mode)), SemanticTokenType::Keyword);
+    add_token_for_name(tokens,
+                       source,
+                       effect.range,
+                       std::string(to_string(effect.receipt_mode)),
+                       SemanticTokenType::Keyword);
+    add_token_for_name(tokens,
+                       source,
+                       effect.range,
+                       std::string(to_string(effect.retry_mode)),
+                       SemanticTokenType::Keyword);
     if (effect.timeout != nullptr) {
         collect_duration_tokens(*effect.timeout, source, tokens);
     }
     if (effect.compensation != nullptr) {
-        collect_qualified_name_tokens(*effect.compensation, source, tokens, SemanticTokenType::Function);
+        collect_qualified_name_tokens(
+            *effect.compensation, source, tokens, SemanticTokenType::Function);
     }
     for (const auto &policy : effect.policies) {
         if (policy != nullptr) {
@@ -965,8 +991,11 @@ void collect_contract_decreases_tokens(const ast::ContractDecreasesSyntax &decre
 void collect_contract_clause_tokens(const ast::ContractClauseSyntax &clause,
                                     const SourceFile &source,
                                     std::vector<TokenEntry> &tokens) {
-    add_token_for_name(
-        tokens, source, clause.range, std::string(to_string(clause.kind)), SemanticTokenType::Keyword);
+    add_token_for_name(tokens,
+                       source,
+                       clause.range,
+                       std::string(to_string(clause.kind)),
+                       SemanticTokenType::Keyword);
     if (clause.expr != nullptr) {
         collect_expr_tokens(*clause.expr, source, tokens);
     }
@@ -1035,8 +1064,11 @@ void collect_trait_item_tokens(const ast::TraitItemSyntax &item,
         break;
     case ast::TraitItemKind::AssocType:
         if (item.assoc_type != nullptr) {
-            add_token_for_name(
-                tokens, source, item.assoc_type->range, item.assoc_type->name, SemanticTokenType::Type);
+            add_token_for_name(tokens,
+                               source,
+                               item.assoc_type->range,
+                               item.assoc_type->name,
+                               SemanticTokenType::Type);
             collect_type_params_tokens(item.assoc_type->type_params, source, tokens);
             collect_type_list_tokens(item.assoc_type->bounds, source, tokens);
             if (item.assoc_type->default_type != nullptr) {
@@ -1046,8 +1078,7 @@ void collect_trait_item_tokens(const ast::TraitItemSyntax &item,
         break;
     case ast::TraitItemKind::AssocConst:
         if (item.assoc_const != nullptr) {
-            const auto readonly_mod =
-                static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
+            const auto readonly_mod = static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
             add_token_for_name(tokens,
                                source,
                                item.assoc_const->range,
@@ -1088,8 +1119,7 @@ void collect_impl_item_tokens(const ast::ImplItemSyntax &item,
         break;
     case ast::ImplItemKind::AssocConst:
         if (item.assoc_const != nullptr) {
-            const auto readonly_mod =
-                static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
+            const auto readonly_mod = static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
             add_token_for_name(tokens,
                                source,
                                item.assoc_const->range,
@@ -1235,18 +1265,12 @@ void collect_decl_tokens(const ast::Decl &decl,
                            agent.initial_state,
                            SemanticTokenType::Variable);
         for (const auto &state : agent.final_states) {
-            add_token_for_name(tokens,
-                               source,
-                               agent.final_states_range,
-                               state,
-                               SemanticTokenType::Variable);
+            add_token_for_name(
+                tokens, source, agent.final_states_range, state, SemanticTokenType::Variable);
         }
         for (const auto &capability : agent.capabilities) {
-            add_token_for_name(tokens,
-                               source,
-                               agent.capabilities_range,
-                               capability,
-                               SemanticTokenType::Interface);
+            add_token_for_name(
+                tokens, source, agent.capabilities_range, capability, SemanticTokenType::Interface);
         }
         if (agent.quota != nullptr) {
             collect_agent_quota_tokens(*agent.quota, source, tokens);
@@ -1292,7 +1316,8 @@ void collect_decl_tokens(const ast::Decl &decl,
                     collect_expr_tokens(*node->input, source, tokens);
                 }
                 for (const auto &dep : node->after) {
-                    add_token_for_name(tokens, source, node->range, dep, SemanticTokenType::Variable);
+                    add_token_for_name(
+                        tokens, source, node->range, dep, SemanticTokenType::Variable);
                 }
             }
         }

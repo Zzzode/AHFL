@@ -591,6 +591,17 @@ class IrProgramPrinter final {
                            }
                            line(indent_level, "}");
                        },
+                       [this, indent_level](const ir::IfLetStatement &value) {
+                           line(indent_level,
+                                "if let " + render_pattern(value.pattern) + " = " +
+                                    render_expr(*value.scrutinee) + " {");
+                           print_block(*value.then_block, indent_level + 1);
+                           if (value.else_block) {
+                               line(indent_level, "} else {");
+                               print_block(*value.else_block, indent_level + 1);
+                           }
+                           line(indent_level, "}");
+                       },
                        [this, indent_level](const ir::GotoStatement &value) {
                            line(indent_level, "goto " + value.target_state);
                        },
@@ -703,10 +714,41 @@ class IrProgramPrinter final {
         line(0, "}");
     }
 
+    [[nodiscard]] std::string render_enum_variant(const ir::EnumVariantDecl &variant) const {
+        std::string text = variant.name;
+        switch (variant.payload_kind) {
+        case ir::EnumVariantPayloadKind::Unit:
+            break;
+        case ir::EnumVariantPayloadKind::Tuple: {
+            std::vector<std::string> payload_types;
+            payload_types.reserve(variant.payload.size());
+            for (const auto &slot : variant.payload) {
+                payload_types.push_back(type_name(slot));
+            }
+            text += "(" + join(payload_types, ", ") + ")";
+            break;
+        }
+        case ir::EnumVariantPayloadKind::Struct: {
+            std::vector<std::string> fields;
+            fields.reserve(variant.fields.size());
+            for (const auto &field : variant.fields) {
+                std::string rendered = field.name + ": " + type_name(field.type_ref);
+                if (field.default_value) {
+                    rendered += " = " + render_expr(*field.default_value);
+                }
+                fields.push_back(std::move(rendered));
+            }
+            text += " { " + join(fields, ", ") + " }";
+            break;
+        }
+        }
+        return text;
+    }
+
     void print_decl(const ir::EnumDecl &declaration) {
         line(0, "enum " + declaration.name + " {");
         for (const auto &variant : declaration.variants) {
-            line(1, "variant " + variant);
+            line(1, "variant " + render_enum_variant(variant));
         }
         line(0, "}");
     }

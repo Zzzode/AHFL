@@ -2672,9 +2672,8 @@ class ResolverPass final {
                 }
                 break;
             case ast::StatementSyntaxKind::IfLet:
-                // RFC e-1 if-let (Wave-19 Lane 3b E): minimal walker stub so the
-                // -Wswitch gate stays green. The pattern has no nested AST
-                // nodes yet; only scrutinee + branches need traversal.
+                // RFC 0002 if-let introduces branch-local payload bindings in
+                // typecheck; resolver only traverses the scrutinee and bodies.
                 if (statement->if_let_stmt->scrutinee) {
                     resolve_declaration_expr(*statement->if_let_stmt->scrutinee);
                 }

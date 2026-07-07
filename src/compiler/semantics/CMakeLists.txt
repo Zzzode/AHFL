@@ -5,6 +5,7 @@ add_library(ahfl_compiler_semantics STATIC
     effects.cpp
     expression_sema.cpp
     flow_facts.cpp
+    match_exhaustiveness.cpp
     name_suggestions.cpp
     monomorphization.cpp
     resolver.cpp

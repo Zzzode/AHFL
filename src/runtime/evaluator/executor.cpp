@@ -1,8 +1,12 @@
 #include "runtime/evaluator/executor.hpp"
 
 #include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/pattern_match.hpp"
 
+#include <optional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 
 namespace ahfl::evaluator {
@@ -54,9 +58,8 @@ ExecResult make_exec_error(std::string message) {
 /// present and evaluates cleanly to a StringValue; otherwise falls back to
 /// `fallback` so the primary failure (assert false / unreachable) is never
 /// masked by a secondary error in the diagnostic expression.
-[[nodiscard]] std::string eval_failure_message(ExecContext &ctx,
-                                               const ir::ExprRef &message_expr,
-                                               std::string_view fallback) {
+[[nodiscard]] std::string
+eval_failure_message(ExecContext &ctx, const ir::ExprRef &message_expr, std::string_view fallback) {
     if (!message_expr) {
         return std::string{fallback};
     }
@@ -96,8 +99,7 @@ namespace {
         }
     }
     if (found_unwrap_none) {
-        r.outcome = ExecAssertFailed{AssertionKind::UNWRAP_NONE,
-                                     std::move(unwrap_message)};
+        r.outcome = ExecAssertFailed{AssertionKind::UNWRAP_NONE, std::move(unwrap_message)};
         return r;
     }
     r.outcome = ExecContinue{};
@@ -175,6 +177,42 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 return make_continue();
 
+            } else if constexpr (std::is_same_v<T, ir::IfLetStatement>) {
+                if (!node.scrutinee) {
+                    return make_exec_error("IfLetStatement has null scrutinee");
+                }
+                auto scrutinee_result = ctx.eval_expression(*node.scrutinee);
+                if (scrutinee_result.has_errors()) {
+                    return wrap_expression_errors(std::move(scrutinee_result));
+                }
+
+                PatternBindings bindings;
+                if (match_pattern(node.pattern, scrutinee_result.value, bindings)) {
+                    std::unordered_map<std::string, std::optional<Value>> saved_bindings;
+                    saved_bindings.reserve(bindings.size());
+                    for (const auto &[name, _] : bindings) {
+                        saved_bindings.emplace(name, ctx.eval_ctx.get_local(name));
+                    }
+                    for (auto &[name, value] : bindings) {
+                        ctx.bind_local(name, std::move(value));
+                    }
+                    ExecResult result =
+                        node.then_block ? exec_block(*node.then_block, ctx) : make_continue();
+                    for (auto &[name, old_value] : saved_bindings) {
+                        if (old_value.has_value()) {
+                            ctx.bind_local(name, std::move(*old_value));
+                        } else {
+                            ctx.eval_ctx.erase_local(name);
+                        }
+                    }
+                    return result;
+                }
+
+                if (node.else_block) {
+                    return exec_block(*node.else_block, ctx);
+                }
+                return make_continue();
+
             } else if constexpr (std::is_same_v<T, ir::GotoStatement>) {
                 return ExecResult{ExecGoto{node.target_state}, {}};
 
@@ -202,9 +240,9 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 if (!bv->value) {
                     return ExecResult{
-                        ExecAssertFailed{AssertionKind::ASSERT_CLAUSE,
-                                         eval_failure_message(
-                                             ctx, node.message, kAssertFailedDefault)},
+                        ExecAssertFailed{
+                            AssertionKind::ASSERT_CLAUSE,
+                            eval_failure_message(ctx, node.message, kAssertFailedDefault)},
                         {}};
                 }
                 return make_continue();
@@ -222,7 +260,8 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return wrap_expression_errors(std::move(op_result));
                 }
                 const bool is_some = [](const Value &v) {
-                    if (std::holds_alternative<NoneValue>(v.node)) return false;
+                    if (std::holds_alternative<NoneValue>(v.node))
+                        return false;
                     if (const auto *opt = std::get_if<OptionalValue>(&v.node)) {
                         return opt->inner != nullptr;
                     }
@@ -252,9 +291,9 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 if (!bv->value) {
                     return ExecResult{
-                        ExecAssertFailed{AssertionKind::REQUIRES_VIOLATION,
-                                         eval_failure_message(
-                                             ctx, node.message, kRequiresFailedDefault)},
+                        ExecAssertFailed{
+                            AssertionKind::REQUIRES_VIOLATION,
+                            eval_failure_message(ctx, node.message, kRequiresFailedDefault)},
                         {}};
                 }
                 return make_continue();

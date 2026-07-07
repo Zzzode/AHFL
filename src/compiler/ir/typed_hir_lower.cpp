@@ -591,9 +591,6 @@ class TypedIrLowerer final {
             }
             return nullptr;
         case ast::StatementSyntaxKind::IfLet:
-            // RFC e-1 minimal POC: walk scrutinee + then/else bodies so the
-            // typed expression origin finder still works on code using the
-            // new syntax.  Pattern bindings are not materialised yet.
             if (statement.if_let_stmt) {
                 if (statement.if_let_stmt->scrutinee) {
                     if (const auto *found = find_match_expr_in_expr(
@@ -758,6 +755,145 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
+    [[nodiscard]] static const ast::IfLetStmtSyntax *
+    find_if_let_stmt_in_decl(const ast::Decl &decl, SourceRange range) {
+        std::function<const ast::IfLetStmtSyntax *(const ast::StatementSyntax &)> find_statement;
+        std::function<const ast::IfLetStmtSyntax *(const ast::BlockSyntax &)> find_block;
+
+        find_block = [&](const ast::BlockSyntax &block) -> const ast::IfLetStmtSyntax * {
+            for (const auto &statement : block.statements) {
+                if (statement) {
+                    if (const auto *found = find_statement(*statement); found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        };
+
+        find_statement = [&](const ast::StatementSyntax &statement)
+            -> const ast::IfLetStmtSyntax * {
+            if (statement.kind == ast::StatementSyntaxKind::IfLet && statement.if_let_stmt &&
+                (ranges_equal(statement.range, range) ||
+                 ranges_equal(statement.if_let_stmt->range, range))) {
+                return statement.if_let_stmt.get();
+            }
+
+            switch (statement.kind) {
+            case ast::StatementSyntaxKind::If:
+                if (statement.if_stmt) {
+                    if (statement.if_stmt->then_block) {
+                        if (const auto *found = find_block(*statement.if_stmt->then_block);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    if (statement.if_stmt->else_block) {
+                        return find_block(*statement.if_stmt->else_block);
+                    }
+                }
+                return nullptr;
+            case ast::StatementSyntaxKind::IfLet:
+                if (statement.if_let_stmt) {
+                    if (statement.if_let_stmt->then_block) {
+                        if (const auto *found = find_block(*statement.if_let_stmt->then_block);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    if (statement.if_let_stmt->else_block) {
+                        return find_block(*statement.if_let_stmt->else_block);
+                    }
+                }
+                return nullptr;
+            case ast::StatementSyntaxKind::Let:
+            case ast::StatementSyntaxKind::Assign:
+            case ast::StatementSyntaxKind::Goto:
+            case ast::StatementSyntaxKind::Return:
+            case ast::StatementSyntaxKind::Assert:
+            case ast::StatementSyntaxKind::Unwrap:
+            case ast::StatementSyntaxKind::Requires:
+            case ast::StatementSyntaxKind::Unreachable:
+            case ast::StatementSyntaxKind::Expr:
+                return nullptr;
+            }
+            return nullptr;
+        };
+
+        switch (decl.kind) {
+        case ast::NodeKind::FlowDecl: {
+            const auto &flow = static_cast<const ast::FlowDecl &>(decl);
+            for (const auto &handler : flow.state_handlers) {
+                if (handler && handler->body) {
+                    if (const auto *found = find_block(*handler->body);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::FnDecl: {
+            const auto &fn = static_cast<const ast::FnDecl &>(decl);
+            return fn.body ? find_block(*fn.body) : nullptr;
+        }
+        case ast::NodeKind::ImplDecl: {
+            const auto &impl = static_cast<const ast::ImplDecl &>(decl);
+            for (const auto &method : impl.methods) {
+                if (method && method->body) {
+                    if (const auto *found = find_block(*method->body);
+                        found != nullptr) {
+                        return found;
+                    }
+                }
+            }
+            return nullptr;
+        }
+        case ast::NodeKind::Program:
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::UseDecl:
+        case ast::NodeKind::ConstDecl:
+        case ast::NodeKind::TypeAliasDecl:
+        case ast::NodeKind::StructDecl:
+        case ast::NodeKind::EnumDecl:
+        case ast::NodeKind::CapabilityDecl:
+        case ast::NodeKind::PredicateDecl:
+        case ast::NodeKind::AgentDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::WorkflowDecl:
+        case ast::NodeKind::TraitDecl:
+            return nullptr;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] const ast::IfLetStmtSyntax *
+    find_ast_if_let_stmt(const TypedStatement &typed) const {
+        const ast::Program *program = ast_program_;
+        if (typed.source_id.has_value() && source_graph_ != nullptr) {
+            program = nullptr;
+            for (const auto &source : source_graph_->sources) {
+                if (source.id == *typed.source_id) {
+                    program = source.program.get();
+                    break;
+                }
+            }
+        }
+        if (program == nullptr) {
+            return nullptr;
+        }
+        for (const auto &decl : program->declarations) {
+            if (decl) {
+                if (const auto *found = find_if_let_stmt_in_decl(*decl, typed.range);
+                    found != nullptr) {
+                    return found;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] const ast::ExprSyntax *find_ast_match_expr(const TypedExpr &typed) const {
         const ast::Program *program = ast_program_;
         if (typed.source_id.has_value() && source_graph_ != nullptr) {
@@ -870,6 +1006,47 @@ class TypedIrLowerer final {
                        },
                        pattern->node);
         return lowered;
+    }
+
+    [[nodiscard]] static ir::MatchPattern
+    lower_if_let_pattern(const ast::IfLetPatternSyntax *pattern) {
+        if (pattern == nullptr) {
+            return ir::MatchPattern{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
+        }
+
+        ir::VariantPattern variant{
+            .path = pattern->variant_name,
+            .kind = pattern->bindings.empty() ? ir::VariantPatternKind::Unit
+                                              : ir::VariantPatternKind::Tuple,
+            .subpatterns = {},
+            .fields = {},
+        };
+        variant.subpatterns.reserve(pattern->bindings.size());
+        for (const auto &binding_name : pattern->bindings) {
+            variant.subpatterns.push_back(make_owned<ir::MatchPattern>(ir::MatchPattern{
+                .node = ir::BindingPattern{.name = binding_name, .is_mut = false, .nested = nullptr},
+                .source_range = pattern->range,
+                .text = binding_name,
+            }));
+        }
+
+        std::string text = pattern->variant_name;
+        if (!pattern->bindings.empty()) {
+            text += "(";
+            for (std::size_t index = 0; index < pattern->bindings.size(); ++index) {
+                if (index > 0) {
+                    text += ", ";
+                }
+                text += pattern->bindings[index];
+            }
+            text += ")";
+        }
+
+        return ir::MatchPattern{
+            .node = std::move(variant),
+            .source_range = pattern->range,
+            .text = std::move(text),
+        };
     }
 
     [[nodiscard]] ir::DeclarationProvenance
@@ -1078,6 +1255,19 @@ class TypedIrLowerer final {
         auto ref = type_ref_from_type(*type);
         ref.source_range = source_range;
         return ref;
+    }
+
+    [[nodiscard]] static ir::EnumVariantPayloadKind
+    enum_variant_payload_kind(EnumVariantPayloadKind kind) noexcept {
+        switch (kind) {
+        case EnumVariantPayloadKind::Unit:
+            return ir::EnumVariantPayloadKind::Unit;
+        case EnumVariantPayloadKind::Tuple:
+            return ir::EnumVariantPayloadKind::Tuple;
+        case EnumVariantPayloadKind::Struct:
+            return ir::EnumVariantPayloadKind::Struct;
+        }
+        return ir::EnumVariantPayloadKind::Unit;
     }
 
     // =====================================================================
@@ -2133,10 +2323,6 @@ class TypedIrLowerer final {
         }
 
         ir::StatementPtr visit_if_let_stmt(const TypedStatement &stmt) const {
-            // RFC e-1 minimal POC: lowering mirrors `if` so downstream IR
-            // stages (and their validation) keep working — but there is no
-            // binding introduction / pattern desugaring yet.  Narrowing
-            // semantics are deliberately deferred to a follow-up wave.
             const TypedExpr *scrutinee = child_expr(0);
             const auto *then_block =
                 stmt.then_block_index != UINT32_MAX &&
@@ -2150,9 +2336,11 @@ class TypedIrLowerer final {
                     : nullptr;
             auto else_ptr =
                 else_block ? make_owned<ir::Block>(self.lower_typed_block(*else_block)) : nullptr;
+            const auto *syntax = self.find_ast_if_let_stmt(stmt);
             return self.make_statement(
-                ir::IfStatement{
-                    .condition = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
+                ir::IfLetStatement{
+                    .pattern = lower_if_let_pattern(syntax != nullptr ? syntax->pattern.get() : nullptr),
+                    .scrutinee = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
                     .then_block = then_block
                                       ? make_owned<ir::Block>(self.lower_typed_block(*then_block))
                                       : nullptr,
@@ -2452,6 +2640,26 @@ class TypedIrLowerer final {
                                         else_summary.may_fallthrough;
                     return s;
                 },
+                [this](const ir::IfLetStatement &value) {
+                    ir::StateHandler::Summary s;
+                    if (value.scrutinee) {
+                        collect_called_targets_from_expr(*value.scrutinee, s.called_targets);
+                    }
+                    const auto then_summary =
+                        value.then_block ? summarize_block(*value.then_block)
+                                         : ir::StateHandler::Summary{};
+                    if (value.then_block) {
+                        merge_flow_summary(s, then_summary);
+                    }
+                    ir::StateHandler::Summary else_summary;
+                    if (value.else_block) {
+                        else_summary = summarize_block(*value.else_block);
+                        merge_flow_summary(s, else_summary);
+                    }
+                    s.may_fallthrough = !value.else_block || then_summary.may_fallthrough ||
+                                        else_summary.may_fallthrough;
+                    return s;
+                },
                 [](const ir::GotoStatement &value) {
                     ir::StateHandler::Summary s;
                     s.goto_targets.push_back(value.target_state);
@@ -2663,7 +2871,30 @@ class TypedIrLowerer final {
             info.declaration_range);
         lowered.variants.reserve(info.variants.size());
         for (const auto &variant : info.variants) {
-            lowered.variants.push_back(variant.name);
+            ir::EnumVariantDecl lowered_variant{
+                .name = variant.name,
+                .payload_kind = enum_variant_payload_kind(variant.payload_kind),
+                .payload = {},
+                .fields = {},
+                .source_range = variant.declaration_range,
+            };
+            lowered_variant.payload.reserve(variant.payload.size());
+            for (const auto payload : variant.payload) {
+                lowered_variant.payload.push_back(type_ref_from_required_type(
+                    payload, variant.declaration_range, "enum variant payload type"));
+            }
+            lowered_variant.fields.reserve(variant.fields.size());
+            for (const auto &field : variant.fields) {
+                lowered_variant.fields.push_back(ir::EnumVariantFieldDecl{
+                    .name = field.name,
+                    .type_ref = type_ref_from_required_type(
+                        field.type, field.declaration_range, "enum variant field type"),
+                    .default_value =
+                        field.has_default ? lower_expr_range(field.default_value_range) : nullptr,
+                    .source_range = field.declaration_range,
+                });
+            }
+            lowered.variants.push_back(std::move(lowered_variant));
         }
         return lowered;
     }

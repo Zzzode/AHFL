@@ -77,6 +77,10 @@ class ExpressionSemaDelegate {
                                  std::string message,
                                  SourceRange range,
                                  std::vector<Diagnostic::Related> notes) = 0;
+    virtual void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                   std::string message,
+                                   SourceRange range,
+                                   std::vector<Diagnostic::Related> notes) = 0;
     [[nodiscard]] virtual ExpressionValue check_nested(const ast::ExprSyntax &expr,
                                                        const ExpressionContext &context,
                                                        MaybeCRef<Type> expected_type) = 0;

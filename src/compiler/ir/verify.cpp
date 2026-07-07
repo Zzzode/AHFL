@@ -264,6 +264,59 @@ class ProgramVerifier {
 
     void verify_decl(const EnumDecl &decl, const std::string &path) {
         verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Type, decl.name);
+        for (std::uint32_t index = 0; index < decl.variants.size(); ++index) {
+            const auto &variant = decl.variants[index];
+            const auto variant_path = path + ".variants[" + std::to_string(index) + "](" +
+                                      (variant.name.empty() ? "<unnamed>" : variant.name) + ")";
+            if (variant.name.empty()) {
+                add_error(variant_path, "enum variant is missing name");
+            }
+            verify_source_range(variant.source_range, variant_path, "source range");
+            switch (variant.payload_kind) {
+            case EnumVariantPayloadKind::Unit:
+                if (!variant.payload.empty()) {
+                    add_error(variant_path, "unit enum variant carries tuple payload");
+                }
+                if (!variant.fields.empty()) {
+                    add_error(variant_path, "unit enum variant carries struct fields");
+                }
+                break;
+            case EnumVariantPayloadKind::Tuple:
+                if (variant.payload.empty()) {
+                    add_error(variant_path, "tuple enum variant is missing payload");
+                }
+                if (!variant.fields.empty()) {
+                    add_error(variant_path, "tuple enum variant carries struct fields");
+                }
+                break;
+            case EnumVariantPayloadKind::Struct:
+                if (!variant.payload.empty()) {
+                    add_error(variant_path, "struct enum variant carries tuple payload");
+                }
+                if (variant.fields.empty()) {
+                    add_error(variant_path, "struct enum variant is missing fields");
+                }
+                break;
+            }
+            for (std::uint32_t payload_index = 0; payload_index < variant.payload.size();
+                 ++payload_index) {
+                verify_type_ref(variant.payload[payload_index],
+                                variant_path + ".payload[" + std::to_string(payload_index) + "]");
+            }
+            for (std::uint32_t field_index = 0; field_index < variant.fields.size();
+                 ++field_index) {
+                const auto &field = variant.fields[field_index];
+                const auto field_path = variant_path + ".fields[" + std::to_string(field_index) +
+                                        "](" + (field.name.empty() ? "<unnamed>" : field.name) +
+                                        ")";
+                if (field.name.empty()) {
+                    add_error(field_path, "enum variant field is missing name");
+                }
+                verify_type_ref(field.type_ref, field_path + ".type_ref");
+                verify_optional_expr_ref(field.default_value, field_path + ".default");
+                verify_source_range(field.source_range, field_path, "source range");
+            }
+        }
     }
 
     void verify_decl(const CapabilityDecl &decl, const std::string &path) {
@@ -481,6 +534,19 @@ class ProgramVerifier {
 
     void verify_statement_node(const IfStatement &stmt, const std::string &path) {
         verify_required_expr_ref(stmt.condition, path + ".condition");
+        if (stmt.then_block) {
+            verify_block(*stmt.then_block, path + ".then");
+        } else {
+            add_error(path + ".then", "then block is null");
+        }
+        if (stmt.else_block) {
+            verify_block(*stmt.else_block, path + ".else");
+        }
+    }
+
+    void verify_statement_node(const IfLetStatement &stmt, const std::string &path) {
+        verify_match_pattern(stmt.pattern, path + ".pattern");
+        verify_required_expr_ref(stmt.scrutinee, path + ".scrutinee");
         if (stmt.then_block) {
             verify_block(*stmt.then_block, path + ".then");
         } else {

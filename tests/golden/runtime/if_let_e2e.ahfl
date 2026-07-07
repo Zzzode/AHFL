@@ -1,0 +1,63 @@
+module runtime::if_let_e2e;
+
+struct InspectRequest {
+    maybe: Maybe<Int>;
+}
+
+enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+struct InspectContext {
+    branch: String = "unset";
+}
+
+struct InspectResponse {
+    branch: String;
+    value: Int;
+}
+
+agent InspectAgent {
+    input: InspectRequest;
+    context: InspectContext;
+    output: InspectResponse;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Done;
+}
+
+flow for InspectAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        if let Some(value) = input.maybe {
+            return InspectResponse {
+                branch: "some",
+                value: value,
+            };
+        } else {
+            return InspectResponse {
+                branch: "none",
+                value: 0,
+            };
+        }
+    }
+}
+
+workflow IfLetWorkflow {
+    input: InspectRequest;
+    output: InspectResponse;
+
+    node inspect: InspectAgent(input);
+
+    return: InspectResponse {
+        branch: inspect.branch,
+        value: inspect.value,
+    };
+}

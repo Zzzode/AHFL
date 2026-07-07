@@ -69,6 +69,13 @@ make_let_int(ahfl::ir::ExprArena &arena, const std::string &name, const std::str
     return type;
 }
 
+[[nodiscard]] ahfl::ir::TypeRef enum_type(std::string canonical_name) {
+    ahfl::ir::TypeRef type;
+    type.kind = ahfl::ir::TypeRefKind::Enum;
+    type.canonical_name = std::move(canonical_name);
+    return type;
+}
+
 [[nodiscard]] ahfl::SourceRange source_range(std::size_t begin, std::size_t end) {
     return ahfl::SourceRange{.begin_offset = begin, .end_offset = end};
 }
@@ -328,6 +335,96 @@ TEST_CASE("lower_to_opt covers contract and workflow expression fragments") {
     CHECK(!opt.skipped_temporal_fragments[0].reason.empty());
 
     const auto verification = ahfl::ir::opt::verify_opt_program(opt);
+    CHECK(!verification.has_errors());
+}
+
+TEST_CASE("lower_to_opt preserves if-let match and payload extraction") {
+    ahfl::ir::Program program;
+    ahfl::ir::SymbolRef agent_ref;
+    agent_ref.kind = ahfl::ir::SymbolRefKind::Agent;
+    agent_ref.canonical_name = "TestAgent";
+    agent_ref.local_name = "TestAgent";
+    agent_ref.id = 1;
+
+    ahfl::ir::AgentDecl agent;
+    agent.name = "TestAgent";
+    agent.symbol_ref = agent_ref;
+    agent.input_type_ref = enum_type("test::Maybe");
+    agent.context_type_ref = struct_type("test::Context");
+    agent.output_type_ref = struct_type("test::Output");
+    program.declarations.push_back(std::move(agent));
+
+    const auto scrutinee = make_path_expr(
+        program, ahfl::ir::PathRootKind::Input, "input", enum_type("test::Maybe"), 10, 17, 1);
+
+    ahfl::ir::VariantPattern variant;
+    variant.path = "Some";
+    variant.kind = ahfl::ir::VariantPatternKind::Tuple;
+    variant.subpatterns.push_back(ahfl::make_owned<ahfl::ir::MatchPattern>(ahfl::ir::MatchPattern{
+        .node = ahfl::ir::BindingPattern{.name = "x"},
+        .source_range = source_range(18, 19),
+        .text = "x",
+    }));
+
+    ahfl::ir::IfLetStatement if_let;
+    if_let.pattern = ahfl::ir::MatchPattern{
+        .node = std::move(variant),
+        .source_range = source_range(18, 25),
+        .text = "Some(x)",
+    };
+    if_let.scrutinee = scrutinee;
+    if_let.then_block = ahfl::make_owned<ahfl::ir::Block>();
+    if_let.else_block = ahfl::make_owned<ahfl::ir::Block>();
+    if_let.then_block->statements.push_back(make_let_int(program.expr_arena, "seen", "1"));
+    if_let.else_block->statements.push_back(make_let_int(program.expr_arena, "seen_else", "0"));
+
+    std::vector<ahfl::ir::StatementPtr> stmts;
+    stmts.push_back(ahfl::make_owned<ahfl::ir::Statement>(ahfl::ir::Statement{
+        .node = std::move(if_let),
+        .source_range = source_range(0, 40),
+    }));
+    add_simple_flow(program, std::move(stmts));
+
+    const auto opt = ahfl::ir::opt::lower_to_opt(program);
+    REQUIRE(opt.functions.size() == 1);
+    const auto &func = opt.functions.front();
+
+    bool found_switch = false;
+    bool found_match_call = false;
+    bool found_payload_call = false;
+    bool found_placeholder_constant = false;
+    for (const auto &block : func.blocks) {
+        if (block.terminator.kind == ahfl::ir::opt::Terminator::Kind::SwitchBool) {
+            found_switch = true;
+        }
+        for (const auto &stmt : block.statements) {
+            if (stmt.rvalue.kind != ahfl::ir::opt::Rvalue::Kind::Call) {
+                for (const auto &operand : stmt.rvalue.operands) {
+                    if (const auto *constant = std::get_if<std::string>(&operand.constant);
+                        constant != nullptr && *constant == "<if-let-binding>") {
+                        found_placeholder_constant = true;
+                    }
+                }
+                continue;
+            }
+            if (stmt.rvalue.callee == "__ahfl_if_let_match:Some(x)") {
+                found_match_call = true;
+            }
+            if (stmt.rvalue.callee == "__ahfl_if_let_payload:x") {
+                found_payload_call = true;
+            }
+        }
+    }
+
+    CHECK(found_switch);
+    CHECK(found_match_call);
+    CHECK(found_payload_call);
+    CHECK_FALSE(found_placeholder_constant);
+
+    const auto verification = ahfl::ir::opt::verify_opt_program(opt);
+    for (const auto &diagnostic : verification.diagnostics) {
+        INFO(diagnostic.message);
+    }
     CHECK(!verification.has_errors());
 }
 

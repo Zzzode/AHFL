@@ -878,9 +878,36 @@
         "id": 4
       },
       "variants": [
-        "Pending",
-        "Approved",
-        "Rejected"
+        {
+          "name": "Pending",
+          "payload_kind": "unit",
+          "source_range": {
+            "begin_offset": 1073,
+            "end_offset": 1080
+          },
+          "payload": [],
+          "fields": []
+        },
+        {
+          "name": "Approved",
+          "payload_kind": "unit",
+          "source_range": {
+            "begin_offset": 1086,
+            "end_offset": 1094
+          },
+          "payload": [],
+          "fields": []
+        },
+        {
+          "name": "Rejected",
+          "payload_kind": "unit",
+          "source_range": {
+            "begin_offset": 1100,
+            "end_offset": 1108
+          },
+          "payload": [],
+          "fields": []
+        }
       ]
     },
     {

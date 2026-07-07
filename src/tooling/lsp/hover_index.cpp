@@ -596,7 +596,8 @@ void add_agent_capability_targets(HoverTargetIndex &index,
                                                SourceRange range) {
     return snapshot.resolve_result.find_reference(ReferenceKind::TypeName, range, source.source_id)
                .has_value() ||
-           snapshot.resolve_result.find_reference(ReferenceKind::TraitBound, range, source.source_id)
+           snapshot.resolve_result
+               .find_reference(ReferenceKind::TraitBound, range, source.source_id)
                .has_value();
 }
 
@@ -662,56 +663,55 @@ void add_type_syntax_targets(HoverTargetIndex &index,
 
     add_builtin_type_constructor_target(index, source, *type);
 
-    std::visit(Overloaded{
-                   [&](const ast::NamedType &t) {
-                       if (t.name &&
-                           !has_resolved_type_reference(snapshot, source, t.name->range)) {
-                           for (const auto &segment :
-                                identifier_segments_in_range(*source.source, t.name->range)) {
-                               index.add(HoverTarget{
-                                   .kind = HoverTargetKind::TypeReference,
-                                   .token_range = segment.range,
-                                   .source_id = source.source_id,
-                                   .local_name = segment.text,
-                                   .role = "builtin type",
-                                   .source_label = source.source->display_name,
-                               });
-                           }
-                       }
-                       for (const auto &arg : t.type_args) {
-                           add_type_syntax_targets(index, snapshot, source, arg.get());
-                       }
-                   },
-                   [&](const ast::AppType &t) {
-                       if (t.name &&
-                           !has_resolved_type_reference(snapshot, source, t.name->range)) {
-                           for (const auto &segment :
-                                identifier_segments_in_range(*source.source, t.name->range)) {
-                               index.add(HoverTarget{
-                                   .kind = HoverTargetKind::TypeReference,
-                                   .token_range = segment.range,
-                                   .source_id = source.source_id,
-                                   .local_name = segment.text,
-                                   .role = "type constructor",
-                                   .source_label = source.source->display_name,
-                               });
-                           }
-                       }
-                       for (const auto &arg : t.arguments) {
-                           add_type_syntax_targets(index, snapshot, source, arg.get());
-                       }
-                   },
-                   [&](const ast::FnType &t) {
-                       for (const auto &param : t.params) {
-                           add_type_syntax_targets(index, snapshot, source, param.get());
-                       }
-                       add_type_syntax_targets(index, snapshot, source, t.return_type.get());
-                   },
-                   [](const auto &) {
-                       // Leaf types with no sub-types or name — nothing to add
-                   },
-               },
-               type->node);
+    std::visit(
+        Overloaded{
+            [&](const ast::NamedType &t) {
+                if (t.name && !has_resolved_type_reference(snapshot, source, t.name->range)) {
+                    for (const auto &segment :
+                         identifier_segments_in_range(*source.source, t.name->range)) {
+                        index.add(HoverTarget{
+                            .kind = HoverTargetKind::TypeReference,
+                            .token_range = segment.range,
+                            .source_id = source.source_id,
+                            .local_name = segment.text,
+                            .role = "builtin type",
+                            .source_label = source.source->display_name,
+                        });
+                    }
+                }
+                for (const auto &arg : t.type_args) {
+                    add_type_syntax_targets(index, snapshot, source, arg.get());
+                }
+            },
+            [&](const ast::AppType &t) {
+                if (t.name && !has_resolved_type_reference(snapshot, source, t.name->range)) {
+                    for (const auto &segment :
+                         identifier_segments_in_range(*source.source, t.name->range)) {
+                        index.add(HoverTarget{
+                            .kind = HoverTargetKind::TypeReference,
+                            .token_range = segment.range,
+                            .source_id = source.source_id,
+                            .local_name = segment.text,
+                            .role = "type constructor",
+                            .source_label = source.source->display_name,
+                        });
+                    }
+                }
+                for (const auto &arg : t.arguments) {
+                    add_type_syntax_targets(index, snapshot, source, arg.get());
+                }
+            },
+            [&](const ast::FnType &t) {
+                for (const auto &param : t.params) {
+                    add_type_syntax_targets(index, snapshot, source, param.get());
+                }
+                add_type_syntax_targets(index, snapshot, source, t.return_type.get());
+            },
+            [](const auto &) {
+                // Leaf types with no sub-types or name — nothing to add
+            },
+        },
+        type->node);
 }
 
 void add_predicate_return_type_target(HoverTargetIndex &index,
@@ -835,15 +835,15 @@ void try_register_construct_targets(HoverTargetIndex &index,
                                     const LspSourceSnapshot &source,
                                     const ast::ExprSyntax *expr,
                                     std::uint32_t fallback_expr_index) {
-    if (snapshot.type_check_result == nullptr || expr == nullptr ||
-        source.source == nullptr) {
+    if (snapshot.type_check_result == nullptr || expr == nullptr || source.source == nullptr) {
         return;
     }
     const auto *type_check_result = snapshot.type_check_result.get();
-    const TypedExpr *typed = type_check_result->typed_program.find_expr(
-        expr->node_id, source.source_id);
+    const TypedExpr *typed =
+        type_check_result->typed_program.find_expr(expr->node_id, source.source_id);
     std::uint32_t expr_index = fallback_expr_index;
-    if (typed == nullptr && fallback_expr_index < type_check_result->typed_program.expressions.size()) {
+    if (typed == nullptr &&
+        fallback_expr_index < type_check_result->typed_program.expressions.size()) {
         typed = &type_check_result->typed_program.expressions[fallback_expr_index];
     }
     if (typed == nullptr) {
@@ -858,15 +858,13 @@ void try_register_construct_targets(HoverTargetIndex &index,
             [&](const types::EnumT &enum_type) -> bool {
                 const EnumTypeInfo *enum_info = nullptr;
                 if (enum_type.symbol.has_value()) {
-                    auto it = type_check_result->environment.enums().find(
-                        enum_type.symbol->value);
+                    auto it = type_check_result->environment.enums().find(enum_type.symbol->value);
                     if (it != type_check_result->environment.enums().end()) {
                         enum_info = &it->second;
                     }
                 }
                 if (enum_info == nullptr) {
-                    for (const auto &[id, ei] :
-                         type_check_result->environment.enums()) {
+                    for (const auto &[id, ei] : type_check_result->environment.enums()) {
                         (void)id;
                         if (ei.canonical_name == enum_type.canonical_name) {
                             enum_info = &ei;
@@ -878,8 +876,7 @@ void try_register_construct_targets(HoverTargetIndex &index,
                     return false;
                 }
                 std::string_view candidate_name;
-                if (e.kind == ast::ExprSyntaxKind::MemberAccess &&
-                    !e.member_name.empty()) {
+                if (e.kind == ast::ExprSyntaxKind::MemberAccess && !e.member_name.empty()) {
                     candidate_name = e.member_name;
                 } else {
                     candidate_name = e.semantic_name;
@@ -892,8 +889,7 @@ void try_register_construct_targets(HoverTargetIndex &index,
                 //     semantic_name), the last segment == the variant name.
                 //   - For PathExpr with plain variant, there's no "::" and
                 //     the string is returned unchanged.
-                if (const auto sep = candidate_name.rfind("::");
-                    sep != std::string_view::npos) {
+                if (const auto sep = candidate_name.rfind("::"); sep != std::string_view::npos) {
                     candidate_name = candidate_name.substr(sep + 2);
                 }
                 const bool is_variant =
@@ -907,32 +903,30 @@ void try_register_construct_targets(HoverTargetIndex &index,
         });
         if (matched) {
             SourceRange effective_range = e.range;
-                // Determine the identifier to narrow-to: prefer the concrete
-                // member_name (populated by TypedHirBuilder for the flat
-                // expressions vector); fall back to the last segment of the
-                // semantic_name (populated by remember_expression_type via
-                // the node_id index — this is the path that fires for AST-
-                // walk registrations where member_name is blank).
-                std::string narrow_target;
-                if (e.kind == ast::ExprSyntaxKind::MemberAccess &&
-                    !e.member_name.empty()) {
-                    narrow_target = std::string{e.member_name};
-                } else {
-                    const auto sep = e.semantic_name.rfind("::");
-                    if (sep != std::string::npos) {
-                        narrow_target =
-                            std::string{e.semantic_name.substr(sep + 2)};
-                    } else if (!e.semantic_name.empty()) {
-                        narrow_target = std::string{e.semantic_name};
-                    }
+            // Determine the identifier to narrow-to: prefer the concrete
+            // member_name (populated by TypedHirBuilder for the flat
+            // expressions vector); fall back to the last segment of the
+            // semantic_name (populated by remember_expression_type via
+            // the node_id index — this is the path that fires for AST-
+            // walk registrations where member_name is blank).
+            std::string narrow_target;
+            if (e.kind == ast::ExprSyntaxKind::MemberAccess && !e.member_name.empty()) {
+                narrow_target = std::string{e.member_name};
+            } else {
+                const auto sep = e.semantic_name.rfind("::");
+                if (sep != std::string::npos) {
+                    narrow_target = std::string{e.semantic_name.substr(sep + 2)};
+                } else if (!e.semantic_name.empty()) {
+                    narrow_target = std::string{e.semantic_name};
                 }
-                if (!narrow_target.empty()) {
-                    if (const auto narrow = last_identifier_range(
-                            *source.source, e.range, narrow_target);
-                        narrow.has_value()) {
-                        effective_range = *narrow;
-                    }
+            }
+            if (!narrow_target.empty()) {
+                if (const auto narrow =
+                        last_identifier_range(*source.source, e.range, narrow_target);
+                    narrow.has_value()) {
+                    effective_range = *narrow;
                 }
+            }
             index.add(HoverTarget{
                 .kind = HoverTargetKind::EnumLiteral,
                 .token_range = effective_range,
@@ -941,9 +935,9 @@ void try_register_construct_targets(HoverTargetIndex &index,
                 // owner_symbol_id carries the enum type's SymbolId so the
                 // hover read-side can look up variant payload types for
                 // tuple-variant Construct Hover (Wave-21 Lane C-1).
-                .owner_symbol_id =
-                    matched_enum_info ? std::optional<SymbolId>{matched_enum_info->symbol}
-                                      : std::nullopt,
+                .owner_symbol_id = matched_enum_info
+                                       ? std::optional<SymbolId>{matched_enum_info->symbol}
+                                       : std::nullopt,
                 .typed_expr_index = expr_index,
                 .local_name = e.semantic_name,
                 .role = "enum-variant construct site",
@@ -954,8 +948,7 @@ void try_register_construct_targets(HoverTargetIndex &index,
 
     // ConstEval detection — mirror of the add_typed_targets block.
     if (e.resolved_symbol.has_value()) {
-        const auto ct = type_check_result->environment.get_const_type(
-            *e.resolved_symbol);
+        const auto ct = type_check_result->environment.get_const_type(*e.resolved_symbol);
         if (ct.has_value()) {
             index.add(HoverTarget{
                 .kind = HoverTargetKind::ConstEval,
@@ -1124,10 +1117,9 @@ void add_statement_targets(HoverTargetIndex &index,
         }
         return;
     case ast::StatementSyntaxKind::IfLet:
-        // RFC e-1 minimal POC: walk scrutinee + then/else bodies so hover
-        // targets inside the new syntax are still indexed.  Pattern bindings
-        // are not materialised as symbols yet (narrowing / symbol-intro
-        // deferred to follow-up work).
+        // RFC 0002: index the scrutinee and both branch bodies. Pattern
+        // binding symbols are introduced by semantic analysis, not this AST
+        // traversal.
         if (statement.if_let_stmt) {
             add_expr_syntax_targets(
                 index, snapshot, source, statement.if_let_stmt->scrutinee.get());
@@ -1146,14 +1138,12 @@ void add_statement_targets(HoverTargetIndex &index,
         if (statement.assert_stmt) {
             add_expr_syntax_targets(
                 index, snapshot, source, statement.assert_stmt->condition.get());
-            add_expr_syntax_targets(
-                index, snapshot, source, statement.assert_stmt->message.get());
+            add_expr_syntax_targets(index, snapshot, source, statement.assert_stmt->message.get());
         }
         return;
     case ast::StatementSyntaxKind::Unwrap:
         if (statement.unwrap_stmt) {
-            add_expr_syntax_targets(
-                index, snapshot, source, statement.unwrap_stmt->operand.get());
+            add_expr_syntax_targets(index, snapshot, source, statement.unwrap_stmt->operand.get());
         }
         return;
     case ast::StatementSyntaxKind::Requires:
@@ -1829,15 +1819,14 @@ void add_typed_targets(HoverTargetIndex &index,
                     //     back to a linear canonical_name scan.
                     const EnumTypeInfo *enum_info = nullptr;
                     if (enum_type.symbol.has_value()) {
-                        auto it = type_check_result->environment.enums().find(
-                            enum_type.symbol->value);
+                        auto it =
+                            type_check_result->environment.enums().find(enum_type.symbol->value);
                         if (it != type_check_result->environment.enums().end()) {
                             enum_info = &it->second;
                         }
                     }
                     if (enum_info == nullptr) {
-                        for (const auto &[id, ei] :
-                             type_check_result->environment.enums()) {
+                        for (const auto &[id, ei] : type_check_result->environment.enums()) {
                             (void)id;
                             if (ei.canonical_name == enum_type.canonical_name) {
                                 enum_info = &ei;
@@ -1878,21 +1867,19 @@ void add_typed_targets(HoverTargetIndex &index,
                 // populated; fall back to the last segment of semantic_name
                 // (see helper try_register_construct_targets for rationale).
                 std::string narrow_target;
-                if (expr.kind == ast::ExprSyntaxKind::MemberAccess &&
-                    !expr.member_name.empty()) {
+                if (expr.kind == ast::ExprSyntaxKind::MemberAccess && !expr.member_name.empty()) {
                     narrow_target = std::string{expr.member_name};
                 } else {
                     const auto sep = expr.semantic_name.rfind("::");
                     if (sep != std::string::npos) {
-                        narrow_target =
-                            std::string{expr.semantic_name.substr(sep + 2)};
+                        narrow_target = std::string{expr.semantic_name.substr(sep + 2)};
                     } else if (!expr.semantic_name.empty()) {
                         narrow_target = std::string{expr.semantic_name};
                     }
                 }
                 if (!narrow_target.empty()) {
-                    if (const auto narrow = last_identifier_range(
-                            *source.source, expr.range, narrow_target);
+                    if (const auto narrow =
+                            last_identifier_range(*source.source, expr.range, narrow_target);
                         narrow.has_value()) {
                         effective_range = *narrow;
                     }
@@ -1905,10 +1892,9 @@ void add_typed_targets(HoverTargetIndex &index,
                     // owner_symbol_id carries the enum type's SymbolId so
                     // the read-side can resolve variant payload types for
                     // tuple-variant Construct Hover (Wave-21 Lane C-1).
-                    .owner_symbol_id =
-                        matched_enum_info
-                            ? std::optional<SymbolId>{matched_enum_info->symbol}
-                            : std::nullopt,
+                    .owner_symbol_id = matched_enum_info
+                                           ? std::optional<SymbolId>{matched_enum_info->symbol}
+                                           : std::nullopt,
                     .typed_expr_index = expr_index,
                     .local_name = expr.semantic_name,
                     .role = "enum-variant construct site",
@@ -1922,8 +1908,7 @@ void add_typed_targets(HoverTargetIndex &index,
         // (not just the declaration-site type).  The renderer appends
         // `= <compile-time value>` after the canonical constant name.
         if (expr.resolved_symbol.has_value()) {
-            const auto ct = type_check_result->environment.get_const_type(
-                *expr.resolved_symbol);
+            const auto ct = type_check_result->environment.get_const_type(*expr.resolved_symbol);
             if (ct.has_value()) {
                 index.add(HoverTarget{
                     .kind = HoverTargetKind::ConstEval,
@@ -2013,11 +1998,10 @@ const HoverTarget *HoverTargetIndex::lookup(std::size_t offset) const noexcept {
         //   2. lowest numeric priority (0 = Construct family wins)
         //   3. lowest enum ordinal (see ORDER CONTRACT in hover_index.hpp)
         //   4. earlier in targets_ (implicit: first match wins on full tie)
-        const bool is_better =
-            best == nullptr || current_size < best_size ||
-            (current_size == best_size && target.priority < best_priority) ||
-            (current_size == best_size && target.priority == best_priority &&
-             static_cast<int>(target.kind) < static_cast<int>(best_kind));
+        const bool is_better = best == nullptr || current_size < best_size ||
+                               (current_size == best_size && target.priority < best_priority) ||
+                               (current_size == best_size && target.priority == best_priority &&
+                                static_cast<int>(target.kind) < static_cast<int>(best_kind));
         if (is_better) {
             best = &target;
             best_size = current_size;

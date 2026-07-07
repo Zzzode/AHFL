@@ -27,11 +27,11 @@ namespace ahfl {
 // to_string(AssertionKind) for diagnostic messages and JSON serialization.
 // ----------------------------------------------------------------------------
 enum class AssertionKind {
-    None = 0,       ///< Not an assertion-producing statement (default).
-    Assert,         ///< `assert(c[, "msg"])`.
-    Unwrap,         ///< `unwrap(e)` statement or expression.
-    Requires,       ///< `requires(c[, "msg"])`.
-    Unreachable,    ///< `unreachable(["msg"])`.
+    None = 0,    ///< Not an assertion-producing statement (default).
+    Assert,      ///< `assert(c[, "msg"])`.
+    Unwrap,      ///< `unwrap(e)` statement or expression.
+    Requires,    ///< `requires(c[, "msg"])`.
+    Unreachable, ///< `unreachable(["msg"])`.
 };
 
 [[nodiscard]] const char *to_string(AssertionKind kind) noexcept;
@@ -92,21 +92,20 @@ enum class TypedCallTargetKind : std::uint8_t {
     Sentinel_ForStaticAssert,
 };
 
-static_assert(
-    std::to_underlying(TypedCallTargetKind::Sentinel_ForStaticAssert) == 3,
-    "TypedCallTargetKind must expose exactly 3 public values: "
-    "InherentMethod, TraitMethod, Builtin");
+static_assert(std::to_underlying(TypedCallTargetKind::Sentinel_ForStaticAssert) == 3,
+              "TypedCallTargetKind must expose exactly 3 public values: "
+              "InherentMethod, TraitMethod, Builtin");
 
 // C-5 (Wave-24): records the result of method dispatch for a MethodCall
 // expression. Stored on TypedExpr so downstream passes (lowering, codegen,
 // formal verification) can directly read which impl+method was selected
 // without re-running the dispatch resolution logic.
 struct DispatchTarget {
-    std::size_t impl_index{0};          // ImplTypeInfo::index in typed_program.declarations
-    std::string method_name;            // Selected method name
-    bool is_inherent{true};             // true = inherent impl, false = trait impl
-    std::optional<SymbolId> method_symbol;  // Method's Function symbol (if registered)
-    std::optional<SymbolId> trait_symbol;   // For trait impls: the trait symbol
+    std::size_t impl_index{0};             // ImplTypeInfo::index in typed_program.declarations
+    std::string method_name;               // Selected method name
+    bool is_inherent{true};                // true = inherent impl, false = trait impl
+    std::optional<SymbolId> method_symbol; // Method's Function symbol (if registered)
+    std::optional<SymbolId> trait_symbol;  // For trait impls: the trait symbol
 };
 
 enum class ConstValueKind : std::uint8_t {
@@ -155,7 +154,7 @@ enum class TypedStmtKind : std::uint8_t {
     Let,
     Assign,
     If,
-    IfLet,       // RFC e-1 (Wave-19 Lane 3b): if let Variant(x) = e { } else { }
+    IfLet, // RFC 0002: if let Variant(x) = e { } else { }
     Goto,
     Return,
     Assert,
@@ -286,8 +285,7 @@ struct InstanceKey {
     SymbolId decl_symbol;
     std::vector<TypePtr> type_args;
 
-    [[nodiscard]] friend bool operator==(const InstanceKey &lhs,
-                                         const InstanceKey &rhs) noexcept {
+    [[nodiscard]] friend bool operator==(const InstanceKey &lhs, const InstanceKey &rhs) noexcept {
         if (lhs.decl_symbol != rhs.decl_symbol)
             return false;
         if (lhs.type_args.size() != rhs.type_args.size())
@@ -333,7 +331,10 @@ struct MonomorphizedInstance {
 // Result of a monomorphize_decl() call. Reports whether the call actually
 // produced new records (Created) or returned a cache hit (DedupHit), plus the
 // index into TypedProgram::monomorphized_instances.
-enum class MonomorphizeStatus : std::uint8_t { Created = 0, DedupHit };
+enum class MonomorphizeStatus : std::uint8_t {
+    Created = 0,
+    DedupHit
+};
 
 struct MonomorphizeResult {
     MonomorphizeStatus status{MonomorphizeStatus::Created};
@@ -672,9 +673,8 @@ struct TypedProgram {
     // Returns a list of indexes into `impl_declaration_indexes`, each of
     // which can be dereferenced into `declarations` via the returned
     // uint32 values. Empty vector when no impl exists.
-    [[nodiscard]] std::vector<std::uint32_t>
-    lookup_impl_index(std::optional<SymbolId> trait_symbol,
-                      const Type &concrete_type) const;
+    [[nodiscard]] std::vector<std::uint32_t> lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                                                               const Type &concrete_type) const;
 
     // Same lookup with a precomputed normalized-type key.
     [[nodiscard]] std::vector<std::uint32_t>
@@ -854,8 +854,7 @@ decltype(auto) typed_visit(const TypedStatement &stmt, Visitor &&visitor) {
 // violation). No exceptions.
 struct TypedDecl;
 
-[[nodiscard]] MonomorphizeResult monomorphize_decl(TypedProgram &program,
-                                                   std::uint32_t source_decl_index,
-                                                   InstanceKey key) noexcept;
+[[nodiscard]] MonomorphizeResult
+monomorphize_decl(TypedProgram &program, std::uint32_t source_decl_index, InstanceKey key) noexcept;
 
 } // namespace ahfl

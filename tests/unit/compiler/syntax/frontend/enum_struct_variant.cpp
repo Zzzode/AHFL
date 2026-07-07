@@ -43,13 +43,9 @@ find_enum_decl(const ahfl::ast::Program &program, std::string_view name) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Wave-19 Lane 3b F1 — RFC d-1 Enum variant named fields (struct variant):
-//   parse → AST → formatter → surface text, with exact-string equality.
-//
-// NOTE: This POC intentionally stops at the parser/AST/printer boundary —
-// no resolver, typechecker, TypedHIR or IR work is performed. Downstream
-// passes only see a new named_fields vector, which is (by design) empty
-// for every non-struct variant so existing codepaths remain untouched.
+// RFC 0001 enum struct variant syntax coverage:
+//   parse -> AST -> formatter -> surface text, with exact-string equality.
+// Semantic, Typed HIR, IR, and runtime coverage lives in dedicated suites.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("Enum struct variants: 1-field / 2-field / 3-field with default (roundtrip)") {

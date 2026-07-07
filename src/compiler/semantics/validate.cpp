@@ -495,8 +495,7 @@ class ValidationPass final {
             return;
         }
 
-        walk_typed_contract_clauses_in_program(
-            require(program_, "validate program must exist"));
+        walk_typed_contract_clauses_in_program(require(program_, "validate program must exist"));
     }
 
     [[nodiscard]] bool has_transition(const ast::AgentDecl &agent_decl,
@@ -565,22 +564,17 @@ class ValidationPass final {
             };
         }
         case ast::StatementSyntaxKind::IfLet: {
-            // RFC e-1 minimal POC: control-flow mirrors `if` — then branch
-            // may introduce bindings (deferred); fallthrough behaviour is
-            // identical so reachability reports stay accurate.
+            // RFC 0002 if-let has the same reachability shape as `if`; payload
+            // bindings are branch-local typecheck state.
             const auto *ifl = statement.if_let_stmt.get();
-            const auto then_summary = ifl && ifl->then_block
-                                          ? analyze_block(*ifl->then_block,
-                                                          agent_decl,
-                                                          handler_state,
-                                                          is_final_handler)
-                                          : ControlFlowSummary{};
-            const auto else_summary = ifl && ifl->else_block
-                                          ? analyze_block(*ifl->else_block,
-                                                          agent_decl,
-                                                          handler_state,
-                                                          is_final_handler)
-                                          : ControlFlowSummary{};
+            const auto then_summary =
+                ifl && ifl->then_block
+                    ? analyze_block(*ifl->then_block, agent_decl, handler_state, is_final_handler)
+                    : ControlFlowSummary{};
+            const auto else_summary =
+                ifl && ifl->else_block
+                    ? analyze_block(*ifl->else_block, agent_decl, handler_state, is_final_handler)
+                    : ControlFlowSummary{};
             return ControlFlowSummary{
                 .may_fallthrough = !ifl || !ifl->else_block || then_summary.may_fallthrough ||
                                    else_summary.may_fallthrough,

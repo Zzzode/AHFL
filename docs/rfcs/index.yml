@@ -1,21 +1,21 @@
 schema: 1
-updated: "2026-07-05"
+updated: "2026-07-06"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
-    status: "implemented"
+    status: "stabilized"
     file: "0001-enum-variant-payload.zh.md"
     area: ["language", "compiler"]
     stability: "stable-language"
   - rfc: "0002"
     title: "Optional Narrowing in Pattern Matching"
-    status: "draft"
+    status: "stabilized"
     file: "0002-optional-narrowing.zh.md"
-    area: ["language", "compiler"]
+    area: ["language", "compiler", "tooling"]
     stability: "stable-language"
   - rfc: "0003"
     title: "Match Exhaustiveness Diagnostics"
-    status: "draft"
+    status: "implemented"
     file: "0003-match-exhaustiveness-diagnostics.zh.md"
     area: ["language", "compiler", "tooling"]
     stability: "developer-facing"

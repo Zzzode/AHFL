@@ -167,6 +167,73 @@ namespace {
         condition.node);
 }
 
+[[nodiscard]] std::optional<TypeFact> extract_method_narrowing(const ast::ExprSyntax &condition,
+                                                               bool truth_value) {
+    return std::visit(
+        Overloaded{
+            [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
+                if (!group.inner) {
+                    return std::nullopt;
+                }
+                return extract_method_narrowing(*group.inner, truth_value);
+            },
+            [truth_value, &condition](const ast::MethodCallExpr &call) -> std::optional<TypeFact> {
+                if (!call.receiver || !call.arguments.empty()) {
+                    return std::nullopt;
+                }
+
+                auto place = extract_place(*call.receiver);
+                if (!place.has_value()) {
+                    return std::nullopt;
+                }
+
+                if (call.method == "is_some") {
+                    return TypeFact{
+                        .place = std::move(*place),
+                        .kind = truth_value ? TypeFactKind::IsNotNone : TypeFactKind::IsNone,
+                        .origin = condition.range,
+                        .enum_name = {},
+                        .variant_name = {},
+                    };
+                }
+                if (call.method == "is_none") {
+                    return TypeFact{
+                        .place = std::move(*place),
+                        .kind = truth_value ? TypeFactKind::IsNone : TypeFactKind::IsNotNone,
+                        .origin = condition.range,
+                        .enum_name = {},
+                        .variant_name = {},
+                    };
+                }
+
+                if (call.method == "is_ok") {
+                    return TypeFact{
+                        .place = std::move(*place),
+                        .kind = truth_value ? TypeFactKind::IsVariant
+                                            : TypeFactKind::IsNotVariant,
+                        .origin = condition.range,
+                        .enum_name = "Result",
+                        .variant_name = "Ok",
+                    };
+                }
+                if (call.method == "is_err") {
+                    return TypeFact{
+                        .place = std::move(*place),
+                        .kind = truth_value ? TypeFactKind::IsVariant
+                                            : TypeFactKind::IsNotVariant,
+                        .origin = condition.range,
+                        .enum_name = "Result",
+                        .variant_name = "Err",
+                    };
+                }
+
+                return std::nullopt;
+            },
+            [](const auto &) -> std::optional<TypeFact> { return std::nullopt; },
+        },
+        condition.node);
+}
+
 void collect_true_facts(const ast::ExprSyntax &condition, FlowFacts &facts) {
     const bool handled =
         std::visit(Overloaded{
@@ -199,6 +266,9 @@ void collect_true_facts(const ast::ExprSyntax &condition, FlowFacts &facts) {
     if (auto fact = extract_variant_comparison(condition, true); fact.has_value()) {
         facts.add(std::move(*fact));
     }
+    if (auto fact = extract_method_narrowing(condition, true); fact.has_value()) {
+        facts.add(std::move(*fact));
+    }
 }
 
 } // namespace
@@ -214,6 +284,9 @@ ConditionFacts extract_condition_facts(const ast::ExprSyntax &condition) {
         result.when_false.add(std::move(*fact));
     }
     if (auto fact = extract_variant_comparison(condition, false); fact.has_value()) {
+        result.when_false.add(std::move(*fact));
+    }
+    if (auto fact = extract_method_narrowing(condition, false); fact.has_value()) {
         result.when_false.add(std::move(*fact));
     }
     return result;

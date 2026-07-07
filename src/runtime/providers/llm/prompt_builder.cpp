@@ -46,7 +46,7 @@ std::string PromptBuilder::describe_type_schema(const std::string &type_name) co
             if (i > 0) {
                 oss << ", ";
             }
-            oss << "\"" << enum_decl->variants[i] << "\"";
+            oss << "\"" << enum_decl->variants[i].name << "\"";
         }
         oss << "]";
         return oss.str();

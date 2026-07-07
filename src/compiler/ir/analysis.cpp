@@ -199,6 +199,23 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
                                           else_summary.may_fallthrough;
                 return summary;
             },
+            [](const IfLetStatement &value) {
+                StateHandler::Summary summary;
+                collect_called_targets_from_expr(*value.scrutinee, summary.called_targets);
+
+                const auto then_summary = summarize_block(*value.then_block);
+                merge_flow_summary(summary, then_summary);
+
+                StateHandler::Summary else_summary;
+                if (value.else_block) {
+                    else_summary = summarize_block(*value.else_block);
+                    merge_flow_summary(summary, else_summary);
+                }
+
+                summary.may_fallthrough = !value.else_block || then_summary.may_fallthrough ||
+                                          else_summary.may_fallthrough;
+                return summary;
+            },
             [](const GotoStatement &value) {
                 StateHandler::Summary summary;
                 summary.goto_targets.push_back(value.target_state);

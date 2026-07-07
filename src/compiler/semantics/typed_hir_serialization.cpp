@@ -270,14 +270,18 @@ template <typename E>
     return "unit";
 }
 
-[[nodiscard]] EnumVariantPayloadKind enum_variant_payload_kind_from_name(std::string_view name) {
+[[nodiscard]] std::optional<EnumVariantPayloadKind>
+enum_variant_payload_kind_from_name(std::string_view name) {
+    if (name == "unit") {
+        return EnumVariantPayloadKind::Unit;
+    }
     if (name == "tuple") {
         return EnumVariantPayloadKind::Tuple;
     }
     if (name == "struct") {
         return EnumVariantPayloadKind::Struct;
     }
-    return EnumVariantPayloadKind::Unit;
+    return std::nullopt;
 }
 
 [[nodiscard]] std::unique_ptr<Json> j_enum_variant_field(const EnumVariantFieldInfo &field) {
@@ -940,6 +944,10 @@ class Reader {
         return ok_;
     }
 
+    void fail() noexcept {
+        ok_ = false;
+    }
+
     [[nodiscard]] const Json *field(const Json &object, std::string_view key) {
         if (object.kind != json::Kind::Object) {
             ok_ = false;
@@ -1483,8 +1491,15 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 };
                 if (const auto *kind = reader.field(*item, "payload_kind");
                     kind != nullptr && kind->kind == json::Kind::String) {
-                    variant.payload_kind =
-                        enum_variant_payload_kind_from_name(kind->string_val);
+                    if (const auto payload_kind =
+                            enum_variant_payload_kind_from_name(kind->string_val);
+                        payload_kind.has_value()) {
+                        variant.payload_kind = *payload_kind;
+                    } else {
+                        reader.fail();
+                    }
+                } else {
+                    reader.fail();
                 }
                 if (const auto *payload = reader.field(*item, "payload");
                     payload != nullptr && payload->kind == json::Kind::Array) {
@@ -1507,13 +1522,6 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                                 reader.range_field(*field_item, "declaration_range"),
                         });
                     }
-                }
-                if (reader.field(*item, "payload_kind") == nullptr) {
-                    variant.payload_kind =
-                        !variant.fields.empty()
-                            ? EnumVariantPayloadKind::Struct
-                            : (!variant.payload.empty() ? EnumVariantPayloadKind::Tuple
-                                                        : EnumVariantPayloadKind::Unit);
                 }
                 variant.rebuild_field_index();
                 info.variants.push_back(std::move(variant));

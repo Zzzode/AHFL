@@ -73,11 +73,32 @@ struct StructDecl {
     SymbolRef symbol_ref;
 };
 
-/// Enum declaration: enum Name { Variant1; Variant2; }
+enum class EnumVariantPayloadKind {
+    Unit,
+    Tuple,
+    Struct,
+};
+
+struct EnumVariantFieldDecl {
+    std::string name;
+    TypeRef type_ref;
+    ExprRef default_value;
+    SourceRangeOpt source_range;
+};
+
+struct EnumVariantDecl {
+    std::string name;
+    EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
+    std::vector<TypeRef> payload;
+    std::vector<EnumVariantFieldDecl> fields;
+    SourceRangeOpt source_range;
+};
+
+/// Enum declaration: enum Name { Unit, Tuple(T), Struct { field: T } }
 struct EnumDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::vector<std::string> variants;
+    std::vector<EnumVariantDecl> variants;
     SymbolRef symbol_ref;
 };
 

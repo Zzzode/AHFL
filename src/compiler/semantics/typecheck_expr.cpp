@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
+#include "compiler/semantics/match_exhaustiveness.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
 #include <algorithm>
@@ -87,6 +88,126 @@ semantic_payload_kind(ast::EnumVariantPayloadKind kind) noexcept {
         return EnumVariantPayloadKind::Struct;
     }
     return EnumVariantPayloadKind::Unit;
+}
+
+[[nodiscard]] std::optional<std::string>
+top_level_variant_name_for_narrowing(const ast::PatternSyntax &pattern,
+                                     const EnumTypeInfo &enum_info) {
+    return std::visit(overloaded{
+                          [&](const ast::BindingPattern &binding) -> std::optional<std::string> {
+                              if (!binding.nested && enum_info.has_variant(binding.name)) {
+                                  const auto variant = enum_info.find_variant(binding.name);
+                                  if (variant.has_value() &&
+                                      variant->get().payload_kind == EnumVariantPayloadKind::Unit) {
+                                      return binding.name;
+                                  }
+                              }
+                              return std::nullopt;
+                          },
+                          [&](const ast::VariantPattern &variant) -> std::optional<std::string> {
+                              if (variant.path == nullptr || variant.path->segments.empty()) {
+                                  return std::nullopt;
+                              }
+                              const auto &name = variant.path->segments.back();
+                              if (enum_info.has_variant(name)) {
+                                  return name;
+                              }
+                              return std::nullopt;
+                          },
+                          [](const auto &) -> std::optional<std::string> { return std::nullopt; },
+                      },
+                      pattern.node);
+}
+
+void add_match_arm_narrowing_fact(const ast::PatternSyntax &pattern,
+                                  const EnumTypeInfo &enum_info,
+                                  const Type &scrutinee_type,
+                                  const Place &scrutinee_place,
+                                  FlowFacts &facts) {
+    const auto variant_name = top_level_variant_name_for_narrowing(pattern, enum_info);
+    if (!variant_name.has_value()) {
+        return;
+    }
+
+    const auto option = stdlib_bridge::std_container_type_view(scrutinee_type);
+    if (option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
+        *variant_name == "Some") {
+        facts.add(TypeFact{
+            .place = scrutinee_place,
+            .kind = TypeFactKind::IsNotNone,
+            .origin = pattern.range,
+        });
+        return;
+    }
+    if (option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
+        *variant_name == "None") {
+        facts.add(TypeFact{
+            .place = scrutinee_place,
+            .kind = TypeFactKind::IsNone,
+            .origin = pattern.range,
+        });
+        return;
+    }
+
+    facts.add(TypeFact{
+        .place = scrutinee_place,
+        .kind = TypeFactKind::IsVariant,
+        .origin = pattern.range,
+        .enum_name = enum_info.canonical_name,
+        .variant_name = *variant_name,
+    });
+}
+
+[[nodiscard]] std::string join_missing_variant_names(const MatchMissingPatternsDiagnostic &missing) {
+    std::string listing;
+    for (std::size_t i = 0; i < missing.variants.size(); ++i) {
+        listing += (i == 0 ? "" : ", ") + missing.variants[i].name;
+    }
+    return listing;
+}
+
+[[nodiscard]] std::vector<Diagnostic::Related>
+missing_pattern_notes(const EnumTypeInfo &enum_info,
+                      const MatchMissingPatternsDiagnostic &missing) {
+    std::vector<Diagnostic::Related> notes;
+    notes.reserve(1 + missing.variants.size());
+    notes.push_back(Diagnostic::Related{
+        .message = "enum '" + enum_info.canonical_name + "' declared here",
+        .range = missing.enum_declaration_range,
+    });
+    for (const auto &variant : missing.variants) {
+        notes.push_back(Diagnostic::Related{
+            .message = "missing variant '" + variant.name + "' declared here",
+            .range = variant.declaration_range,
+        });
+    }
+    return notes;
+}
+
+[[nodiscard]] std::vector<Diagnostic::Related>
+unreachable_arm_notes(const MatchUnreachableArmDiagnostic &unreachable) {
+    std::vector<Diagnostic::Related> notes;
+    notes.reserve(unreachable.covering_arm_indices.size());
+    for (std::size_t i = 0; i < unreachable.covering_arm_indices.size(); ++i) {
+        std::optional<SourceRange> range = std::nullopt;
+        if (i < unreachable.covering_arm_ranges.size()) {
+            range = unreachable.covering_arm_ranges[i];
+        }
+        notes.push_back(Diagnostic::Related{
+            .message =
+                "previously covered by arm #" + std::to_string(unreachable.covering_arm_indices[i]),
+            .range = range,
+        });
+    }
+    return notes;
+}
+
+[[nodiscard]] std::vector<Diagnostic::Related>
+overlap_notes(const MatchOverlapDiagnostic &overlap) {
+    return std::vector<Diagnostic::Related>{Diagnostic::Related{
+        .message = "overlaps with previous arm #" + std::to_string(overlap.previous_arm_index),
+        .range = overlap.previous_pattern_range,
+    }};
 }
 
 struct MethodCandidate {
@@ -267,6 +388,13 @@ class ExpressionCheckerServices final {
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes) const {
         delegate_->typecheck_error(code, std::move(message), range, std::move(notes));
+    }
+
+    void typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                std::string message,
+                                SourceRange range,
+                                std::vector<Diagnostic::Related> notes) const {
+        delegate_->typecheck_warning(code, std::move(message), range, std::move(notes));
     }
 
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
@@ -1002,10 +1130,9 @@ class ExpressionChecker final {
     //      the first arm's body type is the expected type for every subsequent
     //      arm body (MATCH_ARM_TYPE_MISMATCH on divergence).
     //   4. Exhaustiveness: the match is exhaustive when an arm's pattern can
-    //      match every value of the scrutinee type. The first version accepts
-    //      either a wildcard arm (`_`) or a binding-only arm (`x`) at any
-    //      position, or full coverage of all declared variants. Anything else
-    //      reports MATCH_NOT_EXHAUSTIVE with the missing variant names.
+    //      match every value of the scrutinee type. Missing variants report
+    //      MATCH_MISSING_PATTERNS with declaration notes; fully covered later
+    //      arms and structurally overlapping arms are non-blocking warnings.
     [[nodiscard]] TypedValue visit_match(const ast::ExprSyntax &expr) const {
         const auto &match = expr.as<ast::MatchExpr>();
 
@@ -1066,38 +1193,59 @@ class ExpressionChecker final {
             enum_info = enum_info_owned;
         }
 
-        bool has_catch_all = false;
-        std::unordered_set<std::string> covered_variants;
         std::optional<TypePtr> unified_body_type;
         bool unified_is_error = false;
         if (expected_type_.has_value()) {
             unified_body_type = expected_type_->get().clone();
             unified_is_error = is_error_type(**unified_body_type);
         }
+        const auto scrutinee_place =
+            match.scrutinee != nullptr ? place_of_expression(*match.scrutinee) : std::nullopt;
 
         for (const auto &arm : match.arms) {
             // Build a per-arm value context that layers the pattern's bindings
             // on top of the surrounding bindings. Bindings introduced by the
             // pattern shadow any same-named outer binding (match-arm scope).
             ValueContext arm_context = context_;
-            const bool arm_catches_all = lower_pattern(*arm->pattern,
-                                                       scrutinee.type,
-                                                       enum_info,
-                                                       arm_context.bindings,
-                                                       covered_variants,
-                                                       arm->pattern->range);
-
-            if (arm_catches_all) {
-                has_catch_all = true;
+            if (scrutinee_place.has_value() && enum_info.has_value() && scrutinee.type != nullptr) {
+                add_match_arm_narrowing_fact(*arm->pattern,
+                                             enum_info->get(),
+                                             *scrutinee.type,
+                                             *scrutinee_place,
+                                             arm_context.flow_facts);
             }
+            (void)lower_pattern(*arm->pattern,
+                                scrutinee.type,
+                                enum_info,
+                                arm_context.bindings,
+                                arm->pattern->range);
 
             // Optional guard: must be a pure Bool expression evaluated in the
             // arm-local binding scope. A guard with side effects degrades the
-            // match's effect but does not invalidate exhaustiveness accounting.
+            // match's effect. Exhaustiveness accounting is handled separately by
+            // match_exhaustiveness.cpp, where guarded arms do not prove coverage.
             if (arm->guard) {
                 const auto guard_value =
                     services_.check_expr(*arm->guard, arm_context, std::nullopt);
                 joined = join_effects(joined, guard_value.effect);
+                if (guard_value.type != nullptr && !is_bool_type(*guard_value.type) &&
+                    !is_error_type(*guard_value.type)) {
+                    services_.typecheck_error_here(
+                        error_codes::typecheck::TypeMismatch,
+                        messages::typecheck::BoolExpressionRequired.format_with("match guard"),
+                        arm->guard->range,
+                        std::vector<Diagnostic::Related>{Diagnostic::Related{
+                            .message = actual_type_note(*guard_value.type),
+                            .range = arm->guard->range,
+                        }});
+                }
+                if (!guard_value.is_pure) {
+                    services_.typecheck_error_here(
+                        error_codes::typecheck::NonPureExpression,
+                        std::string("match guard must be pure; expression effect: ") +
+                            std::string(to_string(guard_value.effect)),
+                        arm->guard->range);
+                }
             }
 
             MaybeCRef<Type> arm_expected = std::nullopt;
@@ -1120,34 +1268,35 @@ class ExpressionChecker final {
             }
         }
 
-        // Exhaustiveness: catch-all arm short-circuits; otherwise every variant
-        // of the scrutinee enum must appear in some arm's pattern.
-        if (!has_catch_all) {
-            if (enum_info.has_value()) {
-                for (const auto &variant : enum_info->get().variants) {
-                    if (covered_variants.count(variant.name) == 0) {
-                        std::vector<std::string> missing;
-                        missing.reserve(enum_info->get().variants.size());
-                        for (const auto &v : enum_info->get().variants) {
-                            if (covered_variants.count(v.name) == 0) {
-                                missing.push_back(v.name);
-                            }
-                        }
-                        std::string listing;
-                        for (std::size_t i = 0; i < missing.size(); ++i) {
-                            listing += (i == 0 ? "" : ", ") + missing[i];
-                        }
-                        services_.typecheck_error_here(
-                            error_codes::typecheck::MatchNotExhaustive,
-                            messages::typecheck::MatchNotExhaustive.format_with(listing),
-                            expr.range);
-                        break;
-                    }
-                }
+        if (enum_info.has_value()) {
+            const auto match_diagnostics =
+                analyze_match_exhaustiveness(enum_info->get(), match.arms, expr.range);
+            if (match_diagnostics.missing_patterns.has_value()) {
+                const auto &missing = *match_diagnostics.missing_patterns;
+                services_.typecheck_error_here(
+                    error_codes::typecheck::MatchMissingPatterns,
+                    messages::typecheck::MatchMissingPatterns.format_with(
+                        join_missing_variant_names(missing)),
+                    missing.match_range,
+                    missing_pattern_notes(enum_info->get(), missing));
             }
-            // When the scrutinee is not an enum (error path) we skip the
-            // exhaustiveness check — the MATCH_SCRUTINEE_REQUIRES_ENUM
-            // diagnostic above already flags the real problem.
+            for (const auto &unreachable : match_diagnostics.unreachable_arms) {
+                services_.typecheck_warning_here(
+                    error_codes::typecheck::MatchUnreachableArm,
+                    messages::typecheck::MatchUnreachableArm.format_with(),
+                    unreachable.pattern_range,
+                    unreachable_arm_notes(unreachable));
+            }
+            for (const auto &overlap : match_diagnostics.overlaps) {
+                services_.typecheck_warning_here(
+                    error_codes::typecheck::MatchOverlap,
+                    messages::typecheck::MatchOverlap.format_with(
+                        std::to_string(overlap.previous_arm_index)),
+                    overlap.pattern_range,
+                    overlap_notes(overlap));
+            }
+            // When the scrutinee is not an enum (error path), enum_info is not
+            // available and MATCH_SCRUTINEE_REQUIRES_ENUM already flags the root cause.
         }
 
         TypePtr result_type = unified_body_type.has_value() && !unified_is_error
@@ -1245,14 +1394,15 @@ class ExpressionChecker final {
     // ---------------------------------------------------------------------------
     // P1b ADT: pattern lowering for `match` arms.
     //
-    // `lower_pattern` walks a PatternSyntax, recording:
-    //   * payload-binding names into `bindings` (mapping name -> slot type)
-    //   * matched variant names into `covered_variants` (for exhaustiveness)
+    // `lower_pattern` walks a PatternSyntax, recording payload-binding names
+    // into `bindings` (mapping name -> slot type) and validating variant payload
+    // shape. RFC0003 exhaustiveness/reachability is handled by the dedicated
+    // match_exhaustiveness analyzer.
     //
     // Returns true when the pattern is irrefutable at the scrutinee type — i.e.
     // a wildcard `_`, a bare binding `x` (no `@`), or a tuple pattern composed
-    // entirely of irrefutable sub-patterns. Such patterns make the enclosing
-    // arm a catch-all for exhaustiveness purposes.
+    // entirely of irrefutable sub-patterns. This is used only by recursive tuple
+    // and or-pattern lowering.
     //
     // `scrutinee_type` is the narrowed type for this sub-pattern (the enum type
     // at the top level, the slot type inside a variant payload). `enum_info`
@@ -1263,18 +1413,16 @@ class ExpressionChecker final {
                   TypePtr scrutinee_type,
                   std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
                   BindingMap &bindings,
-                  std::unordered_set<std::string> &covered_variants,
                   SourceRange range) const {
         return std::visit(
             overloaded{
                 [&](const ast::LiteralPattern &) {
                     // Literal patterns only narrow (no binding); they are not
-                    // catch-alls. Exhaustiveness against literals is not modeled
-                    // in the first version — only variant coverage counts.
+                    // catch-alls. Exhaustiveness against literals is delegated
+                    // to the RFC0003 analyzer and is currently not modeled.
                     (void)scrutinee_type;
                     (void)enum_info;
                     (void)bindings;
-                    (void)covered_variants;
                     (void)range;
                     return false;
                 },
@@ -1282,7 +1430,6 @@ class ExpressionChecker final {
                     (void)scrutinee_type;
                     (void)enum_info;
                     (void)bindings;
-                    (void)covered_variants;
                     (void)range;
                     return true;
                 },
@@ -1304,7 +1451,6 @@ class ExpressionChecker final {
                                 EnumVariantPayloadKind::Unit,
                                 range);
                         }
-                        covered_variants.insert(std::string(binding.name));
                         return false;
                     }
                     // A bare binding matches everything and is irrefutable.
@@ -1328,7 +1474,6 @@ class ExpressionChecker final {
                                             scrutinee_type,
                                             enum_info,
                                             bindings,
-                                            covered_variants,
                                             binding.nested->range);
                     }
                     // A binding is a catch-all unless it is constrained by an
@@ -1350,7 +1495,6 @@ class ExpressionChecker final {
                                                                    scrutinee_type,
                                                                    enum_info,
                                                                    bindings,
-                                                                   covered_variants,
                                                                    element->range);
                         all_irrefutable = all_irrefutable && sub_irrefutable;
                     }
@@ -1360,7 +1504,7 @@ class ExpressionChecker final {
                     // Variant patterns only narrow; they are never catch-alls.
                     if (!enum_info.has_value()) {
                         // No enum context to validate against (scrutinee failed
-                        // to resolve). Skip variant coverage bookkeeping.
+                        // to resolve). Skip variant-shape validation.
                         return false;
                     }
                     const auto &segments = variant.path->segments;
@@ -1377,8 +1521,6 @@ class ExpressionChecker final {
                             range);
                         return false;
                     }
-
-                    covered_variants.insert(std::string(variant_name));
 
                     const auto pattern_kind = semantic_payload_kind(variant.payload_kind);
                     if (pattern_kind != variant_info->get().payload_kind) {
@@ -1410,7 +1552,6 @@ class ExpressionChecker final {
                                                 payload[index],
                                                 std::nullopt,
                                                 bindings,
-                                                covered_variants,
                                                 variant.subpatterns[index]->range);
                         }
                         return false;
@@ -1430,9 +1571,9 @@ class ExpressionChecker final {
                             }
                             if (!seen_fields.insert(field_pattern->name).second) {
                                 services_.typecheck_error_here(
-                                    error_codes::typecheck::DuplicateField,
-                                    messages::typecheck::DuplicateField.format_with(
-                                        field_pattern->name),
+                                    error_codes::typecheck::DuplicateVariantField,
+                                    messages::typecheck::DuplicateEnumVariantField.format_with(
+                                        field_pattern->name, std::string(variant_name)),
                                     field_pattern->range);
                                 continue;
                             }
@@ -1451,7 +1592,6 @@ class ExpressionChecker final {
                                                     field->get().type,
                                                     std::nullopt,
                                                     bindings,
-                                                    covered_variants,
                                                     field_pattern->pattern->range);
                             }
                         }
@@ -1471,18 +1611,16 @@ class ExpressionChecker final {
                 },
                 [&](const ast::OrPattern &or_pattern) {
                     // An or-pattern is catch-all only if every branch is. We
-                    // lower every branch so each branch's variant coverage and
-                    // bindings are recorded (the first-version requirement is
-                    // that all branches bind equivalent names; we do not yet
-                    // enforce that here — coverage is what matters for
-                    // exhaustiveness).
+                    // lower every branch so branch-local bindings and payload
+                    // shape errors are surfaced. The first-version requirement
+                    // is that all branches bind equivalent names; we do not yet
+                    // enforce that here.
                     bool all_irrefutable = true;
                     for (const auto &branch : or_pattern.branches) {
                         const auto sub_irrefutable = lower_pattern(*branch,
                                                                    scrutinee_type,
                                                                    enum_info,
                                                                    bindings,
-                                                                   covered_variants,
                                                                    branch->range);
                         all_irrefutable = all_irrefutable && sub_irrefutable;
                     }
@@ -1755,8 +1893,9 @@ class ExpressionChecker final {
         for (const auto &field_init : literal.fields) {
             if (!seen_fields.insert(field_init->field_name).second) {
                 services_.typecheck_error_here(
-                    error_codes::typecheck::DuplicateField,
-                    messages::typecheck::DuplicateField.format_with(field_init->field_name),
+                    error_codes::typecheck::DuplicateVariantField,
+                    messages::typecheck::DuplicateEnumVariantField.format_with(
+                        field_init->field_name, variant_name),
                     field_init->range);
                 continue;
             }
@@ -3187,6 +3326,13 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
         }
 
+        void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                               std::string message,
+                               SourceRange range,
+                               std::vector<Diagnostic::Related> notes) override {
+            pass_->typecheck_warning_here(code, std::move(message), range, std::move(notes));
+        }
+
         ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
                                      const ExpressionContext &nested_context,
                                      MaybeCRef<Type> nested_expected) override {
@@ -3272,6 +3418,13 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
                              SourceRange range,
                              std::vector<Diagnostic::Related> notes) override {
             pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+        }
+
+        void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                               std::string message,
+                               SourceRange range,
+                               std::vector<Diagnostic::Related> notes) override {
+            pass_->typecheck_warning_here(code, std::move(message), range, std::move(notes));
         }
 
         ExpressionValue

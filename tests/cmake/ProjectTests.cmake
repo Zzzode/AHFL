@@ -4269,6 +4269,16 @@ add_test(NAME ahfl.runtime.e2e_workflow
             "${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
 )
 
+add_test(NAME ahfl.runtime.enum_variant_e2e
+    COMMAND $<TARGET_FILE:ahfl_enum_variant_e2e_tests>
+            "${AHFL_TESTS_DIR}/golden/runtime/enum_variant_e2e.ahfl"
+)
+
+add_test(NAME ahfl.runtime.if_let_e2e
+    COMMAND $<TARGET_FILE:ahfl_if_let_e2e_tests>
+            "${AHFL_TESTS_DIR}/golden/runtime/if_let_e2e.ahfl"
+)
+
 add_test(NAME ahfl.llm_provider.all
     COMMAND $<TARGET_FILE:ahfl_runtime_provider_llm_tests>
 )
@@ -4428,19 +4438,17 @@ add_test(NAME ahfl.frontend.decreases_symmetry_all
     COMMAND $<TARGET_FILE:ahfl_decreases_symmetry_tests>
 )
 
-# Wave-19 Lane 3b F1 — RFC d-1 Enum variant named fields (struct variant)
-# minimal grammar POC. Coverage: parse → AST → ast_printer → formatter
-# roundtrip. Intentionally stops BEFORE resolver / typechecker / TypedHIR / IR.
+# RFC 0001 enum struct variant syntax coverage: parse -> AST -> ast_printer ->
+# formatter roundtrip. Semantic, Typed HIR, IR, and runtime coverage lives in
+# the dedicated semantics/runtime suites.
 add_test(NAME ahfl.frontend.enum_struct_variant_all
     COMMAND $<TARGET_FILE:ahfl_enum_struct_variant_tests>
 )
 
-# Wave-19 Lane 3b F2 — RFC e-1 Optional narrowing `if let Some(x) = expr`
-# minimal syntax POC. Coverage: parse → AST → ast_printer → formatter
-# roundtrip. Narrowing semantics / TypedHIR lowering / exhaustive-pattern
-# checks are intentionally NOT implemented (pre-approval demo).
-add_test(NAME ahfl.frontend.if_let_syntax_poc_all
-    COMMAND $<TARGET_FILE:ahfl_if_let_syntax_poc_tests>
+# RFC 0002 if-let syntax coverage: parse -> AST -> ast_printer -> formatter
+# roundtrip.
+add_test(NAME ahfl.frontend.if_let_syntax_all
+    COMMAND $<TARGET_FILE:ahfl_if_let_syntax_tests>
 )
 
 add_test(NAME ahfl.support.thread_pool_all

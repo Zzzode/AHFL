@@ -104,6 +104,23 @@ int main() {
               "const preserved in combined file");
     }
 
+    // Test 11: Struct enum variant pattern with explicit field pattern
+    {
+        std::string source = R"AHFL(module fmt::enum_pattern;
+
+enum Packet {
+    Empty,
+    Data { code: Int, label: String },
+}
+
+const X: Int = match Packet::Data { label: "ok", code: 7 } { Data { code: _, label } => 1, Empty => 0 };
+)AHFL";
+        auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format explicit struct variant field pattern succeeds");
+        check(result.formatted.find("Data { code: _, label }") != std::string::npos,
+              "explicit struct variant field pattern preserved");
+    }
+
     std::printf("%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }

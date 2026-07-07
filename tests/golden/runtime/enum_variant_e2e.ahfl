@@ -1,0 +1,65 @@
+module runtime::enum_variant_e2e;
+
+struct TicketRequest {
+    id: Int;
+}
+
+struct TicketContext {
+    seen: Int = 0;
+}
+
+struct TicketResponse {
+    id: Int;
+    owner: String;
+}
+
+enum Ticket {
+    Open { id: Int, owner: String = "system" },
+    Closed { id: Int, reason: String },
+}
+
+agent TicketAgent {
+    input: TicketRequest;
+    context: TicketContext;
+    output: TicketResponse;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Done;
+}
+
+flow for TicketAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        let ticket: Ticket = Ticket::Open { id: input.id };
+        let resolved_id: Int = match ticket {
+            Open { id, owner: _ } => id,
+            Closed { id: _, reason: _ } => 0,
+        };
+        let resolved_owner: String = match ticket {
+            Open { id: _, owner } => owner,
+            Closed { id: _, reason: _ } => "closed",
+        };
+        return TicketResponse {
+            id: resolved_id,
+            owner: resolved_owner,
+        };
+    }
+}
+
+workflow TicketWorkflow {
+    input: TicketRequest;
+    output: TicketResponse;
+
+    node inspect: TicketAgent(input);
+
+    return: TicketResponse {
+        id: inspect.id,
+        owner: inspect.owner,
+    };
+}

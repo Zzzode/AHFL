@@ -371,6 +371,7 @@ Block               ::= "{" { Statement } "}" ;
 Statement           ::= LetStmt
                       | AssignStmt
                       | IfStmt
+                      | IfLetStmt
                       | GotoStmt
                       | ReturnStmt
                       | AssertStmt
@@ -379,6 +380,8 @@ Statement           ::= LetStmt
 LetStmt             ::= "let" Ident [ ":" Type ] "=" Expr ";" ;
 AssignStmt          ::= LValue "=" Expr ";" ;
 IfStmt              ::= "if" Expr Block [ "else" Block ] ;
+IfLetStmt           ::= "if" "let" IfLetPattern "=" Expr Block [ "else" Block ] ;
+IfLetPattern        ::= Ident [ "(" Ident { "," Ident } [ "," ] ")" ] ;
 GotoStmt            ::= "goto" Ident ";" ;
 ReturnStmt          ::= "return" Expr ";" ;
 AssertStmt          ::= "assert" Expr ";" ;
@@ -396,6 +399,9 @@ LValue              ::= PathExpr ;
    - 纯函数/标准库调用
 3. `goto` 只能跳转到当前 agent 的合法后继状态
 4. `return` 只能出现在终态 handler 中
+5. `if let` scrutinee 必须是纯 enum 表达式；pattern 中的 variant 必须存在，payload shape 必须与声明一致。
+6. `if let Variant(x, y) = e` 仅匹配 tuple variant，并在 then block 内引入 payload 绑定；binding 类型按 scrutinee enum 的泛型实参替换。
+7. `if let` then block 获得匹配成功的局部 narrowing fact；else block 获得互补 fact。赋值到被窄化 path 或其后代 path 会失效这些 fact。
 
 ### 3.10 表达式
 
@@ -413,7 +419,7 @@ MulExpr             ::= UnaryExpr { ( "*" | "/" | "%" ) UnaryExpr } ;
 UnaryExpr           ::= ( "not" | "!" | "-" | "+" ) UnaryExpr
                       | PostfixExpr ;
 
-PostfixExpr         ::= PrimaryExpr { "." Ident | "[" Expr "]" } ;
+PostfixExpr         ::= PrimaryExpr { "." Ident | "." Ident "(" [ ExprList ] ")" | "[" Expr "]" } ;
 
 PrimaryExpr         ::= Literal
                       | QualifiedIdent
@@ -482,9 +488,14 @@ ConstExpr           ::= Expr ;
 1. `Enum::TupleVariant(a, b)` 使用 tuple constructor；实参数量与类型必须匹配 variant payload。
 2. `Enum::StructVariant { field: value }` 使用 struct variant constructor；字段名必须存在，必填字段不得缺失，重复字段禁止。
 3. `Enum::UnitVariant` 是 unit variant value；对非 unit variant 省略 payload 是错误。
-4. match scrutinee 必须是 enum；没有 `_` 或 binding pattern 时，match 必须覆盖所有 variant。
-5. variant pattern 的 payload shape 必须与声明一致；`Some(x)`、`Data { code }` 与 `Empty` 不能互换。
-6. struct variant pattern 支持字段 shorthand、`field: pattern` 与 `..`；未使用 `..` 时必须覆盖全部字段。
+4. match scrutinee 必须是 enum；match 必须由无 guard 的 arm 覆盖所有 variant，否则报告 `typecheck.MATCH_MISSING_PATTERNS`。
+5. `_` 与 catch-all binding 覆盖所有 variant；具体 enum variant pattern 只覆盖对应 variant；or-pattern 覆盖其可识别分支的并集。
+6. 带 guard 的 match arm 不贡献穷尽性覆盖，因为 guard 在运行时可能为 false；它仍可参与结构性 overlap warning。
+7. 被前序无 guard arm 完全覆盖的 arm 报告 `typecheck.MATCH_UNREACHABLE_ARM` warning；与前序 arm 结构性相交的 arm 报告 `typecheck.MATCH_OVERLAP` warning。
+8. variant pattern 的 payload shape 必须与声明一致；`Some(x)`、`Data { code }` 与 `Empty` 不能互换。
+9. struct variant pattern 支持字段 shorthand、`field: pattern` 与 `..`；未使用 `..` 时必须覆盖全部字段。
+10. `match` 的具体 top-level variant arm 会在 arm body 内窄化 scrutinee path；wildcard、catch-all binding 与 or-pattern 不产生唯一 variant fact。
+11. `is_some`、`is_none`、`is_ok`、`is_err` 的零参数 method call 在 `if` 条件中会产生局部分支 narrowing fact；receiver 必须是可窄化 path，否则不产生 fact。
 
 ### 3.11 时序表达式
 

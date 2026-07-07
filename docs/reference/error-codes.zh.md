@@ -1965,7 +1965,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 - 启用对应编译 flag（若有）；或改用条件表达式 + variant 访问。
 - 如代码需要立即落地，建议暂时写成 `if` / 辅助谓词结构。
 
-**Related codes**：`MATCH_SCRUTINEE_REQUIRES_ENUM`、`MATCH_NOT_EXHAUSTIVE`、`LAMBDA_NOT_YET_SUPPORTED`。
+**Related codes**：`MATCH_SCRUTINEE_REQUIRES_ENUM`、`MATCH_MISSING_PATTERNS`、`LAMBDA_NOT_YET_SUPPORTED`。
 
 ---
 
@@ -2025,7 +2025,7 @@ fn f(d: Dir) -> Int effect Pure decreases 0 {
 - 纠正分支里的 variant 名，或在 enum 定义里新增该 variant。
 - 跨 module enum 时确认 import 已带齐。
 
-**Related codes**：`UNKNOWN_ENUM_VARIANT`、`MATCH_NOT_EXHAUSTIVE`、`MATCH_VARIANT_PAYLOAD_ARITY`。
+**Related codes**：`UNKNOWN_ENUM_VARIANT`、`MATCH_MISSING_PATTERNS`、`MATCH_VARIANT_PAYLOAD_ARITY`。
 
 ---
 
@@ -2119,7 +2119,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 - 补齐缺失字段，例如 `Data { code, label }`。
 - 若有意忽略剩余字段，使用 `Data { code, .. }`。
 
-**Related codes**：`UNEXPECTED_VARIANT_FIELD`、`INVALID_ENUM_VARIANT_SHAPE`、`MATCH_NOT_EXHAUSTIVE`。
+**Related codes**：`UNEXPECTED_VARIANT_FIELD`、`INVALID_ENUM_VARIANT_SHAPE`、`MATCH_MISSING_PATTERNS`。
 
 ---
 
@@ -2177,15 +2177,15 @@ const p: Packet = Packet::Data { code: 1 };
 
 ---
 
-### MATCH_NOT_EXHAUSTIVE
+### MATCH_MISSING_PATTERNS
 
 | 字段 | 值 |
 | --- | --- |
-| Error code | `typecheck.MATCH_NOT_EXHAUSTIVE` |
-| SoT | `diagnostics.hpp:216` + template line `459` |
-| MessageTemplate | `match is not exhaustive: variant(s) not covered: {}` |
+| Error code | `typecheck.MATCH_MISSING_PATTERNS` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `non-exhaustive match: missing patterns [{}]` |
 
-**触发条件**：match 没有覆盖所有 enum variant，且没有使用通配 `_` 兜底。
+**触发条件**：enum scrutinee 的 `match` 没有被无 guard arm 覆盖所有 variant。`_` 和 catch-all binding 覆盖所有 variant；带 guard 的 arm 不贡献穷尽性覆盖。
 
 **最小复现**：
 ```ahfl
@@ -2202,8 +2202,71 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 **常见修复**：
 - 为缺失 variant 补充分支，或在末尾增加 `_ => default_value`。
 - 若设计上默认分支有语义，推荐显式列所有 variant，未来加新 variant 时可以得到编译提醒。
+- 若 arm 带有 guard，需要额外提供无 guard fallback arm。
 
-**Related codes**：`MATCH_UNKNOWN_VARIANT`、`MATCH_ARM_TYPE_MISMATCH`、`TYPE_MISMATCH`。
+**Related codes**：`MATCH_UNKNOWN_VARIANT`、`MATCH_UNREACHABLE_ARM`、`MATCH_OVERLAP`、`MATCH_ARM_TYPE_MISMATCH`。
+
+---
+
+### MATCH_UNREACHABLE_ARM
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MATCH_UNREACHABLE_ARM` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `this match arm is unreachable` |
+
+**触发条件**：当前 match arm 的 pattern 已经被前序无 guard arm 完全覆盖，因此该 arm 永远不会执行。
+
+**最小复现**：
+```ahfl
+module repro;
+enum E { A, B }
+fn f(e: E) -> Int effect Pure decreases 0 {
+    return match e {
+        _ => 0,
+        E::A => 1
+    };
+}
+```
+
+**常见修复**：
+- 删除不可达 arm。
+- 或把 catch-all arm 移到最后，并确保前序 arm 表达的是更具体的情况。
+
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_OVERLAP`。
+
+---
+
+### MATCH_OVERLAP
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MATCH_OVERLAP` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `pattern overlaps with arm #{}` |
+
+**触发条件**：当前 match arm 与某个前序 arm 在结构上有非空交集。带 guard 的前序 arm 仍可产生 overlap warning，但不会让后序 arm 自动不可达。
+
+**最小复现**：
+```ahfl
+module repro;
+enum E { A, B }
+fn f(e: E, cond: Bool) -> Int effect Pure decreases 0 {
+    return match e {
+        E::A if cond => 1,
+        E::A => 2,
+        E::B => 3
+    };
+}
+```
+
+**常见修复**：
+- 删除重复 arm。
+- 或重新排序 arm，使更具体的 pattern 位于 catch-all pattern 之前。
+- 对 intentional overlap，保留代码但接受 warning；不要依赖 overlap 作为控制流注释。
+
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`。
 
 ---
 

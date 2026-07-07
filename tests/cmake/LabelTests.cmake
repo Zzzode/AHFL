@@ -1902,6 +1902,8 @@ ahfl_label_tests(
     LABELS ahfl-v0.55 v0.55-e2e
     TESTS
         ahfl.runtime.e2e_workflow
+        ahfl.runtime.enum_variant_e2e
+        ahfl.runtime.if_let_e2e
 )
 
 ahfl_label_tests(

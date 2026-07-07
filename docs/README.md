@@ -82,7 +82,6 @@ Avoid:
 - [module-loading.zh.md](./design/module-loading.zh.md)
 - [module-resolution-rules.zh.md](./design/module-resolution-rules.zh.md)
 - [native-runtime-architecture.zh.md](./design/native-runtime-architecture.zh.md)
-- [optional-narrowing-rfc.zh.md](./design/optional-narrowing-rfc.zh.md)
 - [release-evidence-archive.zh.md](./design/release-evidence-archive.zh.md)
 - [repository-layout.zh.md](./design/repository-layout.zh.md)
 - [rfc-system.zh.md](./design/rfc-system.zh.md)

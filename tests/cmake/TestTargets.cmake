@@ -311,6 +311,24 @@ target_link_libraries(ahfl_e2e_workflow_tests
 )
 ahfl_apply_project_warnings(ahfl_e2e_workflow_tests)
 
+add_executable(ahfl_enum_variant_e2e_tests
+    unit/runtime/engine/enum_variant_e2e.cpp
+)
+target_link_libraries(ahfl_enum_variant_e2e_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_enum_variant_e2e_tests)
+
+add_executable(ahfl_if_let_e2e_tests
+    unit/runtime/engine/if_let_e2e.cpp
+)
+target_link_libraries(ahfl_if_let_e2e_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_if_let_e2e_tests)
+
 add_executable(ahfl_runtime_provider_llm_tests
     unit/runtime/providers/llm/llm_provider.cpp
 )
@@ -838,10 +856,9 @@ target_link_libraries(ahfl_decreases_symmetry_tests
 )
 ahfl_apply_project_warnings(ahfl_decreases_symmetry_tests)
 
-# Wave-19 Lane 3b F1 — RFC d-1 Enum variant named fields (struct variant)
-# minimal grammar POC. Tests only parser / AST / ast_printer / formatter
-# roundtrip: resolver, typechecker, TypedHIR and IR are intentionally NOT
-# modified because this is a pre-approval RFC demo.
+# RFC 0001 enum struct variant syntax coverage: parser / AST / ast_printer /
+# formatter roundtrip. Semantic, Typed HIR, IR, and runtime coverage lives in
+# the dedicated semantics/runtime suites.
 add_executable(ahfl_enum_struct_variant_tests
     unit/compiler/syntax/frontend/enum_struct_variant.cpp
 )
@@ -853,21 +870,18 @@ target_link_libraries(ahfl_enum_struct_variant_tests
 )
 ahfl_apply_project_warnings(ahfl_enum_struct_variant_tests)
 
-# Wave-19 Lane 3b F2 — RFC e-1 Optional narrowing `if let Some(x) = expr`
-# minimal syntax POC.  Tests only parser / AST / ast_printer / formatter
-# roundtrip: narrowing semantics, TypedHIR lowering, and exhaustive-pattern
-# checking are intentionally NOT implemented because this is a pre-approval
-# RFC demo.
-add_executable(ahfl_if_let_syntax_poc_tests
-    unit/compiler/syntax/frontend/if_let_syntax_poc.cpp
+# RFC 0002 if-let syntax coverage: parser / AST / ast_printer / formatter
+# roundtrip.
+add_executable(ahfl_if_let_syntax_tests
+    unit/compiler/syntax/frontend/if_let_syntax.cpp
 )
-target_link_libraries(ahfl_if_let_syntax_poc_tests
+target_link_libraries(ahfl_if_let_syntax_tests
     PRIVATE
         ahfl_compiler_syntax
         ahfl_tooling_formatter
         doctest
 )
-ahfl_apply_project_warnings(ahfl_if_let_syntax_poc_tests)
+ahfl_apply_project_warnings(ahfl_if_let_syntax_tests)
 
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
@@ -1128,6 +1142,8 @@ foreach(_tgt
     ahfl_capability_bridge_tests
     ahfl_response_schema_validator_tests
     ahfl_e2e_workflow_tests
+    ahfl_enum_variant_e2e_tests
+    ahfl_if_let_e2e_tests
     ahfl_runtime_provider_llm_tests
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
@@ -1183,7 +1199,7 @@ foreach(_tgt
     ahfl_decreases_desugar_tests
     ahfl_decreases_symmetry_tests
     ahfl_enum_struct_variant_tests
-    ahfl_if_let_syntax_poc_tests
+    ahfl_if_let_syntax_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests

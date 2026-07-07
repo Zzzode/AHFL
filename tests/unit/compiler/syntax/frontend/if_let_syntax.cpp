@@ -1,9 +1,5 @@
-// Wave-19 Lane 3b F2: RFC e-1 Optional narrowing — minimal if-let syntax POC.
-//
-// Pure syntax-layer validation only: parse succeeds, AST node has the right
-// shape, the AST debug-printer + source formatter both accept the node, and
-// formatter → re-parse roundtrips cleanly.  Type narrowing / TypedHIR
-// semantics / exhaustive-patterns are explicitly out of scope.
+// RFC 0002 if-let syntax coverage: parse, AST shape, AST debug-printer,
+// source formatter, and formatter reparse roundtrip.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>

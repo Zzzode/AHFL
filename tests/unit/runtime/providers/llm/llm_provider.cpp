@@ -89,7 +89,9 @@ ir::Program build_test_program() {
     // Enum: Category { General, Technical, Billing }
     ir::EnumDecl category_enum;
     category_enum.name = "Category";
-    category_enum.variants = {"General", "Technical", "Billing"};
+    category_enum.variants.push_back(ir::EnumVariantDecl{.name = "General"});
+    category_enum.variants.push_back(ir::EnumVariantDecl{.name = "Technical"});
+    category_enum.variants.push_back(ir::EnumVariantDecl{.name = "Billing"});
     program.declarations.push_back(std::move(category_enum));
 
     // Struct: ClassifyResult { category: Category, confidence: String }

@@ -4,6 +4,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/condition_facts.hpp"
 #include "ahfl/compiler/semantics/const_sema.hpp"
+#include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_expectation.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
@@ -679,6 +680,55 @@ lambda_capture_names_for(const ast::ExprSyntax &expr, const ResolveResult &resol
     return "unknown";
 }
 
+[[nodiscard]] std::string_view payload_kind_spelling(EnumVariantPayloadKind kind) noexcept {
+    switch (kind) {
+    case EnumVariantPayloadKind::Unit:
+        return "unit";
+    case EnumVariantPayloadKind::Tuple:
+        return "tuple";
+    case EnumVariantPayloadKind::Struct:
+        return "struct";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] EnumVariantPayloadKind
+if_let_payload_kind(const ast::IfLetPatternSyntax &pattern) noexcept {
+    return pattern.bindings.empty() ? EnumVariantPayloadKind::Unit : EnumVariantPayloadKind::Tuple;
+}
+
+[[nodiscard]] std::optional<EnumTypeInfo> substituted_enum_info_for(const EnumTypeInfo &declared,
+                                                                    const types::EnumT &enum_type,
+                                                                    TypeContext &types) {
+    if (declared.type_param_names.empty() ||
+        enum_type.type_args.size() != declared.type_param_names.size()) {
+        return std::nullopt;
+    }
+
+    TypeSubstitutionMap subst;
+    subst.reserve(enum_type.type_args.size());
+    for (const auto *arg : enum_type.type_args) {
+        subst.push_back(arg);
+    }
+
+    EnumTypeInfo substituted = declared;
+    for (auto &variant : substituted.variants) {
+        for (auto &slot : variant.payload) {
+            if (slot != nullptr) {
+                slot = substitute_type(slot, subst, types);
+            }
+        }
+        for (auto &field : variant.fields) {
+            if (field.type != nullptr) {
+                field.type = substitute_type(field.type, subst, types);
+            }
+        }
+        variant.rebuild_field_index();
+    }
+    substituted.rebuild_variant_index();
+    return substituted;
+}
+
 void copy_resolver_snapshot_to_typed_program(const ResolveResult &resolve_result,
                                              TypedProgram &typed_program) {
     typed_program.symbols = resolve_result.symbol_table.symbols();
@@ -775,6 +825,26 @@ void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck
                                          std::vector<Diagnostic::Related> notes) {
     Diagnostic diagnostic{
         .severity = DiagnosticSeverity::Error,
+        .message = std::move(message),
+        .code = code.full_code(),
+        .range = range,
+        .source_name = std::nullopt,
+        .position = std::nullopt,
+        .related = std::move(notes),
+    };
+    if (*current_source_ != nullptr) {
+        diagnostic.source_name = (*current_source_)->source.display_name;
+        diagnostic.position = (*current_source_)->source.locate(range.begin_offset);
+    }
+    diagnostics_->add_diagnostic(std::move(diagnostic));
+}
+
+void DiagnosticReporter::typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                           std::string message,
+                                           SourceRange range,
+                                           std::vector<Diagnostic::Related> notes) {
+    Diagnostic diagnostic{
+        .severity = DiagnosticSeverity::Warning,
         .message = std::move(message),
         .code = code.full_code(),
         .range = range,
@@ -980,6 +1050,13 @@ void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck
                                          SourceRange range,
                                          std::vector<Diagnostic::Related> notes) {
     reporter_.typecheck_error(code, std::move(message), range, std::move(notes));
+}
+
+void TypeCheckPass::typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                           std::string message,
+                                           SourceRange range,
+                                           std::vector<Diagnostic::Related> notes) {
+    reporter_.typecheck_warning(code, std::move(message), range, std::move(notes));
 }
 
 void TypeCheckPass::non_pure_error_here(std::string_view context_label,
@@ -2387,8 +2464,6 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                     case ast::StatementSyntaxKind::IfLet: {
                         // Walk then/else bodies so nested `let self = ...`
                         // bindings are still visible during shadow detection.
-                        // Narrowing semantics are not implemented (RFC e-1,
-                        // Wave-19 Lane 3b minimal POC).
                         const auto *ifl = stmt->if_let_stmt.get();
                         if (ifl == nullptr) {
                             break;
@@ -3282,14 +3357,9 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         break;
     }
     case ast::StatementSyntaxKind::IfLet: {
-        // RFC e-1 minimal POC: `if let Variant(...) = expr { ... } else { ... }`.
-        // Narrowing semantics / TypedHIR lowering / binding introduction are
-        // intentionally deferred.  The scrutinee is still type-checked so a
-        // plain parse-only source file (without stdlib) reports genuine
-        // errors, and the then/else bodies are traversed recursively so
-        // downstream passes keep compiling against a fully-walked AST.
         const auto *ifl = statement.if_let_stmt.get();
         if (ifl != nullptr) {
+            TypedValue scrutinee = error_typed();
             if (ifl->scrutinee != nullptr) {
                 auto scrutinee_context = ValueContext{
                     .bindings = clone_bindings(context.bindings),
@@ -3297,8 +3367,146 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .call_context = CallContext::PureOnly,
                     .current_agent = context.current_agent,
                 };
-                (void)check_expr(*ifl->scrutinee, scrutinee_context);
+                scrutinee = check_expr(*ifl->scrutinee, scrutinee_context);
+                if (!scrutinee.is_pure) {
+                    non_pure_error_here(
+                        "if-let scrutinee", scrutinee.effect, ifl->scrutinee->range);
+                }
             }
+
+            const auto *enum_payload =
+                scrutinee.type != nullptr ? scrutinee.type->get_if<types::EnumT>() : nullptr;
+            auto enum_info_owned = enum_payload != nullptr && scrutinee.type != nullptr
+                                       ? environment().get_enum(*scrutinee.type)
+                                       : std::nullopt;
+            std::optional<EnumTypeInfo> substituted_enum_info;
+            std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info = std::nullopt;
+            if (enum_info_owned.has_value() && enum_payload != nullptr) {
+                substituted_enum_info =
+                    substituted_enum_info_for(enum_info_owned->get(), *enum_payload, *types_);
+                enum_info = substituted_enum_info.has_value()
+                                ? std::make_optional(std::cref(*substituted_enum_info))
+                                : std::make_optional(std::cref(enum_info_owned->get()));
+            }
+
+            if (enum_payload == nullptr && scrutinee.type != nullptr &&
+                !is_error_type(*scrutinee.type)) {
+                typecheck_error_here(error_codes::typecheck::MatchScrutineeRequiresEnum,
+                                     messages::typecheck::MatchScrutineeRequiresEnum.format_with(
+                                         scrutinee.type->describe()),
+                                     ifl->scrutinee != nullptr ? ifl->scrutinee->range
+                                                               : statement.range);
+            }
+
+            FlowFacts then_facts;
+            FlowFacts else_facts;
+            std::vector<std::pair<std::string, TypePtr>> payload_bindings;
+            if (ifl->pattern != nullptr && enum_info.has_value()) {
+                const auto &pattern = *ifl->pattern;
+                const auto variant = enum_info->get().find_variant(pattern.variant_name);
+                if (!variant.has_value()) {
+                    typecheck_error_here(error_codes::typecheck::MatchUnknownVariant,
+                                         messages::typecheck::MatchUnknownVariant.format_with(
+                                             pattern.variant_name, enum_info->get().canonical_name),
+                                         pattern.range);
+                } else {
+                    const auto pattern_kind = if_let_payload_kind(pattern);
+                    if (pattern_kind != variant->get().payload_kind) {
+                        typecheck_error_here(
+                            error_codes::typecheck::InvalidEnumVariantShape,
+                            messages::typecheck::InvalidEnumVariantShape.format_with(
+                                pattern.variant_name,
+                                enum_info->get().canonical_name,
+                                std::string(payload_kind_spelling(variant->get().payload_kind)),
+                                std::string(payload_kind_spelling(pattern_kind))),
+                            pattern.range);
+                    }
+
+                    if (variant->get().payload_kind == EnumVariantPayloadKind::Tuple) {
+                        const auto &payload = variant->get().payload;
+                        if (pattern.bindings.size() != payload.size()) {
+                            typecheck_error_here(
+                                error_codes::typecheck::MatchVariantPayloadArity,
+                                messages::typecheck::MatchVariantPayloadArity.format_with(
+                                    pattern.variant_name,
+                                    enum_info->get().canonical_name,
+                                    std::to_string(payload.size()),
+                                    std::to_string(pattern.bindings.size())),
+                                pattern.range);
+                        }
+
+                        std::unordered_set<std::string> seen_bindings;
+                        const std::size_t limit = std::min(pattern.bindings.size(), payload.size());
+                        payload_bindings.reserve(limit);
+                        for (std::size_t index = 0; index < limit; ++index) {
+                            const auto &binding = pattern.bindings[index];
+                            if (!seen_bindings.insert(binding).second) {
+                                typecheck_error_here(
+                                    error_codes::typecheck::MatchDuplicateBinding,
+                                    messages::typecheck::MatchDuplicateBinding.format_with(binding),
+                                    pattern.range);
+                                continue;
+                            }
+                            payload_bindings.emplace_back(
+                                binding,
+                                payload[index] != nullptr ? payload[index] : make_error_type());
+                        }
+                    }
+
+                    if (ifl->scrutinee != nullptr) {
+                        if (const auto place = place_of_expr(*ifl->scrutinee); place.has_value()) {
+                            const auto option_view =
+                                scrutinee.type != nullptr
+                                    ? stdlib_bridge::std_container_type_view(*scrutinee.type)
+                                    : std::nullopt;
+                            if (option_view.has_value() &&
+                                option_view->kind == stdlib_bridge::StdContainerKind::Option &&
+                                pattern.variant_name == "Some") {
+                                then_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsNotNone,
+                                    .origin = pattern.range,
+                                });
+                                else_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsNone,
+                                    .origin = pattern.range,
+                                });
+                            } else if (option_view.has_value() &&
+                                       option_view->kind ==
+                                           stdlib_bridge::StdContainerKind::Option &&
+                                       pattern.variant_name == "None") {
+                                then_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsNone,
+                                    .origin = pattern.range,
+                                });
+                                else_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsNotNone,
+                                    .origin = pattern.range,
+                                });
+                            } else {
+                                then_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsVariant,
+                                    .origin = pattern.range,
+                                    .enum_name = enum_info->get().canonical_name,
+                                    .variant_name = pattern.variant_name,
+                                });
+                                else_facts.add(TypeFact{
+                                    .place = *place,
+                                    .kind = TypeFactKind::IsNotVariant,
+                                    .origin = pattern.range,
+                                    .enum_name = enum_info->get().canonical_name,
+                                    .variant_name = pattern.variant_name,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
             if (ifl->then_block != nullptr) {
                 auto then_context = ValueContext{
                     .bindings = clone_bindings(context.bindings),
@@ -3306,6 +3514,34 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .call_context = context.call_context,
                     .current_agent = context.current_agent,
                 };
+                then_context.flow_facts.merge_from(then_facts);
+                for (const auto &[name, type] : payload_bindings) {
+                    if (const auto previous = find_binding(then_context.bindings, name);
+                        previous.has_value()) {
+                        if (current_source_ != nullptr) {
+                            result_.diagnostics.warning()
+                                .code(error_codes::typecheck::ShadowedBinding)
+                                .message(messages::typecheck::ShadowedBinding,
+                                         name,
+                                         previous->get().describe())
+                                .range(ifl->pattern != nullptr ? ifl->pattern->range
+                                                               : statement.range)
+                                .source(current_source_->source)
+                                .emit();
+                        } else {
+                            result_.diagnostics.warning()
+                                .code(error_codes::typecheck::ShadowedBinding)
+                                .message(messages::typecheck::ShadowedBinding,
+                                         name,
+                                         previous->get().describe())
+                                .range(ifl->pattern != nullptr ? ifl->pattern->range
+                                                               : statement.range)
+                                .emit();
+                        }
+                    }
+                    then_context.bindings[name] =
+                        type != nullptr ? type->clone() : make_error_type();
+                }
                 check_block(*ifl->then_block,
                             then_context,
                             expected_return_type,
@@ -3319,6 +3555,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .call_context = context.call_context,
                     .current_agent = context.current_agent,
                 };
+                else_context.flow_facts.merge_from(else_facts);
                 check_block(*ifl->else_block,
                             else_context,
                             expected_return_type,
