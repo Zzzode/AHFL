@@ -119,6 +119,15 @@ const SourceUnitFact *index_source_unit_for_uri(const LspWorkspaceIndex &index,
     return found == source_units.end() ? nullptr : &*found;
 }
 
+const SymbolFact *index_symbol_for_canonical_name(const LspWorkspaceIndex &index,
+                                                  std::string_view canonical_name) {
+    const auto &symbols = index.symbols();
+    const auto found = std::find_if(symbols.begin(), symbols.end(), [&](const SymbolFact &symbol) {
+        return symbol.canonical_name == canonical_name;
+    });
+    return found == symbols.end() ? nullptr : &*found;
+}
+
 bool index_has_diagnostic(const LspWorkspaceIndex &index,
                           SourceUnitId source_unit,
                           IndexDiagnosticPhase phase,
@@ -903,44 +912,61 @@ impl Fold<Msg<Int>> for Msg<Int> {
     const auto tokens = decode_semantic_tokens(compute_semantic_tokens(main_uri, analysis));
     check(!tokens.empty(), "semanticTokens.non_empty");
 
-    check_semantic_token_at(tokens, source, "module_path", "app::main", SemanticTokenType::Namespace);
+    check_semantic_token_at(
+        tokens, source, "module_path", "app::main", SemanticTokenType::Namespace);
     check_semantic_token_at(tokens, source, "use_alias", "PublicMsg", SemanticTokenType::Namespace);
     check_semantic_token_at(tokens, source, "const_name", "LIMIT", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "const_type", "Int = 42", SemanticTokenType::Type);
     check_semantic_token_at(tokens, source, "const_number", "42", SemanticTokenType::Number);
     check_semantic_token_at(tokens, source, "struct_name", "Msg<T>", SemanticTokenType::Struct);
-    check_semantic_token_at(tokens, source, "struct_type_param", "T>", SemanticTokenType::TypeParameter);
-    check_semantic_token_at(tokens, source, "struct_field", "value: String", SemanticTokenType::Property);
+    check_semantic_token_at(
+        tokens, source, "struct_type_param", "T>", SemanticTokenType::TypeParameter);
+    check_semantic_token_at(
+        tokens, source, "struct_field", "value: String", SemanticTokenType::Property);
     check_semantic_token_at(tokens, source, "primitive_string", "String;", SemanticTokenType::Type);
-    check_semantic_token_at(tokens, source, "primitive_bool", "Bool = true", SemanticTokenType::Type);
+    check_semantic_token_at(
+        tokens, source, "primitive_bool", "Bool = true", SemanticTokenType::Type);
     check_semantic_token_at(tokens, source, "bool_literal", "true;", SemanticTokenType::Keyword);
     check_semantic_token_at(tokens, source, "enum_name", "Choice<T>", SemanticTokenType::Enum);
-    check_semantic_token_at(tokens, source, "enum_variant", "Some(T)", SemanticTokenType::EnumMember);
-    check_semantic_token_at(tokens, source, "enum_named_field", "left: Int", SemanticTokenType::Property);
-    check_semantic_token_at(tokens, source, "capability_name", "Call(req", SemanticTokenType::Interface);
-    check_semantic_token_at(tokens, source, "capability_param", "req: Msg", SemanticTokenType::Parameter);
-    check_semantic_token_at(tokens, source, "capability_effect", "read;", SemanticTokenType::Keyword);
+    check_semantic_token_at(
+        tokens, source, "enum_variant", "Some(T)", SemanticTokenType::EnumMember);
+    check_semantic_token_at(
+        tokens, source, "enum_named_field", "left: Int", SemanticTokenType::Property);
+    check_semantic_token_at(
+        tokens, source, "capability_name", "Call(req", SemanticTokenType::Interface);
+    check_semantic_token_at(
+        tokens, source, "capability_param", "req: Msg", SemanticTokenType::Parameter);
+    check_semantic_token_at(
+        tokens, source, "capability_effect", "read;", SemanticTokenType::Keyword);
     check_semantic_token_at(tokens, source, "capability_duration", "5s", SemanticTokenType::Number);
-    check_semantic_token_at(tokens, source, "predicate_name", "ok(req", SemanticTokenType::Function);
+    check_semantic_token_at(
+        tokens, source, "predicate_name", "ok(req", SemanticTokenType::Function);
     check_semantic_token_at(tokens, source, "agent_name", "A {", SemanticTokenType::Class);
-    check_semantic_token_at(tokens, source, "agent_state", "Init, Done", SemanticTokenType::Variable);
-    check_semantic_token_at(tokens, source, "contract_target", "A {\n    requires", SemanticTokenType::Class);
-    check_semantic_token_at(tokens, source, "temporal_called", "Call)));", SemanticTokenType::Interface);
+    check_semantic_token_at(
+        tokens, source, "agent_state", "Init, Done", SemanticTokenType::Variable);
+    check_semantic_token_at(
+        tokens, source, "contract_target", "A {\n    requires", SemanticTokenType::Class);
+    check_semantic_token_at(
+        tokens, source, "temporal_called", "Call)));", SemanticTokenType::Interface);
     check_semantic_token_at(tokens, source, "flow_state", "Init with", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "flow_string", "\"x\"", SemanticTokenType::String);
     check_semantic_token_at(tokens, source, "workflow_name", "W {", SemanticTokenType::Class);
-    check_semantic_token_at(tokens, source, "workflow_node", "first: A", SemanticTokenType::Variable);
-    check_semantic_token_at(tokens, source, "function_name", "compute<T", SemanticTokenType::Function);
+    check_semantic_token_at(
+        tokens, source, "workflow_node", "first: A", SemanticTokenType::Variable);
+    check_semantic_token_at(
+        tokens, source, "function_name", "compute<T", SemanticTokenType::Function);
     check_semantic_token_at(tokens, source, "fn_type", "Fn(Int)", SemanticTokenType::Type);
     check_semantic_token_at(tokens, source, "fn_param", "x: Int", SemanticTokenType::Parameter);
-    check_semantic_token_at(tokens, source, "match_variant", "Some(v)", SemanticTokenType::EnumMember);
+    check_semantic_token_at(
+        tokens, source, "match_variant", "Some(v)", SemanticTokenType::EnumMember);
     check_semantic_token_at(tokens, source, "match_binding", "v) if", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "lambda_capture", "y] (p", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "lambda_param", "p: Int", SemanticTokenType::Parameter);
     check_semantic_token_at(tokens, source, "trait_name", "Fold<T>", SemanticTokenType::Interface);
     check_semantic_token_at(tokens, source, "trait_method", "fold(self", SemanticTokenType::Method);
     check_semantic_token_at(tokens, source, "assoc_type", "Item: Msg", SemanticTokenType::Type);
-    check_semantic_token_at(tokens, source, "assoc_const", "DEFAULT: Int", SemanticTokenType::Variable);
+    check_semantic_token_at(
+        tokens, source, "assoc_const", "DEFAULT: Int", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "impl_method", "get(self", SemanticTokenType::Method);
 }
 
@@ -1857,6 +1883,64 @@ void test_lsp_workspace_index_uses_package_graph_source_unit_ids() {
     if (graph_extra != nullptr && index_extra != nullptr) {
         check(index_extra->source_unit_id == graph_extra->id,
               "workspaceIndex.graph_source_ids.extra_matches_graph");
+    }
+}
+
+void test_lsp_workspace_index_symbol_fingerprints_are_stable() {
+    const auto root = make_temp_project("lsp_symbol_fingerprint_stability");
+    const auto sysroot = root / "sysroot";
+    const auto app_root = root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    write_minimal_std_package(sysroot / "std", "symbol-fingerprint-stability");
+    write_package_manifest(app_root, "lsp-symbol-fingerprint-stability", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct MainOnly {\n"
+                                    "    value: Int;\n"
+                                    "}\n"
+                                    "\n"
+                                    "fn keep(x: MainOnly) -> MainOnly effect Pure decreases 0 {\n"
+                                    "    return x;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+
+    auto fingerprint_for_main = [&]() -> std::optional<DefFingerprint> {
+        DocumentStore store;
+        store.open(TextDocumentItem{
+            .uri = main_uri,
+            .language_id = "ahfl",
+            .version = 1,
+            .text = main_source,
+        });
+
+        auto profiles = toolchain_profile_set_for_sysroot(sysroot);
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({root});
+        analysis.set_toolchain_profiles(std::move(profiles));
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "workspaceIndex.def_fingerprint.snapshot_exists");
+        if (snapshot == nullptr || snapshot->workspace_index == nullptr) {
+            check(false, "workspaceIndex.def_fingerprint.index_exists");
+            return std::nullopt;
+        }
+        const auto *symbol =
+            index_symbol_for_canonical_name(*snapshot->workspace_index, "app::main::MainOnly");
+        check(symbol != nullptr, "workspaceIndex.def_fingerprint.symbol_exists");
+        if (symbol == nullptr) {
+            return std::nullopt;
+        }
+        check(symbol->fingerprint.value != 0, "workspaceIndex.def_fingerprint.nonzero");
+        return symbol->fingerprint;
+    };
+
+    const auto first = fingerprint_for_main();
+    const auto second = fingerprint_for_main();
+    check(first.has_value(), "workspaceIndex.def_fingerprint.first_exists");
+    check(second.has_value(), "workspaceIndex.def_fingerprint.second_exists");
+    if (first.has_value() && second.has_value()) {
+        check(*first == *second, "workspaceIndex.def_fingerprint.stable_across_rebuild");
     }
 }
 
@@ -3870,6 +3954,92 @@ void test_package_graph_workspace_rejects_private_dependency_module() {
                    std::string::npos;
         });
     check(has_private_import, "package_graph_workspace_private_module.private_import_diagnostic");
+}
+
+void test_workspace_index_records_visibility_alias_facts() {
+    const auto root = make_temp_project("workspace_index_visibility_alias_facts");
+    const auto app_root = root / "packages" / "app";
+    const auto lib_root = root / "packages" / "lib";
+    const auto app_path = app_root / "src" / "main.ahfl";
+    const auto facade_path = lib_root / "src" / "facade.ahfl";
+    const auto internal_path = lib_root / "src" / "internal.ahfl";
+
+    write_workspace_manifest(root, "\"packages/app\", \"packages/lib\"");
+    write_package_manifest(app_root,
+                           "lsp-app",
+                           "app",
+                           "\"main\"",
+                           "src/main.ahfl",
+                           "\n[dependencies]\nlib = { source = \"workspace\" }\n");
+    write_package_manifest(lib_root, "lib", "lib", "\"facade\"", "src/facade.ahfl");
+
+    const std::string app_source = "module app::main;\n"
+                                   "\n"
+                                   "import lib::facade as facade;\n"
+                                   "\n"
+                                   "fn accept(request: facade::Request) -> Int effect Pure "
+                                   "decreases 0;\n";
+    write_file(app_path, app_source);
+    write_file(facade_path,
+               "module lib::facade;\n"
+               "\n"
+               "pub use lib::internal::Token;\n"
+               "pub use lib::internal::Request;\n");
+    write_file(internal_path,
+               "module lib::internal;\n"
+               "\n"
+               "pub struct Token {}\n"
+               "\n"
+               "pub struct Request {\n"
+               "    token: Token;\n"
+               "}\n");
+
+    const auto app_uri = AnalysisService::uri_from_path(app_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = app_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = app_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+    const auto *snapshot = analysis.snapshot_for_uri(app_uri);
+    check(snapshot != nullptr, "workspace_index.visibility_alias.snapshot_exists");
+    if (snapshot == nullptr) {
+        return;
+    }
+    check(snapshot->workspace_index != nullptr, "workspace_index.visibility_alias.index_exists");
+    if (snapshot->workspace_index == nullptr) {
+        return;
+    }
+
+    const auto &symbols = snapshot->workspace_index->symbols();
+    const auto target_request =
+        std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+            return !symbol.alias_id.has_value() &&
+                   symbol.canonical_name == "lib::internal::Request";
+        });
+    check(target_request != symbols.end(), "workspace_index.visibility_alias.target_exists");
+    if (target_request != symbols.end()) {
+        check(target_request->visibility == ahfl::ast::Visibility::Public,
+              "workspace_index.visibility_alias.target_public");
+        check(target_request->api_reachable, "workspace_index.visibility_alias.target_api");
+    }
+
+    const auto alias_request =
+        std::find_if(symbols.begin(), symbols.end(), [](const SymbolFact &symbol) {
+            return symbol.alias_id.has_value() && symbol.canonical_name == "lib::facade::Request";
+        });
+    check(alias_request != symbols.end(), "workspace_index.visibility_alias.alias_exists");
+    if (alias_request != symbols.end()) {
+        check(alias_request->alias_target_def.has_value(),
+              "workspace_index.visibility_alias.alias_target_def");
+        check(alias_request->api_reachable, "workspace_index.visibility_alias.alias_api");
+        check(alias_request->location.uri == AnalysisService::uri_from_path(facade_path),
+              "workspace_index.visibility_alias.alias_location");
+    }
 }
 
 void test_package_graph_workspace_preserves_cross_package_hover() {
@@ -6090,6 +6260,64 @@ void test_analysis_snapshot_cache_key_records_open_overlay_revisions() {
     }
 }
 
+void test_analysis_snapshot_cache_key_ignores_unrelated_open_overlay_revisions() {
+    const auto root = make_temp_project("analysis_overlay_revision_scope");
+    const auto unrelated_root = make_temp_project("analysis_overlay_revision_unrelated");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto unrelated_path = unrelated_root / "src" / "note.ahfl";
+    write_package_manifest(root, "overlay-revision-scope-app", "app", "\"main\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "\n"
+                                    "struct Main {}\n";
+    const std::string unrelated_source = "module unrelated::note;\n"
+                                         "\n"
+                                         "struct Note {}\n";
+    write_file(main_path, main_source);
+    write_file(unrelated_path, unrelated_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto unrelated_uri = AnalysisService::uri_from_path(unrelated_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+    store.open(TextDocumentItem{
+        .uri = unrelated_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = unrelated_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *first = analysis.snapshot_for_uri(main_uri);
+    check(first != nullptr, "analysis_overlay_revision_scope.first_exists");
+    check(analysis.analysis_runs() == 1, "analysis_overlay_revision_scope.single_run");
+    if (first == nullptr) {
+        return;
+    }
+
+    const auto first_overlay_key = first->open_document_overlay_revision_set;
+    check(first_overlay_key.find(main_uri + "@") != std::string::npos,
+          "analysis_overlay_revision_scope.includes_main");
+    check(first_overlay_key.find(unrelated_uri + "@") == std::string::npos,
+          "analysis_overlay_revision_scope.excludes_unrelated");
+
+    store.change(unrelated_uri,
+                 2,
+                 "module unrelated::note;\n"
+                 "\n"
+                 "struct NoteChanged {}\n");
+    const auto *second = analysis.snapshot_for_uri(main_uri);
+    check(second == first, "analysis_overlay_revision_scope.reuses_after_unrelated_overlay");
+    check(analysis.analysis_runs() == 1, "analysis_overlay_revision_scope.no_unrelated_rebuild");
+}
+
 void test_sysroot_index_cache_key_separates_workspace_roots() {
     const auto root = make_temp_project("sysroot_index_cache_key_workspace_roots");
     const auto sysroot = root / "sysroot";
@@ -8053,6 +8281,7 @@ int main() {
     test_manifest_watcher_refreshes_workspace_index_scope();
     test_manifest_invalidation_preserves_workspace_source_unit_ids();
     test_lsp_workspace_index_uses_package_graph_source_unit_ids();
+    test_lsp_workspace_index_symbol_fingerprints_are_stable();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
@@ -8076,6 +8305,7 @@ int main() {
     test_workspace_index_includes_path_dependency_exports();
     test_cross_workspace_path_dependency_rejects_mixed_toolchain_profiles();
     test_package_graph_workspace_rejects_private_dependency_module();
+    test_workspace_index_records_visibility_alias_facts();
     test_package_graph_workspace_preserves_cross_package_hover();
     test_sysroot_std_manifest_is_not_loaded_as_root_package();
     test_definition_targets_source_sysroot_primitive_home_modules();
@@ -8108,6 +8338,7 @@ int main() {
     test_analysis_snapshot_cache_key_records_toolchain_identity();
     test_analysis_snapshot_cache_key_records_workspace_manifest();
     test_analysis_snapshot_cache_key_records_open_overlay_revisions();
+    test_analysis_snapshot_cache_key_ignores_unrelated_open_overlay_revisions();
     test_sysroot_index_cache_key_separates_workspace_roots();
     test_multi_root_sysroot_index_uses_resource_toolchain_profiles();
     test_package_graph_manifest_does_not_inject_prelude();

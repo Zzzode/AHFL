@@ -1348,6 +1348,19 @@ void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &sy
     items.push_back(std::move(item));
 }
 
+[[nodiscard]] bool symbol_visible_for_completion(const LspAnalysisSnapshot &snapshot,
+                                                 const LspSourceSnapshot &source,
+                                                 const Symbol &symbol) {
+    if (!symbol.source_id.has_value() || same_source(symbol.source_id, source.source_id)) {
+        return true;
+    }
+    if (snapshot.analysis_mode == LspAnalysisMode::DetachedSourceUnit) {
+        return true;
+    }
+    return symbol.visibility == ast::Visibility::Public &&
+           snapshot.resolve_result.is_api_reachable(symbol.id);
+}
+
 [[nodiscard]] bool looks_like_type_position(const SourceFile &source, std::size_t offset) {
     const auto &text = source.content;
     if (offset > text.size()) {
@@ -1977,7 +1990,11 @@ void LspServer::handle_did_change(const json::JsonValue &params) {
     }
 
     store_.change(versioned.uri, versioned.version, std::string(*text));
-    analysis_.invalidate_all();
+    if (const auto path = AnalysisService::path_from_uri(versioned.uri); path.has_value()) {
+        analysis_.invalidate_paths({*path});
+    } else {
+        analysis_.invalidate_all();
+    }
     send_diagnostic_refresh();
 }
 
@@ -1988,8 +2005,13 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
     }
 
     const auto id = parse_text_document_identifier(*td);
+    const auto path = AnalysisService::path_from_uri(id.uri);
     store_.close(id.uri);
-    analysis_.invalidate_all();
+    if (path.has_value()) {
+        analysis_.invalidate_paths({*path});
+    } else {
+        analysis_.invalidate_all();
+    }
     send_diagnostic_refresh();
 }
 
@@ -2117,6 +2139,9 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         push_member_completions(items, *snapshot, *source, offset, *root);
     } else if (looks_like_type_position(*source->source, offset)) {
         for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+            if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
+                continue;
+            }
             if (symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum ||
                 symbol.kind == SymbolKind::TypeAlias) {
                 push_symbol_completion(items, symbol);
@@ -2130,6 +2155,9 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
             push_keyword_completion(items, keyword);
         }
         for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+            if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
+                continue;
+            }
             push_symbol_completion(items, symbol);
         }
         if (snapshot->type_check_result) {

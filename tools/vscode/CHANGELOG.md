@@ -7,6 +7,7 @@ All notable changes to the AHFL VS Code extension will be documented in this fil
 ### Changed
 
 - Resolve resource-scoped `ahfl.toolchain.sysroot` through `workspace/configuration`, including `${workspaceFolder}` expansion and relative path normalization before sending sysroot profiles to the LSP server.
+- Make `.github/workflows/vscode-extension.yml` the only release workflow for Marketplace platform VSIX artifacts; the release path now requires a bundled release `ahfl-lsp`, bundled `std`, package inventory validation, and install smoke evidence.
 
 ## [0.2.0] - 2026-06-28
 
@@ -16,7 +17,7 @@ All notable changes to the AHFL VS Code extension will be documented in this fil
 - **Language configuration** — added `<>` bracket pairs, quote auto-close for single quotes, and a precise `wordPattern` for symbol selection and word-based navigation.
 - **Editor defaults** — new `configurationDefaults` for AHFL files (4-space indent, semantic highlighting enabled, 100-column ruler).
 - **Extension identity** — published under `ahfl` name with `ahfl-team` publisher, display name `AHFL`, description `AHFL Agent Flow Language support`.
-- **GitHub Actions release workflow** — `.github/workflows/release-vscode.yml` automates VSIX packaging and dual publishing to Visual Studio Marketplace (vsce) and Open VSX Registry (ovsx) on `vscode-v*` tags or manual dispatch.
+- **GitHub Actions release automation** — initial VSIX packaging and Marketplace/Open VSX publishing automation for the extension.
 - **Marketplace metadata** — categories and keywords updated to reflect LSP-backed features.
 - **CI artifact upload** — release workflow uploads generated `.vsix` as a GitHub Actions artifact for manual verification before publish.
 

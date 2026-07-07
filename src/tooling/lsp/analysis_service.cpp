@@ -27,8 +27,7 @@ constexpr std::string_view kDiagnosticDetachedSourceUnit = "N::detached_source_u
 constexpr std::string_view kDiagnosticDetachedImport = "E::detached_import";
 constexpr std::string_view kDiagnosticDetachedUnknownNominalType =
     "E::detached_unknown_nominal_type";
-constexpr std::string_view kDiagnosticPrimitiveHomeUnavailable =
-    "W::primitive_home_unavailable";
+constexpr std::string_view kDiagnosticPrimitiveHomeUnavailable = "W::primitive_home_unavailable";
 
 [[nodiscard]] bool is_hex(char ch) noexcept {
     return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
@@ -161,10 +160,8 @@ struct PrimitiveTypeUse {
     SourceRange range;
 };
 
-void collect_primitive_type_uses(const ast::TypeSyntax *type,
-                                 std::vector<PrimitiveTypeUse> &uses);
-void collect_primitive_type_uses(const ast::ExprSyntax *expr,
-                                 std::vector<PrimitiveTypeUse> &uses);
+void collect_primitive_type_uses(const ast::TypeSyntax *type, std::vector<PrimitiveTypeUse> &uses);
+void collect_primitive_type_uses(const ast::ExprSyntax *expr, std::vector<PrimitiveTypeUse> &uses);
 void collect_primitive_type_uses(const ast::BlockSyntax *block,
                                  std::vector<PrimitiveTypeUse> &uses);
 
@@ -233,8 +230,7 @@ void collect_primitive_type_uses(const ast::EffectClauseSyntax *effect,
     collect_primitive_type_uses(effect->decreases_expr.get(), uses);
 }
 
-void collect_primitive_type_uses(const ast::TypeSyntax *type,
-                                 std::vector<PrimitiveTypeUse> &uses) {
+void collect_primitive_type_uses(const ast::TypeSyntax *type, std::vector<PrimitiveTypeUse> &uses) {
     if (type == nullptr) {
         return;
     }
@@ -333,8 +329,7 @@ void collect_primitive_type_uses(const ast::BlockSyntax *block,
     }
 }
 
-void collect_primitive_type_uses(const ast::ExprSyntax *expr,
-                                 std::vector<PrimitiveTypeUse> &uses) {
+void collect_primitive_type_uses(const ast::ExprSyntax *expr, std::vector<PrimitiveTypeUse> &uses) {
     if (expr == nullptr) {
         return;
     }
@@ -640,6 +635,25 @@ dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
     return prefixes;
 }
 
+[[nodiscard]] std::vector<std::string>
+artifact_exports_for_package(const package_graph::PackageGraph &graph,
+                             package_graph::PackageId package_id) {
+    std::vector<std::string> exports;
+    const auto *package = graph.find_package(package_id);
+    if (package == nullptr) {
+        return exports;
+    }
+    for (const auto &target : package->targets) {
+        for (const auto &export_item : target.exports) {
+            exports.push_back(export_item.name);
+        }
+    }
+
+    std::sort(exports.begin(), exports.end());
+    exports.erase(std::unique(exports.begin(), exports.end()), exports.end());
+    return exports;
+}
+
 [[nodiscard]] bool source_unit_has_role(const package_graph::SourceUnitNode &unit,
                                         package_graph::SourceUnitRole role) {
     return std::find(unit.roles.begin(), unit.roles.end(), role) != unit.roles.end();
@@ -779,6 +793,16 @@ workspace_root_index_cache_key(const std::filesystem::path &workspace_root,
            "#" + std::string{kWorkspaceIndexSchemaVersion} + "#" +
            std::string{kWorkspaceIndexIdentitySchemaVersion} + "#" +
            std::string{open_document_overlay_revision_set};
+}
+
+[[nodiscard]] std::vector<std::filesystem::path>
+paths_from_scope_kinds(const NavigationScopeKindMap &scope_kinds) {
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(scope_kinds.size());
+    for (const auto &[path_key, _] : scope_kinds) {
+        paths.emplace_back(path_key);
+    }
+    return paths;
 }
 
 [[nodiscard]] bool is_project_manifest_path(const std::filesystem::path &path) {
@@ -976,6 +1000,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .prefix = package.module_prefix,
             .root = package.module_root,
             .exported_modules = package.exported_modules,
+            .artifact_exports = artifact_exports_for_package(graph, package.id),
             .dependency_prefixes = dependency_prefixes_for_package(graph, package.id),
             .compiler_intrinsics_allow = package.compiler_intrinsics_allow,
         });
@@ -1398,21 +1423,20 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
         return nullptr;
     }
 
-    const auto workspace_revision = store_.workspace_revision();
-    const auto overlay_revision_set = open_document_overlay_revision_set();
     const auto toolchain_cache_key = toolchain_cache_key_for_uri(uri);
     if (const auto existing = cache_.find(uri); existing != cache_.end()) {
         const auto &snapshot = *existing->second;
+        const auto dependency_overlay_revision_set =
+            open_document_overlay_revision_set_for_snapshot(snapshot);
         if (snapshot.document_version == document->version &&
             snapshot.document_revision == *revision && snapshot.content_hash == *hash &&
-            snapshot.workspace_revision == workspace_revision &&
-            snapshot.open_document_overlay_revision_set == overlay_revision_set &&
+            snapshot.open_document_overlay_revision_set == dependency_overlay_revision_set &&
             snapshot.toolchain_cache_key == toolchain_cache_key) {
             return existing->second.get();
         }
     }
 
-    auto snapshot = build_snapshot(uri, toolchain_cache_key, overlay_revision_set);
+    auto snapshot = build_snapshot(uri, toolchain_cache_key);
     if (!snapshot) {
         return nullptr;
     }
@@ -1449,13 +1473,6 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         return nullptr;
     }
 
-    const auto overlay_revision_set = open_document_overlay_revision_set();
-    const auto cache_key = sysroot_index_cache_key(*key, overlay_revision_set);
-    if (const auto existing = sysroot_index_cache_.find(cache_key);
-        existing != sysroot_index_cache_.end()) {
-        return existing->second.get();
-    }
-
     const auto document_path = path_from_uri(uri);
     if (!document_path.has_value()) {
         return nullptr;
@@ -1472,12 +1489,20 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
 
     Frontend frontend;
     NavigationScopeKindMap sysroot_scope_kinds;
+    auto project_input = project_input_from_package_graph(graph,
+                                                          *document_path,
+                                                          open_document_overlays(),
+                                                          LspProjectInputMode::SysrootIndex,
+                                                          &sysroot_scope_kinds);
+    const auto overlay_revision_set =
+        open_document_overlay_revision_set_for_paths(paths_from_scope_kinds(sysroot_scope_kinds));
+    const auto cache_key = sysroot_index_cache_key(*key, overlay_revision_set);
+    if (const auto existing = sysroot_index_cache_.find(cache_key);
+        existing != sysroot_index_cache_.end()) {
+        return existing->second.get();
+    }
     auto index_input = LspWorkspaceIndexInput{
-        .project = project_input_from_package_graph(graph,
-                                                    *document_path,
-                                                    open_document_overlays(),
-                                                    LspProjectInputMode::SysrootIndex,
-                                                    &sysroot_scope_kinds),
+        .project = std::move(project_input),
         .scope =
             NavigationIndexScope{
                 .package_roots = index_package_roots_from_graph(graph),
@@ -1502,7 +1527,6 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
 
 std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices() {
     std::vector<const LspWorkspaceIndex *> indices;
-    const auto overlay_revision_set = open_document_overlay_revision_set();
 
     std::vector<project_discovery::WorkspaceBoundary> workspace_boundaries;
     workspace_boundaries.reserve(workspace_folders_.size());
@@ -1521,6 +1545,15 @@ std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices()
             continue;
         }
 
+        Frontend frontend;
+        NavigationScopeKindMap workspace_scope_kinds;
+        auto project_input = project_input_from_package_graph(project_context.context->graph,
+                                                              root,
+                                                              open_document_overlays(),
+                                                              LspProjectInputMode::WorkspaceIndex,
+                                                              &workspace_scope_kinds);
+        const auto overlay_revision_set = open_document_overlay_revision_set_for_paths(
+            paths_from_scope_kinds(workspace_scope_kinds));
         const auto cache_key = workspace_root_index_cache_key(
             root, project_context.context->graph, overlay_revision_set);
         if (const auto existing = workspace_root_index_cache_.find(cache_key);
@@ -1528,15 +1561,8 @@ std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices()
             indices.push_back(existing->second.get());
             continue;
         }
-
-        Frontend frontend;
-        NavigationScopeKindMap workspace_scope_kinds;
         auto index_input = LspWorkspaceIndexInput{
-            .project = project_input_from_package_graph(project_context.context->graph,
-                                                        root,
-                                                        open_document_overlays(),
-                                                        LspProjectInputMode::WorkspaceIndex,
-                                                        &workspace_scope_kinds),
+            .project = std::move(project_input),
             .scope =
                 NavigationIndexScope{
                     .package_roots = index_package_roots_from_graph(project_context.context->graph),
@@ -1677,8 +1703,7 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
 
 std::unique_ptr<LspAnalysisSnapshot>
 AnalysisService::build_snapshot(const std::string &uri,
-                                std::optional<LspToolchainCacheKey> toolchain_cache_key,
-                                std::string open_document_overlay_revision_set) {
+                                std::optional<LspToolchainCacheKey> toolchain_cache_key) {
     const auto *document = store_.get(uri);
     const auto revision = store_.revision(uri);
     const auto hash = store_.content_hash(uri);
@@ -1692,7 +1717,6 @@ AnalysisService::build_snapshot(const std::string &uri,
     snapshot->document_revision = *revision;
     snapshot->content_hash = *hash;
     snapshot->workspace_revision = store_.workspace_revision();
-    snapshot->open_document_overlay_revision_set = std::move(open_document_overlay_revision_set);
     snapshot->toolchain_cache_key = std::move(toolchain_cache_key);
 
     const auto document_path = path_from_uri(uri);
@@ -1790,6 +1814,8 @@ AnalysisService::build_snapshot(const std::string &uri,
             }
 
             build_hover_indices(*snapshot);
+            snapshot->open_document_overlay_revision_set =
+                open_document_overlay_revision_set_for_snapshot(*snapshot);
             return snapshot;
         }
 
@@ -1807,6 +1833,8 @@ AnalysisService::build_snapshot(const std::string &uri,
                          });
             append_project_diagnostics(*snapshot, uri, project_context.diagnostics);
             build_hover_indices(*snapshot);
+            snapshot->open_document_overlay_revision_set =
+                open_document_overlay_revision_set_for_snapshot(*snapshot);
             return snapshot;
         }
     }
@@ -1822,9 +1850,9 @@ AnalysisService::build_snapshot(const std::string &uri,
                      .source_id = std::nullopt,
                  });
     if (snapshot->analysis_mode == LspAnalysisMode::DetachedSourceUnit) {
-        const auto *primitive_index =
-            snapshot->toolchain_cache_key.has_value() ? sysroot_primitive_index_for_uri(uri)
-                                                      : nullptr;
+        const auto *primitive_index = snapshot->toolchain_cache_key.has_value()
+                                          ? sysroot_primitive_index_for_uri(uri)
+                                          : nullptr;
         append_detached_source_unit_diagnostics(
             *snapshot, uri, primitive_index, snapshot->toolchain_cache_key.has_value());
     }
@@ -1846,6 +1874,8 @@ AnalysisService::build_snapshot(const std::string &uri,
     }
 
     build_hover_indices(*snapshot);
+    snapshot->open_document_overlay_revision_set =
+        open_document_overlay_revision_set_for_snapshot(*snapshot);
     return snapshot;
 }
 
@@ -1862,9 +1892,28 @@ std::unordered_map<std::string, std::string> AnalysisService::open_document_over
     return overlays;
 }
 
-std::string AnalysisService::open_document_overlay_revision_set() const {
-    auto uris = store_.all_uris();
+std::string AnalysisService::open_document_overlay_revision_set_for_paths(
+    const std::vector<std::filesystem::path> &paths) const {
+    std::unordered_set<std::string> path_keys;
+    path_keys.reserve(paths.size());
+    for (const auto &path : paths) {
+        path_keys.insert(std::filesystem::path(normalized_path_key(path)).generic_string());
+    }
+
+    std::vector<std::string> uris;
+    uris.reserve(paths.size());
+    for (const auto &uri : store_.all_uris()) {
+        const auto path = path_from_uri(uri);
+        if (!path.has_value()) {
+            continue;
+        }
+        if (path_keys.contains(
+                std::filesystem::path(normalized_path_key(*path)).generic_string())) {
+            uris.push_back(uri);
+        }
+    }
     std::sort(uris.begin(), uris.end());
+    uris.erase(std::unique(uris.begin(), uris.end()), uris.end());
 
     std::string key;
     for (const auto &uri : uris) {
@@ -1881,6 +1930,28 @@ std::string AnalysisService::open_document_overlay_revision_set() const {
         key += ";";
     }
     return key;
+}
+
+std::string AnalysisService::open_document_overlay_revision_set_for_snapshot(
+    const LspAnalysisSnapshot &snapshot) const {
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(snapshot.sources.size() +
+                  (snapshot.workspace_index == nullptr
+                       ? std::size_t{0}
+                       : snapshot.workspace_index->source_units().size()));
+    for (const auto &source : snapshot.sources) {
+        if (!source.path.empty()) {
+            paths.push_back(source.path);
+        }
+    }
+    if (snapshot.workspace_index != nullptr) {
+        for (const auto &source_unit : snapshot.workspace_index->source_units()) {
+            if (source_unit.valid && !source_unit.path.empty()) {
+                paths.push_back(source_unit.path);
+            }
+        }
+    }
+    return open_document_overlay_revision_set_for_paths(paths);
 }
 
 } // namespace ahfl::lsp

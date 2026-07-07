@@ -23,6 +23,32 @@ void hash_combine(std::size_t &seed, std::size_t value) noexcept {
     seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
 }
 
+void fingerprint_combine(std::uint64_t &seed, std::uint64_t value) noexcept {
+    constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        seed ^= (value >> (index * 8U)) & 0xFFU;
+        seed *= kFnvPrime;
+    }
+}
+
+[[nodiscard]] DefFingerprint symbol_fingerprint(package_graph::PackageId package_id,
+                                                SourceUnitId source_unit_id,
+                                                SymbolNamespace name_space,
+                                                SymbolKind kind,
+                                                SourceRange declaration_range,
+                                                SourceRange selection_range) noexcept {
+    std::uint64_t seed = 14695981039346656037ULL;
+    fingerprint_combine(seed, static_cast<std::uint64_t>(package_id.value));
+    fingerprint_combine(seed, static_cast<std::uint64_t>(source_unit_id.value));
+    fingerprint_combine(seed, static_cast<std::uint8_t>(name_space));
+    fingerprint_combine(seed, static_cast<std::uint8_t>(kind));
+    fingerprint_combine(seed, static_cast<std::uint64_t>(declaration_range.begin_offset));
+    fingerprint_combine(seed, static_cast<std::uint64_t>(declaration_range.end_offset));
+    fingerprint_combine(seed, static_cast<std::uint64_t>(selection_range.begin_offset));
+    fingerprint_combine(seed, static_cast<std::uint64_t>(selection_range.end_offset));
+    return DefFingerprint{.value = seed};
+}
+
 [[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
     const auto pos = source.locate(offset);
     return Position{
@@ -272,6 +298,39 @@ ordered_source_units_for_index(const LspWorkspaceIndexInput &input, const Source
     }
 
     return symbol.declaration_range;
+}
+
+[[nodiscard]] SourceRange alias_navigation_range(const SourceFile &source,
+                                                 const PublicAlias &alias) {
+    if (alias.local_name.empty()) {
+        return alias.declaration_range;
+    }
+
+    const auto begin = std::min(alias.declaration_range.begin_offset, source.content.size());
+    const auto end =
+        std::max(begin, std::min(alias.declaration_range.end_offset, source.content.size()));
+    std::size_t cursor = begin;
+    while (cursor < end) {
+        const auto found = source.content.find(alias.local_name, cursor);
+        if (found == std::string::npos || found + alias.local_name.size() > end) {
+            break;
+        }
+
+        const auto before_ok = found == 0 || !is_identifier_char(source.content[found - 1]);
+        const auto after = found + alias.local_name.size();
+        const auto after_ok =
+            after >= source.content.size() || !is_identifier_char(source.content[after]);
+        if (before_ok && after_ok) {
+            return SourceRange{
+                .begin_offset = found,
+                .end_offset = after,
+            };
+        }
+
+        cursor = found + 1;
+    }
+
+    return alias.declaration_range;
 }
 
 [[nodiscard]] std::optional<Location> impl_location(const SourceGraph &graph,
@@ -689,10 +748,19 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
                                     });
         index.add_symbol(SymbolFact{
             .def_id = DefId{index.symbols().size()},
+            .fingerprint = symbol_fingerprint(package_id,
+                                              source_unit,
+                                              symbol_namespace_for_kind(skeleton->first),
+                                              skeleton->first,
+                                              declaration->range,
+                                              selection_range),
             .package_id = package_id,
             .source_unit_id = source_unit,
             .kind = skeleton->first,
             .name_space = symbol_namespace_for_kind(skeleton->first),
+            .visibility = declaration->visibility,
+            .api_reachable = false,
+            .artifact_reachable = false,
             .local_name = skeleton->second,
             .canonical_name = canonical_name,
             .declaration_range = declaration->range,
@@ -1391,6 +1459,7 @@ class IndexAnalysisPipeline {
 
         update_source_completeness(project.graph, FactCompleteness::Resolved);
         emit_resolved_symbol_facts(project.graph, resolved);
+        emit_resolved_alias_facts(project.graph, resolved);
         emit_resolved_reference_facts(project.graph, resolved);
 
         TypeChecker type_checker;
@@ -1538,15 +1607,72 @@ class IndexAnalysisPipeline {
             def_by_symbol_.emplace(candidate.symbol->id.value, def_id);
             index_.add_symbol(SymbolFact{
                 .def_id = def_id,
+                .fingerprint = symbol_fingerprint(candidate.package_id,
+                                                  candidate.source_unit_id,
+                                                  candidate.symbol->name_space,
+                                                  candidate.symbol->kind,
+                                                  candidate.symbol->declaration_range,
+                                                  candidate.selection_range),
                 .package_id = candidate.package_id,
                 .source_unit_id = candidate.source_unit_id,
                 .kind = candidate.symbol->kind,
                 .name_space = candidate.symbol->name_space,
+                .visibility = candidate.symbol->visibility,
+                .api_reachable = resolved.is_api_reachable(candidate.symbol->id),
+                .artifact_reachable = resolved.is_artifact_reachable(candidate.symbol->id),
                 .local_name = candidate.symbol->local_name,
                 .canonical_name = candidate.symbol->canonical_name,
                 .declaration_range = candidate.symbol->declaration_range,
                 .selection_range = candidate.selection_range,
                 .location = candidate.location,
+                .completeness = FactCompleteness::Resolved,
+            });
+        }
+    }
+
+    void emit_resolved_alias_facts(const SourceGraph &graph, const ResolveResult &resolved) {
+        for (const auto &alias : resolved.public_aliases()) {
+            const auto target = resolved.symbol_table.get(alias.target);
+            if (!target.has_value() || !alias.source_id.has_value()) {
+                continue;
+            }
+            const auto *source_unit = source_unit_for_id(graph, *alias.source_id);
+            if (source_unit == nullptr) {
+                continue;
+            }
+            const auto source_unit_id = index_source_unit_for_source(*source_unit);
+            if (!source_unit_id.has_value()) {
+                continue;
+            }
+            const auto selection_range = alias_navigation_range(source_unit->source, alias);
+            const auto target_def = def_for_symbol(def_by_symbol_, alias.target);
+            index_.add_symbol(SymbolFact{
+                .def_id = DefId{index_.symbols().size()},
+                .fingerprint =
+                    symbol_fingerprint(package_id_for_index_source(*source_unit, *source_unit_id),
+                                       *source_unit_id,
+                                       alias.name_space,
+                                       target->get().kind,
+                                       alias.declaration_range,
+                                       selection_range),
+                .alias_id = alias.id,
+                .alias_target_def = target_def,
+                .package_id = package_id_for_index_source(*source_unit, *source_unit_id),
+                .source_unit_id = *source_unit_id,
+                .kind = target->get().kind,
+                .name_space = alias.name_space,
+                .visibility = alias.visibility,
+                .api_reachable = resolved.is_api_reachable(alias.id),
+                .artifact_reachable = resolved.is_artifact_reachable(alias.id),
+                .local_name = alias.local_name,
+                .canonical_name = alias.canonical_name,
+                .declaration_range = alias.declaration_range,
+                .selection_range = selection_range,
+                .location =
+                    Location{
+                        .uri = uri_from_path(source_unit->path),
+                        .range = to_lsp_range(source_unit->source, selection_range),
+                    },
                 .completeness = FactCompleteness::Resolved,
             });
         }

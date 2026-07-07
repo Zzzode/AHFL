@@ -138,32 +138,36 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm run compile                    # type-check + esbuild bundle
 pnpm run test:extension             # full extension-host regression
 pnpm run test:problems-transcript   # capture diagnostics transcript
-pnpm run package                    # produce client-only .vsix
 ```
 
 ## Marketplace Publishing
 
-Tag-based releases are automated via
-`.github/workflows/release-vscode.yml`. To trigger a release:
+Platform VSIX releases are automated via `.github/workflows/vscode-extension.yml`.
+The release package is built from the repository root so the extension includes
+the release `ahfl-lsp` binary and the bundled `std` sysroot:
 
 ```bash
-git tag vscode-v0.2.0
-git push origin vscode-v0.2.0
+scripts/package-vscode-vsix-release.sh
 ```
 
-This builds the client VSIX, uploads it as an artifact, and publishes to both
-the Visual Studio Marketplace (using `secrets.VSCE_PAT`) and the Open VSX
-Registry (using `secrets.OPEN_VSX_TOKEN`).
+The workflow runs this packaging script on Linux and macOS, verifies the
+Marketplace package inventory, runs a platform VSIX install smoke, uploads the
+generated `tools/vscode/dist/ahfl-language-<version>-<target>.vsix`, and can
+publish to the Visual Studio Marketplace when dispatched with `publish=true`
+and `secrets.VSCE_PAT`.
 
-Manual publishing is also available via the workflow dispatch with an explicit
-`version` input.
+Client-only packaging remains useful for local extension development:
+
+```bash
+cd tools/vscode
+pnpm run package
+```
+
+Do not publish the client-only VSIX as the primary user artifact; it lacks the
+bundled language server and bundled sysroot.
 
 ## Known Limitations
 
 - The LSP server is a **standalone `ahfl-lsp` binary**; there is no
   `ahflc --lsp` subcommand. Make sure you point `ahfl.serverPath` to the
   correct executable if not using the bundled release.
-- Platform-specific VSIX packages with embedded `ahfl-lsp` are produced by the
-  separate `vscode-extension.yml` workflow (one job per OS). The
-  `release-vscode.yml` workflow described above publishes the client-side
-  extension.

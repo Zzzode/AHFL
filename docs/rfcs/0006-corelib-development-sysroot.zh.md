@@ -1,11 +1,11 @@
 ---
 rfc: "0006"
 title: "Corelib Development Sysroot"
-status: "implemented"
+status: "stabilized"
 area: ["compiler", "stdlib", "tooling", "process"]
 stability: "developer-facing"
 created: "2026-07-03"
-updated: "2026-07-04"
+updated: "2026-07-07"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -419,6 +419,17 @@ LSP cache key 必须包含：
 5. `implemented`：CLI、LSP、VS Code extension、PackageGraph、docs 全部落库，当前 corelib 文件不再产生 duplicate `std`。
 6. `stabilized`：release evidence 记录 VSIX bundled sysroot、repo source-sysroot 和普通用户工程三条路径均通过。
 
+当前 release evidence（2026-07-07）：
+
+| Evidence | Status | Notes |
+| --- | --- | --- |
+| VSIX bundled sysroot | 完成 | `scripts/generate-release-evidence-archive.py` 校验 platform VSIX workflow 必须调用 `scripts/package-vscode-vsix-release.sh`、staging release `ahfl-lsp` 与 `std/`，并运行 package inventory / install smoke |
+| Repo source-sysroot | 完成 | release evidence archive 运行 `ahflc check --manifest tests/integration/source_sysroot_cli/std/ahfl.toml --sysroot tests/integration/source_sysroot_cli` |
+| 普通用户工程 | 完成 | release evidence archive 运行 non-std package `check --manifest ... --target workflow --sysroot <repo>` |
+| Multi-root toolchain profile | 完成 | release evidence archive 校验 LSP `profiles[]`、workspace-scoped profile merge、mixed-profile diagnostic contract 和 cross-workspace path dependency rejection |
+
+当前状态为 `stabilized`。RFC 0006 的稳定化复核已经和 RFC 0007 一起完成：VSIX bundled sysroot、repo source-sysroot、普通用户工程和 multi-root toolchain profile evidence 均进入 release evidence archive。后续只保留发布矩阵证据维护；registry、publishing、version range 或多版本 toolchain distribution 不回填本 RFC。
+
 ## Alternatives
 
 1. 在 LSP 里特判 `std` 目录。缺点是把 package identity 问题放到工具层字符串判断，绕过 PackageGraph，并且无法解释 CLI 和测试中的同类问题。
@@ -438,6 +449,7 @@ LSP cache key 必须包含：
 
 - 2026-07-03: Draft opened after diagnosing corelib development duplicate `std` diagnostics in VS Code/LSP.
 - 2026-07-03: Implementation started for ToolchainProfile-driven discovery, canonical LSP/VS Code sysroot configuration, and CLI sysroot normalization.
+- 2026-07-07: Marked stabilized after release evidence covered VSIX bundled sysroot, repo source-sysroot, ordinary user package sysroot usage, and RFC 0007 multi-root toolchain profile isolation.
 - 2026-07-04: Implemented ToolchainProfile source-sysroot support across CLI, LSP, VS Code bundled fallback, PackageGraph diagnostics, and source-sysroot CLI checks.
 - 2026-07-04: Removed legacy `ProjectInput` stdlib auto-discovery, including `AHFL_SOURCE_DIR` and cwd-upward std probes; raw project tests now supply explicit module roots.
 - 2026-07-04: RFC 0007 split LSP semantic visibility from workspace navigation indexing, so source-sysroot exported modules feed IDE navigation without being injected into the current semantic source graph.

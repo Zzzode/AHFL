@@ -111,13 +111,14 @@ class AnalysisService {
 
   private:
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
-    build_snapshot(const std::string &uri,
-                   std::optional<LspToolchainCacheKey> toolchain_cache_key,
-                   std::string open_document_overlay_revision_set);
+    build_snapshot(const std::string &uri, std::optional<LspToolchainCacheKey> toolchain_cache_key);
     [[nodiscard]] std::optional<LspToolchainCacheKey>
     toolchain_cache_key_for_uri(const std::string &uri) const;
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
-    [[nodiscard]] std::string open_document_overlay_revision_set() const;
+    [[nodiscard]] std::string open_document_overlay_revision_set_for_paths(
+        const std::vector<std::filesystem::path> &paths) const;
+    [[nodiscard]] std::string
+    open_document_overlay_revision_set_for_snapshot(const LspAnalysisSnapshot &snapshot) const;
 
     const DocumentStore &store_;
     std::vector<std::filesystem::path> workspace_folders_;

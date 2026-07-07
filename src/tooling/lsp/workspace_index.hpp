@@ -56,6 +56,12 @@ struct DefId {
     [[nodiscard]] friend bool operator==(DefId lhs, DefId rhs) noexcept = default;
 };
 
+struct DefFingerprint {
+    std::uint64_t value{0};
+
+    [[nodiscard]] friend bool operator==(DefFingerprint lhs, DefFingerprint rhs) noexcept = default;
+};
+
 struct WorkspaceImplId {
     std::size_t value{0};
 
@@ -141,10 +147,16 @@ struct ImplFact {
 
 struct SymbolFact {
     DefId def_id;
+    DefFingerprint fingerprint;
+    std::optional<AliasDefId> alias_id;
+    std::optional<DefId> alias_target_def;
     package_graph::PackageId package_id;
     SourceUnitId source_unit_id;
     SymbolKind kind{SymbolKind::Struct};
     SymbolNamespace name_space{SymbolNamespace::Types};
+    ast::Visibility visibility{ast::Visibility::PackageInternal};
+    bool api_reachable{false};
+    bool artifact_reachable{false};
     std::string local_name;
     std::string canonical_name;
     SourceRange declaration_range;
