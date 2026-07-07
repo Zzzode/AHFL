@@ -5,7 +5,7 @@ status: "draft"
 area: ["runtime"]
 stability: "experimental"
 created: "2026-06-28"
-updated: "2026-07-02"
+updated: "2026-07-07"
 authors: ["LLM-orchestrated"]
 shepherd: "TBD"
 owners:
@@ -26,6 +26,12 @@ Decide whether AHFL should add a native gRPC/Protobuf transport for runtime and 
 ## Motivation
 
 HTTP/JSON remains simple and portable, but long streaming responses and multi-turn tool-calling loops may need lower latency, lower CPU overhead, and first-class bidirectional streaming.
+
+## Current Implementation Audit
+
+As of 2026-07-07, AHFL has runtime support and tests for `grpc_json_transcoding` capability bindings, not native gRPC/Protobuf transport. The concrete implementation surface is `GrpcJsonTranscodingEndpoint`, `GrpcJsonTranscodingRequest`, and `execute_grpc_json_transcoding`; smoke and unit tests cover metadata, trailers, retry, auth, malformed JSON, and schema mismatch on that JSON-transcoding path.
+
+This evidence does not satisfy this RFC's acceptance bar because it does not add a Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed.
 
 ## Goals
 
@@ -473,3 +479,4 @@ class GrpcClientFacade {
 
 - 2026-06-28 (V1.1): Added Decision Block §8; Consult / Decision Due / Blocking Items; cross-RFC refs
 - 2026-06-28 (V1.0): Initial DRAFT
+- 2026-07-07: Added explicit decision-gate plan covering owner sign-off, benchmark evidence, build matrix, dependency policy, feature flag, fallback semantics and test strategy.

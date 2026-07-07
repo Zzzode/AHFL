@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-06"
+updated: "2026-07-07"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -27,19 +27,19 @@ rfcs:
     stability: "experimental"
   - rfc: "0005"
     title: "Package Configuration System"
-    status: "review"
+    status: "stabilized"
     file: "0005-package-configuration-system.zh.md"
     area: ["compiler", "stdlib", "runtime", "ir", "tooling", "process"]
     stability: "developer-facing"
   - rfc: "0006"
     title: "Corelib Development Sysroot"
-    status: "implemented"
+    status: "stabilized"
     file: "0006-corelib-development-sysroot.zh.md"
     area: ["compiler", "stdlib", "tooling", "process"]
     stability: "developer-facing"
   - rfc: "0007"
     title: "LSP Workspace Navigation Index"
-    status: "implemented"
+    status: "stabilized"
     file: "0007-lsp-workspace-navigation-index.zh.md"
     area: ["compiler", "stdlib", "tooling"]
     stability: "developer-facing"
@@ -51,7 +51,19 @@ rfcs:
     stability: "developer-facing"
   - rfc: "0009"
     title: "Symbol Visibility and Public API Surface"
-    status: "draft"
+    status: "stabilized"
     file: "0009-symbol-visibility.zh.md"
     area: ["language", "compiler", "stdlib", "tooling"]
     stability: "stable-language"
+  - rfc: "0010"
+    title: "Registry Publishing and SemVer Gates"
+    status: "draft"
+    file: "0010-registry-publishing-semver.zh.md"
+    area: ["compiler", "tooling", "process"]
+    stability: "experimental"
+  - rfc: "0011"
+    title: "Pattern Usefulness Matrix"
+    status: "draft"
+    file: "0011-pattern-usefulness-matrix.zh.md"
+    area: ["language", "compiler", "tooling"]
+    stability: "experimental"

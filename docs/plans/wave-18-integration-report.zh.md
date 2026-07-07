@@ -447,7 +447,7 @@ Group C（P1/P2 收尾 · 3 项 · 1.7 人日）
 | **Wave reports** | `docs/plans/wave-17-integration-report.zh.md`（交叉引用 §7 勾销） | +10 | PR-3 · L2-docs + **本报告 = wave-18-integration-report.zh.md（独立报告 PR）** |
 | **docs/plans** | `phaseb-gap-analysis.zh.md`（Header V1.2 + §3 10 行改写 + §9.2 新表）· `wave-16-integration-report.zh.md`（对照 reference） | ≈ 90 | PR-4 · L2-PB01 |
 | **docs/rfcs（新增 4 份 DRAFT）** | `docs/rfcs/{d-1.md,e-1.md,e-2.md,h-1.md}` | ≈ 700 | PR-4b · L2-rfcs |
-| **.github/workflows（新增 2 份 cron）** | `.github/workflows/{fuzz-cron.yml,release-vscode.yml}` + 既有 `ci.yml, vscode-extension.yml` | 472（fuzz-cron 377 新 + release 93 新 + 交叉引用 2） | PR-3 · L2-docs（fuzz-cron）+ 独立 release-vscode PR（建议拆分） |
+| **.github/workflows（新增/更新发布门禁）** | `.github/workflows/fuzz-cron.yml` + `ci.yml` + `vscode-extension.yml` | 472（fuzz-cron 377 新 + VS Code 发布门禁增量 + 交叉引用 2） | PR-3 · L2-docs（fuzz-cron）+ VS Code platform release 门禁独立审查 |
 | **tools/vscode（9 文件 · **建议拆分独立 PR**）** | `tools/vscode/{package.json,CHANGELOG.md,README.md,language-configuration.json,syntaxes/*.json,.vscodeignore}` | ≈ 180（diff） | 独立 PR：「Wave-17 补正 VSCode 0.2.1」 |
 
 ### 8.2 PR 粒度拆分建议（6 PR + 2 跨 Wave 独立 PR）
@@ -488,7 +488,7 @@ PR-6 [registration]
                   · Reviewer 关注点：build-clean 目录下 ctest 总数 = 980（baseline）
 
 独立 PR-A（跨 Wave）：「Wave-17 补正 VSCode 0.2.1」（tools/vscode 9 文件 ≈ 180 行）
-独立 PR-B（跨 Wave）：「release-vscode workflow 独立接入」（.github/workflows/release-vscode.yml 93 行 + release 流程说明文档）
+独立 PR-B（跨 Wave）：「VS Code platform release 门禁接入」（`.github/workflows/vscode-extension.yml` + release 流程说明文档）
 ```
 
 ### 8.3 Commit 拆分建议（conventional commit · 每 PR 内 3–4 段）

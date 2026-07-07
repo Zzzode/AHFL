@@ -31,18 +31,6 @@ AHFL 的 `match` 对 enum scrutinee 使用结构化穷尽性分析：
 
 实现采用可替换的 top-level usefulness 子集，而不是把 ad-hoc 字符串拼接留在 `visit_match` 内部。
 
-## Status
-
-**Implemented.** 当前实现已落在：
-
-- `src/compiler/semantics/match_exhaustiveness.hpp`
-- `src/compiler/semantics/match_exhaustiveness.cpp`
-- `src/compiler/semantics/typecheck_expr.cpp`
-- `include/ahfl/base/support/diagnostics.hpp`
-- `tests/unit/compiler/semantics/adt_match.cpp`
-
-RFC0003 仍是 developer-facing，而不是 stable-language：当前算法覆盖 AHFL 已支持的 enum variant、wildcard、binding、or-pattern 外层语义，但还不是完整 Maranget 决策矩阵。
-
 ## Motivation
 
 `match` 是 ADT 可用性的核心。只报告“match 不穷尽”不足以支撑真实工程：
@@ -53,7 +41,25 @@ RFC0003 仍是 developer-facing，而不是 stable-language：当前算法覆盖
 
 Rust、Swift、OCaml、GHC 这类成熟实现都把 pattern usefulness 作为 type checking 的一部分。AHFL 当前阶段选择同一方向，但把实现范围限制在现有语言能力可以正确表达的子集。
 
-## Language Semantics
+## Goals
+
+1. 对 enum scrutinee 的 `match` 提供稳定、结构化的穷尽性 error。
+2. 对不可达 arm 和结构性重叠 arm 提供 warning，而不是静默接受。
+3. 让 CLI 和 LSP 消费稳定诊断码、source range 与 related information。
+4. 把覆盖分析从 `visit_match` 的 ad-hoc 逻辑中分离为可替换组件。
+5. 在现有 AHFL pattern 能力内保持算法保守、可解释、可测试。
+
+## Non-Goals
+
+1. 不实现完整 nested-pattern usefulness matrix。
+2. 不对 literal/range pattern 做数值域穷尽性证明。
+3. 不支持 `#[non_exhaustive]` 或类似稳定 ABI 策略。
+4. 不生成自动修复 edit。
+5. 不把 overlap warning 默认升级为 error。
+
+## Design
+
+### Language Semantics
 
 ### Exhaustiveness
 
@@ -120,7 +126,7 @@ typecheck.MATCH_OVERLAP
 
 RFC0003 不保留旧的非结构化穷尽性诊断兼容路径；公开契约只有上表三条诊断码。
 
-## Algorithm
+### Algorithm
 
 当前实现是 Maranget usefulness 思路的 top-level enum 子集。
 
@@ -140,22 +146,48 @@ RFC0003 不保留旧的非结构化穷尽性诊断兼容路径；公开契约只
 
 复杂度是 `O(N^2 + N*K)`，其中 `N` 是 arm 数，`K` 是 enum variant 数。AHFL 当前 enum/arm 规模下这比完整矩阵算法更简单，也足以覆盖现有语义。
 
-## Non-Goals
+## User Impact
 
-1. 不实现完整 nested-pattern usefulness matrix。
-2. 不对 literal/range pattern 做数值域穷尽性证明。
-3. 不支持 `#[non_exhaustive]` 或类似稳定 ABI 策略。
-4. 不生成自动修复 edit。
-5. 不把 overlap warning 默认升级为 error。
+1. 用户会在缺失 enum variant 时收到 `typecheck.MATCH_MISSING_PATTERNS` error，诊断包含缺失 variant 列表。
+2. 用户会在 wildcard/catch-all 或重复 variant arm 之后收到不可达 warning。
+3. 用户会在带 guard 的重叠 arm 上收到 overlap warning，但 guarded arm 不会使后续同 variant arm 不可达。
+4. LSP 可以直接把 enum declaration、missing variant declaration 和 covering arm ranges 映射成 related information。
+5. 旧的非结构化 missing-pattern 文本不再是用户可依赖接口；稳定接口是诊断码和 source ranges。
 
-## Implementation Notes
+## Compatibility and Migration
+
+这是开发者可见的诊断契约变更，不改变合法程序的运行语义。
+
+破坏性影响：
+
+1. 曾经只产生弱诊断或无诊断的非穷尽 `match` 现在会失败。
+2. 曾经静默接受的不可达/重叠 arm 现在会产生 warning。
+3. 依赖旧消息文本的测试需要迁移到稳定诊断码。
+
+迁移方式：
+
+1. 为 enum `match` 补齐缺失 variant、wildcard 或 catch-all binding。
+2. 删除 wildcard/catch-all 之后不可达的具体 arm。
+3. 对测试断言使用 `typecheck.MATCH_MISSING_PATTERNS`、`typecheck.MATCH_UNREACHABLE_ARM` 和 `typecheck.MATCH_OVERLAP`。
+
+## Implementation Plan
 
 - `match_exhaustiveness.{hpp,cpp}` 是唯一的覆盖分析组件；`typecheck_expr.cpp::visit_match` 只负责调用并把结果转换成 diagnostics。
 - `ExpressionSema` 和 `TypeCheckPass` 支持 warning 级 typecheck diagnostics，避免把 unreachable/overlap 错误地建模成 error。
 - missing-pattern diagnostics 使用 `Diagnostic::Related` 承载 enum/variant declaration ranges；LSP 可以直接映射为 related information。
 - Analyzer 内部只使用 enum declaration metadata 和 AST pattern，不依赖用户可见字符串作为 canonical identity。
 
-## Tests
+实现状态：已落库。当前实现位置：
+
+- `src/compiler/semantics/match_exhaustiveness.hpp`
+- `src/compiler/semantics/match_exhaustiveness.cpp`
+- `src/compiler/semantics/typecheck_expr.cpp`
+- `include/ahfl/base/support/diagnostics.hpp`
+- `tests/unit/compiler/semantics/adt_match.cpp`
+
+RFC0003 仍是 developer-facing，而不是 stable-language：当前算法覆盖 AHFL 已支持的 enum variant、wildcard、binding、or-pattern 外层语义，但还不是完整 Maranget 决策矩阵。
+
+## Test Plan
 
 当前覆盖点位于 `tests/unit/compiler/semantics/adt_match.cpp`：
 
@@ -180,15 +212,32 @@ cmake --build --preset build-dev
 ctest --preset test-dev --output-on-failure -j8
 ```
 
-## Future Work
+## Rollout and Stabilization
 
-完整 Maranget matrix 应作为后续 RFC 独立推进，前置条件是 AHFL 的 nested pattern、literal/range pattern 和 payload destructuring 语义全部稳定。届时本 RFC 的 analyzer 可以被替换，但诊断码和用户可见契约应保持不变。
+状态推进：
+
+1. `draft`：定义 match missing-pattern、unreachable arm 和 overlap 诊断契约。
+2. `implemented`：覆盖分析组件、typecheck 接入、稳定诊断码、related information 与 unit tests 已落库。
+3. `stabilized`：当 nested pattern、literal/range pattern、payload destructuring 的语义稳定，并且完整 usefulness matrix 另行设计或本 RFC 明确收窄为永久子集后，再推进。
+
+当前状态是 `implemented`。它不能直接标记为 `stabilized`，因为完整 Maranget matrix 仍不在本 RFC 范围内，且后续 pattern 语义可能扩展 analyzer 的输入域。
+
+## Alternatives
+
+1. 继续在 `visit_match` 内拼接字符串诊断。缺点是无法稳定提供 related information，也无法支持 LSP 结构化展示。
+2. 立即实现完整 Maranget matrix。缺点是 AHFL 当前缺少稳定的 nested/literal/range pattern 语义，完整矩阵会提前冻结尚未成熟的语言面。
+3. 只报告 missing patterns，不报告 unreachable/overlap。缺点是用户仍会保留死代码和重复 arm，编译器无法帮助发现常见逻辑错误。
+
+## Open Questions
+
+完整 Maranget matrix 已转入 [RFC 0011](./0011-pattern-usefulness-matrix.zh.md) 独立推进，前置条件是 AHFL 的 nested pattern、literal/range pattern 和 payload destructuring 语义全部稳定。届时本 RFC 的 analyzer 可以被替换，但诊断码和用户可见契约应保持不变。
 
 ## Decision History
 
 - 2026-06-25: 初稿创建，目标是补齐 match missing/unreachable/overlap diagnostics。
 - 2026-07-02: 纳入 RFC 目录，作为 RFC0003。
 - 2026-07-06: 实现落库；删除旧的非结构化穷尽性诊断路径；明确 guarded arm 不贡献穷尽性覆盖。
+- 2026-07-07: 将完整 pattern usefulness matrix 后续工作拆入 RFC 0011。
 
 ## References
 

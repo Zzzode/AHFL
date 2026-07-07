@@ -1,0 +1,88 @@
+# RFC 后续工作优先级
+
+审计日期：2026-07-07
+
+本计划只记录 `docs/rfcs/` 当前 canonical RFC 的完成度和后续优先级。RFC 的规范文本仍以对应 RFC、`docs/spec/` 和 `docs/reference/` 为准；本文件用于排期、复核和避免把已完成实现、稳定化出口、未来研究项混在一起。
+
+## 状态总览
+
+| RFC | Registry status | 当前判断 | 后续动作 |
+| --- | --- | --- | --- |
+| RFC 0001: Enum Variant Payload Forms | `stabilized` | 完成。enum variant payload、constructor、pattern、if-let/e2e 覆盖已纳入稳定语义。 | 只保留回归测试和诊断码契约维护。 |
+| RFC 0002: Optional Narrowing in Pattern Matching | `stabilized` | 完成。`FlowFacts`、`if let`、match-arm narrowing 与内建 Option/Result predicate narrowing 已稳定。 | 只保留回归测试。 |
+| RFC 0003: Match Exhaustiveness Diagnostics | `implemented` | 核心诊断已完成；不能稳定化为完整 pattern usefulness 系统。 | P2：nested/literal/range/payload destructuring 稳定后，另开完整 usefulness matrix RFC。 |
+| RFC 0004: Native gRPC Transport | `draft` | 未完成。2026-07-07 代码审计确认现有 runtime gRPC 路径是 `grpc_json_transcoding`，不等价于 native gRPC/Protobuf transport。 | P3：先做 runtime owner decision gate、benchmark 和三平台构建评估，再决定是否进入 accepted/implementing。 |
+| RFC 0005: Package Configuration System | `stabilized` | 完成。TOML manifest、workspace、PackageGraph、lockfile、sysroot std、CLI/LSP/formatter/test helper 迁移与 release evidence archive 均已落库；RFC0010 已明确 registry/publishing 不回填破坏 v1 manifest identity。 | 只保留回归测试和 release evidence 维护。 |
+| RFC 0006: Corelib Development Sysroot | `stabilized` | 完成。source sysroot、corelib 开发路径、VSIX bundled sysroot、普通用户工程和 multi-root toolchain profile release evidence 均已落库。 | 只保留发布矩阵证据维护；多版本 toolchain distribution 另行 RFC。 |
+| RFC 0007: LSP Workspace Navigation Index | `stabilized` | v1 完成。semantic graph 与 navigation index 分离、primitive home、impl/reference/navigation 索引、stable fingerprint、rename、CodeLens/reference/implementation v1、open overlay invalidation 和 multi-root profile isolation 均已落库。 | P2：剩余 fact-level incremental remap；public API compatibility gate 已转入 RFC0010。 |
+| RFC 0008: Single-File Primitive and Std Resolution | `implemented` | 完成。detached source unit、primitive home、std dependency/import gate、primitive facade method visibility、`ahflc init --single-file` 显式 package scaffold 已落库。 | 只保留 detached/package 边界回归；不改变 RFC0008 核心语义。 |
+| RFC 0009: Symbol Visibility and Public API Surface | `stabilized` | 完成。语义实现、public API artifact 工具链和 release evidence archive 均已落库；non-std package snapshot/docs/diff 基线由 `ctest -L release-evidence-archive` 覆盖。 | 只保留回归测试；registry、semver 和 publishing metadata 已转入 RFC0010。 |
+| RFC 0010: Registry Publishing and SemVer Gates | `draft` | 新增。registry dependency、publishing、SemVer gate、publish-time public API diff、source archive、lockfile registry digest 均已从 RFC0005/RFC0009 后续项拆出；manifest v2、resolver、source archive、manifest-mode CLI registry resolve、public API snapshot artifact fetch、publish dry run、standalone SemVer gate、publish dry-run previous-release SemVer gate、real registry upload、package yank 和 RFC0010 release evidence 已有实现切片。 | P1：owner review 后进入 accepted；是否产品化 workspace-mode registry fetch 另行决策。 |
+| RFC 0011: Pattern Usefulness Matrix | `draft` | 新增。RFC0003 后续 nested/literal/range/payload destructuring usefulness matrix 已拆成独立 RFC。 | P2：等 pattern surface 稳定后实现 typed pattern HIR、constructor matrix、witness diagnostics 和 LSP quick fix。 |
+
+## 优先级
+
+### P0：Registry 健康度
+
+状态：完成。
+
+1. RFC 0003 已补齐 registry 强制章节结构。
+2. `scripts/check-rfc.py` 已恢复通过。
+3. 后续所有 RFC 变更必须继续保持 canonical file、frontmatter、章节顺序、相对链接和 Mermaid 图规则。
+
+### P1：稳定化阻塞项
+
+1. RFC 0009 public API artifact 工具链。
+   - 状态：完成。
+   - 已提供 `emit public-api` JSON snapshot，从 resolver visibility、alias、API-reachability facts 生成 public surface。
+   - 已提供 `emit public-api-docs` 面向用户的 Markdown docs 输出。
+   - 已提供 `emit public-api-diff`，用结构化 API identity、`SymbolId` / `AliasDefId` / signature facts 比较 public surface，不用 display string 作为 canonical identity。
+   - 已由 `scripts/generate-release-evidence-archive.py` 固定 non-std package 的 snapshot/docs/diff release evidence，RFC 0009 已推进到 `stabilized`。
+
+2. RFC 0005 / 0006 / 0007 release evidence 稳定化复核。
+   - 状态：完成。
+   - RFC 0005 的 v1 package identity contract 已完成；不要再补 legacy descriptor 或 std 特判。
+   - RFC 0006 的 VSIX bundled sysroot、repo source-sysroot、普通用户工程三条路径已进入 release evidence archive。
+   - RFC 0007 的 ordinary user package、source-sysroot、VSIX bundled sysroot 和 multi-root toolchain profile contract 已进入 release evidence archive。
+   - RFC 0005 / 0006 / 0007 已推进到 `stabilized`；后续只做回归维护和 evidence 维护。
+   - 后续 registry / publishing / semver 只能新增 RFC，不得回填破坏 RFC 0005 v1 manifest identity contract。
+
+### P2：明确有价值但应等待语义成熟
+
+1. RFC 0003 后续 pattern usefulness matrix。
+   - 状态：RFC 0011 已新增。
+   - 等 nested pattern、literal/range pattern、enum payload destructuring 的语言语义稳定后进入 accepted / implementing。
+   - RFC 0011 以完整 usefulness matrix 为目标，避免在 RFC 0003 内提前冻结半成熟 pattern 域。
+
+2. RFC 0007 二期 LSP index。
+   - incremental workspace index 已补一层：watched file invalidation 和 open-document overlay revision key 均按实际引用 source path 收敛，避免无关打开文件触发当前 package snapshot/index rebuild。
+   - 剩余工作仍是 fact-level incremental remap：当前受影响 snapshot/index 仍整体重建，不是按 `SourceUnitId` 复用未变 facts。
+   - stable DefId fingerprint 已落库：`SymbolFact::fingerprint` 提供 numeric drift-detection identity，handler tests 覆盖重建稳定性。
+   - rename v1 已落库：`prepareRename` / `textDocument/rename` 返回 `WorkspaceEdit`，并拒绝 keyword 与 same-module conflict；跨 package API compatibility guard 不应硬塞进 rename handler，后续由 RFC 0010 的 public API diff / registry publish gate 承接。
+   - CodeLens/reference/implementation v1 已落库：覆盖 unopened project source、lazy sysroot、path dependency exports、open overlay、partial facts、stable ordering 和 primitive impl candidates；后续只保留 UX polish。
+   - 继续坚持 semantic source graph 不被导航需求污染。
+
+### P3：需要决策或产品化触发
+
+1. RFC 0004 native gRPC transport。
+   - 状态：decision gate 已落到 `docs/plans/native-grpc-decision-gate.zh.md`。
+   - 先完成 owner decision gate、benchmark、三平台构建和 feature flag 策略。
+   - 当前 `GrpcJsonTranscoding*` 实现和 runtime capability binding tests 只能证明 JSON transcoding path 成熟，不能算 native gRPC/Protobuf RFC 完成度。
+   - 没有 Go 决策前不要进入大规模实现。
+
+2. RFC 0008 单文件模式产品化。
+   - 状态：完成。
+   - 已落库 `ahflc init --single-file <input.ahfl>`：新文件生成 starter module，已有裸文件补 module header，已有 module 文件沿用 module prefix/export path，已有 manifest 拒绝覆盖。
+   - 这是开发体验增强，不改变 RFC 0008 的核心语义完成度：detached mode 仍不隐式 import std 或 workspace graph。
+
+3. RFC 0010 registry / publishing / SemVer。
+   - 状态：RFC 已新增；`emit public-api-diff --semver-gate --from <old> --to <new>` 已作为第一条实现切片落库，用结构化 public API diff facts 执行 SemVer gate；`manifest_version = 2` 已接受 registry dependency 语法，并在未解析 registry package 时 fail-closed；`ahfl.registry.index.v1` metadata parser/printer 已落库并对未知字段、非法 digest、本地 dependency 泄漏 fail-closed；registry candidate selection 已按 exact/caret/tilde requirement 选择最高非 yanked 版本，并允许 locked yanked 版本复现；`ahfl.source_archive.v1` normalized source archive builder/parser 已落库，覆盖 source-only 过滤、换行归一化、root manifest requirement、digest metadata 和 fail-closed manifest validation；remote registry artifact fetch 已落库，可拉取 package index metadata、registry index、source archive manifest 和 source archive payload，并且只在 transport unavailable 时回退缓存；registry public API snapshot artifact fetch 已落库，会校验 `public_api_sha256`、`ahfl.public_api.v1` schema，并且 live invalid response 不回退缓存；`ahflc package archive --manifest <ahfl.toml> --out <dir>` 已落库，能生成 source archive metadata/payload artifacts；verified source archive payload materialization 已落库，payload/archive/file digest drift、重复路径、路径逃逸和非空输出目录均 fail closed；archive-backed registry `PackageInput` construction 已落库，会在生成 PackageGraph input 前校验 registry metadata、source archive digest、manifest digest 和 dependency metadata；manifest-mode CLI PackageGraph registry dependency resolution 已落库，会把 root/transitive registry dependencies 拉取、校验、materialize 成 resolver-provided registry packages；PackageGraph 已能消费 resolver 提供的 registry package，校验 registry id / exact/caret/tilde version requirement，并把 source archive、manifest、public API digest 写入 package graph JSON 和 lockfile drift 检查；`ahflc package publish --dry-run --manifest <ahfl.toml> --registry <id> --out <dir>` 已落库，能本地生成 source archive、public API snapshot、registry index metadata 和 `ahfl.publish_dry_run.v1` evidence；`package publish --dry-run --semver-gate --from <previous-version>` 已落库，会从 registry metadata 拉取 previous public API snapshot，执行 publish-time SemVer gate，并在成功时记录 previous snapshot evidence；`ahflc package publish --manifest <ahfl.toml> --registry <id> --out <dir>` 已落库，会在本地 gate 通过后上传 `ahfl.registry.publish_request.v1` 并写出 `ahfl.publish.v1` evidence；`ahflc package yank <package>@<version> --registry <id>` 已落库，会校验 registry 返回同 coordinate 的 `yanked=true` metadata；release evidence archive 已用本地 fixture registry 覆盖 dry-run SemVer pass、real upload、yank 和 SemVer rejection。
+   - 后续不能继续把 registry source、version range、publishing metadata 或 public API compatibility gate 回填到 RFC 0005 / RFC 0009。
+   - 下一步是 owner review；workspace-mode registry fetch 是否产品化需要单独决策，不应默认塞进 LSP 或 workspace build。
+
+## 执行原则
+
+1. 禁止恢复 legacy descriptor、implicit std discovery 或 exported-module-equals-public-symbol 这类旧路径。
+2. 新的 public API、LSP、package graph 工作必须使用结构化 ID 和 flat-store facts；字符串只用于 source spelling、diagnostic 和展示。
+3. `implemented` 到 `stabilized` 必须有 spec/reference/release evidence，不以“代码大体能跑”替代稳定化。
+4. 后续 RFC 如果只是产品化入口或 registry/publishing 扩展，不应回填破坏 RFC 0005 v1 manifest identity contract。

@@ -96,9 +96,11 @@ Avoid:
 - [corelib-completion-plan.zh.md](./plans/corelib-completion-plan.zh.md)
 - [corelib-support-workplan.zh.md](./plans/corelib-support-workplan.zh.md)
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
+- [native-grpc-decision-gate.zh.md](./plans/native-grpc-decision-gate.zh.md)
 - [p3-std-impl-blockers.zh.md](./plans/p3-std-impl-blockers.zh.md)
 - [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
+- [rfc-follow-up-priorities.zh.md](./plans/rfc-follow-up-priorities.zh.md)
 - [trait-self-blocker.en.md](./plans/trait-self-blocker.en.md)
 - [wave-15-integration-report.zh.md](./plans/wave-15-integration-report.zh.md)
 - [wave-16-integration-report.zh.md](./plans/wave-16-integration-report.zh.md)
@@ -146,6 +148,8 @@ Avoid:
 - [0007-lsp-workspace-navigation-index.zh.md](./rfcs/0007-lsp-workspace-navigation-index.zh.md)
 - [0008-single-file-std-primitive-semantics.zh.md](./rfcs/0008-single-file-std-primitive-semantics.zh.md)
 - [0009-symbol-visibility.zh.md](./rfcs/0009-symbol-visibility.zh.md)
+- [0010-registry-publishing-semver.zh.md](./rfcs/0010-registry-publishing-semver.zh.md)
+- [0011-pattern-usefulness-matrix.zh.md](./rfcs/0011-pattern-usefulness-matrix.zh.md)
 
 ## Governance
 

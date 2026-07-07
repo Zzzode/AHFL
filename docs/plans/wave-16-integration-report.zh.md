@@ -50,7 +50,7 @@ pie showData title QW Top-3 完成度（V1.1 wave-16 后）
 | `docs/reference/error-codes.zh.md` | g-0 错误码索引 | ~2247 | **核心交付**：76 `ErrorCode<TypeCheck>` 中 74 条的条目化文档，每条含 SoT 行号 / format 字符串 / 触发条件（中）/ **语法合法且已验证的最小复现 .ahfl 块** / 修复建议 / 关联码；顶部 1 张 mermaid pie（8 分组） |
 | `docs/reference/developer-docs.zh.md` | g-0 配套索引 | ~20 | 开发者文档 landing page；挂 error-codes / formal-subset / incremental-cache 链接 |
 | `tests/unit/compiler/semantics/diagnostic_matrix.cpp` | g-3 语义矩阵 | ~452 | g-3 独立 target；7 TEST_CASE / 30 断言；承载 effects.cpp 放不下的 22 条"矩阵占位行"（TRAIT_BOUND / COHERENCE_CONFLICT / MONO_BUDGET / MATCH_DUP_BINDING / TRAIT_ASSOC_TYPE / DUPLICATE_CAPABILITY / EFFECT_ON_PREDICATE） |
-| `.github/workflows/release-vscode.yml` | h-6 Marketplace 流程 | ~93 | tag `vscode-v*` + workflow_dispatch；`vsce package` 上传 vsix artifact；`secrets.VSCE_PAT` + `secrets.OPEN_VSX_TOKEN` 双发布 |
+| VS Code platform release workflow | h-6 Marketplace 流程 | ~93 | 已由当前 `.github/workflows/vscode-extension.yml` 承接；platform VSIX 必须包含 release `ahfl-lsp` 与 bundled `std` |
 | `.github/workflows/fuzz-cron.yml` | h-20 QW-1 Fuzz cron | ~378 | 每日 03:17 UTC（11:17 北京时）3 target × 20min libFuzzer；crash 自动归档到 `tests/fuzz/corpus/<YYYYMMDD>/` + 生成 repro.sh + README 登记卡 + 开 draft PR |
 | `docs/reference/fuzz-corpus-location.zh.md` | h-20 QW-1 约定文档 | ~236 | 9 章：为什么 / 目录结构（§2 naming rule 强制执行）/ 3 target 一览 / 复现 / repro.sh 最小骨架 / README 登记卡模板 / Cron 自动归档说明 / Triage 值班 SLA / Cleanup 2 年留存 |
 | `tests/fuzz/README.md` | h-20 QW-1 快速开始 | ~110 | 两种构建模式表（Standalone smoke / libFuzzer）；本地跑 / 复现历史 crash / FAQ 6 条 |
@@ -93,7 +93,7 @@ pie showData title QW Top-3 完成度（V1.1 wave-16 后）
 
 | Finding | 等级 | 现象 | 处置 | 最终状态 |
 |---|---|---|---|---|
-| packageManager 字段与 install 命令**不一致** | **HIGH**（CI 直接红） | `package.json` 写 `packageManager: "pnpm@10.10.0"`，但 release-vscode.yml 的 step 用 `npm ci` → CI 跑 npm 时 pnpm lockfile 不存在直接失败 | workflow 改为 `corepack enable pnpm@10.10.0` + `pnpm install --frozen-lockfile`；README 调试说明同步写 pnpm | ✅ 修复 |
+| packageManager 字段与 install 命令**不一致** | **HIGH**（CI 直接红） | `package.json` 写 `packageManager: "pnpm@10.10.0"`，但早期 VS Code release workflow 使用 npm 安装 → CI 跑 npm 时 pnpm lockfile 不存在直接失败 | workflow 改为 `corepack enable pnpm@10.10.0` + `pnpm install --frozen-lockfile`；README 调试说明同步写 pnpm | ✅ 修复 |
 | tmLanguage keyword 覆盖不全 | MEDIUM | `assert / unwrap / requires / unreachable` 4 个 P4-01 新关键字 + `contract / invariant / capability` 6 个原关键字未出现在 TextMate 规则 | 按 ANTLR grammar 的 keyword list 一次性补齐 ~30 关键字 | ✅ 修复 |
 | CHANGELOG semver 日期格式 | LOW | CHANGELOG date 写 `## [0.2.0] - 2026-6-28`（不统一为 `2026-06-28`）；与 keepachangelog 格式冲突 | 统一为 `YYYY-MM-DD` | ✅ 修复 |
 
