@@ -172,6 +172,34 @@ add_test(NAME ahfl.check.project.inherent_method_visibility
             "${PROJECT_SOURCE_DIR}"
 )
 
+add_test(NAME ahfl.check.project.symbol_visibility_api_reachability
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            symbol-visibility-api-reachability
+            "${CMAKE_BINARY_DIR}/symbol_visibility_api_reachability"
+            "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahfl.check.project.symbol_visibility_unreachable_public
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            symbol-visibility-unreachable-public
+            "${CMAKE_BINARY_DIR}/symbol_visibility_unreachable_public"
+            "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahfl.check.project.symbol_visibility_duplicate_modifier
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            symbol-visibility-duplicate-modifier
+            "${CMAKE_BINARY_DIR}/symbol_visibility_duplicate_modifier"
+            "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(NAME ahfl.check.project.symbol_visibility_handoff_export
+    COMMAND $<TARGET_FILE:ahfl_project_check_tests>
+            symbol-visibility-handoff-export
+            "${CMAKE_BINARY_DIR}/symbol_visibility_handoff_export"
+            "${PROJECT_SOURCE_DIR}"
+)
+
 add_test(NAME ahfl.ir.identity_visitor
     COMMAND $<TARGET_FILE:ahfl_compiler_ir_tests>
 )
@@ -2447,6 +2475,17 @@ add_test(NAME ahflc.dump_package_graph.source_sysroot_manifest
 )
 set_tests_properties(ahflc.dump_package_graph.source_sysroot_manifest PROPERTIES
     PASS_REGULAR_EXPRESSION "\"packages\":\\[\\{\"id\":0,\"name\":\"std\".*\"source\":\"sysroot\".*\"dependencies\":\\[\\].*\"module_roots\":\\[\\{\"prefix\":\"std\",\"package\":0"
+)
+
+add_test(NAME ahfl.release_evidence_archive.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/scripts/generate-release-evidence-archive.py"
+            --ahflc $<TARGET_FILE:ahflc>
+            --repo-root "${PROJECT_SOURCE_DIR}"
+            --out-dir "${CMAKE_CURRENT_BINARY_DIR}/release-evidence-archive"
+)
+set_tests_properties(ahfl.release_evidence_archive.smoke PROPERTIES
+    LABELS "release-evidence-archive;rfc0005;rfc0006;rfc0007;rfc0009;rfc0010"
 )
 
 add_test(NAME ahflc.check.manifest_rejects_std_directory_sysroot_input

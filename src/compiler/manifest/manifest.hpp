@@ -19,6 +19,7 @@ struct DependencySpec {
     std::string key;
     std::string source;
     std::optional<std::string> path;
+    std::optional<std::string> registry;
     std::optional<std::string> version;
     SourceRange range{};
 };

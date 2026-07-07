@@ -16,6 +16,10 @@ enum class CommandKind {
     Check,
     RunWorkflow,
     Format,
+    InitSingleFile,
+    PackageArchive,
+    PackagePublish,
+    PackageYank,
     DumpAst,
     DumpTypes,
     DumpPackageGraph,
@@ -54,6 +58,9 @@ enum class CommandKind {
     EmitRuntimeSession,
     EmitDryRunTrace,
     EmitPackageReview,
+    EmitPublicApi,
+    EmitPublicApiDocs,
+    EmitPublicApiDiff,
     EmitSummary,
     EmitSmv,
     EmitAssuranceJson,
@@ -89,6 +96,8 @@ struct CommandLineOptions {
     std::optional<std::string_view> model_checker;
     std::optional<std::string_view> checker_timeout_seconds;
     std::optional<std::string_view> formal_model_out;
+    std::optional<std::string_view> package_archive_output_path;
+    std::optional<std::string_view> package_registry_id;
     std::optional<std::string_view> bmc_depth;
     std::optional<std::string_view> bmc_boundary_invariants;
     bool explain_requested{false};
@@ -99,8 +108,13 @@ struct CommandLineOptions {
     std::optional<std::string_view> metrics_export_path;
     std::optional<std::string_view> structured_log_path;
     std::optional<std::string_view> memory_report_path;
+    std::optional<std::string_view> public_api_from_version;
+    std::optional<std::string_view> public_api_to_version;
+    std::optional<std::string_view> package_yank_reason;
     bool show_internal_artifacts{false};
     bool format_check_requested{false};
+    bool public_api_semver_gate_requested{false};
+    bool package_publish_dry_run_requested{false};
     std::vector<std::string_view> positional;
 };
 
@@ -124,6 +138,7 @@ enum class CommandListKind {
 enum class ActionGroup {
     Emit,
     Dump,
+    Package,
     Verify,
     Validate
 };

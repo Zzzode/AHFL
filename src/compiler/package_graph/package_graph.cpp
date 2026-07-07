@@ -3,11 +3,13 @@
 #include "base/support/sha256.hpp"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <functional>
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -232,6 +234,7 @@ make_target(PackageId package, std::size_t index, const manifest::TargetManifest
     node.module_root = module_root_for(input);
     node.manifest_path = input.manifest_path.lexically_normal();
     node.checksum = input.checksum;
+    node.registry = input.registry;
     node.exported_modules.reserve(input.manifest.exported_modules.size());
     for (const auto &exported : input.manifest.exported_modules) {
         node.exported_modules.push_back(exported.module_path);
@@ -251,6 +254,97 @@ struct IndexedInput {
 
 [[nodiscard]] bool is_user_package(PackageSourceKind source) noexcept {
     return source != PackageSourceKind::Sysroot;
+}
+
+struct SemVer {
+    int major{0};
+    int minor{0};
+    int patch{0};
+};
+
+[[nodiscard]] std::optional<SemVer> parse_semver(std::string_view value) {
+    std::array<std::string_view, 3> parts{};
+    std::size_t part_index = 0;
+    std::size_t start = 0;
+    while (start <= value.size() && part_index < parts.size()) {
+        const auto separator = value.find('.', start);
+        const auto end = separator == std::string_view::npos ? value.size() : separator;
+        parts[part_index++] = value.substr(start, end - start);
+        if (part_index == parts.size() && separator != std::string_view::npos) {
+            return std::nullopt;
+        }
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        start = separator + 1;
+    }
+    if (part_index != parts.size()) {
+        return std::nullopt;
+    }
+
+    SemVer parsed;
+    int *targets[] = {&parsed.major, &parsed.minor, &parsed.patch};
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        if (parts[index].empty()) {
+            return std::nullopt;
+        }
+        int value_part = 0;
+        for (const char item : parts[index]) {
+            if (item < '0' || item > '9') {
+                return std::nullopt;
+            }
+            value_part = (value_part * 10) + (item - '0');
+        }
+        *targets[index] = value_part;
+    }
+    return parsed;
+}
+
+[[nodiscard]] int compare_semver(SemVer lhs, SemVer rhs) noexcept {
+    const auto left = std::tuple{lhs.major, lhs.minor, lhs.patch};
+    const auto right = std::tuple{rhs.major, rhs.minor, rhs.patch};
+    if (left < right) {
+        return -1;
+    }
+    if (right < left) {
+        return 1;
+    }
+    return 0;
+}
+
+[[nodiscard]] bool semver_satisfies(std::string_view version, std::string_view requirement) {
+    if (requirement.empty()) {
+        return false;
+    }
+    const char operator_kind = requirement.front();
+    if (operator_kind == '^' || operator_kind == '~') {
+        requirement.remove_prefix(1);
+    }
+    const auto parsed_version = parse_semver(version);
+    const auto base = parse_semver(requirement);
+    if (!parsed_version.has_value() || !base.has_value()) {
+        return false;
+    }
+    if (operator_kind != '^' && operator_kind != '~') {
+        return compare_semver(*parsed_version, *base) == 0;
+    }
+    if (compare_semver(*parsed_version, *base) < 0) {
+        return false;
+    }
+    SemVer upper = *base;
+    if (operator_kind == '~') {
+        ++upper.minor;
+        upper.patch = 0;
+        return compare_semver(*parsed_version, upper) < 0;
+    }
+    if (base->major > 0) {
+        upper = SemVer{.major = base->major + 1, .minor = 0, .patch = 0};
+    } else if (base->minor > 0) {
+        upper = SemVer{.major = 0, .minor = base->minor + 1, .patch = 0};
+    } else {
+        upper = SemVer{.major = 0, .minor = 0, .patch = base->patch + 1};
+    }
+    return compare_semver(*parsed_version, upper) < 0;
 }
 
 [[nodiscard]] bool read_text_file(const std::filesystem::path &path,
@@ -421,7 +515,7 @@ void append_manifest_diagnostics(std::vector<Diagnostic> &target,
 [[nodiscard]] bool same_dependency_spec(const manifest::DependencySpec &lhs,
                                         const manifest::DependencySpec &rhs) {
     return lhs.key == rhs.key && lhs.source == rhs.source && lhs.path == rhs.path &&
-           lhs.version == rhs.version;
+           lhs.registry == rhs.registry && lhs.version == rhs.version;
 }
 
 [[nodiscard]] PackageInput make_manifest_package_input(manifest::PackageManifest manifest,
@@ -709,6 +803,9 @@ BuildResult build_package_graph(const BuildInput &input) {
     for (const auto &path_package : input.path_packages) {
         append(PackageId{next_id++}, path_package);
     }
+    for (const auto &registry_package : input.registry_packages) {
+        append(PackageId{next_id++}, registry_package);
+    }
 
     validate_sysroot_std_contract(input.sysroot_std, result.diagnostics);
 
@@ -750,6 +847,14 @@ BuildResult build_package_graph(const BuildInput &input) {
 
         const auto found = by_name.find(dependency.key);
         if (found == by_name.end()) {
+            if (dependency.source == "registry") {
+                add_error(
+                    result.diagnostics,
+                    "registry dependency '" + dependency.key +
+                        "' requires registry resolver support before PackageGraph materialization",
+                    dependency.range);
+                return std::nullopt;
+            }
             add_error(result.diagnostics,
                       "missing dependency package '" + dependency.key + "'",
                       dependency.range);
@@ -762,6 +867,40 @@ BuildResult build_package_graph(const BuildInput &input) {
                       "dependency package '" + dependency.key + "' is not in PackageGraph",
                       dependency.range);
             return std::nullopt;
+        }
+
+        if (dependency.source == "registry") {
+            if (target->source != PackageSourceKind::Registry || !target->registry.has_value()) {
+                add_error(result.diagnostics,
+                          "registry dependency '" + dependency.key +
+                              "' does not resolve to a registry package",
+                          dependency.range);
+                return std::nullopt;
+            }
+            const auto expected_registry = dependency.registry.value_or("default");
+            if (target->registry->registry_id != expected_registry) {
+                add_error(result.diagnostics,
+                          "registry dependency '" + dependency.key + "' requires registry '" +
+                              expected_registry + "' but resolved registry '" +
+                              target->registry->registry_id + "'",
+                          dependency.range);
+                return std::nullopt;
+            }
+            if (!dependency.version.has_value()) {
+                add_error(result.diagnostics,
+                          "registry dependency '" + dependency.key +
+                              "' is missing version requirement",
+                          dependency.range);
+                return std::nullopt;
+            }
+            if (!semver_satisfies(target->version, *dependency.version)) {
+                add_error(result.diagnostics,
+                          "registry dependency '" + dependency.key + "' requires version " +
+                              *dependency.version + " but resolved " + target->version,
+                          dependency.range);
+                return std::nullopt;
+            }
+            return target->id;
         }
 
         if (dependency.source == "workspace" && target->source != PackageSourceKind::Workspace &&
@@ -811,11 +950,35 @@ BuildResult build_package_graph(const BuildInput &input) {
             if (!to.has_value()) {
                 continue;
             }
+            const auto *target = graph.find_package(*to);
+            const auto is_registry_dependency = dependency.source == "registry" &&
+                                                target != nullptr && target->registry.has_value();
             graph.dependencies.push_back(DependencyEdge{
                 .from = indexed.id,
                 .dependency_key = dependency.key,
                 .to = *to,
                 .source = dependency.source,
+                .registry_id =
+                    dependency.source == "registry"
+                        ? std::optional<std::string>{dependency.registry.value_or("default")}
+                        : std::nullopt,
+                .version_requirement =
+                    dependency.source == "registry" ? dependency.version : std::nullopt,
+                .selected_version = is_registry_dependency
+                                        ? std::optional<std::string>{target->version}
+                                        : std::nullopt,
+                .source_archive_sha256 =
+                    is_registry_dependency
+                        ? std::optional<std::string>{target->registry->source_archive_sha256}
+                        : std::nullopt,
+                .manifest_sha256 =
+                    is_registry_dependency
+                        ? std::optional<std::string>{target->registry->manifest_sha256}
+                        : std::nullopt,
+                .public_api_sha256 =
+                    is_registry_dependency
+                        ? std::optional<std::string>{target->registry->public_api_sha256}
+                        : std::nullopt,
             });
             adjacency[indexed.id.value].push_back(*to);
         }
@@ -912,6 +1075,7 @@ BuildResult build_package_graph_from_manifests(const ManifestBuildInput &input) 
         .sysroot_std = std::move(*sysroot),
         .root_package = std::move(*root),
         .path_packages = std::move(path_packages),
+        .registry_packages = input.registry_packages,
     });
 }
 
@@ -1024,6 +1188,8 @@ std::string_view source_kind_name(PackageSourceKind kind) noexcept {
         return "workspace";
     case PackageSourceKind::Path:
         return "path";
+    case PackageSourceKind::Registry:
+        return "registry";
     }
     return "unknown";
 }

@@ -84,6 +84,82 @@ std = { source = "sysroot" }
     CHECK(result.manifest->dependencies.front().source == "sysroot");
 }
 
+TEST_CASE("Package manifest schema v2 accepts registry dependencies") {
+    constexpr std::string_view input = R"TOML(manifest_version = 2
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    CHECK(result.manifest->manifest_version == 2);
+    REQUIRE(result.manifest->dependencies.size() == 2);
+    const auto &dependency = result.manifest->dependencies[1];
+    CHECK(dependency.key == "risk-model");
+    CHECK(dependency.source == "registry");
+    REQUIRE(dependency.registry.has_value());
+    CHECK(*dependency.registry == "default");
+    REQUIRE(dependency.version.has_value());
+    CHECK(*dependency.version == "^2.1.0");
+    const auto canonical = ahfl::manifest::canonicalize_package_manifest(*result.manifest);
+    CHECK(canonical.find("risk-model = { source = \"registry\", registry = \"default\", "
+                         "version = \"^2.1.0\" }") != std::string::npos);
+}
+
+TEST_CASE("Package manifest schema v1 rejects registry dependency fields") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_message(result.diagnostics,
+                      "unsupported manifest field 'dependencies.risk-model.registry'"));
+    CHECK(has_message(result.diagnostics, "unsupported dependency source 'registry'"));
+}
+
 TEST_CASE("Package manifest canonicalization is schema ordered and formatting insensitive") {
     constexpr std::string_view first = R"TOML(manifest_version = 1
 

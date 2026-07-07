@@ -1,11 +1,11 @@
 ---
 rfc: "0005"
 title: "Package Configuration System"
-status: "review"
+status: "stabilized"
 area: ["compiler", "stdlib", "runtime", "ir", "tooling", "process"]
 stability: "developer-facing"
 created: "2026-07-02"
-updated: "2026-07-02"
+updated: "2026-07-07"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -26,9 +26,9 @@ decision_due: "2026-07-16"
 
 ## Summary
 
-本 RFC 提议把 AHFL 的工程配置从当前 `ahfl.project.json` / `ahfl.workspace.json` / `ahfl.package.json` 三条浅输入路径，重构为以 `ahfl.toml` 为中心的一等包体系。新的体系把 workspace、package、target、dependency、module root、sysroot `std` 和 runtime handoff target 放进同一条可验证的 PackageGraph 构建链路中。
+本 RFC 将 AHFL 的工程配置从 `ahfl.project.json` / `ahfl.workspace.json` / `ahfl.package.json` 三条浅输入路径，重构为以 `ahfl.toml` 为中心的一等包体系。新的体系把 workspace、package、target、dependency、module root、sysroot `std` 和 runtime handoff target 放进同一条可验证的 PackageGraph 构建链路中。
 
-接受本 RFC 后，`std/` 必须成为带 manifest 的 sysroot package；`ahfl.project.json`、`ahfl.workspace.json` 和当前 runtime-facing `ahfl.package.json` 不再作为公开工程入口继续存在。
+`std/` 是带 manifest 的 sysroot package；`ahfl.project.json`、`ahfl.workspace.json` 和 runtime-facing `ahfl.package.json` 不再作为公开工程入口继续存在。
 
 ## Motivation
 
@@ -574,7 +574,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 
 ## Implementation Plan
 
-实施以 reviewable PR slice 推进。每个 slice 必须删除或隔离对应旧入口，不能新增平行兼容层。
+实施以 reviewable slice 推进。每个 slice 必须删除或隔离对应旧入口，不能新增平行兼容层。
 
 | Slice | Scope | Primary changes | Validation | Deletion / exit criterion |
 | --- | --- | --- | --- | --- |
@@ -586,6 +586,20 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 | 6. CLI migration | `ahflc` public entry | 新增 `--manifest`、`--workspace --package --target`、`dump package-graph`，迁移 `emit native-json` target 输入 | CLI integration tests | 公开 `--project` 和旧 runtime-facing `--package` 输入路径被删除 |
 | 7. Tooling migration | LSP、formatter、test harness | LSP / formatter / diagnostics / semantic tokens / hover 统一复用 PackageGraph builder | LSP / formatter focused tests；discovery precedence tests | 工具层不再重新推断 search roots 或 public/private module visibility |
 | 8. Fixture and docs migration | `tests/`、`examples/`、`docs/reference`、`docs/design`、README | 迁移 integration fixtures、golden commands 和工程配置示例 | `python3 scripts/check-rfc.py`；`ctest --preset test-dev --output-on-failure` | 旧 JSON descriptor fixture 删除 |
+
+当前实现审计（2026-07-07）：
+
+| Slice | 状态 | 当前证据 |
+| --- | --- | --- |
+| 1. TOML syntax layer | 完成 | `src/base/toml/toml.{hpp,cpp}`；`tests/unit/base/toml/toml.cpp` 覆盖 source range、TOML 1.0 值形态、datetime、array of tables、dotted/quoted keys、duplicate keys、invalid escape、malformed table/inline table/datetime 和 mixed-type arrays |
+| 2. Manifest schema layer | 完成 | `src/compiler/manifest/manifest.{hpp,cpp}` 与 `manifest_canonical.cpp`；`tests/unit/compiler/manifest/manifest.cpp` 覆盖 package/workspace schema、字段类型、未知字段、path、dependency policy 和 source ranges |
+| 3. PackageGraph core | 完成 | `src/compiler/package_graph/package_graph.{hpp,cpp}`；`tests/unit/compiler/package_graph/package_graph.cpp` 覆盖 PackageId、sysroot std、workspace/path dependency、duplicate package/module prefix、missing dependency、version mismatch 和 cycles |
+| 4. Lockfile | 完成 | `src/compiler/package_graph/lockfile.{hpp,cpp}`；`dump lockfile`、manifest/workspace lockfile drift 和 checksum-boundary tests 覆盖 identity、checksum、unused package、edge drift 与 PackageId drift |
+| 5. Sysroot std | 完成 | `std/ahfl.toml`、source-sysroot CLI tests、stdlib unit tests 与 LSP sysroot tests 使用 PackageGraph sysroot；`prelude.injection = "explicit"` 是公开契约 |
+| 6. CLI migration | 完成 | `check`、`fmt`、`dump package-graph`、`dump lockfile`、`emit native-json`、`package-review`、`execution-plan` 和 provider artifact tests 均以 `--manifest` / `--workspace --package --target` 为公开入口 |
+| 7. Tooling migration | 完成 | LSP analysis service、formatter package mode 与 test helper 都从 PackageGraph 构造 `ProjectInput`；工具层不再公开 search-root 或旧 std discovery 入口 |
+| 8. Fixture and docs migration | 完成 | `docs/reference/project-usage.zh.md`、`cli-commands.zh.md`、`user-guide-cli.zh.md` 和 `user-guide-execution.zh.md` 均以 `ahfl.toml` / `ahfl.workspace.toml` 为公开工程模型；旧 JSON descriptor 只作为 negative fixture 存在 |
+| 9. Release evidence archive | 完成 | `scripts/generate-release-evidence-archive.py` 固定 non-std package 的 PackageGraph、lockfile 和 repo sysroot check evidence；`ctest --preset test-dev -L release-evidence-archive --output-on-failure` 复跑该发布证据 |
 
 全量验收命令：
 
@@ -626,11 +640,13 @@ ctest --preset test-dev --output-on-failure
 状态推进规则：
 
 1. `draft`：owner、tracking record、manifest schema、parser conformance strategy 和 migration PR 切片已补齐。
-2. `review`：必须有 compiler、stdlib、runtime、ir、tooling、process owner review。
+2. `review`：compiler、stdlib、runtime、ir、tooling、process owner review 完成。
 3. `accepted`：允许开始破坏式迁移；不得再新增旧 descriptor 功能。
-4. `implementing`：以 PackageGraph builder、sysroot std、CLI migration、fixture migration 分 PR 推进。
+4. `implementing`：以 PackageGraph builder、sysroot std、CLI migration、fixture migration 分 slice 推进。
 5. `implemented`：所有旧公开入口删除，docs/reference 示例全部迁移，ctest 全绿。
-6. `stabilized`：spec/reference/release evidence 均反映新包体系。
+6. `stabilized`：spec/reference/release evidence 均反映新包体系，且后续 registry / feature / publishing RFC 不改变 v1 manifest identity contract。
+
+当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 non-std package graph、v1 lockfile、普通用户 package 使用 repo sysroot、source-sysroot corelib 开发、VSIX bundled sysroot contract 和 RFC 0007 multi-root profile contract；[RFC 0010](./0010-registry-publishing-semver.zh.md) 已明确 registry、publishing、version range、source archive 与 publish-time public API compatibility gate 不回填到 RFC 0005 v1 manifest identity。
 
 ## Alternatives
 
@@ -642,12 +658,15 @@ ctest --preset test-dev --output-on-failure
 
 ## Open Questions
 
-1. Registry source 的最小字段集合是否另开 registry RFC。
-2. Dependency feature flags 是否等 trait/std/package graph 稳定后再引入。
-3. Package publishing metadata 是否由后续 registry RFC 定义为 manifest v2 字段。
+1. Registry source 的最小字段集合已转入 [RFC 0010](./0010-registry-publishing-semver.zh.md)，不属于 v1 manifest。
+2. Dependency feature flags 等 trait/std/package graph 稳定后另行 RFC 化。
+3. Package publishing metadata 由 [RFC 0010](./0010-registry-publishing-semver.zh.md) 定义为 manifest v2 或 registry metadata，不回填到 v1 contract。
 
 ## Decision History
 
 - 2026-07-02: Draft opened to replace the current descriptor split with a first-class AHFL package configuration system.
 - 2026-07-02: Moved to review after owner fields, tracking records, and TOML parser conformance strategy were completed.
 - 2026-07-02: Added GitHub issue #13 as the real tracking / discussion record, clarified lockfile checksum boundaries, and replaced the linear implementation list with reviewable PR slices.
+- 2026-07-07: Marked implemented after completion audit found TOML parser, manifest schema, PackageGraph, lockfile, sysroot std, CLI, LSP/formatter/test helper migration, docs/reference migration, and legacy descriptor negative tests all landed in the current checkout.
+- 2026-07-07: Moved registry source and package publishing metadata follow-up into RFC 0010 so manifest v1 identity remains stable.
+- 2026-07-07: Marked stabilized after the release evidence archive covered package graph, lockfile, user package sysroot, source-sysroot, VSIX bundled sysroot, and multi-root toolchain profile evidence, with RFC 0010 preserving the v1 manifest identity boundary.

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,6 +20,14 @@ using ahfl::manifest::PackageManifest;
 using ahfl::package_graph::BuildInput;
 using ahfl::package_graph::PackageInput;
 using ahfl::package_graph::PackageSourceKind;
+using ahfl::package_graph::RegistryPackageIdentity;
+
+constexpr std::string_view kDigestA =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+constexpr std::string_view kDigestB =
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+constexpr std::string_view kDigestC =
+    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 [[nodiscard]] bool write_text_file(const std::filesystem::path &path, std::string_view text) {
     std::ofstream output(path);
@@ -134,6 +143,75 @@ std = { source = "sysroot" }
                          root,
                          source,
                          "sha256:2222222222222222222222222222222222222222222222222222222222222222");
+}
+
+[[nodiscard]] PackageInput app_v2_with_registry_dependency(std::string_view requirement) {
+    std::string text = R"TOML(manifest_version = 2
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+risk-model = { source = "registry", registry = "default", version = ")TOML";
+    text += requirement;
+    text += R"TOML(" }
+)TOML";
+    return package_input(text,
+                         "workspace/packages/refund-audit",
+                         PackageSourceKind::Root,
+                         "sha256:1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+[[nodiscard]] PackageInput registry_package_input() {
+    auto package =
+        package_input(R"TOML(manifest_version = 2
+
+[package]
+name = "risk-model"
+version = "2.1.3"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "risk_model"
+root = "src"
+
+[exports]
+modules = ["lib"]
+
+[targets.lib]
+kind = "library"
+entry = "src/lib.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML",
+                      "registry/default/risk-model/2.1.3",
+                      PackageSourceKind::Registry,
+                      "sha256:2222222222222222222222222222222222222222222222222222222222222222");
+    package.registry = RegistryPackageIdentity{
+        .registry_id = "default",
+        .source_archive_sha256 = std::string{kDigestA},
+        .manifest_sha256 = std::string{kDigestB},
+        .public_api_sha256 = std::string{kDigestC},
+    };
+    return package;
 }
 
 [[nodiscard]] bool has_diagnostic(const std::vector<ahfl::package_graph::Diagnostic> &diagnostics,
@@ -486,6 +564,161 @@ TEST_CASE("PackageGraph rejects missing dependencies") {
 
     REQUIRE(result.has_errors());
     CHECK(has_error(result, "missing dependency package 'audit-core'"));
+}
+
+TEST_CASE("PackageGraph fails closed for registry dependencies before registry resolver") {
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = package_input(
+            R"TOML(manifest_version = 2
+
+[package]
+name = "refund-audit"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "refund_audit"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "refund_audit::main::RefundAuditWorkflow"
+exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
+
+[dependencies]
+std = { source = "sysroot" }
+risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
+)TOML",
+            "workspace/packages/refund-audit",
+            PackageSourceKind::Root,
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111"),
+    });
+
+    REQUIRE(result.has_errors());
+    CHECK(has_error(result,
+                    "registry dependency 'risk-model' requires registry resolver support before "
+                    "PackageGraph materialization"));
+}
+
+TEST_CASE("PackageGraph materializes resolved registry packages with lockfile digest identity") {
+    auto result = ahfl::package_graph::build_package_graph(BuildInput{
+        .sysroot_std = std_input(),
+        .root_package = app_v2_with_registry_dependency("^2.1.0"),
+        .registry_packages = {registry_package_input()},
+    });
+
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.graph.has_value());
+    const auto &graph = *result.graph;
+    REQUIRE(graph.packages.size() == 3);
+    CHECK(graph.packages[2].name == "risk-model");
+    CHECK(graph.packages[2].source == PackageSourceKind::Registry);
+    REQUIRE(graph.packages[2].registry.has_value());
+    CHECK(graph.packages[2].registry->registry_id == "default");
+    CHECK(graph.packages[2].registry->source_archive_sha256 == std::string{kDigestA});
+    CHECK(graph.packages[2].registry->manifest_sha256 == std::string{kDigestB});
+    CHECK(graph.packages[2].registry->public_api_sha256 == std::string{kDigestC});
+
+    REQUIRE(graph.dependencies.size() == 3);
+    const auto risk_edge =
+        std::find_if(graph.dependencies.begin(), graph.dependencies.end(), [](const auto &edge) {
+            return edge.dependency_key == "risk-model";
+        });
+    REQUIRE(risk_edge != graph.dependencies.end());
+    CHECK(risk_edge->from.value == 1);
+    CHECK(risk_edge->to.value == 2);
+    CHECK(risk_edge->source == "registry");
+    CHECK(risk_edge->registry_id == std::optional<std::string>{"default"});
+    CHECK(risk_edge->version_requirement == std::optional<std::string>{"^2.1.0"});
+    CHECK(risk_edge->selected_version == std::optional<std::string>{"2.1.3"});
+    CHECK(risk_edge->source_archive_sha256 == std::optional<std::string>{std::string{kDigestA}});
+    CHECK(risk_edge->manifest_sha256 == std::optional<std::string>{std::string{kDigestB}});
+    CHECK(risk_edge->public_api_sha256 == std::optional<std::string>{std::string{kDigestC}});
+
+    const auto graph_json = ahfl::package_graph::serialize_package_graph_json(graph);
+    CHECK(graph_json.find("\"source\":\"registry\"") != std::string::npos);
+    CHECK(graph_json.find("\"source_archive_sha256\":\"" + std::string{kDigestA} + "\"") !=
+          std::string::npos);
+
+    const auto lockfile = ahfl::package_graph::make_lockfile(graph);
+    REQUIRE(lockfile.packages.size() == 3);
+    CHECK(lockfile.packages[2].source == "registry");
+    CHECK(lockfile.packages[2].registry_id == std::optional<std::string>{"default"});
+    CHECK(lockfile.packages[2].source_archive_sha256 ==
+          std::optional<std::string>{std::string{kDigestA}});
+    REQUIRE(lockfile.edges.size() == 3);
+    CHECK(lockfile.edges[1].dependency == "risk-model");
+    CHECK(lockfile.edges[1].source == "registry");
+    CHECK(lockfile.edges[1].version_requirement == std::optional<std::string>{"^2.1.0"});
+    CHECK(lockfile.edges[1].selected_version == std::optional<std::string>{"2.1.3"});
+
+    const auto encoded = ahfl::package_graph::serialize_lockfile(lockfile);
+    CHECK(encoded.find("\"source\":\"registry\"") != std::string::npos);
+    CHECK(encoded.find("\"public_api_sha256\":\"" + std::string{kDigestC} + "\"") !=
+          std::string::npos);
+    auto parsed = ahfl::package_graph::parse_lockfile_json(encoded);
+    REQUIRE_FALSE(parsed.has_errors());
+    REQUIRE(parsed.lockfile.has_value());
+    CHECK(ahfl::package_graph::check_lockfile_drift(graph, *parsed.lockfile).empty());
+
+    parsed.lockfile->packages[2].source_archive_sha256 = std::string{kDigestB};
+    parsed.lockfile->edges[1].public_api_sha256 = std::string{kDigestA};
+    const auto drift = ahfl::package_graph::check_lockfile_drift(graph, *parsed.lockfile);
+    REQUIRE_FALSE(drift.empty());
+    CHECK(has_diagnostic(drift, "package id 2 field 'source_archive_sha256'"));
+    CHECK(has_diagnostic(drift, "dependency edge 1 --risk-model--> 2 field 'public_api_sha256'"));
+}
+
+TEST_CASE("PackageGraph rejects registry dependencies with mismatched resolver metadata") {
+    SUBCASE("source kind without registry identity") {
+        auto package = registry_package_input();
+        package.registry.reset();
+
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std_input(),
+            .root_package = app_v2_with_registry_dependency("^2.1.0"),
+            .registry_packages = {std::move(package)},
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result,
+                        "registry dependency 'risk-model' does not resolve to a registry "
+                        "package"));
+    }
+
+    SUBCASE("registry id") {
+        auto package = registry_package_input();
+        package.registry->registry_id = "private";
+
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std_input(),
+            .root_package = app_v2_with_registry_dependency("^2.1.0"),
+            .registry_packages = {std::move(package)},
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result,
+                        "registry dependency 'risk-model' requires registry 'default' but "
+                        "resolved registry 'private'"));
+    }
+
+    SUBCASE("version requirement") {
+        auto result = ahfl::package_graph::build_package_graph(BuildInput{
+            .sysroot_std = std_input(),
+            .root_package = app_v2_with_registry_dependency("~2.2.0"),
+            .registry_packages = {registry_package_input()},
+        });
+
+        REQUIRE(result.has_errors());
+        CHECK(has_error(result,
+                        "registry dependency 'risk-model' requires version ~2.2.0 but resolved "
+                        "2.1.3"));
+    }
 }
 
 TEST_CASE("PackageGraph rejects exact dependency version mismatches") {

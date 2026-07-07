@@ -129,6 +129,10 @@ void append_dependency(std::ostream &out, const DependencySpec &dependency) {
         out << ", path = ";
         append_basic_string(out, *dependency.path);
     }
+    if (dependency.registry.has_value()) {
+        out << ", registry = ";
+        append_basic_string(out, *dependency.registry);
+    }
     if (dependency.version.has_value()) {
         out << ", version = ";
         append_basic_string(out, *dependency.version);

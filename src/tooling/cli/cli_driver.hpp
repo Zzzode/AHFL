@@ -6,6 +6,7 @@
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/diagnostic_consumer.hpp"
 #include "tooling/cli/exit_code.hpp"
+#include "tooling/cli/public_api_artifact.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -18,7 +19,7 @@
 namespace ahfl::package_graph {
 struct PackageGraph;
 struct PackageNode;
-}
+} // namespace ahfl::package_graph
 
 namespace ahfl::cli {
 
@@ -60,6 +61,10 @@ class CliDriver final {
 
     [[nodiscard]] ExitCode dump_package_graph();
     [[nodiscard]] ExitCode dump_lockfile();
+    [[nodiscard]] ExitCode init_single_file_package();
+    [[nodiscard]] ExitCode archive_package();
+    [[nodiscard]] ExitCode publish_package();
+    [[nodiscard]] ExitCode yank_package();
 
     [[nodiscard]] ExitCode run_manifest_package();
     [[nodiscard]] ExitCode run_workspace_package();
@@ -78,6 +83,7 @@ class CliDriver final {
     std::optional<CommandKind> effective_command_;
     ahfl::Frontend frontend_;
     std::optional<ahfl::handoff::PackageMetadata> package_metadata_;
+    std::optional<PublicApiPackageContext> public_api_package_context_;
     std::optional<ahfl::dry_run::CapabilityMockSet> capability_mock_set_;
     std::optional<MemoryReportSnapshot> memory_report_;
     std::unique_ptr<DiagnosticConsumer> diag_consumer_;

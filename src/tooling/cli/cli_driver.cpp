@@ -6,7 +6,9 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "base/json/json_value.hpp"
 #include "base/support/json.hpp"
+#include "base/support/sha256.hpp"
 #include "compiler/ir/opt/opt_json.hpp"
 #include "compiler/ir/opt/opt_lower.hpp"
 #include "compiler/ir/opt/opt_passes.hpp"
@@ -26,6 +28,9 @@
 #include "tooling/cli/workflow_run.hpp"
 #include "tooling/formatter/format_config.hpp"
 #include "tooling/formatter/formatter.hpp"
+#include "tooling/package/registry.hpp"
+#include "tooling/package/registry_package_input.hpp"
+#include "tooling/package/source_archive.hpp"
 #include "tooling/profiling/memory_tracker.hpp"
 #include "tooling/telemetry/logging.hpp"
 #include "tooling/telemetry/metrics.hpp"
@@ -39,12 +44,15 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <random>
 #include <set>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace ahfl::cli {
@@ -123,6 +131,73 @@ void print_pass_timing_report(const ahfl::passes::PassManager::RunResult &result
     return std::nullopt;
 }
 
+struct PackageVersionCoordinate {
+    std::string package_name;
+    std::string version;
+};
+
+[[nodiscard]] bool is_cli_semver(std::string_view value) {
+    std::size_t dots = 0;
+    bool digit_in_part = false;
+    for (const char item : value) {
+        if (item >= '0' && item <= '9') {
+            digit_in_part = true;
+            continue;
+        }
+        if (item == '.') {
+            if (!digit_in_part) {
+                return false;
+            }
+            ++dots;
+            digit_in_part = false;
+            continue;
+        }
+        return false;
+    }
+    return dots == 2 && digit_in_part;
+}
+
+[[nodiscard]] bool is_cli_package_name(std::string_view value) {
+    if (value.empty() || value.front() < 'a' || value.front() > 'z') {
+        return false;
+    }
+    bool previous_dash = false;
+    for (const char item : value) {
+        const bool lower = item >= 'a' && item <= 'z';
+        const bool digit = item >= '0' && item <= '9';
+        if (lower || digit) {
+            previous_dash = false;
+            continue;
+        }
+        if (item == '-' && !previous_dash) {
+            previous_dash = true;
+            continue;
+        }
+        return false;
+    }
+    return value.back() != '-';
+}
+
+[[nodiscard]] std::optional<PackageVersionCoordinate>
+parse_package_version_coordinate(std::string_view value) {
+    const auto at = value.rfind('@');
+    if (at == std::string_view::npos || at == 0 || at + 1 >= value.size()) {
+        return std::nullopt;
+    }
+    auto version = value.substr(at + 1);
+    if (!is_cli_semver(version)) {
+        return std::nullopt;
+    }
+    auto package_name = value.substr(0, at);
+    if (!is_cli_package_name(package_name)) {
+        return std::nullopt;
+    }
+    return PackageVersionCoordinate{
+        .package_name = std::string{package_name},
+        .version = std::string{version},
+    };
+}
+
 [[nodiscard]] std::string qualified_name_text(const ahfl::ast::QualifiedName &name) {
     return name.spelling();
 }
@@ -155,6 +230,188 @@ detached_source_unit_diagnostics(const ahfl::ast::Program &program,
     }
 
     return diagnostics;
+}
+
+[[nodiscard]] bool is_ascii_alpha(char value) {
+    return (value >= 'A' && value <= 'Z') || (value >= 'a' && value <= 'z');
+}
+
+[[nodiscard]] bool is_ascii_digit(char value) {
+    return value >= '0' && value <= '9';
+}
+
+[[nodiscard]] char to_ascii_lower(char value) {
+    if (value >= 'A' && value <= 'Z') {
+        return static_cast<char>(value - 'A' + 'a');
+    }
+    return value;
+}
+
+[[nodiscard]] std::string sanitize_kebab_name(std::string_view value) {
+    std::string result;
+    bool previous_separator = false;
+    for (const char raw : value) {
+        const char lowered = to_ascii_lower(raw);
+        if ((lowered >= 'a' && lowered <= 'z') || is_ascii_digit(lowered)) {
+            result.push_back(lowered);
+            previous_separator = false;
+            continue;
+        }
+        if (!result.empty() && !previous_separator) {
+            result.push_back('-');
+            previous_separator = true;
+        }
+    }
+    while (!result.empty() && result.back() == '-') {
+        result.pop_back();
+    }
+    if (result.empty()) {
+        result = "scratch";
+    }
+    if (!is_ascii_alpha(result.front())) {
+        result.insert(0, "ahfl-");
+    }
+    return result;
+}
+
+[[nodiscard]] std::string sanitize_identifier_name(std::string_view value) {
+    std::string result;
+    bool previous_separator = false;
+    for (const char raw : value) {
+        const char lowered = to_ascii_lower(raw);
+        if ((lowered >= 'a' && lowered <= 'z') || is_ascii_digit(lowered) || lowered == '_') {
+            result.push_back(lowered);
+            previous_separator = false;
+            continue;
+        }
+        if (!result.empty() && !previous_separator) {
+            result.push_back('_');
+            previous_separator = true;
+        }
+    }
+    while (!result.empty() && result.back() == '_') {
+        result.pop_back();
+    }
+    if (result.empty()) {
+        result = "main";
+    }
+    if (!is_ascii_alpha(result.front()) && result.front() != '_') {
+        result.insert(result.begin(), '_');
+    }
+    return result;
+}
+
+[[nodiscard]] std::string toml_basic_string(std::string_view value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char character : value) {
+        if (character == '\\' || character == '"') {
+            escaped.push_back('\\');
+            escaped.push_back(character);
+        } else if (character == '\n') {
+            escaped += "\\n";
+        } else if (character == '\r') {
+            escaped += "\\r";
+        } else if (character == '\t') {
+            escaped += "\\t";
+        } else {
+            escaped.push_back(character);
+        }
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+[[nodiscard]] std::optional<std::string>
+module_name_from_program(const ahfl::ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (declaration && declaration->kind == ahfl::ast::NodeKind::ModuleDecl) {
+            const auto &module = static_cast<const ahfl::ast::ModuleDecl &>(*declaration);
+            if (module.name) {
+                return module.name->spelling();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+struct SingleFilePackageShape {
+    std::string package_name;
+    std::string module_prefix;
+    std::string exported_module;
+    std::string module_declaration;
+};
+
+[[nodiscard]] std::optional<SingleFilePackageShape>
+single_file_shape_from_module(std::optional<std::string> declared_module,
+                              const std::filesystem::path &source_path,
+                              std::ostream &err) {
+    const auto source_stem = sanitize_identifier_name(source_path.stem().generic_string());
+    const auto parent_name = source_path.parent_path().filename().generic_string();
+    const auto package_name = sanitize_kebab_name(parent_name.empty() ? source_stem : parent_name);
+
+    if (declared_module.has_value()) {
+        const auto separator = declared_module->find("::");
+        if (separator == std::string::npos || separator == 0 ||
+            separator + 2 >= declared_module->size()) {
+            err << "error: existing source module '" << *declared_module
+                << "' is not a package module; expected <prefix>::<module>\n";
+            return std::nullopt;
+        }
+        return SingleFilePackageShape{
+            .package_name = package_name,
+            .module_prefix = declared_module->substr(0, separator),
+            .exported_module = declared_module->substr(separator + 2),
+            .module_declaration = *declared_module,
+        };
+    }
+
+    std::string module_prefix = sanitize_identifier_name(package_name);
+    std::replace(module_prefix.begin(), module_prefix.end(), '-', '_');
+    return SingleFilePackageShape{
+        .package_name = package_name,
+        .module_prefix = module_prefix,
+        .exported_module = source_stem,
+        .module_declaration = module_prefix + "::" + source_stem,
+    };
+}
+
+[[nodiscard]] std::string single_file_manifest_text(const SingleFilePackageShape &shape,
+                                                    std::string_view source_filename) {
+    std::ostringstream manifest;
+    manifest << "manifest_version = 1\n\n"
+             << "[package]\n"
+             << "name = " << toml_basic_string(shape.package_name) << "\n"
+             << "version = \"0.1.0\"\n"
+             << "edition = \"2026\"\n"
+             << "kind = \"library\"\n\n"
+             << "[module]\n"
+             << "prefix = " << toml_basic_string(shape.module_prefix) << "\n"
+             << "root = \".\"\n\n"
+             << "[exports]\n"
+             << "modules = [" << toml_basic_string(shape.exported_module) << "]\n\n"
+             << "[targets.lib]\n"
+             << "kind = \"library\"\n"
+             << "entry = " << toml_basic_string(source_filename) << "\n\n"
+             << "[dependencies]\n"
+             << "std = { source = \"sysroot\" }\n";
+    return manifest.str();
+}
+
+[[nodiscard]] bool
+write_text_file(const std::filesystem::path &path, std::string_view content, std::ostream &err) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        err << "error: failed to write " << path.generic_string() << '\n';
+        return false;
+    }
+    output << content;
+    if (!output) {
+        err << "error: failed to finish writing " << path.generic_string() << '\n';
+        return false;
+    }
+    return true;
 }
 
 [[nodiscard]] std::filesystem::path normalize_manifest_path(const std::filesystem::path &path) {
@@ -399,6 +656,25 @@ dependency_prefixes_for_package(const ahfl::package_graph::PackageGraph &graph,
     return prefixes;
 }
 
+[[nodiscard]] std::vector<std::string>
+artifact_exports_for_package(const ahfl::package_graph::PackageGraph &graph,
+                             ahfl::package_graph::PackageId package_id) {
+    std::vector<std::string> exports;
+    const auto *package = graph.find_package(package_id);
+    if (package == nullptr) {
+        return exports;
+    }
+    for (const auto &target : package->targets) {
+        for (const auto &export_item : target.exports) {
+            exports.push_back(export_item.name);
+        }
+    }
+
+    std::sort(exports.begin(), exports.end());
+    exports.erase(std::unique(exports.begin(), exports.end()), exports.end());
+    return exports;
+}
+
 [[nodiscard]] const ahfl::package_graph::PackageNode *
 root_package(const ahfl::package_graph::PackageGraph &graph) {
     return graph.find_package(ahfl::package_graph::PackageId{1});
@@ -427,6 +703,14 @@ sysroot_package(const ahfl::package_graph::PackageGraph &graph) {
            (command.has_value() && is_package_supported_command(*command));
 }
 
+[[nodiscard]] bool is_public_api_artifact_command(std::optional<CommandKind> command) {
+    return command == CommandKind::EmitPublicApi || command == CommandKind::EmitPublicApiDocs;
+}
+
+[[nodiscard]] bool is_public_api_diff_command(std::optional<CommandKind> command) {
+    return command == CommandKind::EmitPublicApiDiff;
+}
+
 [[nodiscard]] bool
 selected_action_supports_package_graph_input(const CommandLineOptions &options,
                                              std::optional<CommandKind> command) {
@@ -448,7 +732,7 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
 
 [[nodiscard]] bool command_can_discover_package_graph(const CommandLineOptions &options,
                                                       std::optional<CommandKind> command) {
-    return command != CommandKind::Format &&
+    return command != CommandKind::Format && !is_public_api_diff_command(command) &&
            selected_action_supports_package_graph_input(options, command) &&
            !options.manifest_path.has_value() && !options.workspace_manifest_path.has_value() &&
            options.positional.size() == 1;
@@ -595,6 +879,48 @@ reject_mismatched_std_manifest(const std::filesystem::path &package_manifest_pat
         package_manifest_path, sysroot_manifest_path, *manifest, err);
 }
 
+[[nodiscard]] bool has_registry_dependencies(const ahfl::manifest::PackageManifest &manifest) {
+    return std::any_of(manifest.dependencies.begin(),
+                       manifest.dependencies.end(),
+                       [](const auto &dependency) { return dependency.source == "registry"; });
+}
+
+[[nodiscard]] std::filesystem::path make_registry_materialization_root() {
+    std::random_device random;
+    const auto suffix =
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+        std::to_string(random()) + "-" + std::to_string(random());
+    return std::filesystem::temp_directory_path() / ("ahfl-registry-materialize-" + suffix);
+}
+
+[[nodiscard]] std::vector<ahfl::package_graph::PackageInput>
+resolve_registry_packages_for_manifest(const std::filesystem::path &root_manifest_path,
+                                       std::vector<ahfl::package_graph::Diagnostic> &diagnostics) {
+    std::vector<ahfl::package_graph::PackageInput> packages;
+    auto manifest = load_package_manifest_for_discovery(root_manifest_path, std::cerr);
+    if (!manifest.has_value() || !has_registry_dependencies(*manifest)) {
+        return packages;
+    }
+
+    const ahfl::package::Registry registry;
+    auto result = ahfl::package::resolve_registry_package_inputs(
+        ahfl::package::RegistryPackageInputResolution{
+            .root_manifest = &*manifest,
+            .registry = &registry,
+            .materialization_root = make_registry_materialization_root(),
+        });
+    if (result.has_errors()) {
+        for (const auto &diagnostic : result.diagnostics) {
+            diagnostics.push_back(ahfl::package_graph::Diagnostic{
+                .code = "package.registry_resolution",
+                .message = diagnostic,
+            });
+        }
+        return {};
+    }
+    return std::move(result.packages);
+}
+
 [[nodiscard]] ahfl::package_graph::BuildResult
 build_manifest_or_sysroot_package_graph(const std::filesystem::path &root_manifest_path,
                                         const std::filesystem::path &sysroot_manifest_path) {
@@ -605,10 +931,17 @@ build_manifest_or_sysroot_package_graph(const std::filesystem::path &root_manife
                 .sysroot_manifest_path = sysroot_manifest_path,
             });
     }
+    std::vector<ahfl::package_graph::Diagnostic> registry_diagnostics;
+    auto registry_packages =
+        resolve_registry_packages_for_manifest(root_manifest_path, registry_diagnostics);
+    if (!registry_diagnostics.empty()) {
+        return ahfl::package_graph::BuildResult{.diagnostics = std::move(registry_diagnostics)};
+    }
     return ahfl::package_graph::build_package_graph_from_manifests(
         ahfl::package_graph::ManifestBuildInput{
             .root_manifest_path = root_manifest_path,
             .sysroot_manifest_path = sysroot_manifest_path,
+            .registry_packages = std::move(registry_packages),
         });
 }
 
@@ -747,6 +1080,7 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
             .root = root.root,
             .exported_modules =
                 package != nullptr ? package->exported_modules : std::vector<std::string>{},
+            .artifact_exports = artifact_exports_for_package(graph, root.package),
             .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
             .compiler_intrinsics_allow =
                 package == nullptr
@@ -765,9 +1099,46 @@ project_input_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
     return project_input_from_package_graph(graph, std::move(entry_files));
 }
 
+[[nodiscard]] bool source_unit_has_role(const ahfl::package_graph::SourceUnitNode &source_unit,
+                                        ahfl::package_graph::SourceUnitRole role) {
+    return std::find(source_unit.roles.begin(), source_unit.roles.end(), role) !=
+           source_unit.roles.end();
+}
+
+[[nodiscard]] std::vector<std::filesystem::path>
+public_api_entry_files_from_package_graph(const ahfl::package_graph::PackageGraph &graph,
+                                          const ahfl::package_graph::PackageNode &package) {
+    std::vector<std::filesystem::path> entry_files;
+    for (const auto &source_unit : graph.source_units) {
+        if (source_unit.package != package.id ||
+            !source_unit_has_role(source_unit, ahfl::package_graph::SourceUnitRole::Export)) {
+            continue;
+        }
+        entry_files.push_back(source_unit.path);
+    }
+
+    std::sort(entry_files.begin(), entry_files.end());
+    entry_files.erase(std::unique(entry_files.begin(), entry_files.end()), entry_files.end());
+    return entry_files;
+}
+
+[[nodiscard]] PublicApiPackageContext
+public_api_context_from_package(const ahfl::package_graph::PackageNode &package) {
+    return PublicApiPackageContext{
+        .name = package.name,
+        .version = package.version,
+        .module_prefix = package.module_prefix,
+        .package_root = package.package_root,
+        .manifest_path = package.manifest_path,
+    };
+}
+
 [[nodiscard]] bool
 package_graph_action_requires_handoff_metadata(const CommandLineOptions &options,
                                                std::optional<CommandKind> command) {
+    if (is_public_api_artifact_command(command)) {
+        return false;
+    }
     return selected_action_supports_package(selected_action_from_options(options, command));
 }
 
@@ -1385,6 +1756,194 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
+    if (is_public_api_diff_command(effective_command_)) {
+        if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
+            options_.package_name.has_value() || options_.target_name.has_value() ||
+            options_.sysroot_path.has_value()) {
+            std::cerr << "error: emit public-api-diff accepts exactly two snapshot files and no "
+                         "package/workspace selectors\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.positional.size() != 2) {
+            std::cerr << "error: emit public-api-diff requires <old-public-api.json> "
+                         "<new-public-api.json>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.public_api_semver_gate_requested) {
+            if (!options_.public_api_from_version.has_value() ||
+                !options_.public_api_to_version.has_value()) {
+                std::cerr << "error: emit public-api-diff --semver-gate requires --from "
+                             "<old-version> and --to <new-version>\n";
+                print_usage(std::cerr);
+                return ExitCode::UsageError;
+            }
+        } else if (options_.public_api_from_version.has_value() ||
+                   options_.public_api_to_version.has_value()) {
+            std::cerr << "error: --from and --to are only valid with emit public-api-diff "
+                         "--semver-gate\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    if ((options_.public_api_semver_gate_requested ||
+         options_.public_api_from_version.has_value() ||
+         options_.public_api_to_version.has_value()) &&
+        effective_command_ != CommandKind::PackagePublish) {
+        std::cerr << "error: --semver-gate, --from, and --to are only valid with emit "
+                     "public-api-diff or package publish\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::InitSingleFile) {
+        if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
+            options_.package_name.has_value() || options_.target_name.has_value() ||
+            options_.sysroot_path.has_value()) {
+            std::cerr << "error: init --single-file creates an AHFL package and does not accept "
+                         "package/workspace selectors\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.positional.size() != 1) {
+            std::cerr << "error: init --single-file requires exactly one <input.ahfl>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    if (effective_command_ == CommandKind::PackageArchive) {
+        if (!options_.manifest_path.has_value()) {
+            std::cerr << "error: package archive requires --manifest <ahfl.toml>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.package_archive_output_path.has_value()) {
+            std::cerr << "error: package archive requires --out <dir>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.workspace_manifest_path.has_value() || options_.package_name.has_value() ||
+            options_.target_name.has_value() || options_.sysroot_path.has_value()) {
+            std::cerr << "error: package archive accepts --manifest and --out only\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.positional.empty()) {
+            std::cerr << "error: package archive does not accept positional input files\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    if (effective_command_ == CommandKind::PackagePublish) {
+        if (!options_.manifest_path.has_value()) {
+            std::cerr << "error: package publish requires --manifest <ahfl.toml>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.package_registry_id.has_value()) {
+            std::cerr << "error: package publish requires --registry <id>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.package_archive_output_path.has_value()) {
+            std::cerr << "error: package publish requires --out <dir>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.workspace_manifest_path.has_value() || options_.package_name.has_value() ||
+            options_.target_name.has_value() || options_.package_yank_reason.has_value()) {
+            std::cerr << "error: package publish accepts --manifest, --registry, "
+                         "--out, --sysroot, --dry-run, and optional --semver-gate --from only\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.public_api_semver_gate_requested) {
+            if (!options_.public_api_from_version.has_value()) {
+                std::cerr << "error: package publish --semver-gate requires --from "
+                             "<previous-version>\n";
+                print_usage(std::cerr);
+                return ExitCode::UsageError;
+            }
+            if (options_.public_api_to_version.has_value()) {
+                std::cerr << "error: package publish --semver-gate uses the manifest package "
+                             "version as --to; do not pass --to\n";
+                print_usage(std::cerr);
+                return ExitCode::UsageError;
+            }
+        } else if (options_.public_api_from_version.has_value() ||
+                   options_.public_api_to_version.has_value()) {
+            std::cerr << "error: package publish --from is only valid with --semver-gate, and "
+                         "--to is never accepted\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.positional.empty()) {
+            std::cerr << "error: package publish does not accept positional input files\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    if (effective_command_ == CommandKind::PackageYank) {
+        if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
+            options_.package_name.has_value() || options_.target_name.has_value() ||
+            options_.sysroot_path.has_value() || options_.package_archive_output_path.has_value() ||
+            options_.package_publish_dry_run_requested ||
+            options_.public_api_semver_gate_requested ||
+            options_.public_api_from_version.has_value() ||
+            options_.public_api_to_version.has_value()) {
+            std::cerr << "error: package yank accepts <package>@<version>, --registry, and "
+                         "optional --reason only\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.package_registry_id.has_value()) {
+            std::cerr << "error: package yank requires --registry <id>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.positional.size() != 1 ||
+            !parse_package_version_coordinate(options_.positional.front()).has_value()) {
+            std::cerr << "error: package yank requires exactly one <package>@<version> "
+                         "coordinate\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    if (options_.package_archive_output_path.has_value()) {
+        std::cerr << "error: --out is only supported with package archive or package publish\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.package_registry_id.has_value()) {
+        std::cerr << "error: --registry is only supported with package publish or package yank\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.package_yank_reason.has_value()) {
+        std::cerr << "error: --reason is only supported with package yank\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.package_publish_dry_run_requested) {
+        std::cerr << "error: --dry-run is only supported with package publish\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
     if (options_.workspace_manifest_path.has_value() && !is_workspace_manifest_path(options_)) {
         std::cerr << "error: --workspace expects ahfl.workspace.toml\n";
         print_usage(std::cerr);
@@ -1747,6 +2306,39 @@ ExitCode CliDriver::run_observed() {
 }
 
 ExitCode CliDriver::execute() {
+    if (effective_command_ == CommandKind::InitSingleFile) {
+        return init_single_file_package();
+    }
+
+    if (effective_command_ == CommandKind::PackageArchive) {
+        return archive_package();
+    }
+
+    if (effective_command_ == CommandKind::PackagePublish) {
+        return publish_package();
+    }
+
+    if (effective_command_ == CommandKind::PackageYank) {
+        return yank_package();
+    }
+
+    if (is_public_api_diff_command(effective_command_)) {
+        std::optional<PublicApiSemVerGate> semver_gate;
+        if (options_.public_api_semver_gate_requested) {
+            semver_gate = PublicApiSemVerGate{
+                .from_version = std::string{*options_.public_api_from_version},
+                .to_version = std::string{*options_.public_api_to_version},
+            };
+        }
+        const auto status =
+            emit_public_api_diff(std::filesystem::path{std::string{options_.positional[0]}},
+                                 std::filesystem::path{std::string{options_.positional[1]}},
+                                 std::move(semver_gate),
+                                 std::cout,
+                                 std::cerr);
+        return status == 0 ? ExitCode::Success : ExitCode::CompileError;
+    }
+
     if (effective_command_ == CommandKind::Format) {
         return format_source_file();
     }
@@ -1788,6 +2380,11 @@ ExitCode CliDriver::execute() {
                          "--workspace\n";
             return ExitCode::UsageError;
         }
+        if (is_public_api_artifact_command(effective_command_)) {
+            std::cerr << "error: emit " << command_short_name(*effective_command_)
+                      << " requires an AHFL package manifest; pass --manifest or --workspace\n";
+            return ExitCode::UsageError;
+        }
     }
 
     if (effective_command_ == CommandKind::DumpAst) {
@@ -1815,6 +2412,526 @@ ExitCode CliDriver::execute() {
     }
 
     return run_analysis(*parse_result.program, std::cref(parse_result.source));
+}
+
+ExitCode CliDriver::init_single_file_package() {
+    const auto source_path =
+        normalize_manifest_path(std::filesystem::path{std::string{options_.positional.front()}});
+    if (source_path.extension() != ".ahfl") {
+        std::cerr << "error: init --single-file expects a .ahfl source path\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto package_root = source_path.parent_path().empty()
+                                  ? normalize_manifest_path(std::filesystem::path{"."})
+                                  : source_path.parent_path();
+    const auto manifest_path = package_root / "ahfl.toml";
+
+    std::error_code error;
+    const bool manifest_exists = std::filesystem::exists(manifest_path, error);
+    if (error) {
+        std::cerr << "error: failed to inspect " << manifest_path.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+    if (manifest_exists) {
+        std::cerr << "error: AHFL package manifest already exists: "
+                  << manifest_path.generic_string() << '\n';
+        return ExitCode::UsageError;
+    }
+
+    const bool source_exists = std::filesystem::exists(source_path, error);
+    if (error) {
+        std::cerr << "error: failed to inspect " << source_path.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+    if (source_exists && (!std::filesystem::is_regular_file(source_path, error) || error)) {
+        std::cerr << "error: init --single-file expects a regular .ahfl file path\n";
+        return ExitCode::UsageError;
+    }
+
+    if (!std::filesystem::exists(package_root, error)) {
+        std::filesystem::create_directories(package_root, error);
+        if (error) {
+            std::cerr << "error: failed to create package directory "
+                      << package_root.generic_string() << '\n';
+            return ExitCode::CompileError;
+        }
+    }
+
+    std::string source_content;
+    std::optional<std::string> declared_module;
+    if (source_exists) {
+        if (!read_plain_file(source_path, source_content, std::cerr)) {
+            return ExitCode::CompileError;
+        }
+        auto parse_result = frontend_.parse_file(source_path);
+        render_diagnostics(*diag_consumer_, parse_result, std::cref(parse_result.source));
+        if (parse_result.has_errors() || !parse_result.program) {
+            return ExitCode::CompileError;
+        }
+        declared_module = module_name_from_program(*parse_result.program);
+    }
+
+    auto shape = single_file_shape_from_module(declared_module, source_path, std::cerr);
+    if (!shape.has_value()) {
+        return ExitCode::UsageError;
+    }
+
+    if (!source_exists) {
+        source_content = "module " + shape->module_declaration + ";\n";
+        if (!write_text_file(source_path, source_content, std::cerr)) {
+            return ExitCode::CompileError;
+        }
+        std::cout << "created " << source_path.generic_string() << '\n';
+    } else if (!declared_module.has_value()) {
+        source_content = "module " + shape->module_declaration + ";\n\n" + source_content;
+        if (!write_text_file(source_path, source_content, std::cerr)) {
+            return ExitCode::CompileError;
+        }
+        std::cout << "updated " << source_path.generic_string() << '\n';
+    }
+
+    const auto manifest =
+        single_file_manifest_text(*shape, source_path.filename().generic_string());
+    if (!write_text_file(manifest_path, manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    std::cout << "created " << manifest_path.generic_string() << '\n';
+    return ExitCode::Success;
+}
+
+ExitCode CliDriver::archive_package() {
+    const auto manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    const auto package_root = manifest_path.parent_path();
+
+    auto manifest = load_package_manifest_for_discovery(manifest_path, std::cerr);
+    if (!manifest.has_value()) {
+        return ExitCode::CompileError;
+    }
+
+    auto archive = ahfl::package::build_source_archive(package_root, manifest->package_name);
+    if (archive.has_errors() || !archive.archive.has_value()) {
+        for (const auto &diagnostic : archive.diagnostics) {
+            std::cerr << "error: " << diagnostic << '\n';
+        }
+        return ExitCode::CompileError;
+    }
+
+    auto output_directory = normalize_manifest_path(
+        std::filesystem::path{std::string{*options_.package_archive_output_path}});
+    std::error_code error;
+    std::filesystem::create_directories(output_directory, error);
+    if (error) {
+        std::cerr << "error: failed to create package archive output directory "
+                  << output_directory.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+    if (!std::filesystem::is_directory(output_directory, error) || error) {
+        std::cerr << "error: package archive --out must be a directory: "
+                  << output_directory.generic_string() << '\n';
+        return ExitCode::UsageError;
+    }
+
+    const auto artifact_stem = manifest->package_name + "-" + manifest->package_version;
+    const auto manifest_output = output_directory / (artifact_stem + ".source-archive.json");
+    const auto payload_output = output_directory / (artifact_stem + ".source-archive.payload");
+
+    const auto manifest_json = ahfl::package::serialize_source_archive_manifest(*archive.archive);
+    if (!write_text_file(manifest_output, manifest_json, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    std::ofstream payload(payload_output, std::ios::binary | std::ios::trunc);
+    if (!payload) {
+        std::cerr << "error: failed to write " << payload_output.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+    payload.write(archive.archive->payload.data(),
+                  static_cast<std::streamsize>(archive.archive->payload.size()));
+    if (!payload) {
+        std::cerr << "error: failed to finish writing " << payload_output.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+
+    std::cout << "wrote " << manifest_output.generic_string() << '\n'
+              << "wrote " << payload_output.generic_string() << '\n'
+              << "archive-sha256: " << archive.archive->archive_sha256 << '\n'
+              << "manifest-sha256: " << archive.archive->manifest_sha256 << '\n';
+    return ExitCode::Success;
+}
+
+ExitCode CliDriver::publish_package() {
+    const auto manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    const auto package_root = manifest_path.parent_path();
+
+    auto manifest = load_package_manifest_for_discovery(manifest_path, std::cerr);
+    if (!manifest.has_value()) {
+        return ExitCode::CompileError;
+    }
+    if (manifest->package_kind == "standard-library") {
+        std::cerr << "error: package publish cannot publish standard-library packages; use the "
+                     "toolchain release workflow\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
+        return ExitCode::UsageError;
+    }
+    if (reject_mismatched_std_manifest(
+            manifest_path, *sysroot_manifest.manifest, *manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    auto graph_result =
+        build_manifest_or_sysroot_package_graph(manifest_path, *sysroot_manifest.manifest);
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+    if (auto lock_status =
+            check_lockfile_if_present(*graph_result.graph, manifest_path.parent_path(), std::cerr);
+        lock_status.has_value()) {
+        return *lock_status;
+    }
+
+    const auto *package = root_package(*graph_result.graph);
+    if (package == nullptr) {
+        std::cerr << "error: PackageGraph is missing root package\n";
+        return ExitCode::CompileError;
+    }
+    auto entry_files = public_api_entry_files_from_package_graph(*graph_result.graph, *package);
+    if (entry_files.empty()) {
+        std::cerr << "error: package publish --dry-run requires at least one exported module in "
+                     "ahfl.toml\n";
+        return ExitCode::CompileError;
+    }
+
+    auto project_input =
+        project_input_from_package_graph(*graph_result.graph, std::move(entry_files));
+    auto project_result = ahfl::parse_project(frontend_, project_input);
+    render_diagnostics(*diag_consumer_, project_result, std::nullopt);
+    if (project_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    const ahfl::Resolver resolver;
+    auto resolve_result = resolver.resolve(project_result.graph);
+    render_diagnostics(*diag_consumer_, resolve_result, std::nullopt);
+    if (resolve_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    const ahfl::TypeChecker type_checker;
+    auto type_check_result = type_checker.check(project_result.graph, resolve_result);
+    render_diagnostics(*diag_consumer_, type_check_result, std::nullopt);
+    if (type_check_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    const ahfl::Validator validator;
+    auto validation_result =
+        validator.validate(project_result.graph, resolve_result, type_check_result);
+    render_diagnostics(*diag_consumer_, validation_result, std::nullopt);
+    if (validation_result.has_errors()) {
+        return ExitCode::CompileError;
+    }
+
+    std::ostringstream public_api_snapshot;
+    const auto public_api_status =
+        emit_public_api_snapshot(project_result.graph,
+                                 resolve_result,
+                                 type_check_result,
+                                 public_api_context_from_package(*package),
+                                 public_api_snapshot,
+                                 std::cerr);
+    if (public_api_status != 0) {
+        return ExitCode::CompileError;
+    }
+    const auto public_api_payload = public_api_snapshot.str();
+    const auto public_api_sha256 = "sha256:" + ahfl::support::sha256_hex(public_api_payload);
+
+    auto archive = ahfl::package::build_source_archive(package_root, manifest->package_name);
+    if (archive.has_errors() || !archive.archive.has_value()) {
+        for (const auto &diagnostic : archive.diagnostics) {
+            std::cerr << "error: " << diagnostic << '\n';
+        }
+        return ExitCode::CompileError;
+    }
+
+    ahfl::package::RegistryIndexEntry registry_entry{
+        .registry_id = std::string{*options_.package_registry_id},
+        .package = manifest->package_name,
+        .version = manifest->package_version,
+        .yanked = false,
+        .source_archive_sha256 = archive.archive->archive_sha256,
+        .manifest_sha256 = archive.archive->manifest_sha256,
+        .public_api_sha256 = public_api_sha256,
+    };
+    for (const auto &dependency : manifest->dependencies) {
+        if (dependency.source != "sysroot" && dependency.source != "registry") {
+            std::cerr << "error: package publish cannot publish local dependency '"
+                      << dependency.key << "' with source '" << dependency.source << "'\n";
+            return ExitCode::CompileError;
+        }
+        ahfl::package::RegistryDependencyMetadata metadata{
+            .name = dependency.key,
+            .source = dependency.source,
+        };
+        if (dependency.registry.has_value()) {
+            metadata.registry = *dependency.registry;
+        }
+        if (dependency.version.has_value()) {
+            metadata.version_requirement = *dependency.version;
+        }
+        registry_entry.dependencies.push_back(std::move(metadata));
+    }
+
+    std::string semver_gate_status = "not-run";
+    std::optional<std::string> previous_public_api_payload;
+    std::optional<std::string> previous_public_api_sha256;
+    std::optional<std::string> previous_public_api_version;
+    if (options_.public_api_semver_gate_requested) {
+        const auto previous_version = std::string{*options_.public_api_from_version};
+        const ahfl::package::Registry registry;
+        const auto index = registry.fetch_package_index(manifest->package_name);
+        if (!index.success() || !index.index.has_value()) {
+            std::cerr << "error: failed to fetch previous release metadata for "
+                      << manifest->package_name << "@" << previous_version << "\n";
+            for (const auto &diagnostic : index.diagnostics) {
+                std::cerr << "error: " << diagnostic << "\n";
+            }
+            return ExitCode::CompileError;
+        }
+
+        std::optional<ahfl::package::RegistryIndexEntry> previous_entry;
+        for (const auto &entry : index.index->versions) {
+            if (entry.registry_id == registry_entry.registry_id &&
+                entry.package == manifest->package_name && entry.version == previous_version) {
+                previous_entry = entry;
+                break;
+            }
+        }
+        if (!previous_entry.has_value()) {
+            std::cerr << "error: previous release " << manifest->package_name << "@"
+                      << previous_version << " was not found in registry '"
+                      << registry_entry.registry_id << "'\n";
+            return ExitCode::CompileError;
+        }
+
+        const auto previous_snapshot = registry.fetch_public_api_snapshot(
+            previous_entry->package, previous_entry->version, previous_entry->public_api_sha256);
+        if (!previous_snapshot.success() || !previous_snapshot.snapshot.has_value()) {
+            std::cerr << "error: failed to fetch previous public API snapshot for "
+                      << previous_entry->package << "@" << previous_entry->version << "\n";
+            for (const auto &diagnostic : previous_snapshot.diagnostics) {
+                std::cerr << "error: " << diagnostic << "\n";
+            }
+            return ExitCode::CompileError;
+        }
+
+        const auto previous_label =
+            std::string{"registry:"} + previous_entry->package + "@" + previous_entry->version;
+        const auto current_label =
+            std::string{"current:"} + manifest->package_name + "@" + manifest->package_version;
+        const auto semver_status = emit_public_api_diff_from_snapshots(
+            previous_snapshot.snapshot->snapshot,
+            previous_label,
+            public_api_payload,
+            current_label,
+            PublicApiSemVerGate{.from_version = previous_entry->version,
+                                .to_version = manifest->package_version},
+            std::cout,
+            std::cerr);
+        if (semver_status != 0) {
+            return ExitCode::CompileError;
+        }
+        semver_gate_status = "pass";
+        previous_public_api_payload = previous_snapshot.snapshot->snapshot;
+        previous_public_api_sha256 = previous_entry->public_api_sha256;
+        previous_public_api_version = previous_entry->version;
+    }
+
+    auto output_directory = normalize_manifest_path(
+        std::filesystem::path{std::string{*options_.package_archive_output_path}});
+    std::error_code error;
+    std::filesystem::create_directories(output_directory, error);
+    if (error) {
+        std::cerr << "error: failed to create package publish output directory "
+                  << output_directory.generic_string() << '\n';
+        return ExitCode::CompileError;
+    }
+    if (!std::filesystem::is_directory(output_directory, error) || error) {
+        std::cerr << "error: package publish --out must be a directory: "
+                  << output_directory.generic_string() << '\n';
+        return ExitCode::UsageError;
+    }
+
+    const auto artifact_stem = manifest->package_name + "-" + manifest->package_version;
+    const auto archive_manifest_output =
+        output_directory / (artifact_stem + ".source-archive.json");
+    const auto archive_payload_output =
+        output_directory / (artifact_stem + ".source-archive.payload");
+    const auto public_api_output = output_directory / (artifact_stem + ".public-api.json");
+    const auto registry_index_output = output_directory / (artifact_stem + ".registry-index.json");
+    const bool dry_run = options_.package_publish_dry_run_requested;
+    const auto publish_evidence_output =
+        output_directory / (artifact_stem + (dry_run ? ".publish-dry-run.json" : ".publish.json"));
+    const auto previous_public_api_output =
+        previous_public_api_version.has_value()
+            ? std::optional<std::filesystem::path>{output_directory /
+                                                   (manifest->package_name + "-" +
+                                                    *previous_public_api_version +
+                                                    ".previous-public-api.json")}
+            : std::nullopt;
+
+    if (!write_text_file(archive_manifest_output,
+                         ahfl::package::serialize_source_archive_manifest(*archive.archive),
+                         std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    {
+        std::ofstream payload(archive_payload_output, std::ios::binary | std::ios::trunc);
+        if (!payload) {
+            std::cerr << "error: failed to write " << archive_payload_output.generic_string()
+                      << '\n';
+            return ExitCode::CompileError;
+        }
+        payload.write(archive.archive->payload.data(),
+                      static_cast<std::streamsize>(archive.archive->payload.size()));
+        if (!payload) {
+            std::cerr << "error: failed to finish writing "
+                      << archive_payload_output.generic_string() << '\n';
+            return ExitCode::CompileError;
+        }
+    }
+    if (!write_text_file(public_api_output, public_api_payload, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    if (previous_public_api_payload.has_value() && previous_public_api_output.has_value() &&
+        !write_text_file(*previous_public_api_output, *previous_public_api_payload, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+    if (!write_text_file(registry_index_output,
+                         ahfl::package::serialize_registry_index_entry(registry_entry),
+                         std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    auto evidence = ahfl::json::JsonValue::make_object();
+    if (!dry_run) {
+        const ahfl::package::Registry registry;
+        auto upload = registry.publish_package(ahfl::package::RegistryPublishPackageRequest{
+            .registry = registry_entry,
+            .archive = *archive.archive,
+            .public_api_snapshot = public_api_payload,
+        });
+        if (!upload.success()) {
+            std::cerr << "error: package publish upload failed for " << registry_entry.package
+                      << "@" << registry_entry.version << "\n";
+            for (const auto &diagnostic : upload.diagnostics) {
+                std::cerr << "error: " << diagnostic << "\n";
+            }
+            return ExitCode::CompileError;
+        }
+    }
+
+    evidence->set("format_version",
+                  ahfl::json::JsonValue::make_string(dry_run ? "ahfl.publish_dry_run.v1"
+                                                              : "ahfl.publish.v1"));
+    evidence->set("package", ahfl::json::JsonValue::make_string(manifest->package_name));
+    evidence->set("version", ahfl::json::JsonValue::make_string(manifest->package_version));
+    evidence->set("registry_id", ahfl::json::JsonValue::make_string(registry_entry.registry_id));
+    evidence->set("source_archive_sha256",
+                  ahfl::json::JsonValue::make_string(archive.archive->archive_sha256));
+    evidence->set("manifest_sha256",
+                  ahfl::json::JsonValue::make_string(archive.archive->manifest_sha256));
+    evidence->set("public_api_sha256", ahfl::json::JsonValue::make_string(public_api_sha256));
+    evidence->set("upload_performed", ahfl::json::JsonValue::make_bool(!dry_run));
+    evidence->set("semver_gate", ahfl::json::JsonValue::make_string(semver_gate_status));
+    if (previous_public_api_version.has_value()) {
+        evidence->set("semver_from",
+                      ahfl::json::JsonValue::make_string(*previous_public_api_version));
+        evidence->set("semver_to", ahfl::json::JsonValue::make_string(manifest->package_version));
+    }
+    if (previous_public_api_sha256.has_value()) {
+        evidence->set("previous_public_api_sha256",
+                      ahfl::json::JsonValue::make_string(*previous_public_api_sha256));
+    }
+
+    auto artifacts = ahfl::json::JsonValue::make_object();
+    artifacts->set("source_archive_manifest",
+                   ahfl::json::JsonValue::make_string(archive_manifest_output.generic_string()));
+    artifacts->set("source_archive_payload",
+                   ahfl::json::JsonValue::make_string(archive_payload_output.generic_string()));
+    artifacts->set("public_api_snapshot",
+                   ahfl::json::JsonValue::make_string(public_api_output.generic_string()));
+    if (previous_public_api_output.has_value()) {
+        artifacts->set(
+            "previous_public_api_snapshot",
+            ahfl::json::JsonValue::make_string(previous_public_api_output->generic_string()));
+    }
+    artifacts->set("registry_index",
+                   ahfl::json::JsonValue::make_string(registry_index_output.generic_string()));
+    evidence->set("artifacts", std::move(artifacts));
+
+    if (!write_text_file(
+            publish_evidence_output, ahfl::json::serialize_json(*evidence), std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    std::cout << (dry_run ? "publish-dry-run: pass\n" : "publish: pass\n")
+              << "registry: " << registry_entry.registry_id << '\n'
+              << "wrote " << archive_manifest_output.generic_string() << '\n'
+              << "wrote " << archive_payload_output.generic_string() << '\n'
+              << "wrote " << public_api_output.generic_string() << '\n'
+              << (previous_public_api_output.has_value()
+                      ? "wrote " + previous_public_api_output->generic_string() + "\n"
+                      : "")
+              << "wrote " << registry_index_output.generic_string() << '\n'
+              << "wrote " << publish_evidence_output.generic_string() << '\n'
+              << "source-archive-sha256: " << archive.archive->archive_sha256 << '\n'
+              << "manifest-sha256: " << archive.archive->manifest_sha256 << '\n'
+              << "public-api-sha256: " << public_api_sha256 << '\n'
+              << "upload: " << (dry_run ? "skipped" : "performed") << '\n';
+    return ExitCode::Success;
+}
+
+ExitCode CliDriver::yank_package() {
+    auto coordinate = parse_package_version_coordinate(options_.positional.front());
+    if (!coordinate.has_value()) {
+        std::cerr << "error: package yank requires <package>@<version>\n";
+        return ExitCode::UsageError;
+    }
+
+    const auto reason = options_.package_yank_reason.has_value()
+                            ? std::string{*options_.package_yank_reason}
+                            : std::string{};
+    const ahfl::package::Registry registry;
+    auto result = registry.yank_package(coordinate->package_name,
+                                        coordinate->version,
+                                        std::string{*options_.package_registry_id},
+                                        reason);
+    if (!result.success() || !result.entry.has_value()) {
+        std::cerr << "error: package yank failed for " << coordinate->package_name << "@"
+                  << coordinate->version << "\n";
+        for (const auto &diagnostic : result.diagnostics) {
+            std::cerr << "error: " << diagnostic << "\n";
+        }
+        return ExitCode::CompileError;
+    }
+
+    std::cout << "package-yank: pass\n"
+              << "registry: " << result.entry->registry_id << '\n'
+              << "package: " << result.entry->package << '\n'
+              << "version: " << result.entry->version << '\n'
+              << "yanked: true\n";
+    return ExitCode::Success;
 }
 
 ExitCode CliDriver::run_manifest_package() {
@@ -1935,6 +3052,25 @@ ExitCode CliDriver::run_package_graph_package(const ahfl::package_graph::Package
         }
         std::cerr << "error: PackageGraph is missing root package\n";
         return ExitCode::CompileError;
+    }
+
+    if (is_public_api_artifact_command(effective_command_)) {
+        auto entry_files = public_api_entry_files_from_package_graph(graph, *package);
+        if (entry_files.empty()) {
+            std::cerr << "error: emit " << command_short_name(*effective_command_)
+                      << " requires at least one exported module in ahfl.toml\n";
+            return ExitCode::CompileError;
+        }
+
+        public_api_package_context_ = public_api_context_from_package(*package);
+        auto input = project_input_from_package_graph(graph, std::move(entry_files));
+        auto project_result = ahfl::parse_project(frontend_, input);
+        render_diagnostics(*diag_consumer_, project_result, std::nullopt);
+        if (project_result.has_errors()) {
+            return ExitCode::CompileError;
+        }
+
+        return run_analysis(project_result.graph, std::nullopt);
     }
 
     const auto *target = select_target(*package, options_, std::cerr);
@@ -2221,6 +3357,33 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     render_diagnostics(*diag_consumer_, validation_result, source_file);
     if (validation_result.has_errors()) {
         return ExitCode::CompileError;
+    }
+
+    if (is_public_api_artifact_command(effective_command_)) {
+        if constexpr (std::is_same_v<InputT, ahfl::SourceGraph>) {
+            if (!public_api_package_context_.has_value()) {
+                std::cerr << "internal error: public API emission missing package context\n";
+                return ExitCode::CompileError;
+            }
+            const auto status = effective_command_ == CommandKind::EmitPublicApi
+                                    ? emit_public_api_snapshot(input,
+                                                               resolve_result,
+                                                               type_check_result,
+                                                               *public_api_package_context_,
+                                                               std::cout,
+                                                               std::cerr)
+                                    : emit_public_api_docs(input,
+                                                           resolve_result,
+                                                           type_check_result,
+                                                           *public_api_package_context_,
+                                                           std::cout,
+                                                           std::cerr);
+            return status == 0 ? ExitCode::Success : ExitCode::CompileError;
+        } else {
+            std::cerr << "error: emit " << command_short_name(*effective_command_)
+                      << " requires an AHFL package manifest; pass --manifest or --workspace\n";
+            return ExitCode::UsageError;
+        }
     }
 
     auto verified_ir =

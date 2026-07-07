@@ -30,9 +30,15 @@
 4. Native handoff package 由 manifest target metadata 驱动：`emit native-json --manifest <ahfl.toml> --target <name>`。
 5. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
 6. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
-7. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
-8. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-9. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
+8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。
+9. `package archive` 是 registry publishing 的源码打包入口，生成 normalized source archive payload 和对应 metadata manifest。
+10. manifest-mode `dump package-graph` 会解析 manifest v2 registry dependencies：通过 registry package index 选择版本，拉取 registry index、source archive metadata/payload，校验 digest 后把 registry package 注入 PackageGraph。workspace-mode registry fetch 仍未产品化。
+11. `package publish [--dry-run]` 是 RFC0010 的发布入口，生成 source archive、public API snapshot、registry index metadata 和 publish evidence；可选 `--semver-gate --from <previous-version>` 会从 registry metadata 拉取 previous public API snapshot 并执行 publish-time SemVer gate。未传 `--dry-run` 时会把 validated publish request 上传到 registry。
+12. `package yank <package>@<version> --registry <id>` 会通过 registry mutation 把不可变版本标记为 yanked；yanked 版本不会参与 fresh resolution，但已有 lockfile 仍可复现。
+13. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
+14. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+15. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 
@@ -53,6 +59,10 @@ ahflc run --workflow <name> --input '<json>' [--llm-config <path>] [--tool-catal
 ahflc fmt [--check] <input.ahfl|dir>...
 ahflc fmt [--check] --manifest <ahfl.toml>
 ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>
+ahflc init --single-file <input.ahfl>
+ahflc package archive --manifest <ahfl.toml> --out <dir>
+ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]
+ahflc package yank <package>@<version> --registry <id> [--reason <text>]
 ahflc dump-ast <input-mode>
 ahflc dump-types <input-mode>
 ahflc dump package-graph --manifest <ahfl.toml>
@@ -71,6 +81,9 @@ ahflc emit-scheduler-review --capability-mocks ... --input-fixture ... [--workfl
 ahflc emit-audit-report --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
 ahflc emit-dry-run-trace --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
 ahflc emit-package-review <input-mode>
+ahflc emit-public-api --manifest <ahfl.toml>
+ahflc emit-public-api-docs --manifest <ahfl.toml>
+ahflc emit-public-api-diff <old-public-api.json> <new-public-api.json>
 ahflc emit-summary <input-mode>
 ahflc emit-smv [--smv-size-report] <input-mode>
 ahflc emit-assurance-json <input-mode>
@@ -126,6 +139,13 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--metrics-export` | `<metrics.jsonl>` | 将 CLI duration / exit_code metrics 以 JSONL 写入文件，不改变 stdout artifact |
 | `--structured-log` | `<log.jsonl>` | 将 CLI command completion 结构化日志以 JSONL 写入文件，不改变 stdout artifact |
 | `--memory-report` | `<memory.json>` | 将 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件，不改变 stdout artifact |
+| `--out` | `<dir>` | 仅 `package archive` / `package publish`: 输出 package archive 或 publish evidence artifact 的目录 |
+| `--registry` | `<id>` | 仅 `package publish` / `package yank`: 发布或 yank 目标 registry id；dry-run 也必须显式传入 |
+| `--dry-run` | - | 仅 `package publish`: 执行本地发布门禁并跳过 registry upload |
+| `--reason` | `<text>` | 仅 `package yank`: 记录 yank 原因 |
+| `--semver-gate` | - | `emit public-api-diff` / `package publish`: 执行 public API SemVer gate |
+| `--from` | `<version>` | SemVer gate 的 previous version；`package publish` 用它定位 previous release |
+| `--to` | `<version>` | 仅 `emit public-api-diff --semver-gate`: 显式 next version；`package publish` 使用 manifest version |
 
 ## 已移除入口
 
@@ -143,7 +163,120 @@ ahfl-incremental [--help] <changed.ahfl>...
 4. `std::*` module、`List`、`Map`、`Option`、`Result` 和 primitive facade methods
    都需要 manifest、`std = { source = "sysroot" }` dependency 与显式 import。
 
+如果裸文件需要升级为正式工程，使用：
+
+```bash
+ahflc init --single-file path/to/file.ahfl
+```
+
+该命令只创建文件所在目录的 `ahfl.toml`，并在缺少 module 声明的已有源文件头部补入
+`module <prefix>::<file-stem>;`。生成的 manifest 是 RFC 0005 package manifest：
+`[dependencies] std = { source = "sysroot" }` 只建立 package dependency，不会隐式 import
+任何 std module；源码仍必须显式写 `import std::...`。
+
 详见 [single-file-mode.zh.md](./single-file-mode.zh.md)。
+
+## Package Archive
+
+`ahflc package archive --manifest <ahfl.toml> --out <dir>` 生成 RFC0010 定义的 normalized source archive。当前命令只接受显式 package manifest，不接受 workspace selector、`--target`、`--sysroot` 或 positional source file；registry upload/yank 由 `package publish` / `package yank` 承担，不混入 archive 命令。
+
+输出文件：
+
+```text
+<package>-<version>.source-archive.json
+<package>-<version>.source-archive.payload
+```
+
+metadata manifest 使用 `ahfl.source_archive.v1` schema，记录 package name、`manifest_sha256`、`archive_sha256` 和每个源码文件的 path/size/digest。payload 是 deterministic binary archive payload，当前只包含 `.ahfl` / `.toml` source inputs，排除 VCS/build/cache/lockfile artifacts，拒绝 symlink，并把 CRLF/CR 归一化为 LF。
+
+示例：
+
+```bash
+ahflc package archive --manifest path/to/ahfl.toml --out dist/
+```
+
+## Registry Dependency Resolution
+
+manifest v2 package 可以声明 registry dependency。当前产品化入口是 manifest-mode PackageGraph 构建，例如：
+
+```bash
+ahflc dump package-graph --manifest path/to/ahfl.toml --sysroot .
+```
+
+如果 root manifest 含 registry dependency，CLI 会：
+
+1. 读取 registry package index，按 exact/caret/tilde requirement 选择最高可用版本。
+2. 拉取选中版本的 `ahfl.registry.index.v1`、`ahfl.source_archive.v1` metadata 和 source archive payload。
+3. 校验 registry metadata、source archive digest、manifest digest 和 dependency metadata。
+4. materialize verified source archive，并把 registry package 作为结构化 PackageGraph input 注入。
+5. 递归解析 transitive registry dependencies。
+
+环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `AHFL_REGISTRY_URL` | 覆盖默认 registry endpoint；仅默认 `https://registry.ahfl.io/v1` 构造路径读取该变量。 |
+| `AHFL_PACKAGE_CACHE` | 指定 registry fetch cache 目录；transport unavailable 时允许回退缓存，live invalid response 不回退。 |
+
+边界：
+
+1. LSP 不会隐式执行 registry 网络拉取。
+2. workspace-mode registry dependency fetch 仍未产品化；需要先走 manifest-mode。
+3. registry upload 和 yank 走显式 `package publish` / `package yank`，LSP 与普通 PackageGraph 查询不会隐式执行 mutation。
+
+## Package Publish
+
+`ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]` 执行 RFC0010 发布流水线。它会构建 PackageGraph、检查已有 `ahfl.lock` drift、解析并 typecheck exported public API 输入、生成 public API snapshot 和 digest、构建 normalized source archive、拒绝 path/workspace local dependency 泄漏到 registry metadata，并输出 registry index metadata 与 publish evidence。
+
+如果传入 `--semver-gate --from <previous>`，CLI 会读取 registry package index，定位同 registry id 下的 previous release，拉取并校验 previous public API snapshot，然后把 previous snapshot 和当前 snapshot 交给 `public-api-diff --semver-gate` 同一套结构化 SemVer gate。gate 失败时命令失败，不执行 upload；gate 通过时 evidence 记录 `semver_gate: "pass"`、`semver_from`、`semver_to`、`previous_public_api_sha256` 和 previous snapshot artifact。
+
+未传 `--dry-run` 时，CLI 会在本地 gate 全部通过后向 registry 发送 `ahfl.registry.publish_request.v1` envelope。请求包含 `ahfl.registry.index.v1`、`ahfl.source_archive.v1` metadata、source archive payload 和 public API snapshot。客户端只接受同 coordinate、同 digest、同 dependency metadata 且 `yanked=false` 的 registry index 响应，成功后写出 `ahfl.publish.v1` evidence，并设置 `upload_performed: true`。
+
+输出文件：
+
+```text
+<package>-<version>.source-archive.json
+<package>-<version>.source-archive.payload
+<package>-<version>.public-api.json
+<package>-<previous>.previous-public-api.json    # only when --semver-gate is used
+<package>-<version>.registry-index.json
+<package>-<version>.publish-dry-run.json       # with --dry-run
+<package>-<version>.publish.json               # without --dry-run
+```
+
+`registry-index.json` 使用 `ahfl.registry.index.v1` schema。`publish-dry-run.json` 使用 `ahfl.publish_dry_run.v1` schema，固定记录 `upload_performed: false`；`publish.json` 使用 `ahfl.publish.v1` schema，记录 `upload_performed: true`。未传 `--semver-gate` 时 `semver_gate` 为 `not-run`，传入并通过时为 `pass`。
+
+示例：
+
+```bash
+ahflc package publish --dry-run --manifest path/to/ahfl.toml --registry default --out dist/
+
+ahflc package publish --dry-run \
+  --manifest path/to/ahfl.toml \
+  --registry default \
+  --sysroot . \
+  --out dist/ \
+  --semver-gate --from 1.2.3
+
+ahflc package publish \
+  --manifest path/to/ahfl.toml \
+  --registry default \
+  --sysroot . \
+  --out dist/ \
+  --semver-gate --from 1.2.3
+```
+
+## Package Yank
+
+`ahflc package yank <package>@<version> --registry <id> [--reason <text>]` 标记 registry 中已发布版本为 yanked。yank 不会修改 source archive、manifest digest 或 public API snapshot；它只允许 registry metadata 的 `yanked` 字段从 `false` 变为 `true`。
+
+客户端发送 `ahfl.registry.yank_request.v1`，并只接受同 registry id、同 package、同 version 且 `yanked=true` 的 `ahfl.registry.index.v1` 响应。registry 返回空 body、错误 coordinate 或 `yanked=false` 都会 fail closed。
+
+示例：
+
+```bash
+ahflc package yank release-demo@0.2.0 --registry default --reason "bad release"
+```
 
 ## Formatter
 
@@ -265,6 +398,44 @@ ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/e
 4. `-O` 不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
 5. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
 6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
+
+## Public API Artifact
+
+`emit public-api` 和 `emit public-api-docs` 是 package-level artifact。它们读取
+`ahfl.toml` / `ahfl.workspace.toml` 的 `[exports].modules`，在 parse、resolve、
+typecheck、validate 之后、IR lowering 之前，从 resolver 的 visibility、`AliasDefId`
+和 API-reachability facts 生成 public surface。它们不需要 `--target`，也不会从
+handoff target metadata 推导 API 面。
+
+```bash
+# JSON snapshot，schema 为 ahfl.public_api.v1
+ahflc emit public-api \
+  --manifest tests/integration/package_graph_manifest/ahfl.toml \
+  --sysroot .
+
+# Markdown docs
+ahflc emit public-api-docs \
+  --workspace tests/integration/check_ok/ahfl.workspace.toml \
+  --package lib \
+  --sysroot .
+
+# 比较两个 snapshot
+ahflc emit public-api-diff old.public-api.json new.public-api.json
+
+# 比较两个 snapshot，并按 SemVer bump 执行兼容性 gate
+ahflc emit public-api-diff \
+  --semver-gate --from 1.2.3 --to 2.0.0 \
+  old.public-api.json new.public-api.json
+```
+
+当前边界：
+
+1. Snapshot 只包含选中 root package 的 API-reachable `pub` symbol 和 `pub use` alias；依赖 package 的 public symbol 不会冒充本包 API。
+2. Entry identity 使用 `symbol:<namespace>:<canonical>` 或 `alias:<namespace>:<canonical>`；entry 内保留当前编译会话的 `symbol_id` / `alias_id` / `target_symbol_id` 作为结构化语义来源。
+3. `signature` 字段携带结构化参数、字段、variant、effect、where 等 facts；`signature_text` 只用于展示和 diff 摘要。
+4. `public-api-diff` 只读取两个 `ahfl.public_api.v1` JSON snapshot，不接受 `--manifest`、`--workspace`、`--target` 或 `--sysroot`。
+5. `public-api-diff --semver-gate --from <old> --to <new>` 会基于 diff severity 执行 fail-closed SemVer gate：removed/changed API 需要 major bump，added API 需要 minor bump，无 public API diff 至少需要 patch bump；`0.x` breaking diff 在仍保持 `0.x` 时按 minor bump gate。
+6. `package publish` 已把 source archive、public API snapshot、SemVer gate 和 registry upload 串成同一条 fail-closed 发布路径；独立 `public-api-diff` 仍保留为低层审计命令。
 
 ## Provider Artifact 可见性
 

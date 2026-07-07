@@ -84,6 +84,14 @@ void set_formal_model_out(CommandLineOptions &opts, std::optional<std::string_vi
     opts.formal_model_out = val;
 }
 
+void set_package_archive_output(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.package_archive_output_path = val;
+}
+
+void set_package_registry_id(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.package_registry_id = val;
+}
+
 void set_dump_ast(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.dump_ast_requested = true;
 }
@@ -138,6 +146,26 @@ void set_show_internal(CommandLineOptions &opts, std::optional<std::string_view>
 
 void set_format_check(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.format_check_requested = true;
+}
+
+void set_public_api_semver_gate(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.public_api_semver_gate_requested = true;
+}
+
+void set_public_api_from_version(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.public_api_from_version = val;
+}
+
+void set_public_api_to_version(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.public_api_to_version = val;
+}
+
+void set_package_publish_dry_run(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.package_publish_dry_run_requested = true;
+}
+
+void set_package_yank_reason(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.package_yank_reason = val;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +276,30 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_formal_model_out,
      "Output path for formal model",
      "an output path"},
+    {"--out",
+     "",
+     OptionArgKind::RequiredValue,
+     set_package_archive_output,
+     "Output directory for package archive artifacts",
+     "an output directory"},
+    {"--registry",
+     "",
+     OptionArgKind::RequiredValue,
+     set_package_registry_id,
+     "Registry id for package publishing",
+     "a registry id"},
+    {"--dry-run",
+     "",
+     OptionArgKind::Flag,
+     set_package_publish_dry_run,
+     "Plan package publishing without uploading",
+     ""},
+    {"--reason",
+     "",
+     OptionArgKind::RequiredValue,
+     set_package_yank_reason,
+     "Reason recorded for package yank",
+     "text"},
     {"--bmc-depth",
      "",
      OptionArgKind::RequiredValue,
@@ -300,6 +352,24 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_memory_report,
      "Write CLI structural memory proxy report as JSON",
      "an output path"},
+    {"--semver-gate",
+     "",
+     OptionArgKind::Flag,
+     set_public_api_semver_gate,
+     "Fail if the version bump is incompatible with the public API diff",
+     ""},
+    {"--from",
+     "",
+     OptionArgKind::RequiredValue,
+     set_public_api_from_version,
+     "Previous package version for public API SemVer gate",
+     "a SemVer version"},
+    {"--to",
+     "",
+     OptionArgKind::RequiredValue,
+     set_public_api_to_version,
+     "Next package version for emit public-api-diff --semver-gate",
+     "a SemVer version"},
     {"--show-hidden",
      "",
      OptionArgKind::Flag,
@@ -441,6 +511,20 @@ select_action_group_from_arguments(ActionGroup group,
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<ParseResult> select_init_from_arguments(
+    std::span<const std::string_view> arguments, std::size_t &index, CommandLineOptions &options) {
+    if (!can_select_action(options)) {
+        return usage_error("init cannot be combined with another action");
+    }
+    if (index + 1 >= arguments.size() || arguments[index + 1] != "--single-file") {
+        return usage_error("'init' requires --single-file");
+    }
+
+    ++index;
+    set_command_option(options, CommandKind::InitSingleFile);
+    return std::nullopt;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -502,6 +586,14 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         if (auto group = action_group_from_token(argument); group.has_value()) {
             if (const auto result =
                     select_action_group_from_arguments(*group, argument, arguments, index, options);
+                result.has_value()) {
+                return *result;
+            }
+            continue;
+        }
+
+        if (argument == "init") {
+            if (const auto result = select_init_from_arguments(arguments, index, options);
                 result.has_value()) {
                 return *result;
             }

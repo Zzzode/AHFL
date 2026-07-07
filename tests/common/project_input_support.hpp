@@ -200,6 +200,24 @@ dependency_prefixes_for_package(const package_graph::PackageGraph &graph,
     return prefixes;
 }
 
+[[nodiscard]] inline std::vector<std::string>
+artifact_exports_for_package(const package_graph::PackageGraph &graph,
+                             package_graph::PackageId package_id) {
+    std::vector<std::string> exports;
+    const auto *package = graph.find_package(package_id);
+    if (package == nullptr) {
+        return exports;
+    }
+    for (const auto &target : package->targets) {
+        for (const auto &export_item : target.exports) {
+            exports.push_back(export_item.name);
+        }
+    }
+    std::sort(exports.begin(), exports.end());
+    exports.erase(std::unique(exports.begin(), exports.end()), exports.end());
+    return exports;
+}
+
 [[nodiscard]] inline ProjectInput
 project_input_from_package_graph(const package_graph::PackageGraph &graph,
                                  std::vector<std::filesystem::path> entry_files) {
@@ -215,6 +233,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
             .root = root.root,
             .exported_modules =
                 package != nullptr ? package->exported_modules : std::vector<std::string>{},
+            .artifact_exports = artifact_exports_for_package(graph, root.package),
             .dependency_prefixes = dependency_prefixes_for_package(graph, root.package),
             .compiler_intrinsics_allow =
                 package == nullptr

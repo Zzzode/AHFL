@@ -435,6 +435,19 @@ void validate_semver(std::string_view value,
     }
 }
 
+void validate_version_requirement(std::string_view value,
+                                  std::string_view display,
+                                  SourceRange range,
+                                  std::vector<ManifestDiagnostic> &diagnostics) {
+    if (!matches_regex(value, "^(\\^|~)?[0-9]+\\.[0-9]+\\.[0-9]+$")) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 std::string(display) +
+                     " must be an exact, caret, or tilde semantic version requirement",
+                 range);
+    }
+}
+
 void validate_relative_path(std::string_view value,
                             std::string_view display,
                             SourceRange range,
@@ -467,12 +480,14 @@ void validate_dependency_path(std::string_view value,
 
 [[nodiscard]] DependencySpec read_dependency(std::string_view key,
                                              const Value &value,
+                                             int manifest_version,
                                              SourceRange key_range,
                                              SourceRange range,
                                              std::vector<ManifestDiagnostic> &diagnostics) {
     DependencySpec spec;
     spec.key = std::string{key};
     spec.range = range;
+    const bool registry_schema = manifest_version >= 2;
 
     if (key.empty()) {
         add_diag(diagnostics, kInvalidValue, "dependency key must not be empty", key_range);
@@ -488,13 +503,21 @@ void validate_dependency_path(std::string_view value,
         return spec;
     }
 
-    reject_unknown_fields(
-        value, {"source", "path", "version"}, "dependencies." + spec.key + ".", diagnostics);
+    if (registry_schema) {
+        reject_unknown_fields(value,
+                              {"source", "path", "registry", "version"},
+                              "dependencies." + spec.key + ".",
+                              diagnostics);
+    } else {
+        reject_unknown_fields(
+            value, {"source", "path", "version"}, "dependencies." + spec.key + ".", diagnostics);
+    }
 
     if (auto source = read_required_string(value, "source", "dependencies.source", diagnostics);
         source.has_value()) {
         spec.source = *source;
     }
+    const auto *source_entry = find_entry(value, "source");
     if (const auto *path = find_entry(value, "path"); path != nullptr) {
         if (path->value->kind == ValueKind::String) {
             spec.path = path->value->string_value;
@@ -507,11 +530,30 @@ void validate_dependency_path(std::string_view value,
             add_diag(diagnostics, kType, "dependency path must be a string", path->value->range);
         }
     }
+    if (registry_schema) {
+        if (const auto *registry = find_entry(value, "registry"); registry != nullptr) {
+            if (registry->value->kind == ValueKind::String) {
+                spec.registry = registry->value->string_value;
+                if (spec.registry->empty()) {
+                    reject_empty_string(
+                        "dependencies.registry", registry->value_range, diagnostics);
+                }
+            } else {
+                add_diag(diagnostics,
+                         kType,
+                         "dependency registry must be a string",
+                         registry->value->range);
+            }
+        }
+    }
     if (const auto *version = find_entry(value, "version"); version != nullptr) {
         if (version->value->kind == ValueKind::String) {
             spec.version = version->value->string_value;
             if (spec.version->empty()) {
                 reject_empty_string("dependencies.version", version->value_range, diagnostics);
+            } else if (registry_schema && spec.source == "registry") {
+                validate_version_requirement(
+                    *spec.version, "dependency.version", version->value_range, diagnostics);
             } else {
                 validate_semver(
                     *spec.version, "dependency.version", version->value_range, diagnostics);
@@ -522,7 +564,6 @@ void validate_dependency_path(std::string_view value,
         }
     }
 
-    const auto *source_entry = find_entry(value, "source");
     const auto *path_entry = find_entry(value, "path");
     const auto *version_entry = find_entry(value, "version");
 
@@ -560,6 +601,25 @@ void validate_dependency_path(std::string_view value,
                      "workspace dependency must not declare path or version",
                      version_entry->key_range);
         }
+    } else if (spec.source == "registry" && registry_schema) {
+        if (spec.key == "std") {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "std dependency must use source 'sysroot', not source 'registry'",
+                     source_entry == nullptr ? range : source_entry->value_range);
+        }
+        if (path_entry != nullptr) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "registry dependency must not declare path",
+                     path_entry->key_range);
+        }
+        if (version_entry == nullptr) {
+            add_diag(diagnostics,
+                     kRequired,
+                     "registry dependency is missing required field 'version'",
+                     range);
+        }
     } else if (!spec.source.empty()) {
         add_diag(diagnostics,
                  kInvalidValue,
@@ -570,8 +630,8 @@ void validate_dependency_path(std::string_view value,
     return spec;
 }
 
-[[nodiscard]] std::vector<DependencySpec>
-read_dependencies(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
+[[nodiscard]] std::vector<DependencySpec> read_dependencies(
+    const Value &root, int manifest_version, std::vector<ManifestDiagnostic> &diagnostics) {
     std::vector<DependencySpec> dependencies;
     const auto *deps = find_value(root, "dependencies");
     if (deps == nullptr) {
@@ -582,8 +642,12 @@ read_dependencies(const Value &root, std::vector<ManifestDiagnostic> &diagnostic
         return dependencies;
     }
     for (const auto &entry : deps->table_fields) {
-        dependencies.push_back(read_dependency(
-            entry.key, *entry.value, entry.key_range, entry.value_range, diagnostics));
+        dependencies.push_back(read_dependency(entry.key,
+                                               *entry.value,
+                                               manifest_version,
+                                               entry.key_range,
+                                               entry.value_range,
+                                               diagnostics));
     }
     return dependencies;
 }
@@ -737,11 +801,11 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
             read_required_int(root, "manifest_version", "manifest_version", result.diagnostics);
         version.has_value()) {
         manifest.manifest_version = *version;
-        if (*version != 1) {
+        if (*version != 1 && *version != 2) {
             const auto *entry = find_entry(root, "manifest_version");
             add_diag(result.diagnostics,
                      kInvalidValue,
-                     "manifest_version must be 1",
+                     "manifest_version must be 1 or 2",
                      entry == nullptr ? root.range : entry->value_range);
         }
     }
@@ -896,7 +960,7 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
                  "non standard-library package must declare at least one target",
                  root.range);
     }
-    manifest.dependencies = read_dependencies(root, result.diagnostics);
+    manifest.dependencies = read_dependencies(root, manifest.manifest_version, result.diagnostics);
 
     if (!result.has_errors()) {
         result.manifest = std::move(manifest);
@@ -923,11 +987,11 @@ ManifestResult<WorkspaceManifest> parse_workspace_manifest(std::string_view inpu
             read_required_int(root, "manifest_version", "manifest_version", result.diagnostics);
         version.has_value()) {
         manifest.manifest_version = *version;
-        if (*version != 1) {
+        if (*version != 1 && *version != 2) {
             const auto *entry = find_entry(root, "manifest_version");
             add_diag(result.diagnostics,
                      kInvalidValue,
-                     "manifest_version must be 1",
+                     "manifest_version must be 1 or 2",
                      entry == nullptr ? root.range : entry->value_range);
         }
     }
@@ -998,7 +1062,7 @@ ManifestResult<WorkspaceManifest> parse_workspace_manifest(std::string_view inpu
         }
     }
 
-    manifest.dependencies = read_dependencies(root, result.diagnostics);
+    manifest.dependencies = read_dependencies(root, manifest.manifest_version, result.diagnostics);
     if (!result.has_errors()) {
         result.manifest = std::move(manifest);
     }

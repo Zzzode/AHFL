@@ -55,6 +55,14 @@ enum class PackageSourceKind {
     Root,
     Workspace,
     Path,
+    Registry,
+};
+
+struct RegistryPackageIdentity {
+    std::string registry_id;
+    std::string source_archive_sha256;
+    std::string manifest_sha256;
+    std::string public_api_sha256;
 };
 
 struct Diagnostic {
@@ -76,6 +84,7 @@ struct PackageInput {
     PackageSourceKind source{PackageSourceKind::Path};
     std::filesystem::path manifest_path;
     std::string checksum;
+    std::optional<RegistryPackageIdentity> registry;
 };
 
 struct BuildInput {
@@ -83,11 +92,13 @@ struct BuildInput {
     PackageInput root_package;
     std::vector<PackageInput> workspace_packages;
     std::vector<PackageInput> path_packages;
+    std::vector<PackageInput> registry_packages;
 };
 
 struct ManifestBuildInput {
     std::filesystem::path root_manifest_path;
     std::filesystem::path sysroot_manifest_path;
+    std::vector<PackageInput> registry_packages;
 };
 
 struct WorkspaceBuildInput {
@@ -114,6 +125,12 @@ struct DependencyEdge {
     std::string dependency_key;
     PackageId to;
     std::string source;
+    std::optional<std::string> registry_id;
+    std::optional<std::string> version_requirement;
+    std::optional<std::string> selected_version;
+    std::optional<std::string> source_archive_sha256;
+    std::optional<std::string> manifest_sha256;
+    std::optional<std::string> public_api_sha256;
 };
 
 struct PackageNode {
@@ -127,6 +144,7 @@ struct PackageNode {
     std::filesystem::path module_root;
     std::filesystem::path manifest_path;
     std::string checksum;
+    std::optional<RegistryPackageIdentity> registry;
     std::vector<std::string> exported_modules;
     std::vector<std::string> compiler_intrinsics_allow;
     std::vector<TargetNode> targets;

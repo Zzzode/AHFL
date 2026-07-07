@@ -5,7 +5,7 @@ status: "implemented"
 area: ["language", "compiler", "stdlib", "tooling"]
 stability: "developer-facing"
 created: "2026-07-05"
-updated: "2026-07-05"
+updated: "2026-07-07"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -342,10 +342,11 @@ CLI 需要显式区分 package mode 和 detached mode：
 | `ahflc check --manifest path/to/ahfl.toml` | `PackageGraph` or `SourceSysroot` | 完整工程检查 |
 | `ahflc check path/to/file.ahfl` 且向上找到 `ahfl.toml` | `PackageGraph` | 以所属 package graph 检查 |
 | `ahflc check path/to/file.ahfl` 且没有 `ahfl.toml` | `DetachedSourceUnit` | 单文件检查，返回 core note / LSP information 级 detached diagnostic；只要没有 error，退出码为 0 |
+| `ahflc init --single-file path/to/file.ahfl` | package scaffold | 显式创建 RFC 0005 `ahfl.toml`，必要时为 source 补 module 声明；不改变 detached mode 语义 |
 | `ahflc format path/to/file.ahfl` | parse/format only | 不要求 manifest |
 | `ahflc lsp` | per-document classification | 按 LSP 规则 |
 
-裸文件 `check` 不应静默成功地接受任何 `import` declaration。如果 CLI 需要“把裸文件临时当作工程入口”的体验，应提供显式选项，例如后续 RFC 设计 `--manifest-template` 或 `ahflc init --single-file`；本 RFC 不引入该功能。
+裸文件 `check` 不应静默成功地接受任何 `import` declaration。需要把裸文件升级为工程入口时，用户必须显式运行 `ahflc init --single-file`；该入口生成 package manifest，而不是让 detached mode 隐式获得 std 或 workspace graph。
 
 ### Diagnostics
 
@@ -483,6 +484,7 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 14. Formatter golden：无 manifest 的 formatter fixture 仍可格式化。
 15. Sysroot cache：切换 ToolchainProfile 后 primitive home index invalidates。
 16. Negative fixture：用户声明 `struct String {}` 报 `E::primitive_shadowing_forbidden`。
+17. CLI `ahflc init --single-file`：新文件、已有无 module 裸文件、已有 module 文件和已有 manifest 拒绝路径均有 smoke 覆盖。
 
 ## Rollout and Stabilization
 
@@ -502,7 +504,8 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 5. 已落库 primitive facade method visibility：`String` 类型本身无需 import，但 `s.length()` 必须显式 import `std::string`。
 6. 已落库 primitive shadowing 专用诊断：用户声明 `struct String {}` 报 `E::primitive_shadowing_forbidden`。
 7. 已落库 `W::primitive_home_unavailable`：active sysroot 缺少 primitive home，或没有可用 default ToolchainProfile 时，LSP detached diagnostics 可见。
-8. 已同步 [core-language.zh.md](../spec/core-language.zh.md)、[single-file-mode.zh.md](../reference/single-file-mode.zh.md)、[cli-commands.zh.md](../reference/cli-commands.zh.md)、[lsp-vscode-extension.zh.md](../reference/lsp-vscode-extension.zh.md)、[stdlib-cookbook.zh.md](../reference/stdlib-cookbook.zh.md) 与 [error-codes.zh.md](../reference/error-codes.zh.md)。
+8. 已落库 `ahflc init --single-file`：从 detached source 显式生成 RFC 0005 package manifest，缺失 module declaration 时补写 module header，且不覆盖已有 manifest。
+9. 已同步 [core-language.zh.md](../spec/core-language.zh.md)、[single-file-mode.zh.md](../reference/single-file-mode.zh.md)、[cli-commands.zh.md](../reference/cli-commands.zh.md)、[lsp-vscode-extension.zh.md](../reference/lsp-vscode-extension.zh.md)、[stdlib-cookbook.zh.md](../reference/stdlib-cookbook.zh.md) 与 [error-codes.zh.md](../reference/error-codes.zh.md)。
 
 ## Alternatives
 
@@ -527,3 +530,4 @@ LSP workspace folder 只定义 project discovery 边界，不等于 package root
 ## Decision History
 
 - 2026-07-05: Draft opened from LSP single-file `String` navigation and std import boundary analysis.
+- 2026-07-07: Productized detached-to-package migration via explicit `ahflc init --single-file` scaffold; detached mode still does not import std implicitly.

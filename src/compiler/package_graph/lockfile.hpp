@@ -17,6 +17,10 @@ struct LockfilePackage {
     std::string source;
     std::string manifest;
     std::string checksum;
+    std::optional<std::string> registry_id;
+    std::optional<std::string> source_archive_sha256;
+    std::optional<std::string> manifest_sha256;
+    std::optional<std::string> public_api_sha256;
 };
 
 struct LockfileEdge {
@@ -24,6 +28,12 @@ struct LockfileEdge {
     std::string dependency;
     PackageId to;
     std::string source;
+    std::optional<std::string> registry_id;
+    std::optional<std::string> version_requirement;
+    std::optional<std::string> selected_version;
+    std::optional<std::string> source_archive_sha256;
+    std::optional<std::string> manifest_sha256;
+    std::optional<std::string> public_api_sha256;
 };
 
 struct Lockfile {

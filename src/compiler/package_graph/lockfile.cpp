@@ -54,6 +54,8 @@ void add_error(std::vector<Diagnostic> &diagnostics,
         return "path";
     case PackageSourceKind::Workspace:
         return "workspace";
+    case PackageSourceKind::Registry:
+        return "registry";
     }
     return "unknown";
 }
@@ -111,7 +113,7 @@ resolve_lockfile_manifest_path(std::string_view manifest,
 }
 
 [[nodiscard]] bool is_lockfile_source(std::string_view source) noexcept {
-    return source == "sysroot" || source == "path" || source == "workspace";
+    return source == "sysroot" || source == "path" || source == "workspace" || source == "registry";
 }
 
 [[nodiscard]] bool is_lower_hex(char value) noexcept {
@@ -126,6 +128,49 @@ resolve_lockfile_manifest_path(std::string_view manifest,
     }
     const auto hex = checksum.substr(prefix.size());
     return std::all_of(hex.begin(), hex.end(), is_lower_hex);
+}
+
+[[nodiscard]] std::optional<std::string> read_optional_string(
+    const json::JsonValue &object, std::string_view field, std::vector<Diagnostic> &diagnostics) {
+    const auto *value = object.get(field);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    const auto text = value->as_string();
+    if (!text.has_value() || text->empty()) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field '" + std::string{field} + "' must be a non-empty string",
+                  range_of(*value));
+        return std::nullopt;
+    }
+    return std::string{*text};
+}
+
+void require_registry_lockfile_field(const std::optional<std::string> &field,
+                                     std::string_view field_name,
+                                     std::vector<Diagnostic> &diagnostics,
+                                     SourceRange range) {
+    if (!field.has_value()) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "registry lockfile entry is missing required field '" + std::string{field_name} +
+                      "'",
+                  range);
+    }
+}
+
+void reject_non_registry_lockfile_field(const std::optional<std::string> &field,
+                                        std::string_view field_name,
+                                        std::vector<Diagnostic> &diagnostics,
+                                        SourceRange range) {
+    if (field.has_value()) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field '" + std::string{field_name} +
+                      "' is only valid for registry entries",
+                  range);
+    }
 }
 
 [[nodiscard]] const PackageNode *root_package(const PackageGraph &graph) {
@@ -147,6 +192,19 @@ resolve_lockfile_manifest_path(std::string_view manifest,
     value->set("source", json::JsonValue::make_string(package.source));
     value->set("manifest", json::JsonValue::make_string(package.manifest));
     value->set("checksum", json::JsonValue::make_string(package.checksum));
+    if (package.registry_id.has_value()) {
+        value->set("registry_id", json::JsonValue::make_string(*package.registry_id));
+    }
+    if (package.source_archive_sha256.has_value()) {
+        value->set("source_archive_sha256",
+                   json::JsonValue::make_string(*package.source_archive_sha256));
+    }
+    if (package.manifest_sha256.has_value()) {
+        value->set("manifest_sha256", json::JsonValue::make_string(*package.manifest_sha256));
+    }
+    if (package.public_api_sha256.has_value()) {
+        value->set("public_api_sha256", json::JsonValue::make_string(*package.public_api_sha256));
+    }
     return value;
 }
 
@@ -156,6 +214,25 @@ resolve_lockfile_manifest_path(std::string_view manifest,
     value->set("dependency", json::JsonValue::make_string(edge.dependency));
     value->set("to", json::JsonValue::make_int(static_cast<std::int64_t>(edge.to.value)));
     value->set("source", json::JsonValue::make_string(edge.source));
+    if (edge.registry_id.has_value()) {
+        value->set("registry_id", json::JsonValue::make_string(*edge.registry_id));
+    }
+    if (edge.version_requirement.has_value()) {
+        value->set("version_requirement", json::JsonValue::make_string(*edge.version_requirement));
+    }
+    if (edge.selected_version.has_value()) {
+        value->set("selected_version", json::JsonValue::make_string(*edge.selected_version));
+    }
+    if (edge.source_archive_sha256.has_value()) {
+        value->set("source_archive_sha256",
+                   json::JsonValue::make_string(*edge.source_archive_sha256));
+    }
+    if (edge.manifest_sha256.has_value()) {
+        value->set("manifest_sha256", json::JsonValue::make_string(*edge.manifest_sha256));
+    }
+    if (edge.public_api_sha256.has_value()) {
+        value->set("public_api_sha256", json::JsonValue::make_string(*edge.public_api_sha256));
+    }
     return value;
 }
 
@@ -265,7 +342,16 @@ void reject_unknown_fields(const json::JsonValue &object,
         return std::nullopt;
     }
     reject_unknown_fields(value,
-                          {"id", "name", "version", "source", "manifest", "checksum"},
+                          {"id",
+                           "name",
+                           "version",
+                           "source",
+                           "manifest",
+                           "checksum",
+                           "registry_id",
+                           "source_archive_sha256",
+                           "manifest_sha256",
+                           "public_api_sha256"},
                           "packages[]",
                           diagnostics);
 
@@ -282,7 +368,7 @@ void reject_unknown_fields(const json::JsonValue &object,
     if (!is_lockfile_source(*source)) {
         add_error(diagnostics,
                   std::string{kLockfileSyntax},
-                  "lockfile field 'source' must be 'sysroot', 'path', or 'workspace'",
+                  "lockfile field 'source' must be 'sysroot', 'path', 'workspace', or 'registry'",
                   range_of(*value.get("source")));
     }
     if (!is_sha256_checksum(*checksum)) {
@@ -290,6 +376,46 @@ void reject_unknown_fields(const json::JsonValue &object,
                   std::string{kLockfileSyntax},
                   "lockfile field 'checksum' must be sha256:<64 lowercase hex digits>",
                   range_of(*value.get("checksum")));
+    }
+    auto registry_id = read_optional_string(value, "registry_id", diagnostics);
+    auto source_archive_sha256 = read_optional_string(value, "source_archive_sha256", diagnostics);
+    auto manifest_sha256 = read_optional_string(value, "manifest_sha256", diagnostics);
+    auto public_api_sha256 = read_optional_string(value, "public_api_sha256", diagnostics);
+    if (*source == "registry") {
+        require_registry_lockfile_field(registry_id, "registry_id", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            source_archive_sha256, "source_archive_sha256", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            manifest_sha256, "manifest_sha256", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            public_api_sha256, "public_api_sha256", diagnostics, range_of(value));
+    } else {
+        reject_non_registry_lockfile_field(
+            registry_id, "registry_id", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            source_archive_sha256, "source_archive_sha256", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            manifest_sha256, "manifest_sha256", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            public_api_sha256, "public_api_sha256", diagnostics, range_of(value));
+    }
+    if (source_archive_sha256.has_value() && !is_sha256_checksum(*source_archive_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'source_archive_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("source_archive_sha256")));
+    }
+    if (manifest_sha256.has_value() && !is_sha256_checksum(*manifest_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'manifest_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("manifest_sha256")));
+    }
+    if (public_api_sha256.has_value() && !is_sha256_checksum(*public_api_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'public_api_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("public_api_sha256")));
     }
 
     return LockfilePackage{
@@ -299,6 +425,10 @@ void reject_unknown_fields(const json::JsonValue &object,
         .source = *source,
         .manifest = *manifest,
         .checksum = *checksum,
+        .registry_id = std::move(registry_id),
+        .source_archive_sha256 = std::move(source_archive_sha256),
+        .manifest_sha256 = std::move(manifest_sha256),
+        .public_api_sha256 = std::move(public_api_sha256),
     };
 }
 
@@ -307,7 +437,19 @@ void reject_unknown_fields(const json::JsonValue &object,
     if (!require_object(value, "edges[]", diagnostics)) {
         return std::nullopt;
     }
-    reject_unknown_fields(value, {"from", "dependency", "to", "source"}, "edges[]", diagnostics);
+    reject_unknown_fields(value,
+                          {"from",
+                           "dependency",
+                           "to",
+                           "source",
+                           "registry_id",
+                           "version_requirement",
+                           "selected_version",
+                           "source_archive_sha256",
+                           "manifest_sha256",
+                           "public_api_sha256"},
+                          "edges[]",
+                          diagnostics);
 
     const auto from = read_package_id(value, "from", diagnostics);
     const auto dependency = read_string(value, "dependency", diagnostics);
@@ -319,8 +461,58 @@ void reject_unknown_fields(const json::JsonValue &object,
     if (!is_lockfile_source(*source)) {
         add_error(diagnostics,
                   std::string{kLockfileSyntax},
-                  "lockfile field 'source' must be 'sysroot', 'path', or 'workspace'",
+                  "lockfile field 'source' must be 'sysroot', 'path', 'workspace', or 'registry'",
                   range_of(*value.get("source")));
+    }
+    auto registry_id = read_optional_string(value, "registry_id", diagnostics);
+    auto version_requirement = read_optional_string(value, "version_requirement", diagnostics);
+    auto selected_version = read_optional_string(value, "selected_version", diagnostics);
+    auto source_archive_sha256 = read_optional_string(value, "source_archive_sha256", diagnostics);
+    auto manifest_sha256 = read_optional_string(value, "manifest_sha256", diagnostics);
+    auto public_api_sha256 = read_optional_string(value, "public_api_sha256", diagnostics);
+    if (*source == "registry") {
+        require_registry_lockfile_field(registry_id, "registry_id", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            version_requirement, "version_requirement", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            selected_version, "selected_version", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            source_archive_sha256, "source_archive_sha256", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            manifest_sha256, "manifest_sha256", diagnostics, range_of(value));
+        require_registry_lockfile_field(
+            public_api_sha256, "public_api_sha256", diagnostics, range_of(value));
+    } else {
+        reject_non_registry_lockfile_field(
+            registry_id, "registry_id", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            version_requirement, "version_requirement", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            selected_version, "selected_version", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            source_archive_sha256, "source_archive_sha256", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            manifest_sha256, "manifest_sha256", diagnostics, range_of(value));
+        reject_non_registry_lockfile_field(
+            public_api_sha256, "public_api_sha256", diagnostics, range_of(value));
+    }
+    if (source_archive_sha256.has_value() && !is_sha256_checksum(*source_archive_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'source_archive_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("source_archive_sha256")));
+    }
+    if (manifest_sha256.has_value() && !is_sha256_checksum(*manifest_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'manifest_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("manifest_sha256")));
+    }
+    if (public_api_sha256.has_value() && !is_sha256_checksum(*public_api_sha256)) {
+        add_error(diagnostics,
+                  std::string{kLockfileSyntax},
+                  "lockfile field 'public_api_sha256' must be sha256:<64 lowercase hex digits>",
+                  range_of(*value.get("public_api_sha256")));
     }
 
     return LockfileEdge{
@@ -328,6 +520,12 @@ void reject_unknown_fields(const json::JsonValue &object,
         .dependency = *dependency,
         .to = *to,
         .source = *source,
+        .registry_id = std::move(registry_id),
+        .version_requirement = std::move(version_requirement),
+        .selected_version = std::move(selected_version),
+        .source_archive_sha256 = std::move(source_archive_sha256),
+        .manifest_sha256 = std::move(manifest_sha256),
+        .public_api_sha256 = std::move(public_api_sha256),
     };
 }
 
@@ -371,6 +569,36 @@ void compare_edge_field(std::vector<Diagnostic> &diagnostics,
               "lockfile dependency edge " + edge_text(from, dependency, to) + " field '" +
                   std::string{field} + "' is '" + std::string{actual} +
                   "' but resolver produced '" + std::string{expected} + "'");
+}
+
+void compare_optional_package_field(std::vector<Diagnostic> &diagnostics,
+                                    PackageId id,
+                                    std::string_view field,
+                                    const std::optional<std::string> &actual,
+                                    const std::optional<std::string> &expected) {
+    if (actual == expected) {
+        return;
+    }
+    add_error(diagnostics,
+              std::string{kPackageGraph},
+              "lockfile package id " + package_id_text(id) + " field '" + std::string{field} +
+                  "' drifted");
+}
+
+void compare_optional_edge_field(std::vector<Diagnostic> &diagnostics,
+                                 PackageId from,
+                                 std::string_view dependency,
+                                 PackageId to,
+                                 std::string_view field,
+                                 const std::optional<std::string> &actual,
+                                 const std::optional<std::string> &expected) {
+    if (actual == expected) {
+        return;
+    }
+    add_error(diagnostics,
+              std::string{kPackageGraph},
+              "lockfile dependency edge " + edge_text(from, dependency, to) + " field '" +
+                  std::string{field} + "' drifted");
 }
 
 [[nodiscard]] const LockfileEdge *find_lockfile_edge(const Lockfile &lockfile,
@@ -421,6 +649,20 @@ Lockfile make_lockfile(const PackageGraph &graph,
             .source = std::string{lockfile_source_name(package.source)},
             .manifest = lockfile_manifest_path(package, lockfile_directory),
             .checksum = package.checksum,
+            .registry_id = package.registry.has_value()
+                               ? std::optional<std::string>{package.registry->registry_id}
+                               : std::nullopt,
+            .source_archive_sha256 =
+                package.registry.has_value()
+                    ? std::optional<std::string>{package.registry->source_archive_sha256}
+                    : std::nullopt,
+            .manifest_sha256 = package.registry.has_value()
+                                   ? std::optional<std::string>{package.registry->manifest_sha256}
+                                   : std::nullopt,
+            .public_api_sha256 =
+                package.registry.has_value()
+                    ? std::optional<std::string>{package.registry->public_api_sha256}
+                    : std::nullopt,
         });
     }
 
@@ -431,6 +673,12 @@ Lockfile make_lockfile(const PackageGraph &graph,
             .dependency = edge.dependency_key,
             .to = edge.to,
             .source = edge.source,
+            .registry_id = edge.registry_id,
+            .version_requirement = edge.version_requirement,
+            .selected_version = edge.selected_version,
+            .source_archive_sha256 = edge.source_archive_sha256,
+            .manifest_sha256 = edge.manifest_sha256,
+            .public_api_sha256 = edge.public_api_sha256,
         });
     }
 
@@ -635,6 +883,36 @@ check_lockfile_drift(const PackageGraph &graph,
                               graph_package->manifest_path.generic_string());
         compare_package_field(
             diagnostics, package.id, "checksum", package.checksum, graph_package->checksum);
+        const auto expected_registry_id =
+            graph_package->registry.has_value()
+                ? std::optional<std::string>{graph_package->registry->registry_id}
+                : std::nullopt;
+        const auto expected_source_archive =
+            graph_package->registry.has_value()
+                ? std::optional<std::string>{graph_package->registry->source_archive_sha256}
+                : std::nullopt;
+        const auto expected_manifest =
+            graph_package->registry.has_value()
+                ? std::optional<std::string>{graph_package->registry->manifest_sha256}
+                : std::nullopt;
+        const auto expected_public_api =
+            graph_package->registry.has_value()
+                ? std::optional<std::string>{graph_package->registry->public_api_sha256}
+                : std::nullopt;
+        compare_optional_package_field(
+            diagnostics, package.id, "registry_id", package.registry_id, expected_registry_id);
+        compare_optional_package_field(diagnostics,
+                                       package.id,
+                                       "source_archive_sha256",
+                                       package.source_archive_sha256,
+                                       expected_source_archive);
+        compare_optional_package_field(
+            diagnostics, package.id, "manifest_sha256", package.manifest_sha256, expected_manifest);
+        compare_optional_package_field(diagnostics,
+                                       package.id,
+                                       "public_api_sha256",
+                                       package.public_api_sha256,
+                                       expected_public_api);
     }
 
     for (const auto &package : graph.packages) {
@@ -665,6 +943,48 @@ check_lockfile_drift(const PackageGraph &graph,
                            "source",
                            lockfile_edge->source,
                            edge.source);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "registry_id",
+                                    lockfile_edge->registry_id,
+                                    edge.registry_id);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "version_requirement",
+                                    lockfile_edge->version_requirement,
+                                    edge.version_requirement);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "selected_version",
+                                    lockfile_edge->selected_version,
+                                    edge.selected_version);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "source_archive_sha256",
+                                    lockfile_edge->source_archive_sha256,
+                                    edge.source_archive_sha256);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "manifest_sha256",
+                                    lockfile_edge->manifest_sha256,
+                                    edge.manifest_sha256);
+        compare_optional_edge_field(diagnostics,
+                                    edge.from,
+                                    edge.dependency_key,
+                                    edge.to,
+                                    "public_api_sha256",
+                                    lockfile_edge->public_api_sha256,
+                                    edge.public_api_sha256);
     }
     for (const auto &edge : lockfile.edges) {
         if (!graph_edges.contains(edge_key(edge.from, edge.dependency, edge.to))) {

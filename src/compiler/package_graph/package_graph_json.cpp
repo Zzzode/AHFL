@@ -62,6 +62,17 @@ make_handoff_export_array(const std::vector<manifest::HandoffExportManifest> &va
     value->set("module_root", json::JsonValue::make_string(package.module_root.generic_string()));
     value->set("manifest", json::JsonValue::make_string(package.manifest_path.generic_string()));
     value->set("checksum", json::JsonValue::make_string(package.checksum));
+    if (package.registry.has_value()) {
+        auto registry = json::JsonValue::make_object();
+        registry->set("registry_id", json::JsonValue::make_string(package.registry->registry_id));
+        registry->set("source_archive_sha256",
+                      json::JsonValue::make_string(package.registry->source_archive_sha256));
+        registry->set("manifest_sha256",
+                      json::JsonValue::make_string(package.registry->manifest_sha256));
+        registry->set("public_api_sha256",
+                      json::JsonValue::make_string(package.registry->public_api_sha256));
+        value->set("registry", std::move(registry));
+    }
     value->set("exports", make_string_array(package.exported_modules));
 
     auto targets = json::JsonValue::make_array();
@@ -78,6 +89,25 @@ make_handoff_export_array(const std::vector<manifest::HandoffExportManifest> &va
     value->set("dependency", json::JsonValue::make_string(edge.dependency_key));
     value->set("to", json::JsonValue::make_int(static_cast<std::int64_t>(edge.to.value)));
     value->set("source", json::JsonValue::make_string(edge.source));
+    if (edge.registry_id.has_value()) {
+        value->set("registry_id", json::JsonValue::make_string(*edge.registry_id));
+    }
+    if (edge.version_requirement.has_value()) {
+        value->set("version_requirement", json::JsonValue::make_string(*edge.version_requirement));
+    }
+    if (edge.selected_version.has_value()) {
+        value->set("selected_version", json::JsonValue::make_string(*edge.selected_version));
+    }
+    if (edge.source_archive_sha256.has_value()) {
+        value->set("source_archive_sha256",
+                   json::JsonValue::make_string(*edge.source_archive_sha256));
+    }
+    if (edge.manifest_sha256.has_value()) {
+        value->set("manifest_sha256", json::JsonValue::make_string(*edge.manifest_sha256));
+    }
+    if (edge.public_api_sha256.has_value()) {
+        value->set("public_api_sha256", json::JsonValue::make_string(*edge.public_api_sha256));
+    }
     return value;
 }
 

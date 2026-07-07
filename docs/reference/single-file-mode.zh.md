@@ -47,6 +47,18 @@ Primitive 类型是语言内建类型，不从 `std::*` import 获得。`std` �
 
 `ahflc fmt path/to/file.ahfl` 仍然只做 parse/format，不要求 manifest。
 
+## 初始化为 package
+
+`ahflc init --single-file path/to/file.ahfl` 是 detached 文件升级到正式 package 的显式入口。
+它不会让裸文件隐式获得 std；它会在文件所在目录创建 RFC 0005 `ahfl.toml`：
+
+1. 新文件路径会创建 starter source，并写入 `module <prefix>::<file-stem>;`。
+2. 已存在但没有 module 声明的 source 会在文件头部补入 module 声明。
+3. 已存在 module 声明的 source 会沿用声明中的 module prefix 和导出 module path。
+4. 已有 `ahfl.toml` 时命令失败，不覆盖现有 package identity。
+5. 生成的 manifest 默认声明 `std = { source = "sysroot" }` dependency；源码仍必须显式
+   `import std::...` 才能使用 std module 或 primitive facade impl method。
+
 ## LSP 行为
 
 LSP 打开 detached 文件时会发布 `N::detached_source_unit` information diagnostic。

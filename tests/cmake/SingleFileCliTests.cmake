@@ -152,6 +152,46 @@ add_test(NAME ahflc.passes.semantic_backend_effect
             -P "${PROJECT_SOURCE_DIR}/cmake/RunPassProductizationTest.cmake"
 )
 
+add_test(NAME ahflc.emit_public_api.package_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/public_api_artifact_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/public-api-smoke"
+)
+
+add_test(NAME ahflc.init_single_file.package_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/init_single_file_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/init-single-file-smoke"
+)
+
+add_test(NAME ahflc.package_archive.package_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/package_archive_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/package-archive-smoke"
+)
+
+add_test(NAME ahflc.package_publish.package_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/package_publish_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/package-publish-smoke"
+)
+
+add_test(NAME ahflc.package_registry_resolve.package_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/package_registry_resolve_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/package-registry-resolve-smoke"
+)
+
 add_test(NAME ahflc.quality.smv_size_budget.flow_workflow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

@@ -34,6 +34,7 @@ add_executable(ahflc
     provider/steps/governance.cpp
     provider/steps/production.cpp
     pipeline_runner.cpp
+    public_api_artifact.cpp
     workflow_run.cpp
 )
 
