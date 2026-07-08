@@ -92,6 +92,10 @@ void set_package_registry_id(CommandLineOptions &opts, std::optional<std::string
     opts.package_registry_id = val;
 }
 
+void set_lockfile_path(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.lockfile_path = val;
+}
+
 void set_dump_ast(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.dump_ast_requested = true;
 }
@@ -288,6 +292,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_package_registry_id,
      "Registry id for package publishing",
      "a registry id"},
+    {"--lockfile",
+     "",
+     OptionArgKind::RequiredValue,
+     set_lockfile_path,
+     "Output lockfile path for registry resolve",
+     "an ahfl.lock path"},
     {"--dry-run",
      "",
      OptionArgKind::Flag,

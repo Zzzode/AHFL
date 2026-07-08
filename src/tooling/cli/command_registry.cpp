@@ -102,6 +102,12 @@ constexpr CommandSpec kCommandSpecs[] = {
         CommandKind::PackagePublish, "package-publish", ActionGroup::Package, "publish", 104, 101),
     routed_command(
         CommandKind::PackageYank, "package-yank", ActionGroup::Package, "yank", 105, 102),
+    routed_command(CommandKind::RegistryResolve,
+                   "registry-resolve",
+                   ActionGroup::Registry,
+                   "resolve",
+                   106,
+                   103),
     routed_command(CommandKind::DumpAst, "dump-ast", ActionGroup::Dump, "ast", 1, 0, 73),
     routed_command(CommandKind::DumpTypes, "dump-types", ActionGroup::Dump, "types", 3, 1, 72, 46),
     routed_command(CommandKind::DumpPackageGraph,
@@ -718,6 +724,8 @@ std::optional<ActionGroup> action_group_from_token(std::string_view token) {
         return ActionGroup::Dump;
     if (token == "package")
         return ActionGroup::Package;
+    if (token == "registry")
+        return ActionGroup::Registry;
     if (token == "verify")
         return ActionGroup::Verify;
     if (token == "validate")

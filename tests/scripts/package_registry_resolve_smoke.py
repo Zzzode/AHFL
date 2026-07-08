@@ -200,6 +200,43 @@ def main():
     if edges[0]["selected_version"] != "2.1.3":
         raise AssertionError(f"unexpected selected registry version: {edges[0]}")
 
+    lockfile_path = app_dir / "ahfl.lock"
+    resolve_output = run_command(
+        [
+            ahflc,
+            "registry",
+            "resolve",
+            "--manifest",
+            app_dir / "ahfl.toml",
+            "--sysroot",
+            repo,
+            "--lockfile",
+            lockfile_path,
+        ],
+        env=env,
+    )
+    if "registry-resolve: pass" not in resolve_output:
+        raise AssertionError(f"registry resolve did not report success: {resolve_output}")
+    lockfile = json.loads(lockfile_path.read_text(encoding="utf-8"))
+    locked_packages = {package["name"]: package for package in lockfile["packages"]}
+    if locked_packages["risk-model"]["source"] != "registry":
+        raise AssertionError(f"risk-model did not resolve as registry package: {locked_packages}")
+    if locked_packages["risk-model"]["registry_id"] != "default":
+        raise AssertionError(f"registry id missing from lockfile: {locked_packages['risk-model']}")
+    if locked_packages["risk-model"]["source_archive_sha256"] != digest:
+        raise AssertionError("registry package digest was not preserved in lockfile")
+    locked_edges = [
+        edge
+        for edge in lockfile["edges"]
+        if edge["dependency"] == "risk-model" and edge["source"] == "registry"
+    ]
+    if len(locked_edges) != 1:
+        raise AssertionError(f"missing registry dependency edge in lockfile: {lockfile['edges']}")
+    if locked_edges[0]["version_requirement"] != "^2.0.0":
+        raise AssertionError(f"unexpected locked version requirement: {locked_edges[0]}")
+    if locked_edges[0]["selected_version"] != "2.1.3":
+        raise AssertionError(f"unexpected locked selected version: {locked_edges[0]}")
+
 
 if __name__ == "__main__":
     main()

@@ -253,6 +253,8 @@ int main() {
           "action_group_from_token: emit");
     check(ahfl::cli::action_group_from_token("dump") == ahfl::cli::ActionGroup::Dump,
           "action_group_from_token: dump");
+    check(ahfl::cli::action_group_from_token("registry") == ahfl::cli::ActionGroup::Registry,
+          "action_group_from_token: registry");
     check(ahfl::cli::action_group_from_token("verify") == ahfl::cli::ActionGroup::Verify,
           "action_group_from_token: verify");
     check(ahfl::cli::action_group_from_token("validate") == ahfl::cli::ActionGroup::Validate,
@@ -369,6 +371,20 @@ int main() {
               "parse_options: --checker-timeout-seconds captured");
     }
 
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "registry", "resolve", "--manifest", "ahfl.toml", "--lockfile", "ahfl.lock"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: registry resolve has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::RegistryResolve,
+              "parse_options: registry resolve selected");
+        check(options.manifest_path.has_value() && *options.manifest_path == "ahfl.toml",
+              "parse_options: registry resolve manifest captured");
+        check(options.lockfile_path.has_value() && *options.lockfile_path == "ahfl.lock",
+              "parse_options: registry resolve lockfile captured");
+    }
+
     // resolve_subcommand — core emit artifacts
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir") ==
               ahfl::cli::CommandKind::EmitIr,
@@ -480,6 +496,9 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "lockfile") ==
               ahfl::cli::CommandKind::DumpLockfile,
           "resolve: dump lockfile");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Registry, "resolve") ==
+              ahfl::cli::CommandKind::RegistryResolve,
+          "resolve: registry resolve");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Verify, "formal") ==
               ahfl::cli::CommandKind::VerifyFormal,
           "resolve: verify formal");

@@ -65,6 +65,7 @@ class CliDriver final {
     [[nodiscard]] ExitCode archive_package();
     [[nodiscard]] ExitCode publish_package();
     [[nodiscard]] ExitCode yank_package();
+    [[nodiscard]] ExitCode resolve_registry_dependencies();
 
     [[nodiscard]] ExitCode run_manifest_package();
     [[nodiscard]] ExitCode run_workspace_package();

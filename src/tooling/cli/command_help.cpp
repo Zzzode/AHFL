@@ -25,6 +25,9 @@ namespace ahfl::cli {
         } else if (token.starts_with("package-")) {
             result += "package ";
             result += command_short_name(commands[index]);
+        } else if (token.starts_with("registry-")) {
+            result += "registry ";
+            result += command_short_name(commands[index]);
         } else if (token.starts_with("verify-")) {
             result += "verify";
         } else if (token.starts_with("validate-")) {
@@ -52,6 +55,8 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> "
            "--out <dir> [--sysroot <path>] [--semver-gate --from <previous>]\n"
         << "  ahflc package yank <package>@<version> --registry <id> [--reason <text>]\n"
+        << "  ahflc registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock> "
+           "[--sysroot <path>]\n"
         << "  ahflc emit <artifact> [options] [<input.ahfl>]\n"
         << "  ahflc emit public-api-diff [--semver-gate --from <old> --to <new>] "
            "<old-public-api.json> <new-public-api.json>\n"
@@ -67,6 +72,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  package archive     Build a normalized source archive for publishing\n"
         << "  package publish     Run package publish gates and optionally upload to registry\n"
         << "  package yank        Mark an immutable registry package version as yanked\n"
+        << "  registry resolve    Resolve manifest registry dependencies and write ahfl.lock\n"
         << "  emit <artifact>     Emit a build artifact (see list below)\n"
         << "  dump <target>       Diagnostic dump (ast, types, project, package-graph, lockfile)\n"
         << "  verify              Formal verification via NuSMV/nuXmv\n"
@@ -148,6 +154,7 @@ void print_usage(std::ostream &out, bool show_internal) {
     out << "\nPackage Options:\n"
         << "  --out <dir>                 Output directory for package archive/publish artifacts\n"
         << "  --registry <id>             Registry id for package publish/yank\n"
+        << "  --lockfile <path>           Output lockfile path for registry resolve\n"
         << "  --dry-run                   Plan package publish without uploading\n"
         << "  --reason <text>             Reason recorded for package yank\n"
         << "  --semver-gate               Enforce public API SemVer gate\n"

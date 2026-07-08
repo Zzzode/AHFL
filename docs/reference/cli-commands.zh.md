@@ -33,12 +33,13 @@
 7. Public API artifact 通过 `emit public-api` / `emit public-api-docs` / `emit public-api-diff` 输出 visibility facts 驱动的 API snapshot、Markdown docs 和 API diff。
 8. `init --single-file` 是从 detached 裸文件迁移到正式 `ahfl.toml` package 的显式脚手架入口，不改变 detached mode 语义。
 9. `package archive` 是 registry publishing 的源码打包入口，生成 normalized source archive payload 和对应 metadata manifest。
-10. manifest-mode `dump package-graph` 会解析 manifest v2 registry dependencies：通过 registry package index 选择版本，拉取 registry index、source archive metadata/payload，校验 digest 后把 registry package 注入 PackageGraph。workspace-mode registry fetch 仍未产品化。
-11. `package publish [--dry-run]` 是 RFC0010 的发布入口，生成 source archive、public API snapshot、registry index metadata 和 publish evidence；可选 `--semver-gate --from <previous-version>` 会从 registry metadata 拉取 previous public API snapshot 并执行 publish-time SemVer gate。未传 `--dry-run` 时会把 validated publish request 上传到 registry。
-12. `package yank <package>@<version> --registry <id>` 会通过 registry mutation 把不可变版本标记为 yanked；yanked 版本不会参与 fresh resolution，但已有 lockfile 仍可复现。
-13. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
-14. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-15. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+10. `registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock>` 是显式 registry dependency 解析入口，会解析 manifest v2 registry dependencies 并写出带 registry coordinate/digest 的 lockfile。
+11. manifest-mode `dump package-graph` 会解析 manifest v2 registry dependencies：通过 registry package index 选择版本，拉取 registry index、source archive metadata/payload，校验 digest 后把 registry package 注入 PackageGraph。workspace-mode registry fetch 仍未产品化。
+12. `package publish [--dry-run]` 是 RFC0010 的发布入口，生成 source archive、public API snapshot、registry index metadata 和 publish evidence；可选 `--semver-gate --from <previous-version>` 会从 registry metadata 拉取 previous public API snapshot 并执行 publish-time SemVer gate。未传 `--dry-run` 时会把 validated publish request 上传到 registry。
+13. `package yank <package>@<version> --registry <id>` 会通过 registry mutation 把不可变版本标记为 yanked；yanked 版本不会参与 fresh resolution，但已有 lockfile 仍可复现。
+14. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
+15. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+16. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 
@@ -63,6 +64,7 @@ ahflc init --single-file <input.ahfl>
 ahflc package archive --manifest <ahfl.toml> --out <dir>
 ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir> [--sysroot <path>] [--semver-gate --from <previous>]
 ahflc package yank <package>@<version> --registry <id> [--reason <text>]
+ahflc registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock> [--sysroot <path>]
 ahflc dump-ast <input-mode>
 ahflc dump-types <input-mode>
 ahflc dump package-graph --manifest <ahfl.toml>
@@ -197,7 +199,15 @@ ahflc package archive --manifest path/to/ahfl.toml --out dist/
 
 ## Registry Dependency Resolution
 
-manifest v2 package 可以声明 registry dependency。当前产品化入口是 manifest-mode PackageGraph 构建，例如：
+manifest v2 package 可以声明 registry dependency。显式解析入口是：
+
+```bash
+ahflc registry resolve --manifest path/to/ahfl.toml --lockfile path/to/ahfl.lock --sysroot .
+```
+
+该命令会解析 root/transitive registry dependencies，并把选中版本、registry id、source archive digest、manifest digest 和 public API digest 写入 `ahfl.lock`。输出文件名必须是 canonical `ahfl.lock`，这样后续 package-aware 命令可以执行 lockfile drift 检查。
+
+manifest-mode PackageGraph 构建也会执行同一套解析逻辑，例如：
 
 ```bash
 ahflc dump package-graph --manifest path/to/ahfl.toml --sysroot .

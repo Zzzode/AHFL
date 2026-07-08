@@ -1759,7 +1759,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     if (is_public_api_diff_command(effective_command_)) {
         if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
             options_.package_name.has_value() || options_.target_name.has_value() ||
-            options_.sysroot_path.has_value()) {
+            options_.sysroot_path.has_value() || options_.lockfile_path.has_value()) {
             std::cerr << "error: emit public-api-diff accepts exactly two snapshot files and no "
                          "package/workspace selectors\n";
             print_usage(std::cerr);
@@ -1802,7 +1802,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
     if (effective_command_ == CommandKind::InitSingleFile) {
         if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
             options_.package_name.has_value() || options_.target_name.has_value() ||
-            options_.sysroot_path.has_value()) {
+            options_.sysroot_path.has_value() || options_.lockfile_path.has_value()) {
             std::cerr << "error: init --single-file creates an AHFL package and does not accept "
                          "package/workspace selectors\n";
             print_usage(std::cerr);
@@ -1828,7 +1828,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
             return ExitCode::UsageError;
         }
         if (options_.workspace_manifest_path.has_value() || options_.package_name.has_value() ||
-            options_.target_name.has_value() || options_.sysroot_path.has_value()) {
+            options_.target_name.has_value() || options_.sysroot_path.has_value() ||
+            options_.lockfile_path.has_value()) {
             std::cerr << "error: package archive accepts --manifest and --out only\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
@@ -1858,7 +1859,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
             return ExitCode::UsageError;
         }
         if (options_.workspace_manifest_path.has_value() || options_.package_name.has_value() ||
-            options_.target_name.has_value() || options_.package_yank_reason.has_value()) {
+            options_.target_name.has_value() || options_.package_yank_reason.has_value() ||
+            options_.lockfile_path.has_value()) {
             std::cerr << "error: package publish accepts --manifest, --registry, "
                          "--out, --sysroot, --dry-run, and optional --semver-gate --from only\n";
             print_usage(std::cerr);
@@ -1896,7 +1898,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
         if (options_.manifest_path.has_value() || options_.workspace_manifest_path.has_value() ||
             options_.package_name.has_value() || options_.target_name.has_value() ||
             options_.sysroot_path.has_value() || options_.package_archive_output_path.has_value() ||
-            options_.package_publish_dry_run_requested ||
+            options_.lockfile_path.has_value() || options_.package_publish_dry_run_requested ||
             options_.public_api_semver_gate_requested ||
             options_.public_api_from_version.has_value() ||
             options_.public_api_to_version.has_value()) {
@@ -1920,6 +1922,44 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return std::nullopt;
     }
 
+    if (effective_command_ == CommandKind::RegistryResolve) {
+        if (!options_.manifest_path.has_value()) {
+            std::cerr << "error: registry resolve requires --manifest <ahfl.toml>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.lockfile_path.has_value()) {
+            std::cerr << "error: registry resolve requires --lockfile <ahfl.lock>\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!path_has_filename(*options_.manifest_path, "ahfl.toml")) {
+            std::cerr << "error: --manifest expects ahfl.toml\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!path_has_filename(*options_.lockfile_path, "ahfl.lock")) {
+            std::cerr << "error: registry resolve --lockfile expects ahfl.lock\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (options_.workspace_manifest_path.has_value() || options_.package_name.has_value() ||
+            options_.target_name.has_value() || options_.package_archive_output_path.has_value() ||
+            options_.package_registry_id.has_value() || options_.package_yank_reason.has_value() ||
+            options_.package_publish_dry_run_requested) {
+            std::cerr << "error: registry resolve accepts --manifest, --lockfile, and optional "
+                         "--sysroot only\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        if (!options_.positional.empty()) {
+            std::cerr << "error: registry resolve does not accept positional input files\n";
+            print_usage(std::cerr);
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
     if (options_.package_archive_output_path.has_value()) {
         std::cerr << "error: --out is only supported with package archive or package publish\n";
         print_usage(std::cerr);
@@ -1928,6 +1968,12 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.package_registry_id.has_value()) {
         std::cerr << "error: --registry is only supported with package publish or package yank\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.lockfile_path.has_value()) {
+        std::cerr << "error: --lockfile is only supported with registry resolve\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2320,6 +2366,10 @@ ExitCode CliDriver::execute() {
 
     if (effective_command_ == CommandKind::PackageYank) {
         return yank_package();
+    }
+
+    if (effective_command_ == CommandKind::RegistryResolve) {
+        return resolve_registry_dependencies();
     }
 
     if (is_public_api_diff_command(effective_command_)) {
@@ -2843,7 +2893,7 @@ ExitCode CliDriver::publish_package() {
 
     evidence->set("format_version",
                   ahfl::json::JsonValue::make_string(dry_run ? "ahfl.publish_dry_run.v1"
-                                                              : "ahfl.publish.v1"));
+                                                             : "ahfl.publish.v1"));
     evidence->set("package", ahfl::json::JsonValue::make_string(manifest->package_name));
     evidence->set("version", ahfl::json::JsonValue::make_string(manifest->package_version));
     evidence->set("registry_id", ahfl::json::JsonValue::make_string(registry_entry.registry_id));
@@ -2931,6 +2981,42 @@ ExitCode CliDriver::yank_package() {
               << "package: " << result.entry->package << '\n'
               << "version: " << result.entry->version << '\n'
               << "yanked: true\n";
+    return ExitCode::Success;
+}
+
+ExitCode CliDriver::resolve_registry_dependencies() {
+    const auto sysroot_manifest = sysroot_manifest_from_options(options_, std::cerr);
+    if (!sysroot_manifest.manifest.has_value()) {
+        if (!sysroot_manifest.had_error) {
+            std::cerr << "error: failed to locate sysroot std/ahfl.toml; pass --sysroot <path>\n";
+        }
+        return ExitCode::UsageError;
+    }
+
+    const auto manifest_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.manifest_path}});
+    if (reject_mismatched_std_manifest(manifest_path, *sysroot_manifest.manifest, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    auto graph_result =
+        build_manifest_or_sysroot_package_graph(manifest_path, *sysroot_manifest.manifest);
+    if (graph_result.has_errors() || !graph_result.graph.has_value()) {
+        print_package_graph_diagnostics(graph_result.diagnostics, std::cerr);
+        return ExitCode::CompileError;
+    }
+
+    const auto lockfile_path =
+        normalize_manifest_path(std::filesystem::path{std::string{*options_.lockfile_path}});
+    const auto lockfile =
+        ahfl::package_graph::make_lockfile(*graph_result.graph, lockfile_path.parent_path());
+    const auto payload = ahfl::package_graph::serialize_lockfile(lockfile);
+    if (!write_text_file(lockfile_path, payload, std::cerr)) {
+        return ExitCode::CompileError;
+    }
+
+    std::cout << "registry-resolve: pass\n"
+              << "wrote " << lockfile_path.generic_string() << '\n';
     return ExitCode::Success;
 }
 
