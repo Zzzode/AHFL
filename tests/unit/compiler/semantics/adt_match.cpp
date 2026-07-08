@@ -852,6 +852,123 @@ enum MaybeBig { Some(Int(0, 10000)), None, }
     CHECK(diagnostic->message.find("Some(5000)") != std::string::npos);
 }
 
+TEST_CASE("bounded Int let initializer accepts in-range integer literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(0, 2) = 1;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int let initializer rejects out-of-range integer literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(0, 2) = 5;
+        return Response { value: 0 };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("bounded Int enum constructor accepts in-range integer literal payload") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+enum MaybeTiny {
+    Some(Int(0, 2)),
+    None,
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let value: MaybeTiny = MaybeTiny::Some(1);
+        let result = match value { Some(code) => code, None => 0 };
+        return Response { value: result };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int enum constructor rejects out-of-range integer literal payload") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+enum MaybeTiny {
+    Some(Int(0, 2)),
+    None,
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let value: MaybeTiny = MaybeTiny::Some(5);
+        return Response { value: 0 };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
 // ---------------------------------------------------------------------------
 // Arm body type unification: diverging arm body types report TYPE_MISMATCH.
 // ---------------------------------------------------------------------------

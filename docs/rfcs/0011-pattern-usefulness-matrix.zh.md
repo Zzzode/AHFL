@@ -243,17 +243,18 @@ Migration:
 29. Bounded Int domain matrix infrastructure 已落库：`PatternDomainKind::BoundedInt` 和 constructor-level `int_value` fact 让 range matching 不再从 debug string 反解析数值；小闭区间仍可 materialize singleton constructor witness，大闭区间会改用 normalized interval set，不枚举所有值也能证明 exhaustiveness、生成 inline Int missing witness、识别 overlap / unreachable interval row 和 redundant interval or-branch。
 30. Source-level bounded Int type 首个切片已落库：源码可写 `Int(min, max)` primitive refinement type，grammar/AST/formatter/type resolver/type relations/typed-HIR JSON/IR/LSP primitive navigation 均已接入；`BoundedInt <: Int`，更窄闭区间是更宽闭区间的子类型；enum payload match 可用 `Int(0, 2)` 形成有限 pattern domain，`Some(0..1), Some(2), None` 能证明 exhaustive，域外 literal pattern 不会错误覆盖 bounded domain witness。
 31. 大型嵌套 bounded Int product 已落库：当 finite constructor domain 的 payload 字段包含无法物化的 `Int(min, max)` 时，matrix 会使用 symbolic constructor space + interval product subtraction，而不是退回非 finite；`Some(Int(0, 10000))` 可通过分段 range 证明 exhaustive，也能渲染 `Some(5000)` 这类缺失 witness；多字段 constructor product 会保留有限 sibling dimension，例如 `Pair(Int(0, 10000), Bool)` 可证明两维覆盖或给出 `Pair(0, True)` witness。
+32. Bounded Int literal singleton inference 首个切片已落库：当表达式检查带有 expected `Int(min, max)` 类型时，整数 literal 会先被建模成 singleton `Int(value, value)`，再交给现有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected type 时 literal 仍为普通 `Int` 的行为。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；literal/refinement inference、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation、算术 range inference、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
 
 1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis and symbolic bounded constructor products.
-2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch and large bounded enum payload witnesses.
+2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal singleton assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
 5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets and pattern payload signatureHelp.
@@ -333,3 +334,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added bounded Int domain infrastructure to the matrix core. Int witnesses now carry structured `int_value` facts instead of deriving range semantics from display strings, and finite bounded Int tests cover missing witnesses, exhaustive range coverage and singleton unreachable diagnostics.
 - 2026-07-08: Landed source-level `Int(min, max)` as the first bounded integer type slice, including syntax/AST/type resolver/type relations/typed-HIR JSON/IR/LSP primitive navigation and enum payload match exhaustiveness tests.
 - 2026-07-08: Added symbolic bounded Int constructor product analysis. Finite constructor domains whose fields contain non-materialized `Int(min, max)` now use interval product subtraction, preserving precise missing witnesses such as `Some(5000)` without materializing every payload value.
+- 2026-07-08: Added bounded Int literal singleton inference under expected `Int(min, max)` types, covering let initializers and enum constructor payloads through existing subtype checks.

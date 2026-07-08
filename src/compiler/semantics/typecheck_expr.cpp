@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -51,6 +52,23 @@ template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
     }
 
     return scale;
+}
+
+[[nodiscard]] std::optional<std::int64_t>
+parse_integer_literal_value(const ast::IntegerLiteralExpr &expr) {
+    if (!expr.literal) {
+        return std::nullopt;
+    }
+
+    const std::string_view text = expr.literal->spelling;
+    std::int64_t value = 0;
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
 }
 
 [[nodiscard]] ExprEffect expr_effect_from_judgement(const EffectJudgement &judgement) noexcept {
@@ -1063,7 +1081,13 @@ class ExpressionChecker final {
         return values_.typed(values_.make_type(TypeKind::Bool));
     }
 
-    [[nodiscard]] TypedValue visit_integer_literal(const ast::ExprSyntax &) const {
+    [[nodiscard]] TypedValue visit_integer_literal(const ast::ExprSyntax &expr) const {
+        if (expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>()) {
+            if (const auto value =
+                    parse_integer_literal_value(expr.as<ast::IntegerLiteralExpr>())) {
+                return values_.typed(values_.bounded_int_type(*value, *value));
+            }
+        }
         return values_.typed(values_.make_type(TypeKind::Int));
     }
 

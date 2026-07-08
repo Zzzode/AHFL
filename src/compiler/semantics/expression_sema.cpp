@@ -45,6 +45,10 @@ TypePtr ExpressionValueFactory::string_type() const {
     return types_->string();
 }
 
+TypePtr ExpressionValueFactory::bounded_int_type(std::int64_t minimum, std::int64_t maximum) const {
+    return types_->bounded_int(minimum, maximum);
+}
+
 TypePtr ExpressionValueFactory::decimal_type(std::int64_t scale) const {
     return types_->decimal(scale);
 }

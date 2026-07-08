@@ -177,6 +177,7 @@ class ExpressionValueFactory final {
 
     [[nodiscard]] TypePtr make_type(TypeKind kind) const;
     [[nodiscard]] TypePtr string_type() const;
+    [[nodiscard]] TypePtr bounded_int_type(std::int64_t minimum, std::int64_t maximum) const;
     [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const;
     [[nodiscard]] TypePtr make_error_type() const;
     [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const;
