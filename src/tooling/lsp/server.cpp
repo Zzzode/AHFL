@@ -2453,6 +2453,14 @@ void push_open_primitive_pattern_completions(std::vector<CompletionItem> &items,
     }
 }
 
+void push_bounded_string_pattern_completions(std::vector<CompletionItem> &items,
+                                             const types::BoundedStringT &bounds) {
+    push_wildcard_pattern_completion(items, "wildcard pattern");
+    if (bounds.minimum == 0 && bounds.maximum == 0) {
+        push_literal_pattern_completion(items, "\"\"", "String literal pattern");
+    }
+}
+
 [[nodiscard]] std::optional<std::size_t>
 bounded_int_literal_completion_count(const types::BoundedIntT &bounds) {
     if (bounds.maximum < bounds.minimum) {
@@ -2751,7 +2759,8 @@ find_variant_payload_pattern_at(const TypedProgram &program,
         return true;
     }
     if (pattern->matched_type->holds<types::BoundedStringT>()) {
-        push_wildcard_pattern_completion(items, "wildcard pattern");
+        push_bounded_string_pattern_completions(
+            items, *pattern->matched_type->get_if<types::BoundedStringT>());
         return true;
     }
     if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);

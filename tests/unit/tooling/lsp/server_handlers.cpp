@@ -8040,6 +8040,11 @@ void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
                                "    NoName,\n"
                                "}\n"
                                "\n"
+                               "enum MaybeEmptyString {\n"
+                               "    SomeEmpty(String(0, 0)),\n"
+                               "    NoEmpty,\n"
+                               "}\n"
+                               "\n"
                                "fn use_int(maybe: MaybeInt) -> Int effect Pure decreases 0 {\n"
                                "    return match maybe { SomeInt(_) => 1, NoInt => 0 };\n"
                                "}\n"
@@ -8055,6 +8060,11 @@ void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
                                "fn use_bounded_string(maybe: MaybeBoundedString) -> Int effect Pure "
                                "decreases 0 {\n"
                                "    return match maybe { SomeName(_) => 1, NoName => 0 };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_empty_string(maybe: MaybeEmptyString) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match maybe { SomeEmpty(_) => 1, NoEmpty => 0 };\n"
                                "}\n";
 
     const auto int_position = position_of(source, "SomeInt(_)");
@@ -8121,6 +8131,22 @@ void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_bounded_string_excludes_outer_enum_variant");
     check(bounded_string_output.find("\"label\":\"Noise\"") == std::string::npos,
           "completion.pattern_bounded_string_excludes_struct_symbol");
+
+    const auto empty_string_position = position_of(source, "SomeEmpty(_)");
+    const std::string empty_string_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(empty_string_position.line) + R"(,"character":)" +
+        std::to_string(empty_string_position.character + 10) + R"(}})";
+    const auto empty_string_output =
+        run_handler_request(source, "textDocument/completion", empty_string_params);
+    check(empty_string_output.find("\"label\":\"_\"") != std::string::npos,
+          "completion.pattern_empty_string_contains_wildcard");
+    check(empty_string_output.find("String literal pattern") != std::string::npos,
+          "completion.pattern_empty_string_contains_literal");
+    check(empty_string_output.find("\"label\":\"NoEmpty\"") == std::string::npos,
+          "completion.pattern_empty_string_excludes_outer_enum_variant");
+    check(empty_string_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_empty_string_excludes_struct_symbol");
 }
 
 void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
