@@ -168,22 +168,27 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     for (VariantOrdinal index = 0; index < variant_count; ++index) {
         const auto variant = lowering.enum_domains[domain_index].enum_info.variants[index];
         std::vector<PatternDomainId> field_domains;
+        PatternConstructorDisplay display;
         if (lowering.lower_payloads) {
             if (variant.payload_kind == EnumVariantPayloadKind::Tuple) {
+                display.payload_kind = PatternConstructorPayloadKind::Tuple;
                 field_domains.reserve(variant.payload.size());
                 for (const auto payload_type : variant.payload) {
                     field_domains.push_back(ensure_domain_for_type(lowering, payload_type, stack));
                 }
             } else if (variant.payload_kind == EnumVariantPayloadKind::Struct) {
+                display.payload_kind = PatternConstructorPayloadKind::Struct;
                 field_domains.reserve(variant.fields.size());
+                display.field_names.reserve(variant.fields.size());
                 for (const auto &field : variant.fields) {
                     field_domains.push_back(ensure_domain_for_type(lowering, field.type, stack));
+                    display.field_names.push_back(field.name);
                 }
             }
         }
 
-        const auto constructor =
-            lowering.context.add_constructor(domain, variant.name, std::move(field_domains));
+        const auto constructor = lowering.context.add_constructor(
+            domain, variant.name, std::move(field_domains), std::move(display));
         lowering.enum_domains[domain_index].variant_constructors.push_back(constructor);
         if (is_root) {
             remember_constructor_variant(lowering, constructor, index);

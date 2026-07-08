@@ -247,7 +247,8 @@ PatternDomainId PatternUsefulnessContext::add_domain(PatternDomainKind kind) {
 PatternConstructorId
 PatternUsefulnessContext::add_constructor(PatternDomainId result_domain,
                                           std::string debug_name,
-                                          std::vector<PatternDomainId> field_domains) {
+                                          std::vector<PatternDomainId> field_domains,
+                                          PatternConstructorDisplay display) {
     if (!has_domain(result_domain)) {
         throw std::out_of_range("pattern constructor result domain id is invalid");
     }
@@ -256,12 +257,24 @@ PatternUsefulnessContext::add_constructor(PatternDomainId result_domain,
             throw std::out_of_range("pattern constructor field domain id is invalid");
         }
     }
+    if (display.payload_kind == PatternConstructorPayloadKind::Unit && !field_domains.empty()) {
+        display.payload_kind = PatternConstructorPayloadKind::Tuple;
+    }
+    if (display.payload_kind == PatternConstructorPayloadKind::Struct &&
+        display.field_names.size() != field_domains.size()) {
+        throw std::invalid_argument("struct constructor display field arity does not match shape");
+    }
+    if (display.payload_kind != PatternConstructorPayloadKind::Struct &&
+        !display.field_names.empty()) {
+        throw std::invalid_argument("field names require struct constructor display");
+    }
 
     const PatternConstructorId id{constructors_.size()};
     constructors_.push_back(PatternConstructor{
         .result_domain = result_domain,
         .debug_name = std::move(debug_name),
         .field_domains = std::move(field_domains),
+        .display = std::move(display),
     });
     domains_[result_domain.value].constructors.push_back(id);
     return id;
@@ -489,6 +502,20 @@ std::string render_pattern_witness(const PatternUsefulnessContext &context,
                                ? "#" + std::to_string(witness.constructor.value)
                                : constructor.debug_name;
     if (witness.fields.empty()) {
+        return rendered;
+    }
+
+    if (constructor.display.payload_kind == PatternConstructorPayloadKind::Struct) {
+        rendered += " { ";
+        for (std::size_t index = 0; index < witness.fields.size(); ++index) {
+            if (index > 0) {
+                rendered += ", ";
+            }
+            rendered += constructor.display.field_names[index];
+            rendered += ": ";
+            rendered += render_pattern_witness(context, witness.fields[index]);
+        }
+        rendered += " }";
         return rendered;
     }
 

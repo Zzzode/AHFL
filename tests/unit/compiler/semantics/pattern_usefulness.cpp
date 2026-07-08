@@ -133,6 +133,36 @@ TEST_CASE("nested constructor matrix produces payload witnesses") {
           "Some(False)");
 }
 
+TEST_CASE("struct constructor witness renders named fields") {
+    ahfl::PatternUsefulnessContext context;
+    const auto bool_domain = make_bool_domain(context);
+    const auto packet = context.add_domain();
+    const auto empty = context.add_constructor(packet, "Empty", {});
+    const auto data =
+        context.add_constructor(packet,
+                                "Data",
+                                {bool_domain.domain, bool_domain.domain},
+                                ahfl::PatternConstructorDisplay{
+                                    .payload_kind = ahfl::PatternConstructorPayloadKind::Struct,
+                                    .field_names = {"flag", "other"},
+                                });
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(empty, {})},
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                data,
+                {context.make_constructor_pattern(bool_domain.true_ctor, {}),
+                 context.make_constructor_pattern(bool_domain.false_ctor, {})})},
+    };
+
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, packet, rows);
+
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) ==
+          "Data { flag: False, other: False }");
+}
+
 TEST_CASE("nested or-pattern redundancy is checked in row context") {
     ahfl::PatternUsefulnessContext context;
     const auto bool_domain = make_bool_domain(context);

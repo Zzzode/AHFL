@@ -34,10 +34,22 @@ enum class PatternDomainKind {
     Open,
 };
 
+enum class PatternConstructorPayloadKind {
+    Unit,
+    Tuple,
+    Struct,
+};
+
+struct PatternConstructorDisplay {
+    PatternConstructorPayloadKind payload_kind{PatternConstructorPayloadKind::Unit};
+    std::vector<std::string> field_names;
+};
+
 struct PatternConstructor {
     PatternDomainId result_domain;
     std::string debug_name;
     std::vector<PatternDomainId> field_domains;
+    PatternConstructorDisplay display;
 };
 
 struct PatternDomain {
@@ -70,7 +82,8 @@ class PatternUsefulnessContext {
 
     [[nodiscard]] PatternConstructorId add_constructor(PatternDomainId result_domain,
                                                        std::string debug_name,
-                                                       std::vector<PatternDomainId> field_domains);
+                                                       std::vector<PatternDomainId> field_domains,
+                                                       PatternConstructorDisplay display = {});
 
     [[nodiscard]] PatternId make_never(SourceRange range = {});
     [[nodiscard]] PatternId make_wildcard(SourceRange range = {});

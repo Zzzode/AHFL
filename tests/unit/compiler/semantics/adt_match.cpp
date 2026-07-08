@@ -748,6 +748,30 @@ enum Packet {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("struct variant payload match reports named missing witness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Packet {
+    Empty,
+    Data { flag: Bool, other: Bool },
+}
+)AHFL",
+        "Packet",
+        "Packet::Empty",
+        R"AHFL(match ctx.value {
+            Empty => 0,
+            Data { flag: true, other: true } => 1,
+            Data { flag: true, other: false } => 2,
+            Data { flag: false, other: true } => 3,
+        })AHFL");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Data { flag: false, other: false }") != std::string::npos);
+}
+
 TEST_CASE("struct variant constructor may omit defaulted field") {
     const auto source = wrap_in_flow(
         R"AHFL(
