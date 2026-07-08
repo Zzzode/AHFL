@@ -900,8 +900,9 @@ predicate 调用允许出现在：
    - `String + String -> String`
    - `Int(min, max)` 参与 bounded Int range inference：`+`、`-`、`*`
      对两个 bounded operand 推导闭区间；`/` 仅在 divisor interval 静态排除 0
-     时推导闭区间；`%` 对 singleton operand 推导精确 singleton，对非 singleton
-     operand 推导保守 remainder 闭区间。溢出、除 0 可能性或无法证明的边界回退为
+     时推导闭区间；`%` 在 divisor 为 singleton bounded interval 时推导精确
+     remainder 闭区间，对非 singleton divisor 推导保守 remainder 闭区间。
+     溢出、除 0 可能性或无法证明的边界回退为
      普通 `Int`
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
    - `Decimal(p) / Decimal(q)` 未定义；未来若支持，必须先定义 rounding / target scale policy

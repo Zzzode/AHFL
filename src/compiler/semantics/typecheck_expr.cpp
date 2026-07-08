@@ -119,14 +119,6 @@ parse_integer_literal_value(const ast::IntegerLiteralExpr &expr) {
     return lhs / rhs;
 }
 
-[[nodiscard]] std::optional<std::int64_t> checked_mod_int64(std::int64_t lhs, std::int64_t rhs) {
-    constexpr auto min = std::numeric_limits<std::int64_t>::min();
-    if (rhs == 0 || (lhs == min && rhs == -1)) {
-        return std::nullopt;
-    }
-    return lhs % rhs;
-}
-
 [[nodiscard]] bool interval_contains_zero(const types::BoundedIntT &range) noexcept {
     return range.minimum <= 0 && range.maximum >= 0;
 }
@@ -143,6 +135,88 @@ struct BoundedIntRange {
     std::int64_t minimum{0};
     std::int64_t maximum{0};
 };
+
+[[nodiscard]] std::optional<BoundedIntRange>
+nonnegative_modulo_range(std::int64_t minimum,
+                         std::int64_t maximum,
+                         std::int64_t divisor_abs) {
+    if (minimum < 0 || maximum < minimum || divisor_abs <= 0) {
+        return std::nullopt;
+    }
+    if (divisor_abs == 1) {
+        return BoundedIntRange{.minimum = 0, .maximum = 0};
+    }
+
+    const auto width = static_cast<std::uint64_t>(maximum) -
+                       static_cast<std::uint64_t>(minimum) + 1U;
+    const auto divisor_width = static_cast<std::uint64_t>(divisor_abs);
+    if (width >= divisor_width) {
+        return BoundedIntRange{.minimum = 0, .maximum = divisor_abs - 1};
+    }
+
+    const auto lower_remainder = minimum % divisor_abs;
+    const auto upper_remainder = maximum % divisor_abs;
+    if (lower_remainder <= upper_remainder) {
+        return BoundedIntRange{.minimum = lower_remainder, .maximum = upper_remainder};
+    }
+    return BoundedIntRange{.minimum = 0, .maximum = divisor_abs - 1};
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
+                                          std::int64_t divisor) {
+    const auto divisor_abs = abs_int64(divisor);
+    if (!divisor_abs.has_value() || *divisor_abs == 0) {
+        return std::nullopt;
+    }
+
+    if (lhs.minimum >= 0) {
+        return nonnegative_modulo_range(lhs.minimum, lhs.maximum, *divisor_abs);
+    }
+
+    const auto negate_range = [](const BoundedIntRange &range) {
+        return BoundedIntRange{.minimum = -range.maximum, .maximum = -range.minimum};
+    };
+    const auto merge_range = [](std::optional<BoundedIntRange> current,
+                                const BoundedIntRange &next) -> std::optional<BoundedIntRange> {
+        if (!current.has_value()) {
+            return next;
+        }
+        current->minimum = std::min(current->minimum, next.minimum);
+        current->maximum = std::max(current->maximum, next.maximum);
+        return current;
+    };
+
+    if (lhs.maximum <= 0) {
+        const auto minimum_abs = abs_int64(lhs.maximum);
+        const auto maximum_abs = abs_int64(lhs.minimum);
+        if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
+            return std::nullopt;
+        }
+        const auto positive =
+            nonnegative_modulo_range(*minimum_abs, *maximum_abs, *divisor_abs);
+        if (!positive.has_value()) {
+            return std::nullopt;
+        }
+        return negate_range(*positive);
+    }
+
+    const auto negative_maximum_abs = abs_int64(lhs.minimum);
+    if (!negative_maximum_abs.has_value()) {
+        return std::nullopt;
+    }
+    const auto negative_positive =
+        nonnegative_modulo_range(1, *negative_maximum_abs, *divisor_abs);
+    const auto positive = nonnegative_modulo_range(0, lhs.maximum, *divisor_abs);
+    if (!negative_positive.has_value() || !positive.has_value()) {
+        return std::nullopt;
+    }
+
+    std::optional<BoundedIntRange> result;
+    result = merge_range(result, negate_range(*negative_positive));
+    result = merge_range(result, *positive);
+    return result;
+}
 
 [[nodiscard]] std::optional<BoundedIntRange> bounded_int_arithmetic_range(
     ast::ExprBinaryOp op, const types::BoundedIntT &lhs, const types::BoundedIntT &rhs) {
@@ -217,12 +291,11 @@ struct BoundedIntRange {
         if (interval_contains_zero(rhs)) {
             return std::nullopt;
         }
-        if (lhs.minimum == lhs.maximum && rhs.minimum == rhs.maximum) {
-            const auto value = checked_mod_int64(lhs.minimum, rhs.minimum);
-            if (!value.has_value()) {
-                return std::nullopt;
+        if (rhs.minimum == rhs.maximum) {
+            if (const auto range = bounded_int_modulo_constant_divisor_range(lhs, rhs.minimum);
+                range.has_value()) {
+                return range;
             }
-            return BoundedIntRange{.minimum = *value, .maximum = *value};
         }
 
         const auto lhs_min_abs = abs_int64(lhs.minimum);
