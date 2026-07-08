@@ -214,11 +214,12 @@ Migration:
 3. `ahfl_semantics_pattern_usefulness_tests` 覆盖 wildcard、finite enum-like constructors、bool、or-pattern、nested constructor、guarded row 和 open domain fallback。
 4. RFC 0003 的 `match_exhaustiveness` 已改为 matrix-backed analyzer：现有 `MATCH_MISSING_PATTERNS` / `MATCH_UNREACHABLE_ARM` / `MATCH_OVERLAP` 行为继续由 ADT match 回归测试覆盖。
 5. `match_exhaustiveness` 已接入 typed enum-payload lowering：typechecker 会把 scrutinee type 和 enum resolver 传给 matrix analyzer，nested enum payload pattern 可产生 `Some(Off)` 这类 witness，并能诊断重复 nested payload arm。
+6. Bool payload literal lowering 已落库：`Some(true)` / `Some(false)` 会进入有限 Bool constructor domain，missing witness 可精确到 `Some(false)`；`none` literal pattern 会覆盖 unit `None` variant；不兼容 literal pattern 现在由 typechecker 报 `TYPE_MISMATCH`，不再被静默当成 empty coverage。
 
 尚未完成：
 
 1. Parser/typechecker 还没有独立的一等 typed pattern HIR；当前 `match` path 是 source pattern 到 matrix pattern 的局部 typed lowering。
-2. Literal/range pattern、完整 struct payload witness rendering、if-let/optional narrowing flow integration、stable pattern diagnostic codes 和 LSP quick fixes 仍未实现。
+2. 非 Bool 的 open literal usefulness、range pattern、完整 struct payload witness rendering、if-let/optional narrowing flow integration、stable pattern diagnostic codes 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
 

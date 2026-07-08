@@ -383,7 +383,7 @@ enum Light { Red, Green, Blue, }
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
 }
 
-TEST_CASE("empty coverage pattern does not overlap wildcard") {
+TEST_CASE("enum scrutinee rejects incompatible literal pattern") {
     const auto source = wrap_in_flow(
         R"AHFL(
 enum Light { Red, Green, Blue, }
@@ -392,7 +392,8 @@ enum Light { Red, Green, Blue, }
         "Light::Red",
         "match ctx.value { 1 => 0, _ => 1 }");
     const auto result = typecheck_source(source);
-    CHECK_FALSE(result.has_errors());
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 0);
 }
@@ -520,6 +521,74 @@ enum MaybeFlag { Some(Flag), None, }
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "MATCH_UNKNOWN_VARIANT"));
+}
+
+TEST_CASE("bool literal enum payload match reports precise missing witness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { None => 0, Some(true) => 1 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(false)") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "missing variant 'Some' declared here"));
+}
+
+TEST_CASE("bool literal enum payload exhaustive match compiles") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { None => 0, Some(true) => 1, Some(false) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("duplicate bool literal enum payload arm reports usefulness warnings") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { Some(true) => 1, Some(true) => 2, Some(false) => 3, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
+}
+
+TEST_CASE("invalid literal enum payload pattern reports type mismatch") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { Some(1) => 1, Some(false) => 2, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("none literal pattern covers unit None variant") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { none => 0, Some(true) => 1, Some(false) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
 }
 
 // ---------------------------------------------------------------------------

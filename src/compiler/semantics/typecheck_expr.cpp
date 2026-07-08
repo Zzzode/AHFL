@@ -90,6 +90,36 @@ semantic_payload_kind(ast::EnumVariantPayloadKind kind) noexcept {
     return EnumVariantPayloadKind::Unit;
 }
 
+enum class LiteralPatternKind {
+    Bool,
+    Int,
+    Float,
+    String,
+    None,
+    Unknown,
+};
+
+[[nodiscard]] LiteralPatternKind literal_pattern_kind(std::string_view spelling) {
+    if (spelling == "true" || spelling == "false") {
+        return LiteralPatternKind::Bool;
+    }
+    if (spelling == "none") {
+        return LiteralPatternKind::None;
+    }
+    if (spelling.starts_with('"')) {
+        return LiteralPatternKind::String;
+    }
+    if (spelling.find('.') != std::string_view::npos) {
+        return LiteralPatternKind::Float;
+    }
+    if (!spelling.empty() && std::all_of(spelling.begin(), spelling.end(), [](unsigned char ch) {
+            return std::isdigit(ch) != 0;
+        })) {
+        return LiteralPatternKind::Int;
+    }
+    return LiteralPatternKind::Unknown;
+}
+
 [[nodiscard]] EnumTypeInfo instantiate_enum_info_for_type(const EnumTypeInfo &enum_info,
                                                           const types::EnumT &enum_payload,
                                                           TypeContext &types) {
@@ -1413,6 +1443,67 @@ class ExpressionChecker final {
         return instantiate_enum_info_for_type(enum_info->get(), *enum_payload, services_.types());
     }
 
+    [[nodiscard]] TypePtr literal_pattern_type(LiteralPatternKind kind) const {
+        switch (kind) {
+        case LiteralPatternKind::Bool:
+            return values_.make_type(TypeKind::Bool);
+        case LiteralPatternKind::Int:
+            return values_.make_type(TypeKind::Int);
+        case LiteralPatternKind::Float:
+            return values_.make_type(TypeKind::Float);
+        case LiteralPatternKind::String:
+            return values_.string_type();
+        case LiteralPatternKind::None:
+        case LiteralPatternKind::Unknown:
+            return nullptr;
+        }
+        return nullptr;
+    }
+
+    void check_literal_pattern(const ast::LiteralPattern &literal,
+                               TypePtr scrutinee_type,
+                               std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                               SourceRange range) const {
+        if (scrutinee_type == nullptr || is_error_type(*scrutinee_type)) {
+            return;
+        }
+
+        const auto kind = literal_pattern_kind(literal.spelling);
+        if (kind == LiteralPatternKind::None) {
+            if (enum_info.has_value()) {
+                const auto variant = enum_info->get().find_variant("None");
+                if (variant.has_value()) {
+                    if (variant->get().payload_kind != EnumVariantPayloadKind::Unit) {
+                        services_.invalid_enum_variant_pattern_shape("None",
+                                                                     enum_info->get(),
+                                                                     variant->get(),
+                                                                     EnumVariantPayloadKind::Unit,
+                                                                     range);
+                    }
+                    return;
+                }
+            }
+            services_.typecheck_error_here(
+                error_codes::typecheck::TypeMismatch,
+                messages::typecheck::TypeMismatch.format_with("match literal pattern",
+                                                              "enum with unit None variant",
+                                                              scrutinee_type->describe()),
+                range,
+                std::vector<Diagnostic::Related>{Diagnostic::Related{
+                    .message = actual_type_note(*scrutinee_type),
+                    .range = range,
+                }});
+            return;
+        }
+
+        TypePtr literal_type = literal_pattern_type(kind);
+        if (literal_type == nullptr) {
+            return;
+        }
+        (void)services_.check_assignable(
+            *literal_type, *scrutinee_type, range, "match literal pattern");
+    }
+
     // ---------------------------------------------------------------------------
     // P1b ADT: pattern lowering for `match` arms.
     //
@@ -1448,14 +1539,9 @@ class ExpressionChecker final {
 
         return std::visit(
             overloaded{
-                [&](const ast::LiteralPattern &) {
-                    // Literal patterns only narrow (no binding); they are not
-                    // catch-alls. Exhaustiveness against literals is delegated
-                    // to the RFC0003 analyzer and is currently not modeled.
-                    (void)scrutinee_type;
-                    (void)enum_info;
+                [&](const ast::LiteralPattern &literal) {
+                    check_literal_pattern(literal, scrutinee_type, effective_enum_info, range);
                     (void)bindings;
-                    (void)range;
                     return false;
                 },
                 [&](const ast::WildcardPattern &) {

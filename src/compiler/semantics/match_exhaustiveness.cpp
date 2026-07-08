@@ -24,6 +24,12 @@ struct EnumDomainLowering {
     bool is_root{false};
 };
 
+struct BoolDomainLowering {
+    PatternDomainId domain;
+    PatternConstructorId false_constructor;
+    PatternConstructorId true_constructor;
+};
+
 struct MatchMatrixLowering {
     PatternUsefulnessContext context;
     PatternDomainId root_domain;
@@ -31,6 +37,7 @@ struct MatchMatrixLowering {
     std::unordered_map<TypePtr, std::size_t> enum_domain_by_type;
     std::vector<std::optional<std::size_t>> enum_domain_for_pattern_domain;
     std::vector<std::optional<VariantOrdinal>> variant_for_constructor;
+    std::optional<BoolDomainLowering> bool_domain;
     const MatchEnumInfoResolver *enum_resolver{nullptr};
     bool lower_payloads{false};
 };
@@ -38,6 +45,7 @@ struct MatchMatrixLowering {
 struct PatternExpected {
     PatternDomainId domain;
     const EnumDomainLowering *enum_domain{nullptr};
+    const BoolDomainLowering *bool_domain{nullptr};
 };
 
 [[nodiscard]] std::string_view last_segment(const ast::QualifiedName &name) noexcept {
@@ -93,15 +101,36 @@ void remember_enum_domain(MatchMatrixLowering &lowering,
 
 [[nodiscard]] PatternExpected expected_for_domain(const MatchMatrixLowering &lowering,
                                                   PatternDomainId domain) {
+    const auto *bool_domain =
+        lowering.bool_domain.has_value() && lowering.bool_domain->domain == domain
+            ? &*lowering.bool_domain
+            : nullptr;
     return PatternExpected{
         .domain = domain,
         .enum_domain = enum_domain_for(lowering, domain),
+        .bool_domain = bool_domain,
     };
 }
 
 [[nodiscard]] PatternDomainId make_opaque_domain(MatchMatrixLowering &lowering) {
     const auto domain = lowering.context.add_domain();
     (void)lowering.context.add_constructor(domain, "_", {});
+    return domain;
+}
+
+[[nodiscard]] PatternDomainId ensure_bool_domain(MatchMatrixLowering &lowering) {
+    if (lowering.bool_domain.has_value()) {
+        return lowering.bool_domain->domain;
+    }
+
+    const auto domain = lowering.context.add_domain();
+    const auto false_constructor = lowering.context.add_constructor(domain, "false", {});
+    const auto true_constructor = lowering.context.add_constructor(domain, "true", {});
+    lowering.bool_domain = BoolDomainLowering{
+        .domain = domain,
+        .false_constructor = false_constructor,
+        .true_constructor = true_constructor,
+    };
     return domain;
 }
 
@@ -169,8 +198,14 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
 
 [[nodiscard]] PatternDomainId
 ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<TypePtr> &stack) {
-    if (type == nullptr || !lowering.lower_payloads || lowering.enum_resolver == nullptr ||
-        contains_type(stack, type) || type->get_if<types::EnumT>() == nullptr) {
+    if (type == nullptr || !lowering.lower_payloads) {
+        return make_opaque_domain(lowering);
+    }
+    if (type->get_if<types::BoolT>() != nullptr) {
+        return ensure_bool_domain(lowering);
+    }
+    if (lowering.enum_resolver == nullptr || contains_type(stack, type) ||
+        type->get_if<types::EnumT>() == nullptr) {
         return make_opaque_domain(lowering);
     }
 
@@ -229,6 +264,31 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
 [[nodiscard]] PatternId lower_pattern(const ast::PatternSyntax &pattern,
                                       PatternExpected expected,
                                       MatchMatrixLowering &lowering);
+
+[[nodiscard]] PatternId lower_literal_pattern(const ast::LiteralPattern &literal,
+                                              SourceRange range,
+                                              PatternExpected expected,
+                                              MatchMatrixLowering &lowering) {
+    if (expected.bool_domain != nullptr) {
+        if (literal.spelling == "false") {
+            return lowering.context.make_constructor_pattern(
+                expected.bool_domain->false_constructor, {}, range);
+        }
+        if (literal.spelling == "true") {
+            return lowering.context.make_constructor_pattern(
+                expected.bool_domain->true_constructor, {}, range);
+        }
+    }
+
+    if (expected.enum_domain != nullptr && literal.spelling == "none") {
+        const auto ordinal = variant_ordinal(expected.enum_domain->enum_info, "None");
+        if (ordinal.has_value()) {
+            return constructor_pattern(lowering, *expected.enum_domain, *ordinal, range);
+        }
+    }
+
+    return lowering.context.make_never(range);
+}
 
 [[nodiscard]] PatternId lower_tuple_pattern(const ast::TuplePattern &tuple,
                                             SourceRange range,
@@ -374,6 +434,8 @@ wildcard_children_for_constructor(MatchMatrixLowering &lowering, PatternConstruc
                 return lowering.context.make_or_pattern(std::move(branches), pattern.range);
             } else if constexpr (std::is_same_v<T, ast::TuplePattern>) {
                 return lower_tuple_pattern(node, pattern.range, expected, lowering);
+            } else if constexpr (std::is_same_v<T, ast::LiteralPattern>) {
+                return lower_literal_pattern(node, pattern.range, expected, lowering);
             } else {
                 return lowering.context.make_never(pattern.range);
             }
