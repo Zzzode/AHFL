@@ -404,8 +404,7 @@ Statement           ::= LetStmt
 LetStmt             ::= "let" Ident [ ":" Type ] "=" Expr ";" ;
 AssignStmt          ::= LValue "=" Expr ";" ;
 IfStmt              ::= "if" Expr Block [ "else" Block ] ;
-IfLetStmt           ::= "if" "let" IfLetPattern "=" Expr Block [ "else" Block ] ;
-IfLetPattern        ::= Ident [ "(" Ident { "," Ident } [ "," ] ")" ] ;
+IfLetStmt           ::= "if" "let" Pattern "=" Expr Block [ "else" Block ] ;
 GotoStmt            ::= "goto" Ident ";" ;
 ReturnStmt          ::= "return" Expr ";" ;
 AssertStmt          ::= "assert" Expr ";" ;
@@ -423,8 +422,8 @@ LValue              ::= PathExpr ;
    - 纯函数/标准库调用
 3. `goto` 只能跳转到当前 agent 的合法后继状态
 4. `return` 只能出现在终态 handler 中
-5. `if let` scrutinee 必须是纯 enum 表达式；pattern 中的 variant 必须存在，payload shape 必须与声明一致。
-6. `if let Variant(x, y) = e` 仅匹配 tuple variant，并在 then block 内引入 payload 绑定；binding 类型按 scrutinee enum 的泛型实参替换。
+5. `if let` scrutinee 必须是纯 enum 表达式；pattern 使用与 `match` arm 相同的 `Pattern` 语法，variant 必须存在，payload shape 必须与声明一致。
+6. `if let Variant(x, y) = e` 匹配 tuple variant；`if let Variant { field, .. } = e` 匹配 struct variant payload；then block 内引入 pattern binding，binding 类型按 scrutinee enum 的泛型实参替换。
 7. `if let` then block 获得匹配成功的局部 narrowing fact；else block 获得互补 fact。赋值到被窄化 path 或其后代 path 会失效这些 fact。
 
 ### 3.10 表达式

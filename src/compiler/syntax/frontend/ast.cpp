@@ -518,9 +518,7 @@ class AstInvariantValidator final {
                         statement.if_let_stmt->range,
                         "IfLetStmtSyntax is missing then_block");
                 if (statement.if_let_stmt->pattern) {
-                    require(!statement.if_let_stmt->pattern->variant_name.empty(),
-                            statement.if_let_stmt->pattern->range,
-                            "IfLetPatternSyntax is missing variant_name");
+                    validate_pattern(*statement.if_let_stmt->pattern);
                 }
                 if (statement.if_let_stmt->scrutinee) {
                     validate_expr(*statement.if_let_stmt->scrutinee);

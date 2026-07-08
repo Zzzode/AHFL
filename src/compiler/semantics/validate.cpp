@@ -564,7 +564,7 @@ class ValidationPass final {
             };
         }
         case ast::StatementSyntaxKind::IfLet: {
-            // RFC 0002 if-let has the same reachability shape as `if`; payload
+            // RFC0011 if-let has the same reachability shape as `if`; pattern
             // bindings are branch-local typecheck state.
             const auto *ifl = statement.if_let_stmt.get();
             const auto then_summary =

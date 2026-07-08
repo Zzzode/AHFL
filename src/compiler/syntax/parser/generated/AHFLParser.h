@@ -70,25 +70,24 @@ public:
     RuleImplDecl = 87, RuleTraitRef = 88, RuleImplItem = 89, RuleImplFnItem = 90,
     RuleAssocTypeDef = 91, RuleAssocConstDef = 92, RuleBlock = 93, RuleStatement = 94,
     RuleLetStmt = 95, RuleAssignStmt = 96, RuleIfStmt = 97, RuleIfLetStmt = 98,
-    RuleIfLetPattern = 99, RuleIfLetPatternVar = 100, RuleGotoStmt = 101,
-    RuleReturnStmt = 102, RuleAssertStmt = 103, RuleUnwrapStmt = 104, RuleRequiresStmt = 105,
-    RuleUnreachableStmt = 106, RuleExprStmt = 107, RuleLValue = 108, RuleExpr = 109,
-    RuleImpliesExpr = 110, RuleOrExpr = 111, RuleAndExpr = 112, RuleEqualityExpr = 113,
-    RuleCompareExpr = 114, RuleAddExpr = 115, RuleMulExpr = 116, RuleUnaryExpr = 117,
-    RulePostfixExpr = 118, RulePrimaryExpr = 119, RuleUnwrapExpr = 120,
-    RuleMatchExpr = 121, RuleMatchArm = 122, RulePattern = 123, RuleOrPattern = 124,
-    RuleConcatPattern = 125, RuleLiteralPattern = 126, RuleVariantPattern = 127,
-    RuleQualifiedVariantName = 128, RulePatternFieldList = 129, RulePatternField = 130,
-    RuleWildcardPattern = 131, RuleBindingPattern = 132, RuleTuplePattern = 133,
-    RulePatternList = 134, RulePathExpr = 135, RulePathRoot = 136, RuleQualifiedValueExpr = 137,
-    RuleCallExpr = 138, RuleExprList = 139, RuleLiteral = 140, RuleIntegerLiteral = 141,
-    RuleFloatLiteral = 142, RuleDecimalLiteral = 143, RuleStringLiteral = 144,
-    RuleDurationLiteral = 145, RuleStructLiteral = 146, RuleListLiteral = 147,
-    RuleSetLiteral = 148, RuleMapLiteral = 149, RuleMapEntryList = 150,
-    RuleMapEntry = 151, RuleStructInitList = 152, RuleStructInit = 153,
-    RuleConstExpr = 154, RuleTemporalExpr = 155, RuleWorkflowTemporalExpr = 156,
-    RuleTemporalImpliesExpr = 157, RuleTemporalOrExpr = 158, RuleTemporalAndExpr = 159,
-    RuleTemporalUntilExpr = 160, RuleTemporalUnaryExpr = 161, RuleTemporalAtom = 162
+    RuleGotoStmt = 99, RuleReturnStmt = 100, RuleAssertStmt = 101, RuleUnwrapStmt = 102,
+    RuleRequiresStmt = 103, RuleUnreachableStmt = 104, RuleExprStmt = 105,
+    RuleLValue = 106, RuleExpr = 107, RuleImpliesExpr = 108, RuleOrExpr = 109,
+    RuleAndExpr = 110, RuleEqualityExpr = 111, RuleCompareExpr = 112, RuleAddExpr = 113,
+    RuleMulExpr = 114, RuleUnaryExpr = 115, RulePostfixExpr = 116, RulePrimaryExpr = 117,
+    RuleUnwrapExpr = 118, RuleMatchExpr = 119, RuleMatchArm = 120, RulePattern = 121,
+    RuleOrPattern = 122, RuleConcatPattern = 123, RuleLiteralPattern = 124,
+    RuleVariantPattern = 125, RuleQualifiedVariantName = 126, RulePatternFieldList = 127,
+    RulePatternField = 128, RuleWildcardPattern = 129, RuleBindingPattern = 130,
+    RuleTuplePattern = 131, RulePatternList = 132, RulePathExpr = 133, RulePathRoot = 134,
+    RuleQualifiedValueExpr = 135, RuleCallExpr = 136, RuleExprList = 137,
+    RuleLiteral = 138, RuleIntegerLiteral = 139, RuleFloatLiteral = 140,
+    RuleDecimalLiteral = 141, RuleStringLiteral = 142, RuleDurationLiteral = 143,
+    RuleStructLiteral = 144, RuleListLiteral = 145, RuleSetLiteral = 146,
+    RuleMapLiteral = 147, RuleMapEntryList = 148, RuleMapEntry = 149, RuleStructInitList = 150,
+    RuleStructInit = 151, RuleConstExpr = 152, RuleTemporalExpr = 153, RuleWorkflowTemporalExpr = 154,
+    RuleTemporalImpliesExpr = 155, RuleTemporalOrExpr = 156, RuleTemporalAndExpr = 157,
+    RuleTemporalUntilExpr = 158, RuleTemporalUnaryExpr = 159, RuleTemporalAtom = 160
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -207,8 +206,6 @@ public:
   class AssignStmtContext;
   class IfStmtContext;
   class IfLetStmtContext;
-  class IfLetPatternContext;
-  class IfLetPatternVarContext;
   class GotoStmtContext;
   class ReturnStmtContext;
   class AssertStmtContext;
@@ -1752,13 +1749,13 @@ public:
 
   class  IfLetStmtContext : public antlr4::ParserRuleContext {
   public:
-    AHFLParser::IfLetPatternContext *iflet_pattern = nullptr;
+    AHFLParser::PatternContext *iflet_pattern = nullptr;
     AHFLParser::BlockContext *thenBlock = nullptr;
     AHFLParser::BlockContext *elseBlock = nullptr;
     IfLetStmtContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
     ExprContext *expr();
-    IfLetPatternContext *ifLetPattern();
+    PatternContext *pattern();
     std::vector<BlockContext *> block();
     BlockContext* block(size_t i);
 
@@ -1768,35 +1765,6 @@ public:
   };
 
   IfLetStmtContext* ifLetStmt();
-
-  class  IfLetPatternContext : public antlr4::ParserRuleContext {
-  public:
-    antlr4::Token *variant = nullptr;
-    IfLetPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-    std::vector<IfLetPatternVarContext *> ifLetPatternVar();
-    IfLetPatternVarContext* ifLetPatternVar(size_t i);
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  IfLetPatternContext* ifLetPattern();
-
-  class  IfLetPatternVarContext : public antlr4::ParserRuleContext {
-  public:
-    IfLetPatternVarContext(antlr4::ParserRuleContext *parent, size_t invokingState);
-    virtual size_t getRuleIndex() const override;
-    antlr4::tree::TerminalNode *IDENT();
-
-
-    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
-
-  };
-
-  IfLetPatternVarContext* ifLetPatternVar();
 
   class  GotoStmtContext : public antlr4::ParserRuleContext {
   public:

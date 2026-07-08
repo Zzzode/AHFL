@@ -880,8 +880,8 @@ target_link_libraries(ahfl_enum_struct_variant_tests
 )
 ahfl_apply_project_warnings(ahfl_enum_struct_variant_tests)
 
-# RFC 0002 if-let syntax coverage: parser / AST / ast_printer / formatter
-# roundtrip.
+# RFC 0011 if-let pattern syntax coverage: parser / AST / ast_printer /
+# formatter roundtrip.
 add_executable(ahfl_if_let_syntax_tests
     unit/compiler/syntax/frontend/if_let_syntax.cpp
 )

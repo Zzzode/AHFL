@@ -259,11 +259,9 @@ void test_deep_block_600_overflow() {
 // Group 4: DEEP PATTERN NESTING — shallow positive + source-level guard check
 // ---------------------------------------------------------------------------
 
-// NOTE: as of 2026-06-25 the AHFL grammar only accepts plain `IDENT` in
-// letStmt bindings and flat (non-recursive) patterns in ifLetStmt — no
-// user-facing syntax produces a deeply nested build_pattern_syntax call
-// chain.  We therefore only assert a shallow positive (no spurious overflow)
-// case here, paired with a source-level guard-existence assertion below.
+// NOTE: letStmt still accepts only plain `IDENT` bindings.  Recursive pattern
+// syntax is exercised through ifLetStmt and match-specific tests, while this
+// guard keeps a shallow let case from reporting spurious overflow.
 void test_deep_pattern_64_ok() {
     const auto source = make_agent_source("let x = input;\n        return 1;");
     const auto result = ahfl::Frontend{}.parse_text("test.ahfl", source);
@@ -277,11 +275,11 @@ void test_deep_pattern_64_ok() {
 }
 
 // Source-level companion to test_deep_pattern_64_ok: we cannot drive the
-// "pattern" RecursionDepthGuard to overflow at runtime because the current
-// AHFL grammar does not expose recursive pattern forms (both letStmt and
-// ifLetPattern are flat).  Instead we grep the installed frontend.cpp source
-// for the exact guard-line to prove it is wired in — so any future PR that
-// removes or mislabels the guard line will fail this test immediately.
+// "pattern" RecursionDepthGuard to overflow at runtime in this unit without
+// constructing a large whole-program fixture. Instead we grep the installed
+// frontend.cpp source for the exact guard-line to prove it is wired in — so any
+// future PR that removes or mislabels the guard line will fail this test
+// immediately.
 [[nodiscard]] bool file_contains(const std::string &path, std::string_view needle) {
     std::ifstream in(path);
     if (!in.is_open()) return false;

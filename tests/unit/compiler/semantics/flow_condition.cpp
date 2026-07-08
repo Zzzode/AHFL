@@ -674,7 +674,7 @@ enum Choice {
 }
 
 fn pick(value: Choice) -> Int {
-    if let Missing = value {
+    if let Choice::Missing = value {
         return 1;
     }
     return 0;

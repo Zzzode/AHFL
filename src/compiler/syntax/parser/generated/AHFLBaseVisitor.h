@@ -419,14 +419,6 @@ public:
     return visitChildren(ctx);
   }
 
-  virtual std::any visitIfLetPattern(AHFLParser::IfLetPatternContext *ctx) override {
-    return visitChildren(ctx);
-  }
-
-  virtual std::any visitIfLetPatternVar(AHFLParser::IfLetPatternVarContext *ctx) override {
-    return visitChildren(ctx);
-  }
-
   virtual std::any visitGotoStmt(AHFLParser::GotoStmtContext *ctx) override {
     return visitChildren(ctx);
   }

@@ -1047,6 +1047,19 @@ class ExpressionChecker final {
             expr.node);
     }
 
+    [[nodiscard]] ExpressionPatternLoweringResult lower_pattern_entry(
+        const ast::PatternSyntax &pattern,
+        TypePtr scrutinee_type,
+        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+        BindingMap &bindings,
+        SourceRange range) const {
+        const auto lowered = lower_pattern(pattern, scrutinee_type, enum_info, bindings, range);
+        return ExpressionPatternLoweringResult{
+            .irrefutable = lowered.irrefutable,
+            .typed_pattern_index = lowered.typed_pattern_index,
+        };
+    }
+
     [[nodiscard]] TypedValue visit_bool_literal(const ast::ExprSyntax &) const {
         return values_.typed(values_.make_type(TypeKind::Bool));
     }
@@ -3587,6 +3600,117 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
     return ExpressionChecker{services, context, expected_type, &expectation}.check(expr);
 }
 
+ExpressionPatternLoweringResult ExpressionSema::lower_pattern(
+    const ast::PatternSyntax &pattern,
+    TypePtr scrutinee_type,
+    std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+    ExpressionBindingMap &bindings,
+    SourceRange range) const {
+    ExpressionCheckerServices services{
+        *services_.resolve_result,
+        services_.current_source_id,
+        services_.current_package_prefix,
+        *services_.environment,
+        *services_.types,
+        *services_.relations,
+        *services_.delegate,
+        services_.trace_dispatch,
+    };
+    ExpressionContext context{
+        .bindings = bindings,
+        .flow_facts = {},
+        .call_context = ExpressionCallContext::PureOnly,
+        .current_agent = std::nullopt,
+    };
+    auto lowered =
+        ExpressionChecker{services, context, std::nullopt, nullptr}.lower_pattern_entry(
+            pattern, scrutinee_type, enum_info, bindings, range);
+    return lowered;
+}
+
+class PassExpressionSemaDelegate final : public ExpressionSemaDelegate {
+  public:
+    PassExpressionSemaDelegate(TypeCheckPass &pass, TypeResolver &type_resolver)
+        : pass_(&pass), type_resolver_(&type_resolver) {}
+
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range) override {
+        pass_->typecheck_error_here(code, std::move(message), range);
+    }
+
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range,
+                         std::vector<Diagnostic::Related> notes) override {
+        pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+    }
+
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range,
+                         std::vector<Diagnostic::Related> notes,
+                         std::map<std::string, std::vector<std::string>> data) override {
+        pass_->typecheck_error_here(
+            code, std::move(message), range, std::move(notes), std::move(data));
+    }
+
+    void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                           std::string message,
+                           SourceRange range,
+                           std::vector<Diagnostic::Related> notes) override {
+        pass_->typecheck_warning_here(code, std::move(message), range, std::move(notes));
+    }
+
+    ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
+                                 const ExpressionContext &nested_context,
+                                 MaybeCRef<Type> nested_expected) override {
+        return pass_->check_expr(nested_expr, nested_context, nested_expected);
+    }
+
+    ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
+                                 const ExpressionContext &nested_context,
+                                 const TypeExpectation &nested_expectation) override {
+        return pass_->check_expr(nested_expr, nested_context, nested_expectation);
+    }
+
+    TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {
+        return type_resolver_->resolve_type_symbol(id, range);
+    }
+
+    TypePtr resolve_type_syntax(const ast::TypeSyntax &type) override {
+        return pass_->resolve_type_syntax(type);
+    }
+
+    void record_fn_call_site(SymbolId fn_symbol,
+                             SourceRange call_range,
+                             std::vector<TypePtr> type_args) override {
+        pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
+    }
+
+    bool check_bound(const Type &subject_type,
+                     std::string_view trait_name,
+                     SourceRange range) override {
+        return pass_->check_bound(subject_type, trait_name, range);
+    }
+
+    void note(std::string message, SourceRange range) override {
+        pass_->note_here(std::move(message), range);
+    }
+
+    std::uint32_t append_typed_pattern(TypedPattern pattern) override {
+        return pass_->append_typed_pattern(std::move(pattern));
+    }
+
+    const TypedPattern *typed_pattern(std::uint32_t index) const override {
+        return pass_->typed_pattern(index);
+    }
+
+  private:
+    TypeCheckPass *pass_{nullptr};
+    TypeResolver *type_resolver_{nullptr};
+};
+
 TypedValue TypeCheckPass::check_expr(const ast::ExprSyntax &expr,
                                      const ValueContext &context,
                                      MaybeCRef<Type> expected_type) {
@@ -3613,99 +3737,6 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
                                           const TypeExpectation *expectation) {
     auto type_resolver = make_type_resolver();
 
-    class PassExpressionSemaDelegate final : public ExpressionSemaDelegate {
-      public:
-        PassExpressionSemaDelegate(TypeCheckPass &pass, TypeResolver &type_resolver)
-            : pass_(&pass), type_resolver_(&type_resolver) {}
-
-        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
-                             std::string message,
-                             SourceRange range) override {
-            pass_->typecheck_error_here(code, std::move(message), range);
-        }
-
-        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
-                             std::string message,
-                             SourceRange range,
-                             std::vector<Diagnostic::Related> notes) override {
-            pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
-        }
-
-        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
-                             std::string message,
-                             SourceRange range,
-                             std::vector<Diagnostic::Related> notes,
-                             std::map<std::string, std::vector<std::string>> data) override {
-            pass_->typecheck_error_here(
-                code, std::move(message), range, std::move(notes), std::move(data));
-        }
-
-        void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
-                               std::string message,
-                               SourceRange range,
-                               std::vector<Diagnostic::Related> notes) override {
-            pass_->typecheck_warning_here(code, std::move(message), range, std::move(notes));
-        }
-
-        ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
-                                     const ExpressionContext &nested_context,
-                                     MaybeCRef<Type> nested_expected) override {
-            return pass_->check_expr(nested_expr, nested_context, nested_expected);
-        }
-
-        ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
-                                     const ExpressionContext &nested_context,
-                                     const TypeExpectation &nested_expectation) override {
-            return pass_->check_expr(nested_expr, nested_context, nested_expectation);
-        }
-
-        TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {
-            return type_resolver_->resolve_type_symbol(id, range);
-        }
-
-        // P2 (RFC §6): resolve a closure parameter's type annotation through
-        // the shared TypeCheckPass resolver so the current symbol / module
-        // context is honoured.
-        TypePtr resolve_type_syntax(const ast::TypeSyntax &type) override {
-            return pass_->resolve_type_syntax(type);
-        }
-
-        // P2c (RFC §3.5): forward the recorded fn call site to the
-        // TypeCheckPass so it lands in the typed program's fn_call_sites.
-        void record_fn_call_site(SymbolId fn_symbol,
-                                 SourceRange call_range,
-                                 std::vector<TypePtr> type_args) override {
-            pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
-        }
-
-        // P2d.S2 (RFC §3.5 / §2): forward the bound check to the TypeCheckPass
-        // implementation (which also emits the diagnostic on failure).
-        bool check_bound(const Type &subject_type,
-                         std::string_view trait_name,
-                         SourceRange range) override {
-            return pass_->check_bound(subject_type, trait_name, range);
-        }
-
-        // P3c.S5b: forward informational notes to the TypeCheckPass reporter
-        // so three-stage method-dispatch audit lines appear in the diagnostic
-        // bag alongside real errors.
-        void note(std::string message, SourceRange range) override {
-            pass_->note_here(std::move(message), range);
-        }
-
-        std::uint32_t append_typed_pattern(TypedPattern pattern) override {
-            return pass_->append_typed_pattern(std::move(pattern));
-        }
-
-        const TypedPattern *typed_pattern(std::uint32_t index) const override {
-            return pass_->typed_pattern(index);
-        }
-
-      private:
-        TypeCheckPass *pass_{nullptr};
-        TypeResolver *type_resolver_{nullptr};
-    };
-
     PassExpressionSemaDelegate delegate{*this, type_resolver};
     ExpressionSema sema{ExpressionSemaServices{
         .resolve_result = &resolve_result_,
@@ -3722,6 +3753,27 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
         return sema.check(expr, context, *expectation);
     }
     return sema.check(expr, context, expected_type);
+}
+
+ExpressionPatternLoweringResult TypeCheckPass::lower_typed_pattern(
+    const ast::PatternSyntax &pattern,
+    TypePtr scrutinee_type,
+    std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+    BindingMap &bindings) {
+    auto type_resolver = make_type_resolver();
+    PassExpressionSemaDelegate delegate{*this, type_resolver};
+    ExpressionSema sema{ExpressionSemaServices{
+        .resolve_result = &resolve_result_,
+        .current_source_id = current_source_id_,
+        .current_package_prefix =
+            current_source_ != nullptr ? current_source_->package_prefix : std::string{},
+        .environment = &result_.environment,
+        .types = types_,
+        .relations = &relations_,
+        .delegate = &delegate,
+        .trace_dispatch = options_.trace_dispatch,
+    }};
+    return sema.lower_pattern(pattern, scrutinee_type, enum_info, bindings, pattern.range);
 }
 
 TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueContext &context) {

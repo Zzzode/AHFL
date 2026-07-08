@@ -3443,8 +3443,9 @@ class ResolverPass final {
                 }
                 break;
             case ast::StatementSyntaxKind::IfLet:
-                // RFC 0002 if-let introduces branch-local payload bindings in
-                // typecheck; resolver only traverses the scrutinee and bodies.
+                // RFC0011 if-let uses the match pattern surface. Pattern
+                // bindings are typed facts introduced by typecheck; resolver
+                // only traverses the scrutinee and bodies.
                 if (statement->if_let_stmt->scrutinee) {
                     resolve_declaration_expr(*statement->if_let_stmt->scrutinee);
                 }

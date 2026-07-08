@@ -1,5 +1,5 @@
-// RFC 0002 if-let syntax coverage: parse, AST shape, AST debug-printer,
-// source formatter, and formatter reparse roundtrip.
+// RFC 0011 if-let pattern syntax coverage: parse, AST shape, AST
+// debug-printer, source formatter, and formatter reparse roundtrip.
 
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
@@ -12,12 +12,27 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
 
 using ahfl::ast::NodeKind;
 using ahfl::ast::StatementSyntaxKind;
+
+[[nodiscard]] const ahfl::ast::VariantPattern *
+variant_pattern(const ahfl::ast::PatternSyntax &pattern) {
+    return std::get_if<ahfl::ast::VariantPattern>(&pattern.node);
+}
+
+[[nodiscard]] const ahfl::ast::BindingPattern *
+binding_pattern(const ahfl::ast::PatternSyntax &pattern) {
+    return std::get_if<ahfl::ast::BindingPattern>(&pattern.node);
+}
+
+[[nodiscard]] const ahfl::ast::OrPattern *or_pattern(const ahfl::ast::PatternSyntax &pattern) {
+    return std::get_if<ahfl::ast::OrPattern>(&pattern.node);
+}
 
 [[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename,
                                            const std::string &source) {
@@ -96,9 +111,14 @@ TEST_CASE("if let Some(x) = e with then and else blocks") {
     const auto *ifl = stmt->if_let_stmt.get();
     REQUIRE(ifl != nullptr);
     REQUIRE(ifl->pattern != nullptr);
-    CHECK(ifl->pattern->variant_name == "Some");
-    REQUIRE(ifl->pattern->bindings.size() == 1);
-    CHECK(ifl->pattern->bindings[0] == "x");
+    const auto *some_pattern = variant_pattern(*ifl->pattern);
+    REQUIRE(some_pattern != nullptr);
+    REQUIRE(some_pattern->path != nullptr);
+    CHECK(some_pattern->path->spelling() == "Some");
+    REQUIRE(some_pattern->subpatterns.size() == 1);
+    const auto *x_pattern = binding_pattern(*some_pattern->subpatterns[0]);
+    REQUIRE(x_pattern != nullptr);
+    CHECK(x_pattern->name == "x");
 
     REQUIRE(ifl->scrutinee != nullptr);
 
@@ -115,7 +135,8 @@ TEST_CASE("if let Some(x) = e with then and else blocks") {
     ahfl::dump_program_outline(*program, printer);
     const std::string outline = printer.str();
     CHECK(outline.find("if_let") != std::string::npos);
-    CHECK(outline.find("pattern Some(x)") != std::string::npos);
+    CHECK(outline.find("pattern_variant Some") != std::string::npos);
+    CHECK(outline.find("pattern_binding x") != std::string::npos);
 
     // Formatter succeeds on the source and preserves the if-let shape.
     const auto fmt = ahfl::formatter::format_source(source);
@@ -156,11 +177,17 @@ TEST_CASE("if let Ok(a, b, c) — three bindings, no else") {
     const auto *ifl = stmt->if_let_stmt.get();
     REQUIRE(ifl != nullptr);
     REQUIRE(ifl->pattern != nullptr);
-    CHECK(ifl->pattern->variant_name == "Ok");
-    REQUIRE(ifl->pattern->bindings.size() == 3);
-    CHECK(ifl->pattern->bindings[0] == "a");
-    CHECK(ifl->pattern->bindings[1] == "b");
-    CHECK(ifl->pattern->bindings[2] == "c");
+    const auto *ok_pattern = variant_pattern(*ifl->pattern);
+    REQUIRE(ok_pattern != nullptr);
+    REQUIRE(ok_pattern->path != nullptr);
+    CHECK(ok_pattern->path->spelling() == "Ok");
+    REQUIRE(ok_pattern->subpatterns.size() == 3);
+    REQUIRE(binding_pattern(*ok_pattern->subpatterns[0]) != nullptr);
+    REQUIRE(binding_pattern(*ok_pattern->subpatterns[1]) != nullptr);
+    REQUIRE(binding_pattern(*ok_pattern->subpatterns[2]) != nullptr);
+    CHECK(binding_pattern(*ok_pattern->subpatterns[0])->name == "a");
+    CHECK(binding_pattern(*ok_pattern->subpatterns[1])->name == "b");
+    CHECK(binding_pattern(*ok_pattern->subpatterns[2])->name == "c");
     CHECK(ifl->else_block == nullptr);
     REQUIRE(ifl->then_block != nullptr);
     CHECK(ifl->then_block->statements.size() == 3);
@@ -202,9 +229,13 @@ TEST_CASE("nested if let — outer then-block contains another if let") {
     const auto *outer_ifl = outer->if_let_stmt.get();
     REQUIRE(outer_ifl != nullptr);
     REQUIRE(outer_ifl->pattern != nullptr);
-    CHECK(outer_ifl->pattern->variant_name == "Some");
-    REQUIRE(outer_ifl->pattern->bindings.size() == 1);
-    CHECK(outer_ifl->pattern->bindings[0] == "a");
+    const auto *outer_some = variant_pattern(*outer_ifl->pattern);
+    REQUIRE(outer_some != nullptr);
+    REQUIRE(outer_some->path != nullptr);
+    CHECK(outer_some->path->spelling() == "Some");
+    REQUIRE(outer_some->subpatterns.size() == 1);
+    REQUIRE(binding_pattern(*outer_some->subpatterns[0]) != nullptr);
+    CHECK(binding_pattern(*outer_some->subpatterns[0])->name == "a");
 
     REQUIRE(outer_ifl->then_block != nullptr);
     REQUIRE_FALSE(outer_ifl->then_block->statements.empty());
@@ -215,9 +246,13 @@ TEST_CASE("nested if let — outer then-block contains another if let") {
     const auto *inner_ifl = inner->if_let_stmt.get();
     REQUIRE(inner_ifl != nullptr);
     REQUIRE(inner_ifl->pattern != nullptr);
-    CHECK(inner_ifl->pattern->variant_name == "Some");
-    REQUIRE(inner_ifl->pattern->bindings.size() == 1);
-    CHECK(inner_ifl->pattern->bindings[0] == "b");
+    const auto *inner_some = variant_pattern(*inner_ifl->pattern);
+    REQUIRE(inner_some != nullptr);
+    REQUIRE(inner_some->path != nullptr);
+    CHECK(inner_some->path->spelling() == "Some");
+    REQUIRE(inner_some->subpatterns.size() == 1);
+    REQUIRE(binding_pattern(*inner_some->subpatterns[0]) != nullptr);
+    CHECK(binding_pattern(*inner_some->subpatterns[0])->name == "b");
 
     // Formatter roundtrip for the nested shape.
     const auto fmt = ahfl::formatter::format_source(source);
@@ -234,4 +269,33 @@ TEST_CASE("nested if let — outer then-block contains another if let") {
     REQUIRE_FALSE(reparsed_outer->if_let_stmt->then_block->statements.empty());
     CHECK(reparsed_outer->if_let_stmt->then_block->statements[0]->kind ==
           StatementSyntaxKind::IfLet);
+}
+
+TEST_CASE("if let accepts the full match pattern surface") {
+    const std::string source = wrap_with_fn(
+        "    if let Some(left | right) = payload {\n"
+        "        consume(left);\n"
+        "    }\n");
+
+    const auto parse_result = parse_only("if_let_or_subpattern.ahfl", source);
+    const auto *stmt = first_stmt_of_first_fn(*parse_result.program);
+    REQUIRE(stmt != nullptr);
+    REQUIRE(stmt->kind == StatementSyntaxKind::IfLet);
+    REQUIRE(stmt->if_let_stmt != nullptr);
+    REQUIRE(stmt->if_let_stmt->pattern != nullptr);
+
+    const auto *some_pattern = variant_pattern(*stmt->if_let_stmt->pattern);
+    REQUIRE(some_pattern != nullptr);
+    REQUIRE(some_pattern->subpatterns.size() == 1);
+    const auto *payload_pattern = or_pattern(*some_pattern->subpatterns[0]);
+    REQUIRE(payload_pattern != nullptr);
+    REQUIRE(payload_pattern->branches.size() == 2);
+    REQUIRE(binding_pattern(*payload_pattern->branches[0]) != nullptr);
+    REQUIRE(binding_pattern(*payload_pattern->branches[1]) != nullptr);
+    CHECK(binding_pattern(*payload_pattern->branches[0])->name == "left");
+    CHECK(binding_pattern(*payload_pattern->branches[1])->name == "right");
+
+    const auto fmt = ahfl::formatter::format_source(source);
+    CHECK(fmt.success);
+    CHECK(fmt.formatted.find("if let Some(left | right) = ") != std::string::npos);
 }

@@ -855,21 +855,12 @@ struct IfStmtSyntax {
     Owned<BlockSyntax> else_block; // else branch (optional)
 };
 
-/// Pattern form accepted by `if let`.
-/// Only variant forms are accepted: `VariantName` (unit variant) or
-/// `VariantName(x[, y]*)` (tuple-like).
-struct IfLetPatternSyntax {
-    ahfl::SourceRange range;
-    std::string variant_name;            // e.g. "Some"
-    std::vector<std::string> bindings;   // e.g. {"x"} for `Some(x)`
-};
-
 /// `if let` pattern-match statement.
 /// Pattern match against `scrutinee`; on success execute `then_block` with
 /// bindings in scope, otherwise fall through to `else_block` (when present).
 struct IfLetStmtSyntax {
     ahfl::SourceRange range;
-    Owned<IfLetPatternSyntax> pattern;   // variant pattern on the left of `=`
+    Owned<PatternSyntax> pattern;        // pattern on the left of `=`
     Owned<ExprSyntax> scrutinee;         // expression on the right of `=`
     Owned<BlockSyntax> then_block;       // success branch
     Owned<BlockSyntax> else_block;       // failure branch (optional)

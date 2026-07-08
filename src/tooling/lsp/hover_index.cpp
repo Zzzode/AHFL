@@ -1117,9 +1117,8 @@ void add_statement_targets(HoverTargetIndex &index,
         }
         return;
     case ast::StatementSyntaxKind::IfLet:
-        // RFC 0002: index the scrutinee and both branch bodies. Pattern
-        // binding symbols are introduced by semantic analysis, not this AST
-        // traversal.
+        // RFC0011: index the scrutinee and both branch bodies. Pattern binding
+        // symbols are introduced by typed pattern facts, not this AST traversal.
         if (statement.if_let_stmt) {
             add_expr_syntax_targets(
                 index, snapshot, source, statement.if_let_stmt->scrutinee.get());

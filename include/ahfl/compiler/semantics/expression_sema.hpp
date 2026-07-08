@@ -9,6 +9,7 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -23,6 +24,7 @@ class TypeEnvironment;
 class TypeRelationContext;
 namespace ast {
 struct ExprSyntax;
+struct PatternSyntax;
 struct PathSyntax;
 } // namespace ast
 
@@ -53,6 +55,11 @@ struct ExpressionValue {
     // was selected during dispatch. Propagated to TypedExpr via
     // remember_expression_type so downstream passes can read it directly.
     std::optional<DispatchTarget> dispatch_target;
+};
+
+struct ExpressionPatternLoweringResult {
+    bool irrefutable{false};
+    std::uint32_t typed_pattern_index{UINT32_MAX};
 };
 
 struct ExpressionContext {
@@ -153,6 +160,12 @@ class ExpressionSema final {
     [[nodiscard]] ExpressionValue check(const ast::ExprSyntax &expr,
                                         const ExpressionContext &context,
                                         const TypeExpectation &expectation) const;
+    [[nodiscard]] ExpressionPatternLoweringResult lower_pattern(
+        const ast::PatternSyntax &pattern,
+        TypePtr scrutinee_type,
+        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+        ExpressionBindingMap &bindings,
+        SourceRange range) const;
 
   private:
     ExpressionSemaServices services_;

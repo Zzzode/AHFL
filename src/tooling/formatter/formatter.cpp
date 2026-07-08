@@ -957,23 +957,10 @@ class AstFormatter {
             }
             break;
         case Kind::IfLet:
-            // RFC 0002: format `if let Variant(x[, y]*) = scrutinee { ... }`
-            // with the same branch layout as regular `if`.
             if (stmt.if_let_stmt) {
                 out_ << "if let ";
                 if (stmt.if_let_stmt->pattern) {
-                    out_ << stmt.if_let_stmt->pattern->variant_name;
-                    if (!stmt.if_let_stmt->pattern->bindings.empty()) {
-                        out_ << "(";
-                        for (std::size_t i = 0; i < stmt.if_let_stmt->pattern->bindings.size();
-                             ++i) {
-                            if (i != 0) {
-                                out_ << ", ";
-                            }
-                            out_ << stmt.if_let_stmt->pattern->bindings[i];
-                        }
-                        out_ << ")";
-                    }
+                    format_pattern(*stmt.if_let_stmt->pattern);
                 }
                 out_ << " = ";
                 if (stmt.if_let_stmt->scrutinee) {

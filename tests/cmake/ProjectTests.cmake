@@ -4488,8 +4488,8 @@ add_test(NAME ahfl.frontend.enum_struct_variant_all
     COMMAND $<TARGET_FILE:ahfl_enum_struct_variant_tests>
 )
 
-# RFC 0002 if-let syntax coverage: parse -> AST -> ast_printer -> formatter
-# roundtrip.
+# RFC 0011 if-let pattern syntax coverage: parse -> AST -> ast_printer ->
+# formatter roundtrip.
 add_test(NAME ahfl.frontend.if_let_syntax_all
     COMMAND $<TARGET_FILE:ahfl_if_let_syntax_tests>
 )

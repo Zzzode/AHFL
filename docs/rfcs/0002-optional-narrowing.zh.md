@@ -73,12 +73,14 @@ Assignment to a path invalidates facts for that path and all descendant paths.
 
 ### `if let`
 
-Implemented grammar:
+Implemented grammar at stabilization time:
 
 ```ebnf
 IfLetStmt       ::= "if" "let" IfLetPattern "=" Expr Block [ "else" Block ] ;
 IfLetPattern    ::= Ident [ "(" Ident { "," Ident } [ "," ] ")" ] ;
 ```
+
+Current language grammar has since been generalized by [RFC 0011](./0011-pattern-usefulness-matrix.zh.md): `IfLetStmt` now consumes the same `Pattern` syntax as `match` arms. RFC 0002 remains the authority for the optional narrowing facts and branch semantics, not for the complete pattern surface.
 
 The semantic rules are:
 

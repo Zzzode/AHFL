@@ -2400,27 +2400,11 @@ class ProgramBuilder {
         return statement;
     }
 
-    [[nodiscard]] Owned<ast::IfLetPatternSyntax>
-    build_if_let_pattern(AHFLParser::IfLetPatternContext &context) const {
-        auto pattern = make_owned<ast::IfLetPatternSyntax>();
-        pattern->range = context_range(context, source_);
-        pattern->variant_name =
-            text_of(require(context.variant, "if let pattern variant is missing"));
-        for (const auto &var_ctx : context.ifLetPatternVar()) {
-            if (!var_ctx) {
-                continue;
-            }
-            auto &ident_token = require(var_ctx->IDENT(), "if let pattern binding is missing");
-            pattern->bindings.push_back(text_of(ident_token));
-        }
-        return pattern;
-    }
-
     [[nodiscard]] Owned<ast::IfLetStmtSyntax>
     build_if_let_stmt(AHFLParser::IfLetStmtContext &context) const {
         auto statement = make_owned<ast::IfLetStmtSyntax>();
         statement->range = context_range(context, source_);
-        statement->pattern = build_if_let_pattern(
+        statement->pattern = build_pattern(
             require(context.iflet_pattern, "if let pattern section is missing"));
         statement->scrutinee =
             build_expr_syntax(require(context.expr(), "if let scrutinee is missing"));

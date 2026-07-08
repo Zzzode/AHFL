@@ -1009,25 +1009,11 @@ class AstPrinter final {
             }
             break;
         case ast::StatementSyntaxKind::IfLet: {
-            // RFC 0002: include the matched variant pattern next to the
-            // scrutinee and branch blocks for developer/debug dumps.
             line(indent_level, "if_let");
-            std::ostringstream pattern_builder;
             if (statement.if_let_stmt && statement.if_let_stmt->pattern) {
-                const auto &p = *statement.if_let_stmt->pattern;
-                pattern_builder << p.variant_name;
-                if (!p.bindings.empty()) {
-                    pattern_builder << "(";
-                    for (std::size_t i = 0; i < p.bindings.size(); ++i) {
-                        if (i != 0) {
-                            pattern_builder << ", ";
-                        }
-                        pattern_builder << p.bindings[i];
-                    }
-                    pattern_builder << ")";
-                }
+                line(indent_level + 1, "pattern");
+                print_pattern(*statement.if_let_stmt->pattern, indent_level + 2);
             }
-            line(indent_level + 1, "pattern " + pattern_builder.str());
             if (statement.if_let_stmt) {
                 print_expr_field(
                     "scrutinee", statement.if_let_stmt->scrutinee.get(), indent_level + 1);

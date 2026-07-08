@@ -1008,47 +1008,6 @@ class TypedIrLowerer final {
         return lowered;
     }
 
-    [[nodiscard]] static ir::MatchPattern
-    lower_if_let_pattern(const ast::IfLetPatternSyntax *pattern) {
-        if (pattern == nullptr) {
-            return ir::MatchPattern{.node = ir::WildcardPattern{}, .source_range = std::nullopt};
-        }
-
-        ir::VariantPattern variant{
-            .path = pattern->variant_name,
-            .kind = pattern->bindings.empty() ? ir::VariantPatternKind::Unit
-                                              : ir::VariantPatternKind::Tuple,
-            .subpatterns = {},
-            .fields = {},
-        };
-        variant.subpatterns.reserve(pattern->bindings.size());
-        for (const auto &binding_name : pattern->bindings) {
-            variant.subpatterns.push_back(make_owned<ir::MatchPattern>(ir::MatchPattern{
-                .node = ir::BindingPattern{.name = binding_name, .is_mut = false, .nested = nullptr},
-                .source_range = pattern->range,
-                .text = binding_name,
-            }));
-        }
-
-        std::string text = pattern->variant_name;
-        if (!pattern->bindings.empty()) {
-            text += "(";
-            for (std::size_t index = 0; index < pattern->bindings.size(); ++index) {
-                if (index > 0) {
-                    text += ", ";
-                }
-                text += pattern->bindings[index];
-            }
-            text += ")";
-        }
-
-        return ir::MatchPattern{
-            .node = std::move(variant),
-            .source_range = pattern->range,
-            .text = std::move(text),
-        };
-    }
-
     [[nodiscard]] ir::DeclarationProvenance
     current_provenance(std::optional<SourceRange> source_range = std::nullopt) const {
         if (!current_source_id_.has_value() || current_module_name_.empty()) {
@@ -2339,7 +2298,7 @@ class TypedIrLowerer final {
             const auto *syntax = self.find_ast_if_let_stmt(stmt);
             return self.make_statement(
                 ir::IfLetStatement{
-                    .pattern = lower_if_let_pattern(syntax != nullptr ? syntax->pattern.get() : nullptr),
+                    .pattern = lower_pattern(syntax != nullptr ? syntax->pattern.get() : nullptr),
                     .scrutinee = scrutinee ? self.lower_typed_expr(*scrutinee) : nullptr,
                     .then_block = then_block
                                       ? make_owned<ir::Block>(self.lower_typed_block(*then_block))

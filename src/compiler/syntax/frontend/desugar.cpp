@@ -209,9 +209,9 @@ void desugar_stmt_node(ast::StatementSyntax &stmt) {
     case ast::StatementSyntaxKind::Goto:
         break; // no expressions
     case ast::StatementSyntaxKind::IfLet:
-        // RFC 0002 if-let patterns contain variant names plus identifier
-        // bindings; the scrutinee and branch blocks still need expression
-        // desugaring.
+        // RFC0011 if-let patterns share the match pattern surface. Patterns
+        // contain no expressions, but the scrutinee and branch blocks still
+        // need expression desugaring.
         if (stmt.if_let_stmt->scrutinee) {
             stmt.if_let_stmt->scrutinee = desugar_expr_node(std::move(stmt.if_let_stmt->scrutinee));
         }

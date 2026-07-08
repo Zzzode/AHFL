@@ -221,10 +221,6 @@ public:
 
     virtual std::any visitIfLetStmt(AHFLParser::IfLetStmtContext *context) = 0;
 
-    virtual std::any visitIfLetPattern(AHFLParser::IfLetPatternContext *context) = 0;
-
-    virtual std::any visitIfLetPatternVar(AHFLParser::IfLetPatternVarContext *context) = 0;
-
     virtual std::any visitGotoStmt(AHFLParser::GotoStmtContext *context) = 0;
 
     virtual std::any visitReturnStmt(AHFLParser::ReturnStmtContext *context) = 0;

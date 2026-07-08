@@ -681,23 +681,6 @@ lambda_capture_names_for(const ast::ExprSyntax &expr, const ResolveResult &resol
     return "unknown";
 }
 
-[[nodiscard]] std::string_view payload_kind_spelling(EnumVariantPayloadKind kind) noexcept {
-    switch (kind) {
-    case EnumVariantPayloadKind::Unit:
-        return "unit";
-    case EnumVariantPayloadKind::Tuple:
-        return "tuple";
-    case EnumVariantPayloadKind::Struct:
-        return "struct";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] EnumVariantPayloadKind
-if_let_payload_kind(const ast::IfLetPatternSyntax &pattern) noexcept {
-    return pattern.bindings.empty() ? EnumVariantPayloadKind::Unit : EnumVariantPayloadKind::Tuple;
-}
-
 struct IfLetPatternEffects {
     FlowFacts then_facts;
     FlowFacts else_facts;
@@ -1300,60 +1283,6 @@ const TypedPattern *TypeCheckPass::typed_pattern(std::uint32_t index) const {
         return nullptr;
     }
     return &result_.typed_program.patterns[index];
-}
-
-std::uint32_t TypeCheckPass::append_if_let_typed_pattern(
-    const ast::IfLetPatternSyntax &pattern,
-    TypePtr scrutinee_type,
-    std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
-    std::optional<std::reference_wrapper<const EnumVariantInfo>> variant_info) {
-    auto matched_type = scrutinee_type != nullptr ? scrutinee_type : make_error_type();
-    TypedPattern root;
-    root.kind = TypedPatternKind::Variant;
-    root.range = pattern.range;
-    root.source_id = current_source_id_;
-    root.matched_type = matched_type;
-    root.irrefutable = false;
-    root.variant_name = pattern.variant_name;
-    root.variant_payload_kind =
-        variant_info.has_value() ? variant_info->get().payload_kind : if_let_payload_kind(pattern);
-    if (enum_info.has_value()) {
-        root.enum_symbol = enum_info->get().symbol;
-        root.enum_name = enum_info->get().canonical_name;
-    }
-
-    const bool tuple_payload = variant_info.has_value() &&
-                               variant_info->get().payload_kind == EnumVariantPayloadKind::Tuple;
-    const std::size_t limit =
-        tuple_payload ? std::min(pattern.bindings.size(), variant_info->get().payload.size())
-                      : (!variant_info.has_value() ? pattern.bindings.size() : 0);
-    root.children.reserve(limit);
-    for (std::size_t index = 0; index < limit; ++index) {
-        const auto &binding_name = pattern.bindings[index];
-        TypePtr binding_type = tuple_payload && variant_info->get().payload[index] != nullptr
-                                   ? variant_info->get().payload[index]
-                                   : make_error_type();
-        TypedPattern binding;
-        binding.kind = TypedPatternKind::Binding;
-        binding.range = pattern.range;
-        binding.source_id = current_source_id_;
-        binding.matched_type = binding_type;
-        binding.irrefutable = true;
-        if (!binding_name.empty()) {
-            binding.bindings.push_back(TypedPatternBinding{
-                .name = binding_name,
-                .type = binding_type,
-                .range = pattern.range,
-            });
-        }
-        const auto binding_index = hir_builder_.append_pattern(std::move(binding));
-        root.children.push_back(TypedPatternChild{
-            .pattern_index = binding_index,
-            .name = std::to_string(index),
-        });
-    }
-
-    return hir_builder_.append_pattern(std::move(root));
 }
 
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
@@ -3625,79 +3554,26 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
             IfLetPatternEffects pattern_effects;
             std::uint32_t if_let_pattern_index = UINT32_MAX;
-            std::optional<std::reference_wrapper<const EnumVariantInfo>> pattern_variant_info =
-                std::nullopt;
             bool if_let_pattern_valid_for_usefulness = false;
             const auto scrutinee_place =
                 ifl->scrutinee != nullptr ? place_of_expr(*ifl->scrutinee) : std::nullopt;
-            if (ifl->pattern != nullptr && enum_info.has_value()) {
-                const auto &pattern = *ifl->pattern;
-                const auto variant = enum_info->get().find_variant(pattern.variant_name);
-                if (!variant.has_value()) {
-                    typecheck_error_here(error_codes::typecheck::MatchUnknownVariant,
-                                         messages::typecheck::MatchUnknownVariant.format_with(
-                                             pattern.variant_name, enum_info->get().canonical_name),
-                                         pattern.range);
-                } else {
-                    pattern_variant_info = std::cref(variant->get());
-                    bool shape_valid = true;
-                    const auto pattern_kind = if_let_payload_kind(pattern);
-                    if (pattern_kind != variant->get().payload_kind) {
-                        shape_valid = false;
-                        typecheck_error_here(
-                            error_codes::typecheck::InvalidEnumVariantShape,
-                            messages::typecheck::InvalidEnumVariantShape.format_with(
-                                pattern.variant_name,
-                                enum_info->get().canonical_name,
-                                std::string(payload_kind_spelling(variant->get().payload_kind)),
-                                std::string(payload_kind_spelling(pattern_kind))),
-                            pattern.range);
-                    }
-
-                    if (variant->get().payload_kind == EnumVariantPayloadKind::Tuple) {
-                        const auto &payload = variant->get().payload;
-                        if (pattern.bindings.size() != payload.size()) {
-                            shape_valid = false;
-                            typecheck_error_here(
-                                error_codes::typecheck::MatchVariantPayloadArity,
-                                messages::typecheck::MatchVariantPayloadArity.format_with(
-                                    pattern.variant_name,
-                                    enum_info->get().canonical_name,
-                                    std::to_string(payload.size()),
-                                    std::to_string(pattern.bindings.size())),
-                                pattern.range);
-                        }
-
-                        std::unordered_set<std::string> seen_bindings;
-                        const std::size_t limit = std::min(pattern.bindings.size(), payload.size());
-                        for (std::size_t index = 0; index < limit; ++index) {
-                            const auto &binding = pattern.bindings[index];
-                            if (!seen_bindings.insert(binding).second) {
-                                typecheck_error_here(
-                                    error_codes::typecheck::MatchDuplicateBinding,
-                                    messages::typecheck::MatchDuplicateBinding.format_with(binding),
-                                    pattern.range);
-                            }
-                        }
-                    }
-                    if_let_pattern_valid_for_usefulness = shape_valid;
-                }
-            }
             if (ifl->pattern != nullptr) {
-                if_let_pattern_index = append_if_let_typed_pattern(
-                    *ifl->pattern, scrutinee.type, enum_info, pattern_variant_info);
-                if (pattern_variant_info.has_value() && if_let_pattern_index != UINT32_MAX) {
-                    if (const auto *typed_root = typed_pattern(if_let_pattern_index);
-                        typed_root != nullptr) {
-                        pattern_effects = if_let_effects_from_typed_pattern(
-                            result_.typed_program, *typed_root, scrutinee_place);
-                    }
+                BindingMap pattern_bindings;
+                const auto pattern_error_count_before = result_.diagnostics.error_count();
+                const auto lowered_pattern =
+                    lower_typed_pattern(*ifl->pattern, scrutinee.type, enum_info, pattern_bindings);
+                if_let_pattern_index = lowered_pattern.typed_pattern_index;
+                if_let_pattern_valid_for_usefulness =
+                    result_.diagnostics.error_count() == pattern_error_count_before;
+                if (const auto *typed_root = typed_pattern(if_let_pattern_index);
+                    typed_root != nullptr) {
+                    pattern_effects = if_let_effects_from_typed_pattern(
+                        result_.typed_program, *typed_root, scrutinee_place);
                 }
             }
             if (ifl->else_block != nullptr && enum_info.has_value() &&
-                pattern_variant_info.has_value() && if_let_pattern_valid_for_usefulness &&
-                if_let_pattern_index != UINT32_MAX && scrutinee.type != nullptr &&
-                !is_error_type(*scrutinee.type)) {
+                if_let_pattern_valid_for_usefulness && if_let_pattern_index != UINT32_MAX &&
+                scrutinee.type != nullptr && !is_error_type(*scrutinee.type)) {
                 const MatchEnumInfoResolver enum_resolver = [&](const Type &type) {
                     const auto *payload = type.get_if<types::EnumT>();
                     if (payload == nullptr) {

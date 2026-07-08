@@ -424,10 +424,8 @@ assignStmt: lValue '=' expr ';';
 
 ifStmt: 'if' expr block ('else' block)?;
 
-// RFC 0002: if-let statement with unit or tuple variant binding pattern.
-ifLetStmt: 'if' 'let' iflet_pattern=ifLetPattern '=' expr thenBlock=block ('else' elseBlock=block)?;
-ifLetPattern: variant=IDENT ('(' ifLetPatternVar (',' ifLetPatternVar)* ','? ')')?;
-ifLetPatternVar: IDENT;
+// RFC 0011: if-let uses the same PatternSyntax surface as match arms.
+ifLetStmt: 'if' 'let' iflet_pattern=pattern '=' expr thenBlock=block ('else' elseBlock=block)?;
 
 gotoStmt: 'goto' IDENT ';';
 

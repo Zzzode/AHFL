@@ -823,24 +823,9 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
         }
         break;
     case ast::StatementSyntaxKind::IfLet:
-        // RFC 0002: tag pattern bindings as variables so editors render them
-        // consistently with branch-local `let` bindings.
         if (stmt.if_let_stmt != nullptr) {
             if (stmt.if_let_stmt->pattern != nullptr) {
-                if (!stmt.if_let_stmt->pattern->variant_name.empty()) {
-                    add_token_for_name(tokens,
-                                       source,
-                                       stmt.if_let_stmt->pattern->range,
-                                       stmt.if_let_stmt->pattern->variant_name,
-                                       SemanticTokenType::Enum);
-                }
-                for (const auto &binding : stmt.if_let_stmt->pattern->bindings) {
-                    add_token_for_name(tokens,
-                                       source,
-                                       stmt.if_let_stmt->pattern->range,
-                                       binding,
-                                       SemanticTokenType::Variable);
-                }
+                collect_pattern_tokens(*stmt.if_let_stmt->pattern, source, tokens);
             }
             if (stmt.if_let_stmt->scrutinee != nullptr) {
                 collect_expr_tokens(*stmt.if_let_stmt->scrutinee, source, tokens);
