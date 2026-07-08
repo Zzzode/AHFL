@@ -411,6 +411,36 @@ std::string hover_params_at(const std::string &uri, Position position) {
            R"(}})";
 }
 
+std::string text_document_position_params_at(const std::string &uri, Position position) {
+    return hover_params_at(uri, position);
+}
+
+std::string text_document_position_params_at(const std::string &source,
+                                             const std::string &needle,
+                                             std::size_t occurrence = 0) {
+    return text_document_position_params_at("file:///test.ahfl",
+                                            position_of(source, needle, occurrence));
+}
+
+std::string rename_params_at(const std::string &source,
+                             const std::string &needle,
+                             std::string_view new_name,
+                             std::size_t occurrence = 0) {
+    return text_document_position_params_at(source, needle, occurrence)
+               .substr(0, text_document_position_params_at(source, needle, occurrence).size() - 1) +
+           R"(,"newName":")" + std::string{new_name} + R"("})";
+}
+
+std::string references_params_at(const std::string &source,
+                                 const std::string &needle,
+                                 bool include_declaration,
+                                 std::size_t occurrence = 0) {
+    return text_document_position_params_at(source, needle, occurrence)
+               .substr(0, text_document_position_params_at(source, needle, occurrence).size() - 1) +
+           R"(,"context":{"includeDeclaration":)" +
+           (include_declaration ? std::string{"true"} : std::string{"false"}) + R"(}})";
+}
+
 std::string hover_request_body(const std::string &uri, Position position, int id = 2) {
     return R"({"jsonrpc":"2.0","id":)" + std::to_string(id) +
            R"(,"method":"textDocument/hover","params":)" + hover_params_at(uri, position) + R"(})";
@@ -1013,6 +1043,71 @@ void test_hover_pattern_bindings_use_typed_pattern_facts() {
     check(if_let_binding.find("`inner`") != std::string::npos &&
               if_let_binding.find("`Int`") != std::string::npos,
           "hover.pattern_binding.if_let_type");
+}
+
+void test_local_pattern_binding_navigation_and_rename_use_lexical_scope() {
+    const std::string source = "enum Maybe {\n"
+                               "    Some(Int),\n"
+                               "    None,\n"
+                               "}\n"
+                               "\n"
+                               "fn inspect(x: Maybe) -> Int effect Pure decreases 0 {\n"
+                               "    let matched: Int = match x {\n"
+                               "        Some(v) => v,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "    if let Some(inner) = x {\n"
+                               "        let inner: Int = matched;\n"
+                               "        return inner;\n"
+                               "    } else {\n"
+                               "        return matched;\n"
+                               "    }\n"
+                               "}\n";
+
+    const auto definition_output =
+        run_handler_request(source,
+                            "textDocument/definition",
+                            text_document_position_params_at(source, "v,\n        None"));
+    const auto definition = response_body_for_id(definition_output, 2);
+    check(definition.find(R"("start":{"line":7,"character":13})") != std::string::npos,
+          "localPatternBinding.definition_targets_match_binding_declaration");
+
+    const auto references_output = run_handler_request(
+        source, "textDocument/references", references_params_at(source, "v,\n        None", true));
+    const auto references = response_body_for_id(references_output, 2);
+    check(count_substring(references, R"("uri":"file:///test.ahfl")") == 2,
+          "localPatternBinding.references_include_declaration_and_body_only");
+
+    const auto prepare_output =
+        run_handler_request(source,
+                            "textDocument/prepareRename",
+                            text_document_position_params_at(source, "v,\n        None"));
+    const auto prepare = response_body_for_id(prepare_output, 2);
+    check(prepare.find(R"("start":{"line":7,"character":19})") != std::string::npos &&
+              prepare.find(R"("end":{"line":7,"character":20})") != std::string::npos,
+          "localPatternBinding.prepareRename_returns_reference_token_range");
+
+    const auto rename_output = run_handler_request(
+        source, "textDocument/rename", rename_params_at(source, "v) =>", "item"));
+    const auto rename = response_body_for_id(rename_output, 2);
+    check(count_substring(rename, R"("newText":"item")") == 2,
+          "localPatternBinding.rename_edits_declaration_and_body");
+    check(rename.find(R"("start":{"line":7,"character":13})") != std::string::npos &&
+              rename.find(R"("start":{"line":7,"character":19})") != std::string::npos,
+          "localPatternBinding.rename_ranges_are_source_tokens");
+
+    const auto shadow_refs_output = run_handler_request(
+        source, "textDocument/references", references_params_at(source, "inner) = x", true));
+    const auto shadow_refs = response_body_for_id(shadow_refs_output, 2);
+    check(count_substring(shadow_refs, R"("uri":"file:///test.ahfl")") == 1,
+          "localPatternBinding.references_stop_at_let_shadow");
+
+    const auto shadow_rename_output = run_handler_request(
+        source, "textDocument/rename", rename_params_at(source, "inner) = x", "payload"));
+    const auto shadow_rename = response_body_for_id(shadow_rename_output, 2);
+    check(count_substring(shadow_rename, R"("newText":"payload")") == 1 &&
+              shadow_rename.find(R"("start":{"line":12,"character":15})") == std::string::npos,
+          "localPatternBinding.rename_does_not_cross_shadowing_let");
 }
 
 void test_document_symbol_lists_all() {
@@ -9118,6 +9213,7 @@ int main() {
     test_semantic_tokens_cover_current_syntax_surface();
     test_semantic_tokens_request_uses_document_uri();
     test_hover_pattern_bindings_use_typed_pattern_facts();
+    test_local_pattern_binding_navigation_and_rename_use_lexical_scope();
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();

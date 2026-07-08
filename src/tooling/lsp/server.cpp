@@ -485,6 +485,690 @@ void push_unique_location(std::vector<Location> &locations, Location location) {
     }
 }
 
+[[nodiscard]] std::size_t source_range_size(SourceRange range) noexcept {
+    return range.end_offset >= range.begin_offset ? range.end_offset - range.begin_offset : 0;
+}
+
+[[nodiscard]] bool contains_exclusive(SourceRange range, std::size_t offset) noexcept {
+    return range.begin_offset <= offset && offset < range.end_offset;
+}
+
+[[nodiscard]] bool contains_range(SourceRange outer, SourceRange inner) noexcept {
+    return outer.begin_offset <= inner.begin_offset && inner.end_offset <= outer.end_offset;
+}
+
+[[nodiscard]] bool ranges_overlap(SourceRange lhs, SourceRange rhs) noexcept {
+    return lhs.begin_offset < rhs.end_offset && rhs.begin_offset < lhs.end_offset;
+}
+
+[[nodiscard]] bool same_source_range_vector(const std::vector<SourceRange> &lhs,
+                                            const std::vector<SourceRange> &rhs) noexcept {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+        if (!same_source_range(lhs[index], rhs[index])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] SourceRange bounded_source_range(const SourceFile &source,
+                                               SourceRange range) noexcept {
+    const auto begin = std::min(range.begin_offset, source.content.size());
+    const auto end = std::max(begin, std::min(range.end_offset, source.content.size()));
+    return SourceRange{.begin_offset = begin, .end_offset = end};
+}
+
+[[nodiscard]] std::vector<SourceRange> identifier_ranges_in_source_range(const SourceFile &source,
+                                                                         SourceRange raw_range,
+                                                                         std::string_view name) {
+    std::vector<SourceRange> ranges;
+    if (name.empty()) {
+        return ranges;
+    }
+
+    const auto range = bounded_source_range(source, raw_range);
+    auto cursor = range.begin_offset;
+    while (cursor < range.end_offset) {
+        const auto found = source.content.find(name, cursor);
+        if (found == std::string::npos || found + name.size() > range.end_offset) {
+            break;
+        }
+
+        const auto before_ok = found == 0 || !is_identifier_char(source.content[found - 1]);
+        const auto after = found + name.size();
+        const auto after_ok =
+            after >= source.content.size() || !is_identifier_char(source.content[after]);
+        if (before_ok && after_ok) {
+            ranges.push_back(SourceRange{.begin_offset = found, .end_offset = after});
+        }
+        cursor = found + 1;
+    }
+    return ranges;
+}
+
+[[nodiscard]] std::optional<SourceRange>
+first_identifier_source_range(const SourceFile &source, SourceRange range, std::string_view name) {
+    const auto ranges = identifier_ranges_in_source_range(source, range, name);
+    if (ranges.empty()) {
+        return std::nullopt;
+    }
+    return ranges.front();
+}
+
+enum class LocalBindingKind {
+    Pattern,
+    Let,
+    ShadowOnly,
+};
+
+struct LocalBindingTarget {
+    std::size_t id{0};
+    LocalBindingKind kind{LocalBindingKind::Pattern};
+    std::string name;
+    std::optional<SourceId> source_id;
+    std::vector<SourceRange> declaration_ranges;
+    std::vector<SourceRange> scopes;
+};
+
+struct LocalBindingAt {
+    LocalBindingTarget target;
+    SourceRange token_range;
+    bool declaration{false};
+};
+
+class LocalBindingCollector {
+  public:
+    LocalBindingCollector(const LspSourceSnapshot &source, std::vector<LocalBindingTarget> &targets)
+        : source_(&source), targets_(&targets) {}
+
+    void collect_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
+            if (declaration) {
+                collect_declaration(*declaration);
+            }
+        }
+        assign_ids();
+    }
+
+  private:
+    const LspSourceSnapshot *source_{nullptr};
+    std::vector<LocalBindingTarget> *targets_{nullptr};
+
+    void assign_ids() {
+        for (std::size_t index = 0; index < targets_->size(); ++index) {
+            (*targets_)[index].id = index;
+        }
+    }
+
+    void add_binding(LocalBindingKind kind,
+                     std::string name,
+                     SourceRange declaration_range,
+                     std::vector<SourceRange> scopes) {
+        if (name.empty() || source_range_size(declaration_range) == 0) {
+            return;
+        }
+        scopes.erase(
+            std::remove_if(scopes.begin(),
+                           scopes.end(),
+                           [](SourceRange range) { return source_range_size(range) == 0; }),
+            scopes.end());
+        if (scopes.empty()) {
+            return;
+        }
+        for (auto &target : *targets_) {
+            if (target.kind == kind && target.name == name &&
+                target.source_id == source_->source_id &&
+                same_source_range_vector(target.scopes, scopes)) {
+                target.declaration_ranges.push_back(declaration_range);
+                return;
+            }
+        }
+        targets_->push_back(LocalBindingTarget{
+            .kind = kind,
+            .name = std::move(name),
+            .source_id = source_->source_id,
+            .declaration_ranges = {declaration_range},
+            .scopes = std::move(scopes),
+        });
+    }
+
+    void add_param_shadows(const std::vector<Owned<ast::ParamDeclSyntax>> &params,
+                           const ast::BlockSyntax *body) {
+        if (body == nullptr) {
+            return;
+        }
+        for (const auto &param : params) {
+            if (param) {
+                add_binding(LocalBindingKind::ShadowOnly, param->name, param->range, {body->range});
+            }
+        }
+    }
+
+    void add_pattern_bindings(const ast::PatternSyntax *pattern,
+                              const std::vector<SourceRange> &scopes) {
+        if (pattern == nullptr) {
+            return;
+        }
+
+        std::visit(Overloaded{
+                       [&](const ast::LiteralPattern &) {},
+                       [&](const ast::IntRangePattern &) {},
+                       [&](const ast::WildcardPattern &) {},
+                       [&](const ast::BindingPattern &binding) {
+                           add_binding(
+                               LocalBindingKind::Pattern, binding.name, pattern->range, scopes);
+                           add_pattern_bindings(binding.nested.get(), scopes);
+                       },
+                       [&](const ast::TuplePattern &tuple) {
+                           for (const auto &element : tuple.elements) {
+                               add_pattern_bindings(element.get(), scopes);
+                           }
+                       },
+                       [&](const ast::OrPattern &or_pattern) {
+                           for (const auto &branch : or_pattern.branches) {
+                               add_pattern_bindings(branch.get(), scopes);
+                           }
+                       },
+                       [&](const ast::VariantPattern &variant) {
+                           for (const auto &subpattern : variant.subpatterns) {
+                               add_pattern_bindings(subpattern.get(), scopes);
+                           }
+                           for (const auto &field : variant.fields) {
+                               if (field && !field->is_rest) {
+                                   add_pattern_bindings(field->pattern.get(), scopes);
+                               }
+                           }
+                       },
+                   },
+                   pattern->node);
+    }
+
+    void collect_declaration(const ast::Decl &declaration) {
+        switch (declaration.kind) {
+        case ast::NodeKind::ConstDecl: {
+            const auto &decl = static_cast<const ast::ConstDecl &>(declaration);
+            collect_expr(decl.value.get());
+            return;
+        }
+        case ast::NodeKind::WorkflowDecl: {
+            const auto &decl = static_cast<const ast::WorkflowDecl &>(declaration);
+            collect_expr(decl.return_value.get());
+            for (const auto &safety : decl.safety) {
+                collect_temporal_expr(safety.get());
+            }
+            for (const auto &liveness : decl.liveness) {
+                collect_temporal_expr(liveness.get());
+            }
+            return;
+        }
+        case ast::NodeKind::ContractDecl: {
+            const auto &decl = static_cast<const ast::ContractDecl &>(declaration);
+            for (const auto &clause : decl.clauses) {
+                if (clause) {
+                    collect_expr(clause->expr.get());
+                    collect_temporal_expr(clause->temporal_expr.get());
+                    if (clause->decreases) {
+                        for (const auto &term : clause->decreases->decreases_exprs) {
+                            collect_expr(term.get());
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::FlowDecl: {
+            const auto &decl = static_cast<const ast::FlowDecl &>(declaration);
+            for (const auto &handler : decl.state_handlers) {
+                if (handler) {
+                    collect_block(handler->body.get());
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::FnDecl: {
+            const auto &decl = static_cast<const ast::FnDecl &>(declaration);
+            add_param_shadows(decl.params, decl.body.get());
+            collect_block(decl.body.get());
+            if (decl.effect_clause) {
+                collect_expr(decl.effect_clause->decreases_expr.get());
+            }
+            return;
+        }
+        case ast::NodeKind::ImplDecl: {
+            const auto &decl = static_cast<const ast::ImplDecl &>(declaration);
+            for (const auto &method : decl.methods) {
+                if (method) {
+                    add_param_shadows(method->params, method->body.get());
+                }
+                collect_block(method ? method->body.get() : nullptr);
+                if (method && method->effect_clause) {
+                    collect_expr(method->effect_clause->decreases_expr.get());
+                }
+            }
+            for (const auto &constant : decl.const_items) {
+                if (constant) {
+                    collect_expr(constant->value.get());
+                }
+            }
+            return;
+        }
+        case ast::NodeKind::Program:
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::UseDecl:
+        case ast::NodeKind::TypeAliasDecl:
+        case ast::NodeKind::StructDecl:
+        case ast::NodeKind::EnumDecl:
+        case ast::NodeKind::CapabilityDecl:
+        case ast::NodeKind::PredicateDecl:
+        case ast::NodeKind::AgentDecl:
+        case ast::NodeKind::TraitDecl:
+            return;
+        }
+    }
+
+    void collect_block(const ast::BlockSyntax *block) {
+        if (block == nullptr) {
+            return;
+        }
+        for (const auto &statement : block->statements) {
+            if (!statement) {
+                continue;
+            }
+            collect_statement(*statement, *block);
+        }
+    }
+
+    void collect_statement(const ast::StatementSyntax &statement, const ast::BlockSyntax &block) {
+        switch (statement.kind) {
+        case ast::StatementSyntaxKind::Let:
+            if (statement.let_stmt) {
+                collect_expr(statement.let_stmt->initializer.get());
+                add_binding(LocalBindingKind::Let,
+                            statement.let_stmt->name,
+                            statement.let_stmt->range,
+                            {SourceRange{.begin_offset = statement.range.end_offset,
+                                         .end_offset = block.range.end_offset}});
+            }
+            return;
+        case ast::StatementSyntaxKind::Assign:
+            if (statement.assign_stmt) {
+                collect_expr(statement.assign_stmt->value.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::If:
+            if (statement.if_stmt) {
+                collect_expr(statement.if_stmt->condition.get());
+                collect_block(statement.if_stmt->then_block.get());
+                collect_block(statement.if_stmt->else_block.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::IfLet:
+            if (statement.if_let_stmt) {
+                collect_expr(statement.if_let_stmt->scrutinee.get());
+                if (statement.if_let_stmt->then_block) {
+                    add_pattern_bindings(statement.if_let_stmt->pattern.get(),
+                                         {statement.if_let_stmt->then_block->range});
+                }
+                collect_block(statement.if_let_stmt->then_block.get());
+                collect_block(statement.if_let_stmt->else_block.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Return:
+            if (statement.return_stmt) {
+                collect_expr(statement.return_stmt->value.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Assert:
+            if (statement.assert_stmt) {
+                collect_expr(statement.assert_stmt->condition.get());
+                collect_expr(statement.assert_stmt->message.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Unwrap:
+            if (statement.unwrap_stmt) {
+                collect_expr(statement.unwrap_stmt->operand.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Requires:
+            if (statement.requires_stmt) {
+                collect_expr(statement.requires_stmt->condition.get());
+                collect_expr(statement.requires_stmt->message.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Unreachable:
+            if (statement.unreachable_stmt) {
+                collect_expr(statement.unreachable_stmt->message.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Expr:
+            if (statement.expr_stmt) {
+                collect_expr(statement.expr_stmt->expr.get());
+            }
+            return;
+        case ast::StatementSyntaxKind::Goto:
+            return;
+        }
+    }
+
+    void collect_expr(const ast::ExprSyntax *expr) {
+        if (expr == nullptr) {
+            return;
+        }
+        std::visit(
+            Overloaded{
+                [](const ast::BoolLiteralExpr &) {},
+                [](const ast::IntegerLiteralExpr &) {},
+                [](const ast::FloatLiteralExpr &) {},
+                [](const ast::DecimalLiteralExpr &) {},
+                [](const ast::StringLiteralExpr &) {},
+                [](const ast::DurationLiteralExpr &) {},
+                [](const ast::PathExpr &) {},
+                [](const ast::QualifiedValueExpr &) {},
+                [&](const ast::CallExpr &call) {
+                    for (const auto &arg : call.arguments) {
+                        collect_expr(arg.get());
+                    }
+                },
+                [&](const ast::MethodCallExpr &call) {
+                    collect_expr(call.receiver.get());
+                    for (const auto &arg : call.arguments) {
+                        collect_expr(arg.get());
+                    }
+                },
+                [&](const ast::StructLiteralExpr &literal) {
+                    for (const auto &field : literal.fields) {
+                        if (field) {
+                            collect_expr(field->value.get());
+                        }
+                    }
+                },
+                [&](const ast::UnaryExpr &unary) { collect_expr(unary.operand.get()); },
+                [&](const ast::BinaryExpr &binary) {
+                    collect_expr(binary.lhs.get());
+                    collect_expr(binary.rhs.get());
+                },
+                [&](const ast::MemberAccessExpr &member) { collect_expr(member.base.get()); },
+                [&](const ast::IndexAccessExpr &index) {
+                    collect_expr(index.base.get());
+                    collect_expr(index.index.get());
+                },
+                [&](const ast::GroupExpr &group) { collect_expr(group.inner.get()); },
+                [&](const ast::MatchExpr &match) {
+                    collect_expr(match.scrutinee.get());
+                    for (const auto &arm : match.arms) {
+                        if (!arm) {
+                            continue;
+                        }
+                        std::vector<SourceRange> scopes;
+                        if (arm->guard) {
+                            scopes.push_back(arm->guard->range);
+                        }
+                        if (arm->body) {
+                            scopes.push_back(arm->body->range);
+                        }
+                        add_pattern_bindings(arm->pattern.get(), scopes);
+                        collect_expr(arm->guard.get());
+                        collect_expr(arm->body.get());
+                    }
+                },
+                [&](const ast::LambdaExpr &lambda) {
+                    if (lambda.body) {
+                        for (const auto &param : lambda.params) {
+                            if (param) {
+                                add_binding(LocalBindingKind::ShadowOnly,
+                                            param->name,
+                                            param->range,
+                                            {lambda.body->range});
+                            }
+                        }
+                    }
+                    collect_expr(lambda.body.get());
+                },
+                [&](const ast::UnwrapExprSyntax &unwrap) { collect_expr(unwrap.operand.get()); },
+            },
+            expr->node);
+    }
+
+    void collect_temporal_expr(const ast::TemporalExprSyntax *expr) {
+        if (expr == nullptr) {
+            return;
+        }
+        std::visit(Overloaded{
+                       [&](const ast::EmbeddedTemporalExpr &embedded) {
+                           collect_expr(embedded.expr.get());
+                       },
+                       [](const ast::CalledTemporalExpr &) {},
+                       [](const ast::InStateTemporalExpr &) {},
+                       [](const ast::RunningTemporalExpr &) {},
+                       [](const ast::CompletedTemporalExpr &) {},
+                       [&](const ast::UnaryTemporalExpr &unary) {
+                           collect_temporal_expr(unary.operand.get());
+                       },
+                       [&](const ast::BinaryTemporalExpr &binary) {
+                           collect_temporal_expr(binary.lhs.get());
+                           collect_temporal_expr(binary.rhs.get());
+                       },
+                   },
+                   expr->node);
+    }
+};
+
+[[nodiscard]] std::vector<LocalBindingTarget>
+collect_local_binding_targets(const LspSourceSnapshot &source) {
+    std::vector<LocalBindingTarget> targets;
+    if (source.program == nullptr) {
+        return targets;
+    }
+    LocalBindingCollector collector{source, targets};
+    collector.collect_program(*source.program);
+    return targets;
+}
+
+[[nodiscard]] bool local_binding_kind_is_renameable(LocalBindingKind kind) noexcept {
+    return kind == LocalBindingKind::Pattern || kind == LocalBindingKind::Let;
+}
+
+[[nodiscard]] bool local_binding_declaration_contains(const LocalBindingTarget &target,
+                                                      SourceRange range,
+                                                      std::size_t offset) noexcept {
+    return contains_exclusive(range, offset) &&
+           (target.kind == LocalBindingKind::Pattern || target.kind == LocalBindingKind::Let ||
+            target.kind == LocalBindingKind::ShadowOnly);
+}
+
+[[nodiscard]] std::optional<SourceRange> local_binding_declaration_range_at(
+    const SourceFile &source, const LocalBindingTarget &target, std::size_t offset) {
+    for (const auto declaration : target.declaration_ranges) {
+        const auto token =
+            first_identifier_source_range(source, declaration, target.name).value_or(declaration);
+        if (local_binding_declaration_contains(target, token, offset)) {
+            return token;
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool local_binding_scope_contains(const LocalBindingTarget &target,
+                                                SourceRange range) noexcept {
+    return std::any_of(target.scopes.begin(), target.scopes.end(), [&](SourceRange scope) {
+        return contains_range(scope, range);
+    });
+}
+
+[[nodiscard]] std::size_t local_binding_scope_rank(const LocalBindingTarget &target,
+                                                   SourceRange range) noexcept {
+    std::size_t rank = std::numeric_limits<std::size_t>::max();
+    for (const auto scope : target.scopes) {
+        if (contains_range(scope, range)) {
+            rank = std::min(rank, source_range_size(scope));
+        }
+    }
+    return rank;
+}
+
+[[nodiscard]] std::optional<SourceRange> typed_expr_root_range(const SourceFile &source,
+                                                               const TypedExpr &expr) {
+    if (expr.path_root.empty() || source_range_size(expr.range) == 0) {
+        return std::nullopt;
+    }
+    return first_identifier_source_range(source, expr.range, expr.path_root);
+}
+
+[[nodiscard]] const LocalBindingTarget *
+innermost_local_binding_for_reference(const std::vector<LocalBindingTarget> &targets,
+                                      std::string_view name,
+                                      SourceRange reference_range) {
+    const LocalBindingTarget *best = nullptr;
+    auto best_rank = std::numeric_limits<std::size_t>::max();
+    for (const auto &target : targets) {
+        if (target.name != name || !local_binding_scope_contains(target, reference_range)) {
+            continue;
+        }
+        const auto rank = local_binding_scope_rank(target, reference_range);
+        if (rank < best_rank || (rank == best_rank && best != nullptr && target.id > best->id)) {
+            best = &target;
+            best_rank = rank;
+        }
+    }
+    return best;
+}
+
+[[nodiscard]] std::optional<LocalBindingAt> local_binding_at(const LspAnalysisSnapshot &snapshot,
+                                                             const LspSourceSnapshot &source,
+                                                             std::size_t offset) {
+    if (source.source == nullptr) {
+        return std::nullopt;
+    }
+    const auto targets = collect_local_binding_targets(source);
+    for (const auto &target : targets) {
+        if (!local_binding_kind_is_renameable(target.kind)) {
+            continue;
+        }
+        if (const auto range = local_binding_declaration_range_at(*source.source, target, offset);
+            range.has_value()) {
+            return LocalBindingAt{.target = target, .token_range = *range, .declaration = true};
+        }
+    }
+
+    const auto *typed = snapshot.typed_program();
+    if (typed == nullptr) {
+        return std::nullopt;
+    }
+    for (const auto &expr : typed->expressions) {
+        if (!same_source(expr.source_id, source.source_id) || expr.resolved_symbol.has_value() ||
+            expr.path_root.empty() ||
+            (expr.path_root_kind != AssignTargetRootKind::Local &&
+             expr.path_root_kind != AssignTargetRootKind::Identifier)) {
+            continue;
+        }
+        const auto root_range = typed_expr_root_range(*source.source, expr);
+        if (!root_range.has_value() || !contains_exclusive(*root_range, offset)) {
+            continue;
+        }
+        const auto *target =
+            innermost_local_binding_for_reference(targets, expr.path_root, *root_range);
+        if (target != nullptr && local_binding_kind_is_renameable(target->kind)) {
+            return LocalBindingAt{.target = *target, .token_range = *root_range};
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<Location> local_binding_location(const LspAnalysisSnapshot &snapshot,
+                                                             const LspSourceSnapshot &fallback,
+                                                             const LocalBindingTarget &target,
+                                                             SourceRange range) {
+    return location_for_source_range(snapshot, target.source_id, fallback, range);
+}
+
+[[nodiscard]] std::vector<Location>
+local_binding_definition_locations(const LspAnalysisSnapshot &snapshot,
+                                   const LspSourceSnapshot &source,
+                                   const LocalBindingTarget &target) {
+    std::vector<Location> locations;
+    for (const auto declaration : target.declaration_ranges) {
+        auto token = declaration;
+        if (source.source != nullptr) {
+            token = first_identifier_source_range(*source.source, declaration, target.name)
+                        .value_or(declaration);
+        }
+        if (const auto location = local_binding_location(snapshot, source, target, token);
+            location.has_value()) {
+            push_unique_location(locations, *location);
+        }
+    }
+    return locations;
+}
+
+[[nodiscard]] std::vector<Location>
+local_binding_reference_locations(const LspAnalysisSnapshot &snapshot,
+                                  const LspSourceSnapshot &source,
+                                  const LocalBindingTarget &target,
+                                  bool include_declarations) {
+    std::vector<Location> locations;
+    if (include_declarations) {
+        for (auto location : local_binding_definition_locations(snapshot, source, target)) {
+            push_unique_location(locations, std::move(location));
+        }
+    }
+
+    const auto *typed = snapshot.typed_program();
+    if (typed == nullptr || source.source == nullptr) {
+        return locations;
+    }
+    const auto targets = collect_local_binding_targets(source);
+    for (const auto &expr : typed->expressions) {
+        if (!same_source(expr.source_id, source.source_id) || expr.resolved_symbol.has_value() ||
+            expr.path_root != target.name ||
+            (expr.path_root_kind != AssignTargetRootKind::Local &&
+             expr.path_root_kind != AssignTargetRootKind::Identifier)) {
+            continue;
+        }
+        const auto root_range = typed_expr_root_range(*source.source, expr);
+        if (!root_range.has_value()) {
+            continue;
+        }
+        const auto *bound =
+            innermost_local_binding_for_reference(targets, expr.path_root, *root_range);
+        if (bound == nullptr || bound->id != target.id) {
+            continue;
+        }
+        if (const auto location =
+                location_for_source_range(snapshot, expr.source_id, source, *root_range);
+            location.has_value()) {
+            push_unique_location(locations, *location);
+        }
+    }
+    return locations;
+}
+
+[[nodiscard]] bool local_binding_rename_conflicts(const std::vector<LocalBindingTarget> &targets,
+                                                  const LocalBindingTarget &target,
+                                                  std::string_view new_name) {
+    for (const auto &other : targets) {
+        if (other.id == target.id || other.name != new_name) {
+            continue;
+        }
+        for (const auto target_scope : target.scopes) {
+            for (const auto other_scope : other.scopes) {
+                if (ranges_overlap(target_scope, other_scope)) {
+                    return true;
+                }
+            }
+        }
+        for (const auto declaration : other.declaration_ranges) {
+            if (local_binding_scope_contains(target, declaration)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 [[nodiscard]] std::optional<SymbolId> nominal_symbol_for_type(const Type &type) {
     return type.visit(types::Overloads{
         [](const types::StructT &structure) { return structure.symbol; },
@@ -2566,6 +3250,17 @@ void LspServer::handle_definition(const JsonRpcRequest &req) {
     const auto offset = offset_at(*source->source, position);
     const auto target = symbol_at(*snapshot, *source, offset);
     if (!target.has_value()) {
+        if (const auto local = local_binding_at(*snapshot, *source, offset); local.has_value()) {
+            const auto locations =
+                local_binding_definition_locations(*snapshot, *source, local->target);
+            if (!locations.empty()) {
+                JsonRpcResponse resp;
+                resp.id = req.id;
+                resp.result = serialize_location_or_array(locations);
+                transport_.send_response(resp);
+                return;
+            }
+        }
         auto locations = primitive_type_definition_locations_at(*snapshot, *source, offset);
         if (locations.empty()) {
             if (const auto type = primitive_type_key_at(*snapshot, *source, offset);
@@ -2835,6 +3530,19 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
                 }
             }
         }
+    } else if (const auto local =
+                   local_binding_at(*snapshot, *source, offset_at(*source->source, position));
+               local.has_value()) {
+        bool include_declaration = false;
+        if (const auto *context = req.params->get("context"); context != nullptr) {
+            if (const auto *include = context->get("includeDeclaration"); include != nullptr) {
+                if (const auto value = include->as_bool(); value.has_value()) {
+                    include_declaration = *value;
+                }
+            }
+        }
+        locations = local_binding_reference_locations(
+            *snapshot, *source, local->target, include_declaration);
     }
 
     auto result = json::JsonValue::make_array();
@@ -2868,8 +3576,16 @@ void LspServer::handle_prepare_rename(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto location =
-        rename_location_at(*snapshot, *source, offset_at(*source->source, position));
+    const auto offset = offset_at(*source->source, position);
+    if (const auto local = local_binding_at(*snapshot, *source, offset); local.has_value()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_range(to_lsp_range(*source->source, local->token_range));
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto location = rename_location_at(*snapshot, *source, offset);
     if (!location.has_value()) {
         send_null(transport_, req.id);
         return;
@@ -2907,7 +3623,32 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    const auto offset = offset_at(*source->source, position);
+    if (const auto local = local_binding_at(*snapshot, *source, offset); local.has_value()) {
+        const auto targets = collect_local_binding_targets(*source);
+        if (local_binding_rename_conflicts(targets, local->target, new_name)) {
+            send_invalid_params(
+                transport_, req.id, "rename would conflict with an existing local binding");
+            return;
+        }
+
+        WorkspaceEdit edit;
+        for (const auto &location :
+             local_binding_reference_locations(*snapshot, *source, local->target, true)) {
+            edit.changes[location.uri].push_back(TextEdit{
+                .range = location.range,
+                .new_text = new_name,
+            });
+        }
+
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_workspace_edit(edit);
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto target = symbol_at(*snapshot, *source, offset);
     if (!target.has_value()) {
         send_null(transport_, req.id);
         return;
