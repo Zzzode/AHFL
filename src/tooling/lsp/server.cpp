@@ -1583,6 +1583,30 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
+void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
+                                           const EnumTypeInfo &enum_info,
+                                           const EnumVariantInfo &variant_info,
+                                           const TypedPattern &pattern) {
+    std::unordered_set<std::string> used_fields;
+    used_fields.reserve(pattern.children.size());
+    for (const auto &child : pattern.children) {
+        if (!child.name.empty()) {
+            used_fields.insert(child.name);
+        }
+    }
+
+    for (const auto &field : variant_info.fields) {
+        if (used_fields.contains(field.name)) {
+            continue;
+        }
+        CompletionItem item;
+        item.label = field.name;
+        item.kind = CompletionItemKind::Variable;
+        item.detail = "field " + enum_info.canonical_name + "::" + variant_info.name;
+        items.push_back(std::move(item));
+    }
+}
+
 [[nodiscard]] const TypedPattern *find_typed_pattern_at(const TypedProgram &program,
                                                         std::optional<SourceId> source_id,
                                                         std::size_t offset) {
@@ -1601,17 +1625,74 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
     return best;
 }
 
+[[nodiscard]] bool cursor_inside_struct_payload_braces(const SourceFile &source,
+                                                       const TypedPattern &pattern,
+                                                       std::size_t offset) {
+    if (pattern.range.begin_offset >= pattern.range.end_offset ||
+        pattern.range.end_offset > source.content.size()) {
+        return false;
+    }
+    const auto text = std::string_view{source.content}.substr(
+        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
+    const auto open = text.find('{');
+    const auto close = text.rfind('}');
+    if (open == std::string_view::npos || close == std::string_view::npos || open >= close) {
+        return false;
+    }
+    const auto open_offset = pattern.range.begin_offset + open;
+    const auto close_offset = pattern.range.begin_offset + close;
+    return open_offset < offset && offset <= close_offset;
+}
+
+[[nodiscard]] const TypedPattern *find_struct_variant_pattern_at(const TypedProgram &program,
+                                                                 const SourceFile &source,
+                                                                 std::optional<SourceId> source_id,
+                                                                 std::size_t offset) {
+    const TypedPattern *best = nullptr;
+    std::size_t best_width = std::numeric_limits<std::size_t>::max();
+    for (const auto &pattern : program.patterns) {
+        if (!same_source(pattern.source_id, source_id) || !contains(pattern.range, offset) ||
+            pattern.kind != TypedPatternKind::Variant ||
+            pattern.variant_payload_kind != EnumVariantPayloadKind::Struct ||
+            !cursor_inside_struct_payload_braces(source, pattern, offset)) {
+            continue;
+        }
+        const auto width = pattern.range.end_offset - pattern.range.begin_offset;
+        if (best == nullptr || width < best_width) {
+            best = &pattern;
+            best_width = width;
+        }
+    }
+    return best;
+}
+
 [[nodiscard]] bool push_pattern_context_completions(std::vector<CompletionItem> &items,
                                                     const LspAnalysisSnapshot &snapshot,
                                                     const LspSourceSnapshot &source,
                                                     std::size_t offset) {
-    if (!snapshot.type_check_result) {
+    if (!snapshot.type_check_result || source.source == nullptr) {
         return false;
     }
     const auto *program = snapshot.typed_program();
     if (program == nullptr) {
         return false;
     }
+    const auto *field_pattern =
+        find_struct_variant_pattern_at(*program, *source.source, source.source_id, offset);
+    if (field_pattern != nullptr && field_pattern->enum_symbol.has_value()) {
+        const auto enum_info =
+            snapshot.type_check_result->environment.get_enum(*field_pattern->enum_symbol);
+        if (enum_info.has_value()) {
+            const auto variant_info = enum_info->get().find_variant(field_pattern->variant_name);
+            if (variant_info.has_value() &&
+                variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
+                push_struct_variant_field_completions(
+                    items, enum_info->get(), variant_info->get(), *field_pattern);
+                return true;
+            }
+        }
+    }
+
     const auto *pattern = find_typed_pattern_at(*program, source.source_id, offset);
     if (pattern == nullptr || pattern->matched_type == nullptr) {
         return false;

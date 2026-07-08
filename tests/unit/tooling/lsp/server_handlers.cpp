@@ -7664,6 +7664,54 @@ void test_completion_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_nested_excludes_outer_variant");
 }
 
+void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
+    const std::string source = "enum Packet {\n"
+                               "    Empty,\n"
+                               "    Data { code: Int, label: String },\n"
+                               "}\n"
+                               "\n"
+                               "fn use_match(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { .. } => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_if_let(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    if let Data { code, .. } = packet {\n"
+                               "        return code;\n"
+                               "    } else {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n";
+
+    const auto empty_fields_position = position_of(source, "Data { .. }");
+    const std::string empty_fields_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(empty_fields_position.line) + R"(,"character":)" +
+        std::to_string(empty_fields_position.character + 7) + R"(}})";
+    const auto empty_fields_output =
+        run_handler_request(source, "textDocument/completion", empty_fields_params);
+    check(empty_fields_output.find("\"label\":\"code\"") != std::string::npos,
+          "completion.pattern_struct_fields_contains_code");
+    check(empty_fields_output.find("\"label\":\"label\"") != std::string::npos,
+          "completion.pattern_struct_fields_contains_label");
+    check(empty_fields_output.find("\"label\":\"Empty\"") == std::string::npos,
+          "completion.pattern_struct_fields_excludes_enum_variant");
+
+    const auto used_field_position = position_of(source, "Data { code, .. }");
+    const std::string used_field_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(used_field_position.line) + R"(,"character":)" +
+        std::to_string(used_field_position.character + 13) + R"(}})";
+    const auto used_field_output =
+        run_handler_request(source, "textDocument/completion", used_field_params);
+    check(used_field_output.find("\"label\":\"label\"") != std::string::npos,
+          "completion.pattern_struct_fields_keeps_unused_label");
+    check(used_field_output.find("\"label\":\"code\"") == std::string::npos,
+          "completion.pattern_struct_fields_filters_used_code");
+}
+
 void test_rename_rejects_keyword_and_conflict() {
     const std::string source = "struct Msg {\n"
                                "    value: String;\n"
@@ -8721,6 +8769,7 @@ int main() {
     test_signature_help_keyword_family();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_pattern_context_uses_typed_pattern_facts();
+    test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();
     test_diagnostics_reflect_document_version();
