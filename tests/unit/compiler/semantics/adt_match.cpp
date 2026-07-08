@@ -112,13 +112,13 @@ find_diagnostic_with_code(const ahfl::DiagnosticBag &diagnostics, std::string_vi
 
 [[nodiscard]] std::size_t diagnostic_count_with_code(const ahfl::DiagnosticBag &diagnostics,
                                                      std::string_view code_substring) {
-    return static_cast<std::size_t>(
-        std::count_if(diagnostics.entries().begin(),
-                      diagnostics.entries().end(),
-                      [&](const ahfl::Diagnostic &entry) {
-                          return entry.code.has_value() &&
-                                 entry.code->find(code_substring) != std::string::npos;
-                      }));
+    return static_cast<std::size_t>(std::count_if(diagnostics.entries().begin(),
+                                                  diagnostics.entries().end(),
+                                                  [&](const ahfl::Diagnostic &entry) {
+                                                      return entry.code.has_value() &&
+                                                             entry.code->find(code_substring) !=
+                                                                 std::string::npos;
+                                                  }));
 }
 
 [[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
@@ -460,6 +460,66 @@ enum Maybe { Some(Int), None, }
         "match ctx.value { Some(n) => n + 1, None => 0 }");
     const auto result = typecheck_source(source);
     CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("nested enum payload match reports precise missing witness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Flag { On, Off, }
+enum MaybeFlag { Some(Flag), None, }
+)AHFL",
+        "MaybeFlag",
+        "MaybeFlag::None",
+        "match ctx.value { None => 0, Some(On) => 1 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(Off)") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "missing variant 'Some' declared here"));
+}
+
+TEST_CASE("nested enum payload exhaustive match compiles") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Flag { On, Off, }
+enum MaybeFlag { Some(Flag), None, }
+)AHFL",
+        "MaybeFlag",
+        "MaybeFlag::None",
+        "match ctx.value { None => 0, Some(On) => 1, Some(Off) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("duplicate nested enum payload arm reports usefulness warnings") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Flag { On, Off, }
+enum MaybeFlag { Some(Flag), None, }
+)AHFL",
+        "MaybeFlag",
+        "MaybeFlag::None",
+        "match ctx.value { Some(On) => 1, Some(On) => 2, Some(Off) => 3, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
+}
+
+TEST_CASE("qualified unknown nested enum payload variant reports diagnostic") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Flag { On, Off, }
+enum MaybeFlag { Some(Flag), None, }
+)AHFL",
+        "MaybeFlag",
+        "MaybeFlag::None",
+        "match ctx.value { None => 0, Some(Flag::Missing) => 1, Some(_) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "MATCH_UNKNOWN_VARIANT"));
 }
 
 // ---------------------------------------------------------------------------

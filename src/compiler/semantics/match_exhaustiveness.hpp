@@ -4,6 +4,7 @@
 #include "ahfl/compiler/semantics/declaration_info.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,6 +20,7 @@ struct MatchMissingPatternsDiagnostic {
     SourceRange match_range;
     SourceRange enum_declaration_range;
     std::vector<MatchMissingVariant> variants;
+    std::vector<std::string> witnesses;
 };
 
 struct MatchUnreachableArmDiagnostic {
@@ -29,7 +31,7 @@ struct MatchUnreachableArmDiagnostic {
 };
 
 struct MatchOverlapDiagnostic {
-    std::size_t arm_index{0};          // 1-based source order.
+    std::size_t arm_index{0}; // 1-based source order.
     SourceRange pattern_range;
     std::size_t previous_arm_index{0}; // 1-based source order.
     SourceRange previous_pattern_range;
@@ -45,5 +47,14 @@ struct MatchExhaustivenessDiagnostics {
 analyze_match_exhaustiveness(const EnumTypeInfo &enum_info,
                              const std::vector<Owned<ast::MatchArmSyntax>> &arms,
                              SourceRange match_range);
+
+using MatchEnumInfoResolver = std::function<std::optional<EnumTypeInfo>(const Type &)>;
+
+[[nodiscard]] MatchExhaustivenessDiagnostics
+analyze_match_exhaustiveness(const Type &scrutinee_type,
+                             const EnumTypeInfo &enum_info,
+                             const std::vector<Owned<ast::MatchArmSyntax>> &arms,
+                             SourceRange match_range,
+                             const MatchEnumInfoResolver &enum_resolver);
 
 } // namespace ahfl

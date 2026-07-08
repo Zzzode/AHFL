@@ -90,6 +90,37 @@ semantic_payload_kind(ast::EnumVariantPayloadKind kind) noexcept {
     return EnumVariantPayloadKind::Unit;
 }
 
+[[nodiscard]] EnumTypeInfo instantiate_enum_info_for_type(const EnumTypeInfo &enum_info,
+                                                          const types::EnumT &enum_payload,
+                                                          TypeContext &types) {
+    if (enum_info.type_param_names.empty() ||
+        enum_payload.type_args.size() != enum_info.type_param_names.size()) {
+        return enum_info;
+    }
+
+    TypeSubstitutionMap subst;
+    subst.reserve(enum_payload.type_args.size());
+    for (const auto *type_arg : enum_payload.type_args) {
+        subst.push_back(type_arg);
+    }
+
+    EnumTypeInfo substituted = enum_info;
+    for (auto &variant : substituted.variants) {
+        for (auto &slot : variant.payload) {
+            if (slot != nullptr) {
+                slot = substitute_type(slot, subst, types);
+            }
+        }
+        for (auto &field : variant.fields) {
+            if (field.type != nullptr) {
+                field.type = substitute_type(field.type, subst, types);
+            }
+        }
+        variant.rebuild_field_index();
+    }
+    return substituted;
+}
+
 [[nodiscard]] std::optional<std::string>
 top_level_variant_name_for_narrowing(const ast::PatternSyntax &pattern,
                                      const EnumTypeInfo &enum_info) {
@@ -158,7 +189,16 @@ void add_match_arm_narrowing_fact(const ast::PatternSyntax &pattern,
     });
 }
 
-[[nodiscard]] std::string join_missing_variant_names(const MatchMissingPatternsDiagnostic &missing) {
+[[nodiscard]] std::string
+join_missing_variant_names(const MatchMissingPatternsDiagnostic &missing) {
+    if (!missing.witnesses.empty()) {
+        std::string listing;
+        for (std::size_t i = 0; i < missing.witnesses.size(); ++i) {
+            listing += (i == 0 ? "" : ", ") + missing.witnesses[i];
+        }
+        return listing;
+    }
+
     std::string listing;
     for (std::size_t i = 0; i < missing.variants.size(); ++i) {
         listing += (i == 0 ? "" : ", ") + missing.variants[i].name;
@@ -1148,46 +1188,11 @@ class ExpressionChecker final {
 
         // If the scrutinee failed to resolve to an enum, still walk the arms so
         // cascaded diagnostics stay localized; the match result is error.
-        auto enum_info_owned =
-            enum_payload != nullptr ? services_.get_enum(*scrutinee.type) : std::nullopt;
-        // For a generic enum (Option<T>, List<T>, ...), the EnumTypeInfo in the
-        // environment stores variant payload types with TypeVarT placeholders
-        // keyed by the declaration's type_param_names order. When the scrutinee
-        // is an *instantiated* enum (e.g. Option<List<Int>>) we must substitute
-        // each TypeVarT with the actual type_args from the scrutinee, otherwise
-        // pattern bindings inside variant arms leak unsubstituted TypeVarT
-        // (e.g. `xs : T` instead of `xs : List<Int>`).
-        //
-        // Build a locally-substituted copy so the global EnumTypeInfo (shared
-        // across all instantiations) is never mutated.
-        std::optional<EnumTypeInfo> substituted_enum_info_storage;
+        std::optional<EnumTypeInfo> enum_info_storage =
+            enum_payload != nullptr ? enum_info_for_type(scrutinee.type) : std::nullopt;
         std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info = std::nullopt;
-        if (enum_info_owned.has_value() && enum_payload != nullptr &&
-            !enum_info_owned->get().type_param_names.empty() &&
-            enum_payload->type_args.size() == enum_info_owned->get().type_param_names.size()) {
-            TypeSubstitutionMap subst;
-            subst.reserve(enum_payload->type_args.size());
-            for (const auto *type_arg : enum_payload->type_args) {
-                subst.push_back(type_arg);
-            }
-            EnumTypeInfo substituted = enum_info_owned->get();
-            for (auto &variant : substituted.variants) {
-                for (auto &slot : variant.payload) {
-                    if (slot != nullptr) {
-                        slot = substitute_type(slot, subst, services_.types());
-                    }
-                }
-                for (auto &field : variant.fields) {
-                    if (field.type != nullptr) {
-                        field.type = substitute_type(field.type, subst, services_.types());
-                    }
-                }
-                variant.rebuild_field_index();
-            }
-            substituted_enum_info_storage.emplace(std::move(substituted));
-            enum_info = std::cref(*substituted_enum_info_storage);
-        } else {
-            enum_info = enum_info_owned;
+        if (enum_info_storage.has_value()) {
+            enum_info = std::cref(*enum_info_storage);
         }
 
         std::optional<TypePtr> unified_body_type;
@@ -1266,8 +1271,14 @@ class ExpressionChecker final {
         }
 
         if (enum_info.has_value()) {
+            const MatchEnumInfoResolver enum_resolver = [&](const Type &type) {
+                return enum_info_for_type(&type);
+            };
             const auto match_diagnostics =
-                analyze_match_exhaustiveness(enum_info->get(), match.arms, expr.range);
+                scrutinee.type != nullptr
+                    ? analyze_match_exhaustiveness(
+                          *scrutinee.type, enum_info->get(), match.arms, expr.range, enum_resolver)
+                    : analyze_match_exhaustiveness(enum_info->get(), match.arms, expr.range);
             if (match_diagnostics.missing_patterns.has_value()) {
                 const auto &missing = *match_diagnostics.missing_patterns;
                 services_.typecheck_error_here(
@@ -1285,12 +1296,11 @@ class ExpressionChecker final {
                     unreachable_arm_notes(unreachable));
             }
             for (const auto &overlap : match_diagnostics.overlaps) {
-                services_.typecheck_warning_here(
-                    error_codes::typecheck::MatchOverlap,
-                    messages::typecheck::MatchOverlap.format_with(
-                        std::to_string(overlap.previous_arm_index)),
-                    overlap.pattern_range,
-                    overlap_notes(overlap));
+                services_.typecheck_warning_here(error_codes::typecheck::MatchOverlap,
+                                                 messages::typecheck::MatchOverlap.format_with(
+                                                     std::to_string(overlap.previous_arm_index)),
+                                                 overlap.pattern_range,
+                                                 overlap_notes(overlap));
             }
             // When the scrutinee is not an enum (error path), enum_info is not
             // available and MATCH_SCRUTINEE_REQUIRES_ENUM already flags the root cause.
@@ -1388,6 +1398,21 @@ class ExpressionChecker final {
         return services_.resolve_path(path, context_);
     }
 
+    [[nodiscard]] std::optional<EnumTypeInfo> enum_info_for_type(TypePtr type) const {
+        if (type == nullptr) {
+            return std::nullopt;
+        }
+        const auto *enum_payload = type->get_if<types::EnumT>();
+        if (enum_payload == nullptr) {
+            return std::nullopt;
+        }
+        auto enum_info = services_.get_enum(*type);
+        if (!enum_info.has_value()) {
+            return std::nullopt;
+        }
+        return instantiate_enum_info_for_type(enum_info->get(), *enum_payload, services_.types());
+    }
+
     // ---------------------------------------------------------------------------
     // P1b ADT: pattern lowering for `match` arms.
     //
@@ -1403,14 +1428,24 @@ class ExpressionChecker final {
     //
     // `scrutinee_type` is the narrowed type for this sub-pattern (the enum type
     // at the top level, the slot type inside a variant payload). `enum_info`
-    // is the looked-up EnumTypeInfo for the top-level scrutinee; sub-pattern
-    // recursion passes std::nullopt since nested scrutinees are not enums.
+    // is the looked-up EnumTypeInfo for the current pattern type when the caller
+    // already has one; otherwise it is derived from `scrutinee_type`, so nested
+    // enum payload patterns validate against their own enum.
     [[nodiscard]] bool
     lower_pattern(const ast::PatternSyntax &pattern,
                   TypePtr scrutinee_type,
                   std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
                   BindingMap &bindings,
                   SourceRange range) const {
+        std::optional<EnumTypeInfo> derived_enum_info_storage;
+        auto effective_enum_info = enum_info;
+        if (!effective_enum_info.has_value()) {
+            derived_enum_info_storage = enum_info_for_type(scrutinee_type);
+            if (derived_enum_info_storage.has_value()) {
+                effective_enum_info = std::cref(*derived_enum_info_storage);
+            }
+        }
+
         return std::visit(
             overloaded{
                 [&](const ast::LiteralPattern &) {
@@ -1436,14 +1471,14 @@ class ExpressionChecker final {
                     // enum is a payload-less variant pattern (covers the variant,
                     // is NOT a catch-all). A non-variant identifier is an
                     // irrefutable binding (catch-all).
-                    if (enum_info.has_value() && !binding.nested &&
-                        enum_info->get().has_variant(binding.name)) {
-                        const auto variant = enum_info->get().find_variant(binding.name);
+                    if (effective_enum_info.has_value() && !binding.nested &&
+                        effective_enum_info->get().has_variant(binding.name)) {
+                        const auto variant = effective_enum_info->get().find_variant(binding.name);
                         if (variant.has_value() &&
                             variant->get().payload_kind != EnumVariantPayloadKind::Unit) {
                             services_.invalid_enum_variant_pattern_shape(
                                 binding.name,
-                                enum_info->get(),
+                                effective_enum_info->get(),
                                 variant->get(),
                                 EnumVariantPayloadKind::Unit,
                                 range);
@@ -1469,7 +1504,7 @@ class ExpressionChecker final {
                     if (binding.nested) {
                         (void)lower_pattern(*binding.nested,
                                             scrutinee_type,
-                                            enum_info,
+                                            effective_enum_info,
                                             bindings,
                                             binding.nested->range);
                     }
@@ -1490,7 +1525,7 @@ class ExpressionChecker final {
                     for (const auto &element : tuple.elements) {
                         const auto sub_irrefutable = lower_pattern(*element,
                                                                    scrutinee_type,
-                                                                   enum_info,
+                                                                   effective_enum_info,
                                                                    bindings,
                                                                    element->range);
                         all_irrefutable = all_irrefutable && sub_irrefutable;
@@ -1499,7 +1534,7 @@ class ExpressionChecker final {
                 },
                 [&](const ast::VariantPattern &variant) {
                     // Variant patterns only narrow; they are never catch-alls.
-                    if (!enum_info.has_value()) {
+                    if (!effective_enum_info.has_value()) {
                         // No enum context to validate against (scrutinee failed
                         // to resolve). Skip variant-shape validation.
                         return false;
@@ -1509,12 +1544,13 @@ class ExpressionChecker final {
                         return false;
                     }
                     const auto &variant_name = segments.back();
-                    const auto variant_info = enum_info->get().find_variant(variant_name);
+                    const auto variant_info = effective_enum_info->get().find_variant(variant_name);
                     if (!variant_info.has_value()) {
                         services_.typecheck_error_here(
                             error_codes::typecheck::MatchUnknownVariant,
                             messages::typecheck::MatchUnknownVariant.format_with(
-                                variant.path->spelling(), enum_info->get().canonical_name),
+                                variant.path->spelling(),
+                                effective_enum_info->get().canonical_name),
                             range);
                         return false;
                     }
@@ -1522,7 +1558,7 @@ class ExpressionChecker final {
                     const auto pattern_kind = semantic_payload_kind(variant.payload_kind);
                     if (pattern_kind != variant_info->get().payload_kind) {
                         services_.invalid_enum_variant_pattern_shape(std::string(variant_name),
-                                                                     enum_info->get(),
+                                                                     effective_enum_info->get(),
                                                                      variant_info->get(),
                                                                      pattern_kind,
                                                                      range);
@@ -1536,7 +1572,7 @@ class ExpressionChecker final {
                                 error_codes::typecheck::MatchVariantPayloadArity,
                                 messages::typecheck::MatchVariantPayloadArity.format_with(
                                     std::string(variant_name),
-                                    enum_info->get().canonical_name,
+                                    effective_enum_info->get().canonical_name,
                                     std::to_string(payload.size()),
                                     std::to_string(variant.subpatterns.size())),
                                 range);
@@ -1614,11 +1650,8 @@ class ExpressionChecker final {
                     // enforce that here.
                     bool all_irrefutable = true;
                     for (const auto &branch : or_pattern.branches) {
-                        const auto sub_irrefutable = lower_pattern(*branch,
-                                                                   scrutinee_type,
-                                                                   enum_info,
-                                                                   bindings,
-                                                                   branch->range);
+                        const auto sub_irrefutable = lower_pattern(
+                            *branch, scrutinee_type, effective_enum_info, bindings, branch->range);
                         all_irrefutable = all_irrefutable && sub_irrefutable;
                     }
                     return all_irrefutable && !or_pattern.branches.empty();

@@ -207,18 +207,18 @@ Migration:
 
 ## Current Implementation Status
 
-截至 2026-07-08，本 RFC 仍保持 `draft`，但第一条编译器基础设施切片已经落库：
+截至 2026-07-08，本 RFC 仍保持 `draft`，但前两条编译器基础设施切片已经落库：
 
 1. `PatternUsefulnessContext` 提供 ID-based flat stores：`PatternDomainId`、`PatternConstructorId`、`PatternId` 作为 canonical identity；字符串仅用于 witness/debug rendering。
 2. `analyze_pattern_usefulness()` 已支持 finite constructor domains、nested constructor payload、or-pattern branch redundancy、guarded row 不参与 exhaustiveness、wildcard unreachable row 和 missing witness construction。
 3. `ahfl_semantics_pattern_usefulness_tests` 覆盖 wildcard、finite enum-like constructors、bool、or-pattern、nested constructor、guarded row 和 open domain fallback。
-4. RFC 0003 的 `match_exhaustiveness` 已改为 matrix-backed top-level enum compatibility bridge：现有 `MATCH_MISSING_PATTERNS` / `MATCH_UNREACHABLE_ARM` / `MATCH_OVERLAP` 行为继续由 ADT match 回归测试覆盖。
+4. RFC 0003 的 `match_exhaustiveness` 已改为 matrix-backed analyzer：现有 `MATCH_MISSING_PATTERNS` / `MATCH_UNREACHABLE_ARM` / `MATCH_OVERLAP` 行为继续由 ADT match 回归测试覆盖。
+5. `match_exhaustiveness` 已接入 typed enum-payload lowering：typechecker 会把 scrutinee type 和 enum resolver 传给 matrix analyzer，nested enum payload pattern 可产生 `Some(Off)` 这类 witness，并能诊断重复 nested payload arm。
 
 尚未完成：
 
-1. Parser/typechecker 还没有把 source-level pattern 降到 typed pattern HIR。
-2. 兼容 bridge 仍只按 root enum constructor 解释 source pattern；enum payload destructuring 的 nested usefulness 尚未接入 typechecker。
-3. Literal/range pattern、struct payload destructuring、if-let/optional narrowing flow integration、stable pattern diagnostic codes 和 LSP quick fixes 仍未实现。
+1. Parser/typechecker 还没有独立的一等 typed pattern HIR；当前 `match` path 是 source pattern 到 matrix pattern 的局部 typed lowering。
+2. Literal/range pattern、完整 struct payload witness rendering、if-let/optional narrowing flow integration、stable pattern diagnostic codes 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
 
