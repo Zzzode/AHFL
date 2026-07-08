@@ -2291,31 +2291,77 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
-[[nodiscard]] std::string tuple_variant_pattern_snippet(const EnumVariantInfo &variant) {
+[[nodiscard]] std::string snippet_placeholder(std::size_t tabstop, std::string_view fallback) {
+    return "${" + std::to_string(tabstop) + ":" + std::string(fallback) + "}";
+}
+
+[[nodiscard]] std::string snippet_choice_placeholder(std::size_t tabstop,
+                                                     const std::vector<std::string> &choices) {
+    std::string snippet = "${" + std::to_string(tabstop) + "|";
+    for (std::size_t index = 0; index < choices.size(); ++index) {
+        if (index > 0) {
+            snippet += ",";
+        }
+        snippet += choices[index];
+    }
+    snippet += "|}";
+    return snippet;
+}
+
+[[nodiscard]] std::string pattern_payload_snippet_placeholder(const TypeEnvironment &environment,
+                                                              TypePtr payload_type,
+                                                              std::size_t tabstop) {
+    if (payload_type == nullptr) {
+        return snippet_placeholder(tabstop, "_");
+    }
+
+    const auto enum_info = environment.get_enum(*payload_type);
+    if (!enum_info.has_value()) {
+        return snippet_placeholder(tabstop, "_");
+    }
+
+    std::vector<std::string> choices;
+    choices.reserve(enum_info->get().variants.size() + 1);
+    for (const auto &variant : enum_info->get().variants) {
+        if (variant.payload_kind == EnumVariantPayloadKind::Unit) {
+            choices.push_back(variant.name);
+        }
+    }
+    choices.push_back("_");
+    return snippet_choice_placeholder(tabstop, choices);
+}
+
+[[nodiscard]] std::string tuple_variant_pattern_snippet(const TypeEnvironment &environment,
+                                                        const EnumVariantInfo &variant) {
     std::string snippet = variant.name + "(";
     for (std::size_t index = 0; index < variant.payload.size(); ++index) {
         if (index > 0) {
             snippet += ", ";
         }
-        snippet += "${" + std::to_string(index + 1) + ":_}";
+        snippet +=
+            pattern_payload_snippet_placeholder(environment, variant.payload[index], index + 1);
     }
     snippet += ")";
     return snippet;
 }
 
-[[nodiscard]] std::string struct_variant_pattern_snippet(const EnumVariantInfo &variant) {
+[[nodiscard]] std::string struct_variant_pattern_snippet(const TypeEnvironment &environment,
+                                                         const EnumVariantInfo &variant) {
     std::string snippet = variant.name + " { ";
     for (std::size_t index = 0; index < variant.fields.size(); ++index) {
         if (index > 0) {
             snippet += ", ";
         }
-        snippet += variant.fields[index].name + ": ${" + std::to_string(index + 1) + ":_}";
+        snippet += variant.fields[index].name + ": " +
+                   pattern_payload_snippet_placeholder(
+                       environment, variant.fields[index].type, index + 1);
     }
     snippet += " }";
     return snippet;
 }
 
 void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
+                                           const TypeEnvironment &environment,
                                            const EnumTypeInfo &enum_info,
                                            bool snippet_support) {
     for (const auto &variant : enum_info.variants) {
@@ -2325,11 +2371,11 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
         item.detail = "enum pattern " + enum_info.canonical_name;
         if (snippet_support && variant.payload_kind == EnumVariantPayloadKind::Tuple &&
             !variant.payload.empty()) {
-            item.insert_text = tuple_variant_pattern_snippet(variant);
+            item.insert_text = tuple_variant_pattern_snippet(environment, variant);
             item.insert_text_format = InsertTextFormat::Snippet;
         } else if (snippet_support && variant.payload_kind == EnumVariantPayloadKind::Struct &&
                    !variant.fields.empty()) {
-            item.insert_text = struct_variant_pattern_snippet(variant);
+            item.insert_text = struct_variant_pattern_snippet(environment, variant);
             item.insert_text_format = InsertTextFormat::Snippet;
         }
         items.push_back(std::move(item));
@@ -2337,6 +2383,7 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
 }
 
 void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
+                                           const TypeEnvironment &environment,
                                            const EnumTypeInfo &enum_info,
                                            const EnumVariantInfo &variant_info,
                                            const TypedPattern &pattern,
@@ -2358,7 +2405,8 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
         item.kind = CompletionItemKind::Variable;
         item.detail = "field " + enum_info.canonical_name + "::" + variant_info.name;
         if (snippet_support) {
-            item.insert_text = field.name + ": ${1:_}";
+            item.insert_text =
+                field.name + ": " + pattern_payload_snippet_placeholder(environment, field.type, 1);
             item.insert_text_format = InsertTextFormat::Snippet;
         }
         items.push_back(std::move(item));
@@ -2553,8 +2601,12 @@ find_variant_payload_pattern_at(const TypedProgram &program,
             const auto variant_info = enum_info->get().find_variant(field_pattern->variant_name);
             if (variant_info.has_value() &&
                 variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
-                push_struct_variant_field_completions(
-                    items, enum_info->get(), variant_info->get(), *field_pattern, snippet_support);
+                push_struct_variant_field_completions(items,
+                                                      snapshot.type_check_result->environment,
+                                                      enum_info->get(),
+                                                      variant_info->get(),
+                                                      *field_pattern,
+                                                      snippet_support);
                 return true;
             }
         }
@@ -2569,7 +2621,8 @@ find_variant_payload_pattern_at(const TypedProgram &program,
         return false;
     }
 
-    push_pattern_enum_variant_completions(items, enum_info->get(), snippet_support);
+    push_pattern_enum_variant_completions(
+        items, snapshot.type_check_result->environment, enum_info->get(), snippet_support);
     return true;
 }
 

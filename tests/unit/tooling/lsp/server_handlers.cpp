@@ -7914,10 +7914,15 @@ void test_completion_pattern_context_uses_typed_pattern_facts() {
 }
 
 void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
-    const std::string source = "enum Packet {\n"
+    const std::string source = "enum Level {\n"
+                               "    Low,\n"
+                               "    High,\n"
+                               "}\n"
+                               "\n"
+                               "enum Packet {\n"
                                "    Empty,\n"
-                               "    Pair(Int, String),\n"
-                               "    Data { code: Int, label: String },\n"
+                               "    Pair(Level, String),\n"
+                               "    Data { code: Int, label: Level },\n"
                                "}\n"
                                "\n"
                                "fn use_match(packet: Packet) -> Int effect Pure decreases 0 {\n"
@@ -7954,19 +7959,26 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
 
     check(snippet_output.find("\"label\":\"Pair\"") != std::string::npos,
           "completion.pattern_snippet_tuple_label");
-    check(snippet_output.find("\"insertText\":\"Pair(${1:_}, ${2:_})\"") != std::string::npos,
-          "completion.pattern_snippet_tuple_insert_text");
-    check(snippet_output.find("\"insertText\":\"Data { code: ${1:_}, label: ${2:_} }\"") !=
+    check(snippet_output.find("\"insertText\":\"Pair(${1|Low,High,_|}, ${2:_})\"") !=
               std::string::npos,
-          "completion.pattern_snippet_struct_insert_text");
+          "completion.pattern_snippet_tuple_uses_nested_enum_choices");
+    check(snippet_output.find(
+              "\"insertText\":\"Data { code: ${1:_}, label: ${2|Low,High,_|} }\"") !=
+              std::string::npos,
+          "completion.pattern_snippet_struct_uses_nested_enum_choices");
     check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
           "completion.pattern_snippet_insert_text_format");
 }
 
 void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
-    const std::string source = "enum Packet {\n"
+    const std::string source = "enum Level {\n"
+                               "    Low,\n"
+                               "    High,\n"
+                               "}\n"
+                               "\n"
+                               "enum Packet {\n"
                                "    Empty,\n"
-                               "    Data { code: Int, label: String },\n"
+                               "    Data { code: Int, label: Level },\n"
                                "}\n"
                                "\n"
                                "fn use_match(packet: Packet) -> Int effect Pure decreases 0 {\n"
@@ -8029,8 +8041,9 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
           "completion.pattern_struct_fields_snippet_keeps_unused_label");
     check(snippet_output.find("\"label\":\"code\"") == std::string::npos,
           "completion.pattern_struct_fields_snippet_filters_used_code");
-    check(snippet_output.find("\"insertText\":\"label: ${1:_}\"") != std::string::npos,
-          "completion.pattern_struct_fields_snippet_insert_text");
+    check(snippet_output.find("\"insertText\":\"label: ${1|Low,High,_|}\"") !=
+              std::string::npos,
+          "completion.pattern_struct_fields_snippet_uses_nested_enum_choices");
     check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
           "completion.pattern_struct_fields_snippet_insert_text_format");
 }
