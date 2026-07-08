@@ -29,9 +29,9 @@ HTTP/JSON remains simple and portable, but long streaming responses and multi-tu
 
 ## Current Implementation Audit
 
-As of 2026-07-07, AHFL has runtime support and tests for `grpc_json_transcoding` capability bindings, not native gRPC/Protobuf transport. The concrete implementation surface is `GrpcJsonTranscodingEndpoint`, `GrpcJsonTranscodingRequest`, and `execute_grpc_json_transcoding`; smoke and unit tests cover metadata, trailers, retry, auth, malformed JSON, and schema mismatch on that JSON-transcoding path.
+As of 2026-07-08, AHFL has runtime support and tests for `grpc_json_transcoding` capability bindings, not native gRPC/Protobuf transport. The concrete implementation surface is `GrpcJsonTranscodingEndpoint`, `GrpcJsonTranscodingRequest`, and `execute_grpc_json_transcoding`; smoke and unit tests cover metadata, trailers, retry, auth, malformed JSON, and schema mismatch on that JSON-transcoding path.
 
-This evidence does not satisfy this RFC's acceptance bar because it does not add a Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed. The repository now enforces this boundary with `scripts/check-native-grpc-gate.py`: while RFC 0004 is not accepted, CI rejects native gRPC build flags, C++ gRPC/Protobuf dependency wiring, and native proto service contracts.
+This evidence does not satisfy this RFC's acceptance bar because it does not add a Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed. The repository now enforces this boundary with `scripts/check-native-grpc-gate.py` and [native-grpc-decision-evidence.json](../plans/native-grpc-decision-evidence.json): `accepted` requires a signed owner Go decision, `implementing` requires complete evidence for all native transport gates, and CI rejects native implementation markers until those status-specific evidence contracts are satisfied.
 
 ## Goals
 
@@ -87,6 +87,7 @@ Keep native gRPC off by default until benchmark, platform, and fallback evidence
 - 2026-06-28: Initial draft created during Wave 18 planning.
 - 2026-07-02: Canonicalized as RFC 0004.
 - 2026-07-08: Added a machine gate (`scripts/check-native-grpc-gate.py`) to prevent native gRPC implementation markers from entering the repository before the owner Go/No-Go decision, benchmark evidence, build matrix, dependency policy, feature flag, and fallback semantics are complete.
+- 2026-07-08: Added `ahfl.native_grpc_decision_evidence.v1` as the machine-readable evidence contract for RFC status transitions; `accepted` now requires owner Go evidence, while `implementing` and later statuses require all native transport gates to be complete.
 
 ## Detailed Design Notes
 

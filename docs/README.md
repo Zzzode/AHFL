@@ -96,6 +96,7 @@ Avoid:
 - [corelib-completion-plan.zh.md](./plans/corelib-completion-plan.zh.md)
 - [corelib-support-workplan.zh.md](./plans/corelib-support-workplan.zh.md)
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
+- [native-grpc-decision-evidence.json](./plans/native-grpc-decision-evidence.json)
 - [native-grpc-decision-gate.zh.md](./plans/native-grpc-decision-gate.zh.md)
 - [p3-std-impl-blockers.zh.md](./plans/p3-std-impl-blockers.zh.md)
 - [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)

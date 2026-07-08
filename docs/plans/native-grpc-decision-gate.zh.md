@@ -4,6 +4,8 @@
 
 本计划服务 [RFC 0004](../rfcs/0004-native-grpc-transport.zh.md)。当前 AHFL runtime 已有 `grpc_json_transcoding` 路径；这不能证明 native gRPC/Protobuf transport 应该进入实现。本门禁的目的，是在任何 native gRPC 代码落库前完成可复核的 Go/No-Go 决策。
 
+机器可读证据记录在 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)。该文件使用 `ahfl.native_grpc_decision_evidence.v1` schema，由 `scripts/check-native-grpc-gate.py` 校验；RFC0004 仍为 `draft` 时可以保留 `missing` gate，但一旦推进到 `accepted` 或 `implementing`，状态和证据必须与下列门槛一致。
+
 ## 决策原则
 
 1. 没有 owner sign-off，不进入 `accepted`。
@@ -62,13 +64,25 @@ No-Go 决策必须写回 RFC0004：
 2. `status` 改为 `postponed` 或 `rejected`。
 3. 明确继续维护 `grpc_json_transcoding` 的范围。
 
+## Machine Gate Contract
+
+`scripts/check-native-grpc-gate.py` 现在同时检查 RFC 状态、实现 marker 和结构化证据：
+
+1. `draft`：允许 `native-grpc-decision-evidence.json` 中 gate 仍为 `missing` / `planned`，但仓库禁止 native gRPC build flag、C++ gRPC/Protobuf dependency wiring、native proto service contract 和 `native-grpc` 源文件。
+2. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete` 且带 evidence 引用；仍不允许 implementation marker。
+3. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
+4. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete` 且带 evidence 引用；native implementation marker 仍禁止。
+
+证据引用必须指向可复核 artifact，例如 benchmark 报告、CI run、三平台 build log、dependency review、feature flag design、fallback semantics test matrix 或 release evidence archive 条目。空字符串、口头描述和没有 artifact 的 `complete` 状态都不能作为完成证据。
+
 ## Current State
 
-截至 2026-07-07：
+截至 2026-07-08：
 
 1. native gRPC owner decision 未完成。
 2. benchmark evidence 未完成。
 3. 三平台 build evidence 未完成。
 4. feature flag 策略已有 RFC 草案描述，但未实现。
 5. 仓库级机器门禁已落地：`scripts/check-native-grpc-gate.py` 会在 RFC0004 仍为 `draft` 时拒绝 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract；该脚本已接入 CTest 与 CI。
-6. 因此 RFC0004 必须保持 `draft`，不能进入实现。
+6. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
+7. 因此 RFC0004 必须保持 `draft`，不能进入实现。

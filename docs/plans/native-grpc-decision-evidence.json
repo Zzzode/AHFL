@@ -1,0 +1,55 @@
+{
+  "schema": "ahfl.native_grpc_decision_evidence.v1",
+  "rfc": "0004-native-grpc-transport",
+  "updated_at": "2026-07-08",
+  "decision": {
+    "state": "pending",
+    "owner": "",
+    "signed_off_at": "",
+    "record": ""
+  },
+  "gates": {
+    "runtime_owner_decision": {
+      "status": "missing",
+      "owner": "runtime owner",
+      "evidence": [],
+      "notes": "Required before RFC0004 can move from draft to accepted."
+    },
+    "benchmark": {
+      "status": "missing",
+      "owner": "runtime + QE",
+      "evidence": [],
+      "notes": "Required before native transport implementation markers are allowed."
+    },
+    "build_matrix": {
+      "status": "missing",
+      "owner": "build + runtime",
+      "evidence": [],
+      "notes": "Must cover Linux, macOS, and Windows dependency/build impact."
+    },
+    "dependency_policy": {
+      "status": "missing",
+      "owner": "process owner",
+      "evidence": [],
+      "notes": "Must define dependency source, license review, vendoring/cache policy, and local setup impact."
+    },
+    "feature_flag": {
+      "status": "missing",
+      "owner": "runtime owner",
+      "evidence": [],
+      "notes": "Must define build flag, runtime config, default disabled behavior, and disabled diagnostics."
+    },
+    "fallback_semantics": {
+      "status": "missing",
+      "owner": "runtime owner",
+      "evidence": [],
+      "notes": "Must define unavailable transport, schema mismatch, timeout, and fallback behavior."
+    },
+    "test_strategy": {
+      "status": "missing",
+      "owner": "QE",
+      "evidence": [],
+      "notes": "Must cover unit, integration, mock server, capability binding, and release evidence gates."
+    }
+  }
+}

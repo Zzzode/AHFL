@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Smoke tests for the RFC0004 transport decision gate checker."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+REQUIRED_GATES = (
+    "runtime_owner_decision",
+    "benchmark",
+    "build_matrix",
+    "dependency_policy",
+    "feature_flag",
+    "fallback_semantics",
+    "test_strategy",
+)
+
+
+def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
+    (root / "docs" / "rfcs").mkdir(parents=True)
+    (root / "docs" / "plans").mkdir(parents=True)
+    (root / "docs" / "rfcs" / "0004-native-grpc-transport.zh.md").write_text(
+        f"---\nstatus: {status}\n---\n\n# RFC0004\n", encoding="utf-8"
+    )
+    (root / "docs" / "plans" / "native-grpc-decision-evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None = None) -> dict[str, object]:
+    complete_gates = complete_gates or set()
+    gates: dict[str, object] = {}
+    for gate in REQUIRED_GATES:
+        is_complete = gate in complete_gates
+        gates[gate] = {
+            "status": "complete" if is_complete else "missing",
+            "owner": "owner",
+            "evidence": [f"evidence://{gate}"] if is_complete else [],
+            "notes": "test fixture",
+        }
+    return {
+        "schema": "ahfl.native_grpc_decision_evidence.v1",
+        "rfc": "0004-native-grpc-transport",
+        "updated_at": "2026-07-08",
+        "decision": {
+            "state": decision_state,
+            "owner": "runtime-owner" if decision_state != "pending" else "",
+            "signed_off_at": "2026-07-08" if decision_state != "pending" else "",
+            "record": "evidence://decision" if decision_state != "pending" else "",
+        },
+        "gates": gates,
+    }
+
+
+def run_checker(checker: Path, root: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(checker), "--root", str(root)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def assert_fails(result: subprocess.CompletedProcess[str], needle: str) -> None:
+    if result.returncode == 0:
+        raise AssertionError(f"expected failure, got success: stdout={result.stdout!r}")
+    combined = result.stdout + result.stderr
+    if needle not in combined:
+        raise AssertionError(f"expected {needle!r} in output: {combined!r}")
+
+
+def assert_passes(result: subprocess.CompletedProcess[str]) -> None:
+    if result.returncode != 0:
+        raise AssertionError(
+            f"expected success, got {result.returncode}: stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+
+def test_draft_rejects_implementation_markers(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=evidence())
+        (root / "CMakeLists.txt").write_text(
+            "option(AHFL_ENABLE_" + "GRPC_NATIVE \"test\" OFF)\n", encoding="utf-8"
+        )
+        assert_fails(run_checker(checker, root), "native gRPC build flag")
+
+
+def test_accepted_requires_owner_decision(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=evidence())
+        assert_fails(run_checker(checker, root), "runtime_owner_decision")
+
+
+def test_implementing_requires_complete_gate_evidence(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(
+            root,
+            status="implementing",
+            evidence=evidence(decision_state="go", complete_gates={"runtime_owner_decision"}),
+        )
+        assert_fails(run_checker(checker, root), "benchmark")
+
+
+def test_implementing_allows_markers_after_complete_evidence(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(
+            root,
+            status="implementing",
+            evidence=evidence(decision_state="go", complete_gates=set(REQUIRED_GATES)),
+        )
+        (root / "CMakeLists.txt").write_text(
+            "option(AHFL_ENABLE_" + "GRPC_NATIVE \"test\" OFF)\n", encoding="utf-8"
+        )
+        assert_passes(run_checker(checker, root))
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: transport_gate_smoke.py <check-native-grpc-gate.py>", file=sys.stderr)
+        return 2
+    checker = Path(sys.argv[1]).resolve()
+    test_draft_rejects_implementation_markers(checker)
+    test_accepted_requires_owner_decision(checker)
+    test_implementing_requires_complete_gate_evidence(checker)
+    test_implementing_allows_markers_after_complete_evidence(checker)
+    print("transport gate smoke tests passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

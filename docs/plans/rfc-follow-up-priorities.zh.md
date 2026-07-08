@@ -11,7 +11,7 @@
 | RFC 0001: Enum Variant Payload Forms | `stabilized` | 完成。enum variant payload、constructor、pattern、if-let/e2e 覆盖已纳入稳定语义。 | 只保留回归测试和诊断码契约维护。 |
 | RFC 0002: Optional Narrowing in Pattern Matching | `stabilized` | 完成。`FlowFacts`、`if let`、match-arm narrowing 与内建 Option/Result predicate narrowing 已稳定。 | 只保留回归测试。 |
 | RFC 0003: Match Exhaustiveness Diagnostics | `implemented` | 核心诊断已完成；不能稳定化为完整 pattern usefulness 系统。 | P2：nested/literal/range/payload destructuring 稳定后，另开完整 usefulness matrix RFC。 |
-| RFC 0004: Native gRPC Transport | `draft` | 未完成。现有 runtime gRPC 路径是 `grpc_json_transcoding`，不等价于 native gRPC/Protobuf transport；native gRPC machine gate 已禁止在 Go 决策前引入 build flag、C++ dependency wiring 或 proto service contract。 | P3：先做 runtime owner decision gate、benchmark 和三平台构建评估，再决定是否进入 accepted/implementing。 |
+| RFC 0004: Native gRPC Transport | `draft` | 未完成。现有 runtime gRPC 路径是 `grpc_json_transcoding`，不等价于 native gRPC/Protobuf transport；native gRPC machine gate 已禁止在 Go 决策前引入 build flag、C++ dependency wiring 或 proto service contract，并通过 `ahfl.native_grpc_decision_evidence.v1` 固化 accepted / implementing 的证据门。 | P3：先做 runtime owner decision gate、benchmark 和三平台构建评估，再决定是否进入 accepted/implementing。 |
 | RFC 0005: Package Configuration System | `stabilized` | 完成。TOML manifest、workspace、PackageGraph、lockfile、sysroot std、CLI/LSP/formatter/test helper 迁移与 release evidence archive 均已落库；RFC0010 已明确 registry/publishing 不回填破坏 v1 manifest identity。 | 只保留回归测试和 release evidence 维护。 |
 | RFC 0006: Corelib Development Sysroot | `stabilized` | 完成。source sysroot、corelib 开发路径、VSIX bundled sysroot、普通用户工程和 multi-root toolchain profile release evidence 均已落库。 | 只保留发布矩阵证据维护；多版本 toolchain distribution 另行 RFC。 |
 | RFC 0007: LSP Workspace Navigation Index | `stabilized` | v1 完成。semantic graph 与 navigation index 分离、primitive home、impl/reference/navigation 索引、stable fingerprint、rename、CodeLens/reference/implementation v1、open overlay invalidation、process-local previous-index fact remap 和 multi-root profile isolation 均已落库。 | 只保留 UX / performance polish；public API compatibility gate 已转入 RFC0010。 |
@@ -76,7 +76,7 @@
 ### P3：需要决策或产品化触发
 
 1. RFC 0004 native gRPC transport。
-   - 状态：decision gate 已落到 `docs/plans/native-grpc-decision-gate.zh.md`，并由 `scripts/check-native-grpc-gate.py` / `ahfl.runtime.native_grpc_gate` / CI rfc-check job 机器执行。
+   - 状态：decision gate 已落到 `docs/plans/native-grpc-decision-gate.zh.md` 和 `docs/plans/native-grpc-decision-evidence.json`，并由 `scripts/check-native-grpc-gate.py` / `ahfl.runtime.native_grpc_gate` / CI rfc-check job 机器执行。
    - 先完成 owner decision gate、benchmark、三平台构建和 feature flag 策略。
    - 当前 `GrpcJsonTranscoding*` 实现和 runtime capability binding tests 只能证明 JSON transcoding path 成熟，不能算 native gRPC/Protobuf RFC 完成度；RFC0004 为 `draft` 时，仓库禁止引入 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract。
    - 没有 Go 决策前不要进入大规模实现。

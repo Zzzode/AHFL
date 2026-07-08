@@ -14,6 +14,11 @@ add_test(NAME ahfl.runtime.native_grpc_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"
 )
 
+add_test(NAME ahfl.runtime.transport_gate_smoke
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tests/scripts/transport_gate_smoke.py"
+            "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"
+)
+
 add_test(NAME ahfl.docs.ir_sync_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-ir-doc-sync.py"
 )
