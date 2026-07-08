@@ -905,6 +905,59 @@ flow for LiteralAgent {
     CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
 }
 
+TEST_CASE("bounded Int let initializer accepts in-range negative integer literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(-2, 0) = -1;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int let initializer rejects out-of-range negative integer literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(-2, 0) = -5;
+        return Response { value: 0 };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
 TEST_CASE("bounded Int enum constructor accepts in-range integer literal payload") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {
@@ -931,6 +984,37 @@ flow for LiteralAgent {
         let value: MaybeTiny = MaybeTiny::Some(1);
         let result = match value { Some(code) => code, None => 0 };
         return Response { value: result };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int enum constructor accepts in-range negative integer literal payload") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+enum MaybeTiny {
+    Some(Int(-2, 0)),
+    None,
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let maybe = MaybeTiny::Some(-1);
+        return Response { value: 0 };
     }
 }
 )AHFL");
@@ -1291,6 +1375,36 @@ flow for LiteralAgent {
     state Done {
         let denominator: Int(5, 5) = 5;
         let code: Int(-4, -3) = input.numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int unary negation propagates operand range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Request {
+    delta: Int(1, 2);
+}
+
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(-2, -1) = -input.delta;
         return Response { value: code };
     }
 }

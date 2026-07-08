@@ -72,6 +72,62 @@ parse_integer_literal_value(const ast::IntegerLiteralExpr &expr) {
     return value;
 }
 
+[[nodiscard]] std::optional<std::uint64_t>
+parse_integer_literal_magnitude(const ast::IntegerLiteralExpr &expr) {
+    if (!expr.literal) {
+        return std::nullopt;
+    }
+
+    const std::string_view text = expr.literal->spelling;
+    std::uint64_t value = 0;
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (result.ec != std::errc{} || result.ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+[[nodiscard]] std::optional<std::int64_t>
+parse_signed_integer_literal_value(const ast::ExprSyntax &expr) {
+    if (expr.is<ast::IntegerLiteralExpr>()) {
+        return parse_integer_literal_value(expr.as<ast::IntegerLiteralExpr>());
+    }
+    if (!expr.is<ast::UnaryExpr>()) {
+        return std::nullopt;
+    }
+
+    const auto &unary = expr.as<ast::UnaryExpr>();
+    if (unary.op != ast::ExprUnaryOp::Positive && unary.op != ast::ExprUnaryOp::Negate) {
+        return std::nullopt;
+    }
+    if (unary.operand == nullptr || !unary.operand->is<ast::IntegerLiteralExpr>()) {
+        return std::nullopt;
+    }
+
+    if (unary.op == ast::ExprUnaryOp::Positive) {
+        return parse_integer_literal_value(unary.operand->as<ast::IntegerLiteralExpr>());
+    }
+
+    const auto magnitude =
+        parse_integer_literal_magnitude(unary.operand->as<ast::IntegerLiteralExpr>());
+    if (!magnitude.has_value()) {
+        return std::nullopt;
+    }
+
+    constexpr auto min_value = std::numeric_limits<std::int64_t>::min();
+    constexpr auto max_value = std::numeric_limits<std::int64_t>::max();
+    const auto max_negative_magnitude = static_cast<std::uint64_t>(max_value) + 1U;
+    if (*magnitude > max_negative_magnitude) {
+        return std::nullopt;
+    }
+    if (*magnitude == max_negative_magnitude) {
+        return min_value;
+    }
+    return -static_cast<std::int64_t>(*magnitude);
+}
+
 [[nodiscard]] std::optional<std::int64_t> checked_add_int64(std::int64_t lhs, std::int64_t rhs) {
     constexpr auto min = std::numeric_limits<std::int64_t>::min();
     constexpr auto max = std::numeric_limits<std::int64_t>::max();
@@ -1346,8 +1402,7 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue visit_integer_literal(const ast::ExprSyntax &expr) const {
         if (expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>()) {
-            if (const auto value =
-                    parse_integer_literal_value(expr.as<ast::IntegerLiteralExpr>())) {
+            if (const auto value = parse_signed_integer_literal_value(expr)) {
                 return values_.typed(values_.bounded_int_type(*value, *value));
             }
         }
@@ -3623,6 +3678,13 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_unary_expr(const ast::ExprSyntax &expr) const {
         const auto &unary = expr.as<ast::UnaryExpr>();
+        if (expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>() &&
+            (unary.op == ast::ExprUnaryOp::Negate || unary.op == ast::ExprUnaryOp::Positive)) {
+            if (const auto value = parse_signed_integer_literal_value(expr)) {
+                return values_.typed(values_.bounded_int_type(*value, *value));
+            }
+        }
+
         const auto operand = services_.check_expr(*unary.operand, context_, std::nullopt);
         switch (unary.op) {
         case ast::ExprUnaryOp::Not:
@@ -3642,6 +3704,17 @@ class ExpressionChecker final {
                     messages::typecheck::NumericUnaryRequiresNumeric.format_with(
                         operand.type->describe()),
                     expr.range);
+            }
+            if (unary.op == ast::ExprUnaryOp::Negate) {
+                if (const auto *bounded_int = operand.type->get_if<types::BoundedIntT>()) {
+                    const auto minimum = checked_sub_int64(0, bounded_int->maximum);
+                    const auto maximum = checked_sub_int64(0, bounded_int->minimum);
+                    if (minimum.has_value() && maximum.has_value()) {
+                        return values_.typed_effect(values_.bounded_int_type(*minimum, *maximum),
+                                                    operand.effect);
+                    }
+                    return values_.typed_effect(values_.make_type(TypeKind::Int), operand.effect);
+                }
             }
             return values_.typed_effect(
                 operand.type ? operand.type->clone() : values_.make_error_type(), operand.effect);
