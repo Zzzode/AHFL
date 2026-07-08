@@ -247,6 +247,7 @@ Migration:
 33. Bounded Int arithmetic range inference 首个切片已落库：一元 `-` 作用于 bounded Int operand 时推导 `Int(-max, -min)`；二元 `+`、`-`、`*` 和静态排除零除数的 `/` 在两个 operand 都是 `BoundedInt` 时会推导闭区间结果；`%` 在 divisor magnitude interval 可物化时给出精确 remainder 闭区间，当所有 divisor magnitude 都严格大于所有 dividend magnitude 时给出精确 identity 闭区间，对其他 large-domain variable divisor 使用 quotient-partition 推导精确 remainder hull，只有在分析预算耗尽、溢出或边界无法证明时才回退保守 remainder 闭区间；expected bounded Int 会向 arithmetic operand 传递 literal singleton hint，因此 `let x: Int(0, 5) = 1 + 2` 可通过、`let x: Int(0, 2) = 1 + 2` 会由既有 subtype relation 拒绝；溢出、除数区间可能包含 0 或触发 `int64` `min / -1` 边界时保守回退普通 `Int`，不猜测错误区间。
 34. Decimal multiplication product-scale semantics 已落库：源码表达式 `Decimal(p) * Decimal(q)` 推导为 `Decimal(p + q)`，并继续通过既有 assignability 检查拒绝错误 scale annotation；`Decimal` 加减仍要求同 scale。
 35. Decimal division rounding / target-scale policy 已落库：源码层 `Decimal(p) / Decimal(q)` operator 仍保持未定义，避免引入隐式 rounding；标准库提供 `std::decimal::div(a, b, target_scale, mode)`，要求调用点显式给出目标 runtime scale 和 `RoundingMode`，runtime 按该 mode 舍入并在除数为 0 时失败。
+36. Bounded String validation / literal singleton inference 首个切片已落库：源码可写 `String(min, max)` 会在 type resolver 阶段 fail-closed 拒绝反向区间；当表达式检查带有 expected `String(min, max)` 类型时，string literal 会按当前 escape 规则计算 decoded UTF-8 byte length，并先建模成 singleton `String(length, length)` 再交给既有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected bounded String 时 literal 仍为普通 `String`。
 
 尚未完成：
 
@@ -257,7 +258,7 @@ Migration:
 ## Test Plan
 
 1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis and symbolic bounded constructor products.
-2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability and large bounded enum payload witnesses.
+2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
 5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets and pattern payload signatureHelp.
@@ -347,3 +348,4 @@ Stabilized exit criteria:
 - 2026-07-09: Settled Decimal division as an explicit stdlib API rather than a source-level `/` operator. `std::decimal::div(a, b, target_scale, mode)` now requires target scale and rounding mode at the call site, with runtime tests for exact, fractional, half-even and signed ceiling/floor rounding.
 - 2026-07-09: Added the first oversized variable-divisor modulo exact slice: when every divisor magnitude is greater than every dividend magnitude, `%` now preserves the dividend bounded interval exactly instead of falling back to the conservative remainder hull.
 - 2026-07-09: Added quotient-partition exact hull inference for large-domain variable-divisor bounded Int modulo. The analyzer now computes fixed-endpoint modulo extrema and reachable `0` / `d - 1` witnesses without enumerating every divisor magnitude, with a bounded segment budget and conservative fallback when proof cost or integer boundaries exceed that budget.
+- 2026-07-09: Added bounded String interval validation and expected-type string literal singleton inference, covering let initializers and enum constructor payloads through existing subtype checks.

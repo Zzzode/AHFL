@@ -137,6 +137,29 @@ parse_signed_integer_literal_value(const ast::ExprSyntax &expr) {
     return lhs + rhs;
 }
 
+[[nodiscard]] std::optional<std::int64_t>
+decoded_string_literal_byte_length(std::string_view text) {
+    if (text.size() < 2 || text.front() != '"' || text.back() != '"') {
+        return std::nullopt;
+    }
+
+    std::int64_t length = 0;
+    for (std::size_t index = 1; index + 1 < text.size(); ++index) {
+        if (text[index] == '\\') {
+            ++index;
+            if (index + 1 >= text.size()) {
+                return std::nullopt;
+            }
+        }
+        const auto next = checked_add_int64(length, 1);
+        if (!next.has_value()) {
+            return std::nullopt;
+        }
+        length = *next;
+    }
+    return length;
+}
+
 [[nodiscard]] std::optional<std::int64_t> checked_sub_int64(std::int64_t lhs, std::int64_t rhs) {
     constexpr auto min = std::numeric_limits<std::int64_t>::min();
     constexpr auto max = std::numeric_limits<std::int64_t>::max();
@@ -1758,7 +1781,14 @@ class ExpressionChecker final {
             values_.decimal_type(parse_decimal_scale(expr.as<ast::DecimalLiteralExpr>().spelling)));
     }
 
-    [[nodiscard]] TypedValue visit_string_literal(const ast::ExprSyntax &) const {
+    [[nodiscard]] TypedValue visit_string_literal(const ast::ExprSyntax &expr) const {
+        if (expected_type_.has_value() && expected_type_->get().holds<types::BoundedStringT>()) {
+            if (const auto length =
+                    decoded_string_literal_byte_length(expr.as<ast::StringLiteralExpr>().spelling);
+                length.has_value()) {
+                return values_.typed(values_.bounded_string_type(*length, *length));
+            }
+        }
         return values_.typed(values_.string_type());
     }
 

@@ -232,6 +232,55 @@ type Small = Int(3, 1);
           "bounded Int type lower bound exceeds upper bound");
 }
 
+TEST_CASE("TypeResolver resolves source-level bounded String aliases") {
+    TypeResolverFixture fixture{R"AHFL(
+module resolver;
+
+type Short = String(2, 8);
+)AHFL"};
+    REQUIRE_FALSE(fixture.resolve.has_errors());
+
+    std::size_t alias_body_resolution_count = 0;
+    auto resolver = fixture.make_resolver(&alias_body_resolution_count);
+    fixture.resolver = &resolver;
+
+    const auto alias_symbol = fixture.type_symbol("Short");
+    const auto resolved =
+        resolver.resolve_type_alias(alias_symbol, fixture.alias_decl("Short").range);
+
+    REQUIRE(resolved != nullptr);
+    const auto *bounded = resolved->get_if<ahfl::types::BoundedStringT>();
+    REQUIRE(bounded != nullptr);
+    CHECK(bounded->minimum == 2);
+    CHECK(bounded->maximum == 8);
+    CHECK(resolved->describe() == "String(2, 8)");
+    CHECK(fixture.diagnostics.empty());
+}
+
+TEST_CASE("TypeResolver rejects invalid bounded String aliases") {
+    TypeResolverFixture fixture{R"AHFL(
+module resolver;
+
+type Short = String(8, 2);
+)AHFL"};
+    REQUIRE_FALSE(fixture.resolve.has_errors());
+
+    std::size_t alias_body_resolution_count = 0;
+    auto resolver = fixture.make_resolver(&alias_body_resolution_count);
+    fixture.resolver = &resolver;
+
+    const auto alias_symbol = fixture.type_symbol("Short");
+    const auto resolved =
+        resolver.resolve_type_alias(alias_symbol, fixture.alias_decl("Short").range);
+
+    REQUIRE(resolved != nullptr);
+    CHECK(resolved->holds<ahfl::types::ErrorT>());
+    REQUIRE(fixture.diagnostics.size() == 1);
+    CHECK(fixture.diagnostics.front().code == "typecheck.INVALID_TYPE_REFERENCE");
+    CHECK(fixture.diagnostics.front().message ==
+          "bounded String type lower bound exceeds upper bound");
+}
+
 TEST_CASE("Bare stdlib container aliases fail before TypeResolver") {
     TypeResolverFixture fixture{R"AHFL(
 module resolver;

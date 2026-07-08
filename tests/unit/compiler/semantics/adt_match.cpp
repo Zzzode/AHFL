@@ -1053,6 +1053,116 @@ flow for LiteralAgent {
     CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
 }
 
+TEST_CASE("bounded String let initializer accepts in-range string literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: String(2, 8) = "abc";
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded String let initializer measures decoded escape length") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: String(2, 2) = "a\n";
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded String let initializer rejects out-of-range string literal") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: String(4, 8) = "abc";
+        return Response { value: "" };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("bounded String enum constructor accepts in-range string literal payload") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+enum MaybeText {
+    Some(String(2, 8)),
+    None,
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let value: MaybeText = MaybeText::Some("abc");
+        return Response { value: "ok" };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
 TEST_CASE("bounded Int arithmetic accepts in-range integer literal expression") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {

@@ -41,6 +41,12 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
             [&](const ast::FloatType &) { return types_.make(TypeKind::Float); },
             [&](const ast::StringType &) { return types_.string(); },
             [&](const ast::BoundedStringType &t) {
+                if (t.min_length > t.max_length) {
+                    diagnose_(error_codes::typecheck::InvalidTypeReference,
+                              "bounded String type lower bound exceeds upper bound",
+                              type.range);
+                    return make_error_type();
+                }
                 return types_.bounded_string(static_cast<std::int64_t>(t.min_length),
                                              static_cast<std::int64_t>(t.max_length));
             },

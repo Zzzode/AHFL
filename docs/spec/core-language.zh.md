@@ -598,7 +598,8 @@ Qualified::Nominal<T...>
 其中：
 
 1. `Int(min, max)` 是 `Int` 的闭区间 refinement 形式，`String(min, max)` 是
-   `String` 的 refinement 形式
+   `String` 的 decoded UTF-8 byte length refinement 形式；二者都要求
+   `min <= max`
 2. `Unit`、`Bool`、`Int`、`Float`、`String`、`UUID`、`Timestamp`、
    `Duration`、`Decimal` 是 language primitive prelude；它们不经过 ordinary
    name lookup，也不需要 `import`
@@ -913,6 +914,10 @@ predicate 调用允许出现在：
      `INT_LITERAL`、`+INT_LITERAL`、`-INT_LITERAL` 会先被建模成 singleton
      bounded `Int(value, value)` 再执行 assignability 检查；这不改变 lexer 或
      grammar 中 `-1` 仍为一元表达式的设计
+   - 当 expected type 为 `String(min, max)` 时，string literal 会先按当前
+     literal escape 规则计算 decoded UTF-8 byte length，并建模成 singleton
+     bounded `String(length, length)` 再执行 assignability 检查；无 expected
+     bounded `String` 时，string literal 仍为普通 `String`
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
    - 源码层 `Decimal(p) / Decimal(q)` operator 未定义；Decimal 除法只能通过
      `std::decimal::div(a, b, target_scale, mode)` 表达。该 API 要求用户显式
