@@ -67,6 +67,9 @@ TEST_CASE("pattern usefulness treats wildcard coverage as making later rows unre
     REQUIRE(analysis.unreachable_rows.size() == 1);
     CHECK(analysis.unreachable_rows.front().row_index == 1);
     CHECK(analysis.unreachable_rows.front().covering_row_indices == std::vector<std::size_t>{0});
+    REQUIRE(analysis.overlaps.size() == 1);
+    CHECK(analysis.overlaps.front().row_index == 1);
+    CHECK(analysis.overlaps.front().previous_row_index == 0);
 }
 
 TEST_CASE("guarded rows are useful but do not prove exhaustiveness") {
@@ -125,6 +128,9 @@ TEST_CASE("nested constructor matrix produces payload witnesses") {
 
     REQUIRE(analysis.missing_witness.has_value());
     CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "Some(False)");
+    REQUIRE(analysis.missing_witnesses.size() == 1);
+    CHECK(ahfl::render_pattern_witness(context, analysis.missing_witnesses.front()) ==
+          "Some(False)");
 }
 
 TEST_CASE("nested or-pattern redundancy is checked in row context") {
@@ -166,4 +172,19 @@ TEST_CASE("open domains do not claim complete exhaustiveness") {
     CHECK_FALSE(analysis.missing_witness.has_value());
     CHECK(analysis.unreachable_rows.empty());
     CHECK(analysis.redundant_or_branches.empty());
+}
+
+TEST_CASE("never patterns do not overlap or cover finite witnesses") {
+    ahfl::PatternUsefulnessContext context;
+    const auto bool_domain = make_bool_domain(context);
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_never()},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_wildcard()},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, bool_domain.domain, rows);
+
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    CHECK(analysis.unreachable_rows.empty());
+    CHECK(analysis.overlaps.empty());
 }

@@ -156,6 +156,8 @@ enumerate_domain(const PatternUsefulnessContext &context,
 
     const auto &pattern = context.pattern(pattern_id);
     switch (pattern.kind) {
+    case PatternNodeKind::Never:
+        return false;
     case PatternNodeKind::Wildcard:
         return true;
     case PatternNodeKind::Constructor:
@@ -200,13 +202,16 @@ void collect_covering_rows(const std::vector<PatternWitness> &witnesses,
                            const WitnessMatcher &candidate,
                            const std::vector<WitnessMatcher> &previous,
                            const std::vector<std::size_t> &previous_row_indices,
-                           std::vector<std::size_t> &output) {
+                           const std::vector<SourceRange> &previous_ranges,
+                           std::vector<std::size_t> &output_indices,
+                           std::vector<SourceRange> &output_ranges) {
     for (std::size_t index = 0; index < previous.size(); ++index) {
         const bool overlaps = std::any_of(witnesses.begin(), witnesses.end(), [&](const auto &w) {
             return candidate(w) && previous[index](w);
         });
         if (overlaps) {
-            output.push_back(previous_row_indices[index]);
+            output_indices.push_back(previous_row_indices[index]);
+            output_ranges.push_back(previous_ranges[index]);
         }
     }
 }
@@ -259,6 +264,12 @@ PatternUsefulnessContext::add_constructor(PatternDomainId result_domain,
         .field_domains = std::move(field_domains),
     });
     domains_[result_domain.value].constructors.push_back(id);
+    return id;
+}
+
+PatternId PatternUsefulnessContext::make_never(SourceRange range) {
+    const PatternId id{patterns_.size()};
+    patterns_.push_back(PatternNode{.kind = PatternNodeKind::Never, .range = range});
     return id;
 }
 
@@ -363,28 +374,52 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
 
     std::vector<WitnessMatcher> contributing_matchers;
     std::vector<std::size_t> contributing_row_indices;
+    std::vector<SourceRange> contributing_row_ranges;
+    std::vector<WitnessMatcher> previous_matchers;
+    std::vector<std::size_t> previous_row_indices;
+    std::vector<SourceRange> previous_row_ranges;
 
     for (std::size_t row_index = 0; row_index < rows.size(); ++row_index) {
         const auto &row = rows[row_index];
         const auto row_pattern = row.pattern;
         (void)context.pattern(row_pattern);
+        const auto current_range = row_range(context, row);
 
         const WitnessMatcher candidate = [&, row_pattern](const PatternWitness &witness) {
             return matches_pattern(context, row_pattern, witness, std::nullopt);
         };
+
+        for (std::size_t previous = 0; previous < previous_matchers.size(); ++previous) {
+            const bool overlaps =
+                std::any_of(enumeration.witnesses.begin(),
+                            enumeration.witnesses.end(),
+                            [&](const auto &witness) {
+                                return candidate(witness) && previous_matchers[previous](witness);
+                            });
+            if (overlaps) {
+                analysis.overlaps.push_back(PatternOverlapRow{
+                    .row_index = row_index,
+                    .range = current_range,
+                    .previous_row_index = previous_row_indices[previous],
+                    .previous_range = previous_row_ranges[previous],
+                });
+            }
+        }
 
         const bool useful =
             is_useful_against(enumeration.witnesses, candidate, contributing_matchers);
         if (!useful && any_match(enumeration.witnesses, candidate)) {
             PatternUnreachableRow unreachable{
                 .row_index = row_index,
-                .range = row_range(context, row),
+                .range = current_range,
             };
             collect_covering_rows(enumeration.witnesses,
                                   candidate,
                                   contributing_matchers,
                                   contributing_row_indices,
-                                  unreachable.covering_row_indices);
+                                  contributing_row_ranges,
+                                  unreachable.covering_row_indices,
+                                  unreachable.covering_row_ranges);
             analysis.unreachable_rows.push_back(std::move(unreachable));
         }
 
@@ -425,7 +460,11 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
         if (row.contributes_to_exhaustiveness) {
             contributing_matchers.push_back(candidate);
             contributing_row_indices.push_back(row_index);
+            contributing_row_ranges.push_back(current_range);
         }
+        previous_matchers.push_back(candidate);
+        previous_row_indices.push_back(row_index);
+        previous_row_ranges.push_back(current_range);
     }
 
     for (const auto &witness : enumeration.witnesses) {
@@ -433,8 +472,10 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
                                          contributing_matchers.end(),
                                          [&](const auto &matcher) { return matcher(witness); });
         if (!covered) {
-            analysis.missing_witness = witness;
-            break;
+            analysis.missing_witnesses.push_back(witness);
+            if (!analysis.missing_witness.has_value()) {
+                analysis.missing_witness = witness;
+            }
         }
     }
 

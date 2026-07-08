@@ -46,6 +46,7 @@ struct PatternDomain {
 };
 
 enum class PatternNodeKind {
+    Never,
     Wildcard,
     Constructor,
     Or,
@@ -71,6 +72,7 @@ class PatternUsefulnessContext {
                                                        std::string debug_name,
                                                        std::vector<PatternDomainId> field_domains);
 
+    [[nodiscard]] PatternId make_never(SourceRange range = {});
     [[nodiscard]] PatternId make_wildcard(SourceRange range = {});
     [[nodiscard]] PatternId make_constructor_pattern(PatternConstructorId constructor,
                                                      std::vector<PatternId> children,
@@ -102,6 +104,14 @@ struct PatternUnreachableRow {
     std::size_t row_index{0};
     SourceRange range;
     std::vector<std::size_t> covering_row_indices;
+    std::vector<SourceRange> covering_row_ranges;
+};
+
+struct PatternOverlapRow {
+    std::size_t row_index{0};
+    SourceRange range;
+    std::size_t previous_row_index{0};
+    SourceRange previous_range;
 };
 
 struct PatternRedundantOrBranch {
@@ -119,7 +129,9 @@ struct PatternUsefulnessAnalysis {
     bool root_domain_is_finite{true};
     bool witness_limit_exceeded{false};
     std::optional<PatternWitness> missing_witness;
+    std::vector<PatternWitness> missing_witnesses;
     std::vector<PatternUnreachableRow> unreachable_rows;
+    std::vector<PatternOverlapRow> overlaps;
     std::vector<PatternRedundantOrBranch> redundant_or_branches;
 };
 

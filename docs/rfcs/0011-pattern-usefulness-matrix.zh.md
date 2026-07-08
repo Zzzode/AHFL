@@ -212,11 +212,12 @@ Migration:
 1. `PatternUsefulnessContext` 提供 ID-based flat stores：`PatternDomainId`、`PatternConstructorId`、`PatternId` 作为 canonical identity；字符串仅用于 witness/debug rendering。
 2. `analyze_pattern_usefulness()` 已支持 finite constructor domains、nested constructor payload、or-pattern branch redundancy、guarded row 不参与 exhaustiveness、wildcard unreachable row 和 missing witness construction。
 3. `ahfl_semantics_pattern_usefulness_tests` 覆盖 wildcard、finite enum-like constructors、bool、or-pattern、nested constructor、guarded row 和 open domain fallback。
+4. RFC 0003 的 `match_exhaustiveness` 已改为 matrix-backed top-level enum compatibility bridge：现有 `MATCH_MISSING_PATTERNS` / `MATCH_UNREACHABLE_ARM` / `MATCH_OVERLAP` 行为继续由 ADT match 回归测试覆盖。
 
 尚未完成：
 
-1. 现有 RFC 0003 `match_exhaustiveness` 仍未被 matrix engine 替换。
-2. Parser/typechecker 还没有把 source-level pattern 降到 typed pattern HIR。
+1. Parser/typechecker 还没有把 source-level pattern 降到 typed pattern HIR。
+2. 兼容 bridge 仍只按 root enum constructor 解释 source pattern；enum payload destructuring 的 nested usefulness 尚未接入 typechecker。
 3. Literal/range pattern、struct payload destructuring、if-let/optional narrowing flow integration、stable pattern diagnostic codes 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
@@ -275,3 +276,4 @@ Stabilized exit criteria:
 
 - 2026-07-07: Draft opened as the follow-up home for RFC 0003's full usefulness matrix work after enum payload, optional narrowing and if-let support landed.
 - 2026-07-08: Landed the first compiler infrastructure slice: an ID-based flat pattern usefulness context plus finite constructor matrix tests for wildcard, bool/enum-like constructors, nested payload witnesses, guarded rows, or-pattern redundancy and open-domain fallback.
+- 2026-07-08: Routed RFC 0003 `match_exhaustiveness` through the matrix core for top-level enum coverage while preserving existing diagnostics and ADT match regression behavior.
