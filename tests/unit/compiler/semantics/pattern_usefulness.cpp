@@ -577,6 +577,41 @@ TEST_CASE("large bounded int product payload keeps finite sibling dimensions pre
     CHECK(ahfl::render_pattern_witness(context, *missing.missing_witness) == "Pair(0, True)");
 }
 
+TEST_CASE("closed constructor products fall back to symbolic analysis when witness cap is reached") {
+    ahfl::PatternUsefulnessContext context;
+    const auto bool_domain = make_bool_domain(context);
+    const auto pair_domain = context.add_domain();
+    const auto pair =
+        context.add_constructor(pair_domain, "Pair", {bool_domain.domain, bool_domain.domain});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                pair,
+                {context.make_constructor_pattern(bool_domain.false_ctor, {}),
+                 context.make_constructor_pattern(bool_domain.false_ctor, {})})},
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                pair,
+                {context.make_constructor_pattern(bool_domain.false_ctor, {}),
+                 context.make_constructor_pattern(bool_domain.true_ctor, {})})},
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                pair,
+                {context.make_constructor_pattern(bool_domain.true_ctor, {}),
+                 context.make_constructor_pattern(bool_domain.false_ctor, {})})},
+    };
+
+    const auto analysis = ahfl::analyze_pattern_usefulness(
+        context, pair_domain, rows, ahfl::PatternUsefulnessOptions{.max_witnesses = 1});
+
+    CHECK(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "Pair(True, True)");
+    REQUIRE(analysis.missing_witnesses.size() == 1);
+    CHECK_FALSE(analysis.witness_limit_exceeded);
+}
+
 TEST_CASE("open int range pattern rejects invalid bounds") {
     ahfl::PatternUsefulnessContext context;
     CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)), std::invalid_argument);

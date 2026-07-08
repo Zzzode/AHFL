@@ -1431,6 +1431,19 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
     const auto enumeration = enumerate_root_witnesses(context, root_domain, options);
     analysis.root_domain_is_finite = enumeration.finite;
     analysis.witness_limit_exceeded = enumeration.limit_exceeded;
+    if (enumeration.limit_exceeded) {
+        if (auto interval_analysis =
+                analyze_bounded_int_intervals(context, root_domain, rows, options);
+            interval_analysis.has_value()) {
+            return *interval_analysis;
+        }
+        if (auto symbolic_analysis =
+                analyze_symbolic_closed_spaces(context, root_domain, rows, options);
+            symbolic_analysis.has_value()) {
+            return *symbolic_analysis;
+        }
+        return analysis;
+    }
     if (enumeration.witnesses.empty()) {
         if (auto interval_analysis =
                 analyze_bounded_int_intervals(context, root_domain, rows, options);

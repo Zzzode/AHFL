@@ -254,6 +254,7 @@ Migration:
 40. LSP local binding documentHighlight v1 已落库：`textDocument/documentHighlight` 会优先消费同一套 AST lexical scope 与 typed expression path-root facts，为 pattern binding / let binding 只高亮同一个 lexical binding 的声明和使用；找不到 semantic local binding 时才回退到旧的文本级 identifier highlight。
 41. LSP pattern-aware selectionRange v1 已落库：`textDocument/selectionRange` 会把 `TypedProgram::patterns` 中同 source、包含光标位置的 typed pattern ranges 注入选择链；nested payload destructuring 可以从 identifier / bracket range 继续扩展到 inner variant pattern、outer variant pattern，再到 arm/block/file，通用文本 selection range 仍保持 compiler-agnostic。
 42. Pattern semantics reference cleanup 已落库：`docs/spec/core-language.zh.md` 现在规范化列出 `IntRangePattern`、open literal payload coverage、if-let usefulness warning 和 pattern-only signed range bound；未发射的 legacy `MATCH_NOT_YET_SUPPORTED` / `LAMBDA_NOT_YET_SUPPORTED` / `FN_DECL_NOT_YET_SUPPORTED` 诊断已从 SoT 与 error-code reference 删除，避免旧阶段占位码继续污染 RFC0011 的稳定诊断面。
+43. Witness cap symbolic fallback 已落库：finite constructor product 的 witness 枚举触达 `PatternUsefulnessOptions::max_witnesses` 时，matrix 不再用部分 witness 集合继续证明穷尽性，而是切换到 bounded-int interval / symbolic closed-space analyzer；如果闭合结构化 domain 可分析，仍能精确给出缺失 witness（例如 `Pair(True, True)`），避免大型 product 被错误判为 exhaustive。
 
 尚未完成：
 
@@ -263,7 +264,7 @@ Migration:
 
 ## Test Plan
 
-1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis and symbolic bounded constructor products.
+1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis, symbolic bounded constructor products and witness-cap symbolic fallback.
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal/concatenation assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
@@ -364,3 +365,4 @@ Stabilized exit criteria:
 - 2026-07-09: Added pattern-aware selectionRange. The LSP now augments generic text selection chains with nested typed pattern ranges from `TypedProgram::patterns`.
 - 2026-07-09: Added related information for `MATCH_REDUNDANT_PATTERN`. The usefulness matrix now propagates prior covering row and prior or-branch ranges through match exhaustiveness diagnostics so CLI and LSP diagnostics point at the source that made the branch redundant.
 - 2026-07-09: Synchronized the pattern semantics reference and stable diagnostic surface with the implemented RFC0011 state. `core-language.zh.md` now includes Int range pattern and if-let usefulness semantics, and the unused legacy `*_NOT_YET_SUPPORTED` typecheck diagnostics were removed from the diagnostics SoT and error-code reference.
+- 2026-07-09: Added witness-cap symbolic fallback for closed constructor products. `analyze_pattern_usefulness()` now refuses to prove exhaustiveness from a partial materialized witness set and falls back to interval / symbolic closed-space analysis when `max_witnesses` is reached.
