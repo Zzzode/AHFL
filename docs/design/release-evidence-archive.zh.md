@@ -43,7 +43,7 @@
 | 字段 | 类型 | 描述 |
 | --- | --- | --- |
 | id | string | 稳定 evidence identity |
-| type | string | `command-output` / `repository-contract` |
+| type | string | `command-output` / `command-artifacts` / `expected-failure-output` / `repository-contract` |
 | covers | array<string> | 覆盖的 RFC 或 release gate |
 | status | string | `passed` / `failed` |
 | summary | string | 面向 reviewer 的简短说明 |
@@ -74,6 +74,11 @@ scripts/generate-release-evidence-archive.py \
 | `rfc0009.public_api.snapshot.non_std_package` | RFC0009 | 非 std package 生成 package-relative public API JSON snapshot，且 dependency API 不泄漏 |
 | `rfc0009.public_api.docs.non_std_package` | RFC0009 | public API Markdown docs 从 visibility facts 生成 |
 | `rfc0009.public_api.diff.baseline` | RFC0009 | 两个 public API snapshot 可通过结构化 diff 比较 |
+| `rfc0010.registry_publish.dry_run_semver_gate` | RFC0010 | 本地 fixture registry 上执行 publish dry-run，并通过 previous-release SemVer gate |
+| `rfc0010.registry_publish.upload` | RFC0010 | 本地 fixture registry 接收 validated publish request，返回同 coordinate / digest 的 `ahfl.registry.index.v1` |
+| `rfc0010.registry_resolve.lockfile` | RFC0010 | manifest v2 registry dependency 从本地 fixture registry 解析为带 registry coordinate / digest 的 `ahfl.lock` |
+| `rfc0010.registry_yank.local_fixture` | RFC0010 | 已发布版本通过 registry mutation 标记为 yanked，source archive / public API digest 不被重写 |
+| `rfc0010.registry_publish.semver_rejection` | RFC0010 | publish-time SemVer gate 在 incompatible patch release 上传前 fail closed |
 
 ## Determinism
 
@@ -104,5 +109,5 @@ Durable store import provider 仍可以生成 domain-specific release evidence a
 
 1. `ctest --preset test-dev -L release-evidence-archive --output-on-failure` 通过。
 2. `scripts/generate-release-evidence-archive.py` 可生成 `release-evidence-archive.json`。
-3. RFC0005/RFC0006/RFC0007/RFC0009 的 release-facing evidence item 均在 archive manifest 中出现。
+3. RFC0005/RFC0006/RFC0007/RFC0009/RFC0010 的 release-facing evidence item 均在 archive manifest 中出现。
 4. `scripts/check-rfc.py` 通过，RFC 状态只能在 evidence 存在后推进。

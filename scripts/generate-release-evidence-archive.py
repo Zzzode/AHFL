@@ -65,6 +65,20 @@ def normalize_repo_paths(value: Any, repo: pathlib.Path) -> Any:
     return value
 
 
+def normalize_release_evidence_paths(value: Any, repo: pathlib.Path) -> Any:
+    value = normalize_repo_paths(value, repo)
+    if isinstance(value, dict):
+        return {key: normalize_release_evidence_paths(item, repo) for key, item in value.items()}
+    if isinstance(value, list):
+        return [normalize_release_evidence_paths(item, repo) for item in value]
+    if isinstance(value, str) and value.startswith("/"):
+        path = pathlib.PurePosixPath(value)
+        if "ahfl-registry-materialize-" in value and len(path.parts) >= 2:
+            return "${registry-materialized}/" + "/".join(path.parts[-2:])
+        return "${external-path}/" + path.name
+    return value
+
+
 def write_text(path: pathlib.Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -141,6 +155,7 @@ class LocalRegistry:
         self.previous_snapshots = previous_snapshots
         self.requests: list[dict[str, Any]] = []
         self.published: dict[tuple[str, str], dict[str, Any]] = {}
+        self.published_artifacts: dict[tuple[str, str], dict[str, Any]] = {}
         self.httpd: http.server.HTTPServer | None = None
         self.thread: threading.Thread | None = None
         self.base_url = ""
@@ -183,6 +198,11 @@ class LocalRegistry:
                         for (pkg, version), snapshot in outer.previous_snapshots.items()
                         if pkg == package
                     ]
+                    versions.extend(
+                        entry
+                        for (pkg, _), entry in outer.published.items()
+                        if pkg == package
+                    )
                     if not versions:
                         self._write_json(404, {"error": "not found"})
                         return
@@ -200,9 +220,52 @@ class LocalRegistry:
                     and parts[0] == "v1"
                     and parts[1] == "packages"
                     and parts[3] == "versions"
+                    and parts[5] == "registry-index"
+                ):
+                    entry = outer.published.get((parts[2], parts[4]))
+                    if entry is None:
+                        self._write_json(404, {"error": "not found"})
+                        return
+                    self._write_json(200, entry)
+                    return
+                if (
+                    len(parts) == 6
+                    and parts[0] == "v1"
+                    and parts[1] == "packages"
+                    and parts[3] == "versions"
+                    and parts[5] == "source-archive"
+                ):
+                    artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                    if artifacts is None:
+                        self._write_json(404, {"error": "not found"})
+                        return
+                    self._write_json(200, artifacts["source_archive"])
+                    return
+                if (
+                    len(parts) == 6
+                    and parts[0] == "v1"
+                    and parts[1] == "packages"
+                    and parts[3] == "versions"
+                    and parts[5] == "source-archive.payload"
+                ):
+                    artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                    if artifacts is None:
+                        self._write_json(404, {"error": "not found"})
+                        return
+                    self._write_text(200, artifacts["source_archive_payload"])
+                    return
+                if (
+                    len(parts) == 6
+                    and parts[0] == "v1"
+                    and parts[1] == "packages"
+                    and parts[3] == "versions"
                     and parts[5] == "public-api"
                 ):
                     snapshot = outer.previous_snapshots.get((parts[2], parts[4]))
+                    if snapshot is None:
+                        artifacts = outer.published_artifacts.get((parts[2], parts[4]))
+                        if artifacts is not None:
+                            snapshot = artifacts["public_api_snapshot"]
                     if snapshot is None:
                         self._write_json(404, {"error": "not found"})
                         return
@@ -228,6 +291,11 @@ class LocalRegistry:
                 require(body.get("source_archive_payload"), "publish request missing source payload")
                 require(body.get("public_api_snapshot"), "publish request missing public API snapshot")
                 outer.published[(parts[2], parts[4])] = dict(entry)
+                outer.published_artifacts[(parts[2], parts[4])] = {
+                    "source_archive": body.get("source_archive", {}),
+                    "source_archive_payload": body.get("source_archive_payload", ""),
+                    "public_api_snapshot": body.get("public_api_snapshot", ""),
+                }
                 self._write_json(200, entry)
 
             def do_POST(self) -> None:
@@ -441,6 +509,48 @@ pub fn score(req: ScoreRequest) -> Int effect Pure decreases 0 {{
         )
         return package_root / "ahfl.toml"
 
+    def write_registry_consumer_fixture(
+        self, package: str, version: str, dependency: str, requirement: str
+    ) -> pathlib.Path:
+        package_root = self.out_dir / "fixtures" / package
+        module_prefix = package.replace("-", "_")
+        write_text(
+            package_root / "ahfl.toml",
+            f"""manifest_version = 2
+
+[package]
+name = "{package}"
+version = "{version}"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "{module_prefix}"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "src/main.ahfl"
+
+[dependencies]
+std = {{ source = "sysroot" }}
+{dependency} = {{ source = "registry", registry = "default", version = "{requirement}" }}
+""",
+        )
+        write_text(
+            package_root / "src/main.ahfl",
+            f"""module {module_prefix}::main;
+
+pub fn marker() -> Int effect Pure decreases 0 {{
+    return 1;
+}}
+""",
+        )
+        return package_root / "ahfl.toml"
+
     def registry_publish_evidence(self) -> None:
         previous_release_demo = public_api_snapshot("release-demo", "0.1.0", [])
         removed_entry = {
@@ -552,6 +662,58 @@ pub fn score(req: ScoreRequest) -> Int effect Pure decreases 0 {{
                 ],
                 command=command_template(self.repo, self.ahflc, upload_args),
                 summary="Uploaded a package to a local fixture registry after local publish gates passed.",
+            )
+
+            resolve_manifest = self.write_registry_consumer_fixture(
+                "release-consumer", "0.1.0", "release-demo", "^0.2.0"
+            )
+            resolve_lockfile = resolve_manifest.parent / "ahfl.lock"
+            resolve_args = [
+                "registry",
+                "resolve",
+                "--manifest",
+                str(resolve_manifest),
+                "--sysroot",
+                str(self.repo),
+                "--lockfile",
+                str(resolve_lockfile),
+            ]
+            resolve = run([str(self.ahflc), *resolve_args], self.repo, env=env)
+            require(resolve.returncode == 0, f"registry resolve failed:\n{resolve.stderr}")
+            require(resolve.stderr == "", f"registry resolve emitted stderr:\n{resolve.stderr}")
+            require("registry-resolve: pass" in resolve.stdout, resolve.stdout)
+            lockfile_payload = json.loads(resolve_lockfile.read_text(encoding="utf-8"))
+            locked_packages = {
+                package.get("name"): package for package in lockfile_payload.get("packages", [])
+            }
+            release_demo = locked_packages.get("release-demo", {})
+            require(release_demo.get("source") == "registry", str(lockfile_payload))
+            require(release_demo.get("registry_id") == "default", str(lockfile_payload))
+            require(release_demo.get("version") == "0.2.0", str(lockfile_payload))
+            locked_edges = [
+                edge
+                for edge in lockfile_payload.get("edges", [])
+                if edge.get("dependency") == "release-demo" and edge.get("source") == "registry"
+            ]
+            require(len(locked_edges) == 1, str(lockfile_payload))
+            require(locked_edges[0].get("version_requirement") == "^0.2.0", str(locked_edges[0]))
+            require(locked_edges[0].get("selected_version") == "0.2.0", str(locked_edges[0]))
+            resolve_stdout = self.artifact("registry/release-consumer.registry-resolve.stdout.txt")
+            resolve_lockfile_artifact = self.artifact("registry/release-consumer.ahfl.lock.json")
+            normalized_lockfile = normalize_release_evidence_paths(lockfile_payload, self.repo)
+            normalized_text = json.dumps(normalized_lockfile, sort_keys=True)
+            require("/private/" not in normalized_text, normalized_text)
+            require("/tmp/" not in normalized_text, normalized_text)
+            require("/Users/" not in normalized_text, normalized_text)
+            write_text(resolve_stdout, resolve.stdout)
+            write_json(resolve_lockfile_artifact, normalized_lockfile)
+            self.add_item(
+                evidence_id="rfc0010.registry_resolve.lockfile",
+                covers=["RFC0010"],
+                evidence_type="command-artifacts",
+                artifacts=[resolve_stdout, resolve_lockfile_artifact],
+                command=command_template(self.repo, self.ahflc, resolve_args),
+                summary="Resolved a manifest v2 registry dependency from the local fixture registry into ahfl.lock.",
             )
 
             yank_args = [

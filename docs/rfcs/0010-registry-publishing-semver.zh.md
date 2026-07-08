@@ -1,9 +1,9 @@
 ---
 rfc: "0010"
 title: "Registry Publishing and SemVer Gates"
-status: "accepted"
+status: "stabilized"
 area: ["compiler", "tooling", "process"]
-stability: "experimental"
+stability: "stable-artifact"
 created: "2026-07-07"
 updated: "2026-07-08"
 authors: ["LLM-orchestrated"]
@@ -349,6 +349,15 @@ Stabilized exit criteria:
 3. At least one non-std package fixture publishes to a local fixture registry and resolves from a lockfile.
 4. No old descriptor path participates in package publishing.
 
+当前状态为 `stabilized`。`docs/reference/cli-commands.zh.md` 已记录 registry dependency
+resolution、package publish、SemVer gate 和 package yank 的公开 workflow；
+`ahfl.release_evidence_archive.v1` 已覆盖 `rfc0010.registry_publish.dry_run_semver_gate`、
+`rfc0010.registry_publish.upload`、`rfc0010.registry_resolve.lockfile`、
+`rfc0010.registry_yank.local_fixture` 和 `rfc0010.registry_publish.semver_rejection`。
+其中 `registry_resolve.lockfile` 通过同一个本地 fixture registry 在 publish 后执行显式
+`registry resolve`，并把 registry coordinate / source archive digest / public API digest
+写入 `ahfl.lock`。workspace-mode registry fetch 仍不属于 v1 产品化范围。
+
 ## Alternatives
 
 1. Put registry fields into manifest v1.
@@ -393,3 +402,4 @@ Stabilized exit criteria:
 - 2026-07-07: Landed publish dry-run previous-release SemVer gate wiring: `package publish --dry-run --semver-gate --from <previous-version>` fetches registry package index metadata and previous public API snapshot, compares against the current snapshot, records pass evidence and fails closed on incompatible bumps.
 - 2026-07-07: Landed registry upload/yank wiring and RFC0010 release evidence: `package publish` now uploads a validated publish request envelope after local gates, `package yank` requires a yanked registry index response, and the release evidence archive covers dry-run SemVer pass, upload, yank and SemVer rejection through a local fixture registry.
 - 2026-07-08: Owner review accepted the v1 design boundary. Manifest v2, SemVer-gated publishing, digest-separated registry identity and explicit registry resolution are approved; workspace-mode registry fetch remains out of v1 productization, and LSP/workspace analysis must stay network-free by default.
+- 2026-07-08: Stabilized RFC0010 after release evidence archive gained live fixture-registry resolve coverage: a published non-std package is resolved into a lockfile with registry coordinate and digest metadata, alongside publish dry-run, real upload, yanking and SemVer rejection evidence.

@@ -57,10 +57,10 @@ rfcs:
     stability: "stable-language"
   - rfc: "0010"
     title: "Registry Publishing and SemVer Gates"
-    status: "accepted"
+    status: "stabilized"
     file: "0010-registry-publishing-semver.zh.md"
     area: ["compiler", "tooling", "process"]
-    stability: "experimental"
+    stability: "stable-artifact"
   - rfc: "0011"
     title: "Pattern Usefulness Matrix"
     status: "draft"
