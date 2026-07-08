@@ -698,6 +698,95 @@ if_let_payload_kind(const ast::IfLetPatternSyntax &pattern) noexcept {
     return pattern.bindings.empty() ? EnumVariantPayloadKind::Unit : EnumVariantPayloadKind::Tuple;
 }
 
+struct IfLetPatternEffects {
+    FlowFacts then_facts;
+    FlowFacts else_facts;
+    std::vector<std::pair<std::string, TypePtr>> payload_bindings;
+};
+
+void collect_typed_pattern_bindings(const TypedProgram &program,
+                                    const TypedPattern &pattern,
+                                    std::vector<std::pair<std::string, TypePtr>> &out,
+                                    std::unordered_set<std::string> &seen) {
+    for (const auto &binding : pattern.bindings) {
+        if (!binding.name.empty() && seen.insert(binding.name).second) {
+            out.emplace_back(binding.name, binding.type);
+        }
+    }
+
+    for (const auto &child : pattern.children) {
+        if (child.pattern_index >= program.patterns.size()) {
+            continue;
+        }
+        collect_typed_pattern_bindings(program, program.patterns[child.pattern_index], out, seen);
+    }
+}
+
+[[nodiscard]] IfLetPatternEffects
+if_let_effects_from_typed_pattern(const TypedProgram &program,
+                                  const TypedPattern &pattern,
+                                  const std::optional<Place> &scrutinee_place) {
+    IfLetPatternEffects effects;
+
+    std::unordered_set<std::string> seen_bindings;
+    collect_typed_pattern_bindings(program, pattern, effects.payload_bindings, seen_bindings);
+
+    if (!scrutinee_place.has_value() || pattern.kind != TypedPatternKind::Variant ||
+        pattern.variant_name.empty() || pattern.matched_type == nullptr) {
+        return effects;
+    }
+
+    const auto option_view = stdlib_bridge::std_container_type_view(*pattern.matched_type);
+    if (option_view.has_value() && option_view->kind == stdlib_bridge::StdContainerKind::Option &&
+        pattern.variant_name == "Some") {
+        effects.then_facts.add(TypeFact{
+            .place = *scrutinee_place,
+            .kind = TypeFactKind::IsNotNone,
+            .origin = pattern.range,
+        });
+        effects.else_facts.add(TypeFact{
+            .place = *scrutinee_place,
+            .kind = TypeFactKind::IsNone,
+            .origin = pattern.range,
+        });
+        return effects;
+    }
+    if (option_view.has_value() && option_view->kind == stdlib_bridge::StdContainerKind::Option &&
+        pattern.variant_name == "None") {
+        effects.then_facts.add(TypeFact{
+            .place = *scrutinee_place,
+            .kind = TypeFactKind::IsNone,
+            .origin = pattern.range,
+        });
+        effects.else_facts.add(TypeFact{
+            .place = *scrutinee_place,
+            .kind = TypeFactKind::IsNotNone,
+            .origin = pattern.range,
+        });
+        return effects;
+    }
+
+    if (pattern.enum_name.empty()) {
+        return effects;
+    }
+
+    effects.then_facts.add(TypeFact{
+        .place = *scrutinee_place,
+        .kind = TypeFactKind::IsVariant,
+        .origin = pattern.range,
+        .enum_name = pattern.enum_name,
+        .variant_name = pattern.variant_name,
+    });
+    effects.else_facts.add(TypeFact{
+        .place = *scrutinee_place,
+        .kind = TypeFactKind::IsNotVariant,
+        .origin = pattern.range,
+        .enum_name = pattern.enum_name,
+        .variant_name = pattern.variant_name,
+    });
+    return effects;
+}
+
 [[nodiscard]] std::optional<EnumTypeInfo> substituted_enum_info_for(const EnumTypeInfo &declared,
                                                                     const types::EnumT &enum_type,
                                                                     TypeContext &types) {
@@ -3514,13 +3603,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                                : statement.range);
             }
 
-            FlowFacts then_facts;
-            FlowFacts else_facts;
-            std::vector<std::pair<std::string, TypePtr>> payload_bindings;
+            IfLetPatternEffects pattern_effects;
             std::uint32_t if_let_pattern_index = UINT32_MAX;
             std::optional<std::reference_wrapper<const EnumVariantInfo>> pattern_variant_info =
                 std::nullopt;
             bool if_let_pattern_valid_for_usefulness = false;
+            const auto scrutinee_place =
+                ifl->scrutinee != nullptr ? place_of_expr(*ifl->scrutinee) : std::nullopt;
             if (ifl->pattern != nullptr && enum_info.has_value()) {
                 const auto &pattern = *ifl->pattern;
                 const auto variant = enum_info->get().find_variant(pattern.variant_name);
@@ -3561,7 +3650,6 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
                         std::unordered_set<std::string> seen_bindings;
                         const std::size_t limit = std::min(pattern.bindings.size(), payload.size());
-                        payload_bindings.reserve(limit);
                         for (std::size_t index = 0; index < limit; ++index) {
                             const auto &binding = pattern.bindings[index];
                             if (!seen_bindings.insert(binding).second) {
@@ -3569,71 +3657,22 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                     error_codes::typecheck::MatchDuplicateBinding,
                                     messages::typecheck::MatchDuplicateBinding.format_with(binding),
                                     pattern.range);
-                                continue;
                             }
-                            payload_bindings.emplace_back(
-                                binding,
-                                payload[index] != nullptr ? payload[index] : make_error_type());
                         }
                     }
                     if_let_pattern_valid_for_usefulness = shape_valid;
-
-                    if (ifl->scrutinee != nullptr) {
-                        if (const auto place = place_of_expr(*ifl->scrutinee); place.has_value()) {
-                            const auto option_view =
-                                scrutinee.type != nullptr
-                                    ? stdlib_bridge::std_container_type_view(*scrutinee.type)
-                                    : std::nullopt;
-                            if (option_view.has_value() &&
-                                option_view->kind == stdlib_bridge::StdContainerKind::Option &&
-                                pattern.variant_name == "Some") {
-                                then_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsNotNone,
-                                    .origin = pattern.range,
-                                });
-                                else_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsNone,
-                                    .origin = pattern.range,
-                                });
-                            } else if (option_view.has_value() &&
-                                       option_view->kind ==
-                                           stdlib_bridge::StdContainerKind::Option &&
-                                       pattern.variant_name == "None") {
-                                then_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsNone,
-                                    .origin = pattern.range,
-                                });
-                                else_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsNotNone,
-                                    .origin = pattern.range,
-                                });
-                            } else {
-                                then_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsVariant,
-                                    .origin = pattern.range,
-                                    .enum_name = enum_info->get().canonical_name,
-                                    .variant_name = pattern.variant_name,
-                                });
-                                else_facts.add(TypeFact{
-                                    .place = *place,
-                                    .kind = TypeFactKind::IsNotVariant,
-                                    .origin = pattern.range,
-                                    .enum_name = enum_info->get().canonical_name,
-                                    .variant_name = pattern.variant_name,
-                                });
-                            }
-                        }
-                    }
                 }
             }
             if (ifl->pattern != nullptr) {
                 if_let_pattern_index = append_if_let_typed_pattern(
                     *ifl->pattern, scrutinee.type, enum_info, pattern_variant_info);
+                if (pattern_variant_info.has_value() && if_let_pattern_index != UINT32_MAX) {
+                    if (const auto *typed_root = typed_pattern(if_let_pattern_index);
+                        typed_root != nullptr) {
+                        pattern_effects = if_let_effects_from_typed_pattern(
+                            result_.typed_program, *typed_root, scrutinee_place);
+                    }
+                }
             }
             if (ifl->else_block != nullptr && enum_info.has_value() &&
                 pattern_variant_info.has_value() && if_let_pattern_valid_for_usefulness &&
@@ -3690,8 +3729,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .call_context = context.call_context,
                     .current_agent = context.current_agent,
                 };
-                then_context.flow_facts.merge_from(then_facts);
-                for (const auto &[name, type] : payload_bindings) {
+                then_context.flow_facts.merge_from(pattern_effects.then_facts);
+                for (const auto &[name, type] : pattern_effects.payload_bindings) {
                     if (const auto previous = find_binding(then_context.bindings, name);
                         previous.has_value()) {
                         if (current_source_ != nullptr) {
@@ -3731,7 +3770,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     .call_context = context.call_context,
                     .current_agent = context.current_agent,
                 };
-                else_context.flow_facts.merge_from(else_facts);
+                else_context.flow_facts.merge_from(pattern_effects.else_facts);
                 check_block(*ifl->else_block,
                             else_context,
                             expected_return_type,

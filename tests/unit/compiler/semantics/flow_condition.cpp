@@ -269,6 +269,15 @@ void check_std_string_option(ahfl::TypePtr type) {
                        });
 }
 
+[[nodiscard]] const ahfl::TypedStatement *find_first_typed_stmt(const ahfl::TypedProgram &program,
+                                                                ahfl::TypedStmtKind kind) {
+    const auto it =
+        std::find_if(program.statements.begin(),
+                     program.statements.end(),
+                     [kind](const ahfl::TypedStatement &stmt) { return stmt.kind == kind; });
+    return it == program.statements.end() ? nullptr : &*it;
+}
+
 // Deep recursive AST walker that finds the top-level binary NotEqual node
 // inside an expression subtree. Lives at namespace scope (local classes may
 // not contain templates, but the visitor overloads are non-template member
@@ -449,6 +458,25 @@ TEST_CASE("If-let Some narrows original scrutinee path on then branch") {
     REQUIRE(then_use != nullptr);
     REQUIRE(then_use->type != nullptr);
     CHECK(then_use->type->holds<ahfl::types::StringT>());
+
+    const auto *if_let =
+        find_first_typed_stmt(project.typecheck.typed_program, ahfl::TypedStmtKind::IfLet);
+    REQUIRE(if_let != nullptr);
+    REQUIRE(if_let->pattern_index < project.typecheck.typed_program.patterns.size());
+    const auto &root_pattern = project.typecheck.typed_program.patterns[if_let->pattern_index];
+    CHECK(root_pattern.kind == ahfl::TypedPatternKind::Variant);
+    CHECK(root_pattern.variant_name == "Some");
+    CHECK(root_pattern.enum_name == "std::option::Option");
+    REQUIRE(root_pattern.children.size() == 1);
+    REQUIRE(root_pattern.children.front().pattern_index <
+            project.typecheck.typed_program.patterns.size());
+    const auto &payload_pattern =
+        project.typecheck.typed_program.patterns[root_pattern.children.front().pattern_index];
+    CHECK(payload_pattern.kind == ahfl::TypedPatternKind::Binding);
+    REQUIRE(payload_pattern.bindings.size() == 1);
+    CHECK(payload_pattern.bindings.front().name == "value");
+    REQUIRE(payload_pattern.bindings.front().type != nullptr);
+    CHECK(payload_pattern.bindings.front().type->holds<ahfl::types::StringT>());
 }
 
 TEST_CASE("If-let None exposes non-none complement in else branch") {
