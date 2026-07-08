@@ -232,10 +232,11 @@ Migration:
 19. LSP pattern binding hover v1 已落库：hover index 会遍历 `TypedProgram::patterns` 中的 `TypedPatternBinding` fact，为 `match` 和 `if let` pattern binding 声明位点注册 `LocalBinding` hover target；hover payload 在没有 expression fact 的声明位点仍显示 binding 名称和 typed pattern 推导出的类型。
 20. `if let` 源语法和 AST 已迁移到通用 `PatternSyntax`：grammar 直接消费 `pattern` rule，frontend、formatter、semantic tokens、IR lowering 和 typechecker 共用 match pattern surface；旧 `IfLetPatternSyntax` 和 statement-local typed-pattern 构造路径已删除。
 21. LSP pattern completion v1 已落库：completion 在光标位于 `TypedProgram::patterns` 的 pattern range 内时，使用最小 containing typed pattern 的 `matched_type` 查询 `TypeEnvironment::get_enum`，只返回该 scrutinee enum 的 variant 候选；光标位于 struct variant payload braces 内时，使用 typed variant pattern 的 enum/variant facts 返回尚未出现的 payload field 候选。`match`、`if let`、nested enum payload pattern 和 struct payload field filtering 均由 handler 回归测试覆盖。
+22. LSP pattern payload signatureHelp v1 已落库：`textDocument/signatureHelp` 会优先检查 typed enum variant pattern payload 光标位置，并从 `EnumVariantInfo` 渲染 tuple payload 和 struct payload 的签名、参数标签与 active parameter；handler 回归测试覆盖 tuple payload 第二参数和 struct payload 字段位置。
 
 尚未完成：
 
-1. 未来 destructuring UX 仍需继续推进：payload pattern snippet/editing、signatureHelp 和更深 IDE 编辑序列还没有统一消费 typed pattern fact store。
+1. 未来 destructuring UX 仍需继续推进：payload pattern snippet/editing 和更深 IDE 编辑序列还没有统一消费 typed pattern fact store。
 2. range pattern、typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
@@ -244,7 +245,7 @@ Migration:
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern and invalid range.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
-5. LSP tests: diagnostics ranges, related information and quick fix availability.
+5. LSP tests: diagnostics ranges, related information, quick fix availability and pattern payload signatureHelp.
 6. Regression tests proving RFC 0001 enum payload and RFC 0002 optional narrowing behavior remain stable.
 
 ## Rollout and Stabilization
@@ -309,3 +310,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added an LSP quick fix for `typecheck.MATCH_UNREACHABLE_ARM` that removes a source-safe single-line unreachable match arm using the typed-row diagnostic range.
 - 2026-07-08: Added typed-pattern-driven LSP hover for pattern binding declaration sites, covering both `match` and `if let` bindings through `TypedProgram::patterns`.
 - 2026-07-08: Generalized `if let` source syntax and AST to consume the same `PatternSyntax` as `match`, removing the dedicated `IfLetPatternSyntax` path.
+- 2026-07-08: Added typed-pattern-driven LSP signatureHelp for enum variant pattern payloads, covering tuple payload positions and struct payload fields through `TypedProgram::patterns`.

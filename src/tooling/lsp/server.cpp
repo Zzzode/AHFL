@@ -1607,6 +1607,90 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
     }
 }
 
+struct PatternPayloadCursor {
+    const TypedPattern *pattern{nullptr};
+    std::size_t open_offset{0};
+    std::size_t close_offset{0};
+};
+
+[[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>>
+payload_delimiter_bounds(const SourceFile &source, const TypedPattern &pattern) {
+    if (pattern.range.begin_offset >= pattern.range.end_offset ||
+        pattern.range.end_offset > source.content.size()) {
+        return std::nullopt;
+    }
+
+    const auto text = std::string_view{source.content}.substr(
+        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
+    char open_char = '(';
+    char close_char = ')';
+    if (pattern.variant_payload_kind == EnumVariantPayloadKind::Struct) {
+        open_char = '{';
+        close_char = '}';
+    } else if (pattern.variant_payload_kind != EnumVariantPayloadKind::Tuple) {
+        return std::nullopt;
+    }
+
+    const auto open = text.find(open_char);
+    const auto close = text.rfind(close_char);
+    if (open == std::string_view::npos || close == std::string_view::npos || open >= close) {
+        return std::nullopt;
+    }
+    return std::pair{pattern.range.begin_offset + open, pattern.range.begin_offset + close};
+}
+
+[[nodiscard]] int active_payload_parameter(const SourceFile &source,
+                                           std::size_t open_offset,
+                                           std::size_t close_offset,
+                                           std::size_t cursor_offset,
+                                           std::size_t parameter_count) {
+    if (parameter_count == 0) {
+        return 0;
+    }
+
+    int active = 0;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int bracket_depth = 0;
+    bool in_string = false;
+    bool escaping = false;
+    const auto end = std::min(cursor_offset, close_offset);
+    for (std::size_t index = open_offset + 1; index < end && index < source.content.size();
+         ++index) {
+        const char ch = source.content[index];
+        if (in_string) {
+            if (escaping) {
+                escaping = false;
+            } else if (ch == '\\') {
+                escaping = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+            continue;
+        }
+        if (ch == '(') {
+            ++paren_depth;
+        } else if (ch == ')' && paren_depth > 0) {
+            --paren_depth;
+        } else if (ch == '{') {
+            ++brace_depth;
+        } else if (ch == '}' && brace_depth > 0) {
+            --brace_depth;
+        } else if (ch == '[') {
+            ++bracket_depth;
+        } else if (ch == ']' && bracket_depth > 0) {
+            --bracket_depth;
+        } else if (ch == ',' && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0) {
+            ++active;
+        }
+    }
+    return std::min(active, static_cast<int>(parameter_count - 1));
+}
+
 [[nodiscard]] const TypedPattern *find_typed_pattern_at(const TypedProgram &program,
                                                         std::optional<SourceId> source_id,
                                                         std::size_t offset) {
@@ -1625,45 +1709,54 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
     return best;
 }
 
-[[nodiscard]] bool cursor_inside_struct_payload_braces(const SourceFile &source,
-                                                       const TypedPattern &pattern,
-                                                       std::size_t offset) {
-    if (pattern.range.begin_offset >= pattern.range.end_offset ||
-        pattern.range.end_offset > source.content.size()) {
-        return false;
+[[nodiscard]] std::optional<PatternPayloadCursor>
+find_variant_payload_pattern_at(const TypedProgram &program,
+                                const SourceFile &source,
+                                std::optional<SourceId> source_id,
+                                std::size_t offset) {
+    const TypedPattern *best = nullptr;
+    std::size_t best_open = 0;
+    std::size_t best_close = 0;
+    std::size_t best_width = std::numeric_limits<std::size_t>::max();
+    for (const auto &pattern : program.patterns) {
+        if (!same_source(pattern.source_id, source_id) || !contains(pattern.range, offset) ||
+            pattern.kind != TypedPatternKind::Variant ||
+            (pattern.variant_payload_kind != EnumVariantPayloadKind::Struct &&
+             pattern.variant_payload_kind != EnumVariantPayloadKind::Tuple)) {
+            continue;
+        }
+        const auto bounds = payload_delimiter_bounds(source, pattern);
+        if (!bounds.has_value() || !(bounds->first < offset && offset <= bounds->second)) {
+            continue;
+        }
+        const auto width = pattern.range.end_offset - pattern.range.begin_offset;
+        if (best == nullptr || width < best_width) {
+            best = &pattern;
+            best_open = bounds->first;
+            best_close = bounds->second;
+            best_width = width;
+        }
     }
-    const auto text = std::string_view{source.content}.substr(
-        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
-    const auto open = text.find('{');
-    const auto close = text.rfind('}');
-    if (open == std::string_view::npos || close == std::string_view::npos || open >= close) {
-        return false;
+    if (best == nullptr) {
+        return std::nullopt;
     }
-    const auto open_offset = pattern.range.begin_offset + open;
-    const auto close_offset = pattern.range.begin_offset + close;
-    return open_offset < offset && offset <= close_offset;
+    return PatternPayloadCursor{
+        .pattern = best,
+        .open_offset = best_open,
+        .close_offset = best_close,
+    };
 }
 
 [[nodiscard]] const TypedPattern *find_struct_variant_pattern_at(const TypedProgram &program,
                                                                  const SourceFile &source,
                                                                  std::optional<SourceId> source_id,
                                                                  std::size_t offset) {
-    const TypedPattern *best = nullptr;
-    std::size_t best_width = std::numeric_limits<std::size_t>::max();
-    for (const auto &pattern : program.patterns) {
-        if (!same_source(pattern.source_id, source_id) || !contains(pattern.range, offset) ||
-            pattern.kind != TypedPatternKind::Variant ||
-            pattern.variant_payload_kind != EnumVariantPayloadKind::Struct ||
-            !cursor_inside_struct_payload_braces(source, pattern, offset)) {
-            continue;
-        }
-        const auto width = pattern.range.end_offset - pattern.range.begin_offset;
-        if (best == nullptr || width < best_width) {
-            best = &pattern;
-            best_width = width;
-        }
+    const auto cursor = find_variant_payload_pattern_at(program, source, source_id, offset);
+    if (!cursor.has_value() ||
+        cursor->pattern->variant_payload_kind != EnumVariantPayloadKind::Struct) {
+        return nullptr;
     }
-    return best;
+    return cursor->pattern;
 }
 
 [[nodiscard]] bool push_pattern_context_completions(std::vector<CompletionItem> &items,
@@ -1704,6 +1797,83 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
 
     push_pattern_enum_variant_completions(items, enum_info->get());
     return true;
+}
+
+[[nodiscard]] std::optional<SignatureHelp> pattern_signature_help(
+    const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
+    if (!snapshot.type_check_result || source.source == nullptr) {
+        return std::nullopt;
+    }
+    const auto *program = snapshot.typed_program();
+    if (program == nullptr) {
+        return std::nullopt;
+    }
+    auto cursor =
+        find_variant_payload_pattern_at(*program, *source.source, source.source_id, offset);
+    if (!cursor.has_value() || cursor->pattern == nullptr ||
+        !cursor->pattern->enum_symbol.has_value()) {
+        return std::nullopt;
+    }
+    const auto enum_info =
+        snapshot.type_check_result->environment.get_enum(*cursor->pattern->enum_symbol);
+    if (!enum_info.has_value()) {
+        return std::nullopt;
+    }
+    const auto variant_info = enum_info->get().find_variant(cursor->pattern->variant_name);
+    if (!variant_info.has_value()) {
+        return std::nullopt;
+    }
+
+    SignatureInformation info;
+    info.documentation =
+        "enum pattern " + enum_info->get().canonical_name + "::" + variant_info->get().name;
+    if (variant_info->get().payload_kind == EnumVariantPayloadKind::Tuple) {
+        info.label = enum_info->get().canonical_name + "::" + variant_info->get().name + "(";
+        for (std::size_t index = 0; index < variant_info->get().payload.size(); ++index) {
+            if (index > 0) {
+                info.label += ", ";
+            }
+            const auto type = variant_info->get().payload[index];
+            info.label += type ? type->describe() : "?";
+
+            ParameterInformation parameter;
+            parameter.label = std::to_string(index) + ": " + (type ? type->describe() : "?");
+            parameter.documentation = "tuple payload " + std::to_string(index);
+            info.parameters.push_back(std::move(parameter));
+        }
+        info.label += ")";
+    } else if (variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
+        info.label = enum_info->get().canonical_name + "::" + variant_info->get().name + " { ";
+        for (std::size_t index = 0; index < variant_info->get().fields.size(); ++index) {
+            if (index > 0) {
+                info.label += ", ";
+            }
+            const auto &field = variant_info->get().fields[index];
+            info.label += field.name + ": " + (field.type ? field.type->describe() : "?");
+
+            ParameterInformation parameter;
+            parameter.label = field.name + ": " + (field.type ? field.type->describe() : "?");
+            parameter.documentation = field.type ? field.type->describe() : "?";
+            info.parameters.push_back(std::move(parameter));
+        }
+        info.label += " }";
+    } else {
+        return std::nullopt;
+    }
+
+    if (info.parameters.empty()) {
+        return std::nullopt;
+    }
+
+    SignatureHelp help;
+    help.signatures.push_back(std::move(info));
+    help.active_signature = 0;
+    help.active_parameter = active_payload_parameter(*source.source,
+                                                     cursor->open_offset,
+                                                     cursor->close_offset,
+                                                     offset,
+                                                     help.signatures.front().parameters.size());
+    return help;
 }
 
 [[nodiscard]] std::string callable_signature(const CapabilityTypeInfo &capability) {
@@ -2973,6 +3143,15 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
     const bool has_typecheck = (snapshot->type_check_result != nullptr);
 
     const auto offset = offset_at(*source->source, position);
+    if (auto pattern_help = pattern_signature_help(*snapshot, *source, offset);
+        pattern_help.has_value()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_signature_help(*pattern_help);
+        transport_.send_response(resp);
+        return;
+    }
+
     const auto context = call_context_before_cursor(*source->source, offset);
     if (!context.has_value()) {
         send_null(transport_, req.id);

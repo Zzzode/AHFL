@@ -7482,6 +7482,54 @@ void test_signature_help_keyword_family() {
     run_case("qux(", "unreachable_not_family", 4, "", "", 0, std::nullopt);
 }
 
+void test_signature_help_pattern_payloads_use_typed_pattern_facts() {
+    const std::string source = "enum Packet {\n"
+                               "    Empty,\n"
+                               "    Pair(Int, String),\n"
+                               "    Data { code: Int, label: String },\n"
+                               "}\n"
+                               "\n"
+                               "fn use_match(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Pair(_, _) => 1,\n"
+                               "        Data { code, label: _ } => code,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto tuple_position = position_of(source, "Pair(_, _)");
+    const std::string tuple_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(tuple_position.line) + R"(,"character":)" +
+        std::to_string(tuple_position.character + 8) + R"(}})";
+    const auto tuple_output =
+        run_handler_request(source, "textDocument/signatureHelp", tuple_params);
+    check(tuple_output.find("Packet::Pair(Int, String)") != std::string::npos,
+          "signatureHelp.pattern_tuple_label");
+    check(tuple_output.find("\"label\":\"0: Int\"") != std::string::npos,
+          "signatureHelp.pattern_tuple_first_param");
+    check(tuple_output.find("\"label\":\"1: String\"") != std::string::npos,
+          "signatureHelp.pattern_tuple_second_param");
+    check(tuple_output.find("\"activeParameter\":1") != std::string::npos,
+          "signatureHelp.pattern_tuple_active_parameter");
+
+    const auto struct_position = position_of(source, "Data { code, label");
+    const std::string struct_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(struct_position.line) + R"(,"character":)" +
+        std::to_string(struct_position.character + 13) + R"(}})";
+    const auto struct_output =
+        run_handler_request(source, "textDocument/signatureHelp", struct_params);
+    check(struct_output.find("Packet::Data { code: Int, label: String }") != std::string::npos,
+          "signatureHelp.pattern_struct_label");
+    check(struct_output.find("\"label\":\"code: Int\"") != std::string::npos,
+          "signatureHelp.pattern_struct_code_param");
+    check(struct_output.find("\"label\":\"label: String\"") != std::string::npos,
+          "signatureHelp.pattern_struct_label_param");
+    check(struct_output.find("\"activeParameter\":1") != std::string::npos,
+          "signatureHelp.pattern_struct_active_parameter");
+}
+
 void test_completion_type_member_enum_state_and_workflow_contexts() {
     const std::string type_source = "struct Msg {\n"
                                     "    value: String;\n"
@@ -8484,11 +8532,10 @@ void test_code_action_qf_match_unreachable_arm_removes_arm_line() {
         total_edits += edits.size();
         for (const auto &edit : edits) {
             deletes_unreachable_line =
-                deletes_unreachable_line || (edit.range.start.line == 5 &&
-                                             edit.range.start.character == 0 &&
-                                             edit.range.end.line == 6 &&
-                                             edit.range.end.character == 0 &&
-                                             edit.new_text.empty());
+                deletes_unreachable_line ||
+                (edit.range.start.line == 5 && edit.range.start.character == 0 &&
+                 edit.range.end.line == 6 && edit.range.end.character == 0 &&
+                 edit.new_text.empty());
             keeps_surrounding_lines =
                 keeps_surrounding_lines && edit.range.start.line != 4 && edit.range.end.line != 7;
         }
@@ -8767,6 +8814,7 @@ int main() {
     test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();
     test_signature_help_keyword_family();
+    test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
