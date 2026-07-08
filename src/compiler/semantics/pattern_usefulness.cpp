@@ -573,6 +573,609 @@ analyze_bounded_int_intervals(const PatternUsefulnessContext &context,
     return analysis;
 }
 
+struct SymbolicDomainSpace;
+
+struct SymbolicConstructorSpace {
+    PatternConstructorId constructor;
+    std::vector<SymbolicDomainSpace> fields;
+};
+
+struct SymbolicDomainSpace {
+    PatternDomainId domain;
+    std::vector<IntInterval> intervals;
+    std::vector<SymbolicConstructorSpace> constructors;
+};
+
+[[nodiscard]] SymbolicDomainSpace make_empty_symbolic_space(PatternDomainId domain) {
+    return SymbolicDomainSpace{.domain = domain};
+}
+
+[[nodiscard]] bool is_symbolic_space_empty(const PatternUsefulnessContext &context,
+                                           const SymbolicDomainSpace &space) {
+    const auto &domain = context.domain(space.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        return space.intervals.empty();
+    }
+    return space.constructors.empty();
+}
+
+[[nodiscard]] bool all_symbolic_fields_non_empty(const PatternUsefulnessContext &context,
+                                                 const std::vector<SymbolicDomainSpace> &fields) {
+    return std::all_of(fields.begin(), fields.end(), [&](const auto &field) {
+        return !is_symbolic_space_empty(context, field);
+    });
+}
+
+[[nodiscard]] SymbolicDomainSpace merge_symbolic_spaces(const PatternUsefulnessContext &context,
+                                                        SymbolicDomainSpace lhs,
+                                                        const SymbolicDomainSpace &rhs) {
+    if (lhs.domain != rhs.domain) {
+        return lhs;
+    }
+
+    const auto &domain = context.domain(lhs.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        lhs.intervals.insert(lhs.intervals.end(), rhs.intervals.begin(), rhs.intervals.end());
+        lhs.intervals = normalize_intervals(std::move(lhs.intervals));
+        return lhs;
+    }
+
+    lhs.constructors.insert(
+        lhs.constructors.end(), rhs.constructors.begin(), rhs.constructors.end());
+    return lhs;
+}
+
+[[nodiscard]] std::optional<SymbolicDomainSpace>
+make_symbolic_top_space(const PatternUsefulnessContext &context,
+                        PatternDomainId domain_id,
+                        std::vector<PatternDomainId> &stack) {
+    if (contains_domain(stack, domain_id)) {
+        return std::nullopt;
+    }
+
+    const auto &domain = context.domain(domain_id);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        if (!domain.int_bounds.has_value()) {
+            return std::nullopt;
+        }
+        return SymbolicDomainSpace{
+            .domain = domain_id,
+            .intervals = {IntInterval{.start = domain.int_bounds->minimum,
+                                      .end = domain.int_bounds->maximum}},
+        };
+    }
+    if (domain.kind == PatternDomainKind::Open) {
+        return std::nullopt;
+    }
+
+    stack.push_back(domain_id);
+    SymbolicDomainSpace result{.domain = domain_id};
+    for (const auto constructor_id : domain.constructors) {
+        const auto &constructor = context.constructor(constructor_id);
+        SymbolicConstructorSpace constructor_space{.constructor = constructor_id};
+        constructor_space.fields.reserve(constructor.field_domains.size());
+        for (const auto field_domain : constructor.field_domains) {
+            auto field_space = make_symbolic_top_space(context, field_domain, stack);
+            if (!field_space.has_value()) {
+                stack.pop_back();
+                return std::nullopt;
+            }
+            constructor_space.fields.push_back(std::move(*field_space));
+        }
+        result.constructors.push_back(std::move(constructor_space));
+    }
+    stack.pop_back();
+    return result;
+}
+
+[[nodiscard]] SymbolicDomainSpace intersect_symbolic_spaces(const PatternUsefulnessContext &context,
+                                                            const SymbolicDomainSpace &lhs,
+                                                            const SymbolicDomainSpace &rhs);
+
+[[nodiscard]] std::optional<SymbolicDomainSpace>
+make_symbolic_pattern_space(const PatternUsefulnessContext &context,
+                            PatternId pattern_id,
+                            PatternDomainId domain_id,
+                            const std::optional<Replacement> &replacement,
+                            std::vector<PatternDomainId> &stack) {
+    if (replacement.has_value() && replacement->or_pattern == pattern_id) {
+        return make_symbolic_pattern_space(
+            context, replacement->branch, domain_id, std::nullopt, stack);
+    }
+
+    const auto &domain = context.domain(domain_id);
+    const auto &pattern = context.pattern(pattern_id);
+    switch (pattern.kind) {
+    case PatternNodeKind::Never:
+        return make_empty_symbolic_space(domain_id);
+    case PatternNodeKind::Wildcard:
+        return make_symbolic_top_space(context, domain_id, stack);
+    case PatternNodeKind::Constructor: {
+        if (!pattern.constructor.has_value()) {
+            return make_empty_symbolic_space(domain_id);
+        }
+        const auto &constructor = context.constructor(*pattern.constructor);
+        if (domain.kind == PatternDomainKind::BoundedInt) {
+            if (!constructor.int_value.has_value() || !domain.int_bounds.has_value()) {
+                return make_empty_symbolic_space(domain_id);
+            }
+            const auto interval = intersect_interval(
+                IntInterval{.start = *constructor.int_value, .end = *constructor.int_value},
+                IntInterval{.start = domain.int_bounds->minimum,
+                            .end = domain.int_bounds->maximum});
+            return SymbolicDomainSpace{
+                .domain = domain_id,
+                .intervals = interval.has_value() ? std::vector<IntInterval>{*interval}
+                                                  : std::vector<IntInterval>{},
+            };
+        }
+        if (domain.kind == PatternDomainKind::Open) {
+            return std::nullopt;
+        }
+        if (constructor.result_domain != domain_id ||
+            constructor.field_domains.size() != pattern.children.size()) {
+            return make_empty_symbolic_space(domain_id);
+        }
+
+        SymbolicConstructorSpace constructor_space{.constructor = *pattern.constructor};
+        constructor_space.fields.reserve(pattern.children.size());
+        for (std::size_t index = 0; index < pattern.children.size(); ++index) {
+            auto child_space = make_symbolic_pattern_space(context,
+                                                           pattern.children[index],
+                                                           constructor.field_domains[index],
+                                                           replacement,
+                                                           stack);
+            if (!child_space.has_value()) {
+                return std::nullopt;
+            }
+            constructor_space.fields.push_back(std::move(*child_space));
+        }
+
+        SymbolicDomainSpace result{.domain = domain_id};
+        if (all_symbolic_fields_non_empty(context, constructor_space.fields)) {
+            result.constructors.push_back(std::move(constructor_space));
+        }
+        return result;
+    }
+    case PatternNodeKind::IntRange: {
+        if (domain.kind == PatternDomainKind::BoundedInt) {
+            if (!domain.int_bounds.has_value()) {
+                return std::nullopt;
+            }
+            const auto interval = intersect_interval(
+                IntInterval{.start = pattern.int_range_start, .end = pattern.int_range_end},
+                IntInterval{.start = domain.int_bounds->minimum,
+                            .end = domain.int_bounds->maximum});
+            return SymbolicDomainSpace{
+                .domain = domain_id,
+                .intervals = interval.has_value() ? std::vector<IntInterval>{*interval}
+                                                  : std::vector<IntInterval>{},
+            };
+        }
+        if (domain.kind == PatternDomainKind::Open) {
+            return std::nullopt;
+        }
+
+        SymbolicDomainSpace result{.domain = domain_id};
+        for (const auto constructor_id : domain.constructors) {
+            const auto &constructor = context.constructor(constructor_id);
+            if (!constructor.int_value.has_value() ||
+                *constructor.int_value < pattern.int_range_start ||
+                *constructor.int_value > pattern.int_range_end) {
+                continue;
+            }
+            result.constructors.push_back(SymbolicConstructorSpace{.constructor = constructor_id});
+        }
+        return result;
+    }
+    case PatternNodeKind::Or: {
+        SymbolicDomainSpace result{.domain = domain_id};
+        for (const auto branch : pattern.children) {
+            auto branch_space =
+                make_symbolic_pattern_space(context, branch, domain_id, replacement, stack);
+            if (!branch_space.has_value()) {
+                return std::nullopt;
+            }
+            result = merge_symbolic_spaces(context, std::move(result), *branch_space);
+        }
+        return result;
+    }
+    }
+    return make_empty_symbolic_space(domain_id);
+}
+
+[[nodiscard]] std::vector<SymbolicDomainSpace>
+subtract_symbolic_spaces(const PatternUsefulnessContext &context,
+                         const SymbolicDomainSpace &candidate,
+                         const SymbolicDomainSpace &covered);
+
+[[nodiscard]] std::optional<std::vector<SymbolicDomainSpace>>
+intersect_symbolic_fields(const PatternUsefulnessContext &context,
+                          const std::vector<SymbolicDomainSpace> &lhs,
+                          const std::vector<SymbolicDomainSpace> &rhs) {
+    if (lhs.size() != rhs.size()) {
+        return std::nullopt;
+    }
+
+    std::vector<SymbolicDomainSpace> intersections;
+    intersections.reserve(lhs.size());
+    for (std::size_t index = 0; index < lhs.size(); ++index) {
+        auto intersection = intersect_symbolic_spaces(context, lhs[index], rhs[index]);
+        if (is_symbolic_space_empty(context, intersection)) {
+            return std::nullopt;
+        }
+        intersections.push_back(std::move(intersection));
+    }
+    return intersections;
+}
+
+[[nodiscard]] SymbolicDomainSpace intersect_symbolic_spaces(const PatternUsefulnessContext &context,
+                                                            const SymbolicDomainSpace &lhs,
+                                                            const SymbolicDomainSpace &rhs) {
+    if (lhs.domain != rhs.domain) {
+        return make_empty_symbolic_space(lhs.domain);
+    }
+
+    const auto &domain = context.domain(lhs.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        std::vector<IntInterval> intersections;
+        for (const auto left : lhs.intervals) {
+            for (const auto right : rhs.intervals) {
+                const auto interval = intersect_interval(left, right);
+                if (interval.has_value()) {
+                    intersections.push_back(*interval);
+                }
+            }
+        }
+        return SymbolicDomainSpace{
+            .domain = lhs.domain,
+            .intervals = normalize_intervals(std::move(intersections)),
+        };
+    }
+
+    SymbolicDomainSpace result{.domain = lhs.domain};
+    for (const auto &left_constructor : lhs.constructors) {
+        for (const auto &right_constructor : rhs.constructors) {
+            if (left_constructor.constructor != right_constructor.constructor) {
+                continue;
+            }
+            auto field_intersections = intersect_symbolic_fields(
+                context, left_constructor.fields, right_constructor.fields);
+            if (!field_intersections.has_value()) {
+                continue;
+            }
+            result.constructors.push_back(SymbolicConstructorSpace{
+                .constructor = left_constructor.constructor,
+                .fields = std::move(*field_intersections),
+            });
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<SymbolicConstructorSpace>
+subtract_symbolic_constructor_product(const PatternUsefulnessContext &context,
+                                      const SymbolicConstructorSpace &candidate,
+                                      const SymbolicConstructorSpace &covered) {
+    if (candidate.constructor != covered.constructor ||
+        candidate.fields.size() != covered.fields.size()) {
+        return {candidate};
+    }
+
+    const auto intersections = intersect_symbolic_fields(context, candidate.fields, covered.fields);
+    if (!intersections.has_value()) {
+        return {candidate};
+    }
+
+    std::vector<SymbolicConstructorSpace> remaining;
+    for (std::size_t index = 0; index < candidate.fields.size(); ++index) {
+        const auto residuals =
+            subtract_symbolic_spaces(context, candidate.fields[index], covered.fields[index]);
+        for (const auto &residual : residuals) {
+            if (is_symbolic_space_empty(context, residual)) {
+                continue;
+            }
+
+            SymbolicConstructorSpace fragment{.constructor = candidate.constructor};
+            fragment.fields.reserve(candidate.fields.size());
+            for (std::size_t field_index = 0; field_index < candidate.fields.size();
+                 ++field_index) {
+                if (field_index < index) {
+                    fragment.fields.push_back((*intersections)[field_index]);
+                } else if (field_index == index) {
+                    fragment.fields.push_back(residual);
+                } else {
+                    fragment.fields.push_back(candidate.fields[field_index]);
+                }
+            }
+            if (all_symbolic_fields_non_empty(context, fragment.fields)) {
+                remaining.push_back(std::move(fragment));
+            }
+        }
+    }
+    return remaining;
+}
+
+[[nodiscard]] std::vector<SymbolicDomainSpace>
+subtract_symbolic_spaces(const PatternUsefulnessContext &context,
+                         const SymbolicDomainSpace &candidate,
+                         const SymbolicDomainSpace &covered) {
+    if (candidate.domain != covered.domain || is_symbolic_space_empty(context, candidate) ||
+        is_symbolic_space_empty(context, covered)) {
+        return is_symbolic_space_empty(context, candidate)
+                   ? std::vector<SymbolicDomainSpace>{}
+                   : std::vector<SymbolicDomainSpace>{candidate};
+    }
+
+    const auto &domain = context.domain(candidate.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        auto intervals = subtract_intervals(candidate.intervals, covered.intervals);
+        if (intervals.empty()) {
+            return {};
+        }
+        return {SymbolicDomainSpace{
+            .domain = candidate.domain,
+            .intervals = std::move(intervals),
+        }};
+    }
+
+    SymbolicDomainSpace result{.domain = candidate.domain};
+    for (const auto &candidate_constructor : candidate.constructors) {
+        std::vector<SymbolicConstructorSpace> fragments{candidate_constructor};
+        for (const auto &covered_constructor : covered.constructors) {
+            if (covered_constructor.constructor != candidate_constructor.constructor) {
+                continue;
+            }
+
+            std::vector<SymbolicConstructorSpace> next_fragments;
+            for (const auto &fragment : fragments) {
+                auto residuals =
+                    subtract_symbolic_constructor_product(context, fragment, covered_constructor);
+                next_fragments.insert(next_fragments.end(), residuals.begin(), residuals.end());
+            }
+            fragments = std::move(next_fragments);
+            if (fragments.empty()) {
+                break;
+            }
+        }
+        result.constructors.insert(result.constructors.end(), fragments.begin(), fragments.end());
+    }
+
+    return result.constructors.empty() ? std::vector<SymbolicDomainSpace>{}
+                                       : std::vector<SymbolicDomainSpace>{std::move(result)};
+}
+
+[[nodiscard]] std::vector<SymbolicDomainSpace>
+subtract_symbolic_space_many(const PatternUsefulnessContext &context,
+                             const SymbolicDomainSpace &candidate,
+                             const std::vector<SymbolicDomainSpace> &covered_spaces) {
+    std::vector<SymbolicDomainSpace> fragments{candidate};
+    for (const auto &covered : covered_spaces) {
+        std::vector<SymbolicDomainSpace> next_fragments;
+        for (const auto &fragment : fragments) {
+            auto residuals = subtract_symbolic_spaces(context, fragment, covered);
+            next_fragments.insert(next_fragments.end(), residuals.begin(), residuals.end());
+        }
+        fragments = std::move(next_fragments);
+        if (fragments.empty()) {
+            break;
+        }
+    }
+    return fragments;
+}
+
+[[nodiscard]] bool symbolic_spaces_intersect(const PatternUsefulnessContext &context,
+                                             const SymbolicDomainSpace &lhs,
+                                             const SymbolicDomainSpace &rhs) {
+    const auto intersection = intersect_symbolic_spaces(context, lhs, rhs);
+    return !is_symbolic_space_empty(context, intersection);
+}
+
+[[nodiscard]] std::optional<PatternWitness>
+sample_symbolic_witness(const PatternUsefulnessContext &context, const SymbolicDomainSpace &space) {
+    const auto &domain = context.domain(space.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        if (space.intervals.empty()) {
+            return std::nullopt;
+        }
+        return make_inline_int_witness(space.intervals.front().start);
+    }
+
+    for (const auto &constructor_space : space.constructors) {
+        PatternWitness witness{.constructor = constructor_space.constructor};
+        bool complete = true;
+        for (const auto &field : constructor_space.fields) {
+            auto field_witness = sample_symbolic_witness(context, field);
+            if (!field_witness.has_value()) {
+                complete = false;
+                break;
+            }
+            witness.fields.push_back(std::move(*field_witness));
+        }
+        if (complete) {
+            return witness;
+        }
+    }
+    return std::nullopt;
+}
+
+void collect_symbolic_witnesses(const PatternUsefulnessContext &context,
+                                const SymbolicDomainSpace &space,
+                                std::size_t max_witnesses,
+                                std::vector<PatternWitness> &output,
+                                bool &limit_exceeded) {
+    if (output.size() >= max_witnesses) {
+        limit_exceeded = true;
+        return;
+    }
+
+    const auto &domain = context.domain(space.domain);
+    if (domain.kind == PatternDomainKind::BoundedInt) {
+        for (const auto interval : space.intervals) {
+            if (!append_witness(output,
+                                make_inline_int_witness(interval.start),
+                                max_witnesses,
+                                limit_exceeded)) {
+                return;
+            }
+        }
+        return;
+    }
+
+    for (const auto &constructor_space : space.constructors) {
+        PatternWitness witness{.constructor = constructor_space.constructor};
+        bool complete = true;
+        for (const auto &field : constructor_space.fields) {
+            auto field_witness = sample_symbolic_witness(context, field);
+            if (!field_witness.has_value()) {
+                complete = false;
+                break;
+            }
+            witness.fields.push_back(std::move(*field_witness));
+        }
+        if (!complete) {
+            continue;
+        }
+        if (!append_witness(output, std::move(witness), max_witnesses, limit_exceeded)) {
+            return;
+        }
+    }
+}
+
+[[nodiscard]] std::optional<PatternUsefulnessAnalysis>
+analyze_symbolic_closed_spaces(const PatternUsefulnessContext &context,
+                               PatternDomainId root_domain,
+                               const std::vector<PatternUsefulnessRow> &rows,
+                               PatternUsefulnessOptions options) {
+    std::vector<PatternDomainId> stack;
+    auto top_space = make_symbolic_top_space(context, root_domain, stack);
+    if (!top_space.has_value()) {
+        return std::nullopt;
+    }
+
+    PatternUsefulnessAnalysis analysis;
+    analysis.root_domain_is_finite = true;
+
+    std::vector<SymbolicDomainSpace> contributing_spaces;
+    std::vector<std::size_t> contributing_row_indices;
+    std::vector<SourceRange> contributing_row_ranges;
+    std::vector<SymbolicDomainSpace> previous_spaces;
+    std::vector<std::size_t> previous_row_indices;
+    std::vector<SourceRange> previous_row_ranges;
+
+    for (std::size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const auto &row = rows[row_index];
+        const auto current_range = row_range(context, row);
+        stack.clear();
+        auto row_space =
+            make_symbolic_pattern_space(context, row.pattern, root_domain, std::nullopt, stack);
+        if (!row_space.has_value()) {
+            return std::nullopt;
+        }
+
+        for (std::size_t previous_index = 0; previous_index < previous_spaces.size();
+             ++previous_index) {
+            if (symbolic_spaces_intersect(context, *row_space, previous_spaces[previous_index])) {
+                analysis.overlaps.push_back(PatternOverlapRow{
+                    .row_index = row_index,
+                    .range = current_range,
+                    .previous_row_index = previous_row_indices[previous_index],
+                    .previous_range = previous_row_ranges[previous_index],
+                });
+            }
+        }
+
+        if (!is_symbolic_space_empty(context, *row_space)) {
+            const auto uncovered =
+                subtract_symbolic_space_many(context, *row_space, contributing_spaces);
+            if (uncovered.empty()) {
+                PatternUnreachableRow unreachable{
+                    .row_index = row_index,
+                    .range = current_range,
+                };
+                for (std::size_t previous_index = 0; previous_index < contributing_spaces.size();
+                     ++previous_index) {
+                    if (symbolic_spaces_intersect(
+                            context, *row_space, contributing_spaces[previous_index])) {
+                        unreachable.covering_row_indices.push_back(
+                            contributing_row_indices[previous_index]);
+                        unreachable.covering_row_ranges.push_back(
+                            contributing_row_ranges[previous_index]);
+                    }
+                }
+                analysis.unreachable_rows.push_back(std::move(unreachable));
+            }
+        }
+
+        std::vector<PatternId> or_patterns;
+        collect_or_patterns(context, row.pattern, or_patterns);
+        for (const auto or_pattern : or_patterns) {
+            const auto &or_node = context.pattern(or_pattern);
+            std::vector<SymbolicDomainSpace> previous_branch_spaces;
+            for (std::size_t branch_index = 0; branch_index < or_node.children.size();
+                 ++branch_index) {
+                const auto branch = or_node.children[branch_index];
+                stack.clear();
+                auto branch_space = make_symbolic_pattern_space(
+                    context,
+                    row.pattern,
+                    root_domain,
+                    Replacement{.or_pattern = or_pattern, .branch = branch},
+                    stack);
+                if (!branch_space.has_value()) {
+                    return std::nullopt;
+                }
+
+                std::vector<SymbolicDomainSpace> covered_spaces = contributing_spaces;
+                covered_spaces.insert(covered_spaces.end(),
+                                      previous_branch_spaces.begin(),
+                                      previous_branch_spaces.end());
+                if (!is_symbolic_space_empty(context, *branch_space) &&
+                    subtract_symbolic_space_many(context, *branch_space, covered_spaces).empty()) {
+                    analysis.redundant_or_branches.push_back(PatternRedundantOrBranch{
+                        .row_index = row_index,
+                        .or_pattern = or_pattern,
+                        .branch_index = branch_index,
+                        .branch_range = context.pattern(branch).range,
+                    });
+                }
+                if (!is_symbolic_space_empty(context, *branch_space)) {
+                    previous_branch_spaces.push_back(std::move(*branch_space));
+                }
+            }
+        }
+
+        if (row.contributes_to_exhaustiveness && !is_symbolic_space_empty(context, *row_space)) {
+            contributing_row_indices.push_back(row_index);
+            contributing_row_ranges.push_back(current_range);
+            contributing_spaces.push_back(*row_space);
+        }
+        if (!is_symbolic_space_empty(context, *row_space)) {
+            previous_row_indices.push_back(row_index);
+            previous_row_ranges.push_back(current_range);
+            previous_spaces.push_back(std::move(*row_space));
+        }
+    }
+
+    const auto missing_spaces =
+        subtract_symbolic_space_many(context, *top_space, contributing_spaces);
+    for (const auto &missing_space : missing_spaces) {
+        collect_symbolic_witnesses(context,
+                                   missing_space,
+                                   options.max_witnesses,
+                                   analysis.missing_witnesses,
+                                   analysis.witness_limit_exceeded);
+        if (analysis.witness_limit_exceeded) {
+            break;
+        }
+    }
+    if (!analysis.missing_witnesses.empty()) {
+        analysis.missing_witness = analysis.missing_witnesses.front();
+    }
+
+    return analysis;
+}
+
 } // namespace
 
 PatternDomainId PatternUsefulnessContext::add_domain(PatternDomainKind kind) {
@@ -771,6 +1374,11 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
                 analyze_bounded_int_intervals(context, root_domain, rows, options);
             interval_analysis.has_value()) {
             return *interval_analysis;
+        }
+        if (auto symbolic_analysis =
+                analyze_symbolic_closed_spaces(context, root_domain, rows, options);
+            symbolic_analysis.has_value()) {
+            return *symbolic_analysis;
         }
         return analysis;
     }

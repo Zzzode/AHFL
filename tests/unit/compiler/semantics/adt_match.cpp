@@ -823,6 +823,35 @@ enum MaybeTiny { Some(Int(0, 2)), None, }
     CHECK(diagnostic->message.find("Some(0)") != std::string::npos);
 }
 
+TEST_CASE("large bounded Int enum payload proves exhaustive range coverage") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBig { Some(Int(0, 10000)), None, }
+)AHFL",
+        "MaybeBig",
+        "MaybeBig::None",
+        "match ctx.value { Some(0..4999) => 1, Some(5000..10000) => 2, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS") == 0);
+}
+
+TEST_CASE("large bounded Int enum payload reports precise symbolic missing witness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBig { Some(Int(0, 10000)), None, }
+)AHFL",
+        "MaybeBig",
+        "MaybeBig::None",
+        "match ctx.value { Some(0..4999) => 1, Some(5001..10000) => 2, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(5000)") != std::string::npos);
+}
+
 // ---------------------------------------------------------------------------
 // Arm body type unification: diverging arm body types report TYPE_MISMATCH.
 // ---------------------------------------------------------------------------

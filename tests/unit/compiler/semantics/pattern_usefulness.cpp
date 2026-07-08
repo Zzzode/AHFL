@@ -468,6 +468,82 @@ TEST_CASE("large bounded int domain reports redundant interval or-pattern branch
     CHECK(analysis.redundant_or_branches.front().branch_index == 1);
 }
 
+TEST_CASE("large bounded int constructor payload proves exhaustive coverage symbolically") {
+    ahfl::PatternUsefulnessContext context;
+    const auto option = context.add_domain();
+    const auto payload = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(payload).constructors.empty());
+    const auto none = context.add_constructor(option, "None", {});
+    const auto some = context.add_constructor(option, "Some", {payload});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(
+                                       some, {context.make_int_range_pattern(0, 4999)})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(
+                                       some, {context.make_int_range_pattern(5000, 10000)})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(none, {})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, option, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witnesses.empty());
+    CHECK(analysis.unreachable_rows.empty());
+}
+
+TEST_CASE("large bounded int constructor payload reports missing symbolic witness") {
+    ahfl::PatternUsefulnessContext context;
+    const auto option = context.add_domain();
+    const auto payload = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(payload).constructors.empty());
+    const auto none = context.add_constructor(option, "None", {});
+    const auto some = context.add_constructor(option, "Some", {payload});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(
+                                       some, {context.make_int_range_pattern(0, 4999)})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(
+                                       some, {context.make_int_range_pattern(5001, 10000)})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(none, {})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, option, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "Some(5000)");
+}
+
+TEST_CASE("large bounded int product payload keeps finite sibling dimensions precise") {
+    ahfl::PatternUsefulnessContext context;
+    const auto pair_domain = context.add_domain();
+    const auto big_int = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(big_int).constructors.empty());
+    const auto bool_domain = make_bool_domain(context);
+    const auto pair = context.add_constructor(pair_domain, "Pair", {big_int, bool_domain.domain});
+
+    const auto any_int = context.make_int_range_pattern(0, 10000);
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                pair, {any_int, context.make_constructor_pattern(bool_domain.false_ctor, {})})},
+        ahfl::PatternUsefulnessRow{
+            .pattern = context.make_constructor_pattern(
+                pair,
+                {context.make_int_range_pattern(0, 10000),
+                 context.make_constructor_pattern(bool_domain.true_ctor, {})})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, pair_domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    CHECK(analysis.unreachable_rows.empty());
+
+    const std::vector missing_rows{rows.front()};
+    const auto missing = ahfl::analyze_pattern_usefulness(context, pair_domain, missing_rows);
+    REQUIRE(missing.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *missing.missing_witness) == "Pair(0, True)");
+}
+
 TEST_CASE("open int range pattern rejects invalid bounds") {
     ahfl::PatternUsefulnessContext context;
     CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)), std::invalid_argument);
