@@ -1736,6 +1736,37 @@ void add_path_targets(HoverTargetIndex &index,
     }
 }
 
+void add_typed_pattern_binding_targets(HoverTargetIndex &index,
+                                       const LspSourceSnapshot &source,
+                                       const TypedProgram &typed) {
+    if (source.source == nullptr) {
+        return;
+    }
+
+    for (const auto &pattern : typed.patterns) {
+        if (!same_source(pattern.source_id, source.source_id)) {
+            continue;
+        }
+        for (const auto &binding : pattern.bindings) {
+            if (binding.name.empty() || range_size(binding.range) == 0) {
+                continue;
+            }
+            const auto range = first_identifier_range(*source.source, binding.range, binding.name)
+                                   .value_or(binding.range);
+            index.add(HoverTarget{
+                .kind = HoverTargetKind::LocalBinding,
+                .token_range = range,
+                .source_id = source.source_id,
+                .local_name = binding.name,
+                .role = "pattern binding",
+                .declared_spelling =
+                    binding.type != nullptr ? binding.type->describe() : std::string{"<unknown>"},
+                .source_label = source.source->display_name,
+            });
+        }
+    }
+}
+
 void add_typed_targets(HoverTargetIndex &index,
                        const LspSourceSnapshot &source,
                        const TypeCheckResult *type_check_result) {
@@ -1744,6 +1775,7 @@ void add_typed_targets(HoverTargetIndex &index,
     }
 
     const auto &typed = type_check_result->typed_program;
+    add_typed_pattern_binding_targets(index, source, typed);
     for (std::size_t i = 0; i < typed.expressions.size(); ++i) {
         const auto &expr = typed.expressions[i];
         if (!same_source(expr.source_id, source.source_id) || range_size(expr.range) == 0) {

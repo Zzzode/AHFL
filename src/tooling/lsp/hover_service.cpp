@@ -873,7 +873,17 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
             payload->headline = "local binding";
             return payload;
         }
-        return base_payload(target, "local binding");
+        {
+            auto payload = base_payload(
+                target, target.role == "pattern binding" ? "pattern binding" : "local binding");
+            if (!target.local_name.empty()) {
+                payload.signature = inline_code(target.local_name);
+            }
+            if (!target.declared_spelling.empty()) {
+                add_primary_fact(payload, "type", inline_code(target.declared_spelling));
+            }
+            return payload;
+        }
     case HoverTargetKind::StructLiteral: {
         auto payload = base_payload(target, "struct literal");
         if (!target.local_name.empty()) {

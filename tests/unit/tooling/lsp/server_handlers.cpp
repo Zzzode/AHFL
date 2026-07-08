@@ -983,6 +983,33 @@ void test_semantic_tokens_request_uses_document_uri() {
           "semanticTokens.request_data_is_non_empty");
 }
 
+void test_hover_pattern_bindings_use_typed_pattern_facts() {
+    const std::string source =
+        "enum Maybe {\n"
+        "    Some(Int),\n"
+        "    None,\n"
+        "}\n"
+        "\n"
+        "fn inspect(x: Maybe) -> Int effect Pure decreases 0 {\n"
+        "    let matched: Int = match x { Some(v) => v, None => 0, };\n"
+        "    if let Some(inner) = x { return inner; } else { return matched; }\n"
+        "}\n";
+
+    const auto match_binding = run_hover_request(source, "v) =>");
+    check(match_binding.find("pattern binding") != std::string::npos,
+          "hover.pattern_binding.match_headline");
+    check(match_binding.find("`v`") != std::string::npos &&
+              match_binding.find("`Int`") != std::string::npos,
+          "hover.pattern_binding.match_type");
+
+    const auto if_let_binding = run_hover_request(source, "inner)");
+    check(if_let_binding.find("pattern binding") != std::string::npos,
+          "hover.pattern_binding.if_let_headline");
+    check(if_let_binding.find("`inner`") != std::string::npos &&
+              if_let_binding.find("`Int`") != std::string::npos,
+          "hover.pattern_binding.if_let_type");
+}
+
 void test_document_symbol_lists_all() {
     std::string source =
         "struct Foo {\n    value: String;\n}\n\nstruct Bar {\n    name: String;\n}";
@@ -8605,6 +8632,7 @@ int main() {
     test_analysis_snapshot_reuse_and_invalidation();
     test_semantic_tokens_cover_current_syntax_surface();
     test_semantic_tokens_request_uses_document_uri();
+    test_hover_pattern_bindings_use_typed_pattern_facts();
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();
