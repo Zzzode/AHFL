@@ -50,10 +50,10 @@
 ### P2：明确有价值但应等待语义成熟
 
 1. RFC 0003 后续 pattern usefulness matrix。
-   - 状态：RFC 0011 已新增；`PatternUsefulnessContext` / finite constructor matrix 第一条基础设施切片已落库并有单元测试；RFC 0003 `match_exhaustiveness` 已通过 matrix core 执行 enum coverage，并已接入 typed enum-payload lowering 覆盖 nested enum payload witness、Bool payload literal witness 和 struct payload 字段名 witness rendering。
+   - 状态：RFC 0011 已新增；`PatternUsefulnessContext` / finite constructor matrix 第一条基础设施切片已落库并有单元测试；RFC 0003 `match_exhaustiveness` 已通过 matrix core 执行 enum coverage，并已接入 typed enum-payload lowering 覆盖 nested enum payload witness、Bool payload literal witness、struct payload 字段名 witness rendering 和 redundant or-branch warning。
    - 仍需等完整 typed pattern HIR、非 Bool open literal/range pattern、struct payload destructuring 的语言语义稳定后进入 accepted / full implementing。
    - RFC 0011 以完整 usefulness matrix 为目标，避免在 RFC 0003 内提前冻结半成熟 pattern 域。
-   - 剩余核心工作：一等 typed pattern HIR、非 Bool open literal/range usefulness、if-let/optional narrowing flow integration、stable diagnostic contract、LSP quick fix。
+   - 剩余核心工作：一等 typed pattern HIR、非 Bool open literal/range usefulness、if-let/optional narrowing flow integration、完整 pattern diagnostic code taxonomy、LSP quick fix。
 
 2. RFC 0007 二期 LSP index。
    - incremental workspace index 已补一层：watched file invalidation 和 open-document overlay revision key 均按实际引用 source path 收敛，避免无关打开文件触发当前 package snapshot/index rebuild。

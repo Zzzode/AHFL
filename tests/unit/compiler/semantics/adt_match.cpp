@@ -566,6 +566,24 @@ enum MaybeBool { Some(Bool), None, }
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 1);
 }
 
+TEST_CASE("redundant or-pattern branch reports MATCH_REDUNDANT_PATTERN") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { None => 0, Some(true | true) => 1, Some(false) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_REDUNDANT_PATTERN");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("branch #2") != std::string::npos);
+    CHECK(diagnostic->message.find("arm #2") != std::string::npos);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
+}
+
 TEST_CASE("invalid literal enum payload pattern reports type mismatch") {
     const auto source = wrap_in_flow(
         R"AHFL(

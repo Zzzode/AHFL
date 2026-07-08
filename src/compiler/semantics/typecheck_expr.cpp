@@ -1332,6 +1332,15 @@ class ExpressionChecker final {
                                                  overlap.pattern_range,
                                                  overlap_notes(overlap));
             }
+            for (const auto &redundant : match_diagnostics.redundant_patterns) {
+                services_.typecheck_warning_here(
+                    error_codes::typecheck::MatchRedundantPattern,
+                    messages::typecheck::MatchRedundantPattern.format_with(
+                        std::to_string(redundant.branch_index),
+                        std::to_string(redundant.arm_index)),
+                    redundant.branch_range,
+                    {});
+            }
             // When the scrutinee is not an enum (error path), enum_info is not
             // available and MATCH_SCRUTINEE_REQUIRES_ENUM already flags the root cause.
         }

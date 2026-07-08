@@ -37,10 +37,17 @@ struct MatchOverlapDiagnostic {
     SourceRange previous_pattern_range;
 };
 
+struct MatchRedundantPatternDiagnostic {
+    std::size_t arm_index{0};    // 1-based source order.
+    std::size_t branch_index{0}; // 1-based source order inside the or-pattern.
+    SourceRange branch_range;
+};
+
 struct MatchExhaustivenessDiagnostics {
     std::optional<MatchMissingPatternsDiagnostic> missing_patterns;
     std::vector<MatchUnreachableArmDiagnostic> unreachable_arms;
     std::vector<MatchOverlapDiagnostic> overlaps;
+    std::vector<MatchRedundantPatternDiagnostic> redundant_patterns;
 };
 
 [[nodiscard]] MatchExhaustivenessDiagnostics

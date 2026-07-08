@@ -514,6 +514,16 @@ make_unreachable(const PatternUnreachableRow &row, const std::vector<std::size_t
     };
 }
 
+[[nodiscard]] MatchRedundantPatternDiagnostic
+make_redundant_pattern(const PatternRedundantOrBranch &branch,
+                       const std::vector<std::size_t> &arm_indices) {
+    return MatchRedundantPatternDiagnostic{
+        .arm_index = arm_indices[branch.row_index],
+        .branch_index = branch.branch_index + 1,
+        .branch_range = branch.branch_range,
+    };
+}
+
 MatchExhaustivenessDiagnostics
 analyze_with_lowering(MatchMatrixLowering lowering,
                       const EnumTypeInfo &enum_info,
@@ -551,6 +561,11 @@ analyze_with_lowering(MatchMatrixLowering lowering,
     diagnostics.overlaps.reserve(analysis.overlaps.size());
     for (const auto &row : analysis.overlaps) {
         diagnostics.overlaps.push_back(make_overlap(row, arm_indices));
+    }
+
+    diagnostics.redundant_patterns.reserve(analysis.redundant_or_branches.size());
+    for (const auto &branch : analysis.redundant_or_branches) {
+        diagnostics.redundant_patterns.push_back(make_redundant_pattern(branch, arm_indices));
     }
 
     return diagnostics;

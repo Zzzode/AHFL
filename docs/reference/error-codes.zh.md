@@ -2204,7 +2204,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 - 若设计上默认分支有语义，推荐显式列所有 variant，未来加新 variant 时可以得到编译提醒。
 - 若 arm 带有 guard，需要额外提供无 guard fallback arm。
 
-**Related codes**：`MATCH_UNKNOWN_VARIANT`、`MATCH_UNREACHABLE_ARM`、`MATCH_OVERLAP`、`MATCH_ARM_TYPE_MISMATCH`。
+**Related codes**：`MATCH_UNKNOWN_VARIANT`、`MATCH_UNREACHABLE_ARM`、`MATCH_OVERLAP`、`MATCH_REDUNDANT_PATTERN`、`MATCH_ARM_TYPE_MISMATCH`。
 
 ---
 
@@ -2234,7 +2234,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 - 删除不可达 arm。
 - 或把 catch-all arm 移到最后，并确保前序 arm 表达的是更具体的情况。
 
-**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_OVERLAP`。
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_OVERLAP`、`MATCH_REDUNDANT_PATTERN`。
 
 ---
 
@@ -2266,7 +2266,38 @@ fn f(e: E, cond: Bool) -> Int effect Pure decreases 0 {
 - 或重新排序 arm，使更具体的 pattern 位于 catch-all pattern 之前。
 - 对 intentional overlap，保留代码但接受 warning；不要依赖 overlap 作为控制流注释。
 
-**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`。
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`、`MATCH_REDUNDANT_PATTERN`。
+
+---
+
+### MATCH_REDUNDANT_PATTERN
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MATCH_REDUNDANT_PATTERN` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `redundant pattern branch #{} in match arm #{}` |
+
+**触发条件**：同一个 `match` arm 的 or-pattern 中，某个分支不再覆盖任何新 witness。典型情况是 `A | A`、`Some(true | true)`，或该分支已被同一 arm 内更早的分支覆盖。
+
+**最小复现**：
+```ahfl
+module repro;
+enum E { A(Bool), B }
+fn f(e: E) -> Int effect Pure decreases 0 {
+    return match e {
+        E::B => 0,
+        E::A(true | true) => 1,
+        E::A(false) => 2
+    };
+}
+```
+
+**常见修复**：
+- 删除重复 or-pattern 分支。
+- 若分支意图表达不同语义，改成真正不同的 pattern 或增加 guard。
+
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`、`MATCH_OVERLAP`。
 
 ---
 
