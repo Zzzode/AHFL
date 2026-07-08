@@ -3,6 +3,7 @@
 
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <vector>
 
@@ -19,6 +20,18 @@ struct BoolDomain {
     const auto false_ctor = context.add_constructor(domain, "False", {});
     const auto true_ctor = context.add_constructor(domain, "True", {});
     return BoolDomain{.domain = domain, .false_ctor = false_ctor, .true_ctor = true_ctor};
+}
+
+[[nodiscard]] ahfl::PatternConstructorId
+find_int_constructor(const ahfl::PatternUsefulnessContext &context,
+                     ahfl::PatternDomainId domain,
+                     std::int64_t value) {
+    for (const auto constructor : context.domain(domain).constructors) {
+        if (context.constructor(constructor).int_value == value) {
+            return constructor;
+        }
+    }
+    throw std::logic_error("test int constructor not found");
 }
 
 } // namespace
@@ -249,9 +262,9 @@ TEST_CASE("open int range pattern covers enumerated literal witnesses conservati
     ahfl::PatternUsefulnessContext context;
     const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
     const auto other = context.add_constructor(open, "_", {});
-    const auto one = context.add_constructor(open, "1", {});
-    const auto two = context.add_constructor(open, "2", {});
-    const auto five = context.add_constructor(open, "5", {});
+    const auto one = context.add_int_constructor(open, 1);
+    const auto two = context.add_int_constructor(open, 2);
+    const auto five = context.add_int_constructor(open, 5);
 
     const std::vector rows{
         ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(1, 3)},
@@ -299,7 +312,7 @@ TEST_CASE("open signed int range pattern matches negative constructors") {
     ahfl::PatternUsefulnessContext context;
     const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
     const auto other = context.add_constructor(open, "_", {});
-    const auto minus_two = context.add_constructor(open, "-2", {});
+    const auto minus_two = context.add_int_constructor(open, -2);
 
     const std::vector rows{
         ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(-3, -1)},
@@ -316,10 +329,71 @@ TEST_CASE("open signed int range pattern matches negative constructors") {
           "-2");
 }
 
+TEST_CASE("bounded int domain reports missing finite range witness") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(-2, 2);
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(-2, 0)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "1");
+    REQUIRE(analysis.missing_witnesses.size() == 2);
+    CHECK(ahfl::render_pattern_witness(context, analysis.missing_witnesses[0]) == "1");
+    CHECK(ahfl::render_pattern_witness(context, analysis.missing_witnesses[1]) == "2");
+}
+
+TEST_CASE("bounded int domain proves exhaustive range coverage") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(-2, 2);
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(-2, 0)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(1, 2)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witnesses.empty());
+    CHECK(analysis.unreachable_rows.empty());
+}
+
+TEST_CASE("bounded int range coverage makes later singleton unreachable") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(-2, 2);
+    const auto minus_one = find_int_constructor(context, domain, -1);
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(-2, 0)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(minus_one, {})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(1, 2)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    REQUIRE(analysis.unreachable_rows.size() == 1);
+    CHECK(analysis.unreachable_rows.front().row_index == 1);
+    REQUIRE(analysis.overlaps.size() == 1);
+    CHECK(analysis.overlaps.front().row_index == 1);
+    CHECK(analysis.overlaps.front().previous_row_index == 0);
+}
+
+TEST_CASE("bounded int domain rejects invalid or oversized bounds") {
+    ahfl::PatternUsefulnessContext context;
+    CHECK_THROWS_AS(static_cast<void>(context.add_bounded_int_domain(2, -2)),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(static_cast<void>(context.add_bounded_int_domain(0, 4096)),
+                    std::invalid_argument);
+}
+
 TEST_CASE("open int range pattern rejects invalid bounds") {
     ahfl::PatternUsefulnessContext context;
-    CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)),
-                    std::invalid_argument);
+    CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)), std::invalid_argument);
 }
 
 TEST_CASE("never patterns do not overlap or cover finite witnesses") {

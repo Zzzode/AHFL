@@ -23,6 +23,8 @@ struct WitnessEnumeration {
     bool limit_exceeded{false};
 };
 
+constexpr std::uint64_t kMaxMaterializedBoundedIntConstructors = 4096;
+
 [[nodiscard]] bool contains_domain(const std::vector<PatternDomainId> &stack,
                                    PatternDomainId id) noexcept {
     return std::find(stack.begin(), stack.end(), id) != stack.end();
@@ -92,12 +94,8 @@ enumerate_domain(const PatternUsefulnessContext &context,
         std::vector<std::vector<PatternWitness>> field_values;
         field_values.reserve(constructor.field_domains.size());
         for (const auto field_domain : constructor.field_domains) {
-            auto values = enumerate_domain(context,
-                                           field_domain,
-                                           options,
-                                           stack,
-                                           encountered_open_domain,
-                                           limit_exceeded);
+            auto values = enumerate_domain(
+                context, field_domain, options, stack, encountered_open_domain, limit_exceeded);
             if (!values.has_value()) {
                 stack.pop_back();
                 return std::nullopt;
@@ -146,20 +144,6 @@ enumerate_domain(const PatternUsefulnessContext &context,
                                    const PatternWitness &witness,
                                    const std::optional<Replacement> &replacement);
 
-[[nodiscard]] std::optional<std::int64_t> parse_int_constructor_name(std::string_view text) {
-    if (text.empty()) {
-        return std::nullopt;
-    }
-    std::int64_t value = 0;
-    const auto *begin = text.data();
-    const auto *end = text.data() + text.size();
-    const auto [ptr, ec] = std::from_chars(begin, end, value);
-    if (ec != std::errc{} || ptr != end) {
-        return std::nullopt;
-    }
-    return value;
-}
-
 [[nodiscard]] bool matches_children(const PatternUsefulnessContext &context,
                                     const std::vector<PatternId> &patterns,
                                     const std::vector<PatternWitness> &witnesses,
@@ -195,8 +179,7 @@ enumerate_domain(const PatternUsefulnessContext &context,
         }
         return matches_children(context, pattern.children, witness.fields, replacement);
     case PatternNodeKind::IntRange: {
-        const auto value =
-            parse_int_constructor_name(context.constructor(witness.constructor).debug_name);
+        const auto value = context.constructor(witness.constructor).int_value;
         return value.has_value() && pattern.int_range_start <= *value &&
                *value <= pattern.int_range_end;
     }
@@ -279,6 +262,33 @@ PatternDomainId PatternUsefulnessContext::add_domain(PatternDomainKind kind) {
     return id;
 }
 
+PatternDomainId PatternUsefulnessContext::add_bounded_int_domain(std::int64_t minimum,
+                                                                 std::int64_t maximum) {
+    if (minimum > maximum) {
+        throw std::invalid_argument("bounded int domain lower bound exceeds upper bound");
+    }
+
+    const auto span = static_cast<std::uint64_t>(maximum) - static_cast<std::uint64_t>(minimum);
+    if (span >= kMaxMaterializedBoundedIntConstructors) {
+        throw std::invalid_argument(
+            "bounded int domain exceeds materialized witness constructor budget");
+    }
+
+    const PatternDomainId id{domains_.size()};
+    domains_.push_back(PatternDomain{
+        .kind = PatternDomainKind::BoundedInt,
+        .int_bounds = PatternIntBounds{.minimum = minimum, .maximum = maximum},
+    });
+
+    for (std::int64_t value = minimum;; ++value) {
+        (void)add_int_constructor(id, value);
+        if (value == maximum) {
+            break;
+        }
+    }
+    return id;
+}
+
 PatternConstructorId
 PatternUsefulnessContext::add_constructor(PatternDomainId result_domain,
                                           std::string debug_name,
@@ -313,6 +323,13 @@ PatternUsefulnessContext::add_constructor(PatternDomainId result_domain,
     });
     domains_[result_domain.value].constructors.push_back(id);
     return id;
+}
+
+PatternConstructorId PatternUsefulnessContext::add_int_constructor(PatternDomainId result_domain,
+                                                                   std::int64_t value) {
+    const auto constructor = add_constructor(result_domain, std::to_string(value), {});
+    constructors_[constructor.value].int_value = value;
+    return constructor;
 }
 
 PatternId PatternUsefulnessContext::make_never(SourceRange range) {

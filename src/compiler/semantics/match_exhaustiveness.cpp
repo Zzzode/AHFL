@@ -378,6 +378,20 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     return false;
 }
 
+[[nodiscard]] std::optional<std::int64_t> parse_int_literal_spelling(std::string_view spelling) {
+    if (spelling.empty()) {
+        return std::nullopt;
+    }
+    std::int64_t value = 0;
+    const auto *begin = spelling.data();
+    const auto *end = spelling.data() + spelling.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, value);
+    if (ec != std::errc{} || ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 [[nodiscard]] PatternConstructorId ensure_open_literal_constructor(MatchMatrixLowering &lowering,
                                                                    std::size_t domain_index,
                                                                    std::string_view spelling) {
@@ -387,7 +401,12 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
         found != domain.literal_constructors.end()) {
         return found->second;
     }
-    const auto constructor = lowering.context.add_constructor(domain.domain, key, {});
+    const auto parsed_int = domain.kind == OpenLiteralDomainKind::Int
+                                ? parse_int_literal_spelling(spelling)
+                                : std::nullopt;
+    const auto constructor = parsed_int.has_value()
+                                 ? lowering.context.add_int_constructor(domain.domain, *parsed_int)
+                                 : lowering.context.add_constructor(domain.domain, key, {});
     domain.literal_constructors.emplace(key, constructor);
     return constructor;
 }

@@ -33,6 +33,7 @@ struct PatternId {
 enum class PatternDomainKind {
     Finite,
     Open,
+    BoundedInt,
 };
 
 enum class PatternConstructorPayloadKind {
@@ -51,11 +52,18 @@ struct PatternConstructor {
     std::string debug_name;
     std::vector<PatternDomainId> field_domains;
     PatternConstructorDisplay display;
+    std::optional<std::int64_t> int_value;
+};
+
+struct PatternIntBounds {
+    std::int64_t minimum{0};
+    std::int64_t maximum{0};
 };
 
 struct PatternDomain {
     PatternDomainKind kind{PatternDomainKind::Finite};
     std::vector<PatternConstructorId> constructors;
+    std::optional<PatternIntBounds> int_bounds;
 };
 
 enum class PatternNodeKind {
@@ -83,20 +91,23 @@ struct PatternWitness {
 class PatternUsefulnessContext {
   public:
     [[nodiscard]] PatternDomainId add_domain(PatternDomainKind kind = PatternDomainKind::Finite);
+    [[nodiscard]] PatternDomainId add_bounded_int_domain(std::int64_t minimum,
+                                                         std::int64_t maximum);
 
     [[nodiscard]] PatternConstructorId add_constructor(PatternDomainId result_domain,
                                                        std::string debug_name,
                                                        std::vector<PatternDomainId> field_domains,
                                                        PatternConstructorDisplay display = {});
+    [[nodiscard]] PatternConstructorId add_int_constructor(PatternDomainId result_domain,
+                                                           std::int64_t value);
 
     [[nodiscard]] PatternId make_never(SourceRange range = {});
     [[nodiscard]] PatternId make_wildcard(SourceRange range = {});
     [[nodiscard]] PatternId make_constructor_pattern(PatternConstructorId constructor,
                                                      std::vector<PatternId> children,
                                                      SourceRange range = {});
-    [[nodiscard]] PatternId make_int_range_pattern(std::int64_t start,
-                                                   std::int64_t end,
-                                                   SourceRange range = {});
+    [[nodiscard]] PatternId
+    make_int_range_pattern(std::int64_t start, std::int64_t end, SourceRange range = {});
     [[nodiscard]] PatternId make_or_pattern(std::vector<PatternId> branches,
                                             SourceRange range = {});
 
