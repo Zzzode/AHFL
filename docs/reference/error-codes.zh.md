@@ -6,7 +6,7 @@
 | Status | 草稿 · 可审查 |
 | SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::*` + `messages::*` 命名空间） |
 | Created | 2026-06-28 |
-| Updated | 2026-07-06 |
+| Updated | 2026-07-09 |
 | Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
 
 ## 分组分布
@@ -17,7 +17,6 @@ pie title Stable Error-Code 分组分布
     "Callable & Arity" : 9
     "Effects & Contracts + Trait/Impl" : 28
     "Struct/Enum Literals" : 14
-    "Agent/Flow/Pipeline" : 2
     "Backend SMV/BMC" : 1
     "Linting & Migration" : 2
     "TBD" : 0
@@ -1124,7 +1123,7 @@ flow for A {
 - 查阅伴随诊断给出的具体原因，针对根因（如终止/纯度/类型复杂度）修正。
 - 新语法被标为超出子集时，请在 typecheck 团队登记扩展申请。
 
-**Related codes**：`EFFECT_NOT_PURE`、`SEMANTIC_ERROR`、`LAMBDA_NOT_YET_SUPPORTED`。
+**Related codes**：`EFFECT_NOT_PURE`、`SEMANTIC_ERROR`。
 
 ---
 
@@ -1969,38 +1968,6 @@ const xs: List<Int> = empty<Int>();
 
 ---
 
-### MATCH_NOT_YET_SUPPORTED
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.MATCH_NOT_YET_SUPPORTED` |
-| SoT | `diagnostics.hpp:208` + template line `450` |
-| MessageTemplate | `'match' expressions are not yet type-checked (ADT support is in progress)` |
-
-**触发条件**：使用了 `match` 表达式，但当前编译配置未启用 P1b match typecheck 分支；解析通过而类型检查暂未支持。
-
-**最小复现**：
-```ahfl
-module repro;
-// 注意：本条目仅在 P1b match typecheck 未启用的构建配置中触发；
-// 若下列代码通过类型检查说明已启用完整 match 支持，此时应跳过本码。
-enum E { A, B }
-fn f(e: E) -> Int effect Pure decreases 0 {
-    return match e {
-        E::A => 1,
-        E::B => 2
-    };
-}
-```
-
-**常见修复**：
-- 启用对应编译 flag（若有）；或改用条件表达式 + variant 访问。
-- 如代码需要立即落地，建议暂时写成 `if` / 辅助谓词结构。
-
-**Related codes**：`MATCH_SCRUTINEE_REQUIRES_ENUM`、`MATCH_MISSING_PATTERNS`、`LAMBDA_NOT_YET_SUPPORTED`。
-
----
-
 ### MATCH_SCRUTINEE_REQUIRES_ENUM
 
 | 字段 | 值 |
@@ -2026,7 +1993,7 @@ fn f(n: Int) -> Int effect Pure decreases 0 {
 - 用 `if` / `switch` 类结构替换；或把被匹配值封装成 enum。
 - 对 Int 判定场景建议用比较链。
 
-**Related codes**：`MATCH_NOT_YET_SUPPORTED`、`MATCH_UNKNOWN_VARIANT`、`TYPE_MISMATCH`。
+**Related codes**：`MATCH_UNKNOWN_VARIANT`、`TYPE_MISMATCH`。
 
 ---
 
@@ -2423,68 +2390,7 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 
 ---
 
-## 5. Agent/Flow/Pipeline（2）
-
-agent 能力声明、lambda/fn 支持等横跨构造阶段与类型检查的错误。（match 系列已划归第 4 组 Struct/Enum Literals，因其 scrutinee 语义围绕 enum variant 展开。）
-
-### LAMBDA_NOT_YET_SUPPORTED
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.LAMBDA_NOT_YET_SUPPORTED` |
-| SoT | `diagnostics.hpp:226` + template line `467` |
-| MessageTemplate | `'lambda' expressions are not yet type-checked (closure support is in progress)` |
-
-**触发条件**：源代码中出现 lambda 表达式语法（`\x -> expr` 或 `lambda ...`），但当前 P2 closure 类型检查尚未启用。
-
-**最小复现**：
-```ahfl
-module repro;
-// LAMBDA_NOT_YET_SUPPORTED：使用 lambda 表达式时（语法层面 |x| -> e 或 \x.e 等）
-// 触发的占位诊断。当前 P2 closure 类型检查尚未启用，使用高阶函数
-// 时传入 trait/impl 对象或调用 std::option::map 类方法。
-fn f() -> Int effect Pure decreases 0 {
-    let opt: Optional<Int> = Option::Some(1);
-    // opt.map(|x| x + 1)  <- 若语法启用 lambda，则在此报 LAMBDA_NOT_YET_SUPPORTED
-    return opt.unwrap_or(0);
-}
-```
-
-**常见修复**：
-- 暂以具名谓词或 let 绑定写法替代；如只是一次求值，内联表达式。
-- 若需要高阶传参，使用 trait + impl 结构在 P3 体系下表达。
-
-**Related codes**：`FN_DECL_NOT_YET_SUPPORTED`、`MATCH_NOT_YET_SUPPORTED`、`NOT_IN_VERIFIED_SUBSET`。
-
----
-
-### FN_DECL_NOT_YET_SUPPORTED
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.FN_DECL_NOT_YET_SUPPORTED` |
-| SoT | `diagnostics.hpp:230` + template line `470` |
-| MessageTemplate | `'fn' declarations are not yet type-checked (function support is in progress)` |
-
-**触发条件**：使用了 `fn` 声明（与 `pred`/`capability` 不同的函数关键字），当前 P2b 函数类型检查尚未启用。
-
-**最小复现**：
-```ahfl
-module repro;
-// FN_DECL_NOT_YET_SUPPORTED：以 `fn` 作为类型构造器（高阶函数类型）时触发；
-// 当前语法下该写法会在解析阶段报错，以下为语义等价示意。
-fn apply(f: Object, x: Int) -> Int effect Pure decreases 0 { return x; }
-```
-
-**常见修复**：
-- 改写为 `pred`（纯函数）或 `capability`（副作用函数）。
-- 若确需第一类函数值，升级编译配置或联系 P2 负责人。
-
-**Related codes**：`LAMBDA_NOT_YET_SUPPORTED`、`NOT_IN_VERIFIED_SUBSET`、`INVALID_CALLABLE_REFERENCE`。
-
----
-
-## 6. Backend SMV/BMC（1）
+## 5. Backend SMV/BMC（1）
 
 传给后端之前最后一道检查，涉及后端可处理规模预算与单形态化预算。
 
@@ -2494,7 +2400,7 @@ fn apply(f: Object, x: Int) -> Int effect Pure decreases 0 { return x; }
 
 ---
 
-## 7. Linting & Migration（2）
+## 6. Linting & Migration（2）
 
 不影响正确性的语义告警，主要服务于代码整洁度、升级迁移与终止精度提示。
 
@@ -2553,7 +2459,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 
 ---
 
-## 8. Visibility Diagnostics
+## 7. Visibility Diagnostics
 
 这些 code 来自 RFC 0009 的 symbol visibility 与 public API surface 语义。
 
@@ -2575,7 +2481,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 - 对只服务 handoff artifact 的 symbol，加 `pub` 并在 target exports 中引用；这不会让它自动成为 source-importable API。
 - 修复 `PRIVATE_IN_PUBLIC` 时，不只给外层 declaration 加 `pub`，还要让 signature 中出现的 named types/traits/capabilities 同样 API-reachable。
 
-## 9. Project / Tooling Diagnostics
+## 8. Project / Tooling Diagnostics
 
 这些 code 来自 project discovery、CLI 和 LSP 层，不一定对应
 `messages::typecheck` 模板。
@@ -2665,7 +2571,7 @@ canonical home，或没有可用 default ToolchainProfile。
 - 配置 `ahfl.toolchain.sysroot` 或 LSP default sysroot。
 - 修复 sysroot，使 `std/string.ahfl`、`std/bool.ahfl` 等 primitive home 文件存在。
 
-## 10. TBD
+## 9. TBD
 
 暂无"已登记但尚未归类"的稳定错误码。
 

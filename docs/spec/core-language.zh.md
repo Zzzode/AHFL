@@ -491,10 +491,13 @@ MatchArm            ::= Pattern [ "if" Expr ] "=>" Expr [ "," ] ;
 Pattern             ::= OrPattern ;
 OrPattern           ::= PrimaryPattern { "|" PrimaryPattern } ;
 PrimaryPattern      ::= "_"
+                      | IntRangePattern
                       | Literal
                       | VariantPattern
                       | BindingPattern
                       | TuplePattern ;
+IntRangePattern     ::= PatternIntBound ".." PatternIntBound ;
+PatternIntBound     ::= [ "-" ] Digit { Digit } ;
 VariantPattern      ::= QualifiedIdent
                       | QualifiedIdent "(" PatternList ")"
                       | QualifiedIdent "{" [ PatternFieldList ] "}"
@@ -515,13 +518,16 @@ ConstExpr           ::= Expr ;
 2. `Enum::StructVariant { field: value }` 使用 struct variant constructor；字段名必须存在，必填字段不得缺失，重复字段禁止。
 3. `Enum::UnitVariant` 是 unit variant value；对非 unit variant 省略 payload 是错误。
 4. match scrutinee 必须是 enum；match 必须由无 guard 的 arm 覆盖所有 variant，否则报告 `typecheck.MATCH_MISSING_PATTERNS`。
-5. `_` 与 catch-all binding 覆盖所有 variant；具体 enum variant pattern 只覆盖对应 variant；or-pattern 覆盖其可识别分支的并集。
-6. 带 guard 的 match arm 不贡献穷尽性覆盖，因为 guard 在运行时可能为 false；它仍可参与结构性 overlap warning。
-7. 被前序无 guard arm 完全覆盖的 arm 报告 `typecheck.MATCH_UNREACHABLE_ARM` warning；与前序 arm 结构性相交的 arm 报告 `typecheck.MATCH_OVERLAP` warning。
-8. variant pattern 的 payload shape 必须与声明一致；`Some(x)`、`Data { code }` 与 `Empty` 不能互换。
-9. struct variant pattern 支持字段 shorthand、`field: pattern` 与 `..`；未使用 `..` 时必须覆盖全部字段。
-10. `match` 的具体 top-level variant arm 会在 arm body 内窄化 scrutinee path；wildcard、catch-all binding 与 or-pattern 不产生唯一 variant fact。
-11. `is_some`、`is_none`、`is_ok`、`is_err` 的零参数 method call 在 `if` 条件中会产生局部分支 narrowing fact；receiver 必须是可窄化 path，否则不产生 fact。
+5. `_` 与 catch-all binding 覆盖所有 constructor witness；具体 enum variant pattern 只覆盖对应 variant；or-pattern 覆盖其可识别分支的并集。
+6. literal pattern 在 payload 域内只覆盖对应 singleton witness；在开放 `Int`、`Float`、`String` payload 域里，未显式覆盖的剩余值仍需要 `_`、catch-all binding 或更宽 pattern 覆盖。
+7. `IntRangePattern` 只用于 `Int` / `Int(min, max)` payload pattern，语义为闭区间匹配；下界大于上界报告 `typecheck.INVALID_RANGE_PATTERN`。`PatternIntBound` 是 pattern 专用 signed bound，不改变表达式中 `-1` 仍按 unary expression 解析的规则。
+8. 带 guard 的 match arm 不贡献穷尽性覆盖，因为 guard 在运行时可能为 false；它仍可参与结构性 overlap warning。
+9. 被前序无 guard arm 完全覆盖的 arm 报告 `typecheck.MATCH_UNREACHABLE_ARM` warning；与前序 arm 结构性相交的 arm 报告 `typecheck.MATCH_OVERLAP` warning。
+10. variant pattern 的 payload shape 必须与声明一致；`Some(x)`、`Data { code }` 与 `Empty` 不能互换。
+11. struct variant pattern 支持字段 shorthand、`field: pattern` 与 `..`；未使用 `..` 时必须覆盖全部字段。
+12. `match` 的具体 top-level variant arm 会在 arm body 内窄化 scrutinee path；wildcard、catch-all binding 与 or-pattern 不产生唯一 variant fact。
+13. `if let` 使用同一套 `Pattern` 语义；当 pattern 已经覆盖 scrutinee enum 的所有 constructor 且仍写出 `else` 分支时，报告 `typecheck.UNREACHABLE_IF_LET_ELSE` warning。
+14. `is_some`、`is_none`、`is_ok`、`is_err` 的零参数 method call 在 `if` 条件中会产生局部分支 narrowing fact；receiver 必须是可窄化 path，否则不产生 fact。
 
 ### 3.11 时序表达式
 

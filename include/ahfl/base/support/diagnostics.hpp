@@ -251,10 +251,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AgentContextOmitted{
     "AGENT_CONTEXT_OMITTED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AgentCapabilitiesOmitted{
     "AGENT_CAPABILITIES_OMITTED"};
-// P1 (ADT, RFC §1.6): match typecheck diagnostics. Surfaced by the P1b
-// match typecheck pass (scrutinee narrowing + arm unification + exhaustiveness).
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchNotYetSupported{
-    "MATCH_NOT_YET_SUPPORTED"};
+// RFC0011 match typecheck diagnostics: scrutinee narrowing, arm unification,
+// pattern usefulness, and exhaustiveness.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchScrutineeRequiresEnum{
     "MATCH_SCRUTINEE_REQUIRES_ENUM"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchUnknownVariant{
@@ -286,14 +284,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnexpectedVariantField
     "UNEXPECTED_VARIANT_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingVariantFieldInConstructor{
     "MISSING_VARIANT_FIELD_IN_CONSTRUCTOR"};
-// P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers so a
-// lambda never silently type-checks to the wrong shape before its pass exists.
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> LambdaNotYetSupported{
-    "LAMBDA_NOT_YET_SUPPORTED"};
-// P2 (RFC §3.2.2): fn-declaration typecheck lands in P2b; surfaced by P2a so
-// a parsed fn body is not silently skipped before the fn pass exists.
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> FnDeclNotYetSupported{
-    "FN_DECL_NOT_YET_SUPPORTED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidBuiltinAttribute{
     "INVALID_BUILTIN_ATTRIBUTE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownBuiltinHook{
@@ -579,10 +569,7 @@ inline constexpr MessageTemplate ArithmeticOperatorInvalid{
 inline constexpr MessageTemplate ModuloRequiresInt{"operator '%' requires Int operands"};
 inline constexpr MessageTemplate NoneWithoutContext{
     "cannot infer type of 'none' without an expected Optional<T> context"};
-// P1 (ADT): match typecheck lands in P1b; surfaced by P1a parsers.
-inline constexpr MessageTemplate MatchNotYetSupported{
-    "'match' expressions are not yet type-checked (ADT support is in progress)"};
-// P1b match typecheck messages.
+// RFC0011 match typecheck messages.
 inline constexpr MessageTemplate MatchScrutineeRequiresEnum{
     "'match' scrutinee must have an enum type, got {}"};
 inline constexpr MessageTemplate MatchUnknownVariant{
@@ -613,12 +600,6 @@ inline constexpr MessageTemplate MissingVariantField{
 inline constexpr MessageTemplate UnexpectedVariantField{"struct variant '{}' has no field '{}'"};
 inline constexpr MessageTemplate MissingVariantFieldInConstructor{
     "struct variant constructor '{}' is missing required field '{}'"};
-// P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers.
-inline constexpr MessageTemplate LambdaNotYetSupported{
-    "'lambda' expressions are not yet type-checked (closure support is in progress)"};
-// P2 (RFC §3.2.2): fn-declaration typecheck lands in P2b; surfaced by P2a.
-inline constexpr MessageTemplate FnDeclNotYetSupported{
-    "'fn' declarations are not yet type-checked (function support is in progress)"};
 inline constexpr MessageTemplate InvalidBuiltinAttribute{"@builtin is only allowed in std modules"};
 inline constexpr MessageTemplate UnknownBuiltinHook{"unknown @builtin hook '{}'"};
 inline constexpr MessageTemplate BuiltinHookNotAllowed{

@@ -253,6 +253,7 @@ Migration:
 39. LSP struct payload field completion snippets 已落库：当 client 声明 `completionItem.snippetSupport` 且光标位于 struct enum variant payload braces 内，field completion 会返回 `field: ${1:_}` snippet；不支持 snippet 的 client 继续得到 plain field label；两条路径都继续消费 typed pattern fact store 过滤已出现字段。
 40. LSP local binding documentHighlight v1 已落库：`textDocument/documentHighlight` 会优先消费同一套 AST lexical scope 与 typed expression path-root facts，为 pattern binding / let binding 只高亮同一个 lexical binding 的声明和使用；找不到 semantic local binding 时才回退到旧的文本级 identifier highlight。
 41. LSP pattern-aware selectionRange v1 已落库：`textDocument/selectionRange` 会把 `TypedProgram::patterns` 中同 source、包含光标位置的 typed pattern ranges 注入选择链；nested payload destructuring 可以从 identifier / bracket range 继续扩展到 inner variant pattern、outer variant pattern，再到 arm/block/file，通用文本 selection range 仍保持 compiler-agnostic。
+42. Pattern semantics reference cleanup 已落库：`docs/spec/core-language.zh.md` 现在规范化列出 `IntRangePattern`、open literal payload coverage、if-let usefulness warning 和 pattern-only signed range bound；未发射的 legacy `MATCH_NOT_YET_SUPPORTED` / `LAMBDA_NOT_YET_SUPPORTED` / `FN_DECL_NOT_YET_SUPPORTED` 诊断已从 SoT 与 error-code reference 删除，避免旧阶段占位码继续污染 RFC0011 的稳定诊断面。
 
 尚未完成：
 
@@ -291,8 +292,8 @@ Implemented exit criteria:
 
 Stabilized exit criteria:
 
-1. `docs/spec/core-language.zh.md` describes full pattern semantics.
-2. `docs/reference/error-codes.zh.md` lists stable pattern diagnostics.
+1. `docs/spec/core-language.zh.md` describes full pattern semantics. 状态：v1 已覆盖现有 `Pattern` surface、Int range pattern、literal/open-domain coverage、guard exhaustiveness、if-let usefulness 与 narrowing 规则；未来 Float refinement semantics 仍需另行稳定。
+2. `docs/reference/error-codes.zh.md` lists stable pattern diagnostics. 状态：v1 已列出现行 pattern 诊断码，并删除不再发射的旧阶段 `*_NOT_YET_SUPPORTED` 占位码。
 3. Release evidence includes representative finite/open/nested pattern cases.
 
 ## Alternatives
@@ -308,9 +309,9 @@ Stabilized exit criteria:
 
 ## Open Questions
 
-1. Should AHFL introduce or-pattern syntax before or after range pattern syntax?
+1. Closed for v1: or-pattern syntax and signed Int range pattern syntax have both landed. Future ordering questions are migration/product rollout questions, not RFC0011 semantic blockers.
 2. `Int(min, max)` 已有 source syntax 和大型嵌套 bounded product matrix 支持；literal/refinement inference 应采用什么边界，才能在不牺牲可判定性的前提下继续喂给完整矩阵？
-3. Should missing witness rendering prefer fully-qualified module paths or imported local aliases?
+3. Closed for v1: missing witness rendering uses the scrutinee enum context and emits source-safe variant pattern fragments, while keeping canonical identity in `PatternConstructorId` / typed facts rather than display strings. If AHFL later requires qualification-sensitive variant pattern spelling, that belongs in a follow-up LSP/source-edit display policy and must not alter matrix identity.
 
 ## Decision History
 
@@ -362,3 +363,4 @@ Stabilized exit criteria:
 - 2026-07-09: Added semantic local-binding documentHighlight. The LSP now highlights pattern and let binding declarations/references by lexical identity before falling back to text-level identifier matching.
 - 2026-07-09: Added pattern-aware selectionRange. The LSP now augments generic text selection chains with nested typed pattern ranges from `TypedProgram::patterns`.
 - 2026-07-09: Added related information for `MATCH_REDUNDANT_PATTERN`. The usefulness matrix now propagates prior covering row and prior or-branch ranges through match exhaustiveness diagnostics so CLI and LSP diagnostics point at the source that made the branch redundant.
+- 2026-07-09: Synchronized the pattern semantics reference and stable diagnostic surface with the implemented RFC0011 state. `core-language.zh.md` now includes Int range pattern and if-let usefulness semantics, and the unused legacy `*_NOT_YET_SUPPORTED` typecheck diagnostics were removed from the diagnostics SoT and error-code reference.
