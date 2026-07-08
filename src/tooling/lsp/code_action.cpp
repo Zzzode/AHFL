@@ -473,7 +473,7 @@ struct KeywordCall {
 }
 
 // ---------------------------------------------------------------------------
-// RFC0011-QF: MATCH_MISSING_PATTERNS -> insert a wildcard match arm
+// RFC0011-QF: MATCH_MISSING_PATTERNS -> insert structured witness arm(s)
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] bool is_identifier_char(char c) noexcept {
@@ -632,6 +632,18 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     }
     return std::none_of(
         pattern.begin(), pattern.end(), [](char c) { return c == '\n' || c == '\r' || c == ';'; });
+}
+
+[[nodiscard]] bool source_safe_multiline_pattern_fragment(std::string_view pattern) {
+    const auto trimmed = trim_copy(pattern);
+    if (trimmed.empty()) {
+        return false;
+    }
+    if (pattern.find("=>") != std::string_view::npos ||
+        pattern.find(';') != std::string_view::npos) {
+        return false;
+    }
+    return true;
 }
 
 [[nodiscard]] std::vector<std::string>
@@ -856,45 +868,64 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return c == ' ' || c == '\t';
 }
 
+[[nodiscard]] bool pattern_separator_space(char c) noexcept {
+    return horizontal_space(c) || c == '\n' || c == '\r';
+}
+
+[[nodiscard]] bool prefix_since_line_start_is_indent(const std::string &source,
+                                                     std::size_t offset) {
+    const auto previous_newline = source.rfind('\n', offset == 0 ? 0 : offset - 1);
+    const auto line_start = previous_newline == std::string::npos ? 0 : previous_newline + 1;
+    return std::all_of(source.begin() + static_cast<std::ptrdiff_t>(line_start),
+                       source.begin() + static_cast<std::ptrdiff_t>(offset),
+                       horizontal_space);
+}
+
+[[nodiscard]] std::size_t maybe_include_deleted_line_newline(const std::string &source,
+                                                             std::size_t delete_start,
+                                                             std::size_t delete_end) {
+    if (delete_end < source.size() && source[delete_end] == '\n' &&
+        prefix_since_line_start_is_indent(source, delete_start)) {
+        return delete_end + 1;
+    }
+    return delete_end;
+}
+
 [[nodiscard]] std::optional<Range> find_redundant_or_branch_range(const std::string &source,
                                                                   const LspDiagnostic &diag) {
-    if (diag.range.start.line != diag.range.end.line) {
-        return std::nullopt;
-    }
     const auto start = position_to_offset(source, diag.range.start);
     const auto end = position_to_offset(source, diag.range.end);
     if (start >= end || end > source.size()) {
         return std::nullopt;
     }
-    if (!source_safe_pattern_fragment(std::string_view(source).substr(start, end - start))) {
+    if (!source_safe_multiline_pattern_fragment(
+            std::string_view(source).substr(start, end - start))) {
         return std::nullopt;
     }
 
-    const auto line_start = line_start_offset(source, diag.range.start.line);
-    auto line_end = source.find('\n', line_start);
-    if (line_end == std::string::npos) {
-        line_end = source.size();
-    }
-
     std::size_t left = start;
-    while (left > line_start && horizontal_space(source[left - 1])) {
+    while (left > 0 && pattern_separator_space(source[left - 1])) {
         --left;
     }
-    if (left > line_start && source[left - 1] == '|') {
+    if (left > 0 && source[left - 1] == '|') {
         std::size_t delete_start = left - 1;
-        while (delete_start > line_start && horizontal_space(source[delete_start - 1])) {
+        const auto delete_line_start =
+            line_start_offset(source, offset_to_position(source, delete_start).line);
+        while (delete_start > delete_line_start && horizontal_space(source[delete_start - 1])) {
             --delete_start;
         }
-        return Range{offset_to_position(source, delete_start), offset_to_position(source, end)};
+        const auto delete_end = maybe_include_deleted_line_newline(source, delete_start, end);
+        return Range{offset_to_position(source, delete_start),
+                     offset_to_position(source, delete_end)};
     }
 
     std::size_t right = end;
-    while (right < line_end && horizontal_space(source[right])) {
+    while (right < source.size() && pattern_separator_space(source[right])) {
         ++right;
     }
-    if (right < line_end && source[right] == '|') {
+    if (right < source.size() && source[right] == '|') {
         std::size_t delete_end = right + 1;
-        while (delete_end < line_end && horizontal_space(source[delete_end])) {
+        while (delete_end < source.size() && pattern_separator_space(source[delete_end])) {
             ++delete_end;
         }
         return Range{offset_to_position(source, start), offset_to_position(source, delete_end)};

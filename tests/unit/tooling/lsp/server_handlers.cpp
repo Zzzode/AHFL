@@ -8695,6 +8695,63 @@ void test_code_action_qf_match_redundant_pattern_removes_or_branch() {
     check(deletes_redundant_branch, "codeAction.qf_match_redundant_pattern.deletes_or_branch");
 }
 
+void test_code_action_qf_match_redundant_pattern_removes_multiline_or_branch() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                               "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data {\n"
+                               "            code,\n"
+                               "            label,\n"
+                               "        } | Data {\n"
+                               "            code,\n"
+                               "            label,\n"
+                               "        } => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto branch_start =
+        position_of(source, "Data {\n            code,\n            label,\n        } =>");
+    const auto branch_close = position_of(source, "} => 1");
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_REDUNDANT_PATTERN";
+    diag.severity = DiagnosticSeverity::Warning;
+    diag.message = "redundant pattern branch #2 in match arm #1";
+    diag.range = Range{branch_start, Position{branch_close.line, branch_close.character + 1}};
+
+    const Range cursor_range{branch_start, Position{branch_start.line, branch_start.character + 4}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Remove redundant pattern branch") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_redundant_pattern_multiline.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool deletes_multiline_branch = false;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            deletes_multiline_branch =
+                deletes_multiline_branch ||
+                (edit.range.start.line == 7 && edit.range.start.character == 9 &&
+                 edit.range.end.line == 10 && edit.range.end.character == 9 &&
+                 edit.new_text.empty());
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_match_redundant_pattern_multiline.single_text_edit");
+    check(deletes_multiline_branch,
+          "codeAction.qf_match_redundant_pattern_multiline.deletes_branch");
+}
+
 void test_code_action_qf_unreachable_if_let_else_removes_else_branch() {
     const std::string source = "module lsp::if_let_qf;\n"
                                "enum Only { Some(Int) }\n"
@@ -9118,6 +9175,7 @@ int main() {
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
     test_code_action_qf_match_redundant_pattern_removes_or_branch();
+    test_code_action_qf_match_redundant_pattern_removes_multiline_or_branch();
     test_code_action_qf_unreachable_if_let_else_removes_else_branch();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
