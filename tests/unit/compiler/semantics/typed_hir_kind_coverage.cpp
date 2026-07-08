@@ -243,6 +243,7 @@ void assert_roundtrip_fields(const ahfl::TypedStatement &before,
     CHECK(after.assign_target_root_kind == before.assign_target_root_kind);
     CHECK(after.assert_message == before.assert_message);
     CHECK(after.assertion_kind == before.assertion_kind);
+    CHECK(after.pattern_index == before.pattern_index);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture,

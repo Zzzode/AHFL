@@ -634,6 +634,11 @@ class TypeCheckPass final {
     record_fn_call_site(SymbolId fn_symbol, SourceRange call_range, std::vector<TypePtr> type_args);
     [[nodiscard]] std::uint32_t append_typed_pattern(TypedPattern pattern);
     [[nodiscard]] const TypedPattern *typed_pattern(std::uint32_t index) const;
+    [[nodiscard]] std::uint32_t append_if_let_typed_pattern(
+        const ast::IfLetPatternSyntax &pattern,
+        TypePtr scrutinee_type,
+        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+        std::optional<std::reference_wrapper<const EnumVariantInfo>> variant_info);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);

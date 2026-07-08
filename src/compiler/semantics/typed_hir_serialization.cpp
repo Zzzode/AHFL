@@ -954,6 +954,7 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     // the output produced by new code.
     object->set("failure_kind", Json::make_string(to_string(stmt.assertion_kind)));
     object->set("assertion_kind", j_enum(static_cast<int>(stmt.assertion_kind)));
+    object->set("pattern_index", j_int(stmt.pattern_index));
     return object;
 }
 
@@ -2218,6 +2219,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                 ? static_cast<AssertionKind>(
                       reader.int_field(object, "assertion_kind"))
                 : parse_assertion_kind(reader.string_field(object, "failure_kind")),
+        .pattern_index = reader.optional_u32_field(object, "pattern_index", UINT32_MAX),
     };
 }
 

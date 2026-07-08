@@ -294,6 +294,7 @@ constexpr std::uint64_t kMonoBudgetPerExpr = 1ULL;
 constexpr std::uint64_t kMonoBudgetPerBlock = 1ULL;
 constexpr std::uint64_t kMonoBudgetPerStmt = 2ULL;
 constexpr std::uint64_t kMonoBudgetPerTemporal = 1ULL;
+constexpr std::uint64_t kMonoBudgetPerPattern = 1ULL;
 
 // Running budget counters for the monomorphization pass. Monomorphization is
 // pure additive: cloning a typed-hir record does not delete anything, so
@@ -356,6 +357,7 @@ struct MonomorphizedInstance {
     std::vector<std::uint32_t> root_stmt_indexes;
     std::vector<std::uint32_t> root_block_indexes;
     std::vector<std::uint32_t> root_temporal_indexes;
+    std::vector<std::uint32_t> root_pattern_indexes;
     // Post-substitution function-level type (e.g. substituted CapabilityType
     // with params + return_type applied).
     TypePtr instantiated_type{nullptr};
@@ -498,6 +500,10 @@ struct TypedStatement {
     // runtime journal) can dispatch on a stable enum instead of string-parsing.
     // Defaults to AssertionKind::None for Let/Assign/If/Return etc.
     AssertionKind assertion_kind{AssertionKind::None};
+
+    // Root pattern for pattern-bearing statements (currently IfLet).
+    // UINT32_MAX = no statement-local pattern.
+    std::uint32_t pattern_index{UINT32_MAX};
 };
 
 struct TypedTemporalExpr {

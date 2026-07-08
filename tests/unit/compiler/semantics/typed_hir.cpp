@@ -3148,6 +3148,44 @@ fn choose(v: Maybe) -> Int effect Pure decreases 0 {
     const auto tc = checker.check(*parse.program, resolve);
     REQUIRE_FALSE(tc.has_errors());
 
+    const ahfl::TypedStatement *typed_if_let = nullptr;
+    std::size_t typed_if_let_index = 0;
+    for (std::size_t index = 0; index < tc.typed_program.statements.size(); ++index) {
+        const auto &candidate = tc.typed_program.statements[index];
+        if (candidate.kind == ahfl::TypedStmtKind::IfLet) {
+            typed_if_let = &candidate;
+            typed_if_let_index = index;
+            break;
+        }
+    }
+    REQUIRE(typed_if_let != nullptr);
+    REQUIRE(typed_if_let->pattern_index < tc.typed_program.patterns.size());
+
+    const auto &typed_pattern = tc.typed_program.patterns[typed_if_let->pattern_index];
+    CHECK(typed_pattern.kind == ahfl::TypedPatternKind::Variant);
+    CHECK(typed_pattern.variant_name == "Some");
+    CHECK(typed_pattern.enum_name == "typed::iflet_ir::Maybe");
+    CHECK(typed_pattern.enum_symbol.has_value());
+    CHECK(typed_pattern.variant_payload_kind == ahfl::EnumVariantPayloadKind::Tuple);
+    REQUIRE(typed_pattern.children.size() == 1);
+    CHECK(typed_pattern.children.front().name == "0");
+    REQUIRE(typed_pattern.children.front().pattern_index < tc.typed_program.patterns.size());
+    const auto &typed_binding =
+        tc.typed_program.patterns[typed_pattern.children.front().pattern_index];
+    CHECK(typed_binding.kind == ahfl::TypedPatternKind::Binding);
+    REQUIRE(typed_binding.bindings.size() == 1);
+    CHECK(typed_binding.bindings.front().name == "x");
+    REQUIRE(typed_binding.bindings.front().type != nullptr);
+    CHECK(typed_binding.bindings.front().type->describe() == "Int");
+
+    const auto typed_snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
+    auto typed_restored = ahfl::deserialize_typed_program_json(typed_snapshot);
+    REQUIRE(typed_restored.has_value());
+    REQUIRE(typed_if_let_index < typed_restored->statements.size());
+    CHECK(typed_restored->statements[typed_if_let_index].pattern_index ==
+          typed_if_let->pattern_index);
+    CHECK(ahfl::serialize_typed_program_json(*typed_restored) == typed_snapshot);
+
     const auto lowered = ahfl::lower_typed_program(tc.typed_program, *parse.program);
     CHECK_FALSE(ahfl::ir::verify_ir_program(lowered).has_errors());
 
@@ -3191,6 +3229,94 @@ fn choose(v: Maybe) -> Int effect Pure decreases 0 {
     std::ostringstream text;
     ahfl::print_program_ir(lowered, text);
     CHECK(text.str().find("if let Some(x) =") != std::string::npos);
+}
+
+TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
+    ahfl::TypeContext types;
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+    const auto maybe_type = types.enum_type("typed::mono_iflet::Maybe",
+                                            ahfl::SymbolId{1},
+                                            std::vector<ahfl::TypePtr>{int_type});
+
+    ahfl::TypedProgram program;
+    program.declarations.push_back(ahfl::TypedDecl{
+        .kind = ahfl::ast::NodeKind::FnDecl,
+        .symbol = ahfl::SymbolId{10},
+        .range = {},
+        .source_id = std::nullopt,
+        .associated_agent_symbol = std::nullopt,
+        .type = maybe_type,
+        .payload = std::monostate{},
+    });
+    program.patterns.push_back(ahfl::TypedPattern{
+        .kind = ahfl::TypedPatternKind::Binding,
+        .range = {},
+        .source_id = std::nullopt,
+        .matched_type = int_type,
+        .irrefutable = true,
+        .bindings = {ahfl::TypedPatternBinding{
+            .name = "x",
+            .type = int_type,
+            .range = {},
+        }},
+    });
+    program.patterns.push_back(ahfl::TypedPattern{
+        .kind = ahfl::TypedPatternKind::Variant,
+        .range = {},
+        .source_id = std::nullopt,
+        .matched_type = maybe_type,
+        .irrefutable = false,
+        .children = {ahfl::TypedPatternChild{
+            .pattern_index = 0,
+            .name = "0",
+        }},
+        .enum_symbol = ahfl::SymbolId{1},
+        .enum_name = "typed::mono_iflet::Maybe",
+        .variant_name = "Some",
+        .variant_payload_kind = ahfl::EnumVariantPayloadKind::Tuple,
+    });
+    program.statements.push_back(ahfl::TypedStatement{
+        .kind = ahfl::TypedStmtKind::IfLet,
+        .range = {},
+        .source_id = std::nullopt,
+        .node_id = 7,
+        .children_expr_index = {},
+        .target_name = {},
+        .goto_target_state = {},
+        .then_block_index = UINT32_MAX,
+        .else_block_index = UINT32_MAX,
+        .let_type_ref_strategy = ahfl::LetTypeRefStrategy::NoAnnotation,
+        .let_type = nullptr,
+        .assign_target_root_kind = ahfl::AssignTargetRootKind::Identifier,
+        .assert_message = {},
+        .assertion_kind = ahfl::AssertionKind::None,
+        .pattern_index = 1,
+    });
+
+    const auto result = ahfl::monomorphize_decl(
+        program,
+        0,
+        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
+
+    REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
+    REQUIRE(result.instance_index < program.monomorphized_instances.size());
+    const auto &instance = program.monomorphized_instances[result.instance_index];
+    REQUIRE(instance.root_stmt_indexes.size() == 1);
+    REQUIRE(instance.root_pattern_indexes.size() == 2);
+
+    const auto cloned_stmt_index = instance.root_stmt_indexes.front();
+    REQUIRE(cloned_stmt_index < program.statements.size());
+    const auto &cloned_stmt = program.statements[cloned_stmt_index];
+    CHECK(cloned_stmt.pattern_index == instance.root_pattern_indexes[1]);
+    REQUIRE(cloned_stmt.pattern_index < program.patterns.size());
+
+    const auto &cloned_variant = program.patterns[cloned_stmt.pattern_index];
+    REQUIRE(cloned_variant.children.size() == 1);
+    CHECK(cloned_variant.children.front().pattern_index == instance.root_pattern_indexes[0]);
+    REQUIRE(cloned_variant.children.front().pattern_index < program.patterns.size());
+    const auto &cloned_binding = program.patterns[cloned_variant.children.front().pattern_index];
+    REQUIRE(cloned_binding.bindings.size() == 1);
+    CHECK(cloned_binding.bindings.front().name == "x");
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0011 typed HIR records match pattern flat store") {

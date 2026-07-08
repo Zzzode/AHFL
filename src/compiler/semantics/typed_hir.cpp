@@ -387,10 +387,12 @@ struct MonoWork {
     std::uint32_t source_first_stmt{0};
     std::uint32_t source_first_block{0};
     std::uint32_t source_first_temporal{0};
+    std::uint32_t source_first_pattern{0};
     std::uint32_t target_first_expr{0};
     std::uint32_t target_first_stmt{0};
     std::uint32_t target_first_block{0};
     std::uint32_t target_first_temporal{0};
+    std::uint32_t target_first_pattern{0};
     std::uint64_t cost{0};
 };
 
@@ -453,16 +455,19 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
     work.source_first_stmt = 0;
     work.source_first_block = 0;
     work.source_first_temporal = 0;
+    work.source_first_pattern = 0;
     const auto source_expr_count = static_cast<std::uint32_t>(program.expressions.size());
     const auto source_stmt_count = static_cast<std::uint32_t>(program.statements.size());
     const auto source_block_count = static_cast<std::uint32_t>(program.blocks.size());
     const auto source_temporal_count =
         static_cast<std::uint32_t>(program.temporal_exprs.size());
+    const auto source_pattern_count = static_cast<std::uint32_t>(program.patterns.size());
 
     work.target_first_expr = source_expr_count;
     work.target_first_stmt = source_stmt_count;
     work.target_first_block = source_block_count;
     work.target_first_temporal = source_temporal_count;
+    work.target_first_pattern = source_pattern_count;
 
     // --------------------------
     // Step 3: allocate cloned records (raw copy, then remap).
@@ -512,6 +517,14 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
         work.cost += kMonoBudgetPerTemporal;
     }
 
+    // Patterns.
+    program.patterns.reserve(program.patterns.size() + source_pattern_count);
+    for (std::uint32_t i = 0; i < source_pattern_count; ++i) {
+        TypedPattern clone = program.patterns[i];
+        program.patterns.push_back(std::move(clone));
+        work.cost += kMonoBudgetPerPattern;
+    }
+
     // --------------------------
     // Step 4: remap index references inside cloned records.
     // --------------------------
@@ -556,6 +569,11 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
                                              work.source_first_block,
                                              work.target_first_block,
                                              source_block_count);
+        clone.pattern_index = remap_index(work,
+                                          clone.pattern_index,
+                                          work.source_first_pattern,
+                                          work.target_first_pattern,
+                                          source_pattern_count);
     }
 
     for (std::uint32_t i = 0; i < source_temporal_count; ++i) {
@@ -603,6 +621,17 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
                                  source_temporal_count);
                 break;
             }
+        }
+    }
+
+    for (std::uint32_t i = 0; i < source_pattern_count; ++i) {
+        TypedPattern &clone = program.patterns[work.target_first_pattern + i];
+        for (auto &child : clone.children) {
+            child.pattern_index = remap_index(work,
+                                              child.pattern_index,
+                                              work.source_first_pattern,
+                                              work.target_first_pattern,
+                                              source_pattern_count);
         }
     }
 
@@ -680,6 +709,10 @@ MonomorphizeResult monomorphize_decl(TypedProgram &program,
     instance.root_temporal_indexes.reserve(source_temporal_count);
     for (std::uint32_t i = 0; i < source_temporal_count; ++i) {
         instance.root_temporal_indexes.push_back(work.target_first_temporal + i);
+    }
+    instance.root_pattern_indexes.reserve(source_pattern_count);
+    for (std::uint32_t i = 0; i < source_pattern_count; ++i) {
+        instance.root_pattern_indexes.push_back(work.target_first_pattern + i);
     }
     instance.instantiated_type = program.declarations[decl_clone_index].type;
     instance.budget_cost = work.cost + kMonoBudgetOverhead;

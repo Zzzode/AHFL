@@ -207,7 +207,7 @@ Migration:
 
 ## Current Implementation Status
 
-截至 2026-07-08，本 RFC 仍保持 `draft`，但前两条编译器基础设施切片已经落库：
+截至 2026-07-08，本 RFC 仍保持 `draft`，但多条编译器基础设施切片已经落库：
 
 1. `PatternUsefulnessContext` 提供 ID-based flat stores：`PatternDomainId`、`PatternConstructorId`、`PatternId` 作为 canonical identity；字符串仅用于 witness/debug rendering。
 2. `analyze_pattern_usefulness()` 已支持 finite constructor domains、nested constructor payload、or-pattern branch redundancy、guarded row 不参与 exhaustiveness、wildcard unreachable row 和 missing witness construction。
@@ -219,10 +219,11 @@ Migration:
 8. Redundant or-pattern branch diagnostic 已落库：matrix core 的 redundant branch analysis 现在通过稳定 warning code `MATCH_REDUNDANT_PATTERN` 暴露到 typechecker，range 指向冗余分支本身。
 9. TypedProgram 一等 pattern fact store 的首个切片已落库：typechecker 的 `match` pattern lowering 会把 literal、variant、wildcard、binding、tuple 和 or-pattern 记录到 `TypedProgram::patterns`，包含 `SourceRange`、`SourceId`、matched type、enum symbol、variant payload kind、bindings 和 child pattern index；JSON typed HIR serialization/deserialization 已覆盖该 flat store。
 10. `match_exhaustiveness` matrix consumer 已迁移到 typed pattern root rows：typechecker 传递每个 match arm 的 `TypedProgram::patterns` root index、source range 和 guard exhaustiveness flag，matrix analyzer 从 typed pattern flat store lowering 到 constructor matrix，不再为常规 typed match 重新从 AST pattern lower 一套局部结构。
+11. `if let` statement 的 typed pattern fact 已落库：typechecker 会把 `if let` 根 pattern 写入 `TypedProgram::patterns`，并在 `TypedStatement::pattern_index` 记录 root index；typed HIR JSON round-trip 和 monomorphization remap 已覆盖该 statement-local pattern reference。
 
 尚未完成：
 
-1. `if let`、optional narrowing 和未来 pattern binding 还没有统一落入 typed pattern fact store。
+1. `if let` 的 usefulness/narrowing consumer 仍沿用当前局部逻辑；optional narrowing 和未来 pattern binding 还没有统一消费 typed pattern fact store。
 2. 非 Bool 的 open literal usefulness、range pattern、完整 pattern diagnostic code taxonomy 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
@@ -284,3 +285,4 @@ Stabilized exit criteria:
 - 2026-07-08: Routed RFC 0003 `match_exhaustiveness` through the matrix core for top-level enum coverage while preserving existing diagnostics and ADT match regression behavior.
 - 2026-07-08: Added `TypedProgram::patterns` as the first typed pattern HIR flat-store slice for `match` typechecking, including typed HIR JSON round-trip coverage.
 - 2026-07-08: Migrated regular `match` exhaustiveness analysis to consume typed pattern root rows from `TypedProgram::patterns`, leaving the AST lowering path only as compatibility fallback for callers without typed rows.
+- 2026-07-08: Added typed pattern HIR roots for `if let` statements and serialized `TypedStatement::pattern_index`, so statement-local patterns now share the same flat-store evidence model as `match` arms.

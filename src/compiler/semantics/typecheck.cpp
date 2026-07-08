@@ -1192,6 +1192,60 @@ const TypedPattern *TypeCheckPass::typed_pattern(std::uint32_t index) const {
     return &result_.typed_program.patterns[index];
 }
 
+std::uint32_t TypeCheckPass::append_if_let_typed_pattern(
+    const ast::IfLetPatternSyntax &pattern,
+    TypePtr scrutinee_type,
+    std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+    std::optional<std::reference_wrapper<const EnumVariantInfo>> variant_info) {
+    auto matched_type = scrutinee_type != nullptr ? scrutinee_type : make_error_type();
+    TypedPattern root;
+    root.kind = TypedPatternKind::Variant;
+    root.range = pattern.range;
+    root.source_id = current_source_id_;
+    root.matched_type = matched_type;
+    root.irrefutable = false;
+    root.variant_name = pattern.variant_name;
+    root.variant_payload_kind =
+        variant_info.has_value() ? variant_info->get().payload_kind : if_let_payload_kind(pattern);
+    if (enum_info.has_value()) {
+        root.enum_symbol = enum_info->get().symbol;
+        root.enum_name = enum_info->get().canonical_name;
+    }
+
+    const bool tuple_payload = variant_info.has_value() &&
+                               variant_info->get().payload_kind == EnumVariantPayloadKind::Tuple;
+    const std::size_t limit =
+        tuple_payload ? std::min(pattern.bindings.size(), variant_info->get().payload.size())
+                      : (!variant_info.has_value() ? pattern.bindings.size() : 0);
+    root.children.reserve(limit);
+    for (std::size_t index = 0; index < limit; ++index) {
+        const auto &binding_name = pattern.bindings[index];
+        TypePtr binding_type = tuple_payload && variant_info->get().payload[index] != nullptr
+                                   ? variant_info->get().payload[index]
+                                   : make_error_type();
+        TypedPattern binding;
+        binding.kind = TypedPatternKind::Binding;
+        binding.range = pattern.range;
+        binding.source_id = current_source_id_;
+        binding.matched_type = binding_type;
+        binding.irrefutable = true;
+        if (!binding_name.empty()) {
+            binding.bindings.push_back(TypedPatternBinding{
+                .name = binding_name,
+                .type = binding_type,
+                .range = pattern.range,
+            });
+        }
+        const auto binding_index = hir_builder_.append_pattern(std::move(binding));
+        root.children.push_back(TypedPatternChild{
+            .pattern_index = binding_index,
+            .name = std::to_string(index),
+        });
+    }
+
+    return hir_builder_.append_pattern(std::move(root));
+}
+
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
     auto resolver = make_type_resolver();
     return resolver.resolve_type_alias(id, use_range);
@@ -3462,6 +3516,9 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             FlowFacts then_facts;
             FlowFacts else_facts;
             std::vector<std::pair<std::string, TypePtr>> payload_bindings;
+            std::uint32_t if_let_pattern_index = UINT32_MAX;
+            std::optional<std::reference_wrapper<const EnumVariantInfo>> pattern_variant_info =
+                std::nullopt;
             if (ifl->pattern != nullptr && enum_info.has_value()) {
                 const auto &pattern = *ifl->pattern;
                 const auto variant = enum_info->get().find_variant(pattern.variant_name);
@@ -3471,6 +3528,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                              pattern.variant_name, enum_info->get().canonical_name),
                                          pattern.range);
                 } else {
+                    pattern_variant_info = std::cref(variant->get());
                     const auto pattern_kind = if_let_payload_kind(pattern);
                     if (pattern_kind != variant->get().payload_kind) {
                         typecheck_error_here(
@@ -3567,6 +3625,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     }
                 }
             }
+            if (ifl->pattern != nullptr) {
+                if_let_pattern_index = append_if_let_typed_pattern(
+                    *ifl->pattern, scrutinee.type, enum_info, pattern_variant_info);
+            }
 
             if (ifl->then_block != nullptr) {
                 auto then_context = ValueContext{
@@ -3641,6 +3703,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .let_type = nullptr,
                 .assign_target_root_kind = AssignTargetRootKind::Identifier,
                 .assert_message = {},
+                .pattern_index = if_let_pattern_index,
             });
         }
         break;
