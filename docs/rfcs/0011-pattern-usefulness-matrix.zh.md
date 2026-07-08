@@ -234,6 +234,7 @@ Migration:
 21. LSP pattern completion v1 已落库：completion 在光标位于 `TypedProgram::patterns` 的 pattern range 内时，使用最小 containing typed pattern 的 `matched_type` 查询 `TypeEnvironment::get_enum`，只返回该 scrutinee enum 的 variant 候选；光标位于 struct variant payload braces 内时，使用 typed variant pattern 的 enum/variant facts 返回尚未出现的 payload field 候选；当 client 声明 `completionItem.snippetSupport` 时，tuple/struct enum variant payload completion 会返回可直接展开的 destructuring snippet。`match`、`if let`、nested enum payload pattern、struct payload field filtering 和 snippet capability gating 均由 handler 回归测试覆盖。
 22. LSP pattern payload signatureHelp v1 已落库：`textDocument/signatureHelp` 会优先检查 typed enum variant pattern payload 光标位置，并从 `EnumVariantInfo` 渲染 tuple payload 和 struct payload 的签名、参数标签与 active parameter；handler 回归测试覆盖 tuple payload 第二参数和 struct payload 字段位置。
 23. LSP unreachable-arm quick fix 已能跨多行 pattern/body source scan：删除 `MATCH_UNREACHABLE_ARM` 时不再要求 arm 的 pattern 与 `=>` 在同一行，可完整删除多行 struct payload destructuring arm，同时保留前后 match arms。
+24. LSP if-let usefulness quick fix 已落库：`typecheck.UNREACHABLE_IF_LET_ELSE` 现在可从诊断指向的 else block 反向定位 `else` keyword，source-safe 删除整个不可达 `else { ... }` 分支，同时保留 then block 和后续 statement。
 
 尚未完成：
 
@@ -246,7 +247,7 @@ Migration:
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern and invalid range.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
-5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, payload completion snippets and pattern payload signatureHelp.
+5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, payload completion snippets and pattern payload signatureHelp.
 6. Regression tests proving RFC 0001 enum payload and RFC 0002 optional narrowing behavior remain stable.
 
 ## Rollout and Stabilization
@@ -314,3 +315,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added typed-pattern-driven LSP signatureHelp for enum variant pattern payloads, covering tuple payload positions and struct payload fields through `TypedProgram::patterns`.
 - 2026-07-08: Added LSP payload destructuring snippets for enum variant pattern completions when the client advertises snippet support.
 - 2026-07-08: Extended the `MATCH_UNREACHABLE_ARM` LSP quick fix to delete source-safe multi-line destructuring arms, including struct payload pattern arms.
+- 2026-07-08: Added an LSP quick fix for `UNREACHABLE_IF_LET_ELSE` that removes the source-safe unreachable else branch while preserving the then branch and following statements.

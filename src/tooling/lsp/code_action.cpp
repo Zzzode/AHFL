@@ -119,6 +119,7 @@ constexpr std::string_view kCodeUnusedImport = "lint.UNUSED_IMPORT";
 constexpr std::string_view kCodeWrongArity = "typecheck.WRONG_ARITY";
 constexpr std::string_view kCodeMatchMissingPatterns = "typecheck.MATCH_MISSING_PATTERNS";
 constexpr std::string_view kCodeMatchUnreachableArm = "typecheck.MATCH_UNREACHABLE_ARM";
+constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF_LET_ELSE";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -480,6 +481,86 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     return before_ok && after_ok;
 }
 
+[[nodiscard]] std::size_t skip_trivia_forward(const std::string &source, std::size_t cursor) {
+    while (cursor < source.size()) {
+        if (std::isspace(static_cast<unsigned char>(source[cursor]))) {
+            ++cursor;
+            continue;
+        }
+        if (cursor + 1 < source.size() && source[cursor] == '/' && source[cursor + 1] == '/') {
+            const auto nl = source.find('\n', cursor + 2);
+            if (nl == std::string::npos) {
+                return source.size();
+            }
+            cursor = nl + 1;
+            continue;
+        }
+        if (cursor + 1 < source.size() && source[cursor] == '/' && source[cursor + 1] == '*') {
+            const auto close = source.find("*/", cursor + 2);
+            if (close == std::string::npos) {
+                return source.size();
+            }
+            cursor = close + 2;
+            continue;
+        }
+        break;
+    }
+    return cursor;
+}
+
+[[nodiscard]] std::optional<std::size_t> find_matching_close_brace(const std::string &source,
+                                                                   std::size_t open_brace) {
+    if (open_brace >= source.size() || source[open_brace] != '{') {
+        return std::nullopt;
+    }
+
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (std::size_t cursor = open_brace; cursor < source.size(); ++cursor) {
+        const char c = source[cursor];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (cursor + 1 < source.size() && c == '/' && source[cursor + 1] == '/') {
+            const auto nl = source.find('\n', cursor + 2);
+            if (nl == std::string::npos) {
+                return std::nullopt;
+            }
+            cursor = nl;
+            continue;
+        }
+        if (cursor + 1 < source.size() && c == '/' && source[cursor + 1] == '*') {
+            const auto close = source.find("*/", cursor + 2);
+            if (close == std::string::npos) {
+                return std::nullopt;
+            }
+            cursor = close + 1;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0) {
+                return cursor;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] std::optional<std::size_t> find_match_close_brace(const std::string &source,
                                                                 const Range &range) {
     const auto range_start = position_to_offset(source, range.start);
@@ -499,27 +580,8 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
             return std::nullopt;
         }
 
-        int depth = 0;
-        for (std::size_t cursor = open; cursor < source.size(); ++cursor) {
-            if (source[cursor] == '"') {
-                ++cursor;
-                while (cursor < source.size() && source[cursor] != '"') {
-                    if (source[cursor] == '\\' && cursor + 1 < source.size()) {
-                        cursor += 2;
-                    } else {
-                        ++cursor;
-                    }
-                }
-                continue;
-            }
-            if (source[cursor] == '{') {
-                ++depth;
-            } else if (source[cursor] == '}') {
-                --depth;
-                if (depth == 0) {
-                    return cursor;
-                }
-            }
+        if (const auto close = find_matching_close_brace(source, open)) {
+            return close;
         }
         return std::nullopt;
     }
@@ -859,6 +921,106 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
+[[nodiscard]] std::optional<Range> find_if_let_else_branch_range(const std::string &source,
+                                                                 const LspDiagnostic &diag) {
+    const auto diag_start = position_to_offset(source, diag.range.start);
+    const auto diag_end = position_to_offset(source, diag.range.end);
+    if (diag_start >= source.size() || diag_end < diag_start) {
+        return std::nullopt;
+    }
+
+    std::size_t open_brace = skip_trivia_forward(source, diag_start);
+    if (open_brace >= source.size() || source[open_brace] != '{') {
+        const auto forward_open = source.find('{', diag_start);
+        if (forward_open != std::string::npos && forward_open <= diag_end) {
+            open_brace = forward_open;
+        } else {
+            const auto backward_open =
+                diag_start == 0 ? std::string::npos : source.rfind('{', diag_start - 1);
+            if (backward_open == std::string::npos) {
+                return std::nullopt;
+            }
+            const auto close = find_matching_close_brace(source, backward_open);
+            if (!close.has_value() || *close < diag_end) {
+                return std::nullopt;
+            }
+            open_brace = backward_open;
+        }
+    }
+
+    std::optional<std::size_t> else_keyword;
+    std::size_t search = open_brace;
+    while (search > 0) {
+        const auto candidate = source.rfind("else", search - 1);
+        if (candidate == std::string::npos) {
+            break;
+        }
+        if (is_keyword_at(source, candidate, "else") &&
+            skip_trivia_forward(source, candidate + std::string_view("else").size()) ==
+                open_brace) {
+            else_keyword = candidate;
+            break;
+        }
+        search = candidate;
+    }
+    if (!else_keyword.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto close_brace = find_matching_close_brace(source, open_brace);
+    if (!close_brace.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto line_start = source.rfind('\n', *else_keyword == 0 ? 0 : *else_keyword - 1);
+    const auto else_line_start = line_start == std::string::npos ? 0 : line_start + 1;
+    std::size_t delete_start = *else_keyword;
+    const auto prefix =
+        std::string_view(source).substr(else_line_start, *else_keyword - else_line_start);
+    const bool else_starts_line =
+        std::all_of(prefix.begin(), prefix.end(), [](char c) { return c == ' ' || c == '\t'; });
+    if (else_starts_line) {
+        delete_start = else_line_start;
+    } else {
+        while (delete_start > else_line_start &&
+               (source[delete_start - 1] == ' ' || source[delete_start - 1] == '\t')) {
+            --delete_start;
+        }
+    }
+
+    std::size_t delete_end = *close_brace + 1;
+    if (delete_end < source.size() && source[delete_end] == '\n') {
+        ++delete_end;
+    }
+    if (delete_end <= delete_start) {
+        return std::nullopt;
+    }
+    return Range{offset_to_position(source, delete_start), offset_to_position(source, delete_end)};
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_unreachable_if_let_else(const std::string &source,
+                                                                   const LspDiagnostic &diag) {
+    auto else_range = find_if_let_else_branch_range(source, diag);
+    if (!else_range.has_value()) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range = *else_range;
+    edit.new_text = "";
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Remove unreachable if-let else branch";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 // ---------------------------------------------------------------------------
 // Organize Imports (existing, preserved)
 // ---------------------------------------------------------------------------
@@ -1087,6 +1249,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeMatchUnreachableArm) {
             if (auto a = qf_match_unreachable_arm(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeUnreachableIfLetElse) {
+            if (auto a = qf_unreachable_if_let_else(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

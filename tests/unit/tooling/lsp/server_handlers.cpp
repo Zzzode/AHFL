@@ -8653,6 +8653,61 @@ void test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm() {
           "codeAction.qf_match_unreachable_multiline.preserves_following_arm");
 }
 
+void test_code_action_qf_unreachable_if_let_else_removes_else_branch() {
+    const std::string source = "module lsp::if_let_qf;\n"
+                               "enum Only { Some(Int) }\n"
+                               "fn f(value: Only) -> Int effect Pure decreases 0 {\n"
+                               "    if let Some(x) = value {\n"
+                               "        return x;\n"
+                               "    } else {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "    return 1;\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.UNREACHABLE_IF_LET_ELSE";
+    diag.severity = DiagnosticSeverity::Warning;
+    diag.message = "this if-let else branch is unreachable";
+    diag.range = Range{Position{5, 11}, Position{7, 5}};
+
+    const Range cursor_range{Position{5, 11}, Position{5, 12}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Remove unreachable if-let else branch") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_if_let_unreachable_else.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool deletes_else_branch = false;
+    bool preserves_then_block = true;
+    bool preserves_following_statement = true;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            deletes_else_branch = deletes_else_branch ||
+                                  (edit.range.start.line == 5 && edit.range.start.character == 5 &&
+                                   edit.range.end.line == 8 && edit.range.end.character == 0 &&
+                                   edit.new_text.empty());
+            preserves_then_block = preserves_then_block && edit.range.start.line >= 5;
+            preserves_following_statement =
+                preserves_following_statement && edit.range.end.line <= 8;
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_if_let_unreachable_else.single_text_edit");
+    check(deletes_else_branch, "codeAction.qf_if_let_unreachable_else.deletes_else_branch");
+    check(preserves_then_block, "codeAction.qf_if_let_unreachable_else.preserves_then_block");
+    check(preserves_following_statement,
+          "codeAction.qf_if_let_unreachable_else.preserves_following_statement");
+}
+
 // Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
 // "capabilities: [];" before the first transition line.
 //
@@ -9020,6 +9075,7 @@ int main() {
     test_code_action_qf_match_missing_patterns_falls_back_to_wildcard();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
+    test_code_action_qf_unreachable_if_let_else_removes_else_branch();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
     test_hover_struct_literal_shows_construct_summary();
