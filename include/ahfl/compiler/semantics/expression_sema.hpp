@@ -9,6 +9,7 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -77,6 +78,11 @@ class ExpressionSemaDelegate {
                                  std::string message,
                                  SourceRange range,
                                  std::vector<Diagnostic::Related> notes) = 0;
+    virtual void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                 std::string message,
+                                 SourceRange range,
+                                 std::vector<Diagnostic::Related> notes,
+                                 std::map<std::string, std::vector<std::string>> data) = 0;
     virtual void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
                                    std::string message,
                                    SourceRange range,

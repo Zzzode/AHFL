@@ -138,6 +138,7 @@ void test_serialize_full_diagnostic() {
     diag.source_name = "test.ahfl";
     diag.range = ahfl::SourceRange{10, 25};
     diag.position = ahfl::SourcePosition{10, 2, 5};
+    diag.data["missing_witnesses"] = {"B"};
 
     ahfl::Diagnostic::Related rel;
     rel.message = "declared here";
@@ -172,6 +173,14 @@ void test_serialize_full_diagnostic() {
     auto *related = json->get("related");
     check(related != nullptr && related->is_array(), "diag_ser.full.related_array");
     check(related->array_items.size() == 1, "diag_ser.full.related_count");
+
+    auto *data = json->get("data");
+    check(data != nullptr && data->is_object(), "diag_ser.full.data_object");
+    auto *witnesses = data != nullptr ? data->get("missing_witnesses") : nullptr;
+    check(witnesses != nullptr && witnesses->is_array(),
+          "diag_ser.full.missing_witnesses_array");
+    check(witnesses != nullptr && witnesses->array_items.size() == 1,
+          "diag_ser.full.missing_witnesses_count");
 }
 
 void test_diagnostic_roundtrip_basic() {
@@ -197,6 +206,7 @@ void test_diagnostic_roundtrip_full() {
     original.source_name = "module.ahfl";
     original.range = ahfl::SourceRange{100, 115};
     original.position = ahfl::SourcePosition{100, 10, 3};
+    original.data["missing_witnesses"] = {"Data { flag: false, other: false }", "Empty"};
 
     ahfl::Diagnostic::Related r1;
     r1.message = "previous declaration";
@@ -232,6 +242,12 @@ void test_diagnostic_roundtrip_full() {
           "diag_roundtrip.full.related_1_message");
     check(!parsed->related[1].range.has_value(),
           "diag_roundtrip.full.related_1_no_range");
+    check(parsed->data.count("missing_witnesses") == 1,
+          "diag_roundtrip.full.data_has_missing_witnesses");
+    check(parsed->data.at("missing_witnesses").size() == 2,
+          "diag_roundtrip.full.data_missing_witnesses_count");
+    check(parsed->data.at("missing_witnesses")[0] == "Data { flag: false, other: false }",
+          "diag_roundtrip.full.data_missing_witnesses_first");
 }
 
 void test_diagnostic_deserialize_invalid() {
@@ -251,6 +267,16 @@ void test_diagnostic_deserialize_invalid() {
     // missing message and related
     auto parsed3 = ahfl::deserialize_diagnostic_json(*obj2);
     check(!parsed3.has_value(), "diag_deser.missing_fields");
+
+    auto obj3 = ahfl::json::JsonValue::make_object();
+    obj3->set("severity", ahfl::json::JsonValue::make_string("error"));
+    obj3->set("message", ahfl::json::JsonValue::make_string("msg"));
+    obj3->set("related", ahfl::json::JsonValue::make_array());
+    auto bad_data = ahfl::json::JsonValue::make_object();
+    bad_data->set("missing_witnesses", ahfl::json::JsonValue::make_string("B"));
+    obj3->set("data", std::move(bad_data));
+    auto parsed4 = ahfl::deserialize_diagnostic_json(*obj3);
+    check(!parsed4.has_value(), "diag_deser.invalid_data_payload");
 }
 
 // ============================================================================

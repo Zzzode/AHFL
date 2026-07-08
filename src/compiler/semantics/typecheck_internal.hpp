@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -140,6 +141,11 @@ class DiagnosticReporter {
                          std::string message,
                          SourceRange range,
                          std::vector<Diagnostic::Related> notes);
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range,
+                         std::vector<Diagnostic::Related> notes,
+                         std::map<std::string, std::vector<std::string>> data);
     void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
                            std::string message,
                            SourceRange range,
@@ -617,6 +623,11 @@ class TypeCheckPass final {
                               std::string message,
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes);
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range,
+                              std::vector<Diagnostic::Related> notes,
+                              std::map<std::string, std::vector<std::string>> data);
     void typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                                 std::string message,
                                 SourceRange range,

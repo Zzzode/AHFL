@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -148,6 +149,46 @@ deserialize_related(const Json &value) {
     return result;
 }
 
+[[nodiscard]] std::unique_ptr<Json>
+serialize_diagnostic_data(const std::map<std::string, std::vector<std::string>> &data) {
+    auto object = Json::make_object();
+    for (const auto &[key, values] : data) {
+        auto array = Json::make_array();
+        for (const auto &value : values) {
+            array->push(Json::make_string(value));
+        }
+        object->set(key, std::move(array));
+    }
+    return object;
+}
+
+[[nodiscard]] std::optional<std::map<std::string, std::vector<std::string>>>
+deserialize_diagnostic_data(const Json &value) {
+    if (!value.is_object()) {
+        return std::nullopt;
+    }
+    std::map<std::string, std::vector<std::string>> result;
+    for (const auto &[key, item] : value.object_fields) {
+        if (item == nullptr || !item->is_array()) {
+            return std::nullopt;
+        }
+        std::vector<std::string> values;
+        values.reserve(item->array_items.size());
+        for (const auto &value_ptr : item->array_items) {
+            if (value_ptr == nullptr) {
+                return std::nullopt;
+            }
+            auto str = value_ptr->as_string();
+            if (!str.has_value()) {
+                return std::nullopt;
+            }
+            values.push_back(std::string(*str));
+        }
+        result.emplace(key, std::move(values));
+    }
+    return result;
+}
+
 [[nodiscard]] std::optional<DiagnosticSeverity> parse_severity(std::string_view s) {
     if (s == "error") {
         return DiagnosticSeverity::Error;
@@ -198,6 +239,7 @@ std::unique_ptr<json::JsonValue> serialize_diagnostic_json(const Diagnostic &dia
     }
 
     obj->set("related", serialize_related(diagnostic.related));
+    obj->set("data", serialize_diagnostic_data(diagnostic.data));
 
     return obj;
 }
@@ -271,6 +313,15 @@ std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &val
         return std::nullopt;
     }
     diag.related = std::move(*related);
+
+    auto *data_field = value.get("data");
+    if (data_field != nullptr && !data_field->is_null()) {
+        auto data = deserialize_diagnostic_data(*data_field);
+        if (!data.has_value()) {
+            return std::nullopt;
+        }
+        diag.data = std::move(*data);
+    }
 
     return diag;
 }

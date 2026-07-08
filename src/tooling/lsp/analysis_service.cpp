@@ -1055,6 +1055,7 @@ project_input_from_package_graph(const package_graph::PackageGraph &graph,
     result.severity = to_lsp_severity(diagnostic.severity);
     result.message = diagnostic.message;
     result.code = diagnostic.code.value_or(std::string(fallback_code));
+    result.data = diagnostic.data;
     if (snapshot.analysis_mode == LspAnalysisMode::DetachedSourceUnit &&
         result.code == error_codes::resolve::UnknownSymbol.full_code() &&
         result.message.starts_with("unknown type")) {

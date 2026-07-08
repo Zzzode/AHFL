@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -254,6 +255,15 @@ missing_pattern_notes(const EnumTypeInfo &enum_info,
     return notes;
 }
 
+[[nodiscard]] std::map<std::string, std::vector<std::string>>
+missing_pattern_data(const MatchMissingPatternsDiagnostic &missing) {
+    std::map<std::string, std::vector<std::string>> data;
+    if (!missing.witnesses.empty()) {
+        data.emplace("missing_witnesses", missing.witnesses);
+    }
+    return data;
+}
+
 [[nodiscard]] std::vector<Diagnostic::Related>
 unreachable_arm_notes(const MatchUnreachableArmDiagnostic &unreachable) {
     std::vector<Diagnostic::Related> notes;
@@ -458,6 +468,16 @@ class ExpressionCheckerServices final {
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes) const {
         delegate_->typecheck_error(code, std::move(message), range, std::move(notes));
+    }
+
+    void typecheck_error_here(
+        ErrorCode<DiagnosticCategory::TypeCheck> code,
+        std::string message,
+        SourceRange range,
+        std::vector<Diagnostic::Related> notes,
+        std::map<std::string, std::vector<std::string>> data) const {
+        delegate_->typecheck_error(
+            code, std::move(message), range, std::move(notes), std::move(data));
     }
 
     void typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
@@ -1342,7 +1362,8 @@ class ExpressionChecker final {
                     messages::typecheck::MatchMissingPatterns.format_with(
                         join_missing_variant_names(missing)),
                     missing.match_range,
-                    missing_pattern_notes(enum_info->get(), missing));
+                    missing_pattern_notes(enum_info->get(), missing),
+                    missing_pattern_data(missing));
             }
             for (const auto &unreachable : match_diagnostics.unreachable_arms) {
                 services_.typecheck_warning_here(
@@ -3635,6 +3656,15 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
         }
 
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range,
+                             std::vector<Diagnostic::Related> notes,
+                             std::map<std::string, std::vector<std::string>> data) override {
+            pass_->typecheck_error_here(
+                code, std::move(message), range, std::move(notes), std::move(data));
+        }
+
         void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,
                                std::string message,
                                SourceRange range,
@@ -3735,6 +3765,15 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
                              SourceRange range,
                              std::vector<Diagnostic::Related> notes) override {
             pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+        }
+
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range,
+                             std::vector<Diagnostic::Related> notes,
+                             std::map<std::string, std::vector<std::string>> data) override {
+            pass_->typecheck_error_here(
+                code, std::move(message), range, std::move(notes), std::move(data));
         }
 
         void typecheck_warning(ErrorCode<DiagnosticCategory::TypeCheck> code,

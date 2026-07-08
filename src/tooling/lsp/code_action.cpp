@@ -634,6 +634,28 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     return witnesses;
 }
 
+[[nodiscard]] std::vector<std::string>
+structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
+    constexpr std::size_t kMaxExactWitnessArms = 16;
+    const auto found = diag.data.find("missing_witnesses");
+    if (found == diag.data.end()) {
+        return {};
+    }
+    if (found->second.size() > kMaxExactWitnessArms) {
+        return {};
+    }
+    std::vector<std::string> witnesses;
+    witnesses.reserve(found->second.size());
+    for (const auto &candidate : found->second) {
+        const auto witness = trim_copy(candidate);
+        if (!source_safe_pattern_fragment(witness)) {
+            return {};
+        }
+        witnesses.push_back(witness);
+    }
+    return witnesses;
+}
+
 [[nodiscard]] std::string missing_match_arms_text(const std::vector<std::string> &patterns,
                                                   std::string_view arm_indent,
                                                   std::string_view close_indent) {
@@ -663,7 +685,10 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     const auto close_indent = close_line_prefix_is_indent ? std::string(line_prefix)
                                                           : line_indent_at_offset(source, *close);
     const auto arm_indent = close_indent + "    ";
-    auto patterns = extract_missing_pattern_witnesses(diag.message);
+    auto patterns = structured_missing_pattern_witnesses(diag);
+    if (patterns.empty()) {
+        patterns = extract_missing_pattern_witnesses(diag.message);
+    }
     const bool exact = !patterns.empty();
     if (!exact) {
         patterns = {"_"};

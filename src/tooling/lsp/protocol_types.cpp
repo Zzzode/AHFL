@@ -39,6 +39,19 @@ std::unique_ptr<json::JsonValue> serialize_location(const Location &loc) {
     return obj;
 }
 
+std::unique_ptr<json::JsonValue>
+serialize_diagnostic_data(const std::map<std::string, std::vector<std::string>> &data) {
+    auto obj = json::JsonValue::make_object();
+    for (const auto &[key, values] : data) {
+        auto array = json::JsonValue::make_array();
+        for (const auto &value : values) {
+            array->push(json::JsonValue::make_string(value));
+        }
+        obj->set(key, std::move(array));
+    }
+    return obj;
+}
+
 std::unique_ptr<json::JsonValue> serialize_diagnostic(const LspDiagnostic &diag) {
     auto obj = json::JsonValue::make_object();
     obj->set("range", serialize_range(diag.range));
@@ -47,6 +60,9 @@ std::unique_ptr<json::JsonValue> serialize_diagnostic(const LspDiagnostic &diag)
     obj->set("message", json::JsonValue::make_string(diag.message));
     if (!diag.code.empty()) {
         obj->set("code", json::JsonValue::make_string(diag.code));
+    }
+    if (!diag.data.empty()) {
+        obj->set("data", serialize_diagnostic_data(diag.data));
     }
     if (!diag.related_information.empty()) {
         auto related = json::JsonValue::make_array();

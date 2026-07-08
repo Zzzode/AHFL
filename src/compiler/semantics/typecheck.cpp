@@ -913,6 +913,15 @@ void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck
                                          std::string message,
                                          SourceRange range,
                                          std::vector<Diagnostic::Related> notes) {
+    typecheck_error(code, std::move(message), range, std::move(notes), {});
+}
+
+void DiagnosticReporter::typecheck_error(
+    ErrorCode<DiagnosticCategory::TypeCheck> code,
+    std::string message,
+    SourceRange range,
+    std::vector<Diagnostic::Related> notes,
+    std::map<std::string, std::vector<std::string>> data) {
     Diagnostic diagnostic{
         .severity = DiagnosticSeverity::Error,
         .message = std::move(message),
@@ -920,6 +929,7 @@ void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck
         .range = range,
         .source_name = std::nullopt,
         .position = std::nullopt,
+        .data = std::move(data),
         .related = std::move(notes),
     };
     if (*current_source_ != nullptr) {
@@ -1145,6 +1155,16 @@ void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck
                                          SourceRange range,
                                          std::vector<Diagnostic::Related> notes) {
     reporter_.typecheck_error(code, std::move(message), range, std::move(notes));
+}
+
+void TypeCheckPass::typecheck_error_here(
+    ErrorCode<DiagnosticCategory::TypeCheck> code,
+    std::string message,
+    SourceRange range,
+    std::vector<Diagnostic::Related> notes,
+    std::map<std::string, std::vector<std::string>> data) {
+    reporter_.typecheck_error(
+        code, std::move(message), range, std::move(notes), std::move(data));
 }
 
 void TypeCheckPass::typecheck_warning_here(ErrorCode<DiagnosticCategory::TypeCheck> code,

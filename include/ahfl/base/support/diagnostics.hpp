@@ -1,6 +1,7 @@
 #pragma once
 
 #include <concepts>
+#include <map>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -846,6 +847,7 @@ struct Diagnostic {
     std::optional<SourceRange> range;
     std::optional<std::string> source_name;
     std::optional<SourcePosition> position;
+    std::map<std::string, std::vector<std::string>> data;
 
     // Secondary "related" notes attached to this diagnostic. They share the
     // diagnostic's owning bag (i.e. they do not contribute to error/warning
@@ -949,6 +951,11 @@ class DiagnosticBuilder {
         return std::move(*this);
     }
 
+    DiagnosticBuilder &&data(std::string key, std::vector<std::string> values) && {
+        data_[std::move(key)] = std::move(values);
+        return std::move(*this);
+    }
+
     // Attach a secondary "related" note (e.g. "expected here", "declared here").
     // The note inherits the primary diagnostic's source_name unless
     // `note_source_name` is provided (used for cross-module notes whose range
@@ -977,6 +984,7 @@ class DiagnosticBuilder {
     std::optional<SourceRange> range_;
     std::optional<std::string> source_name_;
     std::optional<SourcePosition> position_;
+    std::map<std::string, std::vector<std::string>> data_;
     std::vector<Diagnostic::Related> related_;
 };
 
@@ -1272,6 +1280,7 @@ inline void DiagnosticBuilder::emit() && {
         .range = range_,
         .source_name = std::move(source_name_),
         .position = position_,
+        .data = std::move(data_),
         .related = std::move(related_),
     });
 }

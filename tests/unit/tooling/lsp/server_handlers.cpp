@@ -2051,6 +2051,21 @@ void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
           "diagnostics.validation_code");
 }
 
+void test_match_missing_patterns_diagnostic_exposes_structured_witness_data() {
+    const std::string source = "enum E { A, B }\n"
+                               "fn f(e: E) -> Int effect Pure decreases 0 {\n"
+                               "    return match e {\n"
+                               "        A => 1,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto output = diagnostics_output_for_source(source);
+    check(output.find("typecheck.MATCH_MISSING_PATTERNS") != std::string::npos,
+          "diagnostics.match_missing_patterns.code");
+    check(output.find(R"("data":{"missing_witnesses":["B"]})") != std::string::npos,
+          "diagnostics.match_missing_patterns.structured_witness_data");
+}
+
 void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto root = make_temp_project("project_cross_file");
     const auto main_path = root / "src" / "main.ahfl";
@@ -8009,7 +8024,8 @@ void test_code_action_qf_match_missing_patterns_inserts_witness_arm() {
     LspDiagnostic diag;
     diag.code = "typecheck.MATCH_MISSING_PATTERNS";
     diag.severity = DiagnosticSeverity::Error;
-    diag.message = "non-exhaustive match: missing patterns [B]";
+    diag.message = "non-exhaustive match";
+    diag.data["missing_witnesses"] = {"B"};
     diag.range = Range{Position{3, 11}, Position{5, 5}};
 
     const Range cursor_range{Position{3, 11}, Position{3, 16}};
@@ -8065,8 +8081,8 @@ void test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields() {
     LspDiagnostic diag;
     diag.code = "typecheck.MATCH_MISSING_PATTERNS";
     diag.severity = DiagnosticSeverity::Error;
-    diag.message =
-        "non-exhaustive match: missing patterns [Data { flag: false, other: false }, Empty]";
+    diag.message = "non-exhaustive match";
+    diag.data["missing_witnesses"] = {"Data { flag: false, other: false }", "Empty"};
     diag.range = Range{Position{2, 11}, Position{4, 5}};
 
     const Range cursor_range{Position{2, 11}, Position{2, 16}};
@@ -8431,6 +8447,7 @@ int main() {
     test_lsp_workspace_index_symbol_fingerprints_are_stable();
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
+    test_match_missing_patterns_diagnostic_exposes_structured_witness_data();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_workspace_symbol_uses_root_index_without_open_documents();

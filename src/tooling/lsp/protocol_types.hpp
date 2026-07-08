@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -81,6 +82,7 @@ struct LspDiagnostic {
     std::string code;
     std::string source{"ahfl"};
     std::string message;
+    std::map<std::string, std::vector<std::string>> data;
     std::vector<RelatedInformation> related_information;
 };
 
