@@ -152,48 +152,19 @@ enum class LiteralPatternKind {
     return substituted;
 }
 
-[[nodiscard]] std::optional<std::string>
-top_level_variant_name_for_narrowing(const ast::PatternSyntax &pattern,
-                                     const EnumTypeInfo &enum_info) {
-    return std::visit(overloaded{
-                          [&](const ast::BindingPattern &binding) -> std::optional<std::string> {
-                              if (!binding.nested && enum_info.has_variant(binding.name)) {
-                                  const auto variant = enum_info.find_variant(binding.name);
-                                  if (variant.has_value() &&
-                                      variant->get().payload_kind == EnumVariantPayloadKind::Unit) {
-                                      return binding.name;
-                                  }
-                              }
-                              return std::nullopt;
-                          },
-                          [&](const ast::VariantPattern &variant) -> std::optional<std::string> {
-                              if (variant.path == nullptr || variant.path->segments.empty()) {
-                                  return std::nullopt;
-                              }
-                              const auto &name = variant.path->segments.back();
-                              if (enum_info.has_variant(name)) {
-                                  return name;
-                              }
-                              return std::nullopt;
-                          },
-                          [](const auto &) -> std::optional<std::string> { return std::nullopt; },
-                      },
-                      pattern.node);
-}
-
-void add_match_arm_narrowing_fact(const ast::PatternSyntax &pattern,
+void add_match_arm_narrowing_fact(const TypedPattern &pattern,
                                   const EnumTypeInfo &enum_info,
                                   const Type &scrutinee_type,
                                   const Place &scrutinee_place,
                                   FlowFacts &facts) {
-    const auto variant_name = top_level_variant_name_for_narrowing(pattern, enum_info);
-    if (!variant_name.has_value()) {
+    if (pattern.kind != TypedPatternKind::Variant || pattern.variant_name.empty() ||
+        !enum_info.has_variant(pattern.variant_name)) {
         return;
     }
 
     const auto option = stdlib_bridge::std_container_type_view(scrutinee_type);
     if (option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
-        *variant_name == "Some") {
+        pattern.variant_name == "Some") {
         facts.add(TypeFact{
             .place = scrutinee_place,
             .kind = TypeFactKind::IsNotNone,
@@ -202,7 +173,7 @@ void add_match_arm_narrowing_fact(const ast::PatternSyntax &pattern,
         return;
     }
     if (option.has_value() && option->kind == stdlib_bridge::StdContainerKind::Option &&
-        *variant_name == "None") {
+        pattern.variant_name == "None") {
         facts.add(TypeFact{
             .place = scrutinee_place,
             .kind = TypeFactKind::IsNone,
@@ -216,7 +187,7 @@ void add_match_arm_narrowing_fact(const ast::PatternSyntax &pattern,
         .kind = TypeFactKind::IsVariant,
         .origin = pattern.range,
         .enum_name = enum_info.canonical_name,
-        .variant_name = *variant_name,
+        .variant_name = pattern.variant_name,
     });
 }
 
@@ -1273,18 +1244,22 @@ class ExpressionChecker final {
             // on top of the surrounding bindings. Bindings introduced by the
             // pattern shadow any same-named outer binding (match-arm scope).
             ValueContext arm_context = context_;
-            if (scrutinee_place.has_value() && enum_info.has_value() && scrutinee.type != nullptr) {
-                add_match_arm_narrowing_fact(*arm->pattern,
-                                             enum_info->get(),
-                                             *scrutinee.type,
-                                             *scrutinee_place,
-                                             arm_context.flow_facts);
-            }
             const auto lowered_pattern = lower_pattern(*arm->pattern,
                                                        scrutinee.type,
                                                        enum_info,
                                                        arm_context.bindings,
                                                        arm->pattern->range);
+            if (scrutinee_place.has_value() && enum_info.has_value() && scrutinee.type != nullptr) {
+                if (const auto *typed_pattern =
+                        services_.typed_pattern(lowered_pattern.typed_pattern_index);
+                    typed_pattern != nullptr) {
+                    add_match_arm_narrowing_fact(*typed_pattern,
+                                                 enum_info->get(),
+                                                 *scrutinee.type,
+                                                 *scrutinee_place,
+                                                 arm_context.flow_facts);
+                }
+            }
             match_pattern_rows.push_back(MatchTypedPatternRow{
                 .pattern_index = lowered_pattern.typed_pattern_index,
                 .range = arm->pattern->range,

@@ -640,6 +640,30 @@ fn keep(level: Priority) -> Priority {
     CHECK(variant->variant_name == "High");
 }
 
+TEST_CASE("Match arm narrows std Option scrutinee through typed pattern root") {
+    const std::string source = R"AHFL(
+import std::option;
+
+struct Context {
+    token: option::Option<String> = option::Option::None;
+}
+
+fn keep(value: option::Option<String>) -> String {
+    return match value {
+        option::Option::Some(_) => value,
+        option::Option::None => "missing",
+    };
+}
+)AHFL";
+
+    const auto project = typecheck_project_source(source, "match_option_narrow_project");
+
+    const auto *arm_use = find_project_expr_by_nth(project, "value", 3);
+    REQUIRE(arm_use != nullptr);
+    REQUIRE(arm_use->type != nullptr);
+    CHECK(arm_use->type->holds<ahfl::types::StringT>());
+}
+
 TEST_CASE("If-let rejects unknown variant and tuple payload arity mismatch") {
     const std::string unknown_variant = R"AHFL(
 module iflet_negative;
