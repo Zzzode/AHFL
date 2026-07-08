@@ -111,6 +111,34 @@ parse_integer_literal_value(const ast::IntegerLiteralExpr &expr) {
     return lhs * rhs;
 }
 
+[[nodiscard]] std::optional<std::int64_t> checked_div_int64(std::int64_t lhs, std::int64_t rhs) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    if (rhs == 0 || (lhs == min && rhs == -1)) {
+        return std::nullopt;
+    }
+    return lhs / rhs;
+}
+
+[[nodiscard]] std::optional<std::int64_t> checked_mod_int64(std::int64_t lhs, std::int64_t rhs) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    if (rhs == 0 || (lhs == min && rhs == -1)) {
+        return std::nullopt;
+    }
+    return lhs % rhs;
+}
+
+[[nodiscard]] bool interval_contains_zero(const types::BoundedIntT &range) noexcept {
+    return range.minimum <= 0 && range.maximum >= 0;
+}
+
+[[nodiscard]] std::optional<std::int64_t> abs_int64(std::int64_t value) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    if (value == min) {
+        return std::nullopt;
+    }
+    return value < 0 ? -value : value;
+}
+
 struct BoundedIntRange {
     std::int64_t minimum{0};
     std::int64_t maximum{0};
@@ -154,6 +182,74 @@ struct BoundedIntRange {
         }
         return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
     }
+    case ast::ExprBinaryOp::Divide: {
+        if (interval_contains_zero(rhs)) {
+            return std::nullopt;
+        }
+        std::optional<std::int64_t> minimum;
+        std::optional<std::int64_t> maximum;
+        const auto update = [&](std::int64_t numerator, std::int64_t denominator) {
+            const auto value = checked_div_int64(numerator, denominator);
+            if (!value.has_value()) {
+                return false;
+            }
+            minimum = minimum.has_value() ? std::min(*minimum, *value) : *value;
+            maximum = maximum.has_value() ? std::max(*maximum, *value) : *value;
+            return true;
+        };
+        std::vector<std::int64_t> denominators{rhs.minimum, rhs.maximum};
+        if (rhs.minimum < -1 && rhs.maximum >= -1) {
+            denominators.push_back(-1);
+        }
+        if (rhs.minimum <= 1 && rhs.maximum > 1) {
+            denominators.push_back(1);
+        }
+        for (const auto numerator : {lhs.minimum, lhs.maximum}) {
+            for (const auto denominator : denominators) {
+                if (!update(numerator, denominator)) {
+                    return std::nullopt;
+                }
+            }
+        }
+        return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
+    }
+    case ast::ExprBinaryOp::Modulo: {
+        if (interval_contains_zero(rhs)) {
+            return std::nullopt;
+        }
+        if (lhs.minimum == lhs.maximum && rhs.minimum == rhs.maximum) {
+            const auto value = checked_mod_int64(lhs.minimum, rhs.minimum);
+            if (!value.has_value()) {
+                return std::nullopt;
+            }
+            return BoundedIntRange{.minimum = *value, .maximum = *value};
+        }
+
+        const auto lhs_min_abs = abs_int64(lhs.minimum);
+        const auto rhs_min_abs = abs_int64(rhs.minimum);
+        const auto rhs_max_abs = abs_int64(rhs.maximum);
+        if (!lhs_min_abs.has_value() || !rhs_min_abs.has_value() || !rhs_max_abs.has_value()) {
+            return std::nullopt;
+        }
+        const auto max_abs_divisor = std::max(*rhs_min_abs, *rhs_max_abs);
+        if (max_abs_divisor == 0) {
+            return std::nullopt;
+        }
+        const auto max_remainder_magnitude = static_cast<std::int64_t>(std::min<std::uint64_t>(
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
+            static_cast<std::uint64_t>(max_abs_divisor - 1)));
+
+        if (lhs.minimum >= 0) {
+            return BoundedIntRange{.minimum = 0,
+                                   .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
+        }
+        if (lhs.maximum <= 0) {
+            return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
+                                   .maximum = 0};
+        }
+        return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
+                               .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
+    }
     default:
         return std::nullopt;
     }
@@ -161,7 +257,8 @@ struct BoundedIntRange {
 
 [[nodiscard]] bool supports_bounded_int_arithmetic(ast::ExprBinaryOp op) noexcept {
     return op == ast::ExprBinaryOp::Add || op == ast::ExprBinaryOp::Subtract ||
-           op == ast::ExprBinaryOp::Multiply;
+           op == ast::ExprBinaryOp::Multiply || op == ast::ExprBinaryOp::Divide ||
+           op == ast::ExprBinaryOp::Modulo;
 }
 
 [[nodiscard]] ExprEffect expr_effect_from_judgement(const EffectJudgement &judgement) noexcept {
@@ -3647,6 +3744,16 @@ class ExpressionChecker final {
         case ast::ExprBinaryOp::Modulo:
             if ((lhs.type->holds<types::IntT>() || lhs.type->holds<types::BoundedIntT>()) &&
                 (rhs.type->holds<types::IntT>() || rhs.type->holds<types::BoundedIntT>())) {
+                const auto *lhs_bounded_int = lhs.type->get_if<types::BoundedIntT>();
+                const auto *rhs_bounded_int = rhs.type->get_if<types::BoundedIntT>();
+                if (lhs_bounded_int != nullptr && rhs_bounded_int != nullptr) {
+                    if (const auto range = bounded_int_arithmetic_range(
+                            binary.op, *lhs_bounded_int, *rhs_bounded_int);
+                        range.has_value()) {
+                        return values_.typed_effect(
+                            values_.bounded_int_type(range->minimum, range->maximum), effect);
+                    }
+                }
                 return values_.typed_effect(values_.make_type(TypeKind::Int), effect);
             }
 

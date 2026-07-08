@@ -1076,6 +1076,169 @@ flow for LiteralAgent {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("bounded Int arithmetic infers division singleton range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(2, 2) = 5 / 2;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int arithmetic rejects out-of-range division singleton range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(3, 3) = 5 / 2;
+        return Response { value: 0 };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("bounded Int arithmetic propagates division operand ranges") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(4, 8) = 4;
+        let denominator: Int(2, 2) = 2;
+        let code: Int(2, 4) = numerator / denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int arithmetic falls back when division divisor may be zero") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let denominator: Int(0, 2) = 1;
+        let code: Int(0, 4) = 4 / denominator;
+        return Response { value: 0 };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("bounded Int arithmetic infers modulo singleton range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let code: Int(2, 2) = 5 % 3;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int arithmetic propagates conservative modulo operand ranges") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(0, 10) = 5;
+        let denominator: Int(3, 4) = 3;
+        let code: Int(0, 3) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
 // ---------------------------------------------------------------------------
 // Arm body type unification: diverging arm body types report TYPE_MISMATCH.
 // ---------------------------------------------------------------------------

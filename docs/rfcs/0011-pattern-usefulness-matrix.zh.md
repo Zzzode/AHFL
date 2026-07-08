@@ -244,18 +244,18 @@ Migration:
 30. Source-level bounded Int type 首个切片已落库：源码可写 `Int(min, max)` primitive refinement type，grammar/AST/formatter/type resolver/type relations/typed-HIR JSON/IR/LSP primitive navigation 均已接入；`BoundedInt <: Int`，更窄闭区间是更宽闭区间的子类型；enum payload match 可用 `Int(0, 2)` 形成有限 pattern domain，`Some(0..1), Some(2), None` 能证明 exhaustive，域外 literal pattern 不会错误覆盖 bounded domain witness。
 31. 大型嵌套 bounded Int product 已落库：当 finite constructor domain 的 payload 字段包含无法物化的 `Int(min, max)` 时，matrix 会使用 symbolic constructor space + interval product subtraction，而不是退回非 finite；`Some(Int(0, 10000))` 可通过分段 range 证明 exhaustive，也能渲染 `Some(5000)` 这类缺失 witness；多字段 constructor product 会保留有限 sibling dimension，例如 `Pair(Int(0, 10000), Bool)` 可证明两维覆盖或给出 `Pair(0, True)` witness。
 32. Bounded Int literal singleton inference 首个切片已落库：当表达式检查带有 expected `Int(min, max)` 类型时，整数 literal 会先被建模成 singleton `Int(value, value)`，再交给现有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected type 时 literal 仍为普通 `Int` 的行为。
-33. Bounded Int arithmetic range inference 首个切片已落库：`+`、`-`、`*` 在两个 operand 都是 `BoundedInt` 时会推导闭区间结果，expected bounded Int 会向 arithmetic operand 传递 literal singleton hint，因此 `let x: Int(0, 5) = 1 + 2` 可通过、`let x: Int(0, 2) = 1 + 2` 会由既有 subtype relation 拒绝；溢出或暂未稳定的 `/`、`%` 保守回退普通 `Int`，不猜测错误区间。
+33. Bounded Int arithmetic range inference 首个切片已落库：`+`、`-`、`*` 和静态排除零除数的 `/` 在两个 operand 都是 `BoundedInt` 时会推导闭区间结果；`%` 对 singleton operand 给出精确 singleton range，对非 singleton operand 给出保守 remainder 闭区间；expected bounded Int 会向 arithmetic operand 传递 literal singleton hint，因此 `let x: Int(0, 5) = 1 + 2` 可通过、`let x: Int(0, 2) = 1 + 2` 会由既有 subtype relation 拒绝；溢出、除数区间可能包含 0 或触发 `int64` `min / -1` 边界时保守回退普通 `Int`，不猜测错误区间。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*` 首个切片，但 division/modulo 精确区间、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/` 和保守 `%` 首个切片，但完整精确 modulo interval、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
 
 1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis and symbolic bounded constructor products.
-2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic assignability and large bounded enum payload witnesses.
+2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
 5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets and pattern payload signatureHelp.
@@ -337,3 +337,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added symbolic bounded Int constructor product analysis. Finite constructor domains whose fields contain non-materialized `Int(min, max)` now use interval product subtraction, preserving precise missing witnesses such as `Some(5000)` without materializing every payload value.
 - 2026-07-08: Added bounded Int literal singleton inference under expected `Int(min, max)` types, covering let initializers and enum constructor payloads through existing subtype checks.
 - 2026-07-08: Added bounded Int arithmetic range inference for `+`, `-` and `*`, including expected-type propagation for literal singleton operands and conservative fallback for overflow or unstable operators.
+- 2026-07-08: Added bounded Int division/modulo range inference. Division infers closed intervals when the divisor range statically excludes zero; modulo infers exact singleton results for singleton operands and conservative bounded remainder intervals otherwise.
