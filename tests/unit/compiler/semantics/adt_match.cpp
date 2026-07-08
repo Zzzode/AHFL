@@ -1323,6 +1323,152 @@ flow for LiteralAgent {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("bounded Int modulo infers exact positive range for finite variable divisor") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(8, 9) = 8;
+        let denominator: Int(3, 4) = 3;
+        let code: Int(0, 2) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers exact nonzero lower bound for finite variable divisor") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(5, 5) = 5;
+        let denominator: Int(3, 4) = 3;
+        let code: Int(1, 2) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers exact negative range for finite variable divisor") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Request {
+    numerator: Int(-9, -8);
+}
+
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let denominator: Int(3, 4) = 3;
+        let code: Int(-2, 0) = input.numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers exact mixed-sign range for finite variable divisor") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Request {
+    numerator: Int(-9, 9);
+}
+
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let denominator: Int(3, 4) = 3;
+        let code: Int(-3, 3) = input.numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo treats finite negative divisor range by magnitude") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(8, 9) = 8;
+        let denominator: Int(-4, -3) = -3;
+        let code: Int(0, 2) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
 TEST_CASE("bounded Int modulo infers exact positive range for fixed divisor") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {

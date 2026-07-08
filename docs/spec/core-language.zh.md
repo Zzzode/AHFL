@@ -902,8 +902,9 @@ predicate 调用允许出现在：
      `Int(-max, -min)`，无法安全表示边界时回退普通 `Int`
    - `Int(min, max)` 参与 bounded Int range inference：`+`、`-`、`*`
      对两个 bounded operand 推导闭区间；`/` 仅在 divisor interval 静态排除 0
-     时推导闭区间；`%` 在 divisor 为 singleton bounded interval 时推导精确
-     remainder 闭区间，对非 singleton divisor 推导保守 remainder 闭区间。
+     时推导闭区间；`%` 在 divisor magnitude interval 可物化时推导精确
+     remainder 闭区间，对过大的 non-singleton divisor magnitude interval
+     推导保守 remainder 闭区间。
      溢出、除 0 可能性或无法证明的边界回退为
      普通 `Int`
    - 当 expected type 为 `Int(min, max)` 时，表达式层 signed integer literal

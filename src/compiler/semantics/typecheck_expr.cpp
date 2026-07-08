@@ -192,10 +192,29 @@ struct BoundedIntRange {
     std::int64_t maximum{0};
 };
 
+constexpr std::uint64_t kMaxExactModuloDivisorMagnitudes = 4096;
+
 [[nodiscard]] std::optional<BoundedIntRange>
-nonnegative_modulo_range(std::int64_t minimum,
-                         std::int64_t maximum,
-                         std::int64_t divisor_abs) {
+merge_bounded_int_range(std::optional<BoundedIntRange> current, const BoundedIntRange &next) {
+    if (!current.has_value()) {
+        return next;
+    }
+    current->minimum = std::min(current->minimum, next.minimum);
+    current->maximum = std::max(current->maximum, next.maximum);
+    return current;
+}
+
+[[nodiscard]] bool
+interval_width_at_most(std::int64_t minimum, std::int64_t maximum, std::uint64_t limit) {
+    if (minimum > maximum || limit == 0) {
+        return false;
+    }
+    const auto distance = static_cast<std::uint64_t>(maximum) - static_cast<std::uint64_t>(minimum);
+    return distance < limit;
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+nonnegative_modulo_range(std::int64_t minimum, std::int64_t maximum, std::int64_t divisor_abs) {
     if (minimum < 0 || maximum < minimum || divisor_abs <= 0) {
         return std::nullopt;
     }
@@ -203,8 +222,8 @@ nonnegative_modulo_range(std::int64_t minimum,
         return BoundedIntRange{.minimum = 0, .maximum = 0};
     }
 
-    const auto width = static_cast<std::uint64_t>(maximum) -
-                       static_cast<std::uint64_t>(minimum) + 1U;
+    const auto width =
+        static_cast<std::uint64_t>(maximum) - static_cast<std::uint64_t>(minimum) + 1U;
     const auto divisor_width = static_cast<std::uint64_t>(divisor_abs);
     if (width >= divisor_width) {
         return BoundedIntRange{.minimum = 0, .maximum = divisor_abs - 1};
@@ -219,8 +238,7 @@ nonnegative_modulo_range(std::int64_t minimum,
 }
 
 [[nodiscard]] std::optional<BoundedIntRange>
-bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
-                                          std::int64_t divisor) {
+bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs, std::int64_t divisor) {
     const auto divisor_abs = abs_int64(divisor);
     if (!divisor_abs.has_value() || *divisor_abs == 0) {
         return std::nullopt;
@@ -233,15 +251,6 @@ bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
     const auto negate_range = [](const BoundedIntRange &range) {
         return BoundedIntRange{.minimum = -range.maximum, .maximum = -range.minimum};
     };
-    const auto merge_range = [](std::optional<BoundedIntRange> current,
-                                const BoundedIntRange &next) -> std::optional<BoundedIntRange> {
-        if (!current.has_value()) {
-            return next;
-        }
-        current->minimum = std::min(current->minimum, next.minimum);
-        current->maximum = std::max(current->maximum, next.maximum);
-        return current;
-    };
 
     if (lhs.maximum <= 0) {
         const auto minimum_abs = abs_int64(lhs.maximum);
@@ -249,8 +258,7 @@ bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
         if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
             return std::nullopt;
         }
-        const auto positive =
-            nonnegative_modulo_range(*minimum_abs, *maximum_abs, *divisor_abs);
+        const auto positive = nonnegative_modulo_range(*minimum_abs, *maximum_abs, *divisor_abs);
         if (!positive.has_value()) {
             return std::nullopt;
         }
@@ -261,17 +269,101 @@ bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
     if (!negative_maximum_abs.has_value()) {
         return std::nullopt;
     }
-    const auto negative_positive =
-        nonnegative_modulo_range(1, *negative_maximum_abs, *divisor_abs);
+    const auto negative_positive = nonnegative_modulo_range(1, *negative_maximum_abs, *divisor_abs);
     const auto positive = nonnegative_modulo_range(0, lhs.maximum, *divisor_abs);
     if (!negative_positive.has_value() || !positive.has_value()) {
         return std::nullopt;
     }
 
     std::optional<BoundedIntRange> result;
-    result = merge_range(result, negate_range(*negative_positive));
-    result = merge_range(result, *positive);
+    result = merge_bounded_int_range(result, negate_range(*negative_positive));
+    result = merge_bounded_int_range(result, *positive);
     return result;
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_finite_divisor_range(const types::BoundedIntT &lhs,
+                                        std::int64_t divisor_abs_minimum,
+                                        std::int64_t divisor_abs_maximum) {
+    if (divisor_abs_minimum <= 0 || divisor_abs_maximum < divisor_abs_minimum ||
+        !interval_width_at_most(
+            divisor_abs_minimum, divisor_abs_maximum, kMaxExactModuloDivisorMagnitudes)) {
+        return std::nullopt;
+    }
+
+    std::optional<BoundedIntRange> result;
+    for (std::int64_t divisor = divisor_abs_minimum;; ++divisor) {
+        const auto range = bounded_int_modulo_constant_divisor_range(lhs, divisor);
+        if (!range.has_value()) {
+            return std::nullopt;
+        }
+        result = merge_bounded_int_range(result, *range);
+        if (divisor == divisor_abs_maximum) {
+            break;
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_finite_variable_divisor_range(const types::BoundedIntT &lhs,
+                                                 const types::BoundedIntT &rhs) {
+    if (interval_contains_zero(rhs)) {
+        return std::nullopt;
+    }
+
+    if (rhs.minimum > 0) {
+        return bounded_int_modulo_finite_divisor_range(lhs, rhs.minimum, rhs.maximum);
+    }
+
+    const auto minimum_abs = abs_int64(rhs.maximum);
+    const auto maximum_abs = abs_int64(rhs.minimum);
+    if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
+        return std::nullopt;
+    }
+    return bounded_int_modulo_finite_divisor_range(lhs, *minimum_abs, *maximum_abs);
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_conservative_divisor_range(const types::BoundedIntT &lhs,
+                                              const types::BoundedIntT &rhs) {
+    const auto lhs_min_abs = abs_int64(lhs.minimum);
+    const auto rhs_min_abs = abs_int64(rhs.minimum);
+    const auto rhs_max_abs = abs_int64(rhs.maximum);
+    if (!lhs_min_abs.has_value() || !rhs_min_abs.has_value() || !rhs_max_abs.has_value()) {
+        return std::nullopt;
+    }
+    const auto max_abs_divisor = std::max(*rhs_min_abs, *rhs_max_abs);
+    if (max_abs_divisor == 0) {
+        return std::nullopt;
+    }
+    const auto max_remainder_magnitude = static_cast<std::int64_t>(std::min<std::uint64_t>(
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
+        static_cast<std::uint64_t>(max_abs_divisor - 1)));
+
+    if (lhs.minimum >= 0) {
+        return BoundedIntRange{.minimum = 0,
+                               .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
+    }
+    if (lhs.maximum <= 0) {
+        return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
+                               .maximum = 0};
+    }
+    return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
+                           .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_range(const types::BoundedIntT &lhs, const types::BoundedIntT &rhs) {
+    if (interval_contains_zero(rhs)) {
+        return std::nullopt;
+    }
+
+    if (const auto range = bounded_int_modulo_finite_variable_divisor_range(lhs, rhs);
+        range.has_value()) {
+        return range;
+    }
+    return bounded_int_modulo_conservative_divisor_range(lhs, rhs);
 }
 
 [[nodiscard]] std::optional<BoundedIntRange> bounded_int_arithmetic_range(
@@ -344,40 +436,7 @@ bounded_int_modulo_constant_divisor_range(const types::BoundedIntT &lhs,
         return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
     }
     case ast::ExprBinaryOp::Modulo: {
-        if (interval_contains_zero(rhs)) {
-            return std::nullopt;
-        }
-        if (rhs.minimum == rhs.maximum) {
-            if (const auto range = bounded_int_modulo_constant_divisor_range(lhs, rhs.minimum);
-                range.has_value()) {
-                return range;
-            }
-        }
-
-        const auto lhs_min_abs = abs_int64(lhs.minimum);
-        const auto rhs_min_abs = abs_int64(rhs.minimum);
-        const auto rhs_max_abs = abs_int64(rhs.maximum);
-        if (!lhs_min_abs.has_value() || !rhs_min_abs.has_value() || !rhs_max_abs.has_value()) {
-            return std::nullopt;
-        }
-        const auto max_abs_divisor = std::max(*rhs_min_abs, *rhs_max_abs);
-        if (max_abs_divisor == 0) {
-            return std::nullopt;
-        }
-        const auto max_remainder_magnitude = static_cast<std::int64_t>(std::min<std::uint64_t>(
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()),
-            static_cast<std::uint64_t>(max_abs_divisor - 1)));
-
-        if (lhs.minimum >= 0) {
-            return BoundedIntRange{.minimum = 0,
-                                   .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
-        }
-        if (lhs.maximum <= 0) {
-            return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
-                                   .maximum = 0};
-        }
-        return BoundedIntRange{.minimum = -std::min(*lhs_min_abs, max_remainder_magnitude),
-                               .maximum = std::min(lhs.maximum, max_remainder_magnitude)};
+        return bounded_int_modulo_range(lhs, rhs);
     }
     default:
         return std::nullopt;
