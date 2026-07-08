@@ -2382,6 +2382,16 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
+void push_bool_pattern_completions(std::vector<CompletionItem> &items) {
+    for (const std::string_view literal : {"true", "false"}) {
+        CompletionItem item;
+        item.label = std::string{literal};
+        item.kind = CompletionItemKind::Constant;
+        item.detail = "Bool pattern";
+        items.push_back(std::move(item));
+    }
+}
+
 void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
                                            const TypeEnvironment &environment,
                                            const EnumTypeInfo &enum_info,
@@ -2616,6 +2626,12 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     if (pattern == nullptr || pattern->matched_type == nullptr) {
         return false;
     }
+    if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);
+        primitive.has_value() && *primitive == PrimitiveKind::Bool) {
+        push_bool_pattern_completions(items);
+        return true;
+    }
+
     const auto enum_info = snapshot.type_check_result->environment.get_enum(*pattern->matched_type);
     if (!enum_info.has_value()) {
         return false;

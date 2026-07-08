@@ -7913,6 +7913,44 @@ void test_completion_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_nested_excludes_outer_variant");
 }
 
+void test_completion_bool_pattern_context_uses_typed_pattern_facts() {
+    const std::string source = "struct Noise {}\n"
+                               "\n"
+                               "enum Other {\n"
+                               "    Alien,\n"
+                               "}\n"
+                               "\n"
+                               "enum Maybe {\n"
+                               "    Some(Bool),\n"
+                               "    None,\n"
+                               "}\n"
+                               "\n"
+                               "fn use_bool(maybe: Maybe) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe {\n"
+                               "        Some(_) => 1,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto wildcard_position = position_of(source, "Some(_)");
+    const std::string completion_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(wildcard_position.line) + R"(,"character":)" +
+        std::to_string(wildcard_position.character + 5) + R"(}})";
+
+    const auto output = run_handler_request(source, "textDocument/completion", completion_params);
+    check(output.find("\"label\":\"true\"") != std::string::npos,
+          "completion.pattern_bool_contains_true");
+    check(output.find("\"label\":\"false\"") != std::string::npos,
+          "completion.pattern_bool_contains_false");
+    check(output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_bool_excludes_struct_symbol");
+    check(output.find("\"label\":\"Alien\"") == std::string::npos,
+          "completion.pattern_bool_excludes_unrelated_enum_variant");
+    check(output.find("\"label\":\"None\"") == std::string::npos,
+          "completion.pattern_bool_excludes_outer_enum_variant");
+}
+
 void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
     const std::string source = "enum Level {\n"
                                "    Low,\n"
@@ -9366,6 +9404,7 @@ int main() {
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_pattern_context_uses_typed_pattern_facts();
+    test_completion_bool_pattern_context_uses_typed_pattern_facts();
     test_completion_pattern_variants_emit_payload_snippets_when_supported();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
