@@ -1110,6 +1110,46 @@ void test_local_pattern_binding_navigation_and_rename_use_lexical_scope() {
           "localPatternBinding.rename_does_not_cross_shadowing_let");
 }
 
+void test_document_highlight_uses_local_binding_identity() {
+    const std::string source = "struct Box {\n"
+                               "    v: Int;\n"
+                               "}\n"
+                               "\n"
+                               "enum Maybe {\n"
+                               "    Some(Int),\n"
+                               "    None,\n"
+                               "}\n"
+                               "\n"
+                               "fn inspect(x: Maybe, v: Int) -> Int effect Pure decreases 0 {\n"
+                               "    let matched: Int = match x {\n"
+                               "        Some(v) => v,\n"
+                               "        None => v,\n"
+                               "    };\n"
+                               "    if let Some(inner) = x {\n"
+                               "        let inner: Int = matched;\n"
+                               "        return inner;\n"
+                               "    } else {\n"
+                               "        return matched;\n"
+                               "    }\n"
+                               "}\n";
+
+    const auto output = run_handler_request(source,
+                                            "textDocument/documentHighlight",
+                                            text_document_position_params_at(source, "v) =>"));
+    const auto response = response_body_for_id(output, 2);
+
+    check(count_substring(response, R"("kind":1)") == 2,
+          "documentHighlight.local_binding_only_declaration_and_reference");
+    check(response.find(R"("start":{"line":11,"character":13})") != std::string::npos,
+          "documentHighlight.local_binding_includes_pattern_declaration");
+    check(response.find(R"("start":{"line":11,"character":19})") != std::string::npos,
+          "documentHighlight.local_binding_includes_arm_reference");
+    check(response.find(R"("start":{"line":1,"character":4})") == std::string::npos,
+          "documentHighlight.local_binding_excludes_struct_field");
+    check(response.find(R"("start":{"line":12,"character":16})") == std::string::npos,
+          "documentHighlight.local_binding_excludes_same_name_parameter_reference");
+}
+
 void test_document_symbol_lists_all() {
     std::string source =
         "struct Foo {\n    value: String;\n}\n\nstruct Bar {\n    name: String;\n}";
@@ -9238,6 +9278,7 @@ int main() {
     test_semantic_tokens_request_uses_document_uri();
     test_hover_pattern_bindings_use_typed_pattern_facts();
     test_local_pattern_binding_navigation_and_rename_use_lexical_scope();
+    test_document_highlight_uses_local_binding_identity();
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();

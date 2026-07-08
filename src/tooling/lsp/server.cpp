@@ -1146,6 +1146,22 @@ local_binding_reference_locations(const LspAnalysisSnapshot &snapshot,
     return locations;
 }
 
+[[nodiscard]] std::vector<DocumentHighlight>
+local_binding_document_highlights(const LspAnalysisSnapshot &snapshot,
+                                  const LspSourceSnapshot &source,
+                                  const LocalBindingTarget &target) {
+    std::vector<DocumentHighlight> highlights;
+    for (const auto &location : local_binding_reference_locations(
+             snapshot, source, target, /*include_declarations=*/true)) {
+        if (location.uri != source.uri) {
+            continue;
+        }
+        highlights.push_back(
+            DocumentHighlight{.range = location.range, .kind = DocumentHighlightKind::Text});
+    }
+    return highlights;
+}
+
 [[nodiscard]] bool local_binding_rename_conflicts(const std::vector<LocalBindingTarget> &targets,
                                                   const LocalBindingTarget &target,
                                                   std::string_view new_name) {
@@ -4297,7 +4313,19 @@ void LspServer::handle_document_highlight(const JsonRpcRequest &req) {
         return;
     }
 
-    auto highlights = compute_document_highlights(document->text, position);
+    std::vector<DocumentHighlight> highlights;
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot != nullptr && source != nullptr && source->source != nullptr) {
+        const auto offset = offset_at(*source->source, position);
+        if (const auto local = local_binding_at(*snapshot, *source, offset); local.has_value()) {
+            highlights = local_binding_document_highlights(*snapshot, *source, local->target);
+        }
+    }
+
+    if (highlights.empty()) {
+        highlights = compute_document_highlights(document->text, position);
+    }
 
     auto result = json::JsonValue::make_array();
     for (const auto &hl : highlights) {
