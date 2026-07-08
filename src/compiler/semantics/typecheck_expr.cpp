@@ -9,6 +9,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -69,6 +70,98 @@ parse_integer_literal_value(const ast::IntegerLiteralExpr &expr) {
         return std::nullopt;
     }
     return value;
+}
+
+[[nodiscard]] std::optional<std::int64_t> checked_add_int64(std::int64_t lhs, std::int64_t rhs) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto max = std::numeric_limits<std::int64_t>::max();
+    if ((rhs > 0 && lhs > max - rhs) || (rhs < 0 && lhs < min - rhs)) {
+        return std::nullopt;
+    }
+    return lhs + rhs;
+}
+
+[[nodiscard]] std::optional<std::int64_t> checked_sub_int64(std::int64_t lhs, std::int64_t rhs) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto max = std::numeric_limits<std::int64_t>::max();
+    if ((rhs > 0 && lhs < min + rhs) || (rhs < 0 && lhs > max + rhs)) {
+        return std::nullopt;
+    }
+    return lhs - rhs;
+}
+
+[[nodiscard]] std::optional<std::int64_t> checked_mul_int64(std::int64_t lhs, std::int64_t rhs) {
+    constexpr auto min = std::numeric_limits<std::int64_t>::min();
+    constexpr auto max = std::numeric_limits<std::int64_t>::max();
+    if (lhs == 0 || rhs == 0) {
+        return 0;
+    }
+    if ((lhs == min && rhs == -1) || (rhs == min && lhs == -1)) {
+        return std::nullopt;
+    }
+    if (lhs > 0) {
+        if ((rhs > 0 && lhs > max / rhs) || (rhs < 0 && rhs < min / lhs)) {
+            return std::nullopt;
+        }
+    } else {
+        if ((rhs > 0 && lhs < min / rhs) || (rhs < 0 && lhs < max / rhs)) {
+            return std::nullopt;
+        }
+    }
+    return lhs * rhs;
+}
+
+struct BoundedIntRange {
+    std::int64_t minimum{0};
+    std::int64_t maximum{0};
+};
+
+[[nodiscard]] std::optional<BoundedIntRange> bounded_int_arithmetic_range(
+    ast::ExprBinaryOp op, const types::BoundedIntT &lhs, const types::BoundedIntT &rhs) {
+    switch (op) {
+    case ast::ExprBinaryOp::Add: {
+        const auto minimum = checked_add_int64(lhs.minimum, rhs.minimum);
+        const auto maximum = checked_add_int64(lhs.maximum, rhs.maximum);
+        if (!minimum.has_value() || !maximum.has_value()) {
+            return std::nullopt;
+        }
+        return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
+    }
+    case ast::ExprBinaryOp::Subtract: {
+        const auto minimum = checked_sub_int64(lhs.minimum, rhs.maximum);
+        const auto maximum = checked_sub_int64(lhs.maximum, rhs.minimum);
+        if (!minimum.has_value() || !maximum.has_value()) {
+            return std::nullopt;
+        }
+        return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
+    }
+    case ast::ExprBinaryOp::Multiply: {
+        std::optional<std::int64_t> minimum;
+        std::optional<std::int64_t> maximum;
+        const auto update = [&](std::optional<std::int64_t> value) {
+            if (!value.has_value()) {
+                return false;
+            }
+            minimum = minimum.has_value() ? std::min(*minimum, *value) : *value;
+            maximum = maximum.has_value() ? std::max(*maximum, *value) : *value;
+            return true;
+        };
+        if (!update(checked_mul_int64(lhs.minimum, rhs.minimum)) ||
+            !update(checked_mul_int64(lhs.minimum, rhs.maximum)) ||
+            !update(checked_mul_int64(lhs.maximum, rhs.minimum)) ||
+            !update(checked_mul_int64(lhs.maximum, rhs.maximum))) {
+            return std::nullopt;
+        }
+        return BoundedIntRange{.minimum = *minimum, .maximum = *maximum};
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+[[nodiscard]] bool supports_bounded_int_arithmetic(ast::ExprBinaryOp op) noexcept {
+    return op == ast::ExprBinaryOp::Add || op == ast::ExprBinaryOp::Subtract ||
+           op == ast::ExprBinaryOp::Multiply;
 }
 
 [[nodiscard]] ExprEffect expr_effect_from_judgement(const EffectJudgement &judgement) noexcept {
@@ -3435,8 +3528,13 @@ class ExpressionChecker final {
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
 
-        const auto lhs = services_.check_expr(*binary.lhs, context_, std::nullopt);
-        const auto rhs = services_.check_expr(*binary.rhs, context_, std::nullopt);
+        const MaybeCRef<Type> arithmetic_operand_expected =
+            expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>() &&
+                    supports_bounded_int_arithmetic(binary.op)
+                ? expected_type_
+                : std::nullopt;
+        const auto lhs = services_.check_expr(*binary.lhs, context_, arithmetic_operand_expected);
+        const auto rhs = services_.check_expr(*binary.rhs, context_, arithmetic_operand_expected);
         const auto effect = join_effects(lhs.effect, rhs.effect);
 
         const auto comparable = [&]() {
@@ -3449,14 +3547,23 @@ class ExpressionChecker final {
                 return values_.make_error_type();
             }
 
-            const bool lhs_int = lhs.type->holds<types::IntT>();
-            const bool rhs_int = rhs.type->holds<types::IntT>();
+            const auto *lhs_bounded_int = lhs.type->get_if<types::BoundedIntT>();
+            const auto *rhs_bounded_int = rhs.type->get_if<types::BoundedIntT>();
+            const bool lhs_int = lhs.type->holds<types::IntT>() || lhs_bounded_int != nullptr;
+            const bool rhs_int = rhs.type->holds<types::IntT>() || rhs_bounded_int != nullptr;
             const bool lhs_float = lhs.type->holds<types::FloatT>();
             const bool rhs_float = rhs.type->holds<types::FloatT>();
             const auto *lhs_dec = lhs.type->get_if<types::DecimalT>();
             const auto *rhs_dec = rhs.type->get_if<types::DecimalT>();
 
             if (lhs_int && rhs_int) {
+                if (lhs_bounded_int != nullptr && rhs_bounded_int != nullptr) {
+                    if (const auto range =
+                            bounded_int_arithmetic_range(op, *lhs_bounded_int, *rhs_bounded_int);
+                        range.has_value()) {
+                        return values_.bounded_int_type(range->minimum, range->maximum);
+                    }
+                }
                 return values_.make_type(TypeKind::Int);
             }
             if (lhs_float && rhs_float) {
@@ -3538,7 +3645,8 @@ class ExpressionChecker final {
             }
             return values_.error_typed_effect(effect);
         case ast::ExprBinaryOp::Modulo:
-            if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
+            if ((lhs.type->holds<types::IntT>() || lhs.type->holds<types::BoundedIntT>()) &&
+                (rhs.type->holds<types::IntT>() || rhs.type->holds<types::BoundedIntT>())) {
                 return values_.typed_effect(values_.make_type(TypeKind::Int), effect);
             }
 
