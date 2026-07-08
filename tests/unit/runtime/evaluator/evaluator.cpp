@@ -765,13 +765,13 @@ void test_match_expr_result_payload_binding() {
 
 void test_match_expr_int_range_pattern() {
     MatchExpr match_expr;
-    match_expr.scrutinee = int_literal("2");
+    match_expr.scrutinee = int_literal("-2");
 
     MatchArmExpr range_arm;
     range_arm.pattern = MatchPattern{
-        .node = IntRangePattern{.start = 1, .end = 3},
+        .node = IntRangePattern{.start = -3, .end = -1},
         .source_range = std::nullopt,
-        .text = "1..3",
+        .text = "-3..-1",
     };
     range_arm.body = int_literal("7");
     match_expr.arms.push_back(std::move(range_arm));

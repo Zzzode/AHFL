@@ -699,7 +699,7 @@ enum MaybeInt { Some(Int), None, }
 )AHFL",
         "MaybeInt",
         "MaybeInt::None",
-        "match ctx.value { Some(1..3) => 1, None => 0 }");
+        "match ctx.value { Some(-3..3) => 1, None => 0 }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     const auto *diagnostic =
@@ -729,7 +729,7 @@ enum MaybeInt { Some(Int), None, }
 )AHFL",
         "MaybeInt",
         "MaybeInt::None",
-        "match ctx.value { Some(5..3) => 1, Some(_) => 2, None => 0 }");
+        "match ctx.value { Some(-1..-3) => 1, Some(_) => 2, None => 0 }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "INVALID_RANGE_PATTERN"));

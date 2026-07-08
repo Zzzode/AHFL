@@ -295,6 +295,27 @@ TEST_CASE("open int range pattern does not match non-int constructors") {
     CHECK(text_analysis.unreachable_rows.empty());
 }
 
+TEST_CASE("open signed int range pattern matches negative constructors") {
+    ahfl::PatternUsefulnessContext context;
+    const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
+    const auto other = context.add_constructor(open, "_", {});
+    const auto minus_two = context.add_constructor(open, "-2", {});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(-3, -1)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(minus_two, {})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, open, rows);
+
+    CHECK_FALSE(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witness->constructor == other);
+    REQUIRE(analysis.unreachable_rows.size() == 1);
+    CHECK(analysis.unreachable_rows.front().row_index == 1);
+    CHECK(ahfl::render_pattern_witness(context, ahfl::PatternWitness{.constructor = minus_two}) ==
+          "-2");
+}
+
 TEST_CASE("open int range pattern rejects invalid bounds") {
     ahfl::PatternUsefulnessContext context;
     CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)),

@@ -871,6 +871,7 @@ pub workflow W {
 pub fn compute<T: Msg<Int>>(f: Fn(Int) -> Bool effect Pure, x: Int) -> Int effect Pure decreases x where T: Msg<Int> {
     let y: Int = 1;
     let z: Int = match Some(x) { Some(v) if v > 0 => v, _ => 0, };
+    let signed_range: Int = match Some(x) { Some(-3..-1) => 1, _ => 0, };
     let captured: Fn(Int) -> Int = \[y] (p: Int) -> p + y;
     assert(z > 0, "z");
     requires(true);
@@ -960,6 +961,10 @@ impl Fold<Msg<Int>> for Msg<Int> {
     check_semantic_token_at(
         tokens, source, "match_variant", "Some(v)", SemanticTokenType::EnumMember);
     check_semantic_token_at(tokens, source, "match_binding", "v) if", SemanticTokenType::Variable);
+    check_semantic_token_at(
+        tokens, source, "signed_range_start", "-3..-1", SemanticTokenType::Number);
+    check_semantic_token_at(
+        tokens, source, "signed_range_end", "-1) =>", SemanticTokenType::Number);
     check_semantic_token_at(tokens, source, "lambda_capture", "y] (p", SemanticTokenType::Variable);
     check_semantic_token_at(tokens, source, "lambda_param", "p: Int", SemanticTokenType::Parameter);
     check_semantic_token_at(tokens, source, "trait_name", "Fold<T>", SemanticTokenType::Interface);

@@ -3424,7 +3424,7 @@ enum Ticket {
 
 fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
     return match ticket {
-        Wrapped(1..3) => 1,
+        Wrapped(-3..-1) => 1,
         Wrapped(_) => 2,
         Closed => 0,
     };
@@ -3446,8 +3446,8 @@ fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
     CHECK(range.kind == ahfl::TypedPatternKind::IntRange);
     REQUIRE(range.matched_type != nullptr);
     CHECK(range.matched_type->describe() == "Int");
-    CHECK(range.int_range_start == 1);
-    CHECK(range.int_range_end == 3);
+    CHECK(range.int_range_start == -3);
+    CHECK(range.int_range_end == -1);
 
     const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
@@ -3455,7 +3455,7 @@ fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
     const auto restored_range =
         std::find_if(restored->patterns.begin(), restored->patterns.end(), [](const auto &pattern) {
             return pattern.kind == ahfl::TypedPatternKind::IntRange &&
-                   pattern.int_range_start == 1 && pattern.int_range_end == 3;
+                   pattern.int_range_start == -3 && pattern.int_range_end == -1;
         });
     REQUIRE(restored_range != restored->patterns.end());
     REQUIRE(restored_range->matched_type != nullptr);

@@ -540,9 +540,9 @@ struct LiteralPattern {
 
 /// Integer range pattern: `start..end`.
 ///
-/// The initial syntax uses non-negative integer literal bounds only, mirroring
-/// LiteralPattern integer spelling. The parsed values are stored so semantic
-/// consumers do not need to treat source text as canonical identity.
+/// The syntax uses signed integer literal pattern bounds. The parsed values
+/// are stored so semantic consumers do not need to treat source text as
+/// canonical identity.
 struct IntRangePattern {
     std::string start_spelling;
     std::string end_spelling;

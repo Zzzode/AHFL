@@ -163,7 +163,7 @@ Rules:
 | `typecheck.UNREACHABLE_IF_LET_ELSE` | if-let else branch is statically unreachable |
 | `typecheck.INVALID_RANGE_PATTERN` | integer range pattern lower bound exceeds upper bound |
 
-Range pattern syntax v1 is implemented for non-negative integer literal closed intervals (`INT_LITERAL..INT_LITERAL`). Negative bounds remain out of this slice because AHFL currently parses `-1` as unary expression syntax rather than an integer literal token.
+Range pattern syntax v1 is implemented for signed integer literal pattern bounds (`-?INT_LITERAL..-?INT_LITERAL`) as closed intervals. This is a pattern-only bound grammar; AHFL expression syntax still parses `-1` as unary expression syntax rather than changing the global integer literal token contract.
 
 Diagnostics must include primary range, missing witness, related information pointing to prior covering arm when relevant, and LSP quick fix only when inserting a wildcard arm is source-safe.
 
@@ -238,12 +238,13 @@ Migration:
 24. LSP if-let usefulness quick fix 已落库：`typecheck.UNREACHABLE_IF_LET_ELSE` 现在可从诊断指向的 else block 反向定位 `else` keyword，source-safe 删除整个不可达 `else { ... }` 分支，同时保留 then block 和后续 statement。
 25. LSP redundant or-pattern quick fix 已落库：`typecheck.MATCH_REDUNDANT_PATTERN` 可在诊断 range 对应单行 source-safe or-pattern branch 时删除冗余分支及相邻 `|` 分隔符，例如把 `Some(true | true)` 修正为 `Some(true)`。
 26. Int range usefulness core 已落库：`PatternUsefulnessContext` 提供 ID-based `IntRange` pattern node，matrix matching 会在 open Int domain 中覆盖已枚举的离散 literal witness，同时保留 `_` 默认 witness，因此不会把无界 Int range 误判为穷尽；单元测试覆盖 range 覆盖、非 Int constructor 不匹配和反向 bounds fail-fast。
-27. Int range pattern source surface v1 已落库：grammar 接受 `INT_LITERAL..INT_LITERAL` pattern，frontend AST、formatter、semantic tokens、typechecker、typed-HIR serialization、match usefulness lowering、IR lowering/printing/JSON 和 runtime evaluator 都以一等 range pattern 处理；typecheck 回归覆盖 open Int payload 的默认 witness、range 覆盖 literal arm、反向 bounds 诊断和非 Int payload type mismatch。
+27. Int range pattern source surface v1 已落库：grammar 接受 `-?INT_LITERAL..-?INT_LITERAL` pattern，frontend AST、formatter、semantic tokens、typechecker、typed-HIR serialization、match usefulness lowering、IR lowering/printing/JSON 和 runtime evaluator 都以一等 range pattern 处理；typecheck 回归覆盖 open Int payload 的默认 witness、range 覆盖 literal arm、反向 bounds 诊断和非 Int payload type mismatch。
+28. Signed Int range bounds 已落库：`signedIntegerPatternBound` 支持负数下界/上界，AST/formatter/semantic tokens/typed-HIR/IR/runtime evaluator 继续使用解析后的 `int64` range fact；matrix core 覆盖负数 constructor witness，source tests 覆盖 `-3..3` 和 `-1..-3`。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖非负 `INT_LITERAL..INT_LITERAL` 闭区间；负数 range、bounded integer domain 的完整穷尽性和更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；bounded integer domain 的完整穷尽性和更复杂 numeric domain semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
@@ -324,3 +325,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added an LSP quick fix for `MATCH_REDUNDANT_PATTERN` that removes a source-safe redundant or-pattern branch and its adjacent separator.
 - 2026-07-08: Added Int range support to the pattern usefulness matrix core. This is a non-syntax infrastructure slice: it matches enumerated Int literal witnesses conservatively while keeping open-domain default witnesses, and leaves parser/typechecker/LSP range-pattern surface work for the next slice.
 - 2026-07-08: Landed Int range pattern source surface v1 for `INT_LITERAL..INT_LITERAL`, including AST/formatter/semantic tokens/typecheck/typed-HIR/IR/runtime evaluator support and the stable `typecheck.INVALID_RANGE_PATTERN` diagnostic for reversed bounds.
+- 2026-07-08: Extended Int range pattern bounds to signed integer pattern bounds (`-?INT_LITERAL..-?INT_LITERAL`) without changing expression integer literal tokenization; tests cover frontend roundtrip, typed-HIR serialization, matrix matching, source typecheck diagnostics, and runtime evaluation for negative bounds.

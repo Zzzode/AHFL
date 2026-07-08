@@ -273,6 +273,8 @@ public:
 
     virtual std::any visitIntRangePattern(AHFLParser::IntRangePatternContext *context) = 0;
 
+    virtual std::any visitSignedIntegerPatternBound(AHFLParser::SignedIntegerPatternBoundContext *context) = 0;
+
     virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *context) = 0;
 
     virtual std::any visitVariantPattern(AHFLParser::VariantPatternContext *context) = 0;

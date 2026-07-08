@@ -162,7 +162,7 @@ TEST_CASE("if let Some(x) = e with then and else blocks") {
 
 TEST_CASE("if let int range pattern parses and formats") {
     const std::string source = wrap_with_fn(
-        "    if let 1..3 = payload {\n"
+        "    if let -3..-1 = payload {\n"
         "        hit();\n"
         "    }\n");
 
@@ -178,18 +178,18 @@ TEST_CASE("if let int range pattern parses and formats") {
 
     const auto *range = int_range_pattern(*ifl->pattern);
     REQUIRE(range != nullptr);
-    CHECK(range->start_spelling == "1");
-    CHECK(range->end_spelling == "3");
-    CHECK(range->start == 1);
-    CHECK(range->end == 3);
+    CHECK(range->start_spelling == "-3");
+    CHECK(range->end_spelling == "-1");
+    CHECK(range->start == -3);
+    CHECK(range->end == -1);
 
     std::ostringstream printer;
     ahfl::dump_program_outline(*program, printer);
-    CHECK(printer.str().find("pattern_int_range 1..3") != std::string::npos);
+    CHECK(printer.str().find("pattern_int_range -3..-1") != std::string::npos);
 
     const auto fmt = ahfl::formatter::format_source(source);
     REQUIRE(fmt.success);
-    CHECK(fmt.formatted.find("if let 1..3 = ") != std::string::npos);
+    CHECK(fmt.formatted.find("if let -3..-1 = ") != std::string::npos);
 
     const ahfl::Frontend frontend;
     const auto reparsed = frontend.parse_text("if_let_int_range_roundtrip.ahfl", fmt.formatted);

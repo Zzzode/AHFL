@@ -534,11 +534,12 @@ concatPattern:
 	| bindingPattern
 	| tuplePattern;
 
-// RFC 0011: integer range pattern. The first surface is intentionally limited
-// to non-negative integer literal bounds, matching the existing integer literal
-// pattern token contract. Negative numbers remain unary expressions, not
-// literal tokens.
-intRangePattern: integerLiteral '..' integerLiteral;
+// RFC 0011: integer range pattern. Bounds are signed integer literal pattern
+// bounds; this keeps the range surface first-class without changing the
+// expression grammar where negative numbers remain unary expressions.
+intRangePattern: signedIntegerPatternBound '..' signedIntegerPatternBound;
+
+signedIntegerPatternBound: '-'? integerLiteral;
 
 // Literal patterns. `none` is sugar for Option::None (RFC §1.6).
 literalPattern:

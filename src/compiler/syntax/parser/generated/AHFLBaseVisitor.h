@@ -523,6 +523,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitSignedIntegerPatternBound(AHFLParser::SignedIntegerPatternBoundContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *ctx) override {
     return visitChildren(ctx);
   }

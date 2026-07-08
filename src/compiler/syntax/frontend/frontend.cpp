@@ -2114,7 +2114,7 @@ class ProgramBuilder {
         pattern->range = context_range(context, source_);
         pattern->text = source_text(source_, pattern->range);
 
-        const auto bounds = context.integerLiteral();
+        const auto bounds = context.signedIntegerPatternBound();
         if (bounds.size() != 2) {
             throw std::logic_error("integer range pattern requires two bounds");
         }
