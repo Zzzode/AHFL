@@ -550,6 +550,16 @@ target_link_libraries(ahfl_semantics_effects_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_effects_tests)
 
+add_executable(ahfl_semantics_pattern_usefulness_tests
+    unit/compiler/semantics/pattern_usefulness.cpp
+)
+target_link_libraries(ahfl_semantics_pattern_usefulness_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_pattern_usefulness_tests)
+
 add_executable(ahfl_semantics_diagnostic_matrix_tests
     unit/compiler/semantics/diagnostic_matrix.cpp
 )
@@ -1165,6 +1175,7 @@ foreach(_tgt
     ahfl_semantics_type_resolver_tests
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
+    ahfl_semantics_pattern_usefulness_tests
     ahfl_semantics_diagnostic_matrix_tests
     ahfl_semantics_type_mismatch_origin_tests
     ahfl_semantics_stmt_diagnostics_tests

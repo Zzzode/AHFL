@@ -4378,6 +4378,10 @@ add_test(NAME ahfl.semantics.effects_all
     COMMAND $<TARGET_FILE:ahfl_semantics_effects_tests>
 )
 
+add_test(NAME ahfl.semantics.pattern_usefulness_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_pattern_usefulness_tests>
+)
+
 add_test(NAME ahfl.semantics.diagnostic_matrix_all
     COMMAND $<TARGET_FILE:ahfl_semantics_diagnostic_matrix_tests>
 )

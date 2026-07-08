@@ -1,0 +1,135 @@
+#pragma once
+
+#include "ahfl/base/support/source.hpp"
+
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace ahfl {
+
+struct PatternDomainId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(PatternDomainId lhs,
+                                         PatternDomainId rhs) noexcept = default;
+};
+
+struct PatternConstructorId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(PatternConstructorId lhs,
+                                         PatternConstructorId rhs) noexcept = default;
+};
+
+struct PatternId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(PatternId lhs, PatternId rhs) noexcept = default;
+};
+
+enum class PatternDomainKind {
+    Finite,
+    Open,
+};
+
+struct PatternConstructor {
+    PatternDomainId result_domain;
+    std::string debug_name;
+    std::vector<PatternDomainId> field_domains;
+};
+
+struct PatternDomain {
+    PatternDomainKind kind{PatternDomainKind::Finite};
+    std::vector<PatternConstructorId> constructors;
+};
+
+enum class PatternNodeKind {
+    Wildcard,
+    Constructor,
+    Or,
+};
+
+struct PatternNode {
+    PatternNodeKind kind{PatternNodeKind::Wildcard};
+    SourceRange range;
+    std::optional<PatternConstructorId> constructor;
+    std::vector<PatternId> children;
+};
+
+struct PatternWitness {
+    PatternConstructorId constructor;
+    std::vector<PatternWitness> fields;
+};
+
+class PatternUsefulnessContext {
+  public:
+    [[nodiscard]] PatternDomainId add_domain(PatternDomainKind kind = PatternDomainKind::Finite);
+
+    [[nodiscard]] PatternConstructorId add_constructor(PatternDomainId result_domain,
+                                                       std::string debug_name,
+                                                       std::vector<PatternDomainId> field_domains);
+
+    [[nodiscard]] PatternId make_wildcard(SourceRange range = {});
+    [[nodiscard]] PatternId make_constructor_pattern(PatternConstructorId constructor,
+                                                     std::vector<PatternId> children,
+                                                     SourceRange range = {});
+    [[nodiscard]] PatternId make_or_pattern(std::vector<PatternId> branches,
+                                            SourceRange range = {});
+
+    [[nodiscard]] const PatternDomain &domain(PatternDomainId id) const;
+    [[nodiscard]] const PatternConstructor &constructor(PatternConstructorId id) const;
+    [[nodiscard]] const PatternNode &pattern(PatternId id) const;
+
+  private:
+    [[nodiscard]] bool has_domain(PatternDomainId id) const noexcept;
+    [[nodiscard]] bool has_constructor(PatternConstructorId id) const noexcept;
+    [[nodiscard]] bool has_pattern(PatternId id) const noexcept;
+
+    std::vector<PatternDomain> domains_;
+    std::vector<PatternConstructor> constructors_;
+    std::vector<PatternNode> patterns_;
+};
+
+struct PatternUsefulnessRow {
+    PatternId pattern;
+    SourceRange range;
+    bool contributes_to_exhaustiveness{true};
+};
+
+struct PatternUnreachableRow {
+    std::size_t row_index{0};
+    SourceRange range;
+    std::vector<std::size_t> covering_row_indices;
+};
+
+struct PatternRedundantOrBranch {
+    std::size_t row_index{0};
+    PatternId or_pattern;
+    std::size_t branch_index{0};
+    SourceRange branch_range;
+};
+
+struct PatternUsefulnessOptions {
+    std::size_t max_witnesses{4096};
+};
+
+struct PatternUsefulnessAnalysis {
+    bool root_domain_is_finite{true};
+    bool witness_limit_exceeded{false};
+    std::optional<PatternWitness> missing_witness;
+    std::vector<PatternUnreachableRow> unreachable_rows;
+    std::vector<PatternRedundantOrBranch> redundant_or_branches;
+};
+
+[[nodiscard]] PatternUsefulnessAnalysis
+analyze_pattern_usefulness(const PatternUsefulnessContext &context,
+                           PatternDomainId root_domain,
+                           const std::vector<PatternUsefulnessRow> &rows,
+                           PatternUsefulnessOptions options = {});
+
+[[nodiscard]] std::string render_pattern_witness(const PatternUsefulnessContext &context,
+                                                 const PatternWitness &witness);
+
+} // namespace ahfl

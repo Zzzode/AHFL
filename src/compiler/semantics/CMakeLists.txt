@@ -7,6 +7,7 @@ add_library(ahfl_compiler_semantics STATIC
     flow_facts.cpp
     match_exhaustiveness.cpp
     name_suggestions.cpp
+    pattern_usefulness.cpp
     monomorphization.cpp
     resolver.cpp
     type_resolver.cpp
