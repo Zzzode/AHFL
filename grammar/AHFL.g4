@@ -88,6 +88,7 @@ type_:
 primitiveType:
 	'Unit'
 	| 'Bool'
+	| 'Int' '(' signedIntegerPatternBound ',' signedIntegerPatternBound ')'
 	| 'Int'
 	| 'Float'
 	| 'String'

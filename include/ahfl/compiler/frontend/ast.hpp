@@ -281,6 +281,12 @@ struct BoolType {};
 /// Int type: int
 struct IntType {};
 
+/// Bounded Int type: Int(min, max)
+struct BoundedIntType {
+    std::int64_t minimum;
+    std::int64_t maximum;
+};
+
 /// Float type: float
 struct FloatType {};
 
@@ -336,6 +342,7 @@ struct AppType {
 using TypeSyntaxNode = std::variant<UnitType,
                                     BoolType,
                                     IntType,
+                                    BoundedIntType,
                                     FloatType,
                                     StringType,
                                     BoundedStringType,
@@ -876,10 +883,10 @@ struct IfStmtSyntax {
 /// bindings in scope, otherwise fall through to `else_block` (when present).
 struct IfLetStmtSyntax {
     ahfl::SourceRange range;
-    Owned<PatternSyntax> pattern;        // pattern on the left of `=`
-    Owned<ExprSyntax> scrutinee;         // expression on the right of `=`
-    Owned<BlockSyntax> then_block;       // success branch
-    Owned<BlockSyntax> else_block;       // failure branch (optional)
+    Owned<PatternSyntax> pattern;  // pattern on the left of `=`
+    Owned<ExprSyntax> scrutinee;   // expression on the right of `=`
+    Owned<BlockSyntax> then_block; // success branch
+    Owned<BlockSyntax> else_block; // failure branch (optional)
 };
 
 /// State jump statement: goto StateName;
@@ -957,12 +964,12 @@ struct StatementSyntax {
     Owned<LetStmtSyntax> let_stmt;
     Owned<AssignStmtSyntax> assign_stmt;
     Owned<IfStmtSyntax> if_stmt;
-    Owned<IfLetStmtSyntax> if_let_stmt;       // if let Variant(x) = e { }
+    Owned<IfLetStmtSyntax> if_let_stmt; // if let Variant(x) = e { }
     Owned<GotoStmtSyntax> goto_stmt;
     Owned<ReturnStmtSyntax> return_stmt;
     Owned<AssertStmtSyntax> assert_stmt;
-    Owned<UnwrapStmtSyntax> unwrap_stmt;        // P4-01: new
-    Owned<RequiresStmtSyntax> requires_stmt;    // P4-01: new
+    Owned<UnwrapStmtSyntax> unwrap_stmt;           // P4-01: new
+    Owned<RequiresStmtSyntax> requires_stmt;       // P4-01: new
     Owned<UnreachableStmtSyntax> unreachable_stmt; // P4-01: new
     Owned<ExprStmtSyntax> expr_stmt;
 };
@@ -1082,9 +1089,9 @@ struct DurationSyntax {
 struct ParamDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
-    Owned<TypeSyntax> type;       // null for bare `self` / `mut self`
-    bool is_self{false};          // true for any self receiver shape
-    bool is_self_mut{false};      // true only when `mut self` was written
+    Owned<TypeSyntax> type;  // null for bare `self` / `mut self`
+    bool is_self{false};     // true for any self receiver shape
+    bool is_self_mut{false}; // true only when `mut self` was written
 };
 
 /// Struct field declaration
@@ -1112,7 +1119,7 @@ struct EnumVariantDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
     EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
-    std::vector<Owned<TypeSyntax>> payload;           // positional tuple payload
+    std::vector<Owned<TypeSyntax>> payload;                  // positional tuple payload
     std::vector<Owned<EnumVariantFieldSyntax>> named_fields; // struct variant payload
 };
 
@@ -1590,7 +1597,7 @@ struct TraitDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<TypeSyntax>> super_traits; // optional super-trait bounds
-    Owned<WhereClauseSyntax> where_clause; // optional generic constraints
+    Owned<WhereClauseSyntax> where_clause;       // optional generic constraints
     std::vector<Owned<TraitItemSyntax>> items;
 
     TraitDecl(std::string name, ahfl::SourceRange range = {});
@@ -1626,7 +1633,7 @@ struct ImplItemSyntax {
     ImplItemKind kind{ImplItemKind::Fn};
     Visibility visibility{Visibility::PackageInternal};
 
-    FnDecl* fn_def{nullptr};
+    FnDecl *fn_def{nullptr};
 
     struct AssocTypeDef {
         ahfl::SourceRange range;
@@ -1634,7 +1641,7 @@ struct ImplItemSyntax {
         std::string name;
         Owned<TypeSyntax> type;
     };
-    AssocTypeDef* assoc_type{nullptr};
+    AssocTypeDef *assoc_type{nullptr};
 
     struct AssocConstDef {
         ahfl::SourceRange range;
@@ -1643,7 +1650,7 @@ struct ImplItemSyntax {
         Owned<TypeSyntax> type;
         Owned<ExprSyntax> value;
     };
-    AssocConstDef* assoc_const{nullptr};
+    AssocConstDef *assoc_const{nullptr};
 };
 
 // Compatibility alias: historical consumer sites use `AssocItemDefSyntax`
@@ -1668,9 +1675,10 @@ struct ImplDecl final : Decl {
     Owned<TypeSyntax> target_type;
     Owned<WhereClauseSyntax> where_clause;
     // Per-kind buckets (stable surface, semantic passes read these directly).
-    std::vector<Owned<FnDecl>> methods;            // ImplItemKind::Fn
+    std::vector<Owned<FnDecl>> methods;                           // ImplItemKind::Fn
     std::vector<Owned<ImplItemSyntax::AssocTypeDef>> assoc_items; // ImplItemKind::AssocType
-    std::vector<Owned<ImplItemSyntax::AssocConstDef>> const_items; // ImplItemKind::AssocConst (P3c.S1)
+    std::vector<Owned<ImplItemSyntax::AssocConstDef>>
+        const_items; // ImplItemKind::AssocConst (P3c.S1)
     // Unified dispatcher (parallel of items; populated alongside buckets so
     // consumers can iterate a single list when they prefer visit-style dispatch)
     std::vector<Owned<ImplItemSyntax>> items;

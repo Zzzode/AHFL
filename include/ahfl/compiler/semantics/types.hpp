@@ -28,6 +28,7 @@ enum class TypeKind {
     Unit,
     Bool,
     Int,
+    BoundedInt,
     Float,
     String,
     BoundedString,
@@ -72,6 +73,10 @@ struct ErrorT {};
 struct UnitT {};
 struct BoolT {};
 struct IntT {};
+struct BoundedIntT {
+    std::int64_t minimum{0};
+    std::int64_t maximum{0};
+};
 struct FloatT {};
 struct StringT {};
 struct BoundedStringT {
@@ -133,6 +138,7 @@ using Payload = std::variant<AnyT,
                              UnitT,
                              BoolT,
                              IntT,
+                             BoundedIntT,
                              FloatT,
                              StringT,
                              BoundedStringT,
@@ -148,7 +154,7 @@ using Payload = std::variant<AnyT,
 
 // --- Architectural gate (R-01) ------------------------------------------------
 //
-// The Payload variant has a fixed cardinality of 18. Adding, removing, or
+// The Payload variant has a fixed cardinality of 19. Adding, removing, or
 // reordering alternatives is a cross-cutting change: every visitor switch,
 // every typed HIR lowering branch, and every serialization round-trip must be
 // kept in sync. Update the number below AND the architecture Python gate
@@ -157,7 +163,7 @@ using Payload = std::variant<AnyT,
 // Container types (Option / List / Set / Map) are encoded through nominal
 // generics on StructT/EnumT rather than ad-hoc variant branches.
 
-static_assert(std::variant_size_v<Payload> == 18,
+static_assert(std::variant_size_v<Payload> == 19,
               "ahfl::types::Payload cardinality drift. Update this static_assert "
               "along with every visitor/lowering/serialization site, and keep "
               "scripts/check-architecture.py aligned.");
@@ -211,6 +217,11 @@ struct Type {
             [](const types::UnitT &) { return std::string{"Unit"}; },
             [](const types::BoolT &) { return std::string{"Bool"}; },
             [](const types::IntT &) { return std::string{"Int"}; },
+            [](const types::BoundedIntT &value) {
+                std::ostringstream builder;
+                builder << "Int(" << value.minimum << ", " << value.maximum << ")";
+                return builder.str();
+            },
             [](const types::FloatT &) { return std::string{"Float"}; },
             [](const types::StringT &) { return std::string{"String"}; },
             [](const types::UUIDT &) { return std::string{"UUID"}; },
@@ -235,7 +246,7 @@ struct Type {
                             result += ", ";
                         }
                         result += value.type_args[i] ? value.type_args[i]->describe()
-                                                      : std::string{"Any"};
+                                                     : std::string{"Any"};
                     }
                     result += '>';
                 }
@@ -250,7 +261,7 @@ struct Type {
                             result += ", ";
                         }
                         result += value.type_args[i] ? value.type_args[i]->describe()
-                                                      : std::string{"Any"};
+                                                     : std::string{"Any"};
                     }
                     result += '>';
                 }
@@ -265,7 +276,7 @@ struct Type {
                             result += ", ";
                         }
                         result += value.type_args[i] ? value.type_args[i]->describe()
-                                                      : std::string{"Any"};
+                                                     : std::string{"Any"};
                     }
                     result += '>';
                 }
@@ -281,8 +292,8 @@ struct Type {
                     }
                     builder << (value.params[i] ? value.params[i]->describe() : std::string{"Any"});
                 }
-                builder << ") -> " << (value.return_type ? value.return_type->describe()
-                                                          : std::string{"Any"});
+                builder << ") -> "
+                        << (value.return_type ? value.return_type->describe() : std::string{"Any"});
                 if (value.effect.kind != EffectJudgement::Kind::Pure) {
                     builder << " effect " << to_string(value.effect);
                 }

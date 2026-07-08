@@ -806,6 +806,8 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
                 return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Bool};
             } else if constexpr (std::is_same_v<Node, ast::IntType>) {
                 return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Int};
+            } else if constexpr (std::is_same_v<Node, ast::BoundedIntType>) {
+                return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Int};
             } else if constexpr (std::is_same_v<Node, ast::FloatType>) {
                 return TypeKey{.kind = TypeKey::Kind::Primitive, .primitive = PrimitiveKind::Float};
             } else if constexpr (std::is_same_v<Node, ast::StringType> ||
@@ -1038,8 +1040,8 @@ void LspWorkspaceIndex::set_source_unit_completeness(SourceUnitId source_unit,
     fact.completeness = completeness;
 }
 
-void LspWorkspaceIndex::set_source_unit_content_fingerprint(
-    SourceUnitId source_unit, std::uint64_t content_fingerprint) {
+void LspWorkspaceIndex::set_source_unit_content_fingerprint(SourceUnitId source_unit,
+                                                            std::uint64_t content_fingerprint) {
     const auto existing = source_unit_index_by_id_.find(source_unit.value);
     if (existing == source_unit_index_by_id_.end()) {
         return;
@@ -1513,8 +1515,7 @@ TypeKey type_key_for_type_with_defs(const Type &type, const DefBySymbolMap *def_
     return previous.package_id == current.package_id &&
            previous.source_unit_id == current.source_unit_id &&
            previous.reference_kind == current.reference_kind &&
-           mapped_target == current.target_def &&
-           source_range_equal(previous.range, current.range);
+           mapped_target == current.target_def && source_range_equal(previous.range, current.range);
 }
 
 [[nodiscard]] bool impl_fact_matches_current(const ImplFact &previous,
@@ -1714,8 +1715,8 @@ class IndexAnalysisPipeline {
             if (previous == nullptr) {
                 continue;
             }
-            const auto mapped_target = remap_type_key(previous_def_to_current_,
-                                                      previous->target_type);
+            const auto mapped_target =
+                remap_type_key(previous_def_to_current_, previous->target_type);
             if (!mapped_target.has_value()) {
                 continue;
             }

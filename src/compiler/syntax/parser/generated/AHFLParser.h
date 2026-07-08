@@ -501,6 +501,8 @@ public:
   public:
     PrimitiveTypeContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
+    std::vector<SignedIntegerPatternBoundContext *> signedIntegerPatternBound();
+    SignedIntegerPatternBoundContext* signedIntegerPatternBound(size_t i);
     std::vector<antlr4::tree::TerminalNode *> INT_LITERAL();
     antlr4::tree::TerminalNode* INT_LITERAL(size_t i);
 

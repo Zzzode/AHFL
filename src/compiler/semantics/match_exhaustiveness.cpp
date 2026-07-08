@@ -65,6 +65,7 @@ struct MatchMatrixLowering {
     std::vector<OpenLiteralDomainLowering> open_literal_domains;
     std::unordered_map<TypePtr, std::size_t> open_literal_domain_by_type;
     std::vector<std::optional<std::size_t>> open_literal_domain_for_pattern_domain;
+    std::unordered_map<TypePtr, PatternDomainId> bounded_int_domain_by_type;
     std::vector<std::optional<VariantOrdinal>> variant_for_constructor;
     std::optional<BoolDomainLowering> bool_domain;
     const MatchEnumInfoResolver *enum_resolver{nullptr};
@@ -167,6 +168,28 @@ open_literal_domain_index_for(const MatchMatrixLowering &lowering, PatternDomain
 [[nodiscard]] PatternDomainId make_opaque_domain(MatchMatrixLowering &lowering) {
     const auto domain = lowering.context.add_domain();
     (void)lowering.context.add_constructor(domain, "_", {});
+    return domain;
+}
+
+[[nodiscard]] bool is_bounded_int_domain(const MatchMatrixLowering &lowering,
+                                         PatternDomainId domain) {
+    return lowering.context.domain(domain).kind == PatternDomainKind::BoundedInt;
+}
+
+[[nodiscard]] PatternDomainId ensure_bounded_int_domain(MatchMatrixLowering &lowering,
+                                                        TypePtr type,
+                                                        const types::BoundedIntT &bounds) {
+    if (type != nullptr) {
+        if (const auto found = lowering.bounded_int_domain_by_type.find(type);
+            found != lowering.bounded_int_domain_by_type.end()) {
+            return found->second;
+        }
+    }
+
+    const auto domain = lowering.context.add_bounded_int_domain(bounds.minimum, bounds.maximum);
+    if (type != nullptr) {
+        lowering.bounded_int_domain_by_type.emplace(type, domain);
+    }
     return domain;
 }
 
@@ -303,6 +326,9 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     }
     if (type->get_if<types::BoolT>() != nullptr) {
         return ensure_bool_domain(lowering);
+    }
+    if (const auto *bounded_int = type->get_if<types::BoundedIntT>()) {
+        return ensure_bounded_int_domain(lowering, type, *bounded_int);
     }
     if (auto open_kind = open_literal_domain_kind_for(type); open_kind.has_value()) {
         return ensure_open_literal_domain(lowering, type, *open_kind);
@@ -454,6 +480,10 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     if (range_pattern.start > range_pattern.end) {
         return lowering.context.make_never(range);
     }
+    if (is_bounded_int_domain(lowering, expected.domain)) {
+        return lowering.context.make_int_range_pattern(
+            range_pattern.start, range_pattern.end, range);
+    }
     if (!expected.open_literal_domain_index.has_value()) {
         return lowering.context.make_never(range);
     }
@@ -469,6 +499,10 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
                                                 MatchMatrixLowering &lowering) {
     if (pattern.int_range_start > pattern.int_range_end) {
         return lowering.context.make_never(pattern.range);
+    }
+    if (is_bounded_int_domain(lowering, expected.domain)) {
+        return lowering.context.make_int_range_pattern(
+            pattern.int_range_start, pattern.int_range_end, pattern.range);
     }
     if (!expected.open_literal_domain_index.has_value()) {
         return lowering.context.make_never(pattern.range);
@@ -512,6 +546,12 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
                     lowering, *expected.open_literal_domain_index, spelling),
                 {},
                 range);
+        }
+    }
+
+    if (is_bounded_int_domain(lowering, expected.domain)) {
+        if (const auto value = parse_int_literal_spelling(spelling); value.has_value()) {
+            return lowering.context.make_int_range_pattern(*value, *value, range);
         }
     }
 

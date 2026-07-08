@@ -31,6 +31,10 @@ namespace {
         lhs.variant_name != rhs.variant_name) {
         return false;
     }
+    if (lhs.int_bounds.has_value() && rhs.int_bounds.has_value() &&
+        lhs.int_bounds != rhs.int_bounds) {
+        return false;
+    }
     if (lhs.string_bounds.has_value() && rhs.string_bounds.has_value() &&
         lhs.string_bounds != rhs.string_bounds) {
         return false;

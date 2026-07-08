@@ -29,6 +29,15 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
             [&](const ast::UnitType &) { return types_.make(TypeKind::Unit); },
             [&](const ast::BoolType &) { return types_.make(TypeKind::Bool); },
             [&](const ast::IntType &) { return types_.make(TypeKind::Int); },
+            [&](const ast::BoundedIntType &t) {
+                if (t.minimum > t.maximum) {
+                    diagnose_(error_codes::typecheck::InvalidTypeReference,
+                              "bounded Int type lower bound exceeds upper bound",
+                              type.range);
+                    return make_error_type();
+                }
+                return types_.bounded_int(t.minimum, t.maximum);
+            },
             [&](const ast::FloatType &) { return types_.make(TypeKind::Float); },
             [&](const ast::StringType &) { return types_.string(); },
             [&](const ast::BoundedStringType &t) {

@@ -52,8 +52,7 @@ using Json = json::JsonValue;
     return j_symbol_id(*id);
 }
 
-template <typename E>
-[[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::optional<E> value) {
+template <typename E> [[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::optional<E> value) {
     if (!value.has_value()) {
         return Json::make_null();
     }
@@ -149,6 +148,13 @@ template <typename E>
         [](const types::IntT &) {
             auto object = Json::make_object();
             object->set("kind", Json::make_string("Int"));
+            return object;
+        },
+        [](const types::BoundedIntT &value) {
+            auto object = Json::make_object();
+            object->set("kind", Json::make_string("BoundedInt"));
+            object->set("minimum", Json::make_int(value.minimum));
+            object->set("maximum", Json::make_int(value.maximum));
             return object;
         },
         [](const types::FloatT &) {
@@ -405,9 +411,9 @@ enum_variant_payload_kind_from_name(std::string_view name) {
         for (const auto &variant : info->variants) {
             auto variant_json = Json::make_object();
             variant_json->set("name", Json::make_string(variant.name));
-            variant_json->set("payload_kind",
-                              Json::make_string(enum_variant_payload_kind_name(
-                                  variant.payload_kind)));
+            variant_json->set(
+                "payload_kind",
+                Json::make_string(enum_variant_payload_kind_name(variant.payload_kind)));
             auto payload_json = Json::make_array();
             for (const auto slot : variant.payload) {
                 payload_json->push(j_type(slot));
@@ -628,9 +634,9 @@ enum_variant_payload_kind_from_name(std::string_view name) {
         // P4.S6 decreases flag — round-tripped through TypedProgram so that
         // consumers of the serialized typed HIR see the same values that the
         // in-memory TypedProgram carries.
-        effect->set(
-            "judgement_kind",
-            Json::make_int(static_cast<std::int64_t>(static_cast<int>(info->effect.judgement.kind))));
+        effect->set("judgement_kind",
+                    Json::make_int(
+                        static_cast<std::int64_t>(static_cast<int>(info->effect.judgement.kind))));
         auto judgement_caps = Json::make_array();
         for (const auto id_value : info->effect.judgement.capabilities.values) {
             judgement_caps->push(j_symbol_id(SymbolId{id_value}));
@@ -663,7 +669,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
             auto mj = Json::make_object();
             mj->set("name", Json::make_string(m.name));
             auto mp = Json::make_array();
-            for (const auto &p : m.params) mp->push(j_param(p));
+            for (const auto &p : m.params)
+                mp->push(j_param(p));
             mj->set("params", std::move(mp));
             mj->set("return_type", j_type(m.return_type));
             mj->set("return_type_range", j_range(m.return_type_range));
@@ -707,7 +714,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
             mj->set("symbol", j_symbol_id(m.symbol));
             mj->set("visibility", Json::make_string(std::string(ast::to_string(m.visibility))));
             auto mp = Json::make_array();
-            for (const auto &p : m.params) mp->push(j_param(p));
+            for (const auto &p : m.params)
+                mp->push(j_param(p));
             mj->set("params", std::move(mp));
             mj->set("return_type", j_type(m.return_type));
             mj->set("return_type_range", j_range(m.return_type_range));
@@ -846,7 +854,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     // When nullopt (non-method-call exprs), emit JSON null.
     if (expr.dispatch_target.has_value()) {
         auto dt = Json::make_object();
-        dt->set("impl_index", Json::make_int(static_cast<std::int64_t>(expr.dispatch_target->impl_index)));
+        dt->set("impl_index",
+                Json::make_int(static_cast<std::int64_t>(expr.dispatch_target->impl_index)));
         dt->set("method_name", Json::make_string(expr.dispatch_target->method_name));
         dt->set("is_inherent", Json::make_bool(expr.dispatch_target->is_inherent));
         dt->set("method_symbol", j_optional_symbol_id(expr.dispatch_target->method_symbol));
@@ -1029,9 +1038,8 @@ class Reader {
         return *result;
     }
 
-    [[nodiscard]] bool optional_bool_field(const Json &object,
-                                           std::string_view key,
-                                           bool default_value) {
+    [[nodiscard]] bool
+    optional_bool_field(const Json &object, std::string_view key, bool default_value) {
         const auto *value = field(object, key);
         if (value == nullptr) {
             return default_value;
@@ -1214,6 +1222,9 @@ class Reader {
             return types.make(TypeKind::Bool);
         if (kind == "Int")
             return types.make(TypeKind::Int);
+        if (kind == "BoundedInt") {
+            return types.bounded_int(int_field(*value, "minimum"), int_field(*value, "maximum"));
+        }
         if (kind == "Float")
             return types.make(TypeKind::Float);
         if (kind == "String")
@@ -1798,9 +1809,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             // added after the baseline snapshot was produced. Missing fields
             // default to Pure / false so legacy snapshots still parse.
             const auto *jk_field = reader.field(*effect_obj, "judgement_kind");
-            const auto jk_int = jk_field != nullptr
-                                    ? static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"))
-                                    : static_cast<int>(EffectJudgement::Kind::Pure);
+            const auto jk_int =
+                jk_field != nullptr
+                    ? static_cast<int>(reader.int_field(*effect_obj, "judgement_kind"))
+                    : static_cast<int>(EffectJudgement::Kind::Pure);
             CapabilitySymbolSet j_caps;
             if (const auto *jc = reader.field(*effect_obj, "judgement_capabilities");
                 jc != nullptr && jc->kind == json::Kind::Array) {
@@ -1904,7 +1916,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
                     a.type_param_names = reader.string_array_field(*item, "type_param_names");
                 }
                 const auto *dt = reader.field(*item, "default_type");
-                a.default_type = (dt != nullptr && !dt->is_null()) ? reader.type_value(dt) : nullptr;
+                a.default_type =
+                    (dt != nullptr && !dt->is_null()) ? reader.type_value(dt) : nullptr;
                 info.assoc_types.push_back(std::move(a));
             }
         }
@@ -2220,8 +2233,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         // JSON archives produced before Wave-20 round-trip correctly.
         .assertion_kind =
             object.get("assertion_kind") != nullptr
-                ? static_cast<AssertionKind>(
-                      reader.int_field(object, "assertion_kind"))
+                ? static_cast<AssertionKind>(reader.int_field(object, "assertion_kind"))
                 : parse_assertion_kind(reader.string_field(object, "failure_kind")),
         .pattern_index = reader.optional_u32_field(object, "pattern_index", UINT32_MAX),
     };

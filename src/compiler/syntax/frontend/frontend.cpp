@@ -2118,8 +2118,7 @@ class ProgramBuilder {
         if (bounds.size() != 2) {
             throw std::logic_error("integer range pattern requires two bounds");
         }
-        auto start_spelling =
-            text_of(require(bounds[0], "integer range lower bound is missing"));
+        auto start_spelling = text_of(require(bounds[0], "integer range lower bound is missing"));
         auto end_spelling = text_of(require(bounds[1], "integer range upper bound is missing"));
         pattern->node = ast::IntRangePattern{
             .start_spelling = start_spelling,
@@ -2431,8 +2430,8 @@ class ProgramBuilder {
     build_if_let_stmt(AHFLParser::IfLetStmtContext &context) const {
         auto statement = make_owned<ast::IfLetStmtSyntax>();
         statement->range = context_range(context, source_);
-        statement->pattern = build_pattern(
-            require(context.iflet_pattern, "if let pattern section is missing"));
+        statement->pattern =
+            build_pattern(require(context.iflet_pattern, "if let pattern section is missing"));
         statement->scrutinee =
             build_expr_syntax(require(context.expr(), "if let scrutinee is missing"));
         statement->then_block =
@@ -2743,6 +2742,21 @@ class ProgramBuilder {
         }
 
         if (primitive_keyword == "Int") {
+            if (!context.signedIntegerPatternBound().empty()) {
+                const auto bounds = context.signedIntegerPatternBound();
+                if (bounds.size() != 2) {
+                    throw std::logic_error("bounded Int type requires two bounds");
+                }
+                auto minimum =
+                    parse_integer_literal(text_of(require(bounds[0], "Int minimum is missing")));
+                auto maximum =
+                    parse_integer_literal(text_of(require(bounds[1], "Int maximum is missing")));
+                type->node = ast::BoundedIntType{
+                    .minimum = minimum,
+                    .maximum = maximum,
+                };
+                return type;
+            }
             type->node = ast::IntType{};
             return type;
         }

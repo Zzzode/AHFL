@@ -32,6 +32,7 @@ struct RootTypeHints {
     clone.display_name = type.display_name;
     clone.canonical_name = type.canonical_name;
     clone.variant_name = type.variant_name;
+    clone.int_bounds = type.int_bounds;
     clone.string_bounds = type.string_bounds;
     clone.decimal_scale = type.decimal_scale;
     clone.source_range = type.source_range;

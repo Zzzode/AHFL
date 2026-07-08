@@ -240,12 +240,13 @@ Migration:
 26. Int range usefulness core 已落库：`PatternUsefulnessContext` 提供 ID-based `IntRange` pattern node，matrix matching 会在 open Int domain 中覆盖已枚举的离散 literal witness，同时保留 `_` 默认 witness，因此不会把无界 Int range 误判为穷尽；单元测试覆盖 range 覆盖、非 Int constructor 不匹配和反向 bounds fail-fast。
 27. Int range pattern source surface v1 已落库：grammar 接受 `-?INT_LITERAL..-?INT_LITERAL` pattern，frontend AST、formatter、semantic tokens、typechecker、typed-HIR serialization、match usefulness lowering、IR lowering/printing/JSON 和 runtime evaluator 都以一等 range pattern 处理；typecheck 回归覆盖 open Int payload 的默认 witness、range 覆盖 literal arm、反向 bounds 诊断和非 Int payload type mismatch。
 28. Signed Int range bounds 已落库：`signedIntegerPatternBound` 支持负数下界/上界，AST/formatter/semantic tokens/typed-HIR/IR/runtime evaluator 继续使用解析后的 `int64` range fact；matrix core 覆盖负数 constructor witness，source tests 覆盖 `-3..3` 和 `-1..-3`。
-29. Bounded Int domain matrix infrastructure 已落库：`PatternDomainKind::BoundedInt` 和 constructor-level `int_value` fact 让 range matching 不再从 debug string 反解析数值；小闭区间仍可 materialize singleton constructor witness，大闭区间会改用 normalized interval set，不枚举所有值也能证明 exhaustiveness、生成 inline Int missing witness、识别 overlap / unreachable interval row 和 redundant interval or-branch。当前这是 matrix 层接入点，尚未暴露为 AHFL source-level bounded integer type。
+29. Bounded Int domain matrix infrastructure 已落库：`PatternDomainKind::BoundedInt` 和 constructor-level `int_value` fact 让 range matching 不再从 debug string 反解析数值；小闭区间仍可 materialize singleton constructor witness，大闭区间会改用 normalized interval set，不枚举所有值也能证明 exhaustiveness、生成 inline Int missing witness、识别 overlap / unreachable interval row 和 redundant interval or-branch。
+30. Source-level bounded Int type 首个切片已落库：源码可写 `Int(min, max)` primitive refinement type，grammar/AST/formatter/type resolver/type relations/typed-HIR JSON/IR/LSP primitive navigation 均已接入；`BoundedInt <: Int`，更窄闭区间是更宽闭区间的子类型；enum payload match 可用 `Int(0, 2)` 形成有限 pattern domain，`Some(0..1), Some(2), None` 能证明 exhaustive，域外 literal pattern 不会错误覆盖 bounded domain witness。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；source-level bounded integer type 以及 Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；literal/refinement inference、大型嵌套非枚举 bounded numeric product、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
@@ -297,7 +298,7 @@ Stabilized exit criteria:
 ## Open Questions
 
 1. Should AHFL introduce or-pattern syntax before or after range pattern syntax?
-2. Source-level bounded integer types should use which syntax and inference boundary before they are allowed to feed complete numeric domains into the matrix?
+2. `Int(min, max)` 已有 source syntax；literal/refinement inference 与大型嵌套 bounded numeric product 应采用什么边界，才能在不牺牲可判定性的前提下继续喂给完整矩阵？
 3. Should missing witness rendering prefer fully-qualified module paths or imported local aliases?
 
 ## Decision History
@@ -329,3 +330,4 @@ Stabilized exit criteria:
 - 2026-07-08: Landed Int range pattern source surface v1 for `INT_LITERAL..INT_LITERAL`, including AST/formatter/semantic tokens/typecheck/typed-HIR/IR/runtime evaluator support and the stable `typecheck.INVALID_RANGE_PATTERN` diagnostic for reversed bounds.
 - 2026-07-08: Extended Int range pattern bounds to signed integer pattern bounds (`-?INT_LITERAL..-?INT_LITERAL`) without changing expression integer literal tokenization; tests cover frontend roundtrip, typed-HIR serialization, matrix matching, source typecheck diagnostics, and runtime evaluation for negative bounds.
 - 2026-07-08: Added bounded Int domain infrastructure to the matrix core. Int witnesses now carry structured `int_value` facts instead of deriving range semantics from display strings, and finite bounded Int tests cover missing witnesses, exhaustive range coverage and singleton unreachable diagnostics.
+- 2026-07-08: Landed source-level `Int(min, max)` as the first bounded integer type slice, including syntax/AST/type resolver/type relations/typed-HIR JSON/IR/LSP primitive navigation and enum payload match exhaustiveness tests.

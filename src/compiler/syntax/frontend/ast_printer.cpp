@@ -739,6 +739,11 @@ class AstPrinter final {
                 [&](const ast::UnitType &) { line(indent_level, "primitive ()"); },
                 [&](const ast::BoolType &) { line(indent_level, "primitive Bool"); },
                 [&](const ast::IntType &) { line(indent_level, "primitive Int"); },
+                [&](const ast::BoundedIntType &t) {
+                    std::ostringstream ss;
+                    ss << "bounded_int Int(" << t.minimum << ", " << t.maximum << ")";
+                    line(indent_level, ss.str());
+                },
                 [&](const ast::FloatType &) { line(indent_level, "primitive Float"); },
                 [&](const ast::StringType &) { line(indent_level, "primitive String"); },
                 [&](const ast::BoundedStringType &t) {

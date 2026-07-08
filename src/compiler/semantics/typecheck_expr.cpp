@@ -441,12 +441,11 @@ class ExpressionCheckerServices final {
         delegate_->typecheck_error(code, std::move(message), range, std::move(notes));
     }
 
-    void typecheck_error_here(
-        ErrorCode<DiagnosticCategory::TypeCheck> code,
-        std::string message,
-        SourceRange range,
-        std::vector<Diagnostic::Related> notes,
-        std::map<std::string, std::vector<std::string>> data) const {
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range,
+                              std::vector<Diagnostic::Related> notes,
+                              std::map<std::string, std::vector<std::string>> data) const {
         delegate_->typecheck_error(
             code, std::move(message), range, std::move(notes), std::move(data));
     }
@@ -1047,12 +1046,12 @@ class ExpressionChecker final {
             expr.node);
     }
 
-    [[nodiscard]] ExpressionPatternLoweringResult lower_pattern_entry(
-        const ast::PatternSyntax &pattern,
-        TypePtr scrutinee_type,
-        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
-        BindingMap &bindings,
-        SourceRange range) const {
+    [[nodiscard]] ExpressionPatternLoweringResult
+    lower_pattern_entry(const ast::PatternSyntax &pattern,
+                        TypePtr scrutinee_type,
+                        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                        BindingMap &bindings,
+                        SourceRange range) const {
         const auto lowered = lower_pattern(pattern, scrutinee_type, enum_info, bindings, range);
         return ExpressionPatternLoweringResult{
             .irrefutable = lowered.irrefutable,
@@ -1544,6 +1543,9 @@ class ExpressionChecker final {
         if (literal_type == nullptr) {
             return;
         }
+        if (kind == LiteralPatternKind::Int && scrutinee_type->holds<types::BoundedIntT>()) {
+            return;
+        }
         (void)services_.check_assignable(
             *literal_type, *scrutinee_type, range, "match literal pattern");
     }
@@ -1554,16 +1556,18 @@ class ExpressionChecker final {
         if (range_pattern.start > range_pattern.end) {
             services_.typecheck_error_here(
                 error_codes::typecheck::InvalidRangePattern,
-                messages::typecheck::InvalidRangePattern.format_with(
-                    range_pattern.start_spelling, range_pattern.end_spelling),
+                messages::typecheck::InvalidRangePattern.format_with(range_pattern.start_spelling,
+                                                                     range_pattern.end_spelling),
                 range);
         }
         if (scrutinee_type == nullptr || is_error_type(*scrutinee_type)) {
             return;
         }
+        if (scrutinee_type->holds<types::BoundedIntT>()) {
+            return;
+        }
         const auto int_type = values_.make_type(TypeKind::Int);
-        (void)services_.check_assignable(
-            *int_type, *scrutinee_type, range, "match range pattern");
+        (void)services_.check_assignable(*int_type, *scrutinee_type, range, "match range pattern");
     }
 
     struct LoweredPattern {
@@ -3628,12 +3632,12 @@ ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
     return ExpressionChecker{services, context, expected_type, &expectation}.check(expr);
 }
 
-ExpressionPatternLoweringResult ExpressionSema::lower_pattern(
-    const ast::PatternSyntax &pattern,
-    TypePtr scrutinee_type,
-    std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
-    ExpressionBindingMap &bindings,
-    SourceRange range) const {
+ExpressionPatternLoweringResult
+ExpressionSema::lower_pattern(const ast::PatternSyntax &pattern,
+                              TypePtr scrutinee_type,
+                              std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                              ExpressionBindingMap &bindings,
+                              SourceRange range) const {
     ExpressionCheckerServices services{
         *services_.resolve_result,
         services_.current_source_id,
@@ -3650,9 +3654,8 @@ ExpressionPatternLoweringResult ExpressionSema::lower_pattern(
         .call_context = ExpressionCallContext::PureOnly,
         .current_agent = std::nullopt,
     };
-    auto lowered =
-        ExpressionChecker{services, context, std::nullopt, nullptr}.lower_pattern_entry(
-            pattern, scrutinee_type, enum_info, bindings, range);
+    auto lowered = ExpressionChecker{services, context, std::nullopt, nullptr}.lower_pattern_entry(
+        pattern, scrutinee_type, enum_info, bindings, range);
     return lowered;
 }
 
@@ -3716,9 +3719,8 @@ class PassExpressionSemaDelegate final : public ExpressionSemaDelegate {
         pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
     }
 
-    bool check_bound(const Type &subject_type,
-                     std::string_view trait_name,
-                     SourceRange range) override {
+    bool
+    check_bound(const Type &subject_type, std::string_view trait_name, SourceRange range) override {
         return pass_->check_bound(subject_type, trait_name, range);
     }
 

@@ -100,6 +100,9 @@ class AstInvariantValidator final {
                 [&](const UnitType &) {},
                 [&](const BoolType &) {},
                 [&](const IntType &) {},
+                [&](const BoundedIntType &) {
+                    // BoundedInt bounds are stored as value types — presence is guaranteed by variant
+                },
                 [&](const FloatType &) {},
                 [&](const StringType &) {},
                 [&](const BoundedStringType &) {
@@ -1481,6 +1484,11 @@ struct TypeSyntaxSpellingVisitor {
     }
     std::string operator()(const IntType &) const {
         return "Int";
+    }
+    std::string operator()(const BoundedIntType &t) const {
+        std::ostringstream builder;
+        builder << "Int(" << t.minimum << ", " << t.maximum << ")";
+        return builder.str();
     }
     std::string operator()(const FloatType &) const {
         return "Float";

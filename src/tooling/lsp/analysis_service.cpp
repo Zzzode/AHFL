@@ -244,6 +244,8 @@ void collect_primitive_type_uses(const ast::TypeSyntax *type, std::vector<Primit
                 add_primitive_type_use(uses, PrimitiveKind::Bool, type->range);
             } else if constexpr (std::is_same_v<Node, ast::IntType>) {
                 add_primitive_type_use(uses, PrimitiveKind::Int, type->range);
+            } else if constexpr (std::is_same_v<Node, ast::BoundedIntType>) {
+                add_primitive_type_use(uses, PrimitiveKind::Int, type->range);
             } else if constexpr (std::is_same_v<Node, ast::FloatType>) {
                 add_primitive_type_use(uses, PrimitiveKind::Float, type->range);
             } else if constexpr (std::is_same_v<Node, ast::StringType> ||
@@ -771,8 +773,7 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
            std::string{kSysrootPrimitiveHomeSchemaVersion};
 }
 
-[[nodiscard]] std::string
-sysroot_index_cache_key_prefix(const LspToolchainCacheKey &key) {
+[[nodiscard]] std::string sysroot_index_cache_key_prefix(const LspToolchainCacheKey &key) {
     return key.analysis_mode + "#" + key.workspace_folder_uri + "#" + key.root_manifest + "#" +
            key.workspace_manifest + "#" + key.package_graph_identity + "#" + key.std_manifest +
            "#" + key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +

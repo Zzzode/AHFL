@@ -15,8 +15,7 @@ namespace {
 
 using ahfl::ast::NodeKind;
 
-[[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename,
-                                           const std::string &source) {
+[[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename, const std::string &source) {
     const ahfl::Frontend frontend;
     auto parse_result = frontend.parse_text(std::string(filename), source);
     if (parse_result.has_errors()) {
@@ -30,12 +29,14 @@ using ahfl::ast::NodeKind;
     return parse_result;
 }
 
-[[nodiscard]] const ahfl::ast::EnumDecl *
-find_enum_decl(const ahfl::ast::Program &program, std::string_view name) {
+[[nodiscard]] const ahfl::ast::EnumDecl *find_enum_decl(const ahfl::ast::Program &program,
+                                                        std::string_view name) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind != NodeKind::EnumDecl) continue;
+        if (decl->kind != NodeKind::EnumDecl)
+            continue;
         const auto *e = static_cast<const ahfl::ast::EnumDecl *>(decl.get());
-        if (e->name == name) return e;
+        if (e->name == name)
+            return e;
     }
     return nullptr;
 }
@@ -183,4 +184,35 @@ TEST_CASE("Enum struct variants coexist with positional (tuple) variants") {
     const auto fmt = ahfl::formatter::format_source(source);
     CHECK(fmt.success);
     CHECK(fmt.formatted == source);
+}
+
+TEST_CASE("Bounded Int primitive type parses and round-trips through enum payloads") {
+    const std::string source = R"AHFL(enum Token {
+    Small(Int(-2, 2)),
+    Bucket { value: Int(0, 255) },
+}
+)AHFL";
+
+    const auto parse_result = parse_only("bounded_int_type.ahfl", source);
+    const auto *program = parse_result.program.get();
+    const auto *token = find_enum_decl(*program, "Token");
+    REQUIRE(token != nullptr);
+    REQUIRE(token->variants.size() == 2);
+
+    REQUIRE(token->variants[0]->payload.size() == 1);
+    CHECK(token->variants[0]->payload[0]->spelling() == "Int(-2, 2)");
+
+    REQUIRE(token->variants[1]->named_fields.size() == 1);
+    REQUIRE(token->variants[1]->named_fields[0]->type != nullptr);
+    CHECK(token->variants[1]->named_fields[0]->type->spelling() == "Int(0, 255)");
+
+    const auto fmt = ahfl::formatter::format_source(source);
+    CHECK(fmt.success);
+    CHECK(fmt.formatted == source);
+
+    std::ostringstream oss;
+    ahfl::dump_program_outline(*program, oss);
+    const std::string outline = oss.str();
+    CHECK(outline.find("Int(-2, 2)") != std::string::npos);
+    CHECK(outline.find("Int(0, 255)") != std::string::npos);
 }

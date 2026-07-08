@@ -58,6 +58,7 @@ namespace {
         .display_name = std::move(display_name),
         .canonical_name = {},
         .variant_name = {},
+        .int_bounds = std::nullopt,
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .source_range = std::nullopt,
@@ -266,10 +267,11 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
 class TypedIrLowerer final {
   public:
     explicit TypedIrLowerer(const TypedProgram &typed_program,
-                             const ast::Program *ast_program = nullptr,
-                             const SourceGraph *source_graph = nullptr,
-                             bool include_stdlib = false)
-        : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph), include_stdlib_(include_stdlib) {}
+                            const ast::Program *ast_program = nullptr,
+                            const SourceGraph *source_graph = nullptr,
+                            bool include_stdlib = false)
+        : typed_program_(&typed_program), ast_program_(ast_program), source_graph_(source_graph),
+          include_stdlib_(include_stdlib) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
@@ -280,7 +282,8 @@ class TypedIrLowerer final {
                 continue;
             current_source_id_ = typed_decl->source_id;
             current_module_name_ = module_name_for(*typed_decl);
-            if (is_stdlib_declaration(*typed_decl) && !include_stdlib_) continue;
+            if (is_stdlib_declaration(*typed_decl) && !include_stdlib_)
+                continue;
             if (const auto *impl = payload_as<ImplTypeInfo>(typed_decl);
                 impl != nullptr && typed_decl->kind == ast::NodeKind::ImplDecl) {
                 for (const auto &method : impl->methods) {
@@ -366,12 +369,11 @@ class TypedIrLowerer final {
                 }
             }
         }
-        return decl.symbol.value != 0 &&
-               typed_program_->find_symbol(decl.symbol)
-                   .transform([](const Symbol &symbol) {
-                       return is_std_module_name(symbol.module_name);
-                   })
-                   .value_or(false);
+        return decl.symbol.value != 0 && typed_program_->find_symbol(decl.symbol)
+                                             .transform([](const Symbol &symbol) {
+                                                 return is_std_module_name(symbol.module_name);
+                                             })
+                                             .value_or(false);
     }
 
     // =====================================================================
@@ -442,8 +444,8 @@ class TypedIrLowerer final {
         return ranges_equal(expr.range, typed.range);
     }
 
-    [[nodiscard]] static const ast::ExprSyntax *
-    find_match_expr_in_expr(const ast::ExprSyntax &expr, const TypedExpr &typed) {
+    [[nodiscard]] static const ast::ExprSyntax *find_match_expr_in_expr(const ast::ExprSyntax &expr,
+                                                                        const TypedExpr &typed) {
         if (expr.is<ast::MatchExpr>() && expr_matches_typed(expr, typed)) {
             return &expr;
         }
@@ -551,8 +553,7 @@ class TypedIrLowerer final {
                     return value.body ? find_match_expr_in_expr(*value.body, typed) : nullptr;
                 },
                 [&](const ast::UnwrapExprSyntax &value) -> const ast::ExprSyntax * {
-                    return value.operand ? find_match_expr_in_expr(*value.operand, typed)
-                                         : nullptr;
+                    return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
                 },
             },
             expr.node);
@@ -593,15 +594,15 @@ class TypedIrLowerer final {
         case ast::StatementSyntaxKind::IfLet:
             if (statement.if_let_stmt) {
                 if (statement.if_let_stmt->scrutinee) {
-                    if (const auto *found = find_match_expr_in_expr(
-                            *statement.if_let_stmt->scrutinee, typed);
+                    if (const auto *found =
+                            find_match_expr_in_expr(*statement.if_let_stmt->scrutinee, typed);
                         found != nullptr) {
                         return found;
                     }
                 }
                 if (statement.if_let_stmt->then_block) {
-                    if (const auto *found = find_match_expr_in_block(
-                            *statement.if_let_stmt->then_block, typed);
+                    if (const auto *found =
+                            find_match_expr_in_block(*statement.if_let_stmt->then_block, typed);
                         found != nullptr) {
                         return found;
                     }
@@ -636,8 +637,7 @@ class TypedIrLowerer final {
                 statement.requires_stmt && statement.requires_stmt->condition
                     ? find_match_expr_in_expr(*statement.requires_stmt->condition, typed)
                     : nullptr;
-            if (result == nullptr && statement.requires_stmt &&
-                statement.requires_stmt->message) {
+            if (result == nullptr && statement.requires_stmt && statement.requires_stmt->message) {
                 result = find_match_expr_in_expr(*statement.requires_stmt->message, typed);
             }
             return result;
@@ -667,8 +667,8 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
-    [[nodiscard]] static const ast::ExprSyntax *
-    find_match_expr_in_decl(const ast::Decl &decl, const TypedExpr &typed) {
+    [[nodiscard]] static const ast::ExprSyntax *find_match_expr_in_decl(const ast::Decl &decl,
+                                                                        const TypedExpr &typed) {
         switch (decl.kind) {
         case ast::NodeKind::ConstDecl: {
             const auto &value = static_cast<const ast::ConstDecl &>(decl);
@@ -678,8 +678,7 @@ class TypedIrLowerer final {
             const auto &value = static_cast<const ast::StructDecl &>(decl);
             for (const auto &field : value.fields) {
                 if (field && field->default_value) {
-                    if (const auto *found =
-                            find_match_expr_in_expr(*field->default_value, typed);
+                    if (const auto *found = find_match_expr_in_expr(*field->default_value, typed);
                         found != nullptr) {
                         return found;
                     }
@@ -755,8 +754,8 @@ class TypedIrLowerer final {
         return nullptr;
     }
 
-    [[nodiscard]] static const ast::IfLetStmtSyntax *
-    find_if_let_stmt_in_decl(const ast::Decl &decl, SourceRange range) {
+    [[nodiscard]] static const ast::IfLetStmtSyntax *find_if_let_stmt_in_decl(const ast::Decl &decl,
+                                                                              SourceRange range) {
         std::function<const ast::IfLetStmtSyntax *(const ast::StatementSyntax &)> find_statement;
         std::function<const ast::IfLetStmtSyntax *(const ast::BlockSyntax &)> find_block;
 
@@ -771,8 +770,8 @@ class TypedIrLowerer final {
             return nullptr;
         };
 
-        find_statement = [&](const ast::StatementSyntax &statement)
-            -> const ast::IfLetStmtSyntax * {
+        find_statement =
+            [&](const ast::StatementSyntax &statement) -> const ast::IfLetStmtSyntax * {
             if (statement.kind == ast::StatementSyntaxKind::IfLet && statement.if_let_stmt &&
                 (ranges_equal(statement.range, range) ||
                  ranges_equal(statement.if_let_stmt->range, range))) {
@@ -825,8 +824,7 @@ class TypedIrLowerer final {
             const auto &flow = static_cast<const ast::FlowDecl &>(decl);
             for (const auto &handler : flow.state_handlers) {
                 if (handler && handler->body) {
-                    if (const auto *found = find_block(*handler->body);
-                        found != nullptr) {
+                    if (const auto *found = find_block(*handler->body); found != nullptr) {
                         return found;
                     }
                 }
@@ -841,8 +839,7 @@ class TypedIrLowerer final {
             const auto &impl = static_cast<const ast::ImplDecl &>(decl);
             for (const auto &method : impl.methods) {
                 if (method && method->body) {
-                    if (const auto *found = find_block(*method->body);
-                        found != nullptr) {
+                    if (const auto *found = find_block(*method->body); found != nullptr) {
                         return found;
                     }
                 }
@@ -928,86 +925,83 @@ class TypedIrLowerer final {
             .source_range = pattern->range,
             .text = pattern->text,
         };
-        lowered.node =
-            std::visit(Overloaded{
-                           [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {
-                               return ir::LiteralPattern{.spelling = value.spelling};
-                           },
-                           [](const ast::IntRangePattern &value) -> ir::MatchPatternNode {
-                               return ir::IntRangePattern{.start = value.start, .end = value.end};
-                           },
-                           [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
-                               ir::VariantPattern variant{
-                                   .path = value.path ? value.path->spelling() : std::string{},
-                                   .kind = value.payload_kind == ast::EnumVariantPayloadKind::Tuple
-                                               ? ir::VariantPatternKind::Tuple
-                                               : (value.payload_kind ==
-                                                          ast::EnumVariantPayloadKind::Struct
-                                                      ? ir::VariantPatternKind::Struct
-                                                      : ir::VariantPatternKind::Unit),
-                                   .subpatterns = {},
-                                   .fields = {},
-                               };
-                               variant.subpatterns.reserve(value.subpatterns.size());
-                               for (const auto &subpattern : value.subpatterns) {
-                                   variant.subpatterns.push_back(
-                                       make_owned<ir::MatchPattern>(
-                                           lower_pattern(subpattern.get())));
-                               }
-                               variant.fields.reserve(value.fields.size());
-                               for (const auto &field : value.fields) {
-                                   if (!field) {
-                                       continue;
-                                   }
-                                   ir::VariantPatternField lowered_field{
-                                       .name = field->name,
-                                       .pattern = nullptr,
-                                       .is_rest = field->is_rest,
-                                   };
-                                   if (field->pattern) {
-                                       lowered_field.pattern =
-                                           make_owned<ir::MatchPattern>(
-                                               lower_pattern(field->pattern.get()));
-                                   }
-                                   variant.fields.push_back(std::move(lowered_field));
-                               }
-                               return variant;
-                           },
-                           [](const ast::WildcardPattern &) -> ir::MatchPatternNode {
-                               return ir::WildcardPattern{};
-                           },
-                           [](const ast::BindingPattern &value) -> ir::MatchPatternNode {
-                               ir::BindingPattern binding{
-                                   .name = value.name,
-                                   .is_mut = value.is_mut,
-                                   .nested = nullptr,
-                               };
-                               if (value.nested) {
-                                   binding.nested =
-                                       make_owned<ir::MatchPattern>(lower_pattern(value.nested.get()));
-                               }
-                               return binding;
-                           },
-                           [](const ast::TuplePattern &value) -> ir::MatchPatternNode {
-                               ir::TuplePattern tuple;
-                               tuple.elements.reserve(value.elements.size());
-                               for (const auto &element : value.elements) {
-                                   tuple.elements.push_back(
-                                       make_owned<ir::MatchPattern>(lower_pattern(element.get())));
-                               }
-                               return tuple;
-                           },
-                           [](const ast::OrPattern &value) -> ir::MatchPatternNode {
-                               ir::OrPattern pattern_or;
-                               pattern_or.branches.reserve(value.branches.size());
-                               for (const auto &branch : value.branches) {
-                                   pattern_or.branches.push_back(
-                                       make_owned<ir::MatchPattern>(lower_pattern(branch.get())));
-                               }
-                               return pattern_or;
-                           },
-                       },
-                       pattern->node);
+        lowered.node = std::visit(
+            Overloaded{
+                [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {
+                    return ir::LiteralPattern{.spelling = value.spelling};
+                },
+                [](const ast::IntRangePattern &value) -> ir::MatchPatternNode {
+                    return ir::IntRangePattern{.start = value.start, .end = value.end};
+                },
+                [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
+                    ir::VariantPattern variant{
+                        .path = value.path ? value.path->spelling() : std::string{},
+                        .kind = value.payload_kind == ast::EnumVariantPayloadKind::Tuple
+                                    ? ir::VariantPatternKind::Tuple
+                                    : (value.payload_kind == ast::EnumVariantPayloadKind::Struct
+                                           ? ir::VariantPatternKind::Struct
+                                           : ir::VariantPatternKind::Unit),
+                        .subpatterns = {},
+                        .fields = {},
+                    };
+                    variant.subpatterns.reserve(value.subpatterns.size());
+                    for (const auto &subpattern : value.subpatterns) {
+                        variant.subpatterns.push_back(
+                            make_owned<ir::MatchPattern>(lower_pattern(subpattern.get())));
+                    }
+                    variant.fields.reserve(value.fields.size());
+                    for (const auto &field : value.fields) {
+                        if (!field) {
+                            continue;
+                        }
+                        ir::VariantPatternField lowered_field{
+                            .name = field->name,
+                            .pattern = nullptr,
+                            .is_rest = field->is_rest,
+                        };
+                        if (field->pattern) {
+                            lowered_field.pattern =
+                                make_owned<ir::MatchPattern>(lower_pattern(field->pattern.get()));
+                        }
+                        variant.fields.push_back(std::move(lowered_field));
+                    }
+                    return variant;
+                },
+                [](const ast::WildcardPattern &) -> ir::MatchPatternNode {
+                    return ir::WildcardPattern{};
+                },
+                [](const ast::BindingPattern &value) -> ir::MatchPatternNode {
+                    ir::BindingPattern binding{
+                        .name = value.name,
+                        .is_mut = value.is_mut,
+                        .nested = nullptr,
+                    };
+                    if (value.nested) {
+                        binding.nested =
+                            make_owned<ir::MatchPattern>(lower_pattern(value.nested.get()));
+                    }
+                    return binding;
+                },
+                [](const ast::TuplePattern &value) -> ir::MatchPatternNode {
+                    ir::TuplePattern tuple;
+                    tuple.elements.reserve(value.elements.size());
+                    for (const auto &element : value.elements) {
+                        tuple.elements.push_back(
+                            make_owned<ir::MatchPattern>(lower_pattern(element.get())));
+                    }
+                    return tuple;
+                },
+                [](const ast::OrPattern &value) -> ir::MatchPatternNode {
+                    ir::OrPattern pattern_or;
+                    pattern_or.branches.reserve(value.branches.size());
+                    for (const auto &branch : value.branches) {
+                        pattern_or.branches.push_back(
+                            make_owned<ir::MatchPattern>(lower_pattern(branch.get())));
+                    }
+                    return pattern_or;
+                },
+            },
+            pattern->node);
         return lowered;
     }
 
@@ -1061,7 +1055,8 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] static std::size_t
-    synthetic_impl_method_symbol_id(const ImplTypeInfo &impl, std::string_view method_name) noexcept {
+    synthetic_impl_method_symbol_id(const ImplTypeInfo &impl,
+                                    std::string_view method_name) noexcept {
         constexpr std::size_t kHighBit = std::size_t{1} << ((sizeof(std::size_t) * 8U) - 1U);
         std::size_t hash = static_cast<std::size_t>(1469598103934665603ULL);
         const auto mix_byte = [&hash](std::size_t byte) {
@@ -1079,8 +1074,8 @@ class TypedIrLowerer final {
         return kHighBit | (hash & ~kHighBit);
     }
 
-    [[nodiscard]] ir::SymbolRef
-    synthetic_impl_method_symbol_ref(const ImplTypeInfo &impl, std::string name) const {
+    [[nodiscard]] ir::SymbolRef synthetic_impl_method_symbol_ref(const ImplTypeInfo &impl,
+                                                                 std::string name) const {
         const auto id = synthetic_impl_method_symbol_id(impl, name);
         return ir::SymbolRef{
             .kind = ir::SymbolRefKind::Function,
@@ -1124,6 +1119,11 @@ class TypedIrLowerer final {
             },
             [&](const types::IntT &) {
                 return make_type_ref_value(ir::TypeRefKind::Int, type.describe());
+            },
+            [&](const types::BoundedIntT &value) {
+                auto ref = make_type_ref_value(ir::TypeRefKind::BoundedInt, type.describe());
+                ref.int_bounds = std::make_pair(value.minimum, value.maximum);
+                return ref;
             },
             [&](const types::FloatT &) {
                 return make_type_ref_value(ir::TypeRefKind::Float, type.describe());
@@ -1252,8 +1252,8 @@ class TypedIrLowerer final {
 
     [[nodiscard]] std::optional<EnumVariantTarget>
     find_enum_variant_target(const types::EnumVariantT &variant_type) const noexcept {
-        const auto from_decl = [&variant_type](const TypedDecl &decl)
-            -> std::optional<EnumVariantTarget> {
+        const auto from_decl =
+            [&variant_type](const TypedDecl &decl) -> std::optional<EnumVariantTarget> {
             const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
             if (enum_info == nullptr) {
                 return std::nullopt;
@@ -1282,8 +1282,7 @@ class TypedIrLowerer final {
 
         for (const auto &decl : typed_program_->declarations) {
             const auto *enum_info = payload_as<EnumTypeInfo>(&decl);
-            if (enum_info == nullptr ||
-                enum_info->canonical_name != variant_type.canonical_name) {
+            if (enum_info == nullptr || enum_info->canonical_name != variant_type.canonical_name) {
                 continue;
             }
             if (auto target = from_decl(decl); target.has_value()) {
@@ -1371,8 +1370,7 @@ class TypedIrLowerer final {
         // length(...) -> Int; }`) emit the correct builtin-hook callee name.
         const bool primitive_target = !target_symbol.has_value();
         const std::string receiver_key =
-            primitive_target ? TypeEnvironment::normalize_type_key(*receiver->type)
-                              : std::string{};
+            primitive_target ? TypeEnvironment::normalize_type_key(*receiver->type) : std::string{};
 
         std::optional<MethodTarget> inherent;
         std::optional<MethodTarget> trait;
@@ -1421,16 +1419,22 @@ class TypedIrLowerer final {
 
     [[nodiscard]] const TypedProgram::FnCallSiteRecord *
     find_fn_call_site(const TypedExpr &call_expr) const noexcept {
-        if (!call_expr.resolved_symbol.has_value()) return nullptr;
-        if (call_expr.call_target_kind != TypedCallTargetKind::Builtin) return nullptr;
+        if (!call_expr.resolved_symbol.has_value())
+            return nullptr;
+        if (call_expr.call_target_kind != TypedCallTargetKind::Builtin)
+            return nullptr;
         const SymbolId target = *call_expr.resolved_symbol;
         const auto &want_source = call_expr.source_id;
         const auto &want_range = call_expr.range;
         for (const auto &site : typed_program_->fn_call_sites) {
-            if (site.fn_symbol != target) continue;
-            if (site.source_id != want_source) continue;
-            if (site.call_range.begin_offset != want_range.begin_offset) continue;
-            if (site.call_range.end_offset != want_range.end_offset) continue;
+            if (site.fn_symbol != target)
+                continue;
+            if (site.source_id != want_source)
+                continue;
+            if (site.call_range.begin_offset != want_range.begin_offset)
+                continue;
+            if (site.call_range.end_offset != want_range.end_offset)
+                continue;
             return &site;
         }
         return nullptr;
@@ -1444,8 +1448,8 @@ class TypedIrLowerer final {
                     const auto separator = expr.semantic_name.rfind("::");
                     if (separator != std::string::npos &&
                         separator + 2 < expr.semantic_name.size()) {
-                        return symbol->get().canonical_name + "::" +
-                               expr.semantic_name.substr(separator + 2);
+                        return symbol->get().canonical_name +
+                               "::" + expr.semantic_name.substr(separator + 2);
                     }
                 }
                 // If the callee is a builtin function, use its builtin name
@@ -1478,12 +1482,14 @@ class TypedIrLowerer final {
                             const auto resolver =
                                 [this](SymbolId id) -> std::optional<std::string> {
                                 const auto sym = typed_program_->find_symbol(id);
-                                if (!sym.has_value()) return std::nullopt;
+                                if (!sym.has_value())
+                                    return std::nullopt;
                                 return sym->get().canonical_name;
                             };
-                            return mangle::mangle_instance(site->fn_symbol,
-                                                           std::span<const TypePtr>(site->type_args),
-                                                           resolver);
+                            return mangle::mangle_instance(
+                                site->fn_symbol,
+                                std::span<const TypePtr>(site->type_args),
+                                resolver);
                         }
                     }
                 }
@@ -1686,8 +1692,8 @@ class TypedIrLowerer final {
         ir::ExprRef visit_struct_literal(const TypedExpr &e) const {
             ir::StructLiteralExpr literal{.type_name = self.render_struct_target(e), .fields = {}};
             const auto variant_target = self.find_enum_variant_target(e);
-            const auto *variant_type = e.type != nullptr ? e.type->get_if<types::EnumVariantT>()
-                                                         : nullptr;
+            const auto *variant_type =
+                e.type != nullptr ? e.type->get_if<types::EnumVariantT>() : nullptr;
             if (variant_target.has_value() && variant_target->owner != nullptr &&
                 variant_target->variant != nullptr) {
                 literal.is_enum_variant = true;
@@ -1699,8 +1705,8 @@ class TypedIrLowerer final {
                 literal.is_enum_variant = true;
                 literal.enum_name = variant_type->canonical_name;
                 literal.variant_name = variant_type->variant_name;
-                literal.type_name = variant_type->canonical_name + "::" +
-                                    variant_type->variant_name;
+                literal.type_name =
+                    variant_type->canonical_name + "::" + variant_type->variant_name;
             }
             std::vector<std::pair<std::string, const TypedExpr *>> explicit_fields;
             for (const auto &child : e.children) {
@@ -1732,9 +1738,8 @@ class TypedIrLowerer final {
                         if (!field.has_default) {
                             continue;
                         }
-                        ir::ExprRef default_value =
-                            self.lower_expr_range(field.default_value_range,
-                                                  variant_target->source_id);
+                        ir::ExprRef default_value = self.lower_expr_range(
+                            field.default_value_range, variant_target->source_id);
                         if (default_value != nullptr) {
                             literal.fields.push_back(ir::StructFieldInit{
                                 .name = field.name,
@@ -1888,14 +1893,13 @@ class TypedIrLowerer final {
             if (inner != nullptr) {
                 return self.lower_typed_expr(*inner);
             }
-            return self.make_expr(
-                ir::QualifiedValueExpr{.value = "<malformed-group>"}, range);
+            return self.make_expr(ir::QualifiedValueExpr{.value = "<malformed-group>"}, range);
         }
         ir::ExprRef visit_match(const TypedExpr &e) const {
             const auto *ast_expr = self.find_ast_match_expr(e);
-            const auto *ast_match =
-                ast_expr != nullptr && ast_expr->is<ast::MatchExpr>() ? &ast_expr->as<ast::MatchExpr>()
-                                                                      : nullptr;
+            const auto *ast_match = ast_expr != nullptr && ast_expr->is<ast::MatchExpr>()
+                                        ? &ast_expr->as<ast::MatchExpr>()
+                                        : nullptr;
 
             ir::MatchExpr match;
             if (const TypedExpr *scrutinee =
@@ -2437,31 +2441,31 @@ class TypedIrLowerer final {
                        [this, &called_targets](const ir::MemberAccessExpr &value) {
                            collect_called_targets_from_expr(*value.base, called_targets);
                        },
-	                       [this, &called_targets](const ir::IndexAccessExpr &value) {
-	                           collect_called_targets_from_expr(*value.base, called_targets);
-	                           collect_called_targets_from_expr(*value.index, called_targets);
-	                       },
-	                       [this, &called_targets](const ir::MatchExpr &value) {
-	                           if (value.scrutinee) {
-	                               collect_called_targets_from_expr(*value.scrutinee, called_targets);
-	                           }
-	                           for (const auto &arm : value.arms) {
-	                               if (arm.guard) {
-	                                   collect_called_targets_from_expr(*arm.guard, called_targets);
-	                               }
-	                               if (arm.body) {
-	                                   collect_called_targets_from_expr(*arm.body, called_targets);
-	                               }
-	                           }
-	                       },
-	                       [this, &called_targets](const ir::UnwrapExpr &value) {
-	                           if (value.operand) {
-	                               collect_called_targets_from_expr(*value.operand, called_targets);
-	                           }
-	                       },
-	                   },
-	                   expr.node);
-	    }
+                       [this, &called_targets](const ir::IndexAccessExpr &value) {
+                           collect_called_targets_from_expr(*value.base, called_targets);
+                           collect_called_targets_from_expr(*value.index, called_targets);
+                       },
+                       [this, &called_targets](const ir::MatchExpr &value) {
+                           if (value.scrutinee) {
+                               collect_called_targets_from_expr(*value.scrutinee, called_targets);
+                           }
+                           for (const auto &arm : value.arms) {
+                               if (arm.guard) {
+                                   collect_called_targets_from_expr(*arm.guard, called_targets);
+                               }
+                               if (arm.body) {
+                                   collect_called_targets_from_expr(*arm.body, called_targets);
+                               }
+                           }
+                       },
+                       [this, &called_targets](const ir::UnwrapExpr &value) {
+                           if (value.operand) {
+                               collect_called_targets_from_expr(*value.operand, called_targets);
+                           }
+                       },
+                   },
+                   expr.node);
+    }
 
     void merge_flow_summary(ir::StateHandler::Summary &target,
                             const ir::StateHandler::Summary &other) const {
@@ -2537,31 +2541,31 @@ class TypedIrLowerer final {
                        [this, &node_names, &reads](const ir::MemberAccessExpr &value) {
                            collect_workflow_value_reads(*value.base, node_names, reads);
                        },
-	                       [this, &node_names, &reads](const ir::IndexAccessExpr &value) {
-	                           collect_workflow_value_reads(*value.base, node_names, reads);
-	                           collect_workflow_value_reads(*value.index, node_names, reads);
-	                       },
-	                       [this, &node_names, &reads](const ir::MatchExpr &value) {
-	                           if (value.scrutinee) {
-	                               collect_workflow_value_reads(*value.scrutinee, node_names, reads);
-	                           }
-	                           for (const auto &arm : value.arms) {
-	                               if (arm.guard) {
-	                                   collect_workflow_value_reads(*arm.guard, node_names, reads);
-	                               }
-	                               if (arm.body) {
-	                                   collect_workflow_value_reads(*arm.body, node_names, reads);
-	                               }
-	                           }
-	                       },
-	                       [this, &node_names, &reads](const ir::UnwrapExpr &value) {
-	                           if (value.operand) {
-	                               collect_workflow_value_reads(*value.operand, node_names, reads);
-	                           }
-	                       },
-	                   },
-	                   expr.node);
-	    }
+                       [this, &node_names, &reads](const ir::IndexAccessExpr &value) {
+                           collect_workflow_value_reads(*value.base, node_names, reads);
+                           collect_workflow_value_reads(*value.index, node_names, reads);
+                       },
+                       [this, &node_names, &reads](const ir::MatchExpr &value) {
+                           if (value.scrutinee) {
+                               collect_workflow_value_reads(*value.scrutinee, node_names, reads);
+                           }
+                           for (const auto &arm : value.arms) {
+                               if (arm.guard) {
+                                   collect_workflow_value_reads(*arm.guard, node_names, reads);
+                               }
+                               if (arm.body) {
+                                   collect_workflow_value_reads(*arm.body, node_names, reads);
+                               }
+                           }
+                       },
+                       [this, &node_names, &reads](const ir::UnwrapExpr &value) {
+                           if (value.operand) {
+                               collect_workflow_value_reads(*value.operand, node_names, reads);
+                           }
+                       },
+                   },
+                   expr.node);
+    }
 
     [[nodiscard]] ir::WorkflowExprSummary
     summarize_workflow_expr(const ir::Expr &expr,
@@ -2607,9 +2611,8 @@ class TypedIrLowerer final {
                     if (value.scrutinee) {
                         collect_called_targets_from_expr(*value.scrutinee, s.called_targets);
                     }
-                    const auto then_summary =
-                        value.then_block ? summarize_block(*value.then_block)
-                                         : ir::StateHandler::Summary{};
+                    const auto then_summary = value.then_block ? summarize_block(*value.then_block)
+                                                               : ir::StateHandler::Summary{};
                     if (value.then_block) {
                         merge_flow_summary(s, then_summary);
                     }
@@ -3149,16 +3152,14 @@ class TypedIrLowerer final {
 
     [[nodiscard]] ir::FnDecl lower_impl_method(const ImplTypeInfo &impl,
                                                const ImplMethodInfo &method) const {
-        const auto synthetic_name =
-            "impl#" + std::to_string(impl.index) + "::" + method.name;
+        const auto synthetic_name = "impl#" + std::to_string(impl.index) + "::" + method.name;
 
         std::vector<std::string> type_param_names;
         type_param_names.reserve(impl.type_param_names.size() + method.type_param_names.size());
         type_param_names.insert(
             type_param_names.end(), impl.type_param_names.begin(), impl.type_param_names.end());
-        type_param_names.insert(type_param_names.end(),
-                                method.type_param_names.begin(),
-                                method.type_param_names.end());
+        type_param_names.insert(
+            type_param_names.end(), method.type_param_names.begin(), method.type_param_names.end());
 
         ir::FnDecl lowered = with_provenance(
             ir::FnDecl{
@@ -3198,10 +3199,13 @@ class TypedIrLowerer final {
 
         [[nodiscard]] friend bool operator==(const InstanceKey &lhs,
                                              const InstanceKey &rhs) noexcept {
-            if (lhs.symbol_value != rhs.symbol_value) return false;
-            if (lhs.type_args.size() != rhs.type_args.size()) return false;
+            if (lhs.symbol_value != rhs.symbol_value)
+                return false;
+            if (lhs.type_args.size() != rhs.type_args.size())
+                return false;
             for (std::size_t i = 0; i < lhs.type_args.size(); ++i) {
-                if (lhs.type_args[i] != rhs.type_args[i]) return false;
+                if (lhs.type_args[i] != rhs.type_args[i])
+                    return false;
             }
             return true;
         }
@@ -3212,14 +3216,20 @@ class TypedIrLowerer final {
             std::size_t h = k.symbol_value;
             for (const TypePtr t : k.type_args) {
                 const auto ptr_bits = reinterpret_cast<std::uintptr_t>(t);
-                h ^= static_cast<std::size_t>(ptr_bits) * 0x9e3779b97f4a7c15ULL +
-                     0x9e3779b9 + (h << 6) + (h >> 2);
+                h ^= static_cast<std::size_t>(ptr_bits) * 0x9e3779b97f4a7c15ULL + 0x9e3779b9 +
+                     (h << 6) + (h >> 2);
             }
             return h;
         }
     };
 
-    enum class InstanceBuildKind { Capability, Predicate, Agent, Workflow, Fn };
+    enum class InstanceBuildKind {
+        Capability,
+        Predicate,
+        Agent,
+        Workflow,
+        Fn
+    };
 
     struct InstanceBuildInfo {
         InstanceBuildKind kind{InstanceBuildKind::Capability};
@@ -3247,17 +3257,21 @@ class TypedIrLowerer final {
         // and only fall back to Capability / Predicate for user capability /
         // formal-predicate methods backed by the old paths.
         for (const auto &expr : typed_program_->expressions) {
-            if (expr.kind != ast::ExprSyntaxKind::Call) continue;
-            if (!expr.resolved_symbol.has_value()) continue;
+            if (expr.kind != ast::ExprSyntaxKind::Call)
+                continue;
+            if (!expr.resolved_symbol.has_value())
+                continue;
             // Only instantiate nominal call targets (Capability / Predicate /
             // stdlib method). Pure Builtin call_target_kind uses the runtime
             // builtin table and never produces an InstanceDecl.
-            if (expr.call_target_kind == TypedCallTargetKind::Builtin) continue;
+            if (expr.call_target_kind == TypedCallTargetKind::Builtin)
+                continue;
             // Stdlib methods only produce InstanceDecl when include_stdlib_ is set
             // (end-to-end evaluator tests); normally they come from the facade runtime.
             {
                 const auto sym = typed_program_->find_symbol(*expr.resolved_symbol);
-                if (!include_stdlib_ && sym.has_value() && sym->get().canonical_name.starts_with("std::")) {
+                if (!include_stdlib_ && sym.has_value() &&
+                    sym->get().canonical_name.starts_with("std::")) {
                     continue;
                 }
             }
@@ -3265,7 +3279,8 @@ class TypedIrLowerer final {
             std::vector<TypePtr> type_args;
             type_args.reserve(expr.children.size());
             for (const auto &child : expr.children) {
-                if (child.role != TypedExprChildRole::Argument) continue;
+                if (child.role != TypedExprChildRole::Argument)
+                    continue;
                 if (child.expr_index == UINT32_MAX ||
                     child.expr_index >= typed_program_->expressions.size()) {
                     type_args.push_back(nullptr);
@@ -3278,7 +3293,8 @@ class TypedIrLowerer final {
                 .symbol_value = static_cast<std::size_t>(expr.resolved_symbol->value),
                 .type_args = std::move(type_args),
             };
-            if (instances.contains(key)) continue;
+            if (instances.contains(key))
+                continue;
 
             InstanceBuildInfo info;
             info.symbol = *expr.resolved_symbol;
@@ -3320,22 +3336,26 @@ class TypedIrLowerer final {
 
         // --- Source 2: Fn call sites (top-level `fn` generic instantiations) -
         for (const auto &site : typed_program_->fn_call_sites) {
-            if (site.type_args.empty()) continue;
+            if (site.type_args.empty())
+                continue;
             // NOTE: SymbolId 0 is valid (first registered fn); only treat a
             // symbol as missing when its id fails to resolve in the program.
             const auto sym = typed_program_->find_symbol(site.fn_symbol);
-            if (!sym.has_value()) continue;
+            if (!sym.has_value())
+                continue;
             // Stdlib fns (`std::*` canonical prefix) keep the nominal
             // dispatch path and do not produce a user-facing InstanceDecl:
             // their bodies are sourced from the facade stdlib runtime and
             // indexed by canonical name in the RuntimeFunctionTable.
-            if (!include_stdlib_ && sym->get().canonical_name.starts_with("std::")) continue;
+            if (!include_stdlib_ && sym->get().canonical_name.starts_with("std::"))
+                continue;
 
             InstanceKey key{
                 .symbol_value = static_cast<std::size_t>(site.fn_symbol.value),
                 .type_args = site.type_args,
             };
-            if (instances.contains(key)) continue;
+            if (instances.contains(key))
+                continue;
 
             InstanceBuildInfo info;
             info.kind = InstanceBuildKind::Fn;
@@ -3349,9 +3369,11 @@ class TypedIrLowerer final {
         // --- Source 3: Workflow node agent targets ---------------------
         for (const auto &decl : typed_program_->declarations) {
             const auto *workflow = payload_as<WorkflowTypeInfo>(&decl);
-            if (workflow == nullptr) continue;
+            if (workflow == nullptr)
+                continue;
             for (const auto &node : workflow->nodes) {
-                if (node.target_symbol.value == 0) continue;
+                if (node.target_symbol.value == 0)
+                    continue;
 
                 const AgentTypeInfo *agent_info = find_agent_info(node.target_symbol);
                 std::vector<TypePtr> type_args;
@@ -3364,7 +3386,8 @@ class TypedIrLowerer final {
                     .symbol_value = static_cast<std::size_t>(node.target_symbol.value),
                     .type_args = std::move(type_args),
                 };
-                if (instances.contains(key)) continue;
+                if (instances.contains(key))
+                    continue;
 
                 InstanceBuildInfo info;
                 info.kind = InstanceBuildKind::Agent;
@@ -3379,28 +3402,31 @@ class TypedIrLowerer final {
         // --- Emit one InstanceDecl per unique key ----------------------
         const auto symbol_resolver = [this](SymbolId id) -> std::optional<std::string> {
             const auto sym = typed_program_->find_symbol(id);
-            if (!sym.has_value()) return std::nullopt;
+            if (!sym.has_value())
+                return std::nullopt;
             return sym->get().canonical_name;
         };
 
         std::vector<std::pair<InstanceKey, InstanceBuildInfo>> sorted_instances;
         sorted_instances.reserve(instances.size());
-        for (auto &[k, v] : instances) sorted_instances.emplace_back(k, v);
-        std::stable_sort(sorted_instances.begin(), sorted_instances.end(),
-                         [](const auto &lhs, const auto &rhs) {
-                             if (lhs.first.symbol_value != rhs.first.symbol_value) {
-                                 return lhs.first.symbol_value < rhs.first.symbol_value;
-                             }
-                             if (lhs.first.type_args.size() != rhs.first.type_args.size()) {
-                                 return lhs.first.type_args.size() < rhs.first.type_args.size();
-                             }
-                             for (std::size_t i = 0; i < lhs.first.type_args.size(); ++i) {
-                                 const auto a = reinterpret_cast<std::uintptr_t>(lhs.first.type_args[i]);
-                                 const auto b = reinterpret_cast<std::uintptr_t>(rhs.first.type_args[i]);
-                                 if (a != b) return a < b;
-                             }
-                             return false;
-                         });
+        for (auto &[k, v] : instances)
+            sorted_instances.emplace_back(k, v);
+        std::stable_sort(
+            sorted_instances.begin(), sorted_instances.end(), [](const auto &lhs, const auto &rhs) {
+                if (lhs.first.symbol_value != rhs.first.symbol_value) {
+                    return lhs.first.symbol_value < rhs.first.symbol_value;
+                }
+                if (lhs.first.type_args.size() != rhs.first.type_args.size()) {
+                    return lhs.first.type_args.size() < rhs.first.type_args.size();
+                }
+                for (std::size_t i = 0; i < lhs.first.type_args.size(); ++i) {
+                    const auto a = reinterpret_cast<std::uintptr_t>(lhs.first.type_args[i]);
+                    const auto b = reinterpret_cast<std::uintptr_t>(rhs.first.type_args[i]);
+                    if (a != b)
+                        return a < b;
+                }
+                return false;
+            });
 
         for (const auto &[key, info] : sorted_instances) {
             program_ir.declarations.push_back(build_instance_decl(info, symbol_resolver));
@@ -3409,7 +3435,8 @@ class TypedIrLowerer final {
 
     [[nodiscard]] const CapabilityTypeInfo *find_capability_info(SymbolId sym) const {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol != sym) continue;
+            if (decl.symbol != sym)
+                continue;
             if (const auto *info = payload_as<CapabilityTypeInfo>(&decl); info != nullptr) {
                 return info;
             }
@@ -3418,7 +3445,8 @@ class TypedIrLowerer final {
     }
     [[nodiscard]] const PredicateTypeInfo *find_predicate_info(SymbolId sym) const {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol != sym) continue;
+            if (decl.symbol != sym)
+                continue;
             if (const auto *info = payload_as<PredicateTypeInfo>(&decl); info != nullptr) {
                 return info;
             }
@@ -3427,7 +3455,8 @@ class TypedIrLowerer final {
     }
     [[nodiscard]] const AgentTypeInfo *find_agent_info(SymbolId sym) const {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol != sym) continue;
+            if (decl.symbol != sym)
+                continue;
             if (const auto *info = payload_as<AgentTypeInfo>(&decl); info != nullptr) {
                 return info;
             }
@@ -3436,7 +3465,8 @@ class TypedIrLowerer final {
     }
     [[nodiscard]] const WorkflowTypeInfo *find_workflow_info(SymbolId sym) const {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol != sym) continue;
+            if (decl.symbol != sym)
+                continue;
             if (const auto *info = payload_as<WorkflowTypeInfo>(&decl); info != nullptr) {
                 return info;
             }
@@ -3445,7 +3475,8 @@ class TypedIrLowerer final {
     }
     [[nodiscard]] const FnTypeInfo *find_fn_info(SymbolId sym) const {
         for (const auto &decl : typed_program_->declarations) {
-            if (decl.symbol != sym) continue;
+            if (decl.symbol != sym)
+                continue;
             if (const auto *info = payload_as<FnTypeInfo>(&decl); info != nullptr) {
                 return info;
             }
@@ -3490,8 +3521,8 @@ class TypedIrLowerer final {
         // Convert type_args to ir::TypeRef for IR inspection.
         decl.type_args.reserve(info.type_args.size());
         for (const TypePtr t : info.type_args) {
-            decl.type_args.push_back(type_ref_from_optional_type(
-                t, info.provenance_range, "instance type_arg"));
+            decl.type_args.push_back(
+                type_ref_from_optional_type(t, info.provenance_range, "instance type_arg"));
         }
 
         switch (info.kind) {
@@ -3499,9 +3530,10 @@ class TypedIrLowerer final {
             decl.kind = ir::InstanceKind::Capability;
             if (info.capability != nullptr) {
                 decl.params = lower_params(info.capability->params);
-                decl.return_type_ref = type_ref_from_optional_type(
-                    info.capability->return_type, info.capability->declaration_range,
-                    "capability instance return type");
+                decl.return_type_ref =
+                    type_ref_from_optional_type(info.capability->return_type,
+                                                info.capability->declaration_range,
+                                                "capability instance return type");
             }
             break;
         case InstanceBuildKind::Predicate:
@@ -3513,26 +3545,31 @@ class TypedIrLowerer final {
         case InstanceBuildKind::Agent:
             decl.kind = ir::InstanceKind::Agent;
             if (info.agent != nullptr) {
-                decl.agent_input_type_ref = type_ref_from_optional_type(
-                    info.agent->input_type, info.agent->input_type_range,
-                    "agent instance input type");
-                decl.agent_context_type_ref = type_ref_from_optional_type(
-                    info.agent->context_type, info.agent->context_type_range,
-                    "agent instance context type");
-                decl.agent_output_type_ref = type_ref_from_optional_type(
-                    info.agent->output_type, info.agent->output_type_range,
-                    "agent instance output type");
+                decl.agent_input_type_ref =
+                    type_ref_from_optional_type(info.agent->input_type,
+                                                info.agent->input_type_range,
+                                                "agent instance input type");
+                decl.agent_context_type_ref =
+                    type_ref_from_optional_type(info.agent->context_type,
+                                                info.agent->context_type_range,
+                                                "agent instance context type");
+                decl.agent_output_type_ref =
+                    type_ref_from_optional_type(info.agent->output_type,
+                                                info.agent->output_type_range,
+                                                "agent instance output type");
             }
             break;
         case InstanceBuildKind::Workflow:
             decl.kind = ir::InstanceKind::Workflow;
             if (info.workflow != nullptr) {
-                decl.workflow_input_type_ref = type_ref_from_optional_type(
-                    info.workflow->input_type, info.workflow->input_type_range,
-                    "workflow instance input type");
-                decl.workflow_output_type_ref = type_ref_from_optional_type(
-                    info.workflow->output_type, info.workflow->output_type_range,
-                    "workflow instance output type");
+                decl.workflow_input_type_ref =
+                    type_ref_from_optional_type(info.workflow->input_type,
+                                                info.workflow->input_type_range,
+                                                "workflow instance input type");
+                decl.workflow_output_type_ref =
+                    type_ref_from_optional_type(info.workflow->output_type,
+                                                info.workflow->output_type_range,
+                                                "workflow instance output type");
             }
             break;
         case InstanceBuildKind::Fn:
@@ -3540,8 +3577,7 @@ class TypedIrLowerer final {
             if (info.fn != nullptr) {
                 decl.params = lower_params(info.fn->params);
                 decl.return_type_ref = type_ref_from_optional_type(
-                    info.fn->return_type, info.fn->return_type_range,
-                    "fn instance return type");
+                    info.fn->return_type, info.fn->return_type_range, "fn instance return type");
             }
             break;
         }
@@ -3616,7 +3652,9 @@ ir::Program lower_typed_program(const TypedProgram &program, const ast::Program 
     return lower_typed_program_impl(program, &ast_program);
 }
 
-ir::Program lower_typed_program(const TypedProgram &program, const SourceGraph &source_graph, bool include_stdlib) {
+ir::Program lower_typed_program(const TypedProgram &program,
+                                const SourceGraph &source_graph,
+                                bool include_stdlib) {
     return lower_typed_program_impl(program, nullptr, &source_graph, include_stdlib);
 }
 

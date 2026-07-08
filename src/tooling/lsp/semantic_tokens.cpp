@@ -332,6 +332,9 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
             [&](const ast::IntType &) {
                 collect_primitive_type_token(type, source, tokens, "Int");
             },
+            [&](const ast::BoundedIntType &) {
+                collect_primitive_type_token(type, source, tokens, "Int");
+            },
             [&](const ast::FloatType &) {
                 collect_primitive_type_token(type, source, tokens, "Float");
             },

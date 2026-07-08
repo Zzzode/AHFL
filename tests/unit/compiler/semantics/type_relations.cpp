@@ -37,9 +37,8 @@ namespace {
                           std::vector{element});
 }
 
-[[nodiscard]] ahfl::TypePtr map_type(ahfl::TypeContext &tc,
-                                     ahfl::TypePtr key,
-                                     ahfl::TypePtr value) {
+[[nodiscard]] ahfl::TypePtr
+map_type(ahfl::TypeContext &tc, ahfl::TypePtr key, ahfl::TypePtr value) {
     return tc.struct_type(std::string{ahfl::stdlib_bridge::kMapType},
                           std::optional<ahfl::SymbolId>{},
                           std::vector{key, value});
@@ -56,6 +55,23 @@ TEST_CASE("type relations preserve bounded string subtyping") {
     CHECK(ahfl::is_subtype_of(*bounded, *string));
     CHECK(ahfl::is_subtype_of(*bounded, *wider));
     CHECK_FALSE(ahfl::is_subtype_of(*bounded, *narrower));
+}
+
+TEST_CASE("type relations preserve bounded Int subtyping") {
+    auto &tc = ahfl::TypeContext::global();
+    const auto int_type = tc.make(ahfl::TypeKind::Int);
+    const auto bounded = tc.bounded_int(-2, 2);
+    const auto same_bounds = tc.bounded_int(-2, 2);
+    const auto wider = tc.bounded_int(-10, 10);
+    const auto narrower = tc.bounded_int(-1, 1);
+
+    CHECK(bounded == same_bounds);
+    CHECK(ahfl::is_subtype_of(*bounded, *int_type));
+    CHECK_FALSE(ahfl::is_subtype_of(*int_type, *bounded));
+    CHECK(ahfl::is_subtype_of(*bounded, *wider));
+    CHECK_FALSE(ahfl::is_subtype_of(*bounded, *narrower));
+    CHECK(ahfl::are_types_equivalent(*bounded, *same_bounds));
+    CHECK_FALSE(ahfl::are_types_equivalent(*bounded, *wider));
 }
 
 TEST_CASE("type relations support covariant container element types") {
@@ -325,8 +341,7 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
     // Map<int, string> vs Map<string, string> → fails at key
     {
         TypeRelationContext ctx(opts);
-        const bool ok =
-            are_types_equivalent(*map_type(tc, i32, str), *map_type(tc, str, str), ctx);
+        const bool ok = are_types_equivalent(*map_type(tc, i32, str), *map_type(tc, str, str), ctx);
         CHECK_FALSE(ok);
         bool found_key = false, found_value = false;
         for (const auto &s : ctx.trace().steps) {
@@ -343,8 +358,7 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
     // Map<string, int> vs Map<string, string> → key matches, value fails
     {
         TypeRelationContext ctx(opts);
-        const bool ok =
-            are_types_equivalent(*map_type(tc, str, i32), *map_type(tc, str, str), ctx);
+        const bool ok = are_types_equivalent(*map_type(tc, str, i32), *map_type(tc, str, str), ctx);
         CHECK_FALSE(ok);
         bool found_value = false;
         for (const auto &s : ctx.trace().steps) {

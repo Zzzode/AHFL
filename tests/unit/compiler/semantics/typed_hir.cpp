@@ -869,7 +869,7 @@ const DurationEquivalent: Bool = 60s == 1m;
 TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR normalizes Set and Map const values") {
     const auto root = make_temp_project("const_normalize_project");
     const auto source_path = module_source_path(root, "typed::const_normalize");
-const std::string source = R"AHFL(
+    const std::string source = R"AHFL(
 module typed::const_normalize;
 import std::collections;
 
@@ -2422,9 +2422,8 @@ fn parse_id(s: String) -> Option<UUID> {
             saw_string_concat || symbol->get().canonical_name == "std::string::concat";
         saw_string_raw_length =
             saw_string_raw_length || symbol->get().canonical_name == "std::string::raw_length";
-        saw_string_raw_concat =
-            saw_string_raw_concat ||
-            symbol->get().canonical_name == "std::string::string_raw_concat";
+        saw_string_raw_concat = saw_string_raw_concat ||
+                                symbol->get().canonical_name == "std::string::string_raw_concat";
         saw_time = saw_time || symbol->get().canonical_name == "std::time::add";
         saw_uuid = saw_uuid || symbol->get().canonical_name == "std::uuid::parse";
     }
@@ -3205,8 +3204,7 @@ fn choose(v: Maybe) -> Int effect Pure decreases 0 {
     REQUIRE(fn->body != nullptr);
     REQUIRE_FALSE(fn->body->statements.empty());
 
-    const auto *if_let =
-        std::get_if<ahfl::ir::IfLetStatement>(&fn->body->statements.front()->node);
+    const auto *if_let = std::get_if<ahfl::ir::IfLetStatement>(&fn->body->statements.front()->node);
     REQUIRE(if_let != nullptr);
     REQUIRE(if_let->scrutinee != nullptr);
     REQUIRE(if_let->then_block != nullptr);
@@ -3234,9 +3232,8 @@ fn choose(v: Maybe) -> Int effect Pure decreases 0 {
 TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
     ahfl::TypeContext types;
     const auto int_type = types.make(ahfl::TypeKind::Int);
-    const auto maybe_type = types.enum_type("typed::mono_iflet::Maybe",
-                                            ahfl::SymbolId{1},
-                                            std::vector<ahfl::TypePtr>{int_type});
+    const auto maybe_type = types.enum_type(
+        "typed::mono_iflet::Maybe", ahfl::SymbolId{1}, std::vector<ahfl::TypePtr>{int_type});
 
     ahfl::TypedProgram program;
     program.declarations.push_back(ahfl::TypedDecl{
@@ -3294,9 +3291,7 @@ TEST_CASE("RFC 0011 monomorphization remaps statement pattern indexes") {
     });
 
     const auto result = ahfl::monomorphize_decl(
-        program,
-        0,
-        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
+        program, 0, ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{10}, .type_args = {int_type}});
 
     REQUIRE(result.status == ahfl::MonomorphizeStatus::Created);
     REQUIRE(result.instance_index < program.monomorphized_instances.size());
@@ -3467,11 +3462,12 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
     const auto root = make_temp_project("snapshot_project");
     const auto source_path = module_source_path(root, "typed::snapshot");
-const std::string source = R"AHFL(
+    const std::string source = R"AHFL(
 module typed::snapshot;
 import std::option;
 
 type Label = String;
+type TinyCode = Int(0, 255);
 const DefaultCode: Int = 200;
 
 struct Req { v: String; token: Optional<String> = std::option::Option::None; }
@@ -3592,6 +3588,27 @@ workflow RunWorker {
     CHECK(alias_info->local_name == "Label");
     REQUIRE(alias_info->aliased_type != nullptr);
     CHECK(alias_info->aliased_type->describe() == "String");
+
+    const auto tiny_code_symbol =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Types, "TinyCode", "typed::snapshot");
+    REQUIRE(tiny_code_symbol.has_value());
+    const auto tiny_code_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [&](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::TypeAliasDecl &&
+                                std::holds_alternative<ahfl::TypeAliasDeclInfo>(decl.payload) &&
+                                decl.symbol == tiny_code_symbol->get().id;
+                     });
+    REQUIRE(tiny_code_it != restored->declarations.end());
+    const auto *tiny_code_info = std::get_if<ahfl::TypeAliasDeclInfo>(&tiny_code_it->payload);
+    REQUIRE(tiny_code_info != nullptr);
+    REQUIRE(tiny_code_info->aliased_type != nullptr);
+    const auto *tiny_code_bounds = tiny_code_info->aliased_type->get_if<ahfl::types::BoundedIntT>();
+    REQUIRE(tiny_code_bounds != nullptr);
+    CHECK(tiny_code_bounds->minimum == 0);
+    CHECK(tiny_code_bounds->maximum == 255);
+    CHECK(tiny_code_info->aliased_type->describe() == "Int(0, 255)");
 
     auto worker_symbol =
         restored->find_local_symbol(ahfl::SymbolNamespace::Agents, "Worker", "typed::snapshot");
@@ -4217,7 +4234,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     // are exercised for parity and TypedProgram.blocks coverage.
     const auto root = make_temp_project("statement_parity_project");
     const auto source_path = module_source_path(root, "typed::statement_parity");
-const std::string source = R"AHFL(
+    const std::string source = R"AHFL(
 module typed::statement_parity;
 import std::option;
 
@@ -4345,7 +4362,7 @@ TEST_CASE_FIXTURE(TypedHIRFixture,
     // to carry non-trivial children_expr_index entries.
     const auto root = make_temp_project("statement_children_project");
     const auto source_path = module_source_path(root, "typed::statement_children");
-const std::string source = R"AHFL(
+    const std::string source = R"AHFL(
 module typed::statement_children;
 import std::option;
 

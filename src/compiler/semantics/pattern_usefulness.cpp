@@ -218,6 +218,9 @@ enumerate_domain(const PatternUsefulnessContext &context,
     if (domain.kind == PatternDomainKind::Open) {
         encountered_open_domain = true;
     }
+    if (domain.kind == PatternDomainKind::BoundedInt && domain.constructors.empty()) {
+        return std::nullopt;
+    }
 
     stack.push_back(domain_id);
     std::vector<PatternWitness> result;
@@ -486,6 +489,13 @@ analyze_bounded_int_intervals(const PatternUsefulnessContext &context,
                     .previous_range = previous.range,
                 });
             }
+        }
+
+        if (intervals.empty()) {
+            analysis.unreachable_rows.push_back(PatternUnreachableRow{
+                .row_index = row_index,
+                .range = current_range,
+            });
         }
 
         const auto uncovered = subtract_intervals(intervals, contributing_intervals);

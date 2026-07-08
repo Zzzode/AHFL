@@ -30,6 +30,11 @@ std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexc
     auto seed = std::hash<int>{}(static_cast<int>(key.kind));
     seed = hash_mix(seed, std::hash<std::string>{}(key.name));
     seed = hash_mix(seed, std::hash<std::string>{}(key.variant_name));
+    seed = hash_mix(seed, std::hash<bool>{}(key.int_bounds.has_value()));
+    if (key.int_bounds.has_value()) {
+        seed = hash_mix(seed, std::hash<std::int64_t>{}(key.int_bounds->first));
+        seed = hash_mix(seed, std::hash<std::int64_t>{}(key.int_bounds->second));
+    }
     seed = hash_mix(seed, std::hash<bool>{}(key.string_bounds.has_value()));
     if (key.string_bounds.has_value()) {
         seed = hash_mix(seed, std::hash<std::int64_t>{}(key.string_bounds->first));
@@ -88,6 +93,11 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
         return types::BoolT{};
     case TypeKind::Int:
         return types::IntT{};
+    case TypeKind::BoundedInt:
+        return types::BoundedIntT{
+            .minimum = key.int_bounds ? key.int_bounds->first : 0,
+            .maximum = key.int_bounds ? key.int_bounds->second : 0,
+        };
     case TypeKind::Float:
         return types::FloatT{};
     case TypeKind::String:
@@ -143,6 +153,7 @@ TypePtr TypeContext::make(TypeKind kind) {
         .kind = kind,
         .name = {},
         .variant_name = {},
+        .int_bounds = std::nullopt,
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .nominal_symbol = std::nullopt,
@@ -151,6 +162,18 @@ TypePtr TypeContext::make(TypeKind kind) {
 
 TypePtr TypeContext::error_type() {
     return make(TypeKind::Error);
+}
+
+TypePtr TypeContext::bounded_int(std::int64_t minimum, std::int64_t maximum) {
+    return intern(TypeKey{
+        .kind = TypeKind::BoundedInt,
+        .name = {},
+        .variant_name = {},
+        .int_bounds = std::make_pair(minimum, maximum),
+        .string_bounds = std::nullopt,
+        .decimal_scale = std::nullopt,
+        .nominal_symbol = std::nullopt,
+    });
 }
 
 TypePtr TypeContext::string() {
@@ -162,6 +185,7 @@ TypePtr TypeContext::bounded_string(std::int64_t minimum, std::int64_t maximum) 
         .kind = TypeKind::BoundedString,
         .name = {},
         .variant_name = {},
+        .int_bounds = std::nullopt,
         .string_bounds = std::make_pair(minimum, maximum),
         .decimal_scale = std::nullopt,
         .nominal_symbol = std::nullopt,
@@ -173,6 +197,7 @@ TypePtr TypeContext::decimal(std::int64_t scale) {
         .kind = TypeKind::Decimal,
         .name = {},
         .variant_name = {},
+        .int_bounds = std::nullopt,
         .string_bounds = std::nullopt,
         .decimal_scale = scale,
         .nominal_symbol = std::nullopt,
@@ -333,9 +358,8 @@ types::Payload TypeContext::build_fn_payload(const FnKey &key) {
     return fn;
 }
 
-TypePtr TypeContext::fn(std::vector<TypePtr> param_types,
-                        TypePtr return_type,
-                        EffectJudgement effect) {
+TypePtr
+TypeContext::fn(std::vector<TypePtr> param_types, TypePtr return_type, EffectJudgement effect) {
     return intern_fn(FnKey{
         .params = std::move(param_types),
         .return_type = return_type,

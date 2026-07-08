@@ -173,6 +173,7 @@ Type            ::= PrimitiveType
 PrimitiveType   ::= "Unit"
                   | "Bool"
                   | "Int"
+                  | "Int" "(" SignedIntLiteral "," SignedIntLiteral ")"
                   | "Float"
                   | "String"
                   | "String" "(" IntLiteral "," IntLiteral ")"
@@ -180,6 +181,8 @@ PrimitiveType   ::= "Unit"
                   | "Timestamp"
                   | "Duration"
                   | "Decimal" "(" IntLiteral ")" ;
+
+SignedIntLiteral ::= [ "-" ] IntLiteral ;
 
 NamedType       ::= QualifiedIdent [ "<" Type { "," Type } [ "," ] ">" ] ;
 ```
@@ -579,6 +582,7 @@ AHFL Core 的**源码可写值类型集合**记为 `T_surface`：
 Unit
 Bool
 Int
+Int(min, max)
 Float
 String
 String(min, max)
@@ -593,7 +597,8 @@ Qualified::Nominal<T...>
 
 其中：
 
-1. `String(min, max)` 是 `String` 的 refinement 形式
+1. `Int(min, max)` 是 `Int` 的闭区间 refinement 形式，`String(min, max)` 是
+   `String` 的 refinement 形式
 2. `Unit`、`Bool`、`Int`、`Float`、`String`、`UUID`、`Timestamp`、
    `Duration`、`Decimal` 是 language primitive prelude；它们不经过 ordinary
    name lookup，也不需要 `import`
@@ -684,8 +689,10 @@ type A = B
 
 仅允许以下真子类型：
 
-1. `String(m1, n1) <: String(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
-2. `String(m, n) <: String`
+1. `Int(m1, n1) <: Int(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
+2. `Int(m, n) <: Int`
+3. `String(m1, n1) <: String(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
+4. `String(m, n) <: String`
 
 除此之外，所有**名义泛型类型**（`struct<T...>` / `enum<T...>`）的子类型关系按其类型参数上声明的 **variance** 决定。variance 的完整设计（通过 trait 约束对每个泛型参数声明 `covariant` / `contravariant` / `invariant`）在 **PHASE B** 中落地。在当前阶段，以下 variance 对 stdlib 容器按名称硬编码生效，其余用户定义的名义泛型一律视为 invariant：
 
@@ -890,6 +897,9 @@ predicate 调用允许出现在：
    - `Float × Float -> Float`
    - `Decimal(p)` 仅允许与相同 `p` 的 `Decimal(p)` 做 `+`、`-`
    - `String + String -> String`
+   - `Int(min, max)` 不引入独立 arithmetic domain；当前运算符不执行
+     literal/refinement 推断，若需要保持值域约束，必须由未来 refinement
+     inference / verification 规则定义
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
    - `Decimal(p) * Decimal(p)`、`Decimal(p) / Decimal(p)` 未定义
 2. 比较运算：

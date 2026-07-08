@@ -24,6 +24,8 @@ namespace {
         return "bool";
     case TypeRefKind::Int:
         return "int";
+    case TypeRefKind::BoundedInt:
+        return "bounded_int";
     case TypeRefKind::Float:
         return "float";
     case TypeRefKind::String:

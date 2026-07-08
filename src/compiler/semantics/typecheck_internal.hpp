@@ -60,8 +60,8 @@ using ValueContext = ExpressionContext;
 }
 
 [[nodiscard]] inline bool is_numeric_type(const Type &type) noexcept {
-    return type.holds<types::IntT>() || type.holds<types::FloatT>() ||
-           type.holds<types::DecimalT>();
+    return type.holds<types::IntT>() || type.holds<types::BoundedIntT>() ||
+           type.holds<types::FloatT>() || type.holds<types::DecimalT>();
 }
 
 [[nodiscard]] inline MaybeCRef<Type> find_binding(const BindingMap &bindings,
@@ -648,11 +648,11 @@ class TypeCheckPass final {
     record_fn_call_site(SymbolId fn_symbol, SourceRange call_range, std::vector<TypePtr> type_args);
     [[nodiscard]] std::uint32_t append_typed_pattern(TypedPattern pattern);
     [[nodiscard]] const TypedPattern *typed_pattern(std::uint32_t index) const;
-    [[nodiscard]] ExpressionPatternLoweringResult lower_typed_pattern(
-        const ast::PatternSyntax &pattern,
-        TypePtr scrutinee_type,
-        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
-        internal::BindingMap &bindings);
+    [[nodiscard]] ExpressionPatternLoweringResult
+    lower_typed_pattern(const ast::PatternSyntax &pattern,
+                        TypePtr scrutinee_type,
+                        std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                        internal::BindingMap &bindings);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);

@@ -23,6 +23,7 @@ class TypeContext {
 
     [[nodiscard]] TypePtr make(TypeKind kind);
     [[nodiscard]] TypePtr error_type();
+    [[nodiscard]] TypePtr bounded_int(std::int64_t minimum, std::int64_t maximum);
     [[nodiscard]] TypePtr string();
     [[nodiscard]] TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum);
     [[nodiscard]] TypePtr decimal(std::int64_t scale);
@@ -30,9 +31,8 @@ class TypeContext {
     [[nodiscard]] TypePtr struct_type(std::string canonical_name);
     [[nodiscard]] TypePtr struct_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] TypePtr struct_type(std::string canonical_name, std::optional<SymbolId> symbol);
-    [[nodiscard]] TypePtr struct_type(std::string canonical_name,
-                                      SymbolId symbol,
-                                      std::vector<TypePtr> type_args);
+    [[nodiscard]] TypePtr
+    struct_type(std::string canonical_name, SymbolId symbol, std::vector<TypePtr> type_args);
     [[nodiscard]] TypePtr struct_type(std::string canonical_name,
                                       std::optional<SymbolId> symbol,
                                       std::vector<TypePtr> type_args);
@@ -40,9 +40,8 @@ class TypeContext {
     [[nodiscard]] TypePtr enum_type(std::string canonical_name);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, std::optional<SymbolId> symbol);
-    [[nodiscard]] TypePtr enum_type(std::string canonical_name,
-                                    SymbolId symbol,
-                                    std::vector<TypePtr> type_args);
+    [[nodiscard]] TypePtr
+    enum_type(std::string canonical_name, SymbolId symbol, std::vector<TypePtr> type_args);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name,
                                     std::optional<SymbolId> symbol,
                                     std::vector<TypePtr> type_args);
@@ -61,9 +60,8 @@ class TypeContext {
                                             std::optional<SymbolId> symbol,
                                             std::vector<TypePtr> type_args);
 
-    [[nodiscard]] TypePtr fn(std::vector<TypePtr> param_types,
-                             TypePtr return_type,
-                             EffectJudgement effect);
+    [[nodiscard]] TypePtr
+    fn(std::vector<TypePtr> param_types, TypePtr return_type, EffectJudgement effect);
 
     // P2 (RFC §5): create a named type variable. Used inside generic
     // declarations as a placeholder; substituted with a concrete type during
@@ -79,6 +77,7 @@ class TypeContext {
         TypeKind kind{TypeKind::Any};
         std::string name;
         std::string variant_name;
+        std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds;
         std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
         std::optional<std::int64_t> decimal_scale;
         std::optional<SymbolId> nominal_symbol;
@@ -121,8 +120,7 @@ class TypeContext {
         const Type *return_type{nullptr};
         EffectJudgement effect;
 
-        [[nodiscard]] friend bool operator==(const FnKey &lhs,
-                                             const FnKey &rhs) noexcept {
+        [[nodiscard]] friend bool operator==(const FnKey &lhs, const FnKey &rhs) noexcept {
             if (lhs.params.size() != rhs.params.size()) {
                 return false;
             }

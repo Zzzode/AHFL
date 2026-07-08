@@ -71,14 +71,14 @@ FORBIDDEN_DEPENDENCIES = {
 
 # --- ahfl::types::Payload variant shape gate (P5.4 / R-01) -------------------
 #
-# The Payload variant in semantics/types.hpp has a fixed cardinality of 18 and
+# The Payload variant in semantics/types.hpp has a fixed cardinality of 19 and
 # MUST NOT include the legacy composite sugar types OptionalT / ListT / SetT /
 # MapT. Composites are now encoded through nominal generics on StructT / EnumT.
 # This Python gate runs as a CTest (ahfl.architecture.boundaries) alongside the
 # compile-time static_assert gates in types.hpp so changes are rejected with a
 # crisp message in CI before the entire project is rebuilt.
 TYPES_HEADER = INCLUDE / "ahfl" / "compiler" / "semantics" / "types.hpp"
-EXPECTED_PAYLOAD_ARITY = 18
+EXPECTED_PAYLOAD_ARITY = 19
 FORBIDDEN_PAYLOAD_SUGARS = ("OptionalT", "ListT", "SetT", "MapT")
 ALLOWED_PAYLOAD_ALTERNATIVES = (
     "AnyT",
@@ -87,6 +87,7 @@ ALLOWED_PAYLOAD_ALTERNATIVES = (
     "UnitT",
     "BoolT",
     "IntT",
+    "BoundedIntT",
     "FloatT",
     "StringT",
     "BoundedStringT",

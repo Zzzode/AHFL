@@ -139,6 +139,7 @@ enum class TypeRefKind {
     Unit,
     Bool,
     Int,
+    BoundedInt,
     Float,
     String,
     BoundedString,
@@ -170,6 +171,7 @@ struct TypeRef {
     std::string display_name{};
     std::string canonical_name{};
     std::string variant_name{};
+    std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds{};
     std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds{};
     std::optional<std::int64_t> decimal_scale{};
     std::optional<SourceRange> source_range{};

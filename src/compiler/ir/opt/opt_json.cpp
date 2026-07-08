@@ -55,6 +55,8 @@ void write_string(std::ostream &out, std::string_view value) {
         return "bool";
     case TypeRefKind::Int:
         return "int";
+    case TypeRefKind::BoundedInt:
+        return "bounded_int";
     case TypeRefKind::Float:
         return "float";
     case TypeRefKind::String:
@@ -111,6 +113,12 @@ void print_type_ref(const TypeRef &type, std::ostream &out, int level) {
         indent(out, level + 1);
         out << "\"variant_name\": ";
         write_string(out, type.variant_name);
+    }
+    if (type.int_bounds.has_value()) {
+        out << ",\n";
+        indent(out, level + 1);
+        out << "\"int_bounds\": {\"min\": " << type.int_bounds->first
+            << ", \"max\": " << type.int_bounds->second << '}';
     }
     if (type.decimal_scale.has_value()) {
         out << ",\n";

@@ -269,8 +269,8 @@ bool equivalent_impl(const Type &lhs,
     const auto lhs_view = stdlib_bridge::std_container_type_view(lhs);
     if (lhs_view.has_value() && lhs_view->nominal && lhs_view->first != nullptr) {
         const auto rhs_view = stdlib_bridge::std_container_type_view(rhs);
-        if (rhs_view.has_value() && rhs_view->nominal &&
-            rhs_view->kind == lhs_view->kind && rhs_view->first != nullptr) {
+        if (rhs_view.has_value() && rhs_view->nominal && rhs_view->kind == lhs_view->kind &&
+            rhs_view->first != nullptr) {
             FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
             switch (lhs_view->kind) {
             case stdlib_bridge::StdContainerKind::Option:
@@ -311,6 +311,11 @@ bool equivalent_impl(const Type &lhs,
         [&](const types::UnitT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
         [&](const types::BoolT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
         [&](const types::IntT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::BoundedIntT &l) {
+            const auto *r = rhs.get_if<types::BoundedIntT>();
+            bool eq = r != nullptr && l.minimum == r->minimum && l.maximum == r->maximum;
+            return equivalent_leaf(lhs, rhs, ctx, path, eq);
+        },
         [&](const types::FloatT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
         [&](const types::StringT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
         [&](const types::UUIDT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
@@ -578,8 +583,7 @@ bool subtype_impl(const Type &source,
                 src_container->first != nullptr) {
                 const auto tgt_container = stdlib_bridge::std_container_type_view(target);
                 if (tgt_container.has_value() && tgt_container->nominal &&
-                    tgt_container->kind == src_container->kind &&
-                    tgt_container->first != nullptr) {
+                    tgt_container->kind == src_container->kind && tgt_container->first != nullptr) {
                     switch (src_container->kind) {
                     case stdlib_bridge::StdContainerKind::Option:
                     case stdlib_bridge::StdContainerKind::List:
@@ -618,11 +622,10 @@ bool subtype_impl(const Type &source,
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
                     return false;
                 }
-                if (!solver.solve(
-                        TypeRelationKind::Equivalent,
-                        *s->type_args[i],
-                        *t->type_args[i],
-                        join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *s->type_args[i],
+                                  *t->type_args[i],
+                                  join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
             }
@@ -659,11 +662,10 @@ bool subtype_impl(const Type &source,
                 if (s->type_args[i] == nullptr || t->type_args[i] == nullptr) {
                     return false;
                 }
-                if (!solver.solve(
-                        TypeRelationKind::Equivalent,
-                        *s->type_args[i],
-                        *t->type_args[i],
-                        join_path(path, "enum.type_args[" + std::to_string(i) + "]"))) {
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *s->type_args[i],
+                                  *t->type_args[i],
+                                  join_path(path, "enum.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
             }
@@ -744,6 +746,21 @@ bool subtype_impl(const Type &source,
         }
     }
 
+    // BoundedInt <: Int relaxation.
+    const auto *src_bi = source.get_if<types::BoundedIntT>();
+    if (src_bi != nullptr && target.holds<types::IntT>()) {
+        return subtype_leaf(source, target, ctx, join_path(path, "bounded-int->int"), true);
+    }
+
+    // BoundedInt covariance.
+    if (src_bi != nullptr) {
+        const auto *tgt_bi = target.get_if<types::BoundedIntT>();
+        if (tgt_bi != nullptr) {
+            bool ok = src_bi->minimum >= tgt_bi->minimum && src_bi->maximum <= tgt_bi->maximum;
+            return subtype_leaf(source, target, ctx, join_path(path, "bounded-int.bounds"), ok);
+        }
+    }
+
     // BoundedString <: String relaxation.
     const auto *src_bs = source.get_if<types::BoundedStringT>();
     const bool allow_bs = ctx == nullptr ? true : ctx->options().allow_bounded_string_relaxation;
@@ -763,12 +780,13 @@ bool subtype_impl(const Type &source,
     // Numeric widening (Int -> Float). Disabled by default; callers must
     // explicitly opt in for compatibility or non-source-level analyses.
     const bool allow_numeric = ctx == nullptr ? true : ctx->options().allow_numeric_widening;
-    if (allow_numeric && source.holds<types::IntT>() && target.holds<types::FloatT>()) {
+    const bool source_is_int_like = source.holds<types::IntT>() || src_bi != nullptr;
+    if (allow_numeric && source_is_int_like && target.holds<types::FloatT>()) {
         return subtype_leaf(source, target, ctx, join_path(path, "numeric.widen"), true);
     }
 
     // Int <: Decimal (numeric promotion).
-    if (allow_numeric && source.holds<types::IntT>() && target.holds<types::DecimalT>()) {
+    if (allow_numeric && source_is_int_like && target.holds<types::DecimalT>()) {
         return subtype_leaf(source, target, ctx, join_path(path, "numeric.int->decimal"), true);
     }
     // Decimal(s1) <: Decimal(s2) if s2 >= s1 (wider scale accepts narrower).

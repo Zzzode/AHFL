@@ -288,8 +288,8 @@ MaybeCRef<TraitTypeInfo> TypeEnvironment::find_trait(std::string_view canonical_
     return std::nullopt;
 }
 
-MaybeCRef<ImplTypeInfo>
-TypeEnvironment::resolve_trait_impl(SymbolId trait_symbol, SymbolId target_symbol) const {
+MaybeCRef<ImplTypeInfo> TypeEnvironment::resolve_trait_impl(SymbolId trait_symbol,
+                                                            SymbolId target_symbol) const {
     // P3 (RFC §2.1): walk the impl table for a trait impl matching the
     // (trait, target) symbol pair. Coherence guarantees at most one such impl
     // (the duplicate-trait-impl detector rejects the second), so the first
@@ -343,11 +343,15 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
         [](const types::UnitT &) { return std::string{"primitive:Unit"}; },
         [](const types::BoolT &) { return std::string{"primitive:Bool"}; },
         [](const types::IntT &) { return std::string{"primitive:Int"}; },
+        [](const types::BoundedIntT &v) {
+            return std::string{"primitive:BoundedInt:"} + std::to_string(v.minimum) + ":" +
+                   std::to_string(v.maximum);
+        },
         [](const types::FloatT &) { return std::string{"primitive:Float"}; },
         [](const types::StringT &) { return std::string{"primitive:String"}; },
         [](const types::BoundedStringT &v) {
-            return std::string{"primitive:BoundedString:"} +
-                   std::to_string(v.minimum) + ":" + std::to_string(v.maximum);
+            return std::string{"primitive:BoundedString:"} + std::to_string(v.minimum) + ":" +
+                   std::to_string(v.maximum);
         },
         [](const types::UUIDT &) { return std::string{"primitive:UUID"}; },
         [](const types::TimestampT &) { return std::string{"primitive:Timestamp"}; },
@@ -357,12 +361,12 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
         },
         // —— Nominal / compound types
         [](const types::StructT &s) {
-            return "struct:" + std::to_string(s.symbol.has_value() ? s.symbol->value : 0) +
-                   ":" + s.canonical_name + "<" + normalize_args_key(s.type_args) + ">";
+            return "struct:" + std::to_string(s.symbol.has_value() ? s.symbol->value : 0) + ":" +
+                   s.canonical_name + "<" + normalize_args_key(s.type_args) + ">";
         },
         [](const types::EnumT &e) {
-            return "enum:" + std::to_string(e.symbol.has_value() ? e.symbol->value : 0) +
-                   ":" + e.canonical_name + "<" + normalize_args_key(e.type_args) + ">";
+            return "enum:" + std::to_string(e.symbol.has_value() ? e.symbol->value : 0) + ":" +
+                   e.canonical_name + "<" + normalize_args_key(e.type_args) + ">";
         },
         [](const types::EnumVariantT &v) {
             return "enum_variant:" + v.canonical_name + "::" + v.variant_name + "<" +
@@ -370,12 +374,11 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
         },
         [](const types::FnT &f) {
             return "fn<" + normalize_args_key(f.params) + "->" +
-                   std::string{f.return_type ? normalize_type_key(*f.return_type) : std::string{"void"}} +
+                   std::string{f.return_type ? normalize_type_key(*f.return_type)
+                                             : std::string{"void"}} +
                    ">";
         },
-        [](const types::TypeVarT &v) {
-            return std::string{"type_var:"} + v.name;
-        },
+        [](const types::TypeVarT &v) { return std::string{"type_var:"} + v.name; },
         // Any, Never, Error already explicit above; this is a safety net.
         [&type](const auto &) { return std::string{"unknown:"} + type.describe(); },
     });
@@ -386,8 +389,7 @@ std::string TypeEnvironment::normalize_type_key(const Type &type) {
 // types normalize to the same key. The orphan-rule checker and the strict
 // coherence duplicate detector (build_impl_types) both route through this
 // function so the equivalence relation is defined exactly once.
-bool TypeEnvironment::impls_conflict_for_type(const ImplTypeInfo &lhs,
-                                              const ImplTypeInfo &rhs) {
+bool TypeEnvironment::impls_conflict_for_type(const ImplTypeInfo &lhs, const ImplTypeInfo &rhs) {
     if (lhs.is_inherent || rhs.is_inherent) {
         return false;
     }
@@ -409,9 +411,8 @@ bool TypeEnvironment::impls_conflict_for_type(const ImplTypeInfo &lhs,
 // the concrete type; the same normalized-type equivalence as
 // impls_conflict_for_type is used so the returned set is consistent with
 // both the orphan rule and the duplicate-impl detector.
-std::vector<ImplRef>
-TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
-                            const Type &concrete_type) const {
+std::vector<ImplRef> TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
+                                                 const Type &concrete_type) const {
     // Fast path: if impl_index_ is populated use the O(1) lookup rather than
     // rescanning impls_. Fall back to the linear scan when the index has not
     // been built (e.g. for environments constructed manually in tests).
@@ -452,8 +453,7 @@ TypeEnvironment::find_impls(std::optional<SymbolId> trait_symbol,
 // P3c.S5a: register a non-inherent impl into impl_index_ using its
 // (trait_symbol, normalized_type_key) pair. No-op for inherent impls or any
 // impl that does not carry a resolved trait symbol / target type.
-void TypeEnvironment::register_impl_index(std::size_t impl_index,
-                                          const ImplTypeInfo &info) {
+void TypeEnvironment::register_impl_index(std::size_t impl_index, const ImplTypeInfo &info) {
     if (info.is_inherent || !info.trait_symbol.has_value() || info.target_type == nullptr) {
         return;
     }
@@ -464,14 +464,14 @@ void TypeEnvironment::register_impl_index(std::size_t impl_index,
     impl_index_[key].push_back(impl_index);
 }
 
-std::vector<std::size_t>
-TypeEnvironment::lookup_impl_index(std::optional<SymbolId> trait_symbol,
-                                   const Type &concrete_type) const {
+std::vector<std::size_t> TypeEnvironment::lookup_impl_index(std::optional<SymbolId> trait_symbol,
+                                                            const Type &concrete_type) const {
     return lookup_impl_index_by_key(trait_symbol, normalize_type_key(concrete_type));
 }
 
-std::vector<std::size_t> TypeEnvironment::lookup_impl_index_by_key(
-    std::optional<SymbolId> trait_symbol, std::string_view normalized_type_key) const {
+std::vector<std::size_t>
+TypeEnvironment::lookup_impl_index_by_key(std::optional<SymbolId> trait_symbol,
+                                          std::string_view normalized_type_key) const {
     if (!trait_symbol.has_value()) {
         // No trait filter: scan all buckets whose normalized type key matches.
         std::vector<std::size_t> out;
@@ -537,6 +537,10 @@ namespace {
     seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->payload.index()));
 
     type->visit(types::Overloads{
+        [&](const types::BoundedIntT &b) {
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.minimum));
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.maximum));
+        },
         [&](const types::BoundedStringT &b) {
             seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.minimum));
             seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.maximum));
@@ -823,7 +827,8 @@ void dump_type_environment(const TypeEnvironment &environment,
                         out << " + ";
                     }
                     const auto super = environment.get_trait(info->get().super_traits[index]);
-                    out << (super.has_value() ? super->get().canonical_name : std::string{"<unknown>"});
+                    out << (super.has_value() ? super->get().canonical_name
+                                              : std::string{"<unknown>"});
                 }
             }
             out << " { " << info->get().methods.size() << " method(s), "
