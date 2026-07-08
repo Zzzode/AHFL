@@ -156,11 +156,13 @@ Rules:
 
 | Code | Meaning |
 | --- | --- |
-| `pattern.NON_EXHAUSTIVE_MATCH` | match does not cover all constructors |
-| `pattern.UNREACHABLE_ARM` | arm pattern is not useful after previous arms |
-| `pattern.REDUNDANT_OR_PATTERN` | an or-pattern alternative is shadowed |
-| `pattern.UNREACHABLE_IF_LET_ELSE` | if-let else branch is statically unreachable |
-| `pattern.INVALID_RANGE_PATTERN` | range pattern is malformed or not allowed for the type |
+| `typecheck.MATCH_MISSING_PATTERNS` | match does not cover all constructors or open-domain default witnesses |
+| `typecheck.MATCH_UNREACHABLE_ARM` | arm pattern is not useful after previous arms |
+| `typecheck.MATCH_OVERLAP` | arm pattern structurally overlaps a previous arm while still possibly contributing coverage |
+| `typecheck.MATCH_REDUNDANT_PATTERN` | an or-pattern alternative is shadowed |
+| `typecheck.UNREACHABLE_IF_LET_ELSE` | if-let else branch is statically unreachable |
+
+Range pattern syntax is not implemented yet, so this RFC does not reserve a stable `INVALID_RANGE_PATTERN` code. When range syntax is accepted, the range diagnostic must be added to `include/ahfl/base/support/diagnostics.hpp`, `docs/reference/error-codes.zh.md`, and this table in the same implementation slice.
 
 Diagnostics must include primary range, missing witness, related information pointing to prior covering arm when relevant, and LSP quick fix only when inserting a wildcard arm is source-safe.
 
@@ -226,11 +228,12 @@ Migration:
 15. `MATCH_MISSING_PATTERNS` structured witness diagnostic payload 已落库：base diagnostic JSON、LSP protocol diagnostic JSON 和 typecheck emission 都会保留 `missing_witnesses` 字段；LSP diagnostics 回归测试覆盖从真实 typechecker 诊断到 JSON-RPC 输出的结构化 witness 数据。
 16. 非 Bool open literal usefulness 已落库：Int / Float / String 类开放 payload domain 会保留 `_` 默认 witness，并把已出现 literal 降为 singleton constructor；`Some(1), None` 不再错误地证明 `Option<Int>` exhaustiveness，`Some(_)` 才覆盖开放剩余值，重复 literal 会继续产生 unreachable / overlap warning。
 17. match-arm narrowing consumer 已迁移到 typed pattern fact store：typechecker 先 lower match arm pattern root，再从 `TypedPatternKind::Variant` fact 派生 arm-local `FlowFacts`；普通 enum variant narrowing 和 std `Option::Some(_)` arm 内的 non-none narrowing 均不再从 AST spelling 单独推导。
+18. 当前已实现 pattern usefulness diagnostic taxonomy 已与代码和 `docs/reference/error-codes.zh.md` 对齐：稳定用户码保持在 `typecheck.MATCH_MISSING_PATTERNS`、`typecheck.MATCH_UNREACHABLE_ARM`、`typecheck.MATCH_OVERLAP`、`typecheck.MATCH_REDUNDANT_PATTERN` 和 `typecheck.UNREACHABLE_IF_LET_ELSE`；未实现的 range pattern 不预留 placeholder code。
 
 尚未完成：
 
 1. LSP pattern diagnostics 和未来 pattern binding 还没有全部统一消费 typed pattern fact store。
-2. range pattern、typed-pattern-driven LSP diagnostics，以及完整 pattern diagnostic taxonomy 的最终稳定化仍未实现。
+2. range pattern、typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
 
@@ -299,3 +302,4 @@ Stabilized exit criteria:
 - 2026-07-08: Promoted missing-pattern witnesses into structured diagnostic payloads (`Diagnostic.data["missing_witnesses"]`) and taught the LSP quick fix to prefer that stable data over user-facing message parsing.
 - 2026-07-08: Added symbolic open-domain literal usefulness for Int / Float / String payloads, including default `_` witnesses, literal singleton constructors and `Option<Int>` typecheck regressions for incomplete literal-only matches.
 - 2026-07-08: Migrated match-arm flow narrowing to consume the typed pattern root fact instead of re-deriving the selected variant from AST pattern syntax.
+- 2026-07-08: Aligned the RFC0011 diagnostic taxonomy with the shipped `typecheck.MATCH_*` / `typecheck.UNREACHABLE_IF_LET_ELSE` codes and removed the unimplemented range-code placeholder.
