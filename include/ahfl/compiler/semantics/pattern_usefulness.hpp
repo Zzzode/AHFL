@@ -86,6 +86,7 @@ struct PatternNode {
 struct PatternWitness {
     PatternConstructorId constructor;
     std::vector<PatternWitness> fields;
+    std::optional<std::int64_t> int_value;
 };
 
 class PatternUsefulnessContext {

@@ -240,17 +240,17 @@ Migration:
 26. Int range usefulness core 已落库：`PatternUsefulnessContext` 提供 ID-based `IntRange` pattern node，matrix matching 会在 open Int domain 中覆盖已枚举的离散 literal witness，同时保留 `_` 默认 witness，因此不会把无界 Int range 误判为穷尽；单元测试覆盖 range 覆盖、非 Int constructor 不匹配和反向 bounds fail-fast。
 27. Int range pattern source surface v1 已落库：grammar 接受 `-?INT_LITERAL..-?INT_LITERAL` pattern，frontend AST、formatter、semantic tokens、typechecker、typed-HIR serialization、match usefulness lowering、IR lowering/printing/JSON 和 runtime evaluator 都以一等 range pattern 处理；typecheck 回归覆盖 open Int payload 的默认 witness、range 覆盖 literal arm、反向 bounds 诊断和非 Int payload type mismatch。
 28. Signed Int range bounds 已落库：`signedIntegerPatternBound` 支持负数下界/上界，AST/formatter/semantic tokens/typed-HIR/IR/runtime evaluator 继续使用解析后的 `int64` range fact；matrix core 覆盖负数 constructor witness，source tests 覆盖 `-3..3` 和 `-1..-3`。
-29. Bounded Int domain matrix infrastructure 已落库：`PatternDomainKind::BoundedInt` 和 constructor-level `int_value` fact 让 range matching 不再从 debug string 反解析数值；matrix core 可在有限闭区间内用 range / singleton Int constructor 证明 exhaustiveness、生成具体 missing witness，并识别 range 覆盖后的 singleton unreachable row。当前这是 matrix 层接入点，尚未暴露为 AHFL source-level bounded integer type。
+29. Bounded Int domain matrix infrastructure 已落库：`PatternDomainKind::BoundedInt` 和 constructor-level `int_value` fact 让 range matching 不再从 debug string 反解析数值；小闭区间仍可 materialize singleton constructor witness，大闭区间会改用 normalized interval set，不枚举所有值也能证明 exhaustiveness、生成 inline Int missing witness、识别 overlap / unreachable interval row 和 redundant interval or-branch。当前这是 matrix 层接入点，尚未暴露为 AHFL source-level bounded integer type。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；source-level bounded integer type、较大数值区间的非枚举 interval set 表示，以及 Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；source-level bounded integer type 以及 Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
 
-1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default and Int range matching.
+1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching and bounded Int interval analysis.
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range and non-Int range mismatch.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
@@ -297,7 +297,7 @@ Stabilized exit criteria:
 ## Open Questions
 
 1. Should AHFL introduce or-pattern syntax before or after range pattern syntax?
-2. Should Int range exhaustiveness ever be complete for bounded integer types, or should all numeric domains remain open until bounded numeric types exist?
+2. Source-level bounded integer types should use which syntax and inference boundary before they are allowed to feed complete numeric domains into the matrix?
 3. Should missing witness rendering prefer fully-qualified module paths or imported local aliases?
 
 ## Decision History
@@ -323,6 +323,7 @@ Stabilized exit criteria:
 - 2026-07-08: Added LSP payload destructuring snippets for enum variant pattern completions when the client advertises snippet support.
 - 2026-07-08: Extended the `MATCH_UNREACHABLE_ARM` LSP quick fix to delete source-safe multi-line destructuring arms, including struct payload pattern arms.
 - 2026-07-08: Added an LSP quick fix for `UNREACHABLE_IF_LET_ELSE` that removes the source-safe unreachable else branch while preserving the then branch and following statements.
+- 2026-07-08: Added non-enumerated bounded Int interval analysis so large closed integer domains can prove usefulness and render representative missing witnesses without materializing every constructor.
 - 2026-07-08: Added an LSP quick fix for `MATCH_REDUNDANT_PATTERN` that removes a source-safe redundant or-pattern branch and its adjacent separator.
 - 2026-07-08: Added Int range support to the pattern usefulness matrix core. This is a non-syntax infrastructure slice: it matches enumerated Int literal witnesses conservatively while keeping open-domain default witnesses, and leaves parser/typechecker/LSP range-pattern surface work for the next slice.
 - 2026-07-08: Landed Int range pattern source surface v1 for `INT_LITERAL..INT_LITERAL`, including AST/formatter/semantic tokens/typecheck/typed-HIR/IR/runtime evaluator support and the stable `typecheck.INVALID_RANGE_PATTERN` diagnostic for reversed bounds.

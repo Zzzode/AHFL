@@ -383,12 +383,89 @@ TEST_CASE("bounded int range coverage makes later singleton unreachable") {
     CHECK(analysis.overlaps.front().previous_row_index == 0);
 }
 
-TEST_CASE("bounded int domain rejects invalid or oversized bounds") {
+TEST_CASE("bounded int domain rejects invalid bounds") {
     ahfl::PatternUsefulnessContext context;
     CHECK_THROWS_AS(static_cast<void>(context.add_bounded_int_domain(2, -2)),
                     std::invalid_argument);
-    CHECK_THROWS_AS(static_cast<void>(context.add_bounded_int_domain(0, 4096)),
-                    std::invalid_argument);
+}
+
+TEST_CASE("large bounded int domain proves exhaustive coverage without constructors") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(domain).constructors.empty());
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(0, 4999)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(5000, 10000)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witnesses.empty());
+    CHECK(analysis.unreachable_rows.empty());
+}
+
+TEST_CASE("large bounded int domain reports interval missing witness without constructors") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(domain).constructors.empty());
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(0, 4999)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(5001, 10000)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "5000");
+    REQUIRE(analysis.missing_witnesses.size() == 1);
+    CHECK(ahfl::render_pattern_witness(context, analysis.missing_witnesses.front()) == "5000");
+}
+
+TEST_CASE("large bounded int domain reports unreachable covered interval row") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(domain).constructors.empty());
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(0, 9000)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(42, 99)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(9001, 10000)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    REQUIRE(analysis.unreachable_rows.size() == 1);
+    CHECK(analysis.unreachable_rows.front().row_index == 1);
+    CHECK(analysis.unreachable_rows.front().covering_row_indices == std::vector<std::size_t>{0});
+    REQUIRE(analysis.overlaps.size() == 1);
+    CHECK(analysis.overlaps.front().row_index == 1);
+    CHECK(analysis.overlaps.front().previous_row_index == 0);
+}
+
+TEST_CASE("large bounded int domain reports redundant interval or-pattern branch") {
+    ahfl::PatternUsefulnessContext context;
+    const auto domain = context.add_bounded_int_domain(0, 10000);
+    CHECK(context.domain(domain).constructors.empty());
+
+    const auto broad = context.make_int_range_pattern(0, 10);
+    const auto duplicate_subset = context.make_int_range_pattern(5, 6);
+    const auto int_or = context.make_or_pattern({broad, duplicate_subset});
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = int_or},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(11, 10000)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, domain, rows);
+
+    CHECK(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    REQUIRE(analysis.redundant_or_branches.size() == 1);
+    CHECK(analysis.redundant_or_branches.front().row_index == 0);
+    CHECK(analysis.redundant_or_branches.front().or_pattern == int_or);
+    CHECK(analysis.redundant_or_branches.front().branch_index == 1);
 }
 
 TEST_CASE("open int range pattern rejects invalid bounds") {

@@ -1,11 +1,10 @@
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
 #include <algorithm>
-#include <charconv>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <stdexcept>
-#include <system_error>
 #include <utility>
 
 namespace ahfl {
@@ -24,6 +23,139 @@ struct WitnessEnumeration {
 };
 
 constexpr std::uint64_t kMaxMaterializedBoundedIntConstructors = 4096;
+constexpr PatternConstructorId kInlineIntWitnessConstructor{
+    std::numeric_limits<std::size_t>::max()};
+
+struct IntInterval {
+    std::int64_t start{0};
+    std::int64_t end{0};
+};
+
+struct IntIntervalRow {
+    std::size_t row_index{0};
+    SourceRange range;
+    std::vector<IntInterval> intervals;
+    bool contributes_to_exhaustiveness{true};
+};
+
+[[nodiscard]] PatternWitness make_inline_int_witness(std::int64_t value) {
+    return PatternWitness{
+        .constructor = kInlineIntWitnessConstructor,
+        .int_value = value,
+    };
+}
+
+[[nodiscard]] bool is_materializable_int_span(std::int64_t minimum, std::int64_t maximum) noexcept {
+    std::uint64_t count = 1;
+    for (auto cursor = minimum; cursor != maximum;) {
+        if (count >= kMaxMaterializedBoundedIntConstructors ||
+            cursor == std::numeric_limits<std::int64_t>::max()) {
+            return false;
+        }
+        ++cursor;
+        ++count;
+    }
+    return true;
+}
+
+[[nodiscard]] std::optional<IntInterval> intersect_interval(IntInterval lhs,
+                                                            IntInterval rhs) noexcept {
+    const IntInterval result{
+        .start = std::max(lhs.start, rhs.start),
+        .end = std::min(lhs.end, rhs.end),
+    };
+    if (result.start > result.end) {
+        return std::nullopt;
+    }
+    return result;
+}
+
+[[nodiscard]] std::vector<IntInterval> normalize_intervals(std::vector<IntInterval> intervals) {
+    if (intervals.empty()) {
+        return {};
+    }
+
+    std::sort(intervals.begin(), intervals.end(), [](IntInterval lhs, IntInterval rhs) {
+        if (lhs.start != rhs.start) {
+            return lhs.start < rhs.start;
+        }
+        return lhs.end < rhs.end;
+    });
+
+    std::vector<IntInterval> normalized;
+    normalized.reserve(intervals.size());
+    for (const auto interval : intervals) {
+        if (normalized.empty()) {
+            normalized.push_back(interval);
+            continue;
+        }
+
+        auto &last = normalized.back();
+        const bool adjacent =
+            last.end != std::numeric_limits<std::int64_t>::max() && interval.start == last.end + 1;
+        if (interval.start <= last.end || adjacent) {
+            last.end = std::max(last.end, interval.end);
+            continue;
+        }
+        normalized.push_back(interval);
+    }
+    return normalized;
+}
+
+[[nodiscard]] bool intervals_intersect(const std::vector<IntInterval> &lhs,
+                                       const std::vector<IntInterval> &rhs) noexcept {
+    std::size_t left = 0;
+    std::size_t right = 0;
+    while (left < lhs.size() && right < rhs.size()) {
+        if (lhs[left].end < rhs[right].start) {
+            ++left;
+            continue;
+        }
+        if (rhs[right].end < lhs[left].start) {
+            ++right;
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] std::vector<IntInterval> subtract_intervals(std::vector<IntInterval> candidate,
+                                                          const std::vector<IntInterval> &covered) {
+    candidate = normalize_intervals(std::move(candidate));
+    std::vector<IntInterval> remaining;
+    for (const auto interval : candidate) {
+        std::vector<IntInterval> fragments{interval};
+        for (const auto cover : covered) {
+            std::vector<IntInterval> next_fragments;
+            for (const auto fragment : fragments) {
+                const auto overlap = intersect_interval(fragment, cover);
+                if (!overlap.has_value()) {
+                    next_fragments.push_back(fragment);
+                    continue;
+                }
+                if (fragment.start < overlap->start) {
+                    next_fragments.push_back(IntInterval{
+                        .start = fragment.start,
+                        .end = static_cast<std::int64_t>(overlap->start - 1),
+                    });
+                }
+                if (overlap->end < fragment.end) {
+                    next_fragments.push_back(IntInterval{
+                        .start = static_cast<std::int64_t>(overlap->end + 1),
+                        .end = fragment.end,
+                    });
+                }
+            }
+            fragments = std::move(next_fragments);
+            if (fragments.empty()) {
+                break;
+            }
+        }
+        remaining.insert(remaining.end(), fragments.begin(), fragments.end());
+    }
+    return normalize_intervals(std::move(remaining));
+}
 
 [[nodiscard]] bool contains_domain(const std::vector<PatternDomainId> &stack,
                                    PatternDomainId id) noexcept {
@@ -174,12 +306,23 @@ enumerate_domain(const PatternUsefulnessContext &context,
     case PatternNodeKind::Wildcard:
         return true;
     case PatternNodeKind::Constructor:
-        if (!pattern.constructor.has_value() || *pattern.constructor != witness.constructor) {
+        if (!pattern.constructor.has_value()) {
             return false;
+        }
+        if (*pattern.constructor != witness.constructor) {
+            const auto &constructor = context.constructor(*pattern.constructor);
+            if (!witness.int_value.has_value() || !constructor.int_value.has_value() ||
+                witness.fields.size() != pattern.children.size() ||
+                *witness.int_value != *constructor.int_value) {
+                return false;
+            }
+            return matches_children(context, pattern.children, witness.fields, replacement);
         }
         return matches_children(context, pattern.children, witness.fields, replacement);
     case PatternNodeKind::IntRange: {
-        const auto value = context.constructor(witness.constructor).int_value;
+        const auto value = witness.int_value.has_value()
+                               ? witness.int_value
+                               : context.constructor(witness.constructor).int_value;
         return value.has_value() && pattern.int_range_start <= *value &&
                *value <= pattern.int_range_end;
     }
@@ -189,6 +332,53 @@ enumerate_domain(const PatternUsefulnessContext &context,
         });
     }
     return false;
+}
+
+[[nodiscard]] std::vector<IntInterval>
+pattern_intervals(const PatternUsefulnessContext &context,
+                  PatternId pattern_id,
+                  IntInterval domain_bounds,
+                  const std::optional<Replacement> &replacement) {
+    if (replacement.has_value() && replacement->or_pattern == pattern_id) {
+        return pattern_intervals(context, replacement->branch, domain_bounds, std::nullopt);
+    }
+
+    const auto &pattern = context.pattern(pattern_id);
+    switch (pattern.kind) {
+    case PatternNodeKind::Never:
+        return {};
+    case PatternNodeKind::Wildcard:
+        return {domain_bounds};
+    case PatternNodeKind::Constructor: {
+        if (!pattern.constructor.has_value()) {
+            return {};
+        }
+        const auto value = context.constructor(*pattern.constructor).int_value;
+        if (!value.has_value()) {
+            return {};
+        }
+        const auto interval =
+            intersect_interval(IntInterval{.start = *value, .end = *value}, domain_bounds);
+        return interval.has_value() ? std::vector<IntInterval>{*interval}
+                                    : std::vector<IntInterval>{};
+    }
+    case PatternNodeKind::IntRange: {
+        const auto interval = intersect_interval(
+            IntInterval{.start = pattern.int_range_start, .end = pattern.int_range_end},
+            domain_bounds);
+        return interval.has_value() ? std::vector<IntInterval>{*interval}
+                                    : std::vector<IntInterval>{};
+    }
+    case PatternNodeKind::Or: {
+        std::vector<IntInterval> intervals;
+        for (const auto branch : pattern.children) {
+            auto branch_intervals = pattern_intervals(context, branch, domain_bounds, replacement);
+            intervals.insert(intervals.end(), branch_intervals.begin(), branch_intervals.end());
+        }
+        return normalize_intervals(std::move(intervals));
+    }
+    }
+    return {};
 }
 
 using WitnessMatcher = std::function<bool(const PatternWitness &)>;
@@ -254,6 +444,125 @@ void collect_or_patterns(const PatternUsefulnessContext &context,
     return context.pattern(row.pattern).range;
 }
 
+[[nodiscard]] std::vector<IntInterval> merge_interval_sets(std::vector<IntInterval> lhs,
+                                                           const std::vector<IntInterval> &rhs) {
+    lhs.insert(lhs.end(), rhs.begin(), rhs.end());
+    return normalize_intervals(std::move(lhs));
+}
+
+[[nodiscard]] std::optional<PatternUsefulnessAnalysis>
+analyze_bounded_int_intervals(const PatternUsefulnessContext &context,
+                              PatternDomainId root_domain,
+                              const std::vector<PatternUsefulnessRow> &rows,
+                              PatternUsefulnessOptions options) {
+    const auto &domain = context.domain(root_domain);
+    if (domain.kind != PatternDomainKind::BoundedInt || !domain.int_bounds.has_value()) {
+        return std::nullopt;
+    }
+
+    const IntInterval domain_bounds{
+        .start = domain.int_bounds->minimum,
+        .end = domain.int_bounds->maximum,
+    };
+
+    PatternUsefulnessAnalysis analysis;
+    analysis.root_domain_is_finite = true;
+
+    std::vector<IntIntervalRow> contributing_rows;
+    std::vector<IntIntervalRow> previous_rows;
+    std::vector<IntInterval> contributing_intervals;
+
+    for (std::size_t row_index = 0; row_index < rows.size(); ++row_index) {
+        const auto &row = rows[row_index];
+        const auto current_range = row_range(context, row);
+        const auto intervals = pattern_intervals(context, row.pattern, domain_bounds, std::nullopt);
+
+        for (const auto &previous : previous_rows) {
+            if (intervals_intersect(intervals, previous.intervals)) {
+                analysis.overlaps.push_back(PatternOverlapRow{
+                    .row_index = row_index,
+                    .range = current_range,
+                    .previous_row_index = previous.row_index,
+                    .previous_range = previous.range,
+                });
+            }
+        }
+
+        const auto uncovered = subtract_intervals(intervals, contributing_intervals);
+        if (uncovered.empty() && !intervals.empty()) {
+            PatternUnreachableRow unreachable{
+                .row_index = row_index,
+                .range = current_range,
+            };
+            for (const auto &previous : contributing_rows) {
+                if (intervals_intersect(intervals, previous.intervals)) {
+                    unreachable.covering_row_indices.push_back(previous.row_index);
+                    unreachable.covering_row_ranges.push_back(previous.range);
+                }
+            }
+            analysis.unreachable_rows.push_back(std::move(unreachable));
+        }
+
+        std::vector<PatternId> or_patterns;
+        collect_or_patterns(context, row.pattern, or_patterns);
+        for (const auto or_pattern : or_patterns) {
+            const auto &or_node = context.pattern(or_pattern);
+            std::vector<IntInterval> previous_branch_intervals;
+            for (std::size_t branch_index = 0; branch_index < or_node.children.size();
+                 ++branch_index) {
+                const auto branch = or_node.children[branch_index];
+                const auto branch_intervals =
+                    pattern_intervals(context,
+                                      row.pattern,
+                                      domain_bounds,
+                                      Replacement{.or_pattern = or_pattern, .branch = branch});
+                auto previous_intervals =
+                    merge_interval_sets(contributing_intervals, previous_branch_intervals);
+                const auto branch_uncovered =
+                    subtract_intervals(branch_intervals, previous_intervals);
+                if (branch_uncovered.empty() && !branch_intervals.empty()) {
+                    analysis.redundant_or_branches.push_back(PatternRedundantOrBranch{
+                        .row_index = row_index,
+                        .or_pattern = or_pattern,
+                        .branch_index = branch_index,
+                        .branch_range = context.pattern(branch).range,
+                    });
+                }
+                previous_branch_intervals =
+                    merge_interval_sets(std::move(previous_branch_intervals), branch_intervals);
+            }
+        }
+
+        IntIntervalRow interval_row{
+            .row_index = row_index,
+            .range = current_range,
+            .intervals = intervals,
+            .contributes_to_exhaustiveness = row.contributes_to_exhaustiveness,
+        };
+        if (row.contributes_to_exhaustiveness) {
+            contributing_intervals = merge_interval_sets(contributing_intervals, intervals);
+            contributing_rows.push_back(interval_row);
+        }
+        previous_rows.push_back(std::move(interval_row));
+    }
+
+    const auto missing_intervals =
+        subtract_intervals(std::vector<IntInterval>{domain_bounds}, contributing_intervals);
+    for (const auto interval : missing_intervals) {
+        if (analysis.missing_witnesses.size() >= options.max_witnesses) {
+            analysis.witness_limit_exceeded = true;
+            break;
+        }
+        auto witness = make_inline_int_witness(interval.start);
+        if (!analysis.missing_witness.has_value()) {
+            analysis.missing_witness = witness;
+        }
+        analysis.missing_witnesses.push_back(std::move(witness));
+    }
+
+    return analysis;
+}
+
 } // namespace
 
 PatternDomainId PatternUsefulnessContext::add_domain(PatternDomainKind kind) {
@@ -268,17 +577,15 @@ PatternDomainId PatternUsefulnessContext::add_bounded_int_domain(std::int64_t mi
         throw std::invalid_argument("bounded int domain lower bound exceeds upper bound");
     }
 
-    const auto span = static_cast<std::uint64_t>(maximum) - static_cast<std::uint64_t>(minimum);
-    if (span >= kMaxMaterializedBoundedIntConstructors) {
-        throw std::invalid_argument(
-            "bounded int domain exceeds materialized witness constructor budget");
-    }
-
     const PatternDomainId id{domains_.size()};
     domains_.push_back(PatternDomain{
         .kind = PatternDomainKind::BoundedInt,
         .int_bounds = PatternIntBounds{.minimum = minimum, .maximum = maximum},
     });
+
+    if (!is_materializable_int_span(minimum, maximum)) {
+        return id;
+    }
 
     for (std::int64_t value = minimum;; ++value) {
         (void)add_int_constructor(id, value);
@@ -450,6 +757,11 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
     analysis.root_domain_is_finite = enumeration.finite;
     analysis.witness_limit_exceeded = enumeration.limit_exceeded;
     if (enumeration.witnesses.empty()) {
+        if (auto interval_analysis =
+                analyze_bounded_int_intervals(context, root_domain, rows, options);
+            interval_analysis.has_value()) {
+            return *interval_analysis;
+        }
         return analysis;
     }
 
@@ -565,6 +877,10 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
 
 std::string render_pattern_witness(const PatternUsefulnessContext &context,
                                    const PatternWitness &witness) {
+    if (witness.int_value.has_value()) {
+        return std::to_string(*witness.int_value);
+    }
+
     const auto &constructor = context.constructor(witness.constructor);
     std::string rendered = constructor.debug_name.empty()
                                ? "#" + std::to_string(witness.constructor.value)
