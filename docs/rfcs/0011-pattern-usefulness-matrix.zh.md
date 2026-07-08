@@ -235,6 +235,7 @@ Migration:
 22. LSP pattern payload signatureHelp v1 已落库：`textDocument/signatureHelp` 会优先检查 typed enum variant pattern payload 光标位置，并从 `EnumVariantInfo` 渲染 tuple payload 和 struct payload 的签名、参数标签与 active parameter；handler 回归测试覆盖 tuple payload 第二参数和 struct payload 字段位置。
 23. LSP unreachable-arm quick fix 已能跨多行 pattern/body source scan：删除 `MATCH_UNREACHABLE_ARM` 时不再要求 arm 的 pattern 与 `=>` 在同一行，可完整删除多行 struct payload destructuring arm，同时保留前后 match arms。
 24. LSP if-let usefulness quick fix 已落库：`typecheck.UNREACHABLE_IF_LET_ELSE` 现在可从诊断指向的 else block 反向定位 `else` keyword，source-safe 删除整个不可达 `else { ... }` 分支，同时保留 then block 和后续 statement。
+25. LSP redundant or-pattern quick fix 已落库：`typecheck.MATCH_REDUNDANT_PATTERN` 可在诊断 range 对应单行 source-safe or-pattern branch 时删除冗余分支及相邻 `|` 分隔符，例如把 `Some(true | true)` 修正为 `Some(true)`。
 
 尚未完成：
 
@@ -247,7 +248,7 @@ Migration:
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern and invalid range.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
-5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, payload completion snippets and pattern payload signatureHelp.
+5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets and pattern payload signatureHelp.
 6. Regression tests proving RFC 0001 enum payload and RFC 0002 optional narrowing behavior remain stable.
 
 ## Rollout and Stabilization
@@ -316,3 +317,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added LSP payload destructuring snippets for enum variant pattern completions when the client advertises snippet support.
 - 2026-07-08: Extended the `MATCH_UNREACHABLE_ARM` LSP quick fix to delete source-safe multi-line destructuring arms, including struct payload pattern arms.
 - 2026-07-08: Added an LSP quick fix for `UNREACHABLE_IF_LET_ELSE` that removes the source-safe unreachable else branch while preserving the then branch and following statements.
+- 2026-07-08: Added an LSP quick fix for `MATCH_REDUNDANT_PATTERN` that removes a source-safe redundant or-pattern branch and its adjacent separator.

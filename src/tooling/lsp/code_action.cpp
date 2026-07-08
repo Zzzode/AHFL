@@ -119,6 +119,7 @@ constexpr std::string_view kCodeUnusedImport = "lint.UNUSED_IMPORT";
 constexpr std::string_view kCodeWrongArity = "typecheck.WRONG_ARITY";
 constexpr std::string_view kCodeMatchMissingPatterns = "typecheck.MATCH_MISSING_PATTERNS";
 constexpr std::string_view kCodeMatchUnreachableArm = "typecheck.MATCH_UNREACHABLE_ARM";
+constexpr std::string_view kCodeMatchRedundantPattern = "typecheck.MATCH_REDUNDANT_PATTERN";
 constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF_LET_ELSE";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
@@ -921,6 +922,79 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
+[[nodiscard]] bool horizontal_space(char c) noexcept {
+    return c == ' ' || c == '\t';
+}
+
+[[nodiscard]] std::optional<Range> find_redundant_or_branch_range(const std::string &source,
+                                                                  const LspDiagnostic &diag) {
+    if (diag.range.start.line != diag.range.end.line) {
+        return std::nullopt;
+    }
+    const auto start = position_to_offset(source, diag.range.start);
+    const auto end = position_to_offset(source, diag.range.end);
+    if (start >= end || end > source.size()) {
+        return std::nullopt;
+    }
+    if (!source_safe_pattern_fragment(std::string_view(source).substr(start, end - start))) {
+        return std::nullopt;
+    }
+
+    const auto line_start = line_start_offset(source, diag.range.start.line);
+    auto line_end = source.find('\n', line_start);
+    if (line_end == std::string::npos) {
+        line_end = source.size();
+    }
+
+    std::size_t left = start;
+    while (left > line_start && horizontal_space(source[left - 1])) {
+        --left;
+    }
+    if (left > line_start && source[left - 1] == '|') {
+        std::size_t delete_start = left - 1;
+        while (delete_start > line_start && horizontal_space(source[delete_start - 1])) {
+            --delete_start;
+        }
+        return Range{offset_to_position(source, delete_start), offset_to_position(source, end)};
+    }
+
+    std::size_t right = end;
+    while (right < line_end && horizontal_space(source[right])) {
+        ++right;
+    }
+    if (right < line_end && source[right] == '|') {
+        std::size_t delete_end = right + 1;
+        while (delete_end < line_end && horizontal_space(source[delete_end])) {
+            ++delete_end;
+        }
+        return Range{offset_to_position(source, start), offset_to_position(source, delete_end)};
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_match_redundant_pattern(
+    const std::string &source, const LspDiagnostic &diag) {
+    auto branch_range = find_redundant_or_branch_range(source, diag);
+    if (!branch_range.has_value()) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range = *branch_range;
+    edit.new_text = "";
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Remove redundant pattern branch";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 [[nodiscard]] std::optional<Range> find_if_let_else_branch_range(const std::string &source,
                                                                  const LspDiagnostic &diag) {
     const auto diag_start = position_to_offset(source, diag.range.start);
@@ -1249,6 +1323,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeMatchUnreachableArm) {
             if (auto a = qf_match_unreachable_arm(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeMatchRedundantPattern) {
+            if (auto a = qf_match_redundant_pattern(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeUnreachableIfLetElse) {
