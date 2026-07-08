@@ -535,6 +535,118 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     return source.substr(indent_start, cursor - indent_start);
 }
 
+[[nodiscard]] std::string trim_copy(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\n' ||
+                             text.front() == '\r')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\n' ||
+                             text.back() == '\r')) {
+        text.remove_suffix(1);
+    }
+    return std::string(text);
+}
+
+[[nodiscard]] bool source_safe_pattern_fragment(std::string_view pattern) noexcept {
+    if (pattern.empty()) {
+        return false;
+    }
+    if (pattern.find("=>") != std::string_view::npos) {
+        return false;
+    }
+    return std::none_of(
+        pattern.begin(), pattern.end(), [](char c) { return c == '\n' || c == '\r' || c == ';'; });
+}
+
+[[nodiscard]] std::vector<std::string> extract_missing_pattern_witnesses(std::string_view message) {
+    constexpr std::string_view kPrefix = "missing patterns [";
+    constexpr std::size_t kMaxExactWitnessArms = 16;
+
+    const auto start = message.find(kPrefix);
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    const auto body_start = start + kPrefix.size();
+    const auto body_end = message.rfind(']');
+    if (body_end == std::string_view::npos || body_end <= body_start) {
+        return {};
+    }
+
+    const auto body = message.substr(body_start, body_end - body_start);
+    std::vector<std::string> witnesses;
+    std::size_t segment_start = 0;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int bracket_depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (std::size_t index = 0; index <= body.size(); ++index) {
+        const bool at_end = index == body.size();
+        const char c = at_end ? '\0' : body[index];
+
+        if (!at_end && in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (!at_end && c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (!at_end) {
+            if (c == '(') {
+                ++paren_depth;
+            } else if (c == ')' && paren_depth > 0) {
+                --paren_depth;
+            } else if (c == '{') {
+                ++brace_depth;
+            } else if (c == '}' && brace_depth > 0) {
+                --brace_depth;
+            } else if (c == '[') {
+                ++bracket_depth;
+            } else if (c == ']' && bracket_depth > 0) {
+                --bracket_depth;
+            }
+        }
+
+        const bool split =
+            at_end || (c == ',' && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0);
+        if (!split) {
+            continue;
+        }
+
+        auto witness = trim_copy(body.substr(segment_start, index - segment_start));
+        if (!source_safe_pattern_fragment(witness)) {
+            return {};
+        }
+        witnesses.push_back(std::move(witness));
+        if (witnesses.size() > kMaxExactWitnessArms) {
+            return {};
+        }
+        segment_start = index + 1;
+    }
+
+    return witnesses;
+}
+
+[[nodiscard]] std::string missing_match_arms_text(const std::vector<std::string> &patterns,
+                                                  std::string_view arm_indent,
+                                                  std::string_view close_indent) {
+    std::string text;
+    for (const auto &pattern : patterns) {
+        text += arm_indent;
+        text += pattern;
+        text += " => <TODO>,\n";
+    }
+    text += close_indent;
+    return text;
+}
+
 [[nodiscard]] std::optional<CodeAction> qf_match_missing_patterns(const std::string &source,
                                                                   const LspDiagnostic &diag) {
     const auto close = find_match_close_brace(source, diag.range);
@@ -551,23 +663,34 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     const auto close_indent = close_line_prefix_is_indent ? std::string(line_prefix)
                                                           : line_indent_at_offset(source, *close);
     const auto arm_indent = close_indent + "    ";
+    auto patterns = extract_missing_pattern_witnesses(diag.message);
+    const bool exact = !patterns.empty();
+    if (!exact) {
+        patterns = {"_"};
+    }
 
     TextEdit edit;
     if (close_line_prefix_is_indent) {
         edit.range.start = offset_to_position(source, close_line_start);
         edit.range.end = close_position;
-        edit.new_text = arm_indent + "_ => <TODO>,\n" + close_indent;
+        edit.new_text = missing_match_arms_text(patterns, arm_indent, close_indent);
     } else {
         edit.range.start = close_position;
         edit.range.end = close_position;
-        edit.new_text = "\n" + arm_indent + "_ => <TODO>,\n" + close_indent;
+        edit.new_text = "\n" + missing_match_arms_text(patterns, arm_indent, close_indent);
     }
 
     WorkspaceEdit ws_edit;
     ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
 
     CodeAction action;
-    action.title = "Insert wildcard match arm";
+    if (exact && patterns.size() == 1) {
+        action.title = "Insert missing match arm";
+    } else if (exact) {
+        action.title = "Insert missing match arms";
+    } else {
+        action.title = "Insert wildcard match arm";
+    }
     action.kind = CodeActionKind::QuickFix;
     action.is_preferred = true;
     action.diagnostics = {diag};

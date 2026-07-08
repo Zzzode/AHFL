@@ -221,13 +221,13 @@ Migration:
 10. `match_exhaustiveness` matrix consumer 已迁移到 typed pattern root rows：typechecker 传递每个 match arm 的 `TypedProgram::patterns` root index、source range 和 guard exhaustiveness flag，matrix analyzer 从 typed pattern flat store lowering 到 constructor matrix，不再为常规 typed match 重新从 AST pattern lower 一套局部结构。
 11. `if let` statement 的 typed pattern fact 已落库：typechecker 会把 `if let` 根 pattern 写入 `TypedProgram::patterns`，并在 `TypedStatement::pattern_index` 记录 root index；typed HIR JSON round-trip 和 monomorphization remap 已覆盖该 statement-local pattern reference。
 12. `if let` 的第一条 usefulness consumer 已落库：typechecker 使用同一个 typed-row matrix analyzer 判断 `if let` pattern 是否覆盖 enum 全部 constructor，并在 `else` 分支不可达时发出 `typecheck.UNREACHABLE_IF_LET_ELSE` warning；单 constructor / 多 constructor enum 回归测试已覆盖。
-13. LSP wildcard quick fix v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 可提供 `Insert wildcard match arm` quick fix，在能可靠定位 `match { ... }` closing brace 时插入 `_ => <TODO>,` fallback arm；handler 单元测试覆盖编辑位置和 quickfix metadata。
+13. LSP missing-pattern quick fix v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 可从当前诊断 message 的 rendered witness list 插入具体 missing arms（例如 `B => <TODO>,` 或 `Data { flag: false, other: false } => <TODO>,`），并在 witness 不可安全提取时保留 `_ => <TODO>,` wildcard fallback；handler 单元测试覆盖编辑位置、struct witness 字段逗号解析、fallback 和 quickfix metadata。
 14. `if let` narrowing consumer 已迁移到 typed pattern fact store：typechecker 从 `TypedStatement::pattern_index` 指向的 `TypedProgram::patterns` root 派生 then/else `FlowFacts` 和 branch-local payload bindings，保留 RFC 0002 Option narrowing 行为，同时避免 flow narrowing 再从 AST pattern 重新推导一套并行语义。
 
 尚未完成：
 
 1. optional narrowing、LSP pattern diagnostics 和未来 pattern binding 还没有全部统一消费 typed pattern fact store。
-2. 非 Bool 的 open literal usefulness、range pattern、基于具体 witness/enum variant 的精确 LSP quick fixes，以及完整 pattern diagnostic taxonomy 的最终稳定化仍未实现。
+2. 非 Bool 的 open literal usefulness、range pattern、结构化 witness diagnostic payload、typed-pattern-driven LSP diagnostics，以及完整 pattern diagnostic taxonomy 的最终稳定化仍未实现。
 
 ## Test Plan
 
@@ -292,3 +292,4 @@ Stabilized exit criteria:
 - 2026-07-08: Routed `if let` unreachable-else diagnostics through the typed pattern matrix consumer and documented `typecheck.UNREACHABLE_IF_LET_ELSE` as the first if-let usefulness diagnostic.
 - 2026-07-08: Added the first LSP pattern quick fix: `MATCH_MISSING_PATTERNS` can insert a wildcard match arm when the affected match block is source-locatable.
 - 2026-07-08: Migrated `if let` flow narrowing and payload binding introduction to consume `TypedProgram::patterns`, making the statement's narrowing behavior use the same typed pattern evidence as usefulness diagnostics.
+- 2026-07-08: Upgraded the LSP `MATCH_MISSING_PATTERNS` quick fix to insert rendered missing witness arms when the diagnostic message exposes a source-safe witness list, while keeping wildcard fallback for unsafe or unstructured diagnostics.

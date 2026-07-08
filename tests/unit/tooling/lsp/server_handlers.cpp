@@ -7997,7 +7997,7 @@ void test_code_action_qf_agent_context() {
           "codeAction.qf_ctx.insertion_between_input_and_output");
 }
 
-void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
+void test_code_action_qf_match_missing_patterns_inserts_witness_arm() {
     const std::string source = "module lsp::match_qf;\n"
                                "enum E { A, B }\n"
                                "fn f(e: E) -> Int effect Pure decreases 0 {\n"
@@ -8017,7 +8017,7 @@ void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
 
     const CodeAction *qf = nullptr;
     for (const auto &action : actions) {
-        if (action.title.find("wildcard match arm") != std::string::npos) {
+        if (action.title == "Insert missing match arm") {
             qf = &action;
             break;
         }
@@ -8026,7 +8026,7 @@ void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
     if (qf == nullptr)
         return;
 
-    check(qf->title == "Insert wildcard match arm", "codeAction.qf_match_missing.title");
+    check(qf->title == "Insert missing match arm", "codeAction.qf_match_missing.title");
     check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_match_missing.kind_is_quickfix");
     check(qf->is_preferred, "codeAction.qf_match_missing.marked_preferred");
     check(qf->edit.has_value(), "codeAction.qf_match_missing.has_workspace_edit");
@@ -8034,13 +8034,14 @@ void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
         return;
 
     std::size_t total_edits = 0;
-    bool found_wildcard_arm = false;
+    bool found_witness_arm = false;
     bool replaces_closing_indent = false;
     for (const auto &[uri_key, edits] : qf->edit->changes) {
         total_edits += edits.size();
         for (const auto &edit : edits) {
-            if (edit.new_text.find("_ => <TODO>,") != std::string::npos) {
-                found_wildcard_arm = true;
+            if (edit.new_text.find("B => <TODO>,") != std::string::npos &&
+                edit.new_text.find("_ => <TODO>,") == std::string::npos) {
+                found_witness_arm = true;
             }
             if (edit.range.start.line == 5 && edit.range.start.character == 0 &&
                 edit.range.end.line == 5 && edit.range.end.character == 4) {
@@ -8049,8 +8050,98 @@ void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
         }
     }
     check(total_edits == 1, "codeAction.qf_match_missing.single_text_edit");
-    check(found_wildcard_arm, "codeAction.qf_match_missing.inserts_wildcard_arm");
+    check(found_witness_arm, "codeAction.qf_match_missing.inserts_witness_arm");
     check(replaces_closing_indent, "codeAction.qf_match_missing.replaces_closing_indent");
+}
+
+void test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "fn f(x: Int) -> Int effect Pure decreases 0 {\n"
+                               "    return match x {\n"
+                               "        _ => 1,\n"
+                               "    };\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_MISSING_PATTERNS";
+    diag.severity = DiagnosticSeverity::Error;
+    diag.message =
+        "non-exhaustive match: missing patterns [Data { flag: false, other: false }, Empty]";
+    diag.range = Range{Position{2, 11}, Position{4, 5}};
+
+    const Range cursor_range{Position{2, 11}, Position{2, 16}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Insert missing match arms") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_missing_struct.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    bool found_struct_witness = false;
+    bool found_second_witness = false;
+    bool avoided_field_split = true;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        for (const auto &edit : edits) {
+            found_struct_witness =
+                found_struct_witness ||
+                edit.new_text.find("Data { flag: false, other: false } => <TODO>,") !=
+                    std::string::npos;
+            found_second_witness =
+                found_second_witness || edit.new_text.find("Empty => <TODO>,") != std::string::npos;
+            avoided_field_split =
+                avoided_field_split &&
+                edit.new_text.find("other: false => <TODO>,") == std::string::npos;
+        }
+    }
+    check(found_struct_witness, "codeAction.qf_match_missing_struct.inserts_struct_witness");
+    check(found_second_witness, "codeAction.qf_match_missing_struct.inserts_second_witness");
+    check(avoided_field_split, "codeAction.qf_match_missing_struct.does_not_split_fields");
+}
+
+void test_code_action_qf_match_missing_patterns_falls_back_to_wildcard() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "enum E { A, B }\n"
+                               "fn f(e: E) -> Int effect Pure decreases 0 {\n"
+                               "    return match e {\n"
+                               "        A => 1,\n"
+                               "    };\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_MISSING_PATTERNS";
+    diag.severity = DiagnosticSeverity::Error;
+    diag.message = "non-exhaustive match";
+    diag.range = Range{Position{3, 11}, Position{5, 5}};
+
+    const Range cursor_range{Position{3, 11}, Position{3, 16}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Insert wildcard match arm") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_missing_fallback.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    bool found_wildcard_arm = false;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        for (const auto &edit : edits) {
+            if (edit.new_text.find("_ => <TODO>,") != std::string::npos) {
+                found_wildcard_arm = true;
+            }
+        }
+    }
+    check(found_wildcard_arm, "codeAction.qf_match_missing_fallback.inserts_wildcard_arm");
 }
 
 // Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
@@ -8408,7 +8499,9 @@ int main() {
     test_code_action_qf_duplicate_struct_related_navigation();
     test_code_action_qf_unused_import_text_edit();
     test_code_action_qf_wrong_arity_placeholder();
-    test_code_action_qf_match_missing_patterns_inserts_wildcard_arm();
+    test_code_action_qf_match_missing_patterns_inserts_witness_arm();
+    test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields();
+    test_code_action_qf_match_missing_patterns_falls_back_to_wildcard();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
     test_hover_struct_literal_shows_construct_summary();
