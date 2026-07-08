@@ -76,18 +76,19 @@ public:
     RuleAndExpr = 110, RuleEqualityExpr = 111, RuleCompareExpr = 112, RuleAddExpr = 113,
     RuleMulExpr = 114, RuleUnaryExpr = 115, RulePostfixExpr = 116, RulePrimaryExpr = 117,
     RuleUnwrapExpr = 118, RuleMatchExpr = 119, RuleMatchArm = 120, RulePattern = 121,
-    RuleOrPattern = 122, RuleConcatPattern = 123, RuleLiteralPattern = 124,
-    RuleVariantPattern = 125, RuleQualifiedVariantName = 126, RulePatternFieldList = 127,
-    RulePatternField = 128, RuleWildcardPattern = 129, RuleBindingPattern = 130,
-    RuleTuplePattern = 131, RulePatternList = 132, RulePathExpr = 133, RulePathRoot = 134,
-    RuleQualifiedValueExpr = 135, RuleCallExpr = 136, RuleExprList = 137,
-    RuleLiteral = 138, RuleIntegerLiteral = 139, RuleFloatLiteral = 140,
-    RuleDecimalLiteral = 141, RuleStringLiteral = 142, RuleDurationLiteral = 143,
-    RuleStructLiteral = 144, RuleListLiteral = 145, RuleSetLiteral = 146,
-    RuleMapLiteral = 147, RuleMapEntryList = 148, RuleMapEntry = 149, RuleStructInitList = 150,
-    RuleStructInit = 151, RuleConstExpr = 152, RuleTemporalExpr = 153, RuleWorkflowTemporalExpr = 154,
-    RuleTemporalImpliesExpr = 155, RuleTemporalOrExpr = 156, RuleTemporalAndExpr = 157,
-    RuleTemporalUntilExpr = 158, RuleTemporalUnaryExpr = 159, RuleTemporalAtom = 160
+    RuleOrPattern = 122, RuleConcatPattern = 123, RuleIntRangePattern = 124,
+    RuleLiteralPattern = 125, RuleVariantPattern = 126, RuleQualifiedVariantName = 127,
+    RulePatternFieldList = 128, RulePatternField = 129, RuleWildcardPattern = 130,
+    RuleBindingPattern = 131, RuleTuplePattern = 132, RulePatternList = 133,
+    RulePathExpr = 134, RulePathRoot = 135, RuleQualifiedValueExpr = 136,
+    RuleCallExpr = 137, RuleExprList = 138, RuleLiteral = 139, RuleIntegerLiteral = 140,
+    RuleFloatLiteral = 141, RuleDecimalLiteral = 142, RuleStringLiteral = 143,
+    RuleDurationLiteral = 144, RuleStructLiteral = 145, RuleListLiteral = 146,
+    RuleSetLiteral = 147, RuleMapLiteral = 148, RuleMapEntryList = 149,
+    RuleMapEntry = 150, RuleStructInitList = 151, RuleStructInit = 152,
+    RuleConstExpr = 153, RuleTemporalExpr = 154, RuleWorkflowTemporalExpr = 155,
+    RuleTemporalImpliesExpr = 156, RuleTemporalOrExpr = 157, RuleTemporalAndExpr = 158,
+    RuleTemporalUntilExpr = 159, RuleTemporalUnaryExpr = 160, RuleTemporalAtom = 161
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -231,6 +232,7 @@ public:
   class PatternContext;
   class OrPatternContext;
   class ConcatPatternContext;
+  class IntRangePatternContext;
   class LiteralPatternContext;
   class VariantPatternContext;
   class QualifiedVariantNameContext;
@@ -2112,6 +2114,7 @@ public:
   public:
     ConcatPatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
+    IntRangePatternContext *intRangePattern();
     LiteralPatternContext *literalPattern();
     VariantPatternContext *variantPattern();
     WildcardPatternContext *wildcardPattern();
@@ -2124,6 +2127,20 @@ public:
   };
 
   ConcatPatternContext* concatPattern();
+
+  class  IntRangePatternContext : public antlr4::ParserRuleContext {
+  public:
+    IntRangePatternContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<IntegerLiteralContext *> integerLiteral();
+    IntegerLiteralContext* integerLiteral(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  IntRangePatternContext* intRangePattern();
 
   class  LiteralPatternContext : public antlr4::ParserRuleContext {
   public:

@@ -527,11 +527,18 @@ pattern: orPattern;
 orPattern: concatPattern ('|' concatPattern)*;
 
 concatPattern:
-	literalPattern
+	intRangePattern
+	| literalPattern
 	| variantPattern
 	| wildcardPattern
 	| bindingPattern
 	| tuplePattern;
+
+// RFC 0011: integer range pattern. The first surface is intentionally limited
+// to non-negative integer literal bounds, matching the existing integer literal
+// pattern token contract. Negative numbers remain unary expressions, not
+// literal tokens.
+intRangePattern: integerLiteral '..' integerLiteral;
 
 // Literal patterns. `none` is sugar for Option::None (RFC §1.6).
 literalPattern:

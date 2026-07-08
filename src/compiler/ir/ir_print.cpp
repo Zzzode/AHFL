@@ -390,6 +390,9 @@ class IrProgramPrinter final {
         return std::visit(
             Overloaded{
                 [](const ir::LiteralPattern &value) { return value.spelling; },
+                [](const ir::IntRangePattern &value) {
+                    return std::to_string(value.start) + ".." + std::to_string(value.end);
+                },
                 [this](const ir::VariantPattern &value) {
                     if (value.kind == ir::VariantPatternKind::Unit) {
                         return value.path;

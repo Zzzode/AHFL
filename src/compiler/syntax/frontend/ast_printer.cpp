@@ -930,6 +930,10 @@ class AstPrinter final {
                 [&](const ast::LiteralPattern &p) {
                     line(indent_level, "pattern_literal " + p.spelling);
                 },
+                [&](const ast::IntRangePattern &p) {
+                    line(indent_level,
+                         "pattern_int_range " + p.start_spelling + ".." + p.end_spelling);
+                },
                 [&](const ast::VariantPattern &p) {
                     line(indent_level, "pattern_variant " + p.path->spelling());
                     for (std::size_t index = 0; index < p.subpatterns.size(); ++index) {

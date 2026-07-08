@@ -428,6 +428,40 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     return lower_literal_spelling(literal.spelling, range, expected, lowering);
 }
 
+[[nodiscard]] PatternId lower_int_range_pattern(const ast::IntRangePattern &range_pattern,
+                                                SourceRange range,
+                                                PatternExpected expected,
+                                                MatchMatrixLowering &lowering) {
+    if (range_pattern.start > range_pattern.end) {
+        return lowering.context.make_never(range);
+    }
+    if (!expected.open_literal_domain_index.has_value()) {
+        return lowering.context.make_never(range);
+    }
+    const auto &domain = lowering.open_literal_domains[*expected.open_literal_domain_index];
+    if (domain.kind != OpenLiteralDomainKind::Int) {
+        return lowering.context.make_never(range);
+    }
+    return lowering.context.make_int_range_pattern(range_pattern.start, range_pattern.end, range);
+}
+
+[[nodiscard]] PatternId lower_int_range_pattern(const TypedPattern &pattern,
+                                                PatternExpected expected,
+                                                MatchMatrixLowering &lowering) {
+    if (pattern.int_range_start > pattern.int_range_end) {
+        return lowering.context.make_never(pattern.range);
+    }
+    if (!expected.open_literal_domain_index.has_value()) {
+        return lowering.context.make_never(pattern.range);
+    }
+    const auto &domain = lowering.open_literal_domains[*expected.open_literal_domain_index];
+    if (domain.kind != OpenLiteralDomainKind::Int) {
+        return lowering.context.make_never(pattern.range);
+    }
+    return lowering.context.make_int_range_pattern(
+        pattern.int_range_start, pattern.int_range_end, pattern.range);
+}
+
 [[nodiscard]] PatternId lower_literal_spelling(std::string_view spelling,
                                                SourceRange range,
                                                PatternExpected expected,
@@ -611,6 +645,8 @@ wildcard_children_for_constructor(MatchMatrixLowering &lowering, PatternConstruc
                 return lower_tuple_pattern(node, pattern.range, expected, lowering);
             } else if constexpr (std::is_same_v<T, ast::LiteralPattern>) {
                 return lower_literal_pattern(node, pattern.range, expected, lowering);
+            } else if constexpr (std::is_same_v<T, ast::IntRangePattern>) {
+                return lower_int_range_pattern(node, pattern.range, expected, lowering);
             } else {
                 return lowering.context.make_never(pattern.range);
             }
@@ -797,6 +833,8 @@ wildcard_children_for_constructor(MatchMatrixLowering &lowering, PatternConstruc
         return lower_typed_tuple_pattern(pattern, expected, lowering, resolver);
     case TypedPatternKind::Or:
         return lower_typed_or_pattern(pattern, expected, lowering, resolver);
+    case TypedPatternKind::IntRange:
+        return lower_int_range_pattern(pattern, expected, lowering);
     }
     return lowering.context.make_never(pattern.range);
 }

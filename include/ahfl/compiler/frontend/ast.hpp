@@ -538,6 +538,20 @@ struct LiteralPattern {
     std::string spelling; // original literal text ("true", "42", "\"s\"", "none")
 };
 
+/// Integer range pattern: `start..end`.
+///
+/// The initial syntax uses non-negative integer literal bounds only, mirroring
+/// LiteralPattern integer spelling. The parsed values are stored so semantic
+/// consumers do not need to treat source text as canonical identity.
+struct IntRangePattern {
+    std::string start_spelling;
+    std::string end_spelling;
+    ahfl::SourceRange start_range;
+    ahfl::SourceRange end_range;
+    std::int64_t start{0};
+    std::int64_t end{0};
+};
+
 enum class EnumVariantPayloadKind {
     Unit,
     Tuple,
@@ -598,6 +612,7 @@ struct OrPattern {
 
 /// Variant alias for the pattern syntax node
 using PatternSyntaxNode = std::variant<LiteralPattern,
+                                       IntRangePattern,
                                        VariantPattern,
                                        WildcardPattern,
                                        BindingPattern,
@@ -634,6 +649,7 @@ struct PatternSyntax {
 /// Pattern kind discriminator (parallels ExprSyntaxKind).
 enum class PatternSyntaxKind {
     Literal,
+    IntRange,
     Variant,
     Wildcard,
     Binding,
@@ -1836,6 +1852,7 @@ temporal_expr_syntax_kind(const TemporalExprSyntax &expr) {
 [[nodiscard]] inline PatternSyntaxKind pattern_syntax_kind(const PatternSyntax &pattern) {
     return std::visit(Overloaded{
                           [](const LiteralPattern &) { return PatternSyntaxKind::Literal; },
+                          [](const IntRangePattern &) { return PatternSyntaxKind::IntRange; },
                           [](const VariantPattern &) { return PatternSyntaxKind::Variant; },
                           [](const WildcardPattern &) { return PatternSyntaxKind::Wildcard; },
                           [](const BindingPattern &) { return PatternSyntaxKind::Binding; },

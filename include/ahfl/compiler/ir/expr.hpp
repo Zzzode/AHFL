@@ -102,6 +102,12 @@ struct LiteralPattern {
     std::string spelling;
 };
 
+/// Integer range pattern: start..end.
+struct IntRangePattern {
+    std::int64_t start{0};
+    std::int64_t end{0};
+};
+
 /// Variant pattern: Result::Ok(value), Some(_), Err(error).
 enum class VariantPatternKind {
     Unit,
@@ -143,6 +149,7 @@ struct OrPattern {
 };
 
 using MatchPatternNode = std::variant<LiteralPattern,
+                                      IntRangePattern,
                                       VariantPattern,
                                       WildcardPattern,
                                       BindingPattern,

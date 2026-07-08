@@ -692,6 +692,62 @@ enum MaybeInt { Some(Int), None, }
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS") == 0);
 }
 
+TEST_CASE("open Int range payload leaves default witness uncovered") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(1..3) => 1, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(_)") != std::string::npos);
+}
+
+TEST_CASE("open Int range payload marks contained literal arm unreachable") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(1..3) => 1, Some(2) => 2, Some(_) => 3, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") >= 1);
+}
+
+TEST_CASE("invalid Int range payload reports INVALID_RANGE_PATTERN") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(5..3) => 1, Some(_) => 2, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "INVALID_RANGE_PATTERN"));
+}
+
+TEST_CASE("Int range pattern on Bool payload reports type mismatch") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { Some(1..3) => 1, Some(_) => 2, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
 TEST_CASE("open String payload literal leaves default witness uncovered") {
     const auto source = wrap_in_flow(
         R"AHFL(

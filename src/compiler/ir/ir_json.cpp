@@ -648,6 +648,14 @@ class IrJsonPrinter final {
 	                        field("spelling", [&]() { write_string(value.spelling); });
 	                    });
 	                },
+	                [&](const ir::IntRangePattern &value) {
+	                    print_object(indent_level, [&](const auto &field) {
+	                        field("kind", [&]() { write_string("int_range"); });
+	                        print_match_pattern_common(field, pattern, indent_level + 1);
+	                        field("start", [&]() { out_ << value.start; });
+	                        field("end", [&]() { out_ << value.end; });
+	                    });
+	                },
 	                [&](const ir::VariantPattern &value) {
 	                    print_object(indent_level, [&](const auto &field) {
 	                        field("kind", [&]() { write_string("variant"); });

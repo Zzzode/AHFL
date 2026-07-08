@@ -2082,6 +2082,9 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::PatternSyntax>
     build_concat_pattern(AHFLParser::ConcatPatternContext &context) const {
+        if (const auto range = borrow(context.intRangePattern())) {
+            return build_int_range_pattern(range->get());
+        }
         if (const auto literal = borrow(context.literalPattern())) {
             return build_literal_pattern(literal->get());
         }
@@ -2103,6 +2106,30 @@ class ProgramBuilder {
         }
 
         throw std::logic_error("pattern did not match any supported AHFL kind");
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_int_range_pattern(AHFLParser::IntRangePatternContext &context) const {
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+
+        const auto bounds = context.integerLiteral();
+        if (bounds.size() != 2) {
+            throw std::logic_error("integer range pattern requires two bounds");
+        }
+        auto start_spelling =
+            text_of(require(bounds[0], "integer range lower bound is missing"));
+        auto end_spelling = text_of(require(bounds[1], "integer range upper bound is missing"));
+        pattern->node = ast::IntRangePattern{
+            .start_spelling = start_spelling,
+            .end_spelling = end_spelling,
+            .start_range = context_range(*bounds[0], source_),
+            .end_range = context_range(*bounds[1], source_),
+            .start = parse_integer_literal(start_spelling),
+            .end = parse_integer_literal(end_spelling),
+        };
+        return pattern;
     }
 
     [[nodiscard]] Owned<ast::PatternSyntax>

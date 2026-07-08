@@ -1548,6 +1548,24 @@ class ExpressionChecker final {
             *literal_type, *scrutinee_type, range, "match literal pattern");
     }
 
+    void check_int_range_pattern(const ast::IntRangePattern &range_pattern,
+                                 TypePtr scrutinee_type,
+                                 SourceRange range) const {
+        if (range_pattern.start > range_pattern.end) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidRangePattern,
+                messages::typecheck::InvalidRangePattern.format_with(
+                    range_pattern.start_spelling, range_pattern.end_spelling),
+                range);
+        }
+        if (scrutinee_type == nullptr || is_error_type(*scrutinee_type)) {
+            return;
+        }
+        const auto int_type = values_.make_type(TypeKind::Int);
+        (void)services_.check_assignable(
+            *int_type, *scrutinee_type, range, "match range pattern");
+    }
+
     struct LoweredPattern {
         bool irrefutable{false};
         std::uint32_t typed_pattern_index{UINT32_MAX};
@@ -1646,6 +1664,16 @@ class ExpressionChecker final {
                     typed.range = range;
                     typed.matched_type = typed_pattern_matched_type(scrutinee_type);
                     typed.literal_spelling = literal.spelling;
+                    return lowered_pattern(false, std::move(typed));
+                },
+                [&](const ast::IntRangePattern &range_pattern) {
+                    check_int_range_pattern(range_pattern, scrutinee_type, range);
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::IntRange;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    typed.int_range_start = range_pattern.start;
+                    typed.int_range_end = range_pattern.end;
                     return lowered_pattern(false, std::move(typed));
                 },
                 [&](const ast::WildcardPattern &) {

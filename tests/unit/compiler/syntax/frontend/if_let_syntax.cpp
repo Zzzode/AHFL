@@ -30,6 +30,11 @@ binding_pattern(const ahfl::ast::PatternSyntax &pattern) {
     return std::get_if<ahfl::ast::BindingPattern>(&pattern.node);
 }
 
+[[nodiscard]] const ahfl::ast::IntRangePattern *
+int_range_pattern(const ahfl::ast::PatternSyntax &pattern) {
+    return std::get_if<ahfl::ast::IntRangePattern>(&pattern.node);
+}
+
 [[nodiscard]] const ahfl::ast::OrPattern *or_pattern(const ahfl::ast::PatternSyntax &pattern) {
     return std::get_if<ahfl::ast::OrPattern>(&pattern.node);
 }
@@ -152,6 +157,42 @@ TEST_CASE("if let Some(x) = e with then and else blocks") {
             MESSAGE("  reparsed error: " << entry.message);
         }
     }
+    CHECK_FALSE(reparsed.has_errors());
+}
+
+TEST_CASE("if let int range pattern parses and formats") {
+    const std::string source = wrap_with_fn(
+        "    if let 1..3 = payload {\n"
+        "        hit();\n"
+        "    }\n");
+
+    const auto parse_result = parse_only("if_let_int_range.ahfl", source);
+    const auto *program = parse_result.program.get();
+
+    const auto *stmt = first_stmt_of_first_fn(*program);
+    REQUIRE(stmt != nullptr);
+    REQUIRE(stmt->kind == StatementSyntaxKind::IfLet);
+    const auto *ifl = stmt->if_let_stmt.get();
+    REQUIRE(ifl != nullptr);
+    REQUIRE(ifl->pattern != nullptr);
+
+    const auto *range = int_range_pattern(*ifl->pattern);
+    REQUIRE(range != nullptr);
+    CHECK(range->start_spelling == "1");
+    CHECK(range->end_spelling == "3");
+    CHECK(range->start == 1);
+    CHECK(range->end == 3);
+
+    std::ostringstream printer;
+    ahfl::dump_program_outline(*program, printer);
+    CHECK(printer.str().find("pattern_int_range 1..3") != std::string::npos);
+
+    const auto fmt = ahfl::formatter::format_source(source);
+    REQUIRE(fmt.success);
+    CHECK(fmt.formatted.find("if let 1..3 = ") != std::string::npos);
+
+    const ahfl::Frontend frontend;
+    const auto reparsed = frontend.parse_text("if_let_int_range_roundtrip.ahfl", fmt.formatted);
     CHECK_FALSE(reparsed.has_errors());
 }
 

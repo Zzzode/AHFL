@@ -763,6 +763,35 @@ void test_match_expr_result_payload_binding() {
     check(value != nullptr && value->value == 42, "match_expr.result_payload.value");
 }
 
+void test_match_expr_int_range_pattern() {
+    MatchExpr match_expr;
+    match_expr.scrutinee = int_literal("2");
+
+    MatchArmExpr range_arm;
+    range_arm.pattern = MatchPattern{
+        .node = IntRangePattern{.start = 1, .end = 3},
+        .source_range = std::nullopt,
+        .text = "1..3",
+    };
+    range_arm.body = int_literal("7");
+    match_expr.arms.push_back(std::move(range_arm));
+
+    MatchArmExpr fallback_arm;
+    fallback_arm.pattern = MatchPattern{
+        .node = WildcardPattern{},
+        .source_range = std::nullopt,
+        .text = "_",
+    };
+    fallback_arm.body = int_literal("0");
+    match_expr.arms.push_back(std::move(fallback_arm));
+
+    EvalContext ctx;
+    auto result = eval_expr(make_expr(std::move(match_expr)), ctx);
+    check(!result.has_errors(), "match_expr.int_range.no_error");
+    auto *value = std::get_if<IntValue>(&result.value.node);
+    check(value != nullptr && value->value == 7, "match_expr.int_range.value");
+}
+
 void test_program_function_call_eval() {
     Program program;
 
@@ -905,6 +934,7 @@ int main(int argc, char *argv[]) {
     test_std_builtin_hooks();
     test_runtime_callable_calls();
     test_match_expr_result_payload_binding();
+    test_match_expr_int_range_pattern();
     test_program_function_call_eval();
     test_print_value();
 

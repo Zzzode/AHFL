@@ -618,6 +618,7 @@ void collect_pattern_bindings(const ir::MatchPattern &pattern, std::vector<std::
                        }
                    },
                    [](const ir::LiteralPattern &) {},
+                   [](const ir::IntRangePattern &) {},
                    [](const ir::WildcardPattern &) {},
                },
                pattern.node);

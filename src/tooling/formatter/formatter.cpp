@@ -1270,6 +1270,11 @@ class AstFormatter {
     void format_pattern(const ahfl::ast::PatternSyntax &pattern) {
         std::visit(Overloaded{
                        [&](const ahfl::ast::LiteralPattern &p) { write(p.spelling); },
+                       [&](const ahfl::ast::IntRangePattern &p) {
+                           write(p.start_spelling);
+                           write("..");
+                           write(p.end_spelling);
+                       },
                        [&](const ahfl::ast::VariantPattern &p) {
                            if (p.path) {
                                write(p.path->spelling());

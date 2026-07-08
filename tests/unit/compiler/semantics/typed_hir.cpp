@@ -3413,6 +3413,56 @@ fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
 }
 
+TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0011 typed HIR records int range pattern facts") {
+    const auto result = check(R"AHFL(
+module typed::match_range_patterns;
+
+enum Ticket {
+    Wrapped(Int),
+    Closed,
+}
+
+fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
+    return match ticket {
+        Wrapped(1..3) => 1,
+        Wrapped(_) => 2,
+        Closed => 0,
+    };
+}
+)AHFL");
+
+    const auto &patterns = result.typed_program.patterns;
+    const auto wrapped = std::find_if(patterns.begin(), patterns.end(), [&](const auto &pattern) {
+        return pattern.kind == ahfl::TypedPatternKind::Variant &&
+               pattern.variant_name == "Wrapped" && pattern.children.size() == 1 &&
+               pattern.children.front().pattern_index < patterns.size() &&
+               patterns[pattern.children.front().pattern_index].kind ==
+                   ahfl::TypedPatternKind::IntRange;
+    });
+    REQUIRE(wrapped != patterns.end());
+    REQUIRE(wrapped->children.size() == 1);
+    REQUIRE(wrapped->children.front().pattern_index < patterns.size());
+    const auto &range = patterns[wrapped->children.front().pattern_index];
+    CHECK(range.kind == ahfl::TypedPatternKind::IntRange);
+    REQUIRE(range.matched_type != nullptr);
+    CHECK(range.matched_type->describe() == "Int");
+    CHECK(range.int_range_start == 1);
+    CHECK(range.int_range_end == 3);
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    const auto restored_range =
+        std::find_if(restored->patterns.begin(), restored->patterns.end(), [](const auto &pattern) {
+            return pattern.kind == ahfl::TypedPatternKind::IntRange &&
+                   pattern.int_range_start == 1 && pattern.int_range_end == 3;
+        });
+    REQUIRE(restored_range != restored->patterns.end());
+    REQUIRE(restored_range->matched_type != nullptr);
+    CHECK(restored_range->matched_type->describe() == "Int");
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
     const auto root = make_temp_project("snapshot_project");

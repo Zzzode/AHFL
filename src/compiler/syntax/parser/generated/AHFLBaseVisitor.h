@@ -519,6 +519,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitIntRangePattern(AHFLParser::IntRangePatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *ctx) override {
     return visitChildren(ctx);
   }

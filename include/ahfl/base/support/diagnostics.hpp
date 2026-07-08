@@ -276,6 +276,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
     "MATCH_DUPLICATE_BINDING"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
     "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidRangePattern{
+    "INVALID_RANGE_PATTERN"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidEnumVariantShape{
     "INVALID_ENUM_VARIANT_SHAPE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingVariantField{
@@ -599,6 +601,8 @@ inline constexpr MessageTemplate MatchArmTypeMismatch{
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
 inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
     "match binding '{}' expects type {}, got payload slot type {}"};
+inline constexpr MessageTemplate InvalidRangePattern{
+    "invalid range pattern: lower bound {} exceeds upper bound {}"};
 inline constexpr MessageTemplate InvalidEnumVariantShape{
     "variant '{}' of enum '{}' is declared as {}, but pattern uses {} syntax"};
 inline constexpr MessageTemplate InvalidEnumVariantConstructorShape{

@@ -180,6 +180,7 @@ enum class TypedPatternKind : std::uint8_t {
     Binding,
     Tuple,
     Or,
+    IntRange,
 };
 
 struct TypedPatternChild {
@@ -206,6 +207,8 @@ struct TypedPattern {
     std::string variant_name;
     EnumVariantPayloadKind variant_payload_kind{EnumVariantPayloadKind::Unit};
     std::string literal_spelling;
+    std::int64_t int_range_start{0};
+    std::int64_t int_range_end{0};
 };
 
 // ----------------------------------------------------------------------------

@@ -986,6 +986,38 @@ fn f(r: R) -> Int effect Pure decreases 0 {
 
 ---
 
+### INVALID_RANGE_PATTERN
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.INVALID_RANGE_PATTERN` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `invalid range pattern: lower bound {} exceeds upper bound {}` |
+
+**触发条件**：整数 range pattern 的下界大于上界。当前 AHFL 首版 range pattern 语法为 `INT_LITERAL..INT_LITERAL`，语义为闭区间匹配。
+
+**最小复现**：
+```ahfl
+module repro;
+enum E { Some(Int), None }
+fn f(e: E) -> Int effect Pure decreases 0 {
+    return match e {
+        E::Some(5..3) => 1,
+        E::Some(_) => 2,
+        E::None => 0
+    };
+}
+```
+
+**常见修复**：
+- 交换上下界，例如把 `5..3` 改成 `3..5`。
+- 若需要表达两个不连续范围，使用多个 match arm 或 or-pattern。
+- 若需要负数范围，等待负数 literal pattern 语法被接受；当前 `-1` 在 AHFL 中仍是 unary expression，不是 integer literal token。
+
+**Related codes**：`TYPE_MISMATCH`、`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`。
+
+---
+
 ## 3. Effects & Contracts + Trait/Impl（29）
 
 Pure/Nondet/Capability 效应判定、decreases 终止度量、不变式纯度检查、trait/impl 解析与一致性等。

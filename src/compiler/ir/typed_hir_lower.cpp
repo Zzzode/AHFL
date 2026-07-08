@@ -933,6 +933,9 @@ class TypedIrLowerer final {
                            [](const ast::LiteralPattern &value) -> ir::MatchPatternNode {
                                return ir::LiteralPattern{.spelling = value.spelling};
                            },
+                           [](const ast::IntRangePattern &value) -> ir::MatchPatternNode {
+                               return ir::IntRangePattern{.start = value.start, .end = value.end};
+                           },
                            [](const ast::VariantPattern &value) -> ir::MatchPatternNode {
                                ir::VariantPattern variant{
                                    .path = value.path ? value.path->spelling() : std::string{},

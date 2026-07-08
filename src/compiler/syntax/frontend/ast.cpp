@@ -351,6 +351,14 @@ class AstInvariantValidator final {
                     require(
                         !pattern.text.empty(), pattern.range, "LiteralPattern is missing spelling");
                 },
+                [&](const IntRangePattern &p) {
+                    require(!p.start_spelling.empty(),
+                            pattern.range,
+                            "IntRangePattern is missing lower bound spelling");
+                    require(!p.end_spelling.empty(),
+                            pattern.range,
+                            "IntRangePattern is missing upper bound spelling");
+                },
                 [&](const VariantPattern &p) {
                     validate_qualified_name(p.path.get(), pattern.range, "VariantPattern.path");
                     switch (p.payload_kind) {

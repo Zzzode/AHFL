@@ -466,6 +466,10 @@ void collect_pattern_tokens(const ast::PatternSyntax &pattern,
                     add_token_from_range(tokens, source, pattern.range, SemanticTokenType::Number);
                 }
             },
+            [&](const ast::IntRangePattern &p) {
+                add_token_from_range(tokens, source, p.start_range, SemanticTokenType::Number);
+                add_token_from_range(tokens, source, p.end_range, SemanticTokenType::Number);
+            },
             [&](const ast::VariantPattern &p) {
                 if (p.path != nullptr) {
                     collect_qualified_name_tokens(

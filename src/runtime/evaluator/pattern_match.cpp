@@ -145,6 +145,11 @@ bool match_pattern(const ir::MatchPattern &pattern, const Value &value, PatternB
             [&](const ir::LiteralPattern &literal) {
                 return match_literal_pattern(literal.spelling, value);
             },
+            [&](const ir::IntRangePattern &range) {
+                const auto *int_value = std::get_if<IntValue>(&value.node);
+                return int_value != nullptr && range.start <= int_value->value &&
+                       int_value->value <= range.end;
+            },
             [&](const ir::VariantPattern &variant) {
                 return match_variant_pattern(variant, value, bindings);
             },

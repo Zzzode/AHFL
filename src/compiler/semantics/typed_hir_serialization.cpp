@@ -911,6 +911,8 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("variant_name", Json::make_string(pattern.variant_name));
     object->set("variant_payload_kind", j_enum(pattern.variant_payload_kind));
     object->set("literal_spelling", Json::make_string(pattern.literal_spelling));
+    object->set("int_range_start", Json::make_int(pattern.int_range_start));
+    object->set("int_range_end", Json::make_int(pattern.int_range_end));
     return object;
 }
 
@@ -2153,6 +2155,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .variant_payload_kind =
             static_cast<EnumVariantPayloadKind>(reader.uint_field(object, "variant_payload_kind")),
         .literal_spelling = reader.string_field(object, "literal_spelling"),
+        .int_range_start = reader.int_field(object, "int_range_start"),
+        .int_range_end = reader.int_field(object, "int_range_end"),
     };
 
     const auto *children = reader.field(object, "children");
