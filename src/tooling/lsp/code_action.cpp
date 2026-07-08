@@ -124,8 +124,7 @@ constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
-constexpr std::string_view kCodeAgentCapabilitiesOmitted =
-    "typecheck.AGENT_CAPABILITIES_OMITTED";
+constexpr std::string_view kCodeAgentCapabilitiesOmitted = "typecheck.AGENT_CAPABILITIES_OMITTED";
 
 [[nodiscard]] std::vector<CodeAction> qf_duplicate_struct(const LspDiagnostic &diag) {
     std::vector<CodeAction> actions;
@@ -184,13 +183,13 @@ constexpr std::string_view kCodeAgentCapabilitiesOmitted =
     // with 'import' around the diagnostic.
     {
         uint32_t probe = (start_line > 0U) ? (start_line - 1U) : 0U;
-        uint32_t upper_bound =
-            std::min(static_cast<uint32_t>(source.size()), end_line_limit + 1U);
+        uint32_t upper_bound = std::min(static_cast<uint32_t>(source.size()), end_line_limit + 1U);
         (void)upper_bound; // kept for future extension; current scan is bounded inline
         // probe for "import" keyword up to 3 lines back
         bool found = false;
         for (uint32_t l = 0; l < 3U; ++l) {
-            if (probe + l >= (1U << 28)) break;
+            if (probe + l >= (1U << 28))
+                break;
             uint32_t line_no = probe + l;
             auto text = line_text(source, line_no);
             if (text.empty() && line_no > end_line_limit) {
@@ -229,12 +228,12 @@ constexpr std::string_view kCodeAgentCapabilitiesOmitted =
     uint32_t lines_seen = 0;
     while (cursor < source.size() && lines_seen < 8) {
         if (source[cursor] == ';') {
-            semicolon_pos = cursor + 1;  // include the ';'
+            semicolon_pos = cursor + 1; // include the ';'
             break;
         }
         if (source[cursor] == '\n') {
             ++lines_seen;
-            last_line_end = cursor + 1;  // include the newline
+            last_line_end = cursor + 1; // include the newline
         }
         ++cursor;
     }
@@ -263,7 +262,8 @@ constexpr std::string_view kCodeAgentCapabilitiesOmitted =
             ++prev_nl;
         }
         std::uint32_t ch = static_cast<std::uint32_t>(end - prev_nl);
-        if (end == 0) ch = 0;
+        if (end == 0)
+            ch = 0;
         range.end = Position{line, ch};
     } else {
         // Fallback: extend to end of the start line
@@ -305,15 +305,22 @@ constexpr std::string_view kCodeAgentCapabilitiesOmitted =
 // ---------------------------------------------------------------------------
 
 constexpr std::array<std::string_view, 4> kWrongArityKeywords = {
-    "assert", "requires", "unreachable", "unwrap",
+    "assert",
+    "requires",
+    "unreachable",
+    "unwrap",
 };
 
 // Placeholder text per keyword (used when the parens are empty).
 [[nodiscard]] std::string_view placeholder_for_keyword(std::string_view keyword) {
-    if (keyword == "assert") return "<cond>";
-    if (keyword == "requires") return "<cond>";
-    if (keyword == "unreachable") return "<TODO_message>";
-    if (keyword == "unwrap") return "<TODO>";
+    if (keyword == "assert")
+        return "<cond>";
+    if (keyword == "requires")
+        return "<cond>";
+    if (keyword == "unreachable")
+        return "<TODO_message>";
+    if (keyword == "unwrap")
+        return "<TODO>";
     return "_TODO_";
 }
 
@@ -321,15 +328,15 @@ constexpr std::array<std::string_view, 4> kWrongArityKeywords = {
 // Returns {keyword, open_paren_offset, close_paren_offset} if found.
 struct KeywordCall {
     std::string_view keyword;
-    std::size_t open_paren;   // position of '('
-    std::size_t close_paren;  // position of ')'
+    std::size_t open_paren;  // position of '('
+    std::size_t close_paren; // position of ')'
 };
 
 [[nodiscard]] std::optional<KeywordCall> find_kw_call_at(const std::string &source,
                                                          const Range &diag_range) {
     // Compute the offset of the diagnostic's start position.
-    std::size_t diag_offset = line_start_offset(source, diag_range.start.line) +
-                              diag_range.start.character;
+    std::size_t diag_offset =
+        line_start_offset(source, diag_range.start.line) + diag_range.start.character;
 
     // Walk backward from diag_offset to find the nearest keyword whose
     // '(' comes before/at diag_offset and whose ')' is ahead.
@@ -347,34 +354,38 @@ struct KeywordCall {
             std::size_t pos = source.rfind(kw, search_end);
             while (pos != std::string::npos && pos >= search_start) {
                 // Ensure full word match (prev char is not identifier)
-                bool prev_ok = (pos == 0) ||
-                               (!std::isalpha(static_cast<unsigned char>(source[pos - 1])) &&
-                                source[pos - 1] != '_');
+                bool prev_ok =
+                    (pos == 0) || (!std::isalpha(static_cast<unsigned char>(source[pos - 1])) &&
+                                   source[pos - 1] != '_');
                 std::size_t after = pos + kw.size();
-                bool next_ok = (after < source.size()) && (source[after] == '(' ||
-                                                           source[after] == ' ' ||
-                                                           source[after] == '\t');
+                bool next_ok =
+                    (after < source.size()) &&
+                    (source[after] == '(' || source[after] == ' ' || source[after] == '\t');
                 if (prev_ok && next_ok) {
                     // Find the open paren (possibly with whitespace)
                     std::size_t op = after;
-                    while (op < source.size() &&
-                           (source[op] == ' ' || source[op] == '\t')) ++op;
+                    while (op < source.size() && (source[op] == ' ' || source[op] == '\t'))
+                        ++op;
                     if (op < source.size() && source[op] == '(') {
                         // Find matching close paren
                         int depth = 1;
                         std::size_t cp = op + 1;
                         while (cp < source.size() && depth > 0) {
-                            if (source[cp] == '(') ++depth;
+                            if (source[cp] == '(')
+                                ++depth;
                             else if (source[cp] == ')') {
                                 --depth;
-                                if (depth == 0) break;
+                                if (depth == 0)
+                                    break;
                             }
                             // Skip string literals (very rough)
                             else if (source[cp] == '"') {
                                 ++cp;
                                 while (cp < source.size() && source[cp] != '"') {
-                                    if (source[cp] == '\\' && cp + 1 < source.size()) cp += 2;
-                                    else ++cp;
+                                    if (source[cp] == '\\' && cp + 1 < source.size())
+                                        cp += 2;
+                                    else
+                                        ++cp;
                                 }
                             }
                             ++cp;
@@ -384,7 +395,8 @@ struct KeywordCall {
                         }
                     }
                 }
-                if (pos == 0) break;
+                if (pos == 0)
+                    break;
                 pos = source.rfind(kw, pos - 1);
             }
         }
@@ -423,8 +435,8 @@ struct KeywordCall {
 
     // Content between '(' and ')'.
     const std::string_view view(source);
-    auto inside = view.substr(kw_call->open_paren + 1,
-                              kw_call->close_paren - (kw_call->open_paren + 1));
+    auto inside =
+        view.substr(kw_call->open_paren + 1, kw_call->close_paren - (kw_call->open_paren + 1));
     auto trimmed_inside = ltrim(inside);
     bool empty = trimmed_inside.empty();
     // Trim trailing whitespace for comparison too.
@@ -622,82 +634,6 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
         pattern.begin(), pattern.end(), [](char c) { return c == '\n' || c == '\r' || c == ';'; });
 }
 
-[[nodiscard]] std::vector<std::string> extract_missing_pattern_witnesses(std::string_view message) {
-    constexpr std::string_view kPrefix = "missing patterns [";
-    constexpr std::size_t kMaxExactWitnessArms = 16;
-
-    const auto start = message.find(kPrefix);
-    if (start == std::string_view::npos) {
-        return {};
-    }
-    const auto body_start = start + kPrefix.size();
-    const auto body_end = message.rfind(']');
-    if (body_end == std::string_view::npos || body_end <= body_start) {
-        return {};
-    }
-
-    const auto body = message.substr(body_start, body_end - body_start);
-    std::vector<std::string> witnesses;
-    std::size_t segment_start = 0;
-    int paren_depth = 0;
-    int brace_depth = 0;
-    int bracket_depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (std::size_t index = 0; index <= body.size(); ++index) {
-        const bool at_end = index == body.size();
-        const char c = at_end ? '\0' : body[index];
-
-        if (!at_end && in_string) {
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-        if (!at_end && c == '"') {
-            in_string = true;
-            continue;
-        }
-        if (!at_end) {
-            if (c == '(') {
-                ++paren_depth;
-            } else if (c == ')' && paren_depth > 0) {
-                --paren_depth;
-            } else if (c == '{') {
-                ++brace_depth;
-            } else if (c == '}' && brace_depth > 0) {
-                --brace_depth;
-            } else if (c == '[') {
-                ++bracket_depth;
-            } else if (c == ']' && bracket_depth > 0) {
-                --bracket_depth;
-            }
-        }
-
-        const bool split =
-            at_end || (c == ',' && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0);
-        if (!split) {
-            continue;
-        }
-
-        auto witness = trim_copy(body.substr(segment_start, index - segment_start));
-        if (!source_safe_pattern_fragment(witness)) {
-            return {};
-        }
-        witnesses.push_back(std::move(witness));
-        if (witnesses.size() > kMaxExactWitnessArms) {
-            return {};
-        }
-        segment_start = index + 1;
-    }
-
-    return witnesses;
-}
-
 [[nodiscard]] std::vector<std::string>
 structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     constexpr std::size_t kMaxExactWitnessArms = 16;
@@ -749,13 +685,9 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     const auto close_indent = close_line_prefix_is_indent ? std::string(line_prefix)
                                                           : line_indent_at_offset(source, *close);
     const auto arm_indent = close_indent + "    ";
-    auto patterns = structured_missing_pattern_witnesses(diag);
+    const auto patterns = structured_missing_pattern_witnesses(diag);
     if (patterns.empty()) {
-        patterns = extract_missing_pattern_witnesses(diag.message);
-    }
-    const bool exact = !patterns.empty();
-    if (!exact) {
-        patterns = {"_"};
+        return std::nullopt;
     }
 
     TextEdit edit;
@@ -773,12 +705,10 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
 
     CodeAction action;
-    if (exact && patterns.size() == 1) {
+    if (patterns.size() == 1) {
         action.title = "Insert missing match arm";
-    } else if (exact) {
-        action.title = "Insert missing match arms";
     } else {
-        action.title = "Insert wildcard match arm";
+        action.title = "Insert missing match arms";
     }
     action.kind = CodeActionKind::QuickFix;
     action.is_preferred = true;
@@ -972,8 +902,8 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<CodeAction> qf_match_redundant_pattern(
-    const std::string &source, const LspDiagnostic &diag) {
+[[nodiscard]] std::optional<CodeAction> qf_match_redundant_pattern(const std::string &source,
+                                                                   const LspDiagnostic &diag) {
     auto branch_range = find_redundant_or_branch_range(source, diag);
     if (!branch_range.has_value()) {
         return std::nullopt;
@@ -1136,13 +1066,13 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
 // Diagnostic range covers the whole agent block. We scan inside this range
 // for the `;` that closes inputDecl, then walk forward to find `output:` and
 // insert a `context: struct { };` line between the two, preserving indent.
-[[nodiscard]] std::optional<CodeAction> qf_agent_context_omitted(
-    const std::string &source, const LspDiagnostic &diag) {
+[[nodiscard]] std::optional<CodeAction> qf_agent_context_omitted(const std::string &source,
+                                                                 const LspDiagnostic &diag) {
     const std::size_t block_start =
         line_start_offset(source, diag.range.start.line) + diag.range.start.character;
-    const std::size_t block_end = std::min(
-        source.size(),
-        line_start_offset(source, diag.range.end.line) + diag.range.end.character + 1);
+    const std::size_t block_end =
+        std::min(source.size(),
+                 line_start_offset(source, diag.range.end.line) + diag.range.end.character + 1);
     if (block_start >= block_end || block_end > source.size()) {
         return std::nullopt;
     }
@@ -1196,13 +1126,13 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
 //       transition or closing `}`.
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] std::optional<CodeAction> qf_agent_capabilities_omitted(
-    const std::string &source, const LspDiagnostic &diag) {
+[[nodiscard]] std::optional<CodeAction> qf_agent_capabilities_omitted(const std::string &source,
+                                                                      const LspDiagnostic &diag) {
     const std::size_t block_start =
         line_start_offset(source, diag.range.start.line) + diag.range.start.character;
-    const std::size_t block_end = std::min(
-        source.size(),
-        line_start_offset(source, diag.range.end.line) + diag.range.end.character + 1);
+    const std::size_t block_end =
+        std::min(source.size(),
+                 line_start_offset(source, diag.range.end.line) + diag.range.end.character + 1);
     if (block_start >= block_end || block_end > source.size()) {
         return std::nullopt;
     }
@@ -1242,7 +1172,8 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
         if (trimmed.empty()) {
             // Skip blank lines, keep scanning.
             const auto nl = source.find('\n', scan);
-            if (nl == std::string::npos || nl >= block_end) break;
+            if (nl == std::string::npos || nl >= block_end)
+                break;
             scan = nl + 1;
             continue;
         }
@@ -1252,7 +1183,8 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
         }
         // Otherwise step past.
         const auto nl = source.find('\n', scan);
-        if (nl == std::string::npos || nl >= block_end) break;
+        if (nl == std::string::npos || nl >= block_end)
+            break;
         scan = nl + 1;
     }
 
@@ -1308,7 +1240,8 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
     for (const auto &diag : diagnostics) {
         if (diag.code == kCodeDuplicateStructName) {
             auto more = qf_duplicate_struct(diag);
-            for (auto &a : more) actions.push_back(std::move(a));
+            for (auto &a : more)
+                actions.push_back(std::move(a));
         } else if (diag.code == kCodeUnusedImport) {
             if (auto a = qf_unused_import(source, diag)) {
                 actions.push_back(std::move(*a));

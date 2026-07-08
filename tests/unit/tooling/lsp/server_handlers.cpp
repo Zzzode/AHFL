@@ -8509,7 +8509,7 @@ void test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields() {
     check(avoided_field_split, "codeAction.qf_match_missing_struct.does_not_split_fields");
 }
 
-void test_code_action_qf_match_missing_patterns_falls_back_to_wildcard() {
+void test_code_action_qf_match_missing_patterns_requires_structured_witnesses() {
     const std::string source = "module lsp::match_qf;\n"
                                "enum E { A, B }\n"
                                "fn f(e: E) -> Int effect Pure decreases 0 {\n"
@@ -8527,26 +8527,16 @@ void test_code_action_qf_match_missing_patterns_falls_back_to_wildcard() {
     const Range cursor_range{Position{3, 11}, Position{3, 16}};
     const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
 
-    const CodeAction *qf = nullptr;
+    bool found_missing_pattern_qf = false;
     for (const auto &action : actions) {
-        if (action.title == "Insert wildcard match arm") {
-            qf = &action;
-            break;
+        if (action.title == "Insert missing match arm" ||
+            action.title == "Insert missing match arms" ||
+            action.title == "Insert wildcard match arm") {
+            found_missing_pattern_qf = true;
         }
     }
-    check(qf != nullptr, "codeAction.qf_match_missing_fallback.action_found");
-    if (qf == nullptr || !qf->edit.has_value())
-        return;
-
-    bool found_wildcard_arm = false;
-    for (const auto &[uri_key, edits] : qf->edit->changes) {
-        for (const auto &edit : edits) {
-            if (edit.new_text.find("_ => <TODO>,") != std::string::npos) {
-                found_wildcard_arm = true;
-            }
-        }
-    }
-    check(found_wildcard_arm, "codeAction.qf_match_missing_fallback.inserts_wildcard_arm");
+    check(!found_missing_pattern_qf,
+          "codeAction.qf_match_missing_structured_data.required_for_action");
 }
 
 void test_code_action_qf_match_unreachable_arm_removes_arm_line() {
@@ -8702,8 +8692,7 @@ void test_code_action_qf_match_redundant_pattern_removes_or_branch() {
         }
     }
     check(total_edits == 1, "codeAction.qf_match_redundant_pattern.single_text_edit");
-    check(deletes_redundant_branch,
-          "codeAction.qf_match_redundant_pattern.deletes_or_branch");
+    check(deletes_redundant_branch, "codeAction.qf_match_redundant_pattern.deletes_or_branch");
 }
 
 void test_code_action_qf_unreachable_if_let_else_removes_else_branch() {
@@ -9125,7 +9114,7 @@ int main() {
     test_code_action_qf_wrong_arity_placeholder();
     test_code_action_qf_match_missing_patterns_inserts_witness_arm();
     test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields();
-    test_code_action_qf_match_missing_patterns_falls_back_to_wildcard();
+    test_code_action_qf_match_missing_patterns_requires_structured_witnesses();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
     test_code_action_qf_match_redundant_pattern_removes_or_branch();
