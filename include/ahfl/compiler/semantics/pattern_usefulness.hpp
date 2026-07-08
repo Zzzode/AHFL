@@ -3,6 +3,7 @@
 #include "ahfl/base/support/source.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -61,6 +62,7 @@ enum class PatternNodeKind {
     Never,
     Wildcard,
     Constructor,
+    IntRange,
     Or,
 };
 
@@ -69,6 +71,8 @@ struct PatternNode {
     SourceRange range;
     std::optional<PatternConstructorId> constructor;
     std::vector<PatternId> children;
+    std::int64_t int_range_start{0};
+    std::int64_t int_range_end{0};
 };
 
 struct PatternWitness {
@@ -90,6 +94,9 @@ class PatternUsefulnessContext {
     [[nodiscard]] PatternId make_constructor_pattern(PatternConstructorId constructor,
                                                      std::vector<PatternId> children,
                                                      SourceRange range = {});
+    [[nodiscard]] PatternId make_int_range_pattern(std::int64_t start,
+                                                   std::int64_t end,
+                                                   SourceRange range = {});
     [[nodiscard]] PatternId make_or_pattern(std::vector<PatternId> branches,
                                             SourceRange range = {});
 

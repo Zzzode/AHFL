@@ -1,8 +1,11 @@
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cstdint>
 #include <functional>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 
 namespace ahfl {
@@ -143,6 +146,20 @@ enumerate_domain(const PatternUsefulnessContext &context,
                                    const PatternWitness &witness,
                                    const std::optional<Replacement> &replacement);
 
+[[nodiscard]] std::optional<std::int64_t> parse_int_constructor_name(std::string_view text) {
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    std::int64_t value = 0;
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, value);
+    if (ec != std::errc{} || ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
 [[nodiscard]] bool matches_children(const PatternUsefulnessContext &context,
                                     const std::vector<PatternId> &patterns,
                                     const std::vector<PatternWitness> &witnesses,
@@ -177,6 +194,12 @@ enumerate_domain(const PatternUsefulnessContext &context,
             return false;
         }
         return matches_children(context, pattern.children, witness.fields, replacement);
+    case PatternNodeKind::IntRange: {
+        const auto value =
+            parse_int_constructor_name(context.constructor(witness.constructor).debug_name);
+        return value.has_value() && pattern.int_range_start <= *value &&
+               *value <= pattern.int_range_end;
+    }
     case PatternNodeKind::Or:
         return std::any_of(pattern.children.begin(), pattern.children.end(), [&](PatternId branch) {
             return matches_pattern(context, branch, witness, replacement);
@@ -326,6 +349,22 @@ PatternId PatternUsefulnessContext::make_constructor_pattern(PatternConstructorI
         .range = range,
         .constructor = constructor,
         .children = std::move(children),
+    });
+    return id;
+}
+
+PatternId PatternUsefulnessContext::make_int_range_pattern(std::int64_t start,
+                                                           std::int64_t end,
+                                                           SourceRange range) {
+    if (start > end) {
+        throw std::invalid_argument("int range pattern lower bound exceeds upper bound");
+    }
+    const PatternId id{patterns_.size()};
+    patterns_.push_back(PatternNode{
+        .kind = PatternNodeKind::IntRange,
+        .range = range,
+        .int_range_start = start,
+        .int_range_end = end,
     });
     return id;
 }

@@ -236,15 +236,17 @@ Migration:
 23. LSP unreachable-arm quick fix 已能跨多行 pattern/body source scan：删除 `MATCH_UNREACHABLE_ARM` 时不再要求 arm 的 pattern 与 `=>` 在同一行，可完整删除多行 struct payload destructuring arm，同时保留前后 match arms。
 24. LSP if-let usefulness quick fix 已落库：`typecheck.UNREACHABLE_IF_LET_ELSE` 现在可从诊断指向的 else block 反向定位 `else` keyword，source-safe 删除整个不可达 `else { ... }` 分支，同时保留 then block 和后续 statement。
 25. LSP redundant or-pattern quick fix 已落库：`typecheck.MATCH_REDUNDANT_PATTERN` 可在诊断 range 对应单行 source-safe or-pattern branch 时删除冗余分支及相邻 `|` 分隔符，例如把 `Some(true | true)` 修正为 `Some(true)`。
+26. Int range usefulness core 已落库：`PatternUsefulnessContext` 提供 ID-based `IntRange` pattern node，matrix matching 会在 open Int domain 中覆盖已枚举的离散 literal witness，同时保留 `_` 默认 witness，因此不会把无界 Int range 误判为穷尽；单元测试覆盖 range 覆盖、非 Int constructor 不匹配和反向 bounds fail-fast。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern、typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
+2. range pattern 的 parser/frontend/typechecker/typed-HIR/LSP surface 仍未接入；当前只落了 matrix core 支撑，不能对用户源码宣称 range pattern 已可用。
+3. typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
 
-1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm and open domain default.
+1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default and Int range core matching.
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern and invalid range.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
@@ -318,3 +320,4 @@ Stabilized exit criteria:
 - 2026-07-08: Extended the `MATCH_UNREACHABLE_ARM` LSP quick fix to delete source-safe multi-line destructuring arms, including struct payload pattern arms.
 - 2026-07-08: Added an LSP quick fix for `UNREACHABLE_IF_LET_ELSE` that removes the source-safe unreachable else branch while preserving the then branch and following statements.
 - 2026-07-08: Added an LSP quick fix for `MATCH_REDUNDANT_PATTERN` that removes a source-safe redundant or-pattern branch and its adjacent separator.
+- 2026-07-08: Added Int range support to the pattern usefulness matrix core. This is a non-syntax infrastructure slice: it matches enumerated Int literal witnesses conservatively while keeping open-domain default witnesses, and leaves parser/typechecker/LSP range-pattern surface work for the next slice.

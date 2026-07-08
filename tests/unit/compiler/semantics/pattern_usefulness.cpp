@@ -3,6 +3,7 @@
 
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -242,6 +243,62 @@ TEST_CASE("open domains report duplicate singleton literal as unreachable") {
     REQUIRE(analysis.overlaps.size() == 3);
     CHECK(analysis.overlaps.front().row_index == 1);
     CHECK(analysis.overlaps.front().previous_row_index == 0);
+}
+
+TEST_CASE("open int range pattern covers enumerated literal witnesses conservatively") {
+    ahfl::PatternUsefulnessContext context;
+    const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
+    const auto other = context.add_constructor(open, "_", {});
+    const auto one = context.add_constructor(open, "1", {});
+    const auto two = context.add_constructor(open, "2", {});
+    const auto five = context.add_constructor(open, "5", {});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(1, 3)},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(two, {})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, open, rows);
+
+    CHECK_FALSE(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witness->constructor == other);
+    REQUIRE(analysis.unreachable_rows.size() == 1);
+    CHECK(analysis.unreachable_rows.front().row_index == 1);
+    REQUIRE(analysis.overlaps.size() == 1);
+    CHECK(analysis.overlaps.front().row_index == 1);
+    CHECK(analysis.overlaps.front().previous_row_index == 0);
+    CHECK(ahfl::render_pattern_witness(context, ahfl::PatternWitness{.constructor = one}) == "1");
+    CHECK(ahfl::render_pattern_witness(context, ahfl::PatternWitness{.constructor = five}) == "5");
+}
+
+TEST_CASE("open int range pattern does not match non-int constructors") {
+    ahfl::PatternUsefulnessContext context;
+    const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
+    const auto other = context.add_constructor(open, "_", {});
+    const auto text = context.add_constructor(open, "\"2\"", {});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_int_range_pattern(1, 3)},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, open, rows);
+
+    CHECK_FALSE(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witness->constructor == other);
+    CHECK(analysis.unreachable_rows.empty());
+
+    const std::vector text_rows{
+        rows.front(),
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(text, {})},
+    };
+    const auto text_analysis = ahfl::analyze_pattern_usefulness(context, open, text_rows);
+    CHECK(text_analysis.unreachable_rows.empty());
+}
+
+TEST_CASE("open int range pattern rejects invalid bounds") {
+    ahfl::PatternUsefulnessContext context;
+    CHECK_THROWS_AS(static_cast<void>(context.make_int_range_pattern(5, 3)),
+                    std::invalid_argument);
 }
 
 TEST_CASE("never patterns do not overlap or cover finite witnesses") {
