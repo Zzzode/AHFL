@@ -204,6 +204,46 @@ TEST_CASE("open domains do not claim complete exhaustiveness") {
     CHECK(analysis.redundant_or_branches.empty());
 }
 
+TEST_CASE("open domains report symbolic default witness after singleton literal") {
+    ahfl::PatternUsefulnessContext context;
+    const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
+    const auto other = context.add_constructor(open, "_", {});
+    const auto one = context.add_constructor(open, "1", {});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(one, {})},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, open, rows);
+
+    CHECK_FALSE(analysis.root_domain_is_finite);
+    REQUIRE(analysis.missing_witness.has_value());
+    CHECK(analysis.missing_witness->constructor == other);
+    CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "_");
+    CHECK(analysis.unreachable_rows.empty());
+}
+
+TEST_CASE("open domains report duplicate singleton literal as unreachable") {
+    ahfl::PatternUsefulnessContext context;
+    const auto open = context.add_domain(ahfl::PatternDomainKind::Open);
+    (void)context.add_constructor(open, "_", {});
+    const auto one = context.add_constructor(open, "1", {});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(one, {})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_constructor_pattern(one, {})},
+        ahfl::PatternUsefulnessRow{.pattern = context.make_wildcard()},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, open, rows);
+
+    CHECK_FALSE(analysis.root_domain_is_finite);
+    CHECK_FALSE(analysis.missing_witness.has_value());
+    REQUIRE(analysis.unreachable_rows.size() == 1);
+    CHECK(analysis.unreachable_rows.front().row_index == 1);
+    REQUIRE(analysis.overlaps.size() == 3);
+    CHECK(analysis.overlaps.front().row_index == 1);
+    CHECK(analysis.overlaps.front().previous_row_index == 0);
+}
+
 TEST_CASE("never patterns do not overlap or cover finite witnesses") {
     ahfl::PatternUsefulnessContext context;
     const auto bool_domain = make_bool_domain(context);

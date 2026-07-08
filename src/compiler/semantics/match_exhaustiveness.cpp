@@ -3,6 +3,7 @@
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <optional>
 #include <string_view>
@@ -32,12 +33,38 @@ struct BoolDomainLowering {
     PatternConstructorId true_constructor;
 };
 
+enum class LiteralPatternKind {
+    Bool,
+    Int,
+    Float,
+    String,
+    None,
+    Unknown,
+};
+
+enum class OpenLiteralDomainKind {
+    Int,
+    Float,
+    String,
+};
+
+struct OpenLiteralDomainLowering {
+    TypePtr type{nullptr};
+    PatternDomainId domain;
+    OpenLiteralDomainKind kind{OpenLiteralDomainKind::Int};
+    PatternConstructorId default_constructor;
+    std::unordered_map<std::string, PatternConstructorId> literal_constructors;
+};
+
 struct MatchMatrixLowering {
     PatternUsefulnessContext context;
     PatternDomainId root_domain;
     std::vector<EnumDomainLowering> enum_domains;
     std::unordered_map<TypePtr, std::size_t> enum_domain_by_type;
     std::vector<std::optional<std::size_t>> enum_domain_for_pattern_domain;
+    std::vector<OpenLiteralDomainLowering> open_literal_domains;
+    std::unordered_map<TypePtr, std::size_t> open_literal_domain_by_type;
+    std::vector<std::optional<std::size_t>> open_literal_domain_for_pattern_domain;
     std::vector<std::optional<VariantOrdinal>> variant_for_constructor;
     std::optional<BoolDomainLowering> bool_domain;
     const MatchEnumInfoResolver *enum_resolver{nullptr};
@@ -48,6 +75,7 @@ struct PatternExpected {
     PatternDomainId domain;
     const EnumDomainLowering *enum_domain{nullptr};
     const BoolDomainLowering *bool_domain{nullptr};
+    std::optional<std::size_t> open_literal_domain_index;
 };
 
 [[nodiscard]] std::string_view last_segment(const ast::QualifiedName &name) noexcept {
@@ -89,6 +117,15 @@ void remember_enum_domain(MatchMatrixLowering &lowering,
     lowering.enum_domain_for_pattern_domain[domain.value] = enum_domain_index;
 }
 
+void remember_open_literal_domain(MatchMatrixLowering &lowering,
+                                  PatternDomainId domain,
+                                  std::size_t open_domain_index) {
+    if (domain.value >= lowering.open_literal_domain_for_pattern_domain.size()) {
+        lowering.open_literal_domain_for_pattern_domain.resize(domain.value + 1);
+    }
+    lowering.open_literal_domain_for_pattern_domain[domain.value] = open_domain_index;
+}
+
 [[nodiscard]] const EnumDomainLowering *enum_domain_for(const MatchMatrixLowering &lowering,
                                                         PatternDomainId domain) {
     if (domain.value >= lowering.enum_domain_for_pattern_domain.size()) {
@@ -101,6 +138,18 @@ void remember_enum_domain(MatchMatrixLowering &lowering,
     return &lowering.enum_domains[*index];
 }
 
+[[nodiscard]] std::optional<std::size_t>
+open_literal_domain_index_for(const MatchMatrixLowering &lowering, PatternDomainId domain) {
+    if (domain.value >= lowering.open_literal_domain_for_pattern_domain.size()) {
+        return std::nullopt;
+    }
+    const auto index = lowering.open_literal_domain_for_pattern_domain[domain.value];
+    if (!index.has_value() || *index >= lowering.open_literal_domains.size()) {
+        return std::nullopt;
+    }
+    return index;
+}
+
 [[nodiscard]] PatternExpected expected_for_domain(const MatchMatrixLowering &lowering,
                                                   PatternDomainId domain) {
     const auto *bool_domain =
@@ -111,12 +160,56 @@ void remember_enum_domain(MatchMatrixLowering &lowering,
         .domain = domain,
         .enum_domain = enum_domain_for(lowering, domain),
         .bool_domain = bool_domain,
+        .open_literal_domain_index = open_literal_domain_index_for(lowering, domain),
     };
 }
 
 [[nodiscard]] PatternDomainId make_opaque_domain(MatchMatrixLowering &lowering) {
     const auto domain = lowering.context.add_domain();
     (void)lowering.context.add_constructor(domain, "_", {});
+    return domain;
+}
+
+[[nodiscard]] std::optional<OpenLiteralDomainKind> open_literal_domain_kind_for(TypePtr type) {
+    if (type == nullptr) {
+        return std::nullopt;
+    }
+    if (type->get_if<types::IntT>() != nullptr) {
+        return OpenLiteralDomainKind::Int;
+    }
+    if (type->get_if<types::FloatT>() != nullptr) {
+        return OpenLiteralDomainKind::Float;
+    }
+    if (type->get_if<types::StringT>() != nullptr ||
+        type->get_if<types::BoundedStringT>() != nullptr) {
+        return OpenLiteralDomainKind::String;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] PatternDomainId ensure_open_literal_domain(MatchMatrixLowering &lowering,
+                                                         TypePtr type,
+                                                         OpenLiteralDomainKind kind) {
+    if (type != nullptr) {
+        if (const auto found = lowering.open_literal_domain_by_type.find(type);
+            found != lowering.open_literal_domain_by_type.end()) {
+            return lowering.open_literal_domains[found->second].domain;
+        }
+    }
+
+    const auto domain = lowering.context.add_domain(PatternDomainKind::Open);
+    const auto default_constructor = lowering.context.add_constructor(domain, "_", {});
+    const auto domain_index = lowering.open_literal_domains.size();
+    lowering.open_literal_domains.push_back(OpenLiteralDomainLowering{
+        .type = type,
+        .domain = domain,
+        .kind = kind,
+        .default_constructor = default_constructor,
+    });
+    remember_open_literal_domain(lowering, domain, domain_index);
+    if (type != nullptr) {
+        lowering.open_literal_domain_by_type.emplace(type, domain_index);
+    }
     return domain;
 }
 
@@ -211,6 +304,9 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     if (type->get_if<types::BoolT>() != nullptr) {
         return ensure_bool_domain(lowering);
     }
+    if (auto open_kind = open_literal_domain_kind_for(type); open_kind.has_value()) {
+        return ensure_open_literal_domain(lowering, type, *open_kind);
+    }
     if (lowering.enum_resolver == nullptr || contains_type(stack, type) ||
         type->get_if<types::EnumT>() == nullptr) {
         return make_opaque_domain(lowering);
@@ -246,6 +342,54 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     const auto root_index = ensure_enum_domain(lowering, &scrutinee_type, enum_info, true, stack);
     lowering.root_domain = lowering.enum_domains[root_index].domain;
     return lowering;
+}
+
+[[nodiscard]] LiteralPatternKind literal_pattern_kind(std::string_view spelling) {
+    if (spelling == "true" || spelling == "false") {
+        return LiteralPatternKind::Bool;
+    }
+    if (spelling == "none") {
+        return LiteralPatternKind::None;
+    }
+    if (spelling.starts_with('"')) {
+        return LiteralPatternKind::String;
+    }
+    if (spelling.find('.') != std::string_view::npos) {
+        return LiteralPatternKind::Float;
+    }
+    if (!spelling.empty() && std::all_of(spelling.begin(), spelling.end(), [](unsigned char ch) {
+            return std::isdigit(ch) != 0;
+        })) {
+        return LiteralPatternKind::Int;
+    }
+    return LiteralPatternKind::Unknown;
+}
+
+[[nodiscard]] bool literal_matches_open_domain(LiteralPatternKind literal,
+                                               OpenLiteralDomainKind domain) noexcept {
+    switch (domain) {
+    case OpenLiteralDomainKind::Int:
+        return literal == LiteralPatternKind::Int;
+    case OpenLiteralDomainKind::Float:
+        return literal == LiteralPatternKind::Float;
+    case OpenLiteralDomainKind::String:
+        return literal == LiteralPatternKind::String;
+    }
+    return false;
+}
+
+[[nodiscard]] PatternConstructorId ensure_open_literal_constructor(MatchMatrixLowering &lowering,
+                                                                   std::size_t domain_index,
+                                                                   std::string_view spelling) {
+    auto &domain = lowering.open_literal_domains[domain_index];
+    const std::string key{spelling};
+    if (const auto found = domain.literal_constructors.find(key);
+        found != domain.literal_constructors.end()) {
+        return found->second;
+    }
+    const auto constructor = lowering.context.add_constructor(domain.domain, key, {});
+    domain.literal_constructors.emplace(key, constructor);
+    return constructor;
 }
 
 [[nodiscard]] PatternId constructor_pattern(MatchMatrixLowering &lowering,
@@ -303,6 +447,18 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
         const auto ordinal = variant_ordinal(expected.enum_domain->enum_info, "None");
         if (ordinal.has_value()) {
             return constructor_pattern(lowering, *expected.enum_domain, *ordinal, range);
+        }
+    }
+
+    if (expected.open_literal_domain_index.has_value()) {
+        const auto &domain = lowering.open_literal_domains[*expected.open_literal_domain_index];
+        const auto literal_kind = literal_pattern_kind(spelling);
+        if (literal_matches_open_domain(literal_kind, domain.kind)) {
+            return lowering.context.make_constructor_pattern(
+                ensure_open_literal_constructor(
+                    lowering, *expected.open_literal_domain_index, spelling),
+                {},
+                range);
         }
     }
 

@@ -662,6 +662,66 @@ enum MaybeBool { Some(Bool), None, }
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("open Int payload literal leaves default witness uncovered") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(1) => 1, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(_)") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "missing variant 'Some' declared here"));
+}
+
+TEST_CASE("open Int payload wildcard covers default witness") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(_) => 1, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS") == 0);
+}
+
+TEST_CASE("open String payload literal leaves default witness uncovered") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeText { Some(String), None, }
+)AHFL",
+        "MaybeText",
+        "MaybeText::None",
+        R"AHFL(match ctx.value { Some("seed") => 1, None => 0 })AHFL");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("Some(_)") != std::string::npos);
+}
+
+TEST_CASE("duplicate open Int payload literal reports usefulness warnings") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeInt { Some(Int), None, }
+)AHFL",
+        "MaybeInt",
+        "MaybeInt::None",
+        "match ctx.value { Some(1) => 1, Some(1) => 2, Some(_) => 3, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") == 3);
+}
+
 // ---------------------------------------------------------------------------
 // Arm body type unification: diverging arm body types report TYPE_MISMATCH.
 // ---------------------------------------------------------------------------

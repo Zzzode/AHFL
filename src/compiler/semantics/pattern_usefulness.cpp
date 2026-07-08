@@ -72,10 +72,14 @@ enumerate_domain(const PatternUsefulnessContext &context,
                  PatternDomainId domain_id,
                  PatternUsefulnessOptions options,
                  std::vector<PatternDomainId> &stack,
+                 bool &encountered_open_domain,
                  bool &limit_exceeded) {
     const auto &domain = context.domain(domain_id);
-    if (domain.kind == PatternDomainKind::Open || contains_domain(stack, domain_id)) {
+    if (contains_domain(stack, domain_id)) {
         return std::nullopt;
+    }
+    if (domain.kind == PatternDomainKind::Open) {
+        encountered_open_domain = true;
     }
 
     stack.push_back(domain_id);
@@ -85,7 +89,12 @@ enumerate_domain(const PatternUsefulnessContext &context,
         std::vector<std::vector<PatternWitness>> field_values;
         field_values.reserve(constructor.field_domains.size());
         for (const auto field_domain : constructor.field_domains) {
-            auto values = enumerate_domain(context, field_domain, options, stack, limit_exceeded);
+            auto values = enumerate_domain(context,
+                                           field_domain,
+                                           options,
+                                           stack,
+                                           encountered_open_domain,
+                                           limit_exceeded);
             if (!values.has_value()) {
                 stack.pop_back();
                 return std::nullopt;
@@ -115,13 +124,16 @@ enumerate_domain(const PatternUsefulnessContext &context,
                                                           PatternUsefulnessOptions options) {
     WitnessEnumeration enumeration;
     bool limit_exceeded = false;
+    bool encountered_open_domain = false;
     std::vector<PatternDomainId> stack;
-    auto witnesses = enumerate_domain(context, root_domain, options, stack, limit_exceeded);
+    auto witnesses = enumerate_domain(
+        context, root_domain, options, stack, encountered_open_domain, limit_exceeded);
     enumeration.limit_exceeded = limit_exceeded;
     if (!witnesses.has_value()) {
         enumeration.finite = false;
         return enumeration;
     }
+    enumeration.finite = !encountered_open_domain;
     enumeration.witnesses = std::move(*witnesses);
     return enumeration;
 }
@@ -381,7 +393,7 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
     const auto enumeration = enumerate_root_witnesses(context, root_domain, options);
     analysis.root_domain_is_finite = enumeration.finite;
     analysis.witness_limit_exceeded = enumeration.limit_exceeded;
-    if (!enumeration.finite) {
+    if (enumeration.witnesses.empty()) {
         return analysis;
     }
 
