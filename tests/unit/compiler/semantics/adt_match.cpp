@@ -584,6 +584,59 @@ enum MaybeBool { Some(Bool), None, }
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
 }
 
+TEST_CASE("if-let over single-constructor enum reports unreachable else") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+enum Only { Some(Int) }
+fn f(value: Only) -> Int effect Pure decreases 0 {
+    if let Some(x) = value {
+        return x;
+    } else {
+        return 0;
+    }
+}
+)AHFL");
+
+    CHECK_FALSE(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "UNREACHABLE_IF_LET_ELSE");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("if-let else branch is unreachable") != std::string::npos);
+    CHECK(diagnostics_contain(result.diagnostics, "if-let pattern covers every constructor"));
+}
+
+TEST_CASE("if-let over multi-constructor enum keeps else reachable") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+enum Maybe { Some(Int), None }
+fn f(value: Maybe) -> Int effect Pure decreases 0 {
+    if let Some(x) = value {
+        return x;
+    } else {
+        return 0;
+    }
+}
+)AHFL");
+
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "UNREACHABLE_IF_LET_ELSE") == 0);
+}
+
+TEST_CASE("invalid if-let pattern shape suppresses unreachable else cascade") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+enum Only { Some(Int) }
+fn f(value: Only) -> Int effect Pure decreases 0 {
+    if let Some = value {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+)AHFL");
+
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "INVALID_ENUM_VARIANT_SHAPE"));
+    CHECK(diagnostic_count_with_code(result.diagnostics, "UNREACHABLE_IF_LET_ELSE") == 0);
+}
+
 TEST_CASE("invalid literal enum payload pattern reports type mismatch") {
     const auto source = wrap_in_flow(
         R"AHFL(

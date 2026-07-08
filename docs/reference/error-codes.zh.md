@@ -2301,6 +2301,37 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 
 ---
 
+### UNREACHABLE_IF_LET_ELSE
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.UNREACHABLE_IF_LET_ELSE` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `this if-let else branch is unreachable` |
+
+**触发条件**：`if let` 的 pattern 已经覆盖 scrutinee enum 的所有 constructor，并且用户仍然写了 `else` 分支。当前实现通过 RFC 0011 typed pattern HIR 和 usefulness matrix 判断覆盖关系。
+
+**最小复现**：
+```ahfl
+module repro;
+enum Only { Some(Int) }
+fn f(value: Only) -> Int effect Pure decreases 0 {
+    if let Some(x) = value {
+        return x;
+    } else {
+        return 0;
+    }
+}
+```
+
+**常见修复**：
+- 删除不可达 `else` 分支。
+- 如果未来会给 enum 增加其他 variant，应先增加 variant，再保留相应 fallback 逻辑。
+
+**Related codes**：`MATCH_MISSING_PATTERNS`、`MATCH_UNREACHABLE_ARM`、`MATCH_REDUNDANT_PATTERN`。
+
+---
+
 ### MATCH_ARM_TYPE_MISMATCH
 
 | 字段 | 值 |

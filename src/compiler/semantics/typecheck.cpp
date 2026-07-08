@@ -8,6 +8,7 @@
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 #include "ahfl/compiler/semantics/type_expectation.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "compiler/semantics/match_exhaustiveness.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
 #include "compiler/semantics/typecheck_internal.hpp"
@@ -3519,6 +3520,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             std::uint32_t if_let_pattern_index = UINT32_MAX;
             std::optional<std::reference_wrapper<const EnumVariantInfo>> pattern_variant_info =
                 std::nullopt;
+            bool if_let_pattern_valid_for_usefulness = false;
             if (ifl->pattern != nullptr && enum_info.has_value()) {
                 const auto &pattern = *ifl->pattern;
                 const auto variant = enum_info->get().find_variant(pattern.variant_name);
@@ -3529,8 +3531,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                          pattern.range);
                 } else {
                     pattern_variant_info = std::cref(variant->get());
+                    bool shape_valid = true;
                     const auto pattern_kind = if_let_payload_kind(pattern);
                     if (pattern_kind != variant->get().payload_kind) {
+                        shape_valid = false;
                         typecheck_error_here(
                             error_codes::typecheck::InvalidEnumVariantShape,
                             messages::typecheck::InvalidEnumVariantShape.format_with(
@@ -3544,6 +3548,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                     if (variant->get().payload_kind == EnumVariantPayloadKind::Tuple) {
                         const auto &payload = variant->get().payload;
                         if (pattern.bindings.size() != payload.size()) {
+                            shape_valid = false;
                             typecheck_error_here(
                                 error_codes::typecheck::MatchVariantPayloadArity,
                                 messages::typecheck::MatchVariantPayloadArity.format_with(
@@ -3571,6 +3576,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                 payload[index] != nullptr ? payload[index] : make_error_type());
                         }
                     }
+                    if_let_pattern_valid_for_usefulness = shape_valid;
 
                     if (ifl->scrutinee != nullptr) {
                         if (const auto place = place_of_expr(*ifl->scrutinee); place.has_value()) {
@@ -3628,6 +3634,53 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             if (ifl->pattern != nullptr) {
                 if_let_pattern_index = append_if_let_typed_pattern(
                     *ifl->pattern, scrutinee.type, enum_info, pattern_variant_info);
+            }
+            if (ifl->else_block != nullptr && enum_info.has_value() &&
+                pattern_variant_info.has_value() && if_let_pattern_valid_for_usefulness &&
+                if_let_pattern_index != UINT32_MAX && scrutinee.type != nullptr &&
+                !is_error_type(*scrutinee.type)) {
+                const MatchEnumInfoResolver enum_resolver = [&](const Type &type) {
+                    const auto *payload = type.get_if<types::EnumT>();
+                    if (payload == nullptr) {
+                        return std::optional<EnumTypeInfo>{};
+                    }
+                    const auto declared = environment().get_enum(type);
+                    if (!declared.has_value()) {
+                        return std::optional<EnumTypeInfo>{};
+                    }
+                    if (auto substituted =
+                            substituted_enum_info_for(declared->get(), *payload, *types_);
+                        substituted.has_value()) {
+                        return substituted;
+                    }
+                    return std::optional<EnumTypeInfo>{declared->get()};
+                };
+                const MatchTypedPatternResolver pattern_resolver = [&](std::uint32_t index) {
+                    return typed_pattern(index);
+                };
+                const auto usefulness = analyze_match_exhaustiveness(
+                    *scrutinee.type,
+                    enum_info->get(),
+                    std::vector<MatchTypedPatternRow>{MatchTypedPatternRow{
+                        .pattern_index = if_let_pattern_index,
+                        .range = ifl->pattern != nullptr ? ifl->pattern->range : statement.range,
+                        .contributes_to_exhaustiveness = true,
+                    }},
+                    statement.range,
+                    enum_resolver,
+                    pattern_resolver);
+                if (!usefulness.missing_patterns.has_value()) {
+                    typecheck_warning_here(
+                        error_codes::typecheck::UnreachableIfLetElse,
+                        messages::typecheck::UnreachableIfLetElse.format_with(),
+                        ifl->else_block->range,
+                        std::vector<Diagnostic::Related>{Diagnostic::Related{
+                            .message = "if-let pattern covers every constructor of enum '" +
+                                       enum_info->get().canonical_name + "'",
+                            .range =
+                                ifl->pattern != nullptr ? ifl->pattern->range : statement.range,
+                        }});
+                }
             }
 
             if (ifl->then_block != nullptr) {

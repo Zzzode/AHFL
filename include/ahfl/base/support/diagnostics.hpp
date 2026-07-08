@@ -267,6 +267,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchUnreachableArm{
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchOverlap{"MATCH_OVERLAP"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchRedundantPattern{
     "MATCH_REDUNDANT_PATTERN"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnreachableIfLetElse{
+    "UNREACHABLE_IF_LET_ELSE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchArmTypeMismatch{
     "MATCH_ARM_TYPE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
@@ -590,6 +592,7 @@ inline constexpr MessageTemplate MatchUnreachableArm{"this match arm is unreacha
 inline constexpr MessageTemplate MatchOverlap{"pattern overlaps with arm #{}"};
 inline constexpr MessageTemplate MatchRedundantPattern{
     "redundant pattern branch #{} in match arm #{}"};
+inline constexpr MessageTemplate UnreachableIfLetElse{"this if-let else branch is unreachable"};
 inline constexpr MessageTemplate MatchArmTypeMismatch{
     "match arm body type mismatch: expected {}, got {}"};
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
