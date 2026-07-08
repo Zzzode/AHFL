@@ -8595,6 +8595,64 @@ void test_code_action_qf_match_unreachable_arm_removes_arm_line() {
     check(keeps_surrounding_lines, "codeAction.qf_match_unreachable.keeps_other_arms");
 }
 
+void test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        _ => 0,\n"
+                               "        Data {\n"
+                               "            code,\n"
+                               "            label,\n"
+                               "        } => 1,\n"
+                               "        Empty => 2,\n"
+                               "    };\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_UNREACHABLE_ARM";
+    diag.severity = DiagnosticSeverity::Warning;
+    diag.message = "unreachable match arm";
+    diag.range = Range{Position{4, 8}, Position{7, 9}};
+
+    const Range cursor_range{Position{4, 8}, Position{4, 12}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Remove unreachable match arm") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_unreachable_multiline.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool deletes_complete_pattern_arm = false;
+    bool preserves_prior_wildcard = true;
+    bool preserves_following_arm = true;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            deletes_complete_pattern_arm =
+                deletes_complete_pattern_arm ||
+                (edit.range.start.line == 4 && edit.range.start.character == 0 &&
+                 edit.range.end.line == 8 && edit.range.end.character == 0 &&
+                 edit.new_text.empty());
+            preserves_prior_wildcard = preserves_prior_wildcard && edit.range.start.line != 3;
+            preserves_following_arm = preserves_following_arm && edit.range.end.line <= 8;
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_match_unreachable_multiline.single_text_edit");
+    check(deletes_complete_pattern_arm,
+          "codeAction.qf_match_unreachable_multiline.deletes_complete_arm");
+    check(preserves_prior_wildcard,
+          "codeAction.qf_match_unreachable_multiline.preserves_prior_wildcard");
+    check(preserves_following_arm,
+          "codeAction.qf_match_unreachable_multiline.preserves_following_arm");
+}
+
 // Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
 // "capabilities: [];" before the first transition line.
 //
@@ -8961,6 +9019,7 @@ int main() {
     test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields();
     test_code_action_qf_match_missing_patterns_falls_back_to_wildcard();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
+    test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
     test_hover_struct_literal_shows_construct_summary();

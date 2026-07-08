@@ -728,7 +728,7 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
                                                                  const LspDiagnostic &diag) {
     const auto arm_line = diag.range.start.line;
     const auto line = line_text(source, arm_line);
-    if (line.empty() || line.find("=>") == std::string_view::npos) {
+    if (line.empty()) {
         return std::nullopt;
     }
 
@@ -738,13 +738,107 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     }
 
     const auto start = line_start_offset(source, arm_line);
-    auto end = source.find('\n', start);
-    if (end == std::string::npos) {
-        end = source.size();
-    } else {
-        ++end;
+    const std::string_view view(source);
+    std::size_t cursor = start;
+    std::optional<std::size_t> arrow;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int bracket_depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (; cursor < source.size(); ++cursor) {
+        const char c = source[cursor];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '(') {
+            ++paren_depth;
+        } else if (c == ')' && paren_depth > 0) {
+            --paren_depth;
+        } else if (c == '{') {
+            ++brace_depth;
+        } else if (c == '}' && brace_depth > 0) {
+            --brace_depth;
+        } else if (c == '[') {
+            ++bracket_depth;
+        } else if (c == ']' && bracket_depth > 0) {
+            --bracket_depth;
+        }
+
+        if (paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 &&
+            cursor + 1 < source.size() && view.substr(cursor, 2) == "=>") {
+            arrow = cursor;
+            cursor += 2;
+            break;
+        }
     }
-    if (end <= start) {
+    if (!arrow.has_value()) {
+        return std::nullopt;
+    }
+
+    std::size_t end = std::string::npos;
+    paren_depth = 0;
+    brace_depth = 0;
+    bracket_depth = 0;
+    in_string = false;
+    escaped = false;
+    for (; cursor < source.size(); ++cursor) {
+        const char c = source[cursor];
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '(') {
+            ++paren_depth;
+        } else if (c == ')' && paren_depth > 0) {
+            --paren_depth;
+        } else if (c == '{') {
+            ++brace_depth;
+        } else if (c == '}' && brace_depth > 0) {
+            --brace_depth;
+        } else if (c == '[') {
+            ++bracket_depth;
+        } else if (c == ']' && bracket_depth > 0) {
+            --bracket_depth;
+        }
+
+        if (paren_depth == 0 && brace_depth == 0 && bracket_depth == 0) {
+            if (c == ',') {
+                end = cursor + 1;
+                if (end < source.size() && source[end] == '\n') {
+                    ++end;
+                }
+                break;
+            }
+            if (c == '}') {
+                end = cursor;
+                break;
+            }
+        }
+    }
+    if (end == std::string::npos || end <= start) {
         return std::nullopt;
     }
 
