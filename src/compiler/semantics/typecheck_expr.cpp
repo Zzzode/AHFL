@@ -976,6 +976,36 @@ overlap_notes(const MatchOverlapDiagnostic &overlap) {
     }};
 }
 
+[[nodiscard]] std::vector<Diagnostic::Related>
+redundant_pattern_notes(const MatchRedundantPatternDiagnostic &redundant) {
+    std::vector<Diagnostic::Related> notes;
+    notes.reserve(redundant.covering_arm_indices.size() + redundant.covering_branch_indices.size());
+    for (std::size_t i = 0; i < redundant.covering_arm_indices.size(); ++i) {
+        std::optional<SourceRange> range = std::nullopt;
+        if (i < redundant.covering_arm_ranges.size()) {
+            range = redundant.covering_arm_ranges[i];
+        }
+        notes.push_back(Diagnostic::Related{
+            .message =
+                "previously covered by arm #" + std::to_string(redundant.covering_arm_indices[i]),
+            .range = range,
+        });
+    }
+    for (std::size_t i = 0; i < redundant.covering_branch_indices.size(); ++i) {
+        std::optional<SourceRange> range = std::nullopt;
+        if (i < redundant.covering_branch_ranges.size()) {
+            range = redundant.covering_branch_ranges[i];
+        }
+        notes.push_back(Diagnostic::Related{
+            .message = "previously covered by branch #" +
+                       std::to_string(redundant.covering_branch_indices[i]) +
+                       " in the same or-pattern",
+            .range = range,
+        });
+    }
+    return notes;
+}
+
 struct MethodCandidate {
     const ImplTypeInfo *impl{nullptr};
     const ImplMethodInfo *method{nullptr};
@@ -2100,7 +2130,7 @@ class ExpressionChecker final {
                         std::to_string(redundant.branch_index),
                         std::to_string(redundant.arm_index)),
                     redundant.branch_range,
-                    {});
+                    redundant_pattern_notes(redundant));
             }
             // When the scrutinee is not an enum (error path), enum_info is not
             // available and MATCH_SCRUTINEE_REQUIRES_ENUM already flags the root cause.

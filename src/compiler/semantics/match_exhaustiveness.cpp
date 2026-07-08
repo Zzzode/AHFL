@@ -967,11 +967,22 @@ make_unreachable(const PatternUnreachableRow &row, const std::vector<std::size_t
 [[nodiscard]] MatchRedundantPatternDiagnostic
 make_redundant_pattern(const PatternRedundantOrBranch &branch,
                        const std::vector<std::size_t> &arm_indices) {
-    return MatchRedundantPatternDiagnostic{
+    MatchRedundantPatternDiagnostic diagnostic{
         .arm_index = arm_indices[branch.row_index],
         .branch_index = branch.branch_index + 1,
         .branch_range = branch.branch_range,
     };
+    diagnostic.covering_arm_indices.reserve(branch.covering_row_indices.size());
+    for (const auto row_index : branch.covering_row_indices) {
+        diagnostic.covering_arm_indices.push_back(arm_indices[row_index]);
+    }
+    diagnostic.covering_arm_ranges = branch.covering_row_ranges;
+    diagnostic.covering_branch_indices.reserve(branch.covering_branch_indices.size());
+    for (const auto branch_index : branch.covering_branch_indices) {
+        diagnostic.covering_branch_indices.push_back(branch_index + 1);
+    }
+    diagnostic.covering_branch_ranges = branch.covering_branch_ranges;
+    return diagnostic;
 }
 
 MatchExhaustivenessDiagnostics

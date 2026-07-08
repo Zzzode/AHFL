@@ -581,7 +581,26 @@ enum MaybeBool { Some(Bool), None, }
     REQUIRE(diagnostic != nullptr);
     CHECK(diagnostic->message.find("branch #2") != std::string::npos);
     CHECK(diagnostic->message.find("arm #2") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "previously covered by branch #1 in the same or-pattern"));
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 0);
+}
+
+TEST_CASE("redundant or-pattern branch diagnostic points to covering match arm") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeBool { Some(Bool), None, }
+)AHFL",
+        "MaybeBool",
+        "MaybeBool::None",
+        "match ctx.value { None => 0, Some(true) => 1, Some(true | false) => 2 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_REDUNDANT_PATTERN");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("branch #1") != std::string::npos);
+    CHECK(diagnostic->message.find("arm #3") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "previously covered by arm #2"));
 }
 
 TEST_CASE("if-let over single-constructor enum reports unreachable else") {

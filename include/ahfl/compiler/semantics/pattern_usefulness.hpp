@@ -151,6 +151,10 @@ struct PatternRedundantOrBranch {
     PatternId or_pattern;
     std::size_t branch_index{0};
     SourceRange branch_range;
+    std::vector<std::size_t> covering_row_indices;
+    std::vector<SourceRange> covering_row_ranges;
+    std::vector<std::size_t> covering_branch_indices;
+    std::vector<SourceRange> covering_branch_ranges;
 };
 
 struct PatternUsefulnessOptions {

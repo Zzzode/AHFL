@@ -427,6 +427,18 @@ void collect_covering_rows(const std::vector<PatternWitness> &witnesses,
     }
 }
 
+void collect_covering_interval_rows(const std::vector<IntInterval> &candidate,
+                                    const std::vector<IntIntervalRow> &previous,
+                                    std::vector<std::size_t> &output_indices,
+                                    std::vector<SourceRange> &output_ranges) {
+    for (const auto &source : previous) {
+        if (intervals_intersect(candidate, source.intervals)) {
+            output_indices.push_back(source.row_index);
+            output_ranges.push_back(source.range);
+        }
+    }
+}
+
 void collect_or_patterns(const PatternUsefulnessContext &context,
                          PatternId pattern_id,
                          std::vector<PatternId> &output) {
@@ -517,6 +529,7 @@ analyze_bounded_int_intervals(const PatternUsefulnessContext &context,
         collect_or_patterns(context, row.pattern, or_patterns);
         for (const auto or_pattern : or_patterns) {
             const auto &or_node = context.pattern(or_pattern);
+            std::vector<IntIntervalRow> previous_branch_rows;
             std::vector<IntInterval> previous_branch_intervals;
             for (std::size_t branch_index = 0; branch_index < or_node.children.size();
                  ++branch_index) {
@@ -531,15 +544,30 @@ analyze_bounded_int_intervals(const PatternUsefulnessContext &context,
                 const auto branch_uncovered =
                     subtract_intervals(branch_intervals, previous_intervals);
                 if (branch_uncovered.empty() && !branch_intervals.empty()) {
-                    analysis.redundant_or_branches.push_back(PatternRedundantOrBranch{
+                    PatternRedundantOrBranch redundant{
                         .row_index = row_index,
                         .or_pattern = or_pattern,
                         .branch_index = branch_index,
                         .branch_range = context.pattern(branch).range,
-                    });
+                    };
+                    collect_covering_interval_rows(branch_intervals,
+                                                   contributing_rows,
+                                                   redundant.covering_row_indices,
+                                                   redundant.covering_row_ranges);
+                    collect_covering_interval_rows(branch_intervals,
+                                                   previous_branch_rows,
+                                                   redundant.covering_branch_indices,
+                                                   redundant.covering_branch_ranges);
+                    analysis.redundant_or_branches.push_back(std::move(redundant));
                 }
                 previous_branch_intervals =
                     merge_interval_sets(std::move(previous_branch_intervals), branch_intervals);
+                previous_branch_rows.push_back(IntIntervalRow{
+                    .row_index = branch_index,
+                    .range = context.pattern(branch).range,
+                    .intervals = branch_intervals,
+                    .contributes_to_exhaustiveness = false,
+                });
             }
         }
 
@@ -971,6 +999,21 @@ subtract_symbolic_space_many(const PatternUsefulnessContext &context,
     return !is_symbolic_space_empty(context, intersection);
 }
 
+void collect_covering_symbolic_spaces(const PatternUsefulnessContext &context,
+                                      const SymbolicDomainSpace &candidate,
+                                      const std::vector<SymbolicDomainSpace> &previous,
+                                      const std::vector<std::size_t> &previous_indices,
+                                      const std::vector<SourceRange> &previous_ranges,
+                                      std::vector<std::size_t> &output_indices,
+                                      std::vector<SourceRange> &output_ranges) {
+    for (std::size_t index = 0; index < previous.size(); ++index) {
+        if (symbolic_spaces_intersect(context, candidate, previous[index])) {
+            output_indices.push_back(previous_indices[index]);
+            output_ranges.push_back(previous_ranges[index]);
+        }
+    }
+}
+
 [[nodiscard]] std::optional<PatternWitness>
 sample_symbolic_witness(const PatternUsefulnessContext &context, const SymbolicDomainSpace &space) {
     const auto &domain = context.domain(space.domain);
@@ -1112,6 +1155,8 @@ analyze_symbolic_closed_spaces(const PatternUsefulnessContext &context,
         for (const auto or_pattern : or_patterns) {
             const auto &or_node = context.pattern(or_pattern);
             std::vector<SymbolicDomainSpace> previous_branch_spaces;
+            std::vector<std::size_t> previous_branch_indices;
+            std::vector<SourceRange> previous_branch_ranges;
             for (std::size_t branch_index = 0; branch_index < or_node.children.size();
                  ++branch_index) {
                 const auto branch = or_node.children[branch_index];
@@ -1132,14 +1177,31 @@ analyze_symbolic_closed_spaces(const PatternUsefulnessContext &context,
                                       previous_branch_spaces.end());
                 if (!is_symbolic_space_empty(context, *branch_space) &&
                     subtract_symbolic_space_many(context, *branch_space, covered_spaces).empty()) {
-                    analysis.redundant_or_branches.push_back(PatternRedundantOrBranch{
+                    PatternRedundantOrBranch redundant{
                         .row_index = row_index,
                         .or_pattern = or_pattern,
                         .branch_index = branch_index,
                         .branch_range = context.pattern(branch).range,
-                    });
+                    };
+                    collect_covering_symbolic_spaces(context,
+                                                     *branch_space,
+                                                     contributing_spaces,
+                                                     contributing_row_indices,
+                                                     contributing_row_ranges,
+                                                     redundant.covering_row_indices,
+                                                     redundant.covering_row_ranges);
+                    collect_covering_symbolic_spaces(context,
+                                                     *branch_space,
+                                                     previous_branch_spaces,
+                                                     previous_branch_indices,
+                                                     previous_branch_ranges,
+                                                     redundant.covering_branch_indices,
+                                                     redundant.covering_branch_ranges);
+                    analysis.redundant_or_branches.push_back(std::move(redundant));
                 }
                 if (!is_symbolic_space_empty(context, *branch_space)) {
+                    previous_branch_indices.push_back(branch_index);
+                    previous_branch_ranges.push_back(context.pattern(branch).range);
                     previous_branch_spaces.push_back(std::move(*branch_space));
                 }
             }
@@ -1439,6 +1501,8 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
         for (const auto or_pattern : or_patterns) {
             const auto &or_node = context.pattern(or_pattern);
             std::vector<WitnessMatcher> previous_or_branch_matchers;
+            std::vector<std::size_t> previous_or_branch_indices;
+            std::vector<SourceRange> previous_or_branch_ranges;
             for (std::size_t branch_index = 0; branch_index < or_node.children.size();
                  ++branch_index) {
                 const auto branch = or_node.children[branch_index];
@@ -1457,13 +1521,30 @@ PatternUsefulnessAnalysis analyze_pattern_usefulness(const PatternUsefulnessCont
                 const bool branch_useful =
                     is_useful_against(enumeration.witnesses, branch_candidate, previous);
                 if (!branch_useful && any_match(enumeration.witnesses, branch_candidate)) {
-                    analysis.redundant_or_branches.push_back(PatternRedundantOrBranch{
+                    PatternRedundantOrBranch redundant{
                         .row_index = row_index,
                         .or_pattern = or_pattern,
                         .branch_index = branch_index,
                         .branch_range = context.pattern(branch).range,
-                    });
+                    };
+                    collect_covering_rows(enumeration.witnesses,
+                                          branch_candidate,
+                                          contributing_matchers,
+                                          contributing_row_indices,
+                                          contributing_row_ranges,
+                                          redundant.covering_row_indices,
+                                          redundant.covering_row_ranges);
+                    collect_covering_rows(enumeration.witnesses,
+                                          branch_candidate,
+                                          previous_or_branch_matchers,
+                                          previous_or_branch_indices,
+                                          previous_or_branch_ranges,
+                                          redundant.covering_branch_indices,
+                                          redundant.covering_branch_ranges);
+                    analysis.redundant_or_branches.push_back(std::move(redundant));
                 }
+                previous_or_branch_indices.push_back(branch_index);
+                previous_or_branch_ranges.push_back(context.pattern(branch).range);
                 previous_or_branch_matchers.push_back(std::move(branch_candidate));
             }
         }

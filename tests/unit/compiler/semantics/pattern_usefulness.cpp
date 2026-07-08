@@ -3,6 +3,7 @@
 
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -122,6 +123,9 @@ TEST_CASE("or-pattern analysis reports branch redundancy") {
     CHECK(analysis.redundant_or_branches.front().row_index == 0);
     CHECK(analysis.redundant_or_branches.front().or_pattern == bool_or);
     CHECK(analysis.redundant_or_branches.front().branch_index == 2);
+    CHECK(analysis.redundant_or_branches.front().covering_row_indices.empty());
+    CHECK(analysis.redundant_or_branches.front().covering_branch_indices ==
+          std::vector<std::size_t>{1});
 }
 
 TEST_CASE("nested constructor matrix produces payload witnesses") {
@@ -201,8 +205,34 @@ TEST_CASE("nested or-pattern redundancy is checked in row context") {
     CHECK(analysis.redundant_or_branches.front().row_index == 0);
     CHECK(analysis.redundant_or_branches.front().or_pattern == true_or_true);
     CHECK(analysis.redundant_or_branches.front().branch_index == 1);
+    CHECK(analysis.redundant_or_branches.front().covering_row_indices.empty());
+    CHECK(analysis.redundant_or_branches.front().covering_branch_indices ==
+          std::vector<std::size_t>{0});
     REQUIRE(analysis.missing_witness.has_value());
     CHECK(ahfl::render_pattern_witness(context, *analysis.missing_witness) == "Some(False)");
+}
+
+TEST_CASE("or-pattern redundancy records covering row source") {
+    ahfl::PatternUsefulnessContext context;
+    const auto bool_domain = make_bool_domain(context);
+    const auto first_true = context.make_constructor_pattern(bool_domain.true_ctor, {});
+    const auto second_true = context.make_constructor_pattern(bool_domain.true_ctor, {});
+    const auto false_pattern = context.make_constructor_pattern(bool_domain.false_ctor, {});
+    const auto bool_or = context.make_or_pattern({second_true, false_pattern});
+
+    const std::vector rows{
+        ahfl::PatternUsefulnessRow{.pattern = first_true},
+        ahfl::PatternUsefulnessRow{.pattern = bool_or},
+    };
+    const auto analysis = ahfl::analyze_pattern_usefulness(context, bool_domain.domain, rows);
+
+    REQUIRE(analysis.redundant_or_branches.size() == 1);
+    CHECK(analysis.redundant_or_branches.front().row_index == 1);
+    CHECK(analysis.redundant_or_branches.front().or_pattern == bool_or);
+    CHECK(analysis.redundant_or_branches.front().branch_index == 0);
+    CHECK(analysis.redundant_or_branches.front().covering_row_indices ==
+          std::vector<std::size_t>{0});
+    CHECK(analysis.redundant_or_branches.front().covering_branch_indices.empty());
 }
 
 TEST_CASE("open domains do not claim complete exhaustiveness") {
@@ -466,6 +496,9 @@ TEST_CASE("large bounded int domain reports redundant interval or-pattern branch
     CHECK(analysis.redundant_or_branches.front().row_index == 0);
     CHECK(analysis.redundant_or_branches.front().or_pattern == int_or);
     CHECK(analysis.redundant_or_branches.front().branch_index == 1);
+    CHECK(analysis.redundant_or_branches.front().covering_row_indices.empty());
+    CHECK(analysis.redundant_or_branches.front().covering_branch_indices ==
+          std::vector<std::size_t>{0});
 }
 
 TEST_CASE("large bounded int constructor payload proves exhaustive coverage symbolically") {
