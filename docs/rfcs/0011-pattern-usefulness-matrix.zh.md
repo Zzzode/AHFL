@@ -217,11 +217,13 @@ Migration:
 6. Bool payload literal lowering 已落库：`Some(true)` / `Some(false)` 会进入有限 Bool constructor domain，missing witness 可精确到 `Some(false)`；`none` literal pattern 会覆盖 unit `None` variant；不兼容 literal pattern 现在由 typechecker 报 `TYPE_MISMATCH`，不再被静默当成 empty coverage。
 7. Struct payload witness rendering 已落库：constructor flat store 记录 payload display kind 和字段名，missing witness 会渲染为 `Data { flag: false, other: false }`，而不是丢失字段语义的 tuple 形式。
 8. Redundant or-pattern branch diagnostic 已落库：matrix core 的 redundant branch analysis 现在通过稳定 warning code `MATCH_REDUNDANT_PATTERN` 暴露到 typechecker，range 指向冗余分支本身。
+9. TypedProgram 一等 pattern fact store 的首个切片已落库：typechecker 的 `match` pattern lowering 会把 literal、variant、wildcard、binding、tuple 和 or-pattern 记录到 `TypedProgram::patterns`，包含 `SourceRange`、`SourceId`、matched type、enum symbol、variant payload kind、bindings 和 child pattern index；JSON typed HIR serialization/deserialization 已覆盖该 flat store。
 
 尚未完成：
 
-1. Parser/typechecker 还没有独立的一等 typed pattern HIR；当前 `match` path 是 source pattern 到 matrix pattern 的局部 typed lowering。
-2. 非 Bool 的 open literal usefulness、range pattern、if-let/optional narrowing flow integration、完整 pattern diagnostic code taxonomy 和 LSP quick fixes 仍未实现。
+1. `match_exhaustiveness` matrix consumer 仍使用自己的局部 typed lowering，尚未迁移为直接消费 `TypedProgram::patterns` / `PatternId`。
+2. `if let`、optional narrowing 和未来 pattern binding 还没有统一落入 typed pattern fact store。
+3. 非 Bool 的 open literal usefulness、range pattern、完整 pattern diagnostic code taxonomy 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
 
@@ -280,3 +282,4 @@ Stabilized exit criteria:
 - 2026-07-07: Draft opened as the follow-up home for RFC 0003's full usefulness matrix work after enum payload, optional narrowing and if-let support landed.
 - 2026-07-08: Landed the first compiler infrastructure slice: an ID-based flat pattern usefulness context plus finite constructor matrix tests for wildcard, bool/enum-like constructors, nested payload witnesses, guarded rows, or-pattern redundancy and open-domain fallback.
 - 2026-07-08: Routed RFC 0003 `match_exhaustiveness` through the matrix core for top-level enum coverage while preserving existing diagnostics and ADT match regression behavior.
+- 2026-07-08: Added `TypedProgram::patterns` as the first typed pattern HIR flat-store slice for `match` typechecking, including typed HIR JSON round-trip coverage.

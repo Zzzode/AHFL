@@ -886,6 +886,11 @@ void TypedHirBuilder::append_expression(TypedExpr expr) {
     program_->expressions.push_back(std::move(expr));
 }
 
+std::uint32_t TypedHirBuilder::append_pattern(TypedPattern pattern) {
+    program_->patterns.push_back(std::move(pattern));
+    return static_cast<std::uint32_t>(program_->patterns.size() - 1);
+}
+
 std::uint32_t TypedHirBuilder::append_temporal_expr(TypedTemporalExpr expr) {
     program_->temporal_exprs.push_back(std::move(expr));
     return static_cast<std::uint32_t>(program_->temporal_exprs.size() - 1);
@@ -1174,6 +1179,10 @@ void TypeCheckPass::record_fn_call_site(SymbolId fn_symbol,
                                        .call_range = call_range,
                                        .source_id = current_source_id_,
                                        .type_args = std::move(type_args)});
+}
+
+std::uint32_t TypeCheckPass::append_typed_pattern(TypedPattern pattern) {
+    return hir_builder_.append_pattern(std::move(pattern));
 }
 
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {

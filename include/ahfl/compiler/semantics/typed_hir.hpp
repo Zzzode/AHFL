@@ -173,6 +173,41 @@ enum class TypedTemporalKind : std::uint8_t {
     Binary,
 };
 
+enum class TypedPatternKind : std::uint8_t {
+    Literal = 0,
+    Variant,
+    Wildcard,
+    Binding,
+    Tuple,
+    Or,
+};
+
+struct TypedPatternChild {
+    std::uint32_t pattern_index{UINT32_MAX};
+    std::string name;
+};
+
+struct TypedPatternBinding {
+    std::string name;
+    TypePtr type{nullptr};
+    SourceRange range;
+};
+
+struct TypedPattern {
+    TypedPatternKind kind{TypedPatternKind::Wildcard};
+    SourceRange range;
+    std::optional<SourceId> source_id;
+    TypePtr matched_type{nullptr};
+    bool irrefutable{false};
+    std::vector<TypedPatternChild> children;
+    std::vector<TypedPatternBinding> bindings;
+    std::optional<SymbolId> enum_symbol;
+    std::string enum_name;
+    std::string variant_name;
+    EnumVariantPayloadKind variant_payload_kind{EnumVariantPayloadKind::Unit};
+    std::string literal_spelling;
+};
+
 // ----------------------------------------------------------------------------
 // Let type-ref strategy (how the let binding's type_ref was determined).
 // ----------------------------------------------------------------------------
@@ -532,6 +567,7 @@ struct TypedProgram {
     std::vector<TypedBlock> blocks;
     std::vector<TypedStatement> statements;
     std::vector<TypedTemporalExpr> temporal_exprs;
+    std::vector<TypedPattern> patterns;
 
     // P2 (RFC §3.5 / §5): recorded fn call sites for the monomorphization
     // pass. Each entry ties a fn declaration (by its Function symbol id) to

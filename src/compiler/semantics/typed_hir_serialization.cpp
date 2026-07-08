@@ -874,6 +874,46 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     return object;
 }
 
+[[nodiscard]] std::unique_ptr<Json> j_pattern_child(const TypedPatternChild &child) {
+    auto object = Json::make_object();
+    object->set("pattern_index", j_int(child.pattern_index));
+    object->set("name", Json::make_string(child.name));
+    return object;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_pattern_binding(const TypedPatternBinding &binding) {
+    auto object = Json::make_object();
+    object->set("name", Json::make_string(binding.name));
+    object->set("type", j_type(binding.type));
+    object->set("range", j_range(binding.range));
+    return object;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_pattern(const TypedPattern &pattern) {
+    auto object = Json::make_object();
+    object->set("kind", j_enum(pattern.kind));
+    object->set("range", j_range(pattern.range));
+    object->set("source_id", j_source_id(pattern.source_id));
+    object->set("matched_type", j_type(pattern.matched_type));
+    object->set("irrefutable", Json::make_bool(pattern.irrefutable));
+    auto children = Json::make_array();
+    for (const auto &child : pattern.children) {
+        children->push(j_pattern_child(child));
+    }
+    object->set("children", std::move(children));
+    auto bindings = Json::make_array();
+    for (const auto &binding : pattern.bindings) {
+        bindings->push(j_pattern_binding(binding));
+    }
+    object->set("bindings", std::move(bindings));
+    object->set("enum_symbol", j_optional_symbol_id(pattern.enum_symbol));
+    object->set("enum_name", Json::make_string(pattern.enum_name));
+    object->set("variant_name", Json::make_string(pattern.variant_name));
+    object->set("variant_payload_kind", j_enum(pattern.variant_payload_kind));
+    object->set("literal_spelling", Json::make_string(pattern.literal_spelling));
+    return object;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_decl(const TypedDecl &decl) {
     auto object = Json::make_object();
     object->set("kind", j_enum(decl.kind));
@@ -2082,6 +2122,57 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
     return expr;
 }
 
+[[nodiscard]] TypedPatternChild read_pattern_child(Reader &reader, const Json &object) {
+    return TypedPatternChild{
+        .pattern_index = reader.u32_field(object, "pattern_index"),
+        .name = reader.string_field(object, "name"),
+    };
+}
+
+[[nodiscard]] TypedPatternBinding read_pattern_binding(Reader &reader, const Json &object) {
+    return TypedPatternBinding{
+        .name = reader.string_field(object, "name"),
+        .type = reader.type_field(object, "type"),
+        .range = reader.range_field(object, "range"),
+    };
+}
+
+[[nodiscard]] TypedPattern read_pattern(Reader &reader, const Json &object) {
+    TypedPattern pattern{
+        .kind = static_cast<TypedPatternKind>(reader.uint_field(object, "kind")),
+        .range = reader.range_field(object, "range"),
+        .source_id = reader.optional_source_id_field(object, "source_id"),
+        .matched_type = reader.type_field(object, "matched_type"),
+        .irrefutable = reader.bool_field(object, "irrefutable"),
+        .children = {},
+        .bindings = {},
+        .enum_symbol = reader.optional_symbol_id_field(object, "enum_symbol"),
+        .enum_name = reader.string_field(object, "enum_name"),
+        .variant_name = reader.string_field(object, "variant_name"),
+        .variant_payload_kind =
+            static_cast<EnumVariantPayloadKind>(reader.uint_field(object, "variant_payload_kind")),
+        .literal_spelling = reader.string_field(object, "literal_spelling"),
+    };
+
+    const auto *children = reader.field(object, "children");
+    if (children != nullptr && children->kind == json::Kind::Array) {
+        pattern.children.reserve(children->array_items.size());
+        for (const auto &item : children->array_items) {
+            pattern.children.push_back(read_pattern_child(reader, *item));
+        }
+    }
+
+    const auto *bindings = reader.field(object, "bindings");
+    if (bindings != nullptr && bindings->kind == json::Kind::Array) {
+        pattern.bindings.reserve(bindings->array_items.size());
+        for (const auto &item : bindings->array_items) {
+            pattern.bindings.push_back(read_pattern_binding(reader, *item));
+        }
+    }
+
+    return pattern;
+}
+
 [[nodiscard]] TypedDecl read_decl(Reader &reader, const Json &object) {
     return TypedDecl{
         .kind = static_cast<ast::NodeKind>(reader.uint_field(object, "kind")),
@@ -2173,6 +2264,7 @@ std::string serialize_typed_program_json(const TypedProgram &program) {
     root->set("blocks", j_array(program.blocks, j_block));
     root->set("statements", j_array(program.statements, j_statement));
     root->set("temporal_exprs", j_array(program.temporal_exprs, j_temporal));
+    root->set("patterns", j_array(program.patterns, j_pattern));
     // P2c (RFC §3.5): recorded fn call sites for the monomorphization pass.
     root->set("fn_call_sites", j_array(program.fn_call_sites, j_fn_call_site));
     return json::serialize_json(*root);
@@ -2261,6 +2353,9 @@ std::optional<TypedProgram> deserialize_typed_program_json(std::string_view json
     program.statements = read_array<TypedStatement>(reader, root, "statements", read_statement);
     program.temporal_exprs =
         read_array<TypedTemporalExpr>(reader, root, "temporal_exprs", read_temporal);
+    if (root.get("patterns") != nullptr) {
+        program.patterns = read_array<TypedPattern>(reader, root, "patterns", read_pattern);
+    }
     if (root.get("fn_call_sites") != nullptr) {
         program.fn_call_sites = read_array<TypedProgram::FnCallSiteRecord>(
             reader, root, "fn_call_sites", read_fn_call_site);

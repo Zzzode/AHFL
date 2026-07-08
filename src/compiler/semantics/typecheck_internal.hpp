@@ -351,6 +351,7 @@ class TypedHirBuilder {
 
     void append_declaration(TypedDecl decl);
     void append_expression(TypedExpr expr);
+    [[nodiscard]] std::uint32_t append_pattern(TypedPattern pattern);
     [[nodiscard]] std::uint32_t append_temporal_expr(TypedTemporalExpr expr);
     [[nodiscard]] std::uint32_t append_block(TypedBlock block);
     [[nodiscard]] std::uint32_t append_statement(TypedStatement statement);
@@ -631,6 +632,7 @@ class TypeCheckPass final {
     // for the monomorphization pass. Called by PassExpressionSemaDelegate.
     void
     record_fn_call_site(SymbolId fn_symbol, SourceRange call_range, std::vector<TypePtr> type_args);
+    [[nodiscard]] std::uint32_t append_typed_pattern(TypedPattern pattern);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);

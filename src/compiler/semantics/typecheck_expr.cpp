@@ -671,6 +671,14 @@ class ExpressionCheckerServices final {
         delegate_->note(std::move(message), range);
     }
 
+    [[nodiscard]] std::uint32_t append_typed_pattern(TypedPattern pattern) const {
+        return delegate_->append_typed_pattern(std::move(pattern));
+    }
+
+    [[nodiscard]] std::optional<SourceId> current_source_id() const noexcept {
+        return current_source_id_;
+    }
+
     // P2d.S2 helper: resolve a nominal type by its canonical (short) name.
     // Looks up the name in the Struct and Enum symbol tables via the
     // ResolveResult and returns a TypePtr with the nominal symbol set, or
@@ -1513,25 +1521,65 @@ class ExpressionChecker final {
             *literal_type, *scrutinee_type, range, "match literal pattern");
     }
 
+    struct LoweredPattern {
+        bool irrefutable{false};
+        std::uint32_t typed_pattern_index{UINT32_MAX};
+    };
+
+    [[nodiscard]] TypePtr typed_pattern_matched_type(TypePtr scrutinee_type) const {
+        return scrutinee_type != nullptr ? scrutinee_type : values_.make_error_type();
+    }
+
+    [[nodiscard]] LoweredPattern lowered_pattern(bool irrefutable, TypedPattern typed) const {
+        if (typed.matched_type == nullptr) {
+            typed.matched_type = values_.make_error_type();
+        }
+        typed.source_id = services_.current_source_id();
+        typed.irrefutable = irrefutable;
+        const auto index = services_.append_typed_pattern(std::move(typed));
+        return LoweredPattern{.irrefutable = irrefutable, .typed_pattern_index = index};
+    }
+
+    [[nodiscard]] TypedPattern
+    variant_typed_pattern(SourceRange range,
+                          TypePtr scrutinee_type,
+                          const EnumTypeInfo &enum_info,
+                          std::string variant_name,
+                          const EnumVariantInfo *variant_info,
+                          EnumVariantPayloadKind payload_kind,
+                          std::vector<TypedPatternChild> children = {}) const {
+        TypedPattern typed;
+        typed.kind = TypedPatternKind::Variant;
+        typed.range = range;
+        typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+        typed.children = std::move(children);
+        typed.enum_symbol = enum_info.symbol;
+        typed.enum_name = enum_info.canonical_name;
+        typed.variant_name = std::move(variant_name);
+        typed.variant_payload_kind =
+            variant_info != nullptr ? variant_info->payload_kind : payload_kind;
+        return typed;
+    }
+
     // ---------------------------------------------------------------------------
     // P1b ADT: pattern lowering for `match` arms.
     //
     // `lower_pattern` walks a PatternSyntax, recording payload-binding names
-    // into `bindings` (mapping name -> slot type) and validating variant payload
-    // shape. RFC0003 exhaustiveness/reachability is handled by the dedicated
-    // match_exhaustiveness analyzer.
+    // into `bindings` (mapping name -> slot type), validating variant payload
+    // shape, and appending a first-class TypedPattern fact into TypedProgram.
+    // RFC0003 exhaustiveness/reachability is still handled by the dedicated
+    // match_exhaustiveness analyzer until RFC0011 migrates that consumer.
     //
-    // Returns true when the pattern is irrefutable at the scrutinee type — i.e.
-    // a wildcard `_`, a bare binding `x` (no `@`), or a tuple pattern composed
-    // entirely of irrefutable sub-patterns. This is used only by recursive tuple
-    // and or-pattern lowering.
+    // The returned irrefutability bit preserves the existing recursive
+    // lowering contract for tuple/or/binding sub-patterns; the index points to
+    // the appended TypedPattern in TypedProgram::patterns.
     //
     // `scrutinee_type` is the narrowed type for this sub-pattern (the enum type
     // at the top level, the slot type inside a variant payload). `enum_info`
     // is the looked-up EnumTypeInfo for the current pattern type when the caller
     // already has one; otherwise it is derived from `scrutinee_type`, so nested
     // enum payload patterns validate against their own enum.
-    [[nodiscard]] bool
+    [[nodiscard]] LoweredPattern
     lower_pattern(const ast::PatternSyntax &pattern,
                   TypePtr scrutinee_type,
                   std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
@@ -1550,15 +1598,37 @@ class ExpressionChecker final {
             overloaded{
                 [&](const ast::LiteralPattern &literal) {
                     check_literal_pattern(literal, scrutinee_type, effective_enum_info, range);
+                    if (literal_pattern_kind(literal.spelling) == LiteralPatternKind::None &&
+                        effective_enum_info.has_value()) {
+                        const auto none_variant = effective_enum_info->get().find_variant("None");
+                        if (none_variant.has_value() &&
+                            none_variant->get().payload_kind == EnumVariantPayloadKind::Unit) {
+                            return lowered_pattern(
+                                false,
+                                variant_typed_pattern(range,
+                                                      scrutinee_type,
+                                                      effective_enum_info->get(),
+                                                      "None",
+                                                      &none_variant->get(),
+                                                      EnumVariantPayloadKind::Unit));
+                        }
+                    }
                     (void)bindings;
-                    return false;
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::Literal;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    typed.literal_spelling = literal.spelling;
+                    return lowered_pattern(false, std::move(typed));
                 },
                 [&](const ast::WildcardPattern &) {
-                    (void)scrutinee_type;
                     (void)enum_info;
                     (void)bindings;
-                    (void)range;
-                    return true;
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::Wildcard;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    return lowered_pattern(true, std::move(typed));
                 },
                 [&](const ast::BindingPattern &binding) {
                     // P1 disambiguation (Rust-style): in an enum scrutinee
@@ -1578,16 +1648,28 @@ class ExpressionChecker final {
                                 EnumVariantPayloadKind::Unit,
                                 range);
                         }
-                        return false;
+                        return lowered_pattern(
+                            false,
+                            variant_typed_pattern(range,
+                                                  scrutinee_type,
+                                                  effective_enum_info->get(),
+                                                  binding.name,
+                                                  variant.has_value() ? &variant->get() : nullptr,
+                                                  EnumVariantPayloadKind::Unit));
                     }
                     // A bare binding matches everything and is irrefutable.
                     // Bind the name to the (narrowed) scrutinee type. When an
                     // `@`-bound nested pattern is present, recurse into it for
                     // its own bindings; the outer name still binds the whole.
+                    std::vector<TypedPatternBinding> typed_bindings;
                     if (!binding.name.empty()) {
-                        const auto [iter, inserted] = bindings.emplace(
-                            binding.name,
-                            scrutinee_type != nullptr ? scrutinee_type : values_.make_error_type());
+                        auto binding_type = typed_pattern_matched_type(scrutinee_type);
+                        typed_bindings.push_back(TypedPatternBinding{
+                            .name = binding.name,
+                            .type = binding_type,
+                            .range = range,
+                        });
+                        const auto [iter, inserted] = bindings.emplace(binding.name, binding_type);
                         if (!inserted && (!iter->second || !is_error_type(*iter->second))) {
                             services_.typecheck_error_here(
                                 error_codes::typecheck::MatchDuplicateBinding,
@@ -1596,19 +1678,27 @@ class ExpressionChecker final {
                                 range);
                         }
                     }
+                    std::vector<TypedPatternChild> children;
+                    bool nested_irrefutable = true;
                     if (binding.nested) {
-                        (void)lower_pattern(*binding.nested,
-                                            scrutinee_type,
-                                            effective_enum_info,
-                                            bindings,
-                                            binding.nested->range);
+                        const auto nested = lower_pattern(*binding.nested,
+                                                          scrutinee_type,
+                                                          effective_enum_info,
+                                                          bindings,
+                                                          binding.nested->range);
+                        children.push_back(TypedPatternChild{
+                            .pattern_index = nested.typed_pattern_index,
+                            .name = "nested",
+                        });
+                        nested_irrefutable = nested.irrefutable;
                     }
-                    // A binding is a catch-all unless it is constrained by an
-                    // `@`-bound variant sub-pattern.
-                    if (binding.nested && binding.nested->is<ast::VariantPattern>()) {
-                        return false;
-                    }
-                    return true;
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::Binding;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    typed.children = std::move(children);
+                    typed.bindings = std::move(typed_bindings);
+                    return lowered_pattern(nested_irrefutable, std::move(typed));
                 },
                 [&](const ast::TuplePattern &tuple) {
                     // Tuple patterns are irrefutable iff every element is. The
@@ -1617,28 +1707,56 @@ class ExpressionChecker final {
                     // are not tuples at this stage, so we conservatively treat
                     // each element against the same scrutinee type.
                     bool all_irrefutable = true;
+                    std::vector<TypedPatternChild> children;
+                    children.reserve(tuple.elements.size());
                     for (const auto &element : tuple.elements) {
-                        const auto sub_irrefutable = lower_pattern(*element,
-                                                                   scrutinee_type,
-                                                                   effective_enum_info,
-                                                                   bindings,
-                                                                   element->range);
-                        all_irrefutable = all_irrefutable && sub_irrefutable;
+                        const auto sub = lower_pattern(*element,
+                                                       scrutinee_type,
+                                                       effective_enum_info,
+                                                       bindings,
+                                                       element->range);
+                        children.push_back(TypedPatternChild{
+                            .pattern_index = sub.typed_pattern_index,
+                            .name = std::to_string(children.size()),
+                        });
+                        all_irrefutable = all_irrefutable && sub.irrefutable;
                     }
-                    return all_irrefutable && !tuple.elements.empty();
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::Tuple;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    typed.children = std::move(children);
+                    return lowered_pattern(all_irrefutable && !tuple.elements.empty(),
+                                           std::move(typed));
                 },
                 [&](const ast::VariantPattern &variant) {
                     // Variant patterns only narrow; they are never catch-alls.
+                    const auto variant_name =
+                        variant.path != nullptr && !variant.path->segments.empty()
+                            ? variant.path->segments.back()
+                            : std::string{};
+                    const auto pattern_kind = semantic_payload_kind(variant.payload_kind);
                     if (!effective_enum_info.has_value()) {
                         // No enum context to validate against (scrutinee failed
                         // to resolve). Skip variant-shape validation.
-                        return false;
+                        TypedPattern typed;
+                        typed.kind = TypedPatternKind::Variant;
+                        typed.range = range;
+                        typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                        typed.variant_name = variant_name;
+                        typed.variant_payload_kind = pattern_kind;
+                        return lowered_pattern(false, std::move(typed));
                     }
-                    const auto &segments = variant.path->segments;
-                    if (segments.empty()) {
-                        return false;
+                    if (variant.path == nullptr || variant.path->segments.empty()) {
+                        TypedPattern typed;
+                        typed.kind = TypedPatternKind::Variant;
+                        typed.range = range;
+                        typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                        typed.enum_symbol = effective_enum_info->get().symbol;
+                        typed.enum_name = effective_enum_info->get().canonical_name;
+                        typed.variant_payload_kind = pattern_kind;
+                        return lowered_pattern(false, std::move(typed));
                     }
-                    const auto &variant_name = segments.back();
                     const auto variant_info = effective_enum_info->get().find_variant(variant_name);
                     if (!variant_info.has_value()) {
                         services_.typecheck_error_here(
@@ -1647,19 +1765,31 @@ class ExpressionChecker final {
                                 variant.path->spelling(),
                                 effective_enum_info->get().canonical_name),
                             range);
-                        return false;
+                        return lowered_pattern(false,
+                                               variant_typed_pattern(range,
+                                                                     scrutinee_type,
+                                                                     effective_enum_info->get(),
+                                                                     variant_name,
+                                                                     nullptr,
+                                                                     pattern_kind));
                     }
 
-                    const auto pattern_kind = semantic_payload_kind(variant.payload_kind);
                     if (pattern_kind != variant_info->get().payload_kind) {
                         services_.invalid_enum_variant_pattern_shape(std::string(variant_name),
                                                                      effective_enum_info->get(),
                                                                      variant_info->get(),
                                                                      pattern_kind,
                                                                      range);
-                        return false;
+                        return lowered_pattern(false,
+                                               variant_typed_pattern(range,
+                                                                     scrutinee_type,
+                                                                     effective_enum_info->get(),
+                                                                     variant_name,
+                                                                     &variant_info->get(),
+                                                                     pattern_kind));
                     }
 
+                    std::vector<TypedPatternChild> children;
                     if (variant_info->get().payload_kind == EnumVariantPayloadKind::Tuple) {
                         const auto &payload = variant_info->get().payload;
                         if (variant.subpatterns.size() != payload.size()) {
@@ -1675,14 +1805,27 @@ class ExpressionChecker final {
 
                         const std::size_t limit =
                             std::min(variant.subpatterns.size(), payload.size());
+                        children.reserve(limit);
                         for (std::size_t index = 0; index < limit; ++index) {
-                            (void)lower_pattern(*variant.subpatterns[index],
-                                                payload[index],
-                                                std::nullopt,
-                                                bindings,
-                                                variant.subpatterns[index]->range);
+                            const auto sub = lower_pattern(*variant.subpatterns[index],
+                                                           payload[index],
+                                                           std::nullopt,
+                                                           bindings,
+                                                           variant.subpatterns[index]->range);
+                            children.push_back(TypedPatternChild{
+                                .pattern_index = sub.typed_pattern_index,
+                                .name = std::to_string(index),
+                            });
                         }
-                        return false;
+                        return lowered_pattern(
+                            false,
+                            variant_typed_pattern(range,
+                                                  scrutinee_type,
+                                                  effective_enum_info->get(),
+                                                  variant_name,
+                                                  &variant_info->get(),
+                                                  variant_info->get().payload_kind,
+                                                  std::move(children)));
                     }
 
                     if (variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
@@ -1716,11 +1859,15 @@ class ExpressionChecker final {
                             }
                             matched_fields.insert(field_pattern->name);
                             if (field_pattern->pattern) {
-                                (void)lower_pattern(*field_pattern->pattern,
-                                                    field->get().type,
-                                                    std::nullopt,
-                                                    bindings,
-                                                    field_pattern->pattern->range);
+                                const auto sub = lower_pattern(*field_pattern->pattern,
+                                                               field->get().type,
+                                                               std::nullopt,
+                                                               bindings,
+                                                               field_pattern->pattern->range);
+                                children.push_back(TypedPatternChild{
+                                    .pattern_index = sub.typed_pattern_index,
+                                    .name = field_pattern->name,
+                                });
                             }
                         }
                         if (!has_rest) {
@@ -1735,7 +1882,14 @@ class ExpressionChecker final {
                             }
                         }
                     }
-                    return false;
+                    return lowered_pattern(false,
+                                           variant_typed_pattern(range,
+                                                                 scrutinee_type,
+                                                                 effective_enum_info->get(),
+                                                                 variant_name,
+                                                                 &variant_info->get(),
+                                                                 variant_info->get().payload_kind,
+                                                                 std::move(children)));
                 },
                 [&](const ast::OrPattern &or_pattern) {
                     // An or-pattern is catch-all only if every branch is. We
@@ -1744,12 +1898,24 @@ class ExpressionChecker final {
                     // is that all branches bind equivalent names; we do not yet
                     // enforce that here.
                     bool all_irrefutable = true;
+                    std::vector<TypedPatternChild> children;
+                    children.reserve(or_pattern.branches.size());
                     for (const auto &branch : or_pattern.branches) {
-                        const auto sub_irrefutable = lower_pattern(
+                        const auto sub = lower_pattern(
                             *branch, scrutinee_type, effective_enum_info, bindings, branch->range);
-                        all_irrefutable = all_irrefutable && sub_irrefutable;
+                        children.push_back(TypedPatternChild{
+                            .pattern_index = sub.typed_pattern_index,
+                            .name = std::to_string(children.size()),
+                        });
+                        all_irrefutable = all_irrefutable && sub.irrefutable;
                     }
-                    return all_irrefutable && !or_pattern.branches.empty();
+                    TypedPattern typed;
+                    typed.kind = TypedPatternKind::Or;
+                    typed.range = range;
+                    typed.matched_type = typed_pattern_matched_type(scrutinee_type);
+                    typed.children = std::move(children);
+                    return lowered_pattern(all_irrefutable && !or_pattern.branches.empty(),
+                                           std::move(typed));
                 },
             },
             pattern.node);
@@ -3504,6 +3670,10 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             pass_->note_here(std::move(message), range);
         }
 
+        std::uint32_t append_typed_pattern(TypedPattern pattern) override {
+            return pass_->append_typed_pattern(std::move(pattern));
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -3602,6 +3772,10 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
         // P3c.S5b: path resolution never selects a method call, so the note
         // sink is a no-op.
         void note(std::string /*message*/, SourceRange /*range*/) override {}
+
+        std::uint32_t append_typed_pattern(TypedPattern /*pattern*/) override {
+            return UINT32_MAX;
+        }
 
       private:
         TypeCheckPass *pass_{nullptr};

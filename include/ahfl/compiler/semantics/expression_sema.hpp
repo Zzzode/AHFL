@@ -114,6 +114,11 @@ class ExpressionSemaDelegate {
     // so tests and humans can trace which branch of the three-stage
     // resolution produced the final call target.
     virtual void note(std::string message, SourceRange range) = 0;
+
+    // RFC0011: append a typed pattern fact to TypedProgram's flat pattern
+    // store. ExpressionSema stays AST/typecheck-layer independent by routing
+    // storage through the delegate that already owns TypedProgram mutation.
+    [[nodiscard]] virtual std::uint32_t append_typed_pattern(TypedPattern pattern) = 0;
 };
 
 struct ExpressionSemaServices {

@@ -3193,6 +3193,100 @@ fn choose(v: Maybe) -> Int effect Pure decreases 0 {
     CHECK(text.str().find("if let Some(x) =") != std::string::npos);
 }
 
+TEST_CASE_FIXTURE(TypedHIRFixture, "RFC 0011 typed HIR records match pattern flat store") {
+    const auto result = check(R"AHFL(
+module typed::match_patterns;
+
+enum Ticket {
+    Open { id: Int, owner: String },
+    Wrapped(Int),
+    Closed,
+}
+
+fn resolve(ticket: Ticket) -> Int effect Pure decreases 0 {
+    return match ticket {
+        Open { id, owner: _ } => id,
+        Wrapped(value) => value,
+        Closed => 0,
+    };
+}
+)AHFL");
+
+    const auto &patterns = result.typed_program.patterns;
+    REQUIRE(patterns.size() >= 6);
+
+    const auto find_pattern_index = [&](auto predicate) -> std::optional<std::size_t> {
+        for (std::size_t index = 0; index < patterns.size(); ++index) {
+            if (predicate(patterns[index])) {
+                return index;
+            }
+        }
+        return std::nullopt;
+    };
+
+    const auto open_index = find_pattern_index([](const ahfl::TypedPattern &pattern) {
+        return pattern.kind == ahfl::TypedPatternKind::Variant && pattern.variant_name == "Open";
+    });
+    REQUIRE(open_index.has_value());
+    const auto &open = patterns[*open_index];
+    CHECK(open.enum_name == "typed::match_patterns::Ticket");
+    CHECK(open.enum_symbol.has_value());
+    CHECK(open.variant_payload_kind == ahfl::EnumVariantPayloadKind::Struct);
+    REQUIRE(open.children.size() == 2);
+
+    const auto id_child = std::find_if(open.children.begin(),
+                                       open.children.end(),
+                                       [](const auto &child) { return child.name == "id"; });
+    REQUIRE(id_child != open.children.end());
+    REQUIRE(id_child->pattern_index < patterns.size());
+    const auto &id_binding = patterns[id_child->pattern_index];
+    CHECK(id_binding.kind == ahfl::TypedPatternKind::Binding);
+    REQUIRE(id_binding.bindings.size() == 1);
+    CHECK(id_binding.bindings.front().name == "id");
+    REQUIRE(id_binding.bindings.front().type != nullptr);
+    CHECK(id_binding.bindings.front().type->describe() == "Int");
+
+    const auto owner_child = std::find_if(open.children.begin(),
+                                          open.children.end(),
+                                          [](const auto &child) { return child.name == "owner"; });
+    REQUIRE(owner_child != open.children.end());
+    REQUIRE(owner_child->pattern_index < patterns.size());
+    const auto &owner_wildcard = patterns[owner_child->pattern_index];
+    CHECK(owner_wildcard.kind == ahfl::TypedPatternKind::Wildcard);
+    REQUIRE(owner_wildcard.matched_type != nullptr);
+    CHECK(owner_wildcard.matched_type->describe() == "String");
+
+    const auto wrapped_index = find_pattern_index([](const ahfl::TypedPattern &pattern) {
+        return pattern.kind == ahfl::TypedPatternKind::Variant && pattern.variant_name == "Wrapped";
+    });
+    REQUIRE(wrapped_index.has_value());
+    const auto &wrapped = patterns[*wrapped_index];
+    CHECK(wrapped.variant_payload_kind == ahfl::EnumVariantPayloadKind::Tuple);
+    REQUIRE(wrapped.children.size() == 1);
+    REQUIRE(wrapped.children.front().pattern_index < patterns.size());
+    const auto &value_binding = patterns[wrapped.children.front().pattern_index];
+    CHECK(value_binding.kind == ahfl::TypedPatternKind::Binding);
+    REQUIRE(value_binding.bindings.size() == 1);
+    CHECK(value_binding.bindings.front().name == "value");
+    REQUIRE(value_binding.bindings.front().type != nullptr);
+    CHECK(value_binding.bindings.front().type->describe() == "Int");
+
+    const auto closed_index = find_pattern_index([](const ahfl::TypedPattern &pattern) {
+        return pattern.kind == ahfl::TypedPatternKind::Variant && pattern.variant_name == "Closed";
+    });
+    REQUIRE(closed_index.has_value());
+    const auto &closed = patterns[*closed_index];
+    CHECK(closed.variant_payload_kind == ahfl::EnumVariantPayloadKind::Unit);
+    CHECK(closed.children.empty());
+
+    const auto snapshot = ahfl::serialize_typed_program_json(result.typed_program);
+    REQUIRE(snapshot.find(R"("patterns")") != std::string::npos);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(restored->patterns.size() == patterns.size());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
 TEST_CASE_FIXTURE(TypedHIRFixture,
                   "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
     const auto root = make_temp_project("snapshot_project");
