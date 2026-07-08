@@ -76,9 +76,9 @@
 ### P3：需要决策或产品化触发
 
 1. RFC 0004 native gRPC transport。
-   - 状态：decision gate 已落到 `docs/plans/native-grpc-decision-gate.zh.md`。
+   - 状态：decision gate 已落到 `docs/plans/native-grpc-decision-gate.zh.md`，并由 `scripts/check-native-grpc-gate.py` / `ahfl.runtime.native_grpc_gate` / CI rfc-check job 机器执行。
    - 先完成 owner decision gate、benchmark、三平台构建和 feature flag 策略。
-   - 当前 `GrpcJsonTranscoding*` 实现和 runtime capability binding tests 只能证明 JSON transcoding path 成熟，不能算 native gRPC/Protobuf RFC 完成度。
+   - 当前 `GrpcJsonTranscoding*` 实现和 runtime capability binding tests 只能证明 JSON transcoding path 成熟，不能算 native gRPC/Protobuf RFC 完成度；RFC0004 为 `draft` 时，仓库禁止引入 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract。
    - 没有 Go 决策前不要进入大规模实现。
 
 2. RFC 0008 单文件模式产品化。

@@ -5,7 +5,7 @@ status: "draft"
 area: ["runtime"]
 stability: "experimental"
 created: "2026-06-28"
-updated: "2026-07-07"
+updated: "2026-07-08"
 authors: ["LLM-orchestrated"]
 shepherd: "TBD"
 owners:
@@ -31,7 +31,7 @@ HTTP/JSON remains simple and portable, but long streaming responses and multi-tu
 
 As of 2026-07-07, AHFL has runtime support and tests for `grpc_json_transcoding` capability bindings, not native gRPC/Protobuf transport. The concrete implementation surface is `GrpcJsonTranscodingEndpoint`, `GrpcJsonTranscodingRequest`, and `execute_grpc_json_transcoding`; smoke and unit tests cover metadata, trailers, retry, auth, malformed JSON, and schema mismatch on that JSON-transcoding path.
 
-This evidence does not satisfy this RFC's acceptance bar because it does not add a Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed.
+This evidence does not satisfy this RFC's acceptance bar because it does not add a Protobuf schema contract, a native HTTP/2 gRPC C++ client facade, benchmark evidence, or the required three-platform native gRPC build matrix. RFC 0004 therefore remains `draft` until the owner decision gate in [Native gRPC Decision Gate](../plans/native-grpc-decision-gate.zh.md) is completed. The repository now enforces this boundary with `scripts/check-native-grpc-gate.py`: while RFC 0004 is not accepted, CI rejects native gRPC build flags, C++ gRPC/Protobuf dependency wiring, and native proto service contracts.
 
 ## Goals
 
@@ -86,6 +86,7 @@ Keep native gRPC off by default until benchmark, platform, and fallback evidence
 
 - 2026-06-28: Initial draft created during Wave 18 planning.
 - 2026-07-02: Canonicalized as RFC 0004.
+- 2026-07-08: Added a machine gate (`scripts/check-native-grpc-gate.py`) to prevent native gRPC implementation markers from entering the repository before the owner Go/No-Go decision, benchmark evidence, build matrix, dependency policy, feature flag, and fallback semantics are complete.
 
 ## Detailed Design Notes
 

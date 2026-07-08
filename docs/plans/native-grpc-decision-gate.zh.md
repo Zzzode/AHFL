@@ -1,6 +1,6 @@
 # Native gRPC Decision Gate
 
-审计日期：2026-07-07
+审计日期：2026-07-08
 
 本计划服务 [RFC 0004](../rfcs/0004-native-grpc-transport.zh.md)。当前 AHFL runtime 已有 `grpc_json_transcoding` 路径；这不能证明 native gRPC/Protobuf transport 应该进入实现。本门禁的目的，是在任何 native gRPC 代码落库前完成可复核的 Go/No-Go 决策。
 
@@ -70,4 +70,5 @@ No-Go 决策必须写回 RFC0004：
 2. benchmark evidence 未完成。
 3. 三平台 build evidence 未完成。
 4. feature flag 策略已有 RFC 草案描述，但未实现。
-5. 因此 RFC0004 必须保持 `draft`，不能进入实现。
+5. 仓库级机器门禁已落地：`scripts/check-native-grpc-gate.py` 会在 RFC0004 仍为 `draft` 时拒绝 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract；该脚本已接入 CTest 与 CI。
+6. 因此 RFC0004 必须保持 `draft`，不能进入实现。

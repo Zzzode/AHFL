@@ -10,6 +10,10 @@ add_test(NAME ahfl.architecture.boundaries
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-architecture.py"
 )
 
+add_test(NAME ahfl.runtime.native_grpc_gate
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-native-grpc-gate.py"
+)
+
 add_test(NAME ahfl.docs.ir_sync_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-ir-doc-sync.py"
 )
