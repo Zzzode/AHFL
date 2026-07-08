@@ -193,6 +193,7 @@ struct BoundedIntRange {
 };
 
 constexpr std::uint64_t kMaxExactModuloDivisorMagnitudes = 4096;
+constexpr std::uint64_t kMaxExactModuloQuotientSegments = 65536;
 
 [[nodiscard]] std::optional<BoundedIntRange>
 merge_bounded_int_range(std::optional<BoundedIntRange> current, const BoundedIntRange &next) {
@@ -359,6 +360,243 @@ bounded_int_modulo_divisor_dominates_range(const types::BoundedIntT &lhs,
     return BoundedIntRange{.minimum = lhs.minimum, .maximum = lhs.maximum};
 }
 
+struct NonnegativeModuloExtrema {
+    std::int64_t minimum{0};
+    std::int64_t maximum{0};
+};
+
+struct DivisorMultipleQuery {
+    std::optional<std::int64_t> divisor;
+};
+
+[[nodiscard]] std::optional<std::int64_t>
+quotient_segment_lower_bound(std::int64_t numerator, std::int64_t quotient) {
+    if (numerator < 0 || quotient < 0) {
+        return std::nullopt;
+    }
+    if (quotient == 0) {
+        return checked_add_int64(numerator, 1);
+    }
+    const auto next_quotient = checked_add_int64(quotient, 1);
+    if (!next_quotient.has_value()) {
+        return 1;
+    }
+    return checked_add_int64(numerator / *next_quotient, 1);
+}
+
+[[nodiscard]] std::optional<NonnegativeModuloExtrema>
+fixed_nonnegative_modulo_extrema(std::int64_t value,
+                                 std::int64_t divisor_minimum,
+                                 std::int64_t divisor_maximum) {
+    if (value < 0 || divisor_minimum <= 0 || divisor_maximum < divisor_minimum) {
+        return std::nullopt;
+    }
+
+    std::optional<NonnegativeModuloExtrema> result;
+    auto record = [&result](std::int64_t remainder) {
+        if (!result.has_value()) {
+            result = NonnegativeModuloExtrema{.minimum = remainder, .maximum = remainder};
+            return;
+        }
+        result->minimum = std::min(result->minimum, remainder);
+        result->maximum = std::max(result->maximum, remainder);
+    };
+
+    const auto quotient_partition_maximum = std::min(divisor_maximum, value);
+    std::uint64_t segment_count = 0;
+    for (std::int64_t divisor = divisor_minimum; divisor <= quotient_partition_maximum;) {
+        if (++segment_count > kMaxExactModuloQuotientSegments) {
+            return std::nullopt;
+        }
+
+        const auto quotient = value / divisor;
+        const auto segment_maximum = std::min(quotient_partition_maximum, value / quotient);
+        record(value - quotient * segment_maximum);
+        record(value - quotient * divisor);
+
+        if (segment_maximum == quotient_partition_maximum) {
+            break;
+        }
+        divisor = segment_maximum + 1;
+    }
+
+    if (divisor_maximum > value) {
+        record(value);
+    }
+    return result;
+}
+
+[[nodiscard]] std::optional<DivisorMultipleQuery>
+largest_divisor_with_multiple_in_interval(std::int64_t interval_minimum,
+                                          std::int64_t interval_maximum,
+                                          std::int64_t divisor_minimum,
+                                          std::int64_t divisor_maximum) {
+    if (interval_maximum < interval_minimum) {
+        return DivisorMultipleQuery{};
+    }
+    if (divisor_minimum <= 0 || divisor_maximum < divisor_minimum) {
+        return std::nullopt;
+    }
+    if (interval_minimum <= 0 && interval_maximum >= 0) {
+        return DivisorMultipleQuery{.divisor = divisor_maximum};
+    }
+    if (interval_minimum < 0 || interval_maximum <= 0) {
+        return DivisorMultipleQuery{};
+    }
+
+    const auto before_interval = checked_sub_int64(interval_minimum, 1);
+    if (!before_interval.has_value()) {
+        return std::nullopt;
+    }
+
+    std::int64_t divisor = std::min(divisor_maximum, interval_maximum);
+    if (divisor < divisor_minimum) {
+        return DivisorMultipleQuery{};
+    }
+
+    std::uint64_t segment_count = 0;
+    while (divisor >= divisor_minimum) {
+        if (++segment_count > kMaxExactModuloQuotientSegments) {
+            return std::nullopt;
+        }
+
+        const auto interval_quotient = interval_maximum / divisor;
+        const auto before_quotient = *before_interval / divisor;
+        const auto interval_lower =
+            quotient_segment_lower_bound(interval_maximum, interval_quotient);
+        const auto before_lower = quotient_segment_lower_bound(*before_interval, before_quotient);
+        if (!interval_lower.has_value() || !before_lower.has_value()) {
+            return std::nullopt;
+        }
+
+        const auto segment_lower =
+            std::max(divisor_minimum, std::max(*interval_lower, *before_lower));
+        if (interval_quotient > before_quotient) {
+            return DivisorMultipleQuery{.divisor = divisor};
+        }
+        if (segment_lower <= divisor_minimum) {
+            break;
+        }
+        divisor = segment_lower - 1;
+    }
+    return DivisorMultipleQuery{};
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+nonnegative_modulo_variable_divisor_range(const types::BoundedIntT &lhs,
+                                          std::int64_t divisor_minimum,
+                                          std::int64_t divisor_maximum) {
+    if (lhs.minimum < 0 || lhs.maximum < lhs.minimum || divisor_minimum <= 0 ||
+        divisor_maximum < divisor_minimum) {
+        return std::nullopt;
+    }
+
+    std::int64_t minimum = 0;
+    const auto zero_query = largest_divisor_with_multiple_in_interval(
+        lhs.minimum, lhs.maximum, divisor_minimum, divisor_maximum);
+    if (!zero_query.has_value()) {
+        return std::nullopt;
+    }
+    if (!zero_query->divisor.has_value()) {
+        const auto lower_extrema =
+            fixed_nonnegative_modulo_extrema(lhs.minimum, divisor_minimum, divisor_maximum);
+        if (!lower_extrema.has_value()) {
+            return std::nullopt;
+        }
+        minimum = lower_extrema->minimum;
+    }
+
+    const auto upper_extrema =
+        fixed_nonnegative_modulo_extrema(lhs.maximum, divisor_minimum, divisor_maximum);
+    if (!upper_extrema.has_value()) {
+        return std::nullopt;
+    }
+    auto maximum = upper_extrema->maximum;
+
+    const auto successor_minimum = checked_add_int64(lhs.minimum, 1);
+    const auto successor_maximum = checked_add_int64(lhs.maximum, 1);
+    if (!successor_minimum.has_value() || !successor_maximum.has_value()) {
+        return std::nullopt;
+    }
+    const auto predecessor_query = largest_divisor_with_multiple_in_interval(
+        *successor_minimum, *successor_maximum, divisor_minimum, divisor_maximum);
+    if (!predecessor_query.has_value()) {
+        return std::nullopt;
+    }
+    if (predecessor_query->divisor.has_value()) {
+        maximum = std::max(maximum, *predecessor_query->divisor - 1);
+    }
+
+    return BoundedIntRange{.minimum = minimum, .maximum = maximum};
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_abs_divisor_range(const types::BoundedIntT &lhs,
+                                     std::int64_t divisor_minimum,
+                                     std::int64_t divisor_maximum) {
+    if (divisor_minimum <= 0 || divisor_maximum < divisor_minimum) {
+        return std::nullopt;
+    }
+
+    if (lhs.minimum >= 0) {
+        return nonnegative_modulo_variable_divisor_range(lhs, divisor_minimum, divisor_maximum);
+    }
+
+    const auto negative_range = [&](const types::BoundedIntT &negative_lhs)
+        -> std::optional<BoundedIntRange> {
+        const auto minimum_abs = abs_int64(negative_lhs.maximum);
+        const auto maximum_abs = abs_int64(negative_lhs.minimum);
+        if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
+            return std::nullopt;
+        }
+        const auto positive = nonnegative_modulo_variable_divisor_range(
+            types::BoundedIntT{.minimum = *minimum_abs, .maximum = *maximum_abs},
+            divisor_minimum,
+            divisor_maximum);
+        if (!positive.has_value()) {
+            return std::nullopt;
+        }
+        return BoundedIntRange{.minimum = -positive->maximum, .maximum = -positive->minimum};
+    };
+
+    if (lhs.maximum <= 0) {
+        return negative_range(lhs);
+    }
+
+    const auto negative = negative_range(types::BoundedIntT{.minimum = lhs.minimum,
+                                                           .maximum = -1});
+    const auto positive = nonnegative_modulo_variable_divisor_range(
+        types::BoundedIntT{.minimum = 0, .maximum = lhs.maximum},
+        divisor_minimum,
+        divisor_maximum);
+    if (!negative.has_value() || !positive.has_value()) {
+        return std::nullopt;
+    }
+    std::optional<BoundedIntRange> result;
+    result = merge_bounded_int_range(result, *negative);
+    result = merge_bounded_int_range(result, *positive);
+    return result;
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_quotient_partition_range(const types::BoundedIntT &lhs,
+                                            const types::BoundedIntT &rhs) {
+    if (interval_contains_zero(rhs)) {
+        return std::nullopt;
+    }
+
+    if (rhs.minimum > 0) {
+        return bounded_int_modulo_abs_divisor_range(lhs, rhs.minimum, rhs.maximum);
+    }
+
+    const auto minimum_abs = abs_int64(rhs.maximum);
+    const auto maximum_abs = abs_int64(rhs.minimum);
+    if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
+        return std::nullopt;
+    }
+    return bounded_int_modulo_abs_divisor_range(lhs, *minimum_abs, *maximum_abs);
+}
+
 [[nodiscard]] std::optional<BoundedIntRange>
 bounded_int_modulo_conservative_divisor_range(const types::BoundedIntT &lhs,
                                               const types::BoundedIntT &rhs) {
@@ -399,6 +637,10 @@ bounded_int_modulo_range(const types::BoundedIntT &lhs, const types::BoundedIntT
         return range;
     }
     if (const auto range = bounded_int_modulo_divisor_dominates_range(lhs, rhs);
+        range.has_value()) {
+        return range;
+    }
+    if (const auto range = bounded_int_modulo_quotient_partition_range(lhs, rhs);
         range.has_value()) {
         return range;
     }

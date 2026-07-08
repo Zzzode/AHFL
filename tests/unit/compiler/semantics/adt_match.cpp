@@ -1528,6 +1528,121 @@ flow for LiteralAgent {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("bounded Int modulo infers quotient-partition exact positive range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(500000, 500000) = 500000;
+        let denominator: Int(3, 100000) = 3;
+        let code: Int(0, 83330) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers quotient-partition exact negative range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Request {
+    numerator: Int(-500000, -500000);
+}
+
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let denominator: Int(3, 100000) = 3;
+        let code: Int(-83330, 0) = input.numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers quotient-partition exact range for negative divisors") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(500000, 500000) = 500000;
+        let denominator: Int(-100000, -3) = -3;
+        let code: Int(0, 83330) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo infers quotient-partition exact positive interval range") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(500000, 500010) = 500000;
+        let denominator: Int(3, 100000) = 3;
+        let code: Int(0, 83334) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
 TEST_CASE("bounded Int modulo infers exact positive range for fixed divisor") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {
