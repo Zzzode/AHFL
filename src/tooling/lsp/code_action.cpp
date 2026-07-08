@@ -623,15 +623,19 @@ is_keyword_at(const std::string &source, std::size_t offset, std::string_view ke
     return std::string(text);
 }
 
-[[nodiscard]] bool source_safe_pattern_fragment(std::string_view pattern) noexcept {
-    if (pattern.empty()) {
+[[nodiscard]] bool source_safe_inserted_pattern_fragment(std::string_view pattern) {
+    const auto trimmed = trim_copy(pattern);
+    if (trimmed.empty()) {
         return false;
     }
     if (pattern.find("=>") != std::string_view::npos) {
         return false;
     }
-    return std::none_of(
-        pattern.begin(), pattern.end(), [](char c) { return c == '\n' || c == '\r' || c == ';'; });
+    if (pattern.find("//") != std::string_view::npos ||
+        pattern.find("/*") != std::string_view::npos) {
+        return false;
+    }
+    return std::none_of(pattern.begin(), pattern.end(), [](char c) { return c == ';'; });
 }
 
 [[nodiscard]] bool source_safe_multiline_pattern_fragment(std::string_view pattern) {
@@ -660,7 +664,7 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     witnesses.reserve(found->second.size());
     for (const auto &candidate : found->second) {
         const auto witness = trim_copy(candidate);
-        if (!source_safe_pattern_fragment(witness)) {
+        if (!source_safe_inserted_pattern_fragment(witness)) {
             return {};
         }
         witnesses.push_back(witness);
@@ -668,13 +672,39 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return witnesses;
 }
 
+[[nodiscard]] std::string indent_pattern_fragment_for_arm(std::string_view pattern,
+                                                          std::string_view arm_indent) {
+    std::string text;
+    std::size_t cursor = 0;
+    bool first_line = true;
+    while (cursor <= pattern.size()) {
+        const auto next_newline = pattern.find('\n', cursor);
+        const auto line_end =
+            next_newline == std::string_view::npos ? pattern.size() : next_newline;
+        auto line = pattern.substr(cursor, line_end - cursor);
+        if (!line.empty() && line.back() == '\r') {
+            line.remove_suffix(1);
+        }
+        if (!first_line) {
+            text += "\n";
+        }
+        text += arm_indent;
+        text += line;
+        if (next_newline == std::string_view::npos) {
+            break;
+        }
+        first_line = false;
+        cursor = next_newline + 1;
+    }
+    return text;
+}
+
 [[nodiscard]] std::string missing_match_arms_text(const std::vector<std::string> &patterns,
                                                   std::string_view arm_indent,
                                                   std::string_view close_indent) {
     std::string text;
     for (const auto &pattern : patterns) {
-        text += arm_indent;
-        text += pattern;
+        text += indent_pattern_fragment_for_arm(pattern, arm_indent);
         text += " => <TODO>,\n";
     }
     text += close_indent;

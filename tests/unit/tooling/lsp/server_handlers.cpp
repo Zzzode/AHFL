@@ -8509,6 +8509,57 @@ void test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields() {
     check(avoided_field_split, "codeAction.qf_match_missing_struct.does_not_split_fields");
 }
 
+void test_code_action_qf_match_missing_patterns_inserts_multiline_witness_arm() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                               "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_MISSING_PATTERNS";
+    diag.severity = DiagnosticSeverity::Error;
+    diag.message = "non-exhaustive match";
+    diag.data["missing_witnesses"] = {"Data {\n    code: 0,\n    label: \"x\"\n}"};
+    diag.range = Range{Position{3, 11}, Position{5, 5}};
+
+    const Range cursor_range{Position{3, 11}, Position{3, 16}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Insert missing match arm") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_missing_multiline.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool formats_multiline_witness = false;
+    bool rejects_wildcard_fallback = true;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            formats_multiline_witness =
+                formats_multiline_witness ||
+                edit.new_text.find("        Data {\n"
+                                   "            code: 0,\n"
+                                   "            label: \"x\"\n"
+                                   "        } => <TODO>,") != std::string::npos;
+            rejects_wildcard_fallback = rejects_wildcard_fallback &&
+                                        edit.new_text.find("_ => <TODO>,") == std::string::npos;
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_match_missing_multiline.single_text_edit");
+    check(formats_multiline_witness, "codeAction.qf_match_missing_multiline.formats_witness_arm");
+    check(rejects_wildcard_fallback, "codeAction.qf_match_missing_multiline.no_wildcard_fallback");
+}
+
 void test_code_action_qf_match_missing_patterns_requires_structured_witnesses() {
     const std::string source = "module lsp::match_qf;\n"
                                "enum E { A, B }\n"
@@ -9171,6 +9222,7 @@ int main() {
     test_code_action_qf_wrong_arity_placeholder();
     test_code_action_qf_match_missing_patterns_inserts_witness_arm();
     test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields();
+    test_code_action_qf_match_missing_patterns_inserts_multiline_witness_arm();
     test_code_action_qf_match_missing_patterns_requires_structured_witnesses();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
