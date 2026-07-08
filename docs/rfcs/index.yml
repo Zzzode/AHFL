@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-07"
+updated: "2026-07-08"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -57,7 +57,7 @@ rfcs:
     stability: "stable-language"
   - rfc: "0010"
     title: "Registry Publishing and SemVer Gates"
-    status: "draft"
+    status: "accepted"
     file: "0010-registry-publishing-semver.zh.md"
     area: ["compiler", "tooling", "process"]
     stability: "experimental"

@@ -1,7 +1,7 @@
 ---
 rfc: "0010"
 title: "Registry Publishing and SemVer Gates"
-status: "draft"
+status: "accepted"
 area: ["compiler", "tooling", "process"]
 stability: "experimental"
 created: "2026-07-07"
@@ -321,6 +321,14 @@ Draft exit criteria:
 2. Public API diff severity taxonomy is sufficient for RFC 0009 public API facts.
 3. Registry cache fallback semantics match the package registry transport failure model.
 
+Owner review decision:
+
+1. Accepted for v1: manifest v2 is the only boundary for registry dependency fields; manifest v1 remains the RFC 0005 identity contract.
+2. Accepted for v1: package publishing is gated by structured public API diff facts and SemVer policy before registry upload.
+3. Accepted for v1: source archive, manifest, public API and registry metadata digests remain distinct identity facts; display coordinates are diagnostics/output only.
+4. Accepted for v1: workspace-mode registry fetch is not productized. Registry package acquisition stays behind explicit CLI actions such as `ahflc registry resolve` and manifest-mode package graph commands. LSP and ordinary workspace analysis must not perform implicit network fetches.
+5. Non-blocking follow-up: editor diagnostics/code actions may suggest explicit registry resolution later, but they must preserve the same network-free default.
+
 Accepted exit criteria:
 
 1. CLI command names and manifest v2 fields are approved.
@@ -384,3 +392,4 @@ Stabilized exit criteria:
 - 2026-07-07: Landed registry public API snapshot artifact fetch with `public_api_sha256` verification, `ahfl.public_api.v1` schema validation and cache fallback only on transport unavailability, preparing the previous-release SemVer gate wiring.
 - 2026-07-07: Landed publish dry-run previous-release SemVer gate wiring: `package publish --dry-run --semver-gate --from <previous-version>` fetches registry package index metadata and previous public API snapshot, compares against the current snapshot, records pass evidence and fails closed on incompatible bumps.
 - 2026-07-07: Landed registry upload/yank wiring and RFC0010 release evidence: `package publish` now uploads a validated publish request envelope after local gates, `package yank` requires a yanked registry index response, and the release evidence archive covers dry-run SemVer pass, upload, yank and SemVer rejection through a local fixture registry.
+- 2026-07-08: Owner review accepted the v1 design boundary. Manifest v2, SemVer-gated publishing, digest-separated registry identity and explicit registry resolution are approved; workspace-mode registry fetch remains out of v1 productization, and LSP/workspace analysis must stay network-free by default.
