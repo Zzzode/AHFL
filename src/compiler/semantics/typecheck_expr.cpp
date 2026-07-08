@@ -324,6 +324,41 @@ bounded_int_modulo_finite_variable_divisor_range(const types::BoundedIntT &lhs,
     return bounded_int_modulo_finite_divisor_range(lhs, *minimum_abs, *maximum_abs);
 }
 
+[[nodiscard]] std::optional<std::int64_t>
+bounded_int_max_abs_magnitude(const types::BoundedIntT &range) {
+    const auto minimum_abs = abs_int64(range.minimum);
+    const auto maximum_abs = abs_int64(range.maximum);
+    if (!minimum_abs.has_value() || !maximum_abs.has_value()) {
+        return std::nullopt;
+    }
+    return std::max(*minimum_abs, *maximum_abs);
+}
+
+[[nodiscard]] std::optional<std::int64_t>
+bounded_int_min_abs_magnitude_excluding_zero(const types::BoundedIntT &range) {
+    if (interval_contains_zero(range)) {
+        return std::nullopt;
+    }
+    if (range.minimum > 0) {
+        return range.minimum;
+    }
+    return abs_int64(range.maximum);
+}
+
+[[nodiscard]] std::optional<BoundedIntRange>
+bounded_int_modulo_divisor_dominates_range(const types::BoundedIntT &lhs,
+                                           const types::BoundedIntT &rhs) {
+    const auto lhs_max_abs = bounded_int_max_abs_magnitude(lhs);
+    const auto rhs_min_abs = bounded_int_min_abs_magnitude_excluding_zero(rhs);
+    if (!lhs_max_abs.has_value() || !rhs_min_abs.has_value()) {
+        return std::nullopt;
+    }
+    if (*rhs_min_abs <= *lhs_max_abs) {
+        return std::nullopt;
+    }
+    return BoundedIntRange{.minimum = lhs.minimum, .maximum = lhs.maximum};
+}
+
 [[nodiscard]] std::optional<BoundedIntRange>
 bounded_int_modulo_conservative_divisor_range(const types::BoundedIntT &lhs,
                                               const types::BoundedIntT &rhs) {
@@ -360,6 +395,10 @@ bounded_int_modulo_range(const types::BoundedIntT &lhs, const types::BoundedIntT
     }
 
     if (const auto range = bounded_int_modulo_finite_variable_divisor_range(lhs, rhs);
+        range.has_value()) {
+        return range;
+    }
+    if (const auto range = bounded_int_modulo_divisor_dominates_range(lhs, rhs);
         range.has_value()) {
         return range;
     }

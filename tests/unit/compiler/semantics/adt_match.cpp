@@ -1469,6 +1469,65 @@ flow for LiteralAgent {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("bounded Int modulo keeps exact range when large positive divisor dominates") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let numerator: Int(5, 10) = 5;
+        let denominator: Int(10000, 20000) = 10000;
+        let code: Int(5, 10) = numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded Int modulo keeps exact range when large negative divisor dominates") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Request {
+    numerator: Int(-10, -5);
+}
+
+struct Response {
+    value: Int = 0;
+}
+
+agent LiteralAgent {
+    input: Request;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let denominator: Int(-20000, -10000) = -10000;
+        let code: Int(-10, -5) = input.numerator % denominator;
+        return Response { value: code };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
 TEST_CASE("bounded Int modulo infers exact positive range for fixed divisor") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {
