@@ -993,7 +993,7 @@ flow for ArithmeticAgent {
         let bad_int_float_add = input.count + 1.25;
         let bad_int_decimal_add = input.count + 1.00d;
         let bad_decimal_scale_add = 1.0d + 1.00d;
-        let bad_decimal_multiply = 1.00d * 2.00d;
+        let bad_decimal_divide = 1.00d / 2.00d;
         let bad_int_float_compare = input.count < 1.25;
         return Response {
             value: ok_string,
@@ -1016,6 +1016,86 @@ flow for ArithmeticAgent {
                               "arithmetic operator is not defined for Decimal(2) and Decimal(2)"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "comparison operands are not type-compatible: Int vs Float"));
+}
+
+TEST_CASE("Decimal multiplication infers product scale") {
+    const std::string source = R"AHFL(
+struct Request {
+    text: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent DecimalAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for DecimalAgent {
+    state Done {
+        let product: Decimal(5) = 1.20d * 3.400d;
+        return Response {
+            value: input.text,
+        };
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("decimal_multiply_product_scale.ahfl", source);
+    CHECK_FALSE(type_result.has_errors());
+}
+
+TEST_CASE("Decimal multiplication rejects incompatible product scale annotation") {
+    const std::string source = R"AHFL(
+struct Request {
+    text: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent DecimalAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for DecimalAgent {
+    state Done {
+        let product: Decimal(4) = 1.20d * 3.400d;
+        return Response {
+            value: input.text,
+        };
+    }
+}
+)AHFL";
+
+    const auto type_result =
+        typecheck_source("decimal_multiply_product_scale_mismatch.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "type mismatch in let initializer: expected Decimal(4), got "
+                              "Decimal(5)"));
 }
 
 TEST_CASE("Declaration diagnostics use stable typecheck codes") {

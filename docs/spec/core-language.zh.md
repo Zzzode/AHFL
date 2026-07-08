@@ -895,13 +895,16 @@ predicate 调用允许出现在：
 1. `+ - * / %`：
    - `Int × Int -> Int`
    - `Float × Float -> Float`
-   - `Decimal(p)` 仅允许与相同 `p` 的 `Decimal(p)` 做 `+`、`-`
+   - `Decimal(p) + Decimal(p) -> Decimal(p)`；`Decimal(p) - Decimal(p) -> Decimal(p)`
+   - `Decimal(p) * Decimal(q) -> Decimal(p + q)`；乘法 scale 加法溢出时该表达式不成立
    - `String + String -> String`
-   - `Int(min, max)` 不引入独立 arithmetic domain；当前运算符不执行
-     literal/refinement 推断，若需要保持值域约束，必须由未来 refinement
-     inference / verification 规则定义
+   - `Int(min, max)` 参与 bounded Int range inference：`+`、`-`、`*`
+     对两个 bounded operand 推导闭区间；`/` 仅在 divisor interval 静态排除 0
+     时推导闭区间；`%` 对 singleton operand 推导精确 singleton，对非 singleton
+     operand 推导保守 remainder 闭区间。溢出、除 0 可能性或无法证明的边界回退为
+     普通 `Int`
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
-   - `Decimal(p) * Decimal(p)`、`Decimal(p) / Decimal(p)` 未定义
+   - `Decimal(p) / Decimal(q)` 未定义；未来若支持，必须先定义 rounding / target scale policy
 2. 比较运算：
    - 两侧类型必须相同，或左侧为右侧子类型，或右侧为左侧子类型
 3. 逻辑运算：
@@ -909,8 +912,9 @@ predicate 调用允许出现在：
 4. `=>`：
    - 仅作用于 `Bool`
 
-测试要求：混合 numeric operator、不同 scale `Decimal` 运算、`Decimal` 乘除、以及 `Int < Float` 必须以稳定诊断
-`typecheck.INVALID_OPERATION` 失败。`TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
+测试要求：混合 numeric operator、不同 scale `Decimal` 加减、`Decimal` 除法、以及 `Int < Float` 必须以稳定诊断
+`typecheck.INVALID_OPERATION` 失败；`Decimal` 乘法必须以 product scale 参与 assignability 检查。
+`TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
 不得改变源码表达式类型规则。
 
 #### 4.6.8 表达式 Effect 分级

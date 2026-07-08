@@ -245,11 +245,12 @@ Migration:
 31. 大型嵌套 bounded Int product 已落库：当 finite constructor domain 的 payload 字段包含无法物化的 `Int(min, max)` 时，matrix 会使用 symbolic constructor space + interval product subtraction，而不是退回非 finite；`Some(Int(0, 10000))` 可通过分段 range 证明 exhaustive，也能渲染 `Some(5000)` 这类缺失 witness；多字段 constructor product 会保留有限 sibling dimension，例如 `Pair(Int(0, 10000), Bool)` 可证明两维覆盖或给出 `Pair(0, True)` witness。
 32. Bounded Int literal singleton inference 首个切片已落库：当表达式检查带有 expected `Int(min, max)` 类型时，整数 literal 会先被建模成 singleton `Int(value, value)`，再交给现有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected type 时 literal 仍为普通 `Int` 的行为。
 33. Bounded Int arithmetic range inference 首个切片已落库：`+`、`-`、`*` 和静态排除零除数的 `/` 在两个 operand 都是 `BoundedInt` 时会推导闭区间结果；`%` 对 singleton operand 给出精确 singleton range，对非 singleton operand 给出保守 remainder 闭区间；expected bounded Int 会向 arithmetic operand 传递 literal singleton hint，因此 `let x: Int(0, 5) = 1 + 2` 可通过、`let x: Int(0, 2) = 1 + 2` 会由既有 subtype relation 拒绝；溢出、除数区间可能包含 0 或触发 `int64` `min / -1` 边界时保守回退普通 `Int`，不猜测错误区间。
+34. Decimal multiplication product-scale semantics 已落库：源码表达式 `Decimal(p) * Decimal(q)` 推导为 `Decimal(p + q)`，并继续通过既有 assignability 检查拒绝错误 scale annotation；`Decimal` 加减仍要求同 scale，`Decimal` 除法仍未定义，避免在 rounding / target scale policy 未稳定前引入隐式语义。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/` 和保守 `%` 首个切片，但完整精确 modulo interval、Float/Decimal 等更复杂 numeric domain semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/` 和保守 `%` 首个切片，Decimal multiplication product-scale semantics 已落库，但完整精确 modulo interval、Decimal division rounding / target-scale policy 和未来 Float refinement semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续只剩更深 destructuring 编辑序列的 UX 产品化。
 
 ## Test Plan

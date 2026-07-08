@@ -3670,6 +3670,12 @@ class ExpressionChecker final {
                 lhs_dec != nullptr && rhs_dec != nullptr && lhs_dec->scale == rhs_dec->scale) {
                 return lhs.type->clone();
             }
+            if (op == ast::ExprBinaryOp::Multiply && lhs_dec != nullptr && rhs_dec != nullptr) {
+                if (const auto scale = checked_add_int64(lhs_dec->scale, rhs_dec->scale);
+                    scale.has_value()) {
+                    return values_.decimal_type(*scale);
+                }
+            }
             return nullptr;
         };
 
