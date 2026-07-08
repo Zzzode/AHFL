@@ -250,10 +250,11 @@ Migration:
 36. Bounded String validation / literal singleton inference 首个切片已落库：源码可写 `String(min, max)` 会在 type resolver 阶段 fail-closed 拒绝反向区间；当表达式检查带有 expected `String(min, max)` 类型时，string literal 会按当前 escape 规则计算 decoded UTF-8 byte length，并先建模成 singleton `String(length, length)` 再交给既有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected bounded String 时 literal 仍为普通 `String`。
 37. Bounded String concatenation range inference 首个切片已落库：`String(min, max) + String(min, max)` 会推导 decoded byte length 闭区间和，边界溢出时保守回退普通 `String`；expected bounded String 会作为 concatenation operand hint，让 literal operand 先产生 singleton bounded String，再由结构化 length range 判断最终 assignability；混入裸 `String` operand 时仍保守推导普通 `String`，不凭 source spelling 猜测长度。
 38. LSP local pattern binding navigation / rename v1 已落库：`textDocument/definition`、`textDocument/references`、`prepareRename` 和 `rename` 会从 AST lexical scope 与 typed expression path-root facts 识别 `match` / `if let` pattern binding 的声明和使用位点；rename 使用同文件 lexical local binding index，尊重 `let` / lambda parameter shadowing，避免把 pattern binding 改名越过更内层局部绑定。
+39. LSP struct payload field completion snippets 已落库：当 client 声明 `completionItem.snippetSupport` 且光标位于 struct enum variant payload braces 内，field completion 会返回 `field: ${1:_}` snippet；不支持 snippet 的 client 继续得到 plain field label；两条路径都继续消费 typed pattern fact store 过滤已出现字段。
 
 尚未完成：
 
-1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store；pattern binding 基础导航与 rename v1 已完成。
+1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store；pattern binding 基础导航与 rename v1、struct payload field snippet completion v1 已完成。
 2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/`、finite variable-divisor 精确 `%`、divisor-dominates oversized exact `%`、quotient-partition large-domain exact `%` 和 bounded String concatenation range inference，Decimal multiplication product-scale semantics 与显式 Decimal division target-scale / rounding API 已落库；未来 Float refinement semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续只剩更深 destructuring 编辑序列的 UX 产品化。
 
@@ -263,7 +264,7 @@ Migration:
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal/concatenation assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
-5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets, pattern payload signatureHelp and lexical pattern binding navigation/rename.
+5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets, struct payload field snippets, pattern payload signatureHelp and lexical pattern binding navigation/rename.
 6. Regression tests proving RFC 0001 enum payload and RFC 0002 optional narrowing behavior remain stable.
 
 ## Rollout and Stabilization
@@ -355,3 +356,4 @@ Stabilized exit criteria:
 - 2026-07-09: Extended the `MATCH_REDUNDANT_PATTERN` quick fix to remove source-safe multi-line or-pattern branches, including struct payload destructuring branches, while preserving the existing adjacent-separator deletion contract.
 - 2026-07-09: Extended the `MATCH_MISSING_PATTERNS` quick fix to insert source-safe multi-line witness arms from structured diagnostic data, improving complex payload destructuring edits without parsing rendered messages.
 - 2026-07-09: Added LSP lexical local binding navigation and rename for pattern bindings. Definition, references, prepareRename and rename now identify `match` / `if let` pattern bindings through AST scope plus typed expression path-root facts, and respect inner `let` / lambda parameter shadowing.
+- 2026-07-09: Added client-gated LSP snippets for struct enum variant payload field completion. Field completions inside destructuring braces now insert `field: ${1:_}` for snippet-capable clients while preserving typed-pattern field filtering for all clients.

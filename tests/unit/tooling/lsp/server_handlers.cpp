@@ -7908,6 +7908,30 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
           "completion.pattern_struct_fields_keeps_unused_label");
     check(used_field_output.find("\"label\":\"code\"") == std::string::npos,
           "completion.pattern_struct_fields_filters_used_code");
+    check(used_field_output.find("\"insertTextFormat\":2") == std::string::npos,
+          "completion.pattern_struct_fields_default_snippet_gated_off");
+
+    const std::string init_body =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"textDocument":{"completion":{"completionItem":{"snippetSupport":true}}}}}})";
+    const auto escaped_text = escape_json_string(source);
+    const std::string did_open_body =
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.ahfl","languageId":"ahfl","version":1,"text":")" +
+        escaped_text + R"("}}})";
+    const std::string req_body =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":)" +
+        used_field_params + R"(})";
+    const std::string shutdown_body = R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})";
+    const auto snippet_output = response_body_for_id(
+        run_lsp_messages({init_body, did_open_body, req_body, shutdown_body}), 2);
+
+    check(snippet_output.find("\"label\":\"label\"") != std::string::npos,
+          "completion.pattern_struct_fields_snippet_keeps_unused_label");
+    check(snippet_output.find("\"label\":\"code\"") == std::string::npos,
+          "completion.pattern_struct_fields_snippet_filters_used_code");
+    check(snippet_output.find("\"insertText\":\"label: ${1:_}\"") != std::string::npos,
+          "completion.pattern_struct_fields_snippet_insert_text");
+    check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
+          "completion.pattern_struct_fields_snippet_insert_text_format");
 }
 
 void test_rename_rejects_keyword_and_conflict() {

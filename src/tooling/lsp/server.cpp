@@ -2323,7 +2323,8 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
 void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
                                            const EnumTypeInfo &enum_info,
                                            const EnumVariantInfo &variant_info,
-                                           const TypedPattern &pattern) {
+                                           const TypedPattern &pattern,
+                                           bool snippet_support) {
     std::unordered_set<std::string> used_fields;
     used_fields.reserve(pattern.children.size());
     for (const auto &child : pattern.children) {
@@ -2340,6 +2341,10 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
         item.label = field.name;
         item.kind = CompletionItemKind::Variable;
         item.detail = "field " + enum_info.canonical_name + "::" + variant_info.name;
+        if (snippet_support) {
+            item.insert_text = field.name + ": ${1:_}";
+            item.insert_text_format = InsertTextFormat::Snippet;
+        }
         items.push_back(std::move(item));
     }
 }
@@ -2518,7 +2523,7 @@ find_variant_payload_pattern_at(const TypedProgram &program,
             if (variant_info.has_value() &&
                 variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
                 push_struct_variant_field_completions(
-                    items, enum_info->get(), variant_info->get(), *field_pattern);
+                    items, enum_info->get(), variant_info->get(), *field_pattern, snippet_support);
                 return true;
             }
         }
