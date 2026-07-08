@@ -6,6 +6,7 @@
 #include <cctype>
 #include <charconv>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
@@ -31,6 +32,11 @@ struct BoolDomainLowering {
     PatternDomainId domain;
     PatternConstructorId false_constructor;
     PatternConstructorId true_constructor;
+};
+
+struct StringSingletonDomainLowering {
+    PatternDomainId domain;
+    PatternConstructorId empty_constructor;
 };
 
 enum class LiteralPatternKind {
@@ -68,6 +74,7 @@ struct MatchMatrixLowering {
     std::unordered_map<TypePtr, PatternDomainId> bounded_int_domain_by_type;
     std::vector<std::optional<VariantOrdinal>> variant_for_constructor;
     std::optional<BoolDomainLowering> bool_domain;
+    std::optional<StringSingletonDomainLowering> empty_string_domain;
     const MatchEnumInfoResolver *enum_resolver{nullptr};
     bool lower_payloads{false};
 };
@@ -76,6 +83,7 @@ struct PatternExpected {
     PatternDomainId domain;
     const EnumDomainLowering *enum_domain{nullptr};
     const BoolDomainLowering *bool_domain{nullptr};
+    const StringSingletonDomainLowering *empty_string_domain{nullptr};
     std::optional<std::size_t> open_literal_domain_index;
 };
 
@@ -157,10 +165,15 @@ open_literal_domain_index_for(const MatchMatrixLowering &lowering, PatternDomain
         lowering.bool_domain.has_value() && lowering.bool_domain->domain == domain
             ? &*lowering.bool_domain
             : nullptr;
+    const auto *empty_string_domain =
+        lowering.empty_string_domain.has_value() && lowering.empty_string_domain->domain == domain
+            ? &*lowering.empty_string_domain
+            : nullptr;
     return PatternExpected{
         .domain = domain,
         .enum_domain = enum_domain_for(lowering, domain),
         .bool_domain = bool_domain,
+        .empty_string_domain = empty_string_domain,
         .open_literal_domain_index = open_literal_domain_index_for(lowering, domain),
     };
 }
@@ -203,8 +216,7 @@ open_literal_domain_index_for(const MatchMatrixLowering &lowering, PatternDomain
     if (type->get_if<types::FloatT>() != nullptr) {
         return OpenLiteralDomainKind::Float;
     }
-    if (type->get_if<types::StringT>() != nullptr ||
-        type->get_if<types::BoundedStringT>() != nullptr) {
+    if (type->get_if<types::StringT>() != nullptr) {
         return OpenLiteralDomainKind::String;
     }
     return std::nullopt;
@@ -248,6 +260,20 @@ open_literal_domain_index_for(const MatchMatrixLowering &lowering, PatternDomain
         .domain = domain,
         .false_constructor = false_constructor,
         .true_constructor = true_constructor,
+    };
+    return domain;
+}
+
+[[nodiscard]] PatternDomainId ensure_empty_string_domain(MatchMatrixLowering &lowering) {
+    if (lowering.empty_string_domain.has_value()) {
+        return lowering.empty_string_domain->domain;
+    }
+
+    const auto domain = lowering.context.add_domain();
+    const auto empty_constructor = lowering.context.add_constructor(domain, "\"\"", {});
+    lowering.empty_string_domain = StringSingletonDomainLowering{
+        .domain = domain,
+        .empty_constructor = empty_constructor,
     };
     return domain;
 }
@@ -329,6 +355,12 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     }
     if (const auto *bounded_int = type->get_if<types::BoundedIntT>()) {
         return ensure_bounded_int_domain(lowering, type, *bounded_int);
+    }
+    if (const auto *bounded_string = type->get_if<types::BoundedStringT>()) {
+        if (bounded_string->minimum == 0 && bounded_string->maximum == 0) {
+            return ensure_empty_string_domain(lowering);
+        }
+        return ensure_open_literal_domain(lowering, type, OpenLiteralDomainKind::String);
     }
     if (auto open_kind = open_literal_domain_kind_for(type); open_kind.has_value()) {
         return ensure_open_literal_domain(lowering, type, *open_kind);
@@ -418,21 +450,70 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     return value;
 }
 
-[[nodiscard]] PatternConstructorId ensure_open_literal_constructor(MatchMatrixLowering &lowering,
-                                                                   std::size_t domain_index,
-                                                                   std::string_view spelling) {
+[[nodiscard]] std::optional<std::string> decode_string_literal_spelling(std::string_view spelling) {
+    if (spelling.size() < 2 || spelling.front() != '"' || spelling.back() != '"') {
+        return std::nullopt;
+    }
+
+    std::string decoded;
+    decoded.reserve(spelling.size() - 2);
+    for (std::size_t index = 1; index + 1 < spelling.size(); ++index) {
+        char value = spelling[index];
+        if (value == '\\') {
+            ++index;
+            if (index + 1 >= spelling.size()) {
+                return std::nullopt;
+            }
+            switch (spelling[index]) {
+            case '"':
+                value = '"';
+                break;
+            case '\\':
+                value = '\\';
+                break;
+            case 'n':
+                value = '\n';
+                break;
+            case 'r':
+                value = '\r';
+                break;
+            case 't':
+                value = '\t';
+                break;
+            default:
+                return std::nullopt;
+            }
+        }
+        decoded.push_back(value);
+    }
+    return decoded;
+}
+
+[[nodiscard]] std::optional<std::string> canonical_open_literal_key(OpenLiteralDomainKind kind,
+                                                                    std::string_view spelling) {
+    if (kind == OpenLiteralDomainKind::String) {
+        return decode_string_literal_spelling(spelling);
+    }
+    return std::string{spelling};
+}
+
+[[nodiscard]] PatternConstructorId
+ensure_open_literal_constructor(MatchMatrixLowering &lowering,
+                                std::size_t domain_index,
+                                std::string key,
+                                std::string_view display_spelling) {
     auto &domain = lowering.open_literal_domains[domain_index];
-    const std::string key{spelling};
     if (const auto found = domain.literal_constructors.find(key);
         found != domain.literal_constructors.end()) {
         return found->second;
     }
     const auto parsed_int = domain.kind == OpenLiteralDomainKind::Int
-                                ? parse_int_literal_spelling(spelling)
+                                ? parse_int_literal_spelling(display_spelling)
                                 : std::nullopt;
-    const auto constructor = parsed_int.has_value()
-                                 ? lowering.context.add_int_constructor(domain.domain, *parsed_int)
-                                 : lowering.context.add_constructor(domain.domain, key, {});
+    const auto constructor =
+        parsed_int.has_value()
+            ? lowering.context.add_int_constructor(domain.domain, *parsed_int)
+            : lowering.context.add_constructor(domain.domain, std::string{display_spelling}, {});
     domain.literal_constructors.emplace(key, constructor);
     return constructor;
 }
@@ -537,13 +618,26 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
         }
     }
 
+    if (expected.empty_string_domain != nullptr) {
+        const auto decoded = decode_string_literal_spelling(spelling);
+        if (decoded.has_value() && decoded->empty()) {
+            return lowering.context.make_constructor_pattern(
+                expected.empty_string_domain->empty_constructor, {}, range);
+        }
+        return lowering.context.make_never(range);
+    }
+
     if (expected.open_literal_domain_index.has_value()) {
         const auto &domain = lowering.open_literal_domains[*expected.open_literal_domain_index];
         const auto literal_kind = literal_pattern_kind(spelling);
         if (literal_matches_open_domain(literal_kind, domain.kind)) {
+            auto key = canonical_open_literal_key(domain.kind, spelling);
+            if (!key.has_value()) {
+                return lowering.context.make_never(range);
+            }
             return lowering.context.make_constructor_pattern(
                 ensure_open_literal_constructor(
-                    lowering, *expected.open_literal_domain_index, spelling),
+                    lowering, *expected.open_literal_domain_index, std::move(*key), spelling),
                 {},
                 range);
         }

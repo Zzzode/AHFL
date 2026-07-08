@@ -783,6 +783,52 @@ enum MaybeText { Some(String), None, }
     CHECK(diagnostic->message.find("Some(_)") != std::string::npos);
 }
 
+TEST_CASE("open String payload canonicalizes equivalent escaped literal patterns") {
+    const auto match_expr =
+        std::string{"match ctx.value { Some(\"\\t\") => 1, Some(\"\t\") => 2, "} +
+        "Some(_) => 3, None => 0 }";
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeText { Some(String), None, }
+)AHFL",
+        "MaybeText",
+        "MaybeText::None",
+        match_expr);
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") >= 1);
+}
+
+TEST_CASE("empty bounded String payload literal proves singleton coverage") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeEmptyText { Some(String(0, 0)), None, }
+)AHFL",
+        "MaybeEmptyText",
+        "MaybeEmptyText::None",
+        R"AHFL(match ctx.value { Some("") => 1, None => 0 })AHFL");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS") == 0);
+}
+
+TEST_CASE("non-empty bounded String singleton pattern leaves empty witness uncovered") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeEmptyText { Some(String(0, 0)), None, }
+)AHFL",
+        "MaybeEmptyText",
+        "MaybeEmptyText::None",
+        R"AHFL(match ctx.value { Some("x") => 1, None => 0 })AHFL");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_MISSING_PATTERNS");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find(R"AHFL(Some(""))AHFL") != std::string::npos);
+}
+
 TEST_CASE("duplicate open Int payload literal reports usefulness warnings") {
     const auto source = wrap_in_flow(
         R"AHFL(

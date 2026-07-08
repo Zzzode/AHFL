@@ -2303,6 +2303,9 @@ class ExpressionChecker final {
         if (kind == LiteralPatternKind::Int && scrutinee_type->holds<types::BoundedIntT>()) {
             return;
         }
+        if (kind == LiteralPatternKind::String && scrutinee_type->holds<types::BoundedStringT>()) {
+            return;
+        }
         (void)services_.check_assignable(
             *literal_type, *scrutinee_type, range, "match literal pattern");
     }
