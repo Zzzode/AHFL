@@ -7712,6 +7712,56 @@ void test_completion_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_nested_excludes_outer_variant");
 }
 
+void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
+    const std::string source = "enum Packet {\n"
+                               "    Empty,\n"
+                               "    Pair(Int, String),\n"
+                               "    Data { code: Int, label: String },\n"
+                               "}\n"
+                               "\n"
+                               "fn use_match(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        _ => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto wildcard_position = position_of(source, "_ => 0");
+    const std::string completion_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(wildcard_position.line) + R"(,"character":)" +
+        std::to_string(wildcard_position.character) + R"(}})";
+
+    const auto default_output =
+        run_handler_request(source, "textDocument/completion", completion_params);
+    check(default_output.find("\"label\":\"Pair\"") != std::string::npos,
+          "completion.pattern_snippet_default_contains_pair");
+    check(default_output.find("\"insertTextFormat\":2") == std::string::npos,
+          "completion.pattern_snippet_default_gated_off");
+
+    const std::string init_body =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"textDocument":{"completion":{"completionItem":{"snippetSupport":true}}}}}})";
+    const auto escaped_text = escape_json_string(source);
+    const std::string did_open_body =
+        R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.ahfl","languageId":"ahfl","version":1,"text":")" +
+        escaped_text + R"("}}})";
+    const std::string req_body =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/completion","params":)" +
+        completion_params + R"(})";
+    const std::string shutdown_body = R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})";
+    const auto snippet_output = response_body_for_id(
+        run_lsp_messages({init_body, did_open_body, req_body, shutdown_body}), 2);
+
+    check(snippet_output.find("\"label\":\"Pair\"") != std::string::npos,
+          "completion.pattern_snippet_tuple_label");
+    check(snippet_output.find("\"insertText\":\"Pair(${1:_}, ${2:_})\"") != std::string::npos,
+          "completion.pattern_snippet_tuple_insert_text");
+    check(snippet_output.find("\"insertText\":\"Data { code: ${1:_}, label: ${2:_} }\"") !=
+              std::string::npos,
+          "completion.pattern_snippet_struct_insert_text");
+    check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
+          "completion.pattern_snippet_insert_text_format");
+}
+
 void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
     const std::string source = "enum Packet {\n"
                                "    Empty,\n"
@@ -8817,6 +8867,7 @@ int main() {
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_pattern_context_uses_typed_pattern_facts();
+    test_completion_pattern_variants_emit_payload_snippets_when_supported();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();

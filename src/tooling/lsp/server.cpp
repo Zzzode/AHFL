@@ -890,6 +890,25 @@ text_document_position(const json::JsonValue &params, std::string &uri, Position
     return MarkupKind::Markdown;
 }
 
+[[nodiscard]] bool completion_snippet_support_from_initialize(const json::JsonValue *params) {
+    if (params == nullptr) {
+        return false;
+    }
+    const auto *capabilities = params->get("capabilities");
+    const auto *text_document =
+        capabilities != nullptr ? capabilities->get("textDocument") : nullptr;
+    const auto *completion = text_document != nullptr ? text_document->get("completion") : nullptr;
+    const auto *completion_item =
+        completion != nullptr ? completion->get("completionItem") : nullptr;
+    const auto *snippet_support =
+        completion_item != nullptr ? completion_item->get("snippetSupport") : nullptr;
+    if (snippet_support == nullptr) {
+        return false;
+    }
+    const auto value = snippet_support->as_bool();
+    return value.has_value() && *value;
+}
+
 [[nodiscard]] const json::JsonValue *hover_initialization_options(const json::JsonValue *params) {
     if (params == nullptr) {
         return nullptr;
@@ -1572,13 +1591,47 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
+[[nodiscard]] std::string tuple_variant_pattern_snippet(const EnumVariantInfo &variant) {
+    std::string snippet = variant.name + "(";
+    for (std::size_t index = 0; index < variant.payload.size(); ++index) {
+        if (index > 0) {
+            snippet += ", ";
+        }
+        snippet += "${" + std::to_string(index + 1) + ":_}";
+    }
+    snippet += ")";
+    return snippet;
+}
+
+[[nodiscard]] std::string struct_variant_pattern_snippet(const EnumVariantInfo &variant) {
+    std::string snippet = variant.name + " { ";
+    for (std::size_t index = 0; index < variant.fields.size(); ++index) {
+        if (index > 0) {
+            snippet += ", ";
+        }
+        snippet += variant.fields[index].name + ": ${" + std::to_string(index + 1) + ":_}";
+    }
+    snippet += " }";
+    return snippet;
+}
+
 void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
-                                           const EnumTypeInfo &enum_info) {
+                                           const EnumTypeInfo &enum_info,
+                                           bool snippet_support) {
     for (const auto &variant : enum_info.variants) {
         CompletionItem item;
         item.label = variant.name;
         item.kind = CompletionItemKind::Enum;
         item.detail = "enum pattern " + enum_info.canonical_name;
+        if (snippet_support && variant.payload_kind == EnumVariantPayloadKind::Tuple &&
+            !variant.payload.empty()) {
+            item.insert_text = tuple_variant_pattern_snippet(variant);
+            item.insert_text_format = InsertTextFormat::Snippet;
+        } else if (snippet_support && variant.payload_kind == EnumVariantPayloadKind::Struct &&
+                   !variant.fields.empty()) {
+            item.insert_text = struct_variant_pattern_snippet(variant);
+            item.insert_text_format = InsertTextFormat::Snippet;
+        }
         items.push_back(std::move(item));
     }
 }
@@ -1762,7 +1815,8 @@ find_variant_payload_pattern_at(const TypedProgram &program,
 [[nodiscard]] bool push_pattern_context_completions(std::vector<CompletionItem> &items,
                                                     const LspAnalysisSnapshot &snapshot,
                                                     const LspSourceSnapshot &source,
-                                                    std::size_t offset) {
+                                                    std::size_t offset,
+                                                    bool snippet_support) {
     if (!snapshot.type_check_result || source.source == nullptr) {
         return false;
     }
@@ -1795,7 +1849,7 @@ find_variant_payload_pattern_at(const TypedProgram &program,
         return false;
     }
 
-    push_pattern_enum_variant_completions(items, enum_info->get());
+    push_pattern_enum_variant_completions(items, enum_info->get(), snippet_support);
     return true;
 }
 
@@ -2226,6 +2280,7 @@ void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialization_toolchain_profiles_ = toolchain_profiles_from_initialize(req.params.get());
     apply_active_toolchain_profiles();
     hover_options_ = hover_render_options_from_initialize(req.params.get());
+    completion_snippet_support_ = completion_snippet_support_from_initialize(req.params.get());
 
     ServerCapabilities caps;
     caps.document_formatting_provider = true;
@@ -2442,7 +2497,8 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
 
     if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
         push_member_completions(items, *snapshot, *source, offset, *root);
-    } else if (push_pattern_context_completions(items, *snapshot, *source, offset)) {
+    } else if (push_pattern_context_completions(
+                   items, *snapshot, *source, offset, completion_snippet_support_)) {
         // Pattern-aware completion is type-directed. Once the cursor is inside
         // a typed pattern, generic expression symbols would be noisy and can
         // offer symbols that are not valid constructors for this scrutinee.

@@ -99,10 +99,17 @@ enum class CompletionItemKind : int {
     Constant = 21,
 };
 
+enum class InsertTextFormat : int {
+    PlainText = 1,
+    Snippet = 2,
+};
+
 struct CompletionItem {
     std::string label;
     CompletionItemKind kind{CompletionItemKind::Text};
     std::string detail;
+    std::string insert_text;
+    std::optional<InsertTextFormat> insert_text_format;
 };
 
 // ---------- Hover ----------

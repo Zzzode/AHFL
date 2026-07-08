@@ -36,6 +36,7 @@ class LspServer {
     bool initialized_{false};
     bool shutdown_requested_{false};
     bool trace_enabled_{false};
+    bool completion_snippet_support_{false};
 
     // Request handlers
     void handle_request(const JsonRpcRequest &req);
