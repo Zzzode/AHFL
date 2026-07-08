@@ -898,7 +898,9 @@ predicate 调用允许出现在：
    - `Float × Float -> Float`
    - `Decimal(p) + Decimal(p) -> Decimal(p)`；`Decimal(p) - Decimal(p) -> Decimal(p)`
    - `Decimal(p) * Decimal(q) -> Decimal(p + q)`；乘法 scale 加法溢出时该表达式不成立
-   - `String + String -> String`
+   - `String + String -> String`；当两个 operand 都是 `String(min, max)` 时，
+     结果推导为 `String(lhs.min + rhs.min, lhs.max + rhs.max)`，长度边界溢出时
+     保守回退普通 `String`
    - 一元 `+` 保留 operand 类型；一元 `-` 作用于 `Int(min, max)` 时推导
      `Int(-max, -min)`，无法安全表示边界时回退普通 `Int`
    - `Int(min, max)` 参与 bounded Int range inference：`+`、`-`、`*`
@@ -918,6 +920,10 @@ predicate 调用允许出现在：
      literal escape 规则计算 decoded UTF-8 byte length，并建模成 singleton
      bounded `String(length, length)` 再执行 assignability 检查；无 expected
      bounded `String` 时，string literal 仍为普通 `String`
+   - 当 expected type 为 `String(min, max)` 且表达式是 string concatenation
+     时，该 expected type 会作为 operand hint 让 literal operand 产生 singleton
+     bounded String；最终仍由 concatenation 的结构化 length range 推断决定是否
+     可赋值
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
    - 源码层 `Decimal(p) / Decimal(q)` operator 未定义；Decimal 除法只能通过
      `std::decimal::div(a, b, target_scale, mode)` 表达。该 API 要求用户显式

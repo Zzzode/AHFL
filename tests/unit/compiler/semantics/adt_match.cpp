@@ -1163,6 +1163,115 @@ flow for LiteralAgent {
     CHECK_FALSE(result.has_errors());
 }
 
+TEST_CASE("bounded String concatenation propagates operand length ranges") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let left: String(1, 2) = "a";
+        let right: String(2, 4) = "bc";
+        let combined: String(3, 6) = left + right;
+        return Response { value: combined };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded String concatenation infers singleton range from literals") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let combined: String(3, 3) = "a" + "bc";
+        return Response { value: combined };
+    }
+}
+)AHFL");
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("bounded String concatenation rejects out-of-range singleton result") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let combined: String(4, 4) = "a" + "bc";
+        return Response { value: "" };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
+TEST_CASE("bounded String concatenation stays conservative with unbounded operand") {
+    const auto result = typecheck_source(module_preamble() + R"AHFL(
+struct Response {
+    value: String = "";
+}
+
+agent LiteralAgent {
+    input: Response;
+    context: Response;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for LiteralAgent {
+    state Done {
+        let raw: String = "bc";
+        let combined: String(3, 3) = "a" + raw;
+        return Response { value: "" };
+    }
+}
+)AHFL");
+    CHECK(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_MISMATCH"));
+}
+
 TEST_CASE("bounded Int arithmetic accepts in-range integer literal expression") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 struct Response {

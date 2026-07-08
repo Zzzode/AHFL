@@ -248,17 +248,18 @@ Migration:
 34. Decimal multiplication product-scale semantics 已落库：源码表达式 `Decimal(p) * Decimal(q)` 推导为 `Decimal(p + q)`，并继续通过既有 assignability 检查拒绝错误 scale annotation；`Decimal` 加减仍要求同 scale。
 35. Decimal division rounding / target-scale policy 已落库：源码层 `Decimal(p) / Decimal(q)` operator 仍保持未定义，避免引入隐式 rounding；标准库提供 `std::decimal::div(a, b, target_scale, mode)`，要求调用点显式给出目标 runtime scale 和 `RoundingMode`，runtime 按该 mode 舍入并在除数为 0 时失败。
 36. Bounded String validation / literal singleton inference 首个切片已落库：源码可写 `String(min, max)` 会在 type resolver 阶段 fail-closed 拒绝反向区间；当表达式检查带有 expected `String(min, max)` 类型时，string literal 会按当前 escape 规则计算 decoded UTF-8 byte length，并先建模成 singleton `String(length, length)` 再交给既有 subtype relation 接受域内值、拒绝域外值；该路径覆盖 `let` 初始化和 enum constructor payload，不改变无 expected bounded String 时 literal 仍为普通 `String`。
+37. Bounded String concatenation range inference 首个切片已落库：`String(min, max) + String(min, max)` 会推导 decoded byte length 闭区间和，边界溢出时保守回退普通 `String`；expected bounded String 会作为 concatenation operand hint，让 literal operand 先产生 singleton bounded String，再由结构化 length range 判断最终 assignability；混入裸 `String` operand 时仍保守推导普通 `String`，不凭 source spelling 猜测长度。
 
 尚未完成：
 
 1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/`、finite variable-divisor 精确 `%`、divisor-dominates oversized exact `%` 和 quotient-partition large-domain exact `%`，Decimal multiplication product-scale semantics 与显式 Decimal division target-scale / rounding API 已落库；未来 Float refinement semantics 仍未稳定。
+2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/`、finite variable-divisor 精确 `%`、divisor-dominates oversized exact `%`、quotient-partition large-domain exact `%` 和 bounded String concatenation range inference，Decimal multiplication product-scale semantics 与显式 Decimal division target-scale / rounding API 已落库；未来 Float refinement semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续只剩更深 destructuring 编辑序列的 UX 产品化。
 
 ## Test Plan
 
 1. Unit tests for matrix usefulness: wildcard, enum variants, bool, or-pattern, nested constructor, guarded arm, open domain default, Int range matching, bounded Int interval analysis and symbolic bounded constructor products.
-2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal assignability and large bounded enum payload witnesses.
+2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal/concatenation assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
 5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets and pattern payload signatureHelp.
@@ -349,3 +350,4 @@ Stabilized exit criteria:
 - 2026-07-09: Added the first oversized variable-divisor modulo exact slice: when every divisor magnitude is greater than every dividend magnitude, `%` now preserves the dividend bounded interval exactly instead of falling back to the conservative remainder hull.
 - 2026-07-09: Added quotient-partition exact hull inference for large-domain variable-divisor bounded Int modulo. The analyzer now computes fixed-endpoint modulo extrema and reachable `0` / `d - 1` witnesses without enumerating every divisor magnitude, with a bounded segment budget and conservative fallback when proof cost or integer boundaries exceed that budget.
 - 2026-07-09: Added bounded String interval validation and expected-type string literal singleton inference, covering let initializers and enum constructor payloads through existing subtype checks.
+- 2026-07-09: Added bounded String concatenation range inference, including expected-type literal singleton propagation for concatenation operands and conservative fallback for unbounded operands or length-bound overflow.

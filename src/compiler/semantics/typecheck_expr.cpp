@@ -215,6 +215,11 @@ struct BoundedIntRange {
     std::int64_t maximum{0};
 };
 
+struct BoundedStringRange {
+    std::int64_t minimum{0};
+    std::int64_t maximum{0};
+};
+
 constexpr std::uint64_t kMaxExactModuloDivisorMagnitudes = 4096;
 constexpr std::uint64_t kMaxExactModuloQuotientSegments = 65536;
 
@@ -751,6 +756,16 @@ bounded_int_modulo_range(const types::BoundedIntT &lhs, const types::BoundedIntT
     return op == ast::ExprBinaryOp::Add || op == ast::ExprBinaryOp::Subtract ||
            op == ast::ExprBinaryOp::Multiply || op == ast::ExprBinaryOp::Divide ||
            op == ast::ExprBinaryOp::Modulo;
+}
+
+[[nodiscard]] std::optional<BoundedStringRange>
+bounded_string_concat_range(const types::BoundedStringT &lhs, const types::BoundedStringT &rhs) {
+    const auto minimum = checked_add_int64(lhs.minimum, rhs.minimum);
+    const auto maximum = checked_add_int64(lhs.maximum, rhs.maximum);
+    if (!minimum.has_value() || !maximum.has_value()) {
+        return std::nullopt;
+    }
+    return BoundedStringRange{.minimum = *minimum, .maximum = *maximum};
 }
 
 [[nodiscard]] ExprEffect expr_effect_from_judgement(const EffectJudgement &judgement) noexcept {
@@ -4141,13 +4156,17 @@ class ExpressionChecker final {
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
 
-        const MaybeCRef<Type> arithmetic_operand_expected =
-            expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>() &&
-                    supports_bounded_int_arithmetic(binary.op)
-                ? expected_type_
-                : std::nullopt;
-        const auto lhs = services_.check_expr(*binary.lhs, context_, arithmetic_operand_expected);
-        const auto rhs = services_.check_expr(*binary.rhs, context_, arithmetic_operand_expected);
+        MaybeCRef<Type> binary_operand_expected = std::nullopt;
+        if (expected_type_.has_value() && expected_type_->get().holds<types::BoundedIntT>() &&
+            supports_bounded_int_arithmetic(binary.op)) {
+            binary_operand_expected = expected_type_;
+        } else if (expected_type_.has_value() &&
+                   expected_type_->get().holds<types::BoundedStringT>() &&
+                   binary.op == ast::ExprBinaryOp::Add) {
+            binary_operand_expected = expected_type_;
+        }
+        const auto lhs = services_.check_expr(*binary.lhs, context_, binary_operand_expected);
+        const auto rhs = services_.check_expr(*binary.rhs, context_, binary_operand_expected);
         const auto effect = join_effects(lhs.effect, rhs.effect);
 
         const auto comparable = [&]() {
@@ -4222,7 +4241,24 @@ class ExpressionChecker final {
             }
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         case ast::ExprBinaryOp::Add:
-            if (lhs.type->holds<types::StringT>() && rhs.type->holds<types::StringT>()) {
+            if (is_error_type(*lhs.type) || is_error_type(*rhs.type)) {
+                return values_.error_typed_effect(effect);
+            }
+            if (const auto *lhs_bounded_string = lhs.type->get_if<types::BoundedStringT>();
+                lhs_bounded_string != nullptr) {
+                if (const auto *rhs_bounded_string = rhs.type->get_if<types::BoundedStringT>();
+                    rhs_bounded_string != nullptr) {
+                    if (const auto range =
+                            bounded_string_concat_range(*lhs_bounded_string, *rhs_bounded_string);
+                        range.has_value()) {
+                        return values_.typed_effect(
+                            values_.bounded_string_type(range->minimum, range->maximum), effect);
+                    }
+                    return values_.typed_effect(values_.string_type(), effect);
+                }
+            }
+            if ((lhs.type->holds<types::StringT>() || lhs.type->holds<types::BoundedStringT>()) &&
+                (rhs.type->holds<types::StringT>() || rhs.type->holds<types::BoundedStringT>())) {
                 return values_.typed_effect(values_.string_type(), effect);
             }
 
