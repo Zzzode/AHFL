@@ -25,4 +25,17 @@ namespace ahfl::lsp {
 [[nodiscard]] std::vector<SelectionRange>
 compute_selection_ranges(const std::string &source, const std::vector<Position> &positions);
 
+/**
+ * Compute selection ranges with additional semantic candidates.
+ *
+ * `extra_ranges_by_position[i]` contains optional ranges for `positions[i]`.
+ * These ranges are inserted after the token/bracket levels and before the
+ * enclosing line/block levels, which lets typed AST/HIR ranges refine the
+ * selection chain without coupling this module to compiler semantic types.
+ */
+[[nodiscard]] std::vector<SelectionRange>
+compute_selection_ranges(const std::string &source,
+                         const std::vector<Position> &positions,
+                         const std::vector<std::vector<Range>> &extra_ranges_by_position);
+
 } // namespace ahfl::lsp

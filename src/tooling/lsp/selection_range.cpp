@@ -359,6 +359,67 @@ namespace {
 
 // ---------- Chain builder ----------
 
+[[nodiscard]] bool same_range(const Range &lhs, const Range &rhs) {
+    return lhs.start.line == rhs.start.line && lhs.start.character == rhs.start.character &&
+           lhs.end.line == rhs.end.line && lhs.end.character == rhs.end.character;
+}
+
+[[nodiscard]] std::size_t range_begin_offset(const std::string &source, const Range &range) {
+    return offset_of(source, range.start);
+}
+
+[[nodiscard]] std::size_t range_end_offset(const std::string &source, const Range &range) {
+    return offset_of(source, range.end);
+}
+
+[[nodiscard]] bool
+range_contains_offset(const std::string &source, const Range &range, std::size_t offset) {
+    const auto begin = range_begin_offset(source, range);
+    const auto end = range_end_offset(source, range);
+    return begin <= end && begin <= offset && offset <= end;
+}
+
+void push_candidate_if_new(std::vector<Range> &candidates, const Range &range) {
+    if (std::find_if(candidates.begin(), candidates.end(), [&](const Range &candidate) {
+            return same_range(candidate, range);
+        }) != candidates.end()) {
+        return;
+    }
+    candidates.push_back(range);
+}
+
+[[nodiscard]] std::vector<Range> normalized_extra_ranges(const std::string &source,
+                                                         Position pos,
+                                                         const std::vector<Range> &extra_ranges) {
+    const auto offset = offset_of(source, pos);
+    std::vector<Range> ranges;
+    for (const auto &range : extra_ranges) {
+        if (range_begin_offset(source, range) == range_end_offset(source, range) ||
+            !range_contains_offset(source, range, offset)) {
+            continue;
+        }
+        push_candidate_if_new(ranges, range);
+    }
+
+    std::stable_sort(ranges.begin(), ranges.end(), [&](const Range &lhs, const Range &rhs) {
+        const auto lhs_begin = range_begin_offset(source, lhs);
+        const auto lhs_end = range_end_offset(source, lhs);
+        const auto rhs_begin = range_begin_offset(source, rhs);
+        const auto rhs_end = range_end_offset(source, rhs);
+        const auto lhs_width = lhs_end >= lhs_begin ? lhs_end - lhs_begin : 0;
+        const auto rhs_width = rhs_end >= rhs_begin ? rhs_end - rhs_begin : 0;
+        if (lhs_width != rhs_width) {
+            return lhs_width < rhs_width;
+        }
+        if (lhs_begin != rhs_begin) {
+            return lhs_begin > rhs_begin;
+        }
+        return lhs_end < rhs_end;
+    });
+
+    return ranges;
+}
+
 // Returns true if `outer` strictly contains `inner` (i.e., outer starts <= inner
 // and ends >= inner, and they are not identical).
 [[nodiscard]] bool range_contains(const Range &outer, const Range &inner) {
@@ -394,7 +455,8 @@ void push_parent_if_larger(SelectionRange &root, const Range &range) {
     tail->parent = std::move(next);
 }
 
-[[nodiscard]] SelectionRange build_chain(const std::string &source, Position pos) {
+[[nodiscard]] SelectionRange
+build_chain(const std::string &source, Position pos, const std::vector<Range> &extra_ranges) {
     const std::size_t offset = offset_of(source, pos);
 
     // Collect candidate ranges from innermost to outermost.
@@ -402,29 +464,35 @@ void push_parent_if_larger(SelectionRange &root, const Range &range) {
 
     // Level 1: identifier
     if (const auto r = identifier_range(source, offset); r.has_value()) {
-        candidates.push_back(*r);
+        push_candidate_if_new(candidates, *r);
     }
 
     // Level 2: expression (smallest bracket pair)
     if (const auto r = expression_range(source, offset); r.has_value()) {
-        candidates.push_back(*r);
+        push_candidate_if_new(candidates, *r);
+    }
+
+    // Semantic ranges refine the chain between token/bracket and line/block
+    // levels. Callers provide these from typed AST/HIR facts.
+    for (const auto &range : normalized_extra_ranges(source, pos, extra_ranges)) {
+        push_candidate_if_new(candidates, range);
     }
 
     // Level 3: line
-    candidates.push_back(line_range(source, offset));
+    push_candidate_if_new(candidates, line_range(source, offset));
 
     // Level 4: block (braced)
     if (const auto r = block_range(source, offset); r.has_value()) {
-        candidates.push_back(*r);
+        push_candidate_if_new(candidates, *r);
     }
 
     // Level 5: declaration / function
     if (const auto r = declaration_range(source, offset); r.has_value()) {
-        candidates.push_back(*r);
+        push_candidate_if_new(candidates, *r);
     }
 
     // Level 6: file
-    candidates.push_back(file_range(source));
+    push_candidate_if_new(candidates, file_range(source));
 
     // Build the chain: start with the first (innermost) candidate, then push
     // each subsequent candidate as a parent if it is strictly larger.
@@ -444,11 +512,23 @@ void push_parent_if_larger(SelectionRange &root, const Range &range) {
 
 std::vector<SelectionRange> compute_selection_ranges(const std::string &source,
                                                      const std::vector<Position> &positions) {
+    return compute_selection_ranges(source, positions, {});
+}
+
+std::vector<SelectionRange>
+compute_selection_ranges(const std::string &source,
+                         const std::vector<Position> &positions,
+                         const std::vector<std::vector<Range>> &extra_ranges_by_position) {
     std::vector<SelectionRange> result;
     result.reserve(positions.size());
 
+    const std::vector<Range> empty_ranges;
     for (const auto &pos : positions) {
-        result.push_back(build_chain(source, pos));
+        const auto index = result.size();
+        const auto &extra_ranges = index < extra_ranges_by_position.size()
+                                       ? extra_ranges_by_position[index]
+                                       : empty_ranges;
+        result.push_back(build_chain(source, pos, extra_ranges));
     }
 
     return result;

@@ -356,6 +356,24 @@ position_of(const std::string &source, const std::string &needle, std::size_t oc
     return pos;
 }
 
+Position position_after(Position start, std::string_view text) {
+    for (const char ch : text) {
+        if (ch == '\n') {
+            ++start.line;
+            start.character = 0;
+        } else {
+            ++start.character;
+        }
+    }
+    return start;
+}
+
+std::string range_fragment(Position start, Position end) {
+    return R"("range":{"start":{"line":)" + std::to_string(start.line) + R"(,"character":)" +
+           std::to_string(start.character) + R"(},"end":{"line":)" + std::to_string(end.line) +
+           R"(,"character":)" + std::to_string(end.character) + R"(}})";
+}
+
 struct DecodedSemanticToken {
     std::uint32_t line{0};
     std::uint32_t start{0};
@@ -1148,6 +1166,49 @@ void test_document_highlight_uses_local_binding_identity() {
           "documentHighlight.local_binding_excludes_struct_field");
     check(response.find(R"("start":{"line":12,"character":16})") == std::string::npos,
           "documentHighlight.local_binding_excludes_same_name_parameter_reference");
+}
+
+void test_selection_range_uses_typed_pattern_ranges() {
+    const std::string source = "enum Inner {\n"
+                               "    Data(Int),\n"
+                               "    Blank,\n"
+                               "}\n"
+                               "\n"
+                               "enum Outer {\n"
+                               "    Wrap(Inner),\n"
+                               "    None,\n"
+                               "}\n"
+                               "\n"
+                               "fn inspect(x: Outer) -> Int effect Pure decreases 0 {\n"
+                               "    return match x {\n"
+                               "        Wrap(Data(value)) => value,\n"
+                               "        Wrap(Blank) => 0,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto value_position = position_of(source, "value))");
+    const std::string params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"positions":[{"line":)" +
+        std::to_string(value_position.line) + R"(,"character":)" +
+        std::to_string(value_position.character) + R"(}]})";
+    const auto output = run_handler_request(source, "textDocument/selectionRange", params);
+    const auto response = response_body_for_id(output, 2);
+
+    const auto data_start = position_of(source, "Data(value)");
+    const auto data_end = position_after(data_start, "Data(value)");
+    const auto wrap_start = position_of(source, "Wrap(Data(value))");
+    const auto wrap_end = position_after(wrap_start, "Wrap(Data(value))");
+    const auto data_range = range_fragment(data_start, data_end);
+    const auto wrap_range = range_fragment(wrap_start, wrap_end);
+    const auto data_range_offset = response.find(data_range);
+    const auto wrap_range_offset = response.find(wrap_range);
+
+    check(data_range_offset != std::string::npos, "selectionRange.pattern_includes_inner_variant");
+    check(wrap_range_offset != std::string::npos, "selectionRange.pattern_includes_outer_variant");
+    check(data_range_offset != std::string::npos && wrap_range_offset != std::string::npos &&
+              data_range_offset < wrap_range_offset,
+          "selectionRange.pattern_ranges_are_inner_to_outer");
 }
 
 void test_document_symbol_lists_all() {
@@ -9279,6 +9340,7 @@ int main() {
     test_hover_pattern_bindings_use_typed_pattern_facts();
     test_local_pattern_binding_navigation_and_rename_use_lexical_scope();
     test_document_highlight_uses_local_binding_identity();
+    test_selection_range_uses_typed_pattern_ranges();
     test_document_symbol_lists_all();
     test_workspace_symbol_filters();
     test_references_returns_locations();

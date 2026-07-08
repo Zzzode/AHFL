@@ -2467,6 +2467,21 @@ payload_delimiter_bounds(const SourceFile &source, const TypedPattern &pattern) 
     return best;
 }
 
+[[nodiscard]] std::vector<Range> typed_pattern_selection_ranges(const TypedProgram &program,
+                                                                const SourceFile &source,
+                                                                std::optional<SourceId> source_id,
+                                                                std::size_t offset) {
+    std::vector<Range> ranges;
+    for (const auto &pattern : program.patterns) {
+        if (!same_source(pattern.source_id, source_id) || !contains(pattern.range, offset) ||
+            pattern.range.begin_offset == pattern.range.end_offset) {
+            continue;
+        }
+        ranges.push_back(to_lsp_range(source, pattern.range));
+    }
+    return ranges;
+}
+
 [[nodiscard]] std::optional<PatternPayloadCursor>
 find_variant_payload_pattern_at(const TypedProgram &program,
                                 const SourceFile &source,
@@ -4370,7 +4385,20 @@ void LspServer::handle_selection_range(const JsonRpcRequest &req) {
         return;
     }
 
-    auto ranges = compute_selection_ranges(document->text, positions);
+    std::vector<std::vector<Range>> semantic_ranges;
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    const auto *program = snapshot != nullptr ? snapshot->typed_program() : nullptr;
+    if (source != nullptr && source->source != nullptr && program != nullptr) {
+        semantic_ranges.reserve(positions.size());
+        for (const auto &position : positions) {
+            const auto offset = offset_at(*source->source, position);
+            semantic_ranges.push_back(typed_pattern_selection_ranges(
+                *program, *source->source, source->source_id, offset));
+        }
+    }
+
+    auto ranges = compute_selection_ranges(document->text, positions, semantic_ranges);
 
     auto result = json::JsonValue::make_array();
     for (const auto &r : ranges) {
