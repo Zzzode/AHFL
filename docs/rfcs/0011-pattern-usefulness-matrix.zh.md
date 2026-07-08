@@ -218,12 +218,12 @@ Migration:
 7. Struct payload witness rendering 已落库：constructor flat store 记录 payload display kind 和字段名，missing witness 会渲染为 `Data { flag: false, other: false }`，而不是丢失字段语义的 tuple 形式。
 8. Redundant or-pattern branch diagnostic 已落库：matrix core 的 redundant branch analysis 现在通过稳定 warning code `MATCH_REDUNDANT_PATTERN` 暴露到 typechecker，range 指向冗余分支本身。
 9. TypedProgram 一等 pattern fact store 的首个切片已落库：typechecker 的 `match` pattern lowering 会把 literal、variant、wildcard、binding、tuple 和 or-pattern 记录到 `TypedProgram::patterns`，包含 `SourceRange`、`SourceId`、matched type、enum symbol、variant payload kind、bindings 和 child pattern index；JSON typed HIR serialization/deserialization 已覆盖该 flat store。
+10. `match_exhaustiveness` matrix consumer 已迁移到 typed pattern root rows：typechecker 传递每个 match arm 的 `TypedProgram::patterns` root index、source range 和 guard exhaustiveness flag，matrix analyzer 从 typed pattern flat store lowering 到 constructor matrix，不再为常规 typed match 重新从 AST pattern lower 一套局部结构。
 
 尚未完成：
 
-1. `match_exhaustiveness` matrix consumer 仍使用自己的局部 typed lowering，尚未迁移为直接消费 `TypedProgram::patterns` / `PatternId`。
-2. `if let`、optional narrowing 和未来 pattern binding 还没有统一落入 typed pattern fact store。
-3. 非 Bool 的 open literal usefulness、range pattern、完整 pattern diagnostic code taxonomy 和 LSP quick fixes 仍未实现。
+1. `if let`、optional narrowing 和未来 pattern binding 还没有统一落入 typed pattern fact store。
+2. 非 Bool 的 open literal usefulness、range pattern、完整 pattern diagnostic code taxonomy 和 LSP quick fixes 仍未实现。
 
 ## Test Plan
 
@@ -283,3 +283,4 @@ Stabilized exit criteria:
 - 2026-07-08: Landed the first compiler infrastructure slice: an ID-based flat pattern usefulness context plus finite constructor matrix tests for wildcard, bool/enum-like constructors, nested payload witnesses, guarded rows, or-pattern redundancy and open-domain fallback.
 - 2026-07-08: Routed RFC 0003 `match_exhaustiveness` through the matrix core for top-level enum coverage while preserving existing diagnostics and ADT match regression behavior.
 - 2026-07-08: Added `TypedProgram::patterns` as the first typed pattern HIR flat-store slice for `match` typechecking, including typed HIR JSON round-trip coverage.
+- 2026-07-08: Migrated regular `match` exhaustiveness analysis to consume typed pattern root rows from `TypedProgram::patterns`, leaving the AST lowering path only as compatibility fallback for callers without typed rows.

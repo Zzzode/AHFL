@@ -2,8 +2,10 @@
 
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/declaration_info.hpp"
+#include "ahfl/compiler/semantics/typed_hir.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -63,5 +65,21 @@ analyze_match_exhaustiveness(const Type &scrutinee_type,
                              const std::vector<Owned<ast::MatchArmSyntax>> &arms,
                              SourceRange match_range,
                              const MatchEnumInfoResolver &enum_resolver);
+
+struct MatchTypedPatternRow {
+    std::uint32_t pattern_index{UINT32_MAX};
+    SourceRange range;
+    bool contributes_to_exhaustiveness{true};
+};
+
+using MatchTypedPatternResolver = std::function<const TypedPattern *(std::uint32_t)>;
+
+[[nodiscard]] MatchExhaustivenessDiagnostics
+analyze_match_exhaustiveness(const Type &scrutinee_type,
+                             const EnumTypeInfo &enum_info,
+                             const std::vector<MatchTypedPatternRow> &rows,
+                             SourceRange match_range,
+                             const MatchEnumInfoResolver &enum_resolver,
+                             const MatchTypedPatternResolver &pattern_resolver);
 
 } // namespace ahfl

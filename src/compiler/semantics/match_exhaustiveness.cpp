@@ -3,8 +3,10 @@
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <optional>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -270,22 +272,34 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
                                       PatternExpected expected,
                                       MatchMatrixLowering &lowering);
 
+[[nodiscard]] PatternId lower_literal_spelling(std::string_view spelling,
+                                               SourceRange range,
+                                               PatternExpected expected,
+                                               MatchMatrixLowering &lowering);
+
 [[nodiscard]] PatternId lower_literal_pattern(const ast::LiteralPattern &literal,
                                               SourceRange range,
                                               PatternExpected expected,
                                               MatchMatrixLowering &lowering) {
+    return lower_literal_spelling(literal.spelling, range, expected, lowering);
+}
+
+[[nodiscard]] PatternId lower_literal_spelling(std::string_view spelling,
+                                               SourceRange range,
+                                               PatternExpected expected,
+                                               MatchMatrixLowering &lowering) {
     if (expected.bool_domain != nullptr) {
-        if (literal.spelling == "false") {
+        if (spelling == "false") {
             return lowering.context.make_constructor_pattern(
                 expected.bool_domain->false_constructor, {}, range);
         }
-        if (literal.spelling == "true") {
+        if (spelling == "true") {
             return lowering.context.make_constructor_pattern(
                 expected.bool_domain->true_constructor, {}, range);
         }
     }
 
-    if (expected.enum_domain != nullptr && literal.spelling == "none") {
+    if (expected.enum_domain != nullptr && spelling == "none") {
         const auto ordinal = variant_ordinal(expected.enum_domain->enum_info, "None");
         if (ordinal.has_value()) {
             return constructor_pattern(lowering, *expected.enum_domain, *ordinal, range);
@@ -448,6 +462,189 @@ wildcard_children_for_constructor(MatchMatrixLowering &lowering, PatternConstruc
         pattern.node);
 }
 
+[[nodiscard]] std::optional<std::size_t> parse_child_ordinal(std::string_view text) noexcept {
+    if (text.empty()) {
+        return std::nullopt;
+    }
+    std::size_t value = 0;
+    const auto *begin = text.data();
+    const auto *end = text.data() + text.size();
+    const auto [ptr, ec] = std::from_chars(begin, end, value);
+    if (ec != std::errc{} || ptr != end) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+[[nodiscard]] const TypedPattern *resolve_typed_pattern(const MatchTypedPatternResolver &resolver,
+                                                        std::uint32_t index) {
+    if (index == UINT32_MAX) {
+        return nullptr;
+    }
+    return resolver(index);
+}
+
+[[nodiscard]] PatternId lower_typed_pattern(const TypedPattern &pattern,
+                                            PatternExpected expected,
+                                            MatchMatrixLowering &lowering,
+                                            const MatchTypedPatternResolver &resolver);
+
+[[nodiscard]] PatternId lower_typed_child(const TypedPatternChild &child,
+                                          PatternExpected expected,
+                                          MatchMatrixLowering &lowering,
+                                          const MatchTypedPatternResolver &resolver) {
+    const auto *typed_child = resolve_typed_pattern(resolver, child.pattern_index);
+    if (typed_child == nullptr) {
+        return lowering.context.make_wildcard();
+    }
+    return lower_typed_pattern(*typed_child, expected, lowering, resolver);
+}
+
+[[nodiscard]] PatternId lower_typed_tuple_pattern(const TypedPattern &pattern,
+                                                  PatternExpected expected,
+                                                  MatchMatrixLowering &lowering,
+                                                  const MatchTypedPatternResolver &resolver) {
+    if (pattern.children.empty()) {
+        return lowering.context.make_never(pattern.range);
+    }
+
+    bool all_elements_irrefutable = true;
+    std::vector<PatternId> branches;
+    branches.reserve(pattern.children.size());
+    for (const auto &child : pattern.children) {
+        const auto lowered = lower_typed_child(child, expected, lowering, resolver);
+        if (lowering.context.pattern(lowered).kind == PatternNodeKind::Wildcard) {
+            continue;
+        }
+        all_elements_irrefutable = false;
+        branches.push_back(lowered);
+    }
+
+    if (all_elements_irrefutable) {
+        return lowering.context.make_wildcard(pattern.range);
+    }
+    if (branches.empty()) {
+        return lowering.context.make_never(pattern.range);
+    }
+    if (branches.size() == 1) {
+        return branches.front();
+    }
+    return lowering.context.make_or_pattern(std::move(branches), pattern.range);
+}
+
+[[nodiscard]] PatternId lower_typed_variant_pattern(const TypedPattern &pattern,
+                                                    PatternExpected expected,
+                                                    MatchMatrixLowering &lowering,
+                                                    const MatchTypedPatternResolver &resolver) {
+    if (expected.enum_domain == nullptr || pattern.variant_name.empty()) {
+        return lowering.context.make_never(pattern.range);
+    }
+
+    const auto ordinal = variant_ordinal(expected.enum_domain->enum_info, pattern.variant_name);
+    if (!ordinal.has_value()) {
+        return lowering.context.make_never(pattern.range);
+    }
+
+    const auto constructor = expected.enum_domain->variant_constructors[*ordinal];
+    auto children = wildcard_children_for_constructor(lowering, constructor);
+    const auto &variant_info = expected.enum_domain->enum_info.variants[*ordinal];
+    const auto &shape = lowering.context.constructor(constructor);
+
+    if (variant_info.payload_kind == EnumVariantPayloadKind::Tuple) {
+        for (const auto &child : pattern.children) {
+            const auto child_index = parse_child_ordinal(child.name);
+            if (!child_index.has_value() || *child_index >= children.size() ||
+                *child_index >= shape.field_domains.size()) {
+                continue;
+            }
+            children[*child_index] =
+                lower_typed_child(child,
+                                  expected_for_domain(lowering, shape.field_domains[*child_index]),
+                                  lowering,
+                                  resolver);
+        }
+    } else if (variant_info.payload_kind == EnumVariantPayloadKind::Struct) {
+        for (const auto &child : pattern.children) {
+            for (std::size_t field_index = 0; field_index < variant_info.fields.size();
+                 ++field_index) {
+                if (variant_info.fields[field_index].name != child.name ||
+                    field_index >= children.size() || field_index >= shape.field_domains.size()) {
+                    continue;
+                }
+                children[field_index] = lower_typed_child(
+                    child,
+                    expected_for_domain(lowering, shape.field_domains[field_index]),
+                    lowering,
+                    resolver);
+                break;
+            }
+        }
+    }
+
+    return lowering.context.make_constructor_pattern(
+        constructor, std::move(children), pattern.range);
+}
+
+[[nodiscard]] PatternId lower_typed_or_pattern(const TypedPattern &pattern,
+                                               PatternExpected expected,
+                                               MatchMatrixLowering &lowering,
+                                               const MatchTypedPatternResolver &resolver) {
+    std::vector<PatternId> branches;
+    branches.reserve(pattern.children.size());
+    for (const auto &child : pattern.children) {
+        const auto *typed_child = resolve_typed_pattern(resolver, child.pattern_index);
+        if (typed_child == nullptr) {
+            continue;
+        }
+        branches.push_back(lower_typed_pattern(*typed_child, expected, lowering, resolver));
+    }
+    if (branches.empty()) {
+        return lowering.context.make_never(pattern.range);
+    }
+    if (branches.size() == 1) {
+        return branches.front();
+    }
+    return lowering.context.make_or_pattern(std::move(branches), pattern.range);
+}
+
+[[nodiscard]] PatternId lower_typed_binding_pattern(const TypedPattern &pattern,
+                                                    PatternExpected expected,
+                                                    MatchMatrixLowering &lowering,
+                                                    const MatchTypedPatternResolver &resolver) {
+    if (pattern.children.empty()) {
+        return lowering.context.make_wildcard(pattern.range);
+    }
+    const auto nested =
+        std::find_if(pattern.children.begin(),
+                     pattern.children.end(),
+                     [](const TypedPatternChild &child) { return child.name == "nested"; });
+    if (nested != pattern.children.end()) {
+        return lower_typed_child(*nested, expected, lowering, resolver);
+    }
+    return lower_typed_child(pattern.children.front(), expected, lowering, resolver);
+}
+
+[[nodiscard]] PatternId lower_typed_pattern(const TypedPattern &pattern,
+                                            PatternExpected expected,
+                                            MatchMatrixLowering &lowering,
+                                            const MatchTypedPatternResolver &resolver) {
+    switch (pattern.kind) {
+    case TypedPatternKind::Literal:
+        return lower_literal_spelling(pattern.literal_spelling, pattern.range, expected, lowering);
+    case TypedPatternKind::Variant:
+        return lower_typed_variant_pattern(pattern, expected, lowering, resolver);
+    case TypedPatternKind::Wildcard:
+        return lowering.context.make_wildcard(pattern.range);
+    case TypedPatternKind::Binding:
+        return lower_typed_binding_pattern(pattern, expected, lowering, resolver);
+    case TypedPatternKind::Tuple:
+        return lower_typed_tuple_pattern(pattern, expected, lowering, resolver);
+    case TypedPatternKind::Or:
+        return lower_typed_or_pattern(pattern, expected, lowering, resolver);
+    }
+    return lowering.context.make_never(pattern.range);
+}
+
 [[nodiscard]] std::optional<VariantOrdinal> variant_for_witness(const MatchMatrixLowering &lowering,
                                                                 const PatternWitness &witness) {
     if (witness.constructor.value >= lowering.variant_for_constructor.size()) {
@@ -571,6 +768,56 @@ analyze_with_lowering(MatchMatrixLowering lowering,
     return diagnostics;
 }
 
+MatchExhaustivenessDiagnostics
+analyze_with_typed_lowering(MatchMatrixLowering lowering,
+                            const EnumTypeInfo &enum_info,
+                            const std::vector<MatchTypedPatternRow> &typed_rows,
+                            SourceRange match_range,
+                            const MatchTypedPatternResolver &pattern_resolver) {
+    MatchExhaustivenessDiagnostics diagnostics;
+    const auto root_expected = expected_for_domain(lowering, lowering.root_domain);
+
+    std::vector<PatternUsefulnessRow> rows;
+    std::vector<std::size_t> arm_indices;
+    rows.reserve(typed_rows.size());
+    arm_indices.reserve(typed_rows.size());
+    for (std::size_t index = 0; index < typed_rows.size(); ++index) {
+        const auto &row = typed_rows[index];
+        const auto *typed_pattern = resolve_typed_pattern(pattern_resolver, row.pattern_index);
+        if (typed_pattern == nullptr) {
+            continue;
+        }
+        const auto pattern_id =
+            lower_typed_pattern(*typed_pattern, root_expected, lowering, pattern_resolver);
+        rows.push_back(PatternUsefulnessRow{
+            .pattern = pattern_id,
+            .range = row.range,
+            .contributes_to_exhaustiveness = row.contributes_to_exhaustiveness,
+        });
+        arm_indices.push_back(index + 1);
+    }
+
+    const auto analysis = analyze_pattern_usefulness(lowering.context, lowering.root_domain, rows);
+    add_missing_patterns(diagnostics, analysis, lowering, enum_info, match_range);
+
+    diagnostics.unreachable_arms.reserve(analysis.unreachable_rows.size());
+    for (const auto &row : analysis.unreachable_rows) {
+        diagnostics.unreachable_arms.push_back(make_unreachable(row, arm_indices));
+    }
+
+    diagnostics.overlaps.reserve(analysis.overlaps.size());
+    for (const auto &row : analysis.overlaps) {
+        diagnostics.overlaps.push_back(make_overlap(row, arm_indices));
+    }
+
+    diagnostics.redundant_patterns.reserve(analysis.redundant_or_branches.size());
+    for (const auto &branch : analysis.redundant_or_branches) {
+        diagnostics.redundant_patterns.push_back(make_redundant_pattern(branch, arm_indices));
+    }
+
+    return diagnostics;
+}
+
 } // namespace
 
 MatchExhaustivenessDiagnostics
@@ -588,6 +835,20 @@ analyze_match_exhaustiveness(const Type &scrutinee_type,
                              const MatchEnumInfoResolver &enum_resolver) {
     return analyze_with_lowering(
         make_lowering(scrutinee_type, enum_info, enum_resolver), enum_info, arms, match_range);
+}
+
+MatchExhaustivenessDiagnostics
+analyze_match_exhaustiveness(const Type &scrutinee_type,
+                             const EnumTypeInfo &enum_info,
+                             const std::vector<MatchTypedPatternRow> &rows,
+                             SourceRange match_range,
+                             const MatchEnumInfoResolver &enum_resolver,
+                             const MatchTypedPatternResolver &pattern_resolver) {
+    return analyze_with_typed_lowering(make_lowering(scrutinee_type, enum_info, enum_resolver),
+                                       enum_info,
+                                       rows,
+                                       match_range,
+                                       pattern_resolver);
 }
 
 } // namespace ahfl

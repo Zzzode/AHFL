@@ -675,6 +675,10 @@ class ExpressionCheckerServices final {
         return delegate_->append_typed_pattern(std::move(pattern));
     }
 
+    [[nodiscard]] const TypedPattern *typed_pattern(std::uint32_t index) const {
+        return delegate_->typed_pattern(index);
+    }
+
     [[nodiscard]] std::optional<SourceId> current_source_id() const noexcept {
         return current_source_id_;
     }
@@ -1241,6 +1245,8 @@ class ExpressionChecker final {
         }
         const auto scrutinee_place =
             match.scrutinee != nullptr ? place_of_expression(*match.scrutinee) : std::nullopt;
+        std::vector<MatchTypedPatternRow> match_pattern_rows;
+        match_pattern_rows.reserve(match.arms.size());
 
         for (const auto &arm : match.arms) {
             // Build a per-arm value context that layers the pattern's bindings
@@ -1254,11 +1260,16 @@ class ExpressionChecker final {
                                              *scrutinee_place,
                                              arm_context.flow_facts);
             }
-            (void)lower_pattern(*arm->pattern,
-                                scrutinee.type,
-                                enum_info,
-                                arm_context.bindings,
-                                arm->pattern->range);
+            const auto lowered_pattern = lower_pattern(*arm->pattern,
+                                                       scrutinee.type,
+                                                       enum_info,
+                                                       arm_context.bindings,
+                                                       arm->pattern->range);
+            match_pattern_rows.push_back(MatchTypedPatternRow{
+                .pattern_index = lowered_pattern.typed_pattern_index,
+                .range = arm->pattern->range,
+                .contributes_to_exhaustiveness = arm->guard == nullptr,
+            });
 
             // Optional guard: must be a pure Bool expression evaluated in the
             // arm-local binding scope. A guard with side effects degrades the
@@ -1312,10 +1323,17 @@ class ExpressionChecker final {
             const MatchEnumInfoResolver enum_resolver = [&](const Type &type) {
                 return enum_info_for_type(&type);
             };
+            const MatchTypedPatternResolver pattern_resolver = [&](std::uint32_t index) {
+                return services_.typed_pattern(index);
+            };
             const auto match_diagnostics =
                 scrutinee.type != nullptr
-                    ? analyze_match_exhaustiveness(
-                          *scrutinee.type, enum_info->get(), match.arms, expr.range, enum_resolver)
+                    ? analyze_match_exhaustiveness(*scrutinee.type,
+                                                   enum_info->get(),
+                                                   match_pattern_rows,
+                                                   expr.range,
+                                                   enum_resolver,
+                                                   pattern_resolver)
                     : analyze_match_exhaustiveness(enum_info->get(), match.arms, expr.range);
             if (match_diagnostics.missing_patterns.has_value()) {
                 const auto &missing = *match_diagnostics.missing_patterns;
@@ -3674,6 +3692,10 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return pass_->append_typed_pattern(std::move(pattern));
         }
 
+        const TypedPattern *typed_pattern(std::uint32_t index) const override {
+            return pass_->typed_pattern(index);
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -3775,6 +3797,10 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
 
         std::uint32_t append_typed_pattern(TypedPattern /*pattern*/) override {
             return UINT32_MAX;
+        }
+
+        const TypedPattern *typed_pattern(std::uint32_t /*index*/) const override {
+            return nullptr;
         }
 
       private:

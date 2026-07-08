@@ -119,6 +119,7 @@ class ExpressionSemaDelegate {
     // store. ExpressionSema stays AST/typecheck-layer independent by routing
     // storage through the delegate that already owns TypedProgram mutation.
     [[nodiscard]] virtual std::uint32_t append_typed_pattern(TypedPattern pattern) = 0;
+    [[nodiscard]] virtual const TypedPattern *typed_pattern(std::uint32_t index) const = 0;
 };
 
 struct ExpressionSemaServices {

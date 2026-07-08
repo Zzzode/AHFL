@@ -1185,6 +1185,13 @@ std::uint32_t TypeCheckPass::append_typed_pattern(TypedPattern pattern) {
     return hir_builder_.append_pattern(std::move(pattern));
 }
 
+const TypedPattern *TypeCheckPass::typed_pattern(std::uint32_t index) const {
+    if (index >= result_.typed_program.patterns.size()) {
+        return nullptr;
+    }
+    return &result_.typed_program.patterns[index];
+}
+
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
     auto resolver = make_type_resolver();
     return resolver.resolve_type_alias(id, use_range);
