@@ -118,6 +118,7 @@ constexpr std::string_view kCodeDuplicateStructName = "lint.DUPLICATE_STRUCT_NAM
 constexpr std::string_view kCodeUnusedImport = "lint.UNUSED_IMPORT";
 constexpr std::string_view kCodeWrongArity = "typecheck.WRONG_ARITY";
 constexpr std::string_view kCodeMatchMissingPatterns = "typecheck.MATCH_MISSING_PATTERNS";
+constexpr std::string_view kCodeMatchUnreachableArm = "typecheck.MATCH_UNREACHABLE_ARM";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -723,6 +724,47 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
+[[nodiscard]] std::optional<CodeAction> qf_match_unreachable_arm(const std::string &source,
+                                                                 const LspDiagnostic &diag) {
+    const auto arm_line = diag.range.start.line;
+    const auto line = line_text(source, arm_line);
+    if (line.empty() || line.find("=>") == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const auto trimmed = ltrim(line);
+    if (trimmed.empty() || trimmed.front() == '}') {
+        return std::nullopt;
+    }
+
+    const auto start = line_start_offset(source, arm_line);
+    auto end = source.find('\n', start);
+    if (end == std::string::npos) {
+        end = source.size();
+    } else {
+        ++end;
+    }
+    if (end <= start) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range.start = offset_to_position(source, start);
+    edit.range.end = offset_to_position(source, end);
+    edit.new_text = "";
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Remove unreachable match arm";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 // ---------------------------------------------------------------------------
 // Organize Imports (existing, preserved)
 // ---------------------------------------------------------------------------
@@ -947,6 +989,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeMatchMissingPatterns) {
             if (auto a = qf_match_missing_patterns(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeMatchUnreachableArm) {
+            if (auto a = qf_match_unreachable_arm(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

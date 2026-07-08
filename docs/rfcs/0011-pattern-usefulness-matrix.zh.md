@@ -223,7 +223,7 @@ Migration:
 10. `match_exhaustiveness` matrix consumer 已迁移到 typed pattern root rows：typechecker 传递每个 match arm 的 `TypedProgram::patterns` root index、source range 和 guard exhaustiveness flag，matrix analyzer 从 typed pattern flat store lowering 到 constructor matrix，不再为常规 typed match 重新从 AST pattern lower 一套局部结构。
 11. `if let` statement 的 typed pattern fact 已落库：typechecker 会把 `if let` 根 pattern 写入 `TypedProgram::patterns`，并在 `TypedStatement::pattern_index` 记录 root index；typed HIR JSON round-trip 和 monomorphization remap 已覆盖该 statement-local pattern reference。
 12. `if let` 的第一条 usefulness consumer 已落库：typechecker 使用同一个 typed-row matrix analyzer 判断 `if let` pattern 是否覆盖 enum 全部 constructor，并在 `else` 分支不可达时发出 `typecheck.UNREACHABLE_IF_LET_ELSE` warning；单 constructor / 多 constructor enum 回归测试已覆盖。
-13. LSP missing-pattern quick fix v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 可从结构化 `Diagnostic.data["missing_witnesses"]` 插入具体 missing arms（例如 `B => <TODO>,` 或 `Data { flag: false, other: false } => <TODO>,`），并在 witness 不可安全提取或旧诊断缺少结构化 payload 时保留 rendered-message 解析与 `_ => <TODO>,` wildcard fallback；handler 单元测试覆盖编辑位置、struct witness 字段逗号解析、fallback 和 quickfix metadata。
+13. LSP pattern quick fixes v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 可从结构化 `Diagnostic.data["missing_witnesses"]` 插入具体 missing arms（例如 `B => <TODO>,` 或 `Data { flag: false, other: false } => <TODO>,`），并在 witness 不可安全提取或旧诊断缺少结构化 payload 时保留 rendered-message 解析与 `_ => <TODO>,` wildcard fallback；`typecheck.MATCH_UNREACHABLE_ARM` 可在诊断 range 对应单行 match arm 时删除整条 unreachable arm。handler 单元测试覆盖编辑位置、struct witness 字段逗号解析、fallback、unreachable-arm deletion 和 quickfix metadata。
 14. `if let` narrowing consumer 已迁移到 typed pattern fact store：typechecker 从 `TypedStatement::pattern_index` 指向的 `TypedProgram::patterns` root 派生 then/else `FlowFacts` 和 branch-local payload bindings，保留 RFC 0002 Option narrowing 行为，同时避免 flow narrowing 再从 AST pattern 重新推导一套并行语义。
 15. `MATCH_MISSING_PATTERNS` structured witness diagnostic payload 已落库：base diagnostic JSON、LSP protocol diagnostic JSON 和 typecheck emission 都会保留 `missing_witnesses` 字段；LSP diagnostics 回归测试覆盖从真实 typechecker 诊断到 JSON-RPC 输出的结构化 witness 数据。
 16. 非 Bool open literal usefulness 已落库：Int / Float / String 类开放 payload domain 会保留 `_` 默认 witness，并把已出现 literal 降为 singleton constructor；`Some(1), None` 不再错误地证明 `Option<Int>` exhaustiveness，`Some(_)` 才覆盖开放剩余值，重复 literal 会继续产生 unreachable / overlap warning。
@@ -232,7 +232,7 @@ Migration:
 
 尚未完成：
 
-1. LSP pattern diagnostics 和未来 pattern binding 还没有全部统一消费 typed pattern fact store。
+1. 未来 pattern binding / destructuring UX 还没有统一消费 typed pattern fact store。
 2. range pattern、typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan
@@ -303,3 +303,4 @@ Stabilized exit criteria:
 - 2026-07-08: Added symbolic open-domain literal usefulness for Int / Float / String payloads, including default `_` witnesses, literal singleton constructors and `Option<Int>` typecheck regressions for incomplete literal-only matches.
 - 2026-07-08: Migrated match-arm flow narrowing to consume the typed pattern root fact instead of re-deriving the selected variant from AST pattern syntax.
 - 2026-07-08: Aligned the RFC0011 diagnostic taxonomy with the shipped `typecheck.MATCH_*` / `typecheck.UNREACHABLE_IF_LET_ELSE` codes and removed the unimplemented range-code placeholder.
+- 2026-07-08: Added an LSP quick fix for `typecheck.MATCH_UNREACHABLE_ARM` that removes a source-safe single-line unreachable match arm using the typed-row diagnostic range.
