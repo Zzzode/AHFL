@@ -18,7 +18,7 @@
 | RFC 0008: Single-File Primitive and Std Resolution | `implemented` | 完成。detached source unit、primitive home、std dependency/import gate、primitive facade method visibility、`ahflc init --single-file` 显式 package scaffold 已落库。 | 只保留 detached/package 边界回归；不改变 RFC0008 核心语义。 |
 | RFC 0009: Symbol Visibility and Public API Surface | `stabilized` | 完成。语义实现、public API artifact 工具链和 release evidence archive 均已落库；non-std package snapshot/docs/diff 基线由 `ctest -L release-evidence-archive` 覆盖。 | 只保留回归测试；registry、semver 和 publishing metadata 已转入 RFC0010。 |
 | RFC 0010: Registry Publishing and SemVer Gates | `stabilized` | 完成。v1 设计边界已通过 owner review；manifest v2、registry resolver、source archive、显式 `registry resolve` lockfile CLI、public API snapshot artifact fetch、publish dry run、publish-time SemVer gate、real registry upload、package yank 和 RFC0010 release evidence 均已落库。release evidence archive 已覆盖 registry resolve、publish dry-run、real upload、yank 和 SemVer rejection。 | 只保留 local fixture registry evidence 维护；workspace-mode registry fetch 不进入 v1 产品化，后续如需做必须另行显式决策。 |
-| RFC 0011: Pattern Usefulness Matrix | `draft` | 新增。RFC0003 后续 nested/literal/range/payload destructuring usefulness matrix 已拆成独立 RFC；matrix core、`TypedProgram::patterns` 首批基础设施、match consumer typed-row 迁移、if-let statement typed pattern root 和 if-let unreachable-else matrix diagnostic 已落库。 | P2：迁移 if-let narrowing consumer 和 LSP 消费 typed pattern HIR，补 open literal/range usefulness 和 quick fix。 |
+| RFC 0011: Pattern Usefulness Matrix | `draft` | 新增。RFC0003 后续 nested/literal/range/payload destructuring usefulness matrix 已拆成独立 RFC；matrix core、`TypedProgram::patterns` 首批基础设施、match consumer typed-row 迁移、if-let statement typed pattern root、if-let unreachable-else matrix diagnostic 和 LSP wildcard quick fix v1 已落库。 | P2：迁移 if-let narrowing consumer 和 LSP 消费 typed pattern HIR，补 open literal/range usefulness 和精确 witness quick fix。 |
 
 ## 优先级
 
@@ -59,10 +59,10 @@
 ### P2：明确有价值但应等待语义成熟
 
 1. RFC 0003 后续 pattern usefulness matrix。
-   - 状态：RFC 0011 已新增；`PatternUsefulnessContext` / finite constructor matrix 第一条基础设施切片已落库并有单元测试；RFC 0003 `match_exhaustiveness` 已通过 matrix core 执行 enum coverage，并已接入 typed enum-payload lowering 覆盖 nested enum payload witness、Bool payload literal witness、struct payload 字段名 witness rendering 和 redundant or-branch warning；`TypedProgram::patterns` 已记录 `match` pattern 的 typed fact flat store 并覆盖 JSON round-trip；常规 `match` exhaustiveness 已迁移为消费 typed pattern root rows；`if let` statement 已记录 typed pattern root index 并覆盖 serialization/monomorphization remap；`if let` unreachable-else warning 已通过 typed-row matrix consumer 发出。
+   - 状态：RFC 0011 已新增；`PatternUsefulnessContext` / finite constructor matrix 第一条基础设施切片已落库并有单元测试；RFC 0003 `match_exhaustiveness` 已通过 matrix core 执行 enum coverage，并已接入 typed enum-payload lowering 覆盖 nested enum payload witness、Bool payload literal witness、struct payload 字段名 witness rendering 和 redundant or-branch warning；`TypedProgram::patterns` 已记录 `match` pattern 的 typed fact flat store 并覆盖 JSON round-trip；常规 `match` exhaustiveness 已迁移为消费 typed pattern root rows；`if let` statement 已记录 typed pattern root index 并覆盖 serialization/monomorphization remap；`if let` unreachable-else warning 已通过 typed-row matrix consumer 发出；LSP 已能为 `MATCH_MISSING_PATTERNS` 插入 wildcard fallback arm。
    - 仍需等 if-let narrowing consumer、optional narrowing/LSP 消费 `TypedProgram::patterns`、非 Bool open literal/range pattern、struct payload destructuring 的语言语义稳定后进入 accepted / full implementing。
    - RFC 0011 以完整 usefulness matrix 为目标，避免在 RFC 0003 内提前冻结半成熟 pattern 域。
-   - 剩余核心工作：if-let narrowing consumer、optional narrowing 消费 typed pattern HIR、非 Bool open literal/range usefulness、完整 pattern diagnostic code taxonomy、LSP quick fix。
+   - 剩余核心工作：if-let narrowing consumer、optional narrowing 消费 typed pattern HIR、非 Bool open literal/range usefulness、完整 pattern diagnostic code taxonomy、基于具体 witness/enum variant 的 LSP quick fix。
 
 2. RFC 0007 二期 LSP index。
    - incremental workspace index 已补一层：watched file invalidation 和 open-document overlay revision key 均按实际引用 source path 收敛，避免无关打开文件触发当前 package snapshot/index rebuild。

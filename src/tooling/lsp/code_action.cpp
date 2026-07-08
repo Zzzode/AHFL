@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -116,6 +117,7 @@ namespace {
 constexpr std::string_view kCodeDuplicateStructName = "lint.DUPLICATE_STRUCT_NAME";
 constexpr std::string_view kCodeUnusedImport = "lint.UNUSED_IMPORT";
 constexpr std::string_view kCodeWrongArity = "typecheck.WRONG_ARITY";
+constexpr std::string_view kCodeMatchMissingPatterns = "typecheck.MATCH_MISSING_PATTERNS";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -403,6 +405,11 @@ struct KeywordCall {
     return Position{line, static_cast<uint32_t>(offset - last_nl)};
 }
 
+[[nodiscard]] std::size_t position_to_offset(const std::string &source, Position position) {
+    const auto start = line_start_offset(source, position.line);
+    return std::min(source.size(), start + position.character);
+}
+
 [[nodiscard]] std::optional<CodeAction> qf_wrong_arity(const std::string &source,
                                                        const LspDiagnostic &diag) {
     // Only apply for the assert/requires/unreachable/unwrap family.
@@ -443,6 +450,124 @@ struct KeywordCall {
 
     CodeAction action;
     action.title = "Insert placeholder for missing argument(s)";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
+// ---------------------------------------------------------------------------
+// RFC0011-QF: MATCH_MISSING_PATTERNS -> insert a wildcard match arm
+// ---------------------------------------------------------------------------
+
+[[nodiscard]] bool is_identifier_char(char c) noexcept {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+[[nodiscard]] bool
+is_keyword_at(const std::string &source, std::size_t offset, std::string_view keyword) {
+    if (offset + keyword.size() > source.size()) {
+        return false;
+    }
+    if (std::string_view(source).substr(offset, keyword.size()) != keyword) {
+        return false;
+    }
+    const bool before_ok = offset == 0 || !is_identifier_char(source[offset - 1]);
+    const auto after = offset + keyword.size();
+    const bool after_ok = after >= source.size() || !is_identifier_char(source[after]);
+    return before_ok && after_ok;
+}
+
+[[nodiscard]] std::optional<std::size_t> find_match_close_brace(const std::string &source,
+                                                                const Range &range) {
+    const auto range_start = position_to_offset(source, range.start);
+    auto range_end = position_to_offset(source, range.end);
+    if (range_end <= range_start || range_end > source.size()) {
+        range_end = source.size();
+    }
+
+    std::size_t match_pos = source.find("match", range_start);
+    while (match_pos != std::string::npos && match_pos < range_end) {
+        if (!is_keyword_at(source, match_pos, "match")) {
+            match_pos = source.find("match", match_pos + 1);
+            continue;
+        }
+        const auto open = source.find('{', match_pos + std::string_view("match").size());
+        if (open == std::string::npos || open >= source.size()) {
+            return std::nullopt;
+        }
+
+        int depth = 0;
+        for (std::size_t cursor = open; cursor < source.size(); ++cursor) {
+            if (source[cursor] == '"') {
+                ++cursor;
+                while (cursor < source.size() && source[cursor] != '"') {
+                    if (source[cursor] == '\\' && cursor + 1 < source.size()) {
+                        cursor += 2;
+                    } else {
+                        ++cursor;
+                    }
+                }
+                continue;
+            }
+            if (source[cursor] == '{') {
+                ++depth;
+            } else if (source[cursor] == '}') {
+                --depth;
+                if (depth == 0) {
+                    return cursor;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::string line_indent_at_offset(const std::string &source, std::size_t offset) {
+    const auto line_start = source.rfind('\n', offset == 0 ? 0 : offset - 1);
+    std::size_t cursor = line_start == std::string::npos ? 0 : line_start + 1;
+    const auto indent_start = cursor;
+    while (cursor < source.size() && (source[cursor] == ' ' || source[cursor] == '\t')) {
+        ++cursor;
+    }
+    return source.substr(indent_start, cursor - indent_start);
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_match_missing_patterns(const std::string &source,
+                                                                  const LspDiagnostic &diag) {
+    const auto close = find_match_close_brace(source, diag.range);
+    if (!close.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto close_position = offset_to_position(source, *close);
+    const auto close_line_start = line_start_offset(source, close_position.line);
+    const auto line_prefix =
+        std::string_view(source).substr(close_line_start, *close - close_line_start);
+    const bool close_line_prefix_is_indent = std::all_of(
+        line_prefix.begin(), line_prefix.end(), [](char c) { return c == ' ' || c == '\t'; });
+    const auto close_indent = close_line_prefix_is_indent ? std::string(line_prefix)
+                                                          : line_indent_at_offset(source, *close);
+    const auto arm_indent = close_indent + "    ";
+
+    TextEdit edit;
+    if (close_line_prefix_is_indent) {
+        edit.range.start = offset_to_position(source, close_line_start);
+        edit.range.end = close_position;
+        edit.new_text = arm_indent + "_ => <TODO>,\n" + close_indent;
+    } else {
+        edit.range.start = close_position;
+        edit.range.end = close_position;
+        edit.new_text = "\n" + arm_indent + "_ => <TODO>,\n" + close_indent;
+    }
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Insert wildcard match arm";
     action.kind = CodeActionKind::QuickFix;
     action.is_preferred = true;
     action.diagnostics = {diag};
@@ -670,6 +795,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeWrongArity) {
             if (auto a = qf_wrong_arity(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeMatchMissingPatterns) {
+            if (auto a = qf_match_missing_patterns(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

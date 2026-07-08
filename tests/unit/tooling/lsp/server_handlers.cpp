@@ -7997,6 +7997,62 @@ void test_code_action_qf_agent_context() {
           "codeAction.qf_ctx.insertion_between_input_and_output");
 }
 
+void test_code_action_qf_match_missing_patterns_inserts_wildcard_arm() {
+    const std::string source = "module lsp::match_qf;\n"
+                               "enum E { A, B }\n"
+                               "fn f(e: E) -> Int effect Pure decreases 0 {\n"
+                               "    return match e {\n"
+                               "        A => 1,\n"
+                               "    };\n"
+                               "}\n";
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.MATCH_MISSING_PATTERNS";
+    diag.severity = DiagnosticSeverity::Error;
+    diag.message = "non-exhaustive match: missing patterns [B]";
+    diag.range = Range{Position{3, 11}, Position{5, 5}};
+
+    const Range cursor_range{Position{3, 11}, Position{3, 16}};
+    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title.find("wildcard match arm") != std::string::npos) {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_match_missing.action_found");
+    if (qf == nullptr)
+        return;
+
+    check(qf->title == "Insert wildcard match arm", "codeAction.qf_match_missing.title");
+    check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_match_missing.kind_is_quickfix");
+    check(qf->is_preferred, "codeAction.qf_match_missing.marked_preferred");
+    check(qf->edit.has_value(), "codeAction.qf_match_missing.has_workspace_edit");
+    if (!qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool found_wildcard_arm = false;
+    bool replaces_closing_indent = false;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            if (edit.new_text.find("_ => <TODO>,") != std::string::npos) {
+                found_wildcard_arm = true;
+            }
+            if (edit.range.start.line == 5 && edit.range.start.character == 0 &&
+                edit.range.end.line == 5 && edit.range.end.character == 4) {
+                replaces_closing_indent = true;
+            }
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_match_missing.single_text_edit");
+    check(found_wildcard_arm, "codeAction.qf_match_missing.inserts_wildcard_arm");
+    check(replaces_closing_indent, "codeAction.qf_match_missing.replaces_closing_indent");
+}
+
 // Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
 // "capabilities: [];" before the first transition line.
 //
@@ -8352,6 +8408,7 @@ int main() {
     test_code_action_qf_duplicate_struct_related_navigation();
     test_code_action_qf_unused_import_text_edit();
     test_code_action_qf_wrong_arity_placeholder();
+    test_code_action_qf_match_missing_patterns_inserts_wildcard_arm();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
     test_hover_struct_literal_shows_construct_summary();
