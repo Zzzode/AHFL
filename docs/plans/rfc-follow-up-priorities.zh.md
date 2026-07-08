@@ -1,6 +1,6 @@
 # RFC 后续工作优先级
 
-审计日期：2026-07-07
+审计日期：2026-07-08
 
 本计划只记录 `docs/rfcs/` 当前 canonical RFC 的完成度和后续优先级。RFC 的规范文本仍以对应 RFC、`docs/spec/` 和 `docs/reference/` 为准；本文件用于排期、复核和避免把已完成实现、稳定化出口、未来研究项混在一起。
 
@@ -11,10 +11,10 @@
 | RFC 0001: Enum Variant Payload Forms | `stabilized` | 完成。enum variant payload、constructor、pattern、if-let/e2e 覆盖已纳入稳定语义。 | 只保留回归测试和诊断码契约维护。 |
 | RFC 0002: Optional Narrowing in Pattern Matching | `stabilized` | 完成。`FlowFacts`、`if let`、match-arm narrowing 与内建 Option/Result predicate narrowing 已稳定。 | 只保留回归测试。 |
 | RFC 0003: Match Exhaustiveness Diagnostics | `implemented` | 核心诊断已完成；不能稳定化为完整 pattern usefulness 系统。 | P2：nested/literal/range/payload destructuring 稳定后，另开完整 usefulness matrix RFC。 |
-| RFC 0004: Native gRPC Transport | `draft` | 未完成。2026-07-07 代码审计确认现有 runtime gRPC 路径是 `grpc_json_transcoding`，不等价于 native gRPC/Protobuf transport。 | P3：先做 runtime owner decision gate、benchmark 和三平台构建评估，再决定是否进入 accepted/implementing。 |
+| RFC 0004: Native gRPC Transport | `draft` | 未完成。现有 runtime gRPC 路径是 `grpc_json_transcoding`，不等价于 native gRPC/Protobuf transport；native gRPC machine gate 已禁止在 Go 决策前引入 build flag、C++ dependency wiring 或 proto service contract。 | P3：先做 runtime owner decision gate、benchmark 和三平台构建评估，再决定是否进入 accepted/implementing。 |
 | RFC 0005: Package Configuration System | `stabilized` | 完成。TOML manifest、workspace、PackageGraph、lockfile、sysroot std、CLI/LSP/formatter/test helper 迁移与 release evidence archive 均已落库；RFC0010 已明确 registry/publishing 不回填破坏 v1 manifest identity。 | 只保留回归测试和 release evidence 维护。 |
 | RFC 0006: Corelib Development Sysroot | `stabilized` | 完成。source sysroot、corelib 开发路径、VSIX bundled sysroot、普通用户工程和 multi-root toolchain profile release evidence 均已落库。 | 只保留发布矩阵证据维护；多版本 toolchain distribution 另行 RFC。 |
-| RFC 0007: LSP Workspace Navigation Index | `stabilized` | v1 完成。semantic graph 与 navigation index 分离、primitive home、impl/reference/navigation 索引、stable fingerprint、rename、CodeLens/reference/implementation v1、open overlay invalidation 和 multi-root profile isolation 均已落库。 | P2：剩余 fact-level incremental remap；public API compatibility gate 已转入 RFC0010。 |
+| RFC 0007: LSP Workspace Navigation Index | `stabilized` | v1 完成。semantic graph 与 navigation index 分离、primitive home、impl/reference/navigation 索引、stable fingerprint、rename、CodeLens/reference/implementation v1、open overlay invalidation、process-local previous-index fact remap 和 multi-root profile isolation 均已落库。 | 只保留 UX / performance polish；public API compatibility gate 已转入 RFC0010。 |
 | RFC 0008: Single-File Primitive and Std Resolution | `implemented` | 完成。detached source unit、primitive home、std dependency/import gate、primitive facade method visibility、`ahflc init --single-file` 显式 package scaffold 已落库。 | 只保留 detached/package 边界回归；不改变 RFC0008 核心语义。 |
 | RFC 0009: Symbol Visibility and Public API Surface | `stabilized` | 完成。语义实现、public API artifact 工具链和 release evidence archive 均已落库；non-std package snapshot/docs/diff 基线由 `ctest -L release-evidence-archive` 覆盖。 | 只保留回归测试；registry、semver 和 publishing metadata 已转入 RFC0010。 |
 | RFC 0010: Registry Publishing and SemVer Gates | `stabilized` | 完成。v1 设计边界已通过 owner review；manifest v2、registry resolver、source archive、显式 `registry resolve` lockfile CLI、public API snapshot artifact fetch、publish dry run、publish-time SemVer gate、real registry upload、package yank 和 RFC0010 release evidence 均已落库。release evidence archive 已覆盖 registry resolve、publish dry-run、real upload、yank 和 SemVer rejection。 | 只保留 local fixture registry evidence 维护；workspace-mode registry fetch 不进入 v1 产品化，后续如需做必须另行显式决策。 |
