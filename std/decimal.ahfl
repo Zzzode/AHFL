@@ -41,6 +41,10 @@ fn decimal_raw_sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure;
 @builtin("decimal_raw_mul")
 fn decimal_raw_mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure;
 
+@builtin("decimal_raw_div")
+fn decimal_raw_div(a: JDecimal, b: JDecimal, target_scale: Int, mode: Int)
+    -> JDecimal effect Pure;
+
 @builtin("decimal_raw_scale")
 fn decimal_raw_scale(a: Decimal(0)) -> Int effect Pure;
 
@@ -117,6 +121,12 @@ pub fn sub(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
 pub fn mul(a: JDecimal, b: JDecimal) -> JDecimal effect Pure decreases 0 {
     // Product scale = scale_of(a) + scale_of(b).
     return decimal_raw_mul(a, b);
+}
+
+pub fn div(a: JDecimal, b: JDecimal, target_scale: Int, mode: RoundingMode)
+    -> JDecimal effect Pure decreases 0
+{
+    return decimal_raw_div(a, b, target_scale, mode_index(mode));
 }
 
 // ===========================================================================

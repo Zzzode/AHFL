@@ -1507,6 +1507,71 @@ bool align(const Dec &a, const Dec &b, Dec &aa, Dec &bb) {
     return rescale(a, s, aa) && rescale(b, s, bb);
 }
 
+std::optional<int64_t> pow10_i64_checked(int64_t exp) {
+    if (exp < 0) return std::nullopt;
+    int64_t result = 1;
+    for (int64_t i = 0; i < exp; ++i) {
+        int64_t next = 0;
+        if (__builtin_mul_overflow(result, static_cast<int64_t>(10), &next)) return std::nullopt;
+        result = next;
+    }
+    return result;
+}
+
+std::optional<uint64_t> abs_i64_to_u64(int64_t value) {
+    if (value == std::numeric_limits<int64_t>::min()) {
+        return static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
+    }
+    if (value < 0) return static_cast<uint64_t>(-value);
+    return static_cast<uint64_t>(value);
+}
+
+std::optional<int64_t> rounded_quotient(int64_t numerator, int64_t denominator, int64_t mode) {
+    if (denominator == 0) return std::nullopt;
+
+    int64_t trunc = numerator / denominator;
+    const int64_t rem = numerator % denominator;
+    if (rem == 0) return trunc;
+
+    const auto rem_abs = abs_i64_to_u64(rem);
+    const auto denom_abs = abs_i64_to_u64(denominator);
+    if (!rem_abs.has_value() || !denom_abs.has_value()) return std::nullopt;
+
+    const bool negative_result = (numerator < 0) != (denominator < 0);
+    const bool greater_than_half = *rem_abs > (*denom_abs - *rem_abs);
+    const bool exactly_half = *rem_abs == (*denom_abs - *rem_abs);
+
+    bool away = false;
+    switch (mode) {
+    case 0: // Ceiling
+        away = !negative_result;
+        break;
+    case 1: // Floor
+        away = negative_result;
+        break;
+    case 2: // Truncate
+        away = false;
+        break;
+    case 3: // HalfUp
+        away = greater_than_half || exactly_half;
+        break;
+    case 4: // HalfDown
+        away = greater_than_half;
+        break;
+    case 5: // HalfEven
+        away = greater_than_half || (exactly_half && (trunc % 2 != 0));
+        break;
+    default:
+        return std::nullopt;
+    }
+
+    if (!away) return trunc;
+    const int64_t delta = negative_result ? -1 : 1;
+    int64_t rounded = 0;
+    if (__builtin_add_overflow(trunc, delta, &rounded)) return std::nullopt;
+    return rounded;
+}
+
 } // namespace decimal_impl
 
 /// decimal_raw_make(mantissa: Int, scale: Int) -> Decimal
@@ -1574,6 +1639,48 @@ EvalResult builtin_decimal_raw_mul(const std::vector<Value> &args, const EvalCon
         s64 < std::numeric_limits<int32_t>::min())
         return make_error("decimal_raw_mul: scale overflow");
     return EvalResult{make_decimal(decimal_impl::Dec::spell(prod, static_cast<int32_t>(s64))), {}};
+}
+
+EvalResult builtin_decimal_raw_div(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 4)
+        return arg_count_error(4, args.size());
+    auto *a = std::get_if<DecimalValue>(&args[0].node);
+    auto *b = std::get_if<DecimalValue>(&args[1].node);
+    auto *s = std::get_if<IntValue>(&args[2].node);
+    auto *m = std::get_if<IntValue>(&args[3].node);
+    if (!a || !b || !s || !m) return make_error("decimal_raw_div: bad argument types");
+
+    decimal_impl::Dec da{}, db{};
+    if (!decimal_impl::Dec::parse(a->spelling, da) || !decimal_impl::Dec::parse(b->spelling, db))
+        return make_error("decimal_raw_div: malformed Decimal spelling");
+    if (db.mant == 0) return make_error("decimal_raw_div: division by zero");
+
+    const int64_t target_scale64 = s->value;
+    if (target_scale64 > std::numeric_limits<int32_t>::max() ||
+        target_scale64 < std::numeric_limits<int32_t>::min())
+        return make_error("decimal_raw_div: scale out of int32 range");
+    const auto target_scale = static_cast<int32_t>(target_scale64);
+    if (m->value < 0 || m->value > 5) return make_error("decimal_raw_div: unknown rounding mode");
+
+    const auto exponent = static_cast<int64_t>(db.scale) + static_cast<int64_t>(target_scale) -
+                          static_cast<int64_t>(da.scale);
+    int64_t numerator = da.mant;
+    int64_t denominator = db.mant;
+    if (exponent >= 0) {
+        const auto multiplier = decimal_impl::pow10_i64_checked(exponent);
+        if (!multiplier.has_value()) return make_error("decimal_raw_div: scale overflow");
+        if (__builtin_mul_overflow(numerator, *multiplier, &numerator))
+            return make_error("decimal_raw_div: mantissa overflow");
+    } else {
+        const auto multiplier = decimal_impl::pow10_i64_checked(-exponent);
+        if (!multiplier.has_value()) return make_error("decimal_raw_div: scale overflow");
+        if (__builtin_mul_overflow(denominator, *multiplier, &denominator))
+            return make_error("decimal_raw_div: mantissa overflow");
+    }
+
+    const auto quotient = decimal_impl::rounded_quotient(numerator, denominator, m->value);
+    if (!quotient.has_value()) return make_error("decimal_raw_div: rounding overflow");
+    return EvalResult{make_decimal(decimal_impl::Dec::spell(*quotient, target_scale)), {}};
 }
 
 /// decimal_raw_scale(a: Decimal) -> Int
@@ -1873,6 +1980,7 @@ void BuiltinTable::populate() {
     insert("decimal_raw_add", builtin_decimal_raw_add);
     insert("decimal_raw_sub", builtin_decimal_raw_sub);
     insert("decimal_raw_mul", builtin_decimal_raw_mul);
+    insert("decimal_raw_div", builtin_decimal_raw_div);
     insert("decimal_raw_scale", builtin_decimal_raw_scale);
     insert("decimal_raw_with_scale", builtin_decimal_raw_with_scale);
     insert("decimal_raw_quantize", builtin_decimal_raw_quantize);

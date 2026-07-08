@@ -13,8 +13,8 @@ import std::cmp as cmp;
 // yet ship a `decimal_from_string` builtin. `decimal_raw_to_string` exists and
 // is tested via the fmt inherent impl smoke-check.
 //
-// Target: 25 assertions.  4 make/from_int + 5 add/sub/mul + 5 scale +
-//                         6 cmp + 3 max/min/clamp + 2 rounding-mode = 25.
+// Target: 34 assertions. 4 make/from_int + 5 add/sub/mul + 5 scale +
+// 10 cmp/max/min/clamp + 2 rounding-mode + 8 explicit division checks.
 
 fn decimal_ut() -> Int effect Pure decreases 0 {
     // ===== 4 make / from_int =====
@@ -106,6 +106,48 @@ fn decimal_ut() -> Int effect Pure decreases 0 {
     assert(cmp::compare(decimal::mode_index(decimal::RoundingMode::HalfEven),
                         decimal::mode_index(decimal::RoundingMode::HalfDown))
            == cmp::Ordering::Greater);
+
+    // ===== explicit division / rounding =====
+    let quarter: decimal::JDecimal =
+        decimal::div(decimal::make(100, 2),
+                     decimal::make(400, 2),
+                     2,
+                     decimal::RoundingMode::HalfUp);
+    assert(decimal::scale_of(quarter) == 2);
+    assert(quarter.eq(decimal::make(25, 2)));
+
+    let one_third: decimal::JDecimal =
+        decimal::div(decimal::from_int(1),
+                     decimal::from_int(3),
+                     2,
+                     decimal::RoundingMode::HalfUp);
+    assert(one_third.eq(decimal::make(33, 2)));
+
+    assert(decimal::div(decimal::from_int(2),
+                        decimal::from_int(3),
+                        0,
+                        decimal::RoundingMode::HalfUp)
+           .eq(decimal::from_int(1)));
+    assert(decimal::div(decimal::from_int(5),
+                        decimal::from_int(2),
+                        0,
+                        decimal::RoundingMode::HalfEven)
+           .eq(decimal::from_int(2)));
+    assert(decimal::div(decimal::from_int(5),
+                        decimal::from_int(2),
+                        0,
+                        decimal::RoundingMode::HalfUp)
+           .eq(decimal::from_int(3)));
+    assert(decimal::div(decimal::from_int(-5),
+                        decimal::from_int(2),
+                        0,
+                        decimal::RoundingMode::Ceiling)
+           .eq(decimal::from_int(-2)));
+    assert(decimal::div(decimal::from_int(-5),
+                        decimal::from_int(2),
+                        0,
+                        decimal::RoundingMode::Floor)
+           .eq(decimal::from_int(-3)));
 
     return 0;
 }

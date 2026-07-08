@@ -658,6 +658,55 @@ void test_std_builtin_hooks() {
         check(uuid_string != nullptr && uuid_string->value == "550e8400e29b41d4a716446655440000",
               "std.uuid_to_string.value");
     }
+
+    auto make_decimal_call = [](std::string mantissa, std::string scale) {
+        return make_expr_ptr(CallExpr{
+            "decimal_raw_make",
+            {make_expr_ptr(IntegerLiteralExpr{std::move(mantissa)}),
+             make_expr_ptr(IntegerLiteralExpr{std::move(scale)})},
+        });
+    };
+    auto decimal_div = [&](std::string lhs_mantissa,
+                           std::string lhs_scale,
+                           std::string rhs_mantissa,
+                           std::string rhs_scale,
+                           std::string target_scale,
+                           std::string mode) {
+        return eval_expr(make_expr(CallExpr{
+                             "decimal_raw_div",
+                             {make_decimal_call(std::move(lhs_mantissa), std::move(lhs_scale)),
+                              make_decimal_call(std::move(rhs_mantissa), std::move(rhs_scale)),
+                              make_expr_ptr(IntegerLiteralExpr{std::move(target_scale)}),
+                              make_expr_ptr(IntegerLiteralExpr{std::move(mode)})},
+                         }),
+                         ctx);
+    };
+    auto check_decimal_spelling = [&](const EvalResult &result,
+                                      std::string_view expected,
+                                      std::string_view name) {
+        check(!result.has_errors(), std::string{name} + ".no_error");
+        auto *decimal = std::get_if<DecimalValue>(&result.value.node);
+        check(decimal != nullptr && decimal->spelling == expected, std::string{name} + ".value");
+    };
+
+    check_decimal_spelling(decimal_div("100", "2", "400", "2", "2", "3"),
+                           "s2:25",
+                           "std.decimal_raw_div.quarter_half_up");
+    check_decimal_spelling(decimal_div("5", "0", "2", "0", "0", "5"),
+                           "s0:2",
+                           "std.decimal_raw_div.half_even");
+    check_decimal_spelling(decimal_div("5", "0", "2", "0", "0", "3"),
+                           "s0:3",
+                           "std.decimal_raw_div.half_up");
+    check_decimal_spelling(decimal_div("-5", "0", "2", "0", "0", "0"),
+                           "s0:-2",
+                           "std.decimal_raw_div.ceiling_negative");
+    check_decimal_spelling(decimal_div("-5", "0", "2", "0", "0", "1"),
+                           "s0:-3",
+                           "std.decimal_raw_div.floor_negative");
+
+    auto div_zero = decimal_div("1", "0", "0", "0", "0", "3");
+    check(div_zero.has_errors(), "std.decimal_raw_div.division_by_zero_error");
 }
 
 Path local_path(std::string name) {

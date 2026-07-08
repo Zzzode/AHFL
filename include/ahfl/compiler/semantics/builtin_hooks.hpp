@@ -65,6 +65,7 @@ inline constexpr std::array kKnownBuiltinHooks{
     std::string_view{"decimal_raw_add"},
     std::string_view{"decimal_raw_sub"},
     std::string_view{"decimal_raw_mul"},
+    std::string_view{"decimal_raw_div"},
     std::string_view{"decimal_raw_scale"},
     std::string_view{"decimal_raw_with_scale"},
     std::string_view{"decimal_raw_quantize"},

@@ -912,7 +912,10 @@ predicate 调用允许出现在：
      bounded `Int(value, value)` 再执行 assignability 检查；这不改变 lexer 或
      grammar 中 `-1` 仍为一元表达式的设计
    - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
-   - `Decimal(p) / Decimal(q)` 未定义；未来若支持，必须先定义 rounding / target scale policy
+   - 源码层 `Decimal(p) / Decimal(q)` operator 未定义；Decimal 除法只能通过
+     `std::decimal::div(a, b, target_scale, mode)` 表达。该 API 要求用户显式
+     给出目标 runtime scale 和 `RoundingMode`；结果按 `mode` 舍入到
+     `target_scale`，除数为 0 时由 runtime 报错。
 2. 比较运算：
    - 两侧类型必须相同，或左侧为右侧子类型，或右侧为左侧子类型
 3. 逻辑运算：
@@ -920,8 +923,10 @@ predicate 调用允许出现在：
 4. `=>`：
    - 仅作用于 `Bool`
 
-测试要求：混合 numeric operator、不同 scale `Decimal` 加减、`Decimal` 除法、以及 `Int < Float` 必须以稳定诊断
-`typecheck.INVALID_OPERATION` 失败；`Decimal` 乘法必须以 product scale 参与 assignability 检查。
+测试要求：混合 numeric operator、不同 scale `Decimal` 加减、源码层 `Decimal`
+除法 operator、以及 `Int < Float` 必须以稳定诊断
+`typecheck.INVALID_OPERATION` 失败；`Decimal` 乘法必须以 product scale 参与
+assignability 检查；`std::decimal::div` 必须覆盖显式 target scale 和 rounding mode。
 `TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
 不得改变源码表达式类型规则。
 
