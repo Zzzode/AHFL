@@ -31,6 +31,16 @@ void fingerprint_combine(std::uint64_t &seed, std::uint64_t value) noexcept {
     }
 }
 
+[[nodiscard]] std::uint64_t content_fingerprint(std::string_view text) noexcept {
+    std::uint64_t seed = 14695981039346656037ULL;
+    for (const unsigned char ch : text) {
+        seed ^= ch;
+        seed *= 1099511628211ULL;
+    }
+    fingerprint_combine(seed, static_cast<std::uint64_t>(text.size()));
+    return seed;
+}
+
 [[nodiscard]] DefFingerprint symbol_fingerprint(package_graph::PackageId package_id,
                                                 SourceUnitId source_unit_id,
                                                 SymbolNamespace name_space,
@@ -411,6 +421,7 @@ using SourceUnitByDiagnosticNameMap = std::unordered_map<std::string, SourceUnit
 using SourceUnitBySourceIdMap = std::unordered_map<std::size_t, SourceUnitId>;
 using SourceUnitByPathMap = std::unordered_map<std::string, SourceUnitId>;
 using SourceUnitPathSet = std::unordered_set<std::string>;
+using PreviousDefRemap = std::unordered_map<std::size_t, DefId>;
 
 [[nodiscard]] TypeKey type_key_for_type_with_defs(const Type &type,
                                                   const DefBySymbolMap *def_by_symbol);
@@ -914,6 +925,8 @@ void append_parse_skeleton_facts_into(LspWorkspaceIndex &index,
             input,
             path,
             parse_result.program ? FactCompleteness::Parsed : FactCompleteness::Invalid);
+        index.set_source_unit_content_fingerprint(source_unit,
+                                                  content_fingerprint(parse_result.source.content));
         if (const auto *source_fact = source_unit_fact(index, source_unit);
             source_fact != nullptr) {
             add_diagnostic_source_aliases(source_units_by_name, *source_fact, &parse_result.source);
@@ -983,6 +996,10 @@ void LspWorkspaceIndex::set_metadata(NavigationIndexMetadata metadata) {
     metadata_ = std::move(metadata);
 }
 
+void LspWorkspaceIndex::set_reuse_stats(NavigationIndexReuseStats stats) {
+    reuse_stats_ = stats;
+}
+
 void LspWorkspaceIndex::add_source_unit(SourceUnitFact fact) {
     fact.valid = true;
     const auto id = fact.source_unit_id;
@@ -1019,6 +1036,19 @@ void LspWorkspaceIndex::set_source_unit_completeness(SourceUnitId source_unit,
         return;
     }
     fact.completeness = completeness;
+}
+
+void LspWorkspaceIndex::set_source_unit_content_fingerprint(
+    SourceUnitId source_unit, std::uint64_t content_fingerprint) {
+    const auto existing = source_unit_index_by_id_.find(source_unit.value);
+    if (existing == source_unit_index_by_id_.end()) {
+        return;
+    }
+    auto &fact = source_units_[existing->second];
+    if (!fact.valid) {
+        return;
+    }
+    fact.content_fingerprint = content_fingerprint;
 }
 
 void LspWorkspaceIndex::add_symbol(SymbolFact fact) {
@@ -1415,10 +1445,98 @@ TypeKey type_key_for_type_with_defs(const Type &type, const DefBySymbolMap *def_
     return TypeKey{.kind = TypeKey::Kind::Unknown};
 }
 
+[[nodiscard]] bool source_range_equal(SourceRange lhs, SourceRange rhs) noexcept {
+    return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
+}
+
+[[nodiscard]] bool source_unit_is_reusable(const SourceUnitFact &previous,
+                                           const SourceUnitFact &current) {
+    return previous.valid && current.valid && previous.source_unit_id == current.source_unit_id &&
+           previous.package_id == current.package_id &&
+           normalize_path(previous.path).generic_string() ==
+               normalize_path(current.path).generic_string() &&
+           previous.content_fingerprint != 0 &&
+           previous.content_fingerprint == current.content_fingerprint;
+}
+
+[[nodiscard]] std::optional<DefId> remap_def(const PreviousDefRemap &remap,
+                                             std::optional<DefId> previous_def) {
+    if (!previous_def.has_value()) {
+        return std::nullopt;
+    }
+    const auto found = remap.find(previous_def->value);
+    if (found == remap.end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
+[[nodiscard]] std::optional<TypeKey> remap_type_key(const PreviousDefRemap &remap,
+                                                    const TypeKey &previous) {
+    TypeKey mapped = previous;
+    if (previous.def.has_value()) {
+        const auto def = remap_def(remap, previous.def);
+        if (!def.has_value()) {
+            return std::nullopt;
+        }
+        mapped.def = *def;
+    }
+    mapped.type_args.clear();
+    mapped.type_args.reserve(previous.type_args.size());
+    for (const auto &arg : previous.type_args) {
+        const auto mapped_arg = remap_type_key(remap, arg);
+        if (!mapped_arg.has_value()) {
+            return std::nullopt;
+        }
+        mapped.type_args.push_back(*mapped_arg);
+    }
+    return mapped;
+}
+
+[[nodiscard]] bool symbol_fact_matches_current(const SymbolFact &previous,
+                                               const SymbolFact &current) {
+    return previous.fingerprint == current.fingerprint &&
+           previous.source_unit_id == current.source_unit_id &&
+           previous.package_id == current.package_id && previous.kind == current.kind &&
+           previous.name_space == current.name_space && previous.visibility == current.visibility &&
+           previous.api_reachable == current.api_reachable &&
+           previous.artifact_reachable == current.artifact_reachable &&
+           previous.local_name == current.local_name &&
+           previous.canonical_name == current.canonical_name &&
+           source_range_equal(previous.declaration_range, current.declaration_range) &&
+           source_range_equal(previous.selection_range, current.selection_range);
+}
+
+[[nodiscard]] bool reference_fact_matches_current(const ReferenceFact &previous,
+                                                  const ReferenceFact &current,
+                                                  std::optional<DefId> mapped_target) {
+    return previous.package_id == current.package_id &&
+           previous.source_unit_id == current.source_unit_id &&
+           previous.reference_kind == current.reference_kind &&
+           mapped_target == current.target_def &&
+           source_range_equal(previous.range, current.range);
+}
+
+[[nodiscard]] bool impl_fact_matches_current(const ImplFact &previous,
+                                             const ImplFact &current,
+                                             const TypeKey &mapped_target_type,
+                                             std::optional<DefId> mapped_trait_def) {
+    return previous.package_id == current.package_id &&
+           previous.source_unit_id == current.source_unit_id &&
+           mapped_target_type == current.target_type && mapped_trait_def == current.trait_def &&
+           previous.methods.size() == current.methods.size() &&
+           previous.source_order == current.source_order &&
+           previous.completeness == current.completeness &&
+           source_range_equal(previous.declaration_range, current.declaration_range) &&
+           source_range_equal(previous.target_range, current.target_range);
+}
+
 class IndexAnalysisPipeline {
   public:
     IndexAnalysisPipeline(const Frontend &frontend, LspWorkspaceIndexInput input)
-        : frontend_(frontend), input_(std::move(input)) {}
+        : frontend_(frontend), input_(std::move(input)), previous_index_(input_.previous_index) {
+        prepare_previous_fact_lookups();
+    }
 
     [[nodiscard]] LspWorkspaceIndex run() {
         index_.set_metadata(input_.metadata);
@@ -1427,7 +1545,7 @@ class IndexAnalysisPipeline {
         auto project = parse_project(frontend_, input_.project);
         if (project.has_errors() && project.graph.sources.empty()) {
             append_parse_skeleton_facts(index_, frontend_, input_, &project.diagnostics);
-            return std::move(index_);
+            return finish();
         }
 
         register_parsed_sources(project.graph);
@@ -1454,7 +1572,7 @@ class IndexAnalysisPipeline {
                                                                       : FactCompleteness::Resolved);
         if (resolved.has_errors()) {
             append_resolved_skeleton_facts(project.graph, FactCompleteness::Parsed);
-            return std::move(index_);
+            return finish();
         }
 
         update_source_completeness(project.graph, FactCompleteness::Resolved);
@@ -1473,15 +1591,148 @@ class IndexAnalysisPipeline {
         if (typed.has_errors()) {
             emit_typed_impl_facts(project.graph, typed);
             append_impl_skeleton_facts(project.graph, FactCompleteness::Resolved);
-            return std::move(index_);
+            return finish();
         }
 
         update_source_completeness(project.graph, FactCompleteness::Typed);
         emit_typed_impl_facts(project.graph, typed);
-        return std::move(index_);
+        return finish();
     }
 
   private:
+    [[nodiscard]] LspWorkspaceIndex finish() {
+        reuse_stats_.reused_source_units = reusable_source_units_.size();
+        index_.set_reuse_stats(reuse_stats_);
+        return std::move(index_);
+    }
+
+    void prepare_previous_fact_lookups() {
+        if (previous_index_ == nullptr) {
+            return;
+        }
+        for (const auto &symbol : previous_index_->symbols()) {
+            previous_symbols_by_fingerprint_[symbol.fingerprint.value].push_back(&symbol);
+        }
+        for (const auto &reference : previous_index_->references()) {
+            previous_references_by_source_[reference.source_unit_id.value].push_back(&reference);
+        }
+        for (const auto &impl : previous_index_->impls()) {
+            previous_impls_by_source_[impl.source_unit_id.value].push_back(&impl);
+        }
+    }
+
+    [[nodiscard]] bool source_unit_reusable(SourceUnitId source_unit) const {
+        return reusable_source_units_.contains(source_unit.value);
+    }
+
+    void mark_source_unit_content(SourceUnitId source_unit, std::string_view content) {
+        const auto fingerprint = content_fingerprint(content);
+        index_.set_source_unit_content_fingerprint(source_unit, fingerprint);
+        if (previous_index_ == nullptr) {
+            return;
+        }
+        const auto *previous = previous_index_->source_unit_for_id(source_unit);
+        const auto *current = index_.source_unit_for_id(source_unit);
+        if (previous == nullptr || current == nullptr) {
+            return;
+        }
+        if (source_unit_is_reusable(*previous, *current)) {
+            reusable_source_units_.insert(source_unit.value);
+        }
+    }
+
+    [[nodiscard]] const SymbolFact *previous_symbol_for_current(const SymbolFact &current) const {
+        if (previous_index_ == nullptr) {
+            return nullptr;
+        }
+        const auto found = previous_symbols_by_fingerprint_.find(current.fingerprint.value);
+        if (found == previous_symbols_by_fingerprint_.end()) {
+            return nullptr;
+        }
+        for (const auto *previous : found->second) {
+            if (previous != nullptr && symbol_fact_matches_current(*previous, current)) {
+                return previous;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] SymbolFact remap_reusable_symbol_fact(const SymbolFact &current,
+                                                        const SymbolFact *previous) {
+        if (previous != nullptr) {
+            previous_def_to_current_.try_emplace(previous->def_id.value, current.def_id);
+        }
+        if (previous == nullptr || !source_unit_reusable(current.source_unit_id)) {
+            return current;
+        }
+        auto reused = *previous;
+        reused.def_id = current.def_id;
+        if (previous->alias_target_def.has_value()) {
+            const auto target = remap_def(previous_def_to_current_, previous->alias_target_def);
+            if (!target.has_value()) {
+                return current;
+            }
+            reused.alias_target_def = *target;
+        }
+        ++reuse_stats_.reused_symbol_facts;
+        return reused;
+    }
+
+    [[nodiscard]] ReferenceFact remap_reusable_reference_fact(const ReferenceFact &current) {
+        if (previous_index_ == nullptr || !source_unit_reusable(current.source_unit_id)) {
+            return current;
+        }
+        const auto found = previous_references_by_source_.find(current.source_unit_id.value);
+        if (found == previous_references_by_source_.end()) {
+            return current;
+        }
+        for (const auto *previous : found->second) {
+            if (previous == nullptr) {
+                continue;
+            }
+            const auto mapped_target = remap_def(previous_def_to_current_, previous->target_def);
+            if (!reference_fact_matches_current(*previous, current, mapped_target)) {
+                continue;
+            }
+            auto reused = *previous;
+            reused.target_def = mapped_target;
+            ++reuse_stats_.reused_reference_facts;
+            return reused;
+        }
+        return current;
+    }
+
+    [[nodiscard]] ImplFact remap_reusable_impl_fact(const ImplFact &current) {
+        if (previous_index_ == nullptr || !source_unit_reusable(current.source_unit_id)) {
+            return current;
+        }
+        const auto found = previous_impls_by_source_.find(current.source_unit_id.value);
+        if (found == previous_impls_by_source_.end()) {
+            return current;
+        }
+        for (const auto *previous : found->second) {
+            if (previous == nullptr) {
+                continue;
+            }
+            const auto mapped_target = remap_type_key(previous_def_to_current_,
+                                                      previous->target_type);
+            if (!mapped_target.has_value()) {
+                continue;
+            }
+            const auto mapped_trait = remap_def(previous_def_to_current_, previous->trait_def);
+            if (!impl_fact_matches_current(*previous, current, *mapped_target, mapped_trait)) {
+                continue;
+            }
+            auto reused = *previous;
+            reused.impl_id = current.impl_id;
+            reused.target_type = *mapped_target;
+            reused.trait_def = mapped_trait;
+            ++reuse_stats_.reused_impl_facts;
+            return reused;
+        }
+        return current;
+    }
+
     [[nodiscard]] SourceUnitPathSet parsed_source_paths(const SourceGraph &graph) const {
         SourceUnitPathSet paths;
         paths.reserve(graph.sources.size());
@@ -1495,6 +1746,7 @@ class IndexAnalysisPipeline {
         for (const auto *source : ordered_source_units_for_index(input_, graph)) {
             const auto source_unit = register_source_unit(
                 index_, source_units_by_path_, input_, source->path, FactCompleteness::Parsed);
+            mark_source_unit_content(source_unit, source->source.content);
             source_units_by_source_id_.emplace(source->id.value, source_unit);
             if (const auto *source_fact = source_unit_fact(index_, source_unit);
                 source_fact != nullptr) {
@@ -1605,7 +1857,7 @@ class IndexAnalysisPipeline {
         for (const auto &candidate : symbol_candidates) {
             const auto def_id = DefId{index_.symbols().size()};
             def_by_symbol_.emplace(candidate.symbol->id.value, def_id);
-            index_.add_symbol(SymbolFact{
+            const auto fact = SymbolFact{
                 .def_id = def_id,
                 .fingerprint = symbol_fingerprint(candidate.package_id,
                                                   candidate.source_unit_id,
@@ -1626,7 +1878,9 @@ class IndexAnalysisPipeline {
                 .selection_range = candidate.selection_range,
                 .location = candidate.location,
                 .completeness = FactCompleteness::Resolved,
-            });
+            };
+            const auto *previous = previous_symbol_for_current(fact);
+            index_.add_symbol(remap_reusable_symbol_fact(fact, previous));
         }
     }
 
@@ -1646,7 +1900,7 @@ class IndexAnalysisPipeline {
             }
             const auto selection_range = alias_navigation_range(source_unit->source, alias);
             const auto target_def = def_for_symbol(def_by_symbol_, alias.target);
-            index_.add_symbol(SymbolFact{
+            const auto fact = SymbolFact{
                 .def_id = DefId{index_.symbols().size()},
                 .fingerprint =
                     symbol_fingerprint(package_id_for_index_source(*source_unit, *source_unit_id),
@@ -1674,7 +1928,9 @@ class IndexAnalysisPipeline {
                         .range = to_lsp_range(source_unit->source, selection_range),
                     },
                 .completeness = FactCompleteness::Resolved,
-            });
+            };
+            const auto *previous = previous_symbol_for_current(fact);
+            index_.add_symbol(remap_reusable_symbol_fact(fact, previous));
         }
     }
 
@@ -1693,7 +1949,7 @@ class IndexAnalysisPipeline {
                 continue;
             }
             const auto target = def_by_symbol_.find(reference.target.value);
-            index_.add_reference(ReferenceFact{
+            const auto fact = ReferenceFact{
                 .package_id = package_id_for_index_source(*source_unit, *source_unit_id),
                 .source_unit_id = *source_unit_id,
                 .target_def = target == def_by_symbol_.end() ? std::nullopt
@@ -1703,7 +1959,8 @@ class IndexAnalysisPipeline {
                 .location = *location,
                 .completeness = target == def_by_symbol_.end() ? FactCompleteness::Parsed
                                                                : FactCompleteness::Resolved,
-            });
+            };
+            index_.add_reference(remap_reusable_reference_fact(fact));
         }
     }
 
@@ -1748,7 +2005,7 @@ class IndexAnalysisPipeline {
         std::sort(impl_candidates.begin(), impl_candidates.end(), impl_fact_candidate_less);
 
         for (auto &candidate : impl_candidates) {
-            index_.add_impl(ImplFact{
+            const auto fact = ImplFact{
                 .impl_id = WorkspaceImplId{index_.impls().size()},
                 .package_id = candidate.package_id,
                 .source_unit_id = candidate.source_unit_id,
@@ -1762,7 +2019,8 @@ class IndexAnalysisPipeline {
                 .methods = std::move(candidate.methods),
                 .source_order = candidate.source_order,
                 .completeness = FactCompleteness::Typed,
-            });
+            };
+            index_.add_impl(remap_reusable_impl_fact(fact));
         }
     }
 
@@ -1773,6 +2031,15 @@ class IndexAnalysisPipeline {
     SourceUnitByDiagnosticNameMap source_units_by_name_;
     SourceUnitBySourceIdMap source_units_by_source_id_;
     DefBySymbolMap def_by_symbol_;
+    const LspWorkspaceIndex *previous_index_{nullptr};
+    NavigationIndexReuseStats reuse_stats_;
+    std::unordered_set<std::size_t> reusable_source_units_;
+    PreviousDefRemap previous_def_to_current_;
+    std::unordered_map<std::uint64_t, std::vector<const SymbolFact *>>
+        previous_symbols_by_fingerprint_;
+    std::unordered_map<std::size_t, std::vector<const ReferenceFact *>>
+        previous_references_by_source_;
+    std::unordered_map<std::size_t, std::vector<const ImplFact *>> previous_impls_by_source_;
 };
 
 } // namespace

@@ -116,6 +116,7 @@ struct SourceUnitFact {
     std::filesystem::path path;
     std::string uri;
     std::uint64_t revision{0};
+    std::uint64_t content_fingerprint{0};
     std::vector<LspNavigationIndexSourceKind> scope_kinds;
     FactCompleteness completeness{FactCompleteness::Resolved};
     bool valid{false};
@@ -193,12 +194,22 @@ struct NavigationIndexMetadata {
     std::string index_identity_schema_version;
 };
 
+struct NavigationIndexReuseStats {
+    std::size_t reused_source_units{0};
+    std::size_t reused_symbol_facts{0};
+    std::size_t reused_reference_facts{0};
+    std::size_t reused_impl_facts{0};
+};
+
 class LspWorkspaceIndex {
   public:
     void set_metadata(NavigationIndexMetadata metadata);
+    void set_reuse_stats(NavigationIndexReuseStats stats);
 
     void add_source_unit(SourceUnitFact fact);
     void set_source_unit_completeness(SourceUnitId source_unit, FactCompleteness completeness);
+    void set_source_unit_content_fingerprint(SourceUnitId source_unit,
+                                             std::uint64_t content_fingerprint);
     void add_symbol(SymbolFact fact);
     void add_reference(ReferenceFact fact);
     void add_impl(ImplFact fact);
@@ -228,6 +239,10 @@ class LspWorkspaceIndex {
         return metadata_;
     }
 
+    [[nodiscard]] const NavigationIndexReuseStats &reuse_stats() const noexcept {
+        return reuse_stats_;
+    }
+
     [[nodiscard]] const SourceUnitFact *source_unit_for_id(SourceUnitId source_unit) const;
     [[nodiscard]] std::vector<SourceUnitId>
     source_units_for_package(package_graph::PackageId package_id) const;
@@ -247,6 +262,7 @@ class LspWorkspaceIndex {
 
   private:
     NavigationIndexMetadata metadata_;
+    NavigationIndexReuseStats reuse_stats_;
     std::vector<SourceUnitFact> source_units_;
     std::vector<SymbolFact> symbols_;
     std::vector<ReferenceFact> references_;
@@ -282,6 +298,7 @@ struct LspWorkspaceIndexInput {
     ProjectInput project;
     NavigationIndexScope scope;
     NavigationIndexMetadata metadata;
+    const LspWorkspaceIndex *previous_index{nullptr};
 };
 
 [[nodiscard]] std::optional<PrimitiveKind> primitive_kind_from_spelling(std::string_view name);

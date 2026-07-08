@@ -2998,6 +2998,140 @@ void test_workspace_index_assigns_source_units_by_scope_order() {
     }
 }
 
+void test_workspace_index_reuses_unchanged_source_unit_facts() {
+    const auto root = make_temp_project("workspace_index_incremental_source_units");
+    const auto source_root = root / "src";
+    const auto a_path = source_root / "a.ahfl";
+    const auto b_path = source_root / "b.ahfl";
+
+    const std::string a_source_v1 = "module app::a;\n"
+                                    "import app::b as b;\n"
+                                    "\n"
+                                    "struct A {\n"
+                                    "    payload: b::B;\n"
+                                    "}\n";
+    const std::string a_source_v2 = "module app::a;\n"
+                                    "import app::b as b;\n"
+                                    "\n"
+                                    "struct A {\n"
+                                    "    payload: b::B;\n"
+                                    "}\n"
+                                    "\n"
+                                    "struct AddedInA {}\n";
+    const std::string b_source = "module app::b;\n"
+                                 "\n"
+                                 "struct B {}\n"
+                                 "\n"
+                                 "fn keep(x: B) -> B effect Pure decreases 0 {\n"
+                                 "    return x;\n"
+                                 "}\n"
+                                 "\n"
+                                 "impl B {\n"
+                                 "    fn clone(self: B) -> B effect Pure decreases 0 {\n"
+                                 "        return self;\n"
+                                 "    }\n"
+                                 "}\n";
+    write_file(a_path, a_source_v1);
+    write_file(b_path, b_source);
+
+    const auto package_id = ahfl::package_graph::PackageId{0};
+    const auto make_input = [&](std::uint64_t revision,
+                                const LspWorkspaceIndex *previous_index = nullptr) {
+        ahfl::ProjectInput project;
+        project.entry_files = {a_path, b_path};
+        project.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "app",
+            .root = source_root,
+            .exported_modules = {"a", "b"},
+            .dependency_prefixes = {},
+        });
+        return LspWorkspaceIndexInput{
+            .project = std::move(project),
+            .scope =
+                NavigationIndexScope{
+                    .package_roots =
+                        {
+                            LspIndexPackageRoot{
+                                .package_id = package_id,
+                                .module_root = source_root,
+                            },
+                        },
+                    .source_units =
+                        {
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{0},
+                                .package_id = package_id,
+                                .path = a_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{1},
+                                .package_id = package_id,
+                                .path = b_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                        },
+                },
+            .metadata =
+                NavigationIndexMetadata{
+                    .revision = revision,
+                    .index_schema_version = "test-index-schema",
+                    .index_identity_schema_version = "test-identity-schema",
+                },
+            .previous_index = previous_index,
+        };
+    };
+
+    const ahfl::Frontend frontend;
+    auto first = build_lsp_workspace_index(frontend, make_input(1));
+    check(first.reuse_stats().reused_source_units == 0,
+          "workspace_index.incremental.first_has_no_reuse");
+
+    const auto *first_a_source = first.source_unit_for_id(SourceUnitId{0});
+    const auto *first_b_source = first.source_unit_for_id(SourceUnitId{1});
+    const auto *first_b_symbol = index_symbol_for_canonical_name(first, "app::b::B");
+    check(first_a_source != nullptr, "workspace_index.incremental.first_a_source_exists");
+    check(first_b_source != nullptr, "workspace_index.incremental.first_b_source_exists");
+    check(first_b_symbol != nullptr, "workspace_index.incremental.first_b_symbol_exists");
+    if (first_b_symbol != nullptr) {
+        check(!first.reference_locations_for_def(first_b_symbol->def_id).empty(),
+              "workspace_index.incremental.first_b_references_exist");
+        check(!first.implementation_locations_for_nominal_def(first_b_symbol->def_id).empty(),
+              "workspace_index.incremental.first_b_impl_exists");
+    }
+
+    write_file(a_path, a_source_v2);
+    auto second = build_lsp_workspace_index(frontend, make_input(2, &first));
+    const auto *second_a_source = second.source_unit_for_id(SourceUnitId{0});
+    const auto *second_b_source = second.source_unit_for_id(SourceUnitId{1});
+    const auto *second_b_symbol = index_symbol_for_canonical_name(second, "app::b::B");
+    check(second_a_source != nullptr, "workspace_index.incremental.second_a_source_exists");
+    check(second_b_source != nullptr, "workspace_index.incremental.second_b_source_exists");
+    check(second_b_symbol != nullptr, "workspace_index.incremental.second_b_symbol_exists");
+    if (first_a_source != nullptr && first_b_source != nullptr && second_a_source != nullptr &&
+        second_b_source != nullptr) {
+        check(second_a_source->content_fingerprint != first_a_source->content_fingerprint,
+              "workspace_index.incremental.changed_source_not_reused_by_fingerprint");
+        check(second_b_source->content_fingerprint == first_b_source->content_fingerprint,
+              "workspace_index.incremental.unchanged_source_fingerprint_stable");
+    }
+
+    check(second.reuse_stats().reused_source_units == 1,
+          "workspace_index.incremental.reuses_only_unchanged_source");
+    check(second.reuse_stats().reused_symbol_facts > 0,
+          "workspace_index.incremental.reuses_symbol_facts");
+    check(second.reuse_stats().reused_reference_facts > 0,
+          "workspace_index.incremental.reuses_reference_facts");
+    check(second.reuse_stats().reused_impl_facts > 0,
+          "workspace_index.incremental.reuses_impl_facts");
+    if (second_b_symbol != nullptr) {
+        check(!second.reference_locations_for_def(second_b_symbol->def_id).empty(),
+              "workspace_index.incremental.remapped_references_still_query");
+        check(!second.implementation_locations_for_nominal_def(second_b_symbol->def_id).empty(),
+              "workspace_index.incremental.remapped_impls_still_query");
+    }
+}
+
 void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
     const auto root = make_temp_project("project_index_partial_typecheck");
     const auto main_path = root / "src" / "main.ahfl";
@@ -8456,6 +8590,7 @@ int main() {
     test_workspace_index_identity_hash_and_flat_store_ids();
     test_workspace_index_queries_sort_by_package_source_and_order();
     test_workspace_index_assigns_source_units_by_scope_order();
+    test_workspace_index_reuses_unchanged_source_unit_facts();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();

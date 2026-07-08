@@ -772,13 +772,17 @@ index_package_roots_from_graph(const package_graph::PackageGraph &graph) {
 }
 
 [[nodiscard]] std::string
-sysroot_index_cache_key(const LspToolchainCacheKey &key,
-                        std::string_view open_document_overlay_revision_set) {
+sysroot_index_cache_key_prefix(const LspToolchainCacheKey &key) {
     return key.analysis_mode + "#" + key.workspace_folder_uri + "#" + key.root_manifest + "#" +
            key.workspace_manifest + "#" + key.package_graph_identity + "#" + key.std_manifest +
            "#" + key.std_identity + "#" + key.scope + "#" + key.index_schema_version + "#" +
-           key.index_identity_schema_version + "#" +
-           std::string{open_document_overlay_revision_set};
+           key.index_identity_schema_version + "#";
+}
+
+[[nodiscard]] std::string
+sysroot_index_cache_key(const LspToolchainCacheKey &key,
+                        std::string_view open_document_overlay_revision_set) {
+    return sysroot_index_cache_key_prefix(key) + std::string{open_document_overlay_revision_set};
 }
 
 [[nodiscard]] std::string package_graph_identity(const package_graph::PackageGraph &graph) {
@@ -786,13 +790,30 @@ sysroot_index_cache_key(const LspToolchainCacheKey &key,
 }
 
 [[nodiscard]] std::string
+workspace_root_index_cache_key_prefix(const std::filesystem::path &workspace_root,
+                                      const package_graph::PackageGraph &graph) {
+    return AnalysisService::uri_from_path(workspace_root) + "#" + package_graph_identity(graph) +
+           "#" + std::string{kWorkspaceIndexSchemaVersion} + "#" +
+           std::string{kWorkspaceIndexIdentitySchemaVersion} + "#";
+}
+
+[[nodiscard]] std::string
 workspace_root_index_cache_key(const std::filesystem::path &workspace_root,
                                const package_graph::PackageGraph &graph,
                                std::string_view open_document_overlay_revision_set) {
-    return AnalysisService::uri_from_path(workspace_root) + "#" + package_graph_identity(graph) +
-           "#" + std::string{kWorkspaceIndexSchemaVersion} + "#" +
-           std::string{kWorkspaceIndexIdentitySchemaVersion} + "#" +
+    return workspace_root_index_cache_key_prefix(workspace_root, graph) +
            std::string{open_document_overlay_revision_set};
+}
+
+template <typename Cache>
+[[nodiscard]] const LspWorkspaceIndex *previous_index_for_cache_prefix(const Cache &cache,
+                                                                       std::string_view prefix) {
+    for (const auto &[key, index] : cache) {
+        if (index != nullptr && key.starts_with(prefix)) {
+            return index.get();
+        }
+    }
+    return nullptr;
 }
 
 [[nodiscard]] std::vector<std::filesystem::path>
@@ -1425,6 +1446,7 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     }
 
     const auto toolchain_cache_key = toolchain_cache_key_for_uri(uri);
+    const LspWorkspaceIndex *previous_index = nullptr;
     if (const auto existing = cache_.find(uri); existing != cache_.end()) {
         const auto &snapshot = *existing->second;
         const auto dependency_overlay_revision_set =
@@ -1435,9 +1457,10 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
             snapshot.toolchain_cache_key == toolchain_cache_key) {
             return existing->second.get();
         }
+        previous_index = snapshot.workspace_index.get();
     }
 
-    auto snapshot = build_snapshot(uri, toolchain_cache_key);
+    auto snapshot = build_snapshot(uri, toolchain_cache_key, previous_index);
     if (!snapshot) {
         return nullptr;
     }
@@ -1502,6 +1525,9 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
         existing != sysroot_index_cache_.end()) {
         return existing->second.get();
     }
+    const auto cache_key_prefix = sysroot_index_cache_key_prefix(*key);
+    const auto *previous_index =
+        previous_index_for_cache_prefix(sysroot_index_cache_, cache_key_prefix);
     auto index_input = LspWorkspaceIndexInput{
         .project = std::move(project_input),
         .scope =
@@ -1518,6 +1544,7 @@ const LspWorkspaceIndex *AnalysisService::sysroot_index_for_uri(const std::strin
                 .index_schema_version = std::string{kWorkspaceIndexSchemaVersion},
                 .index_identity_schema_version = std::string{kWorkspaceIndexIdentitySchemaVersion},
             },
+        .previous_index = previous_index,
     };
     auto index = std::make_unique<LspWorkspaceIndex>(
         build_lsp_workspace_index(frontend, std::move(index_input)));
@@ -1562,6 +1589,10 @@ std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices()
             indices.push_back(existing->second.get());
             continue;
         }
+        const auto cache_key_prefix =
+            workspace_root_index_cache_key_prefix(root, project_context.context->graph);
+        const auto *previous_index =
+            previous_index_for_cache_prefix(workspace_root_index_cache_, cache_key_prefix);
         auto index_input = LspWorkspaceIndexInput{
             .project = std::move(project_input),
             .scope =
@@ -1580,6 +1611,7 @@ std::vector<const LspWorkspaceIndex *> AnalysisService::workspace_root_indices()
                     .index_identity_schema_version =
                         std::string{kWorkspaceIndexIdentitySchemaVersion},
                 },
+            .previous_index = previous_index,
         };
 
         auto index = std::make_unique<LspWorkspaceIndex>(
@@ -1704,7 +1736,8 @@ AnalysisService::toolchain_cache_key_for_uri(const std::string &uri) const {
 
 std::unique_ptr<LspAnalysisSnapshot>
 AnalysisService::build_snapshot(const std::string &uri,
-                                std::optional<LspToolchainCacheKey> toolchain_cache_key) {
+                                std::optional<LspToolchainCacheKey> toolchain_cache_key,
+                                const LspWorkspaceIndex *previous_index) {
     const auto *document = store_.get(uri);
     const auto revision = store_.revision(uri);
     const auto hash = store_.content_hash(uri);
@@ -1776,6 +1809,7 @@ AnalysisService::build_snapshot(const std::string &uri,
                         .index_identity_schema_version =
                             std::string{kWorkspaceIndexIdentitySchemaVersion},
                     },
+                .previous_index = previous_index,
             };
             auto project_result = ahfl::parse_project(frontend, project_input);
             snapshot->project_result =

@@ -66,10 +66,11 @@
 
 2. RFC 0007 二期 LSP index。
    - incremental workspace index 已补一层：watched file invalidation 和 open-document overlay revision key 均按实际引用 source path 收敛，避免无关打开文件触发当前 package snapshot/index rebuild。
-   - 剩余工作仍是 fact-level incremental remap：当前受影响 snapshot/index 仍整体重建，不是按 `SourceUnitId` 复用未变 facts。
-   - stable DefId fingerprint 已落库：`SymbolFact::fingerprint` 提供 numeric drift-detection identity，handler tests 覆盖重建稳定性。
+   - fact-level incremental remap 已落地第一版：`LspWorkspaceIndexInput::previous_index` 允许 snapshot / workspace-root / sysroot index 在同一 scope 的 overlay revision 变化后，把未变 `SourceUnitId` 的 symbol/reference/impl facts 通过 `SymbolFact::fingerprint` remap 到当前 `DefId` flat store 后复用；handler tests 覆盖只改一个 source 时未变 source 的 fact reuse 和 remapped reference/impl 查询。
+   - stable DefId fingerprint 已落库：`SymbolFact::fingerprint` 提供 numeric drift-detection identity，handler tests 覆盖重建稳定性和 previous-index remap。
    - rename v1 已落库：`prepareRename` / `textDocument/rename` 返回 `WorkspaceEdit`，并拒绝 keyword 与 same-module conflict；跨 package API compatibility guard 不应硬塞进 rename handler，后续由 RFC 0010 的 public API diff / registry publish gate 承接。
    - CodeLens/reference/implementation v1 已落库：覆盖 unopened project source、lazy sysroot、path dependency exports、open overlay、partial facts、stable ordering 和 primitive impl candidates；后续只保留 UX polish。
+   - 不进入 RFC 0007 v1 的范围：磁盘持久索引、remote index server、跨 checkout cache、后台 daemon 共享索引和跨 public API 的 rename 兼容性 gate。
    - 继续坚持 semantic source graph 不被导航需求污染。
 
 ### P3：需要决策或产品化触发
