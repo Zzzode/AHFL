@@ -2395,6 +2395,64 @@ void push_bool_pattern_completions(std::vector<CompletionItem> &items) {
     }
 }
 
+void push_wildcard_pattern_completion(std::vector<CompletionItem> &items,
+                                      std::string_view detail) {
+    CompletionItem item;
+    item.label = "_";
+    item.kind = CompletionItemKind::Constant;
+    item.detail = std::string{detail};
+    items.push_back(std::move(item));
+}
+
+void push_literal_pattern_completion(std::vector<CompletionItem> &items,
+                                     std::string label,
+                                     std::string detail,
+                                     std::string insert_text = {},
+                                     std::optional<InsertTextFormat> insert_text_format =
+                                         std::nullopt) {
+    CompletionItem item;
+    item.label = std::move(label);
+    item.kind = CompletionItemKind::Constant;
+    item.detail = std::move(detail);
+    item.insert_text = std::move(insert_text);
+    item.insert_text_format = insert_text_format;
+    items.push_back(std::move(item));
+}
+
+void push_open_primitive_pattern_completions(std::vector<CompletionItem> &items,
+                                             PrimitiveKind primitive,
+                                             bool snippet_support) {
+    push_wildcard_pattern_completion(items, "wildcard pattern");
+
+    switch (primitive) {
+    case PrimitiveKind::Int:
+        push_literal_pattern_completion(items, "0", "Int literal pattern");
+        if (snippet_support) {
+            push_literal_pattern_completion(items,
+                                            "0..0",
+                                            "Int range pattern",
+                                            "${1:0}..${2:0}",
+                                            InsertTextFormat::Snippet);
+        } else {
+            push_literal_pattern_completion(items, "0..0", "Int range pattern");
+        }
+        return;
+    case PrimitiveKind::Float:
+        push_literal_pattern_completion(items, "0.0", "Float literal pattern");
+        return;
+    case PrimitiveKind::String:
+        push_literal_pattern_completion(items, "\"\"", "String literal pattern");
+        return;
+    case PrimitiveKind::Unit:
+    case PrimitiveKind::Bool:
+    case PrimitiveKind::UUID:
+    case PrimitiveKind::Timestamp:
+    case PrimitiveKind::Duration:
+    case PrimitiveKind::Decimal:
+        return;
+    }
+}
+
 [[nodiscard]] std::optional<std::size_t>
 bounded_int_literal_completion_count(const types::BoundedIntT &bounds) {
     if (bounds.maximum < bounds.minimum) {
@@ -2690,6 +2748,15 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     if (const auto *bounded_int = pattern->matched_type->get_if<types::BoundedIntT>();
         bounded_int != nullptr) {
         push_bounded_int_pattern_completions(items, *bounded_int);
+        return true;
+    }
+    if (pattern->matched_type->holds<types::BoundedStringT>()) {
+        push_wildcard_pattern_completion(items, "wildcard pattern");
+        return true;
+    }
+    if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);
+        primitive.has_value()) {
+        push_open_primitive_pattern_completions(items, *primitive, snippet_support);
         return true;
     }
 

@@ -8017,6 +8017,112 @@ void test_completion_bounded_int_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_bounded_int_wide_excludes_struct_symbol");
 }
 
+void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
+    const std::string source = "struct Noise {}\n"
+                               "\n"
+                               "enum MaybeInt {\n"
+                               "    SomeInt(Int),\n"
+                               "    NoInt,\n"
+                               "}\n"
+                               "\n"
+                               "enum MaybeFloat {\n"
+                               "    SomeFloat(Float),\n"
+                               "    NoFloat,\n"
+                               "}\n"
+                               "\n"
+                               "enum MaybeString {\n"
+                               "    SomeString(String),\n"
+                               "    NoString,\n"
+                               "}\n"
+                               "\n"
+                               "enum MaybeBoundedString {\n"
+                               "    SomeName(String(1, 3)),\n"
+                               "    NoName,\n"
+                               "}\n"
+                               "\n"
+                               "fn use_int(maybe: MaybeInt) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe { SomeInt(_) => 1, NoInt => 0 };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_float(maybe: MaybeFloat) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe { SomeFloat(_) => 1, NoFloat => 0 };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_string(maybe: MaybeString) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe { SomeString(_) => 1, NoString => 0 };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_bounded_string(maybe: MaybeBoundedString) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match maybe { SomeName(_) => 1, NoName => 0 };\n"
+                               "}\n";
+
+    const auto int_position = position_of(source, "SomeInt(_)");
+    const std::string int_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(int_position.line) + R"(,"character":)" +
+        std::to_string(int_position.character + 8) + R"(}})";
+    const auto int_output = run_handler_request(source, "textDocument/completion", int_params);
+    check(int_output.find("\"label\":\"_\"") != std::string::npos,
+          "completion.pattern_open_int_contains_wildcard");
+    check(int_output.find("\"label\":\"0\"") != std::string::npos,
+          "completion.pattern_open_int_contains_zero");
+    check(int_output.find("\"label\":\"0..0\"") != std::string::npos,
+          "completion.pattern_open_int_contains_range_template");
+    check(int_output.find("\"label\":\"NoInt\"") == std::string::npos,
+          "completion.pattern_open_int_excludes_outer_enum_variant");
+    check(int_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_open_int_excludes_struct_symbol");
+
+    const auto float_position = position_of(source, "SomeFloat(_)");
+    const std::string float_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(float_position.line) + R"(,"character":)" +
+        std::to_string(float_position.character + 10) + R"(}})";
+    const auto float_output =
+        run_handler_request(source, "textDocument/completion", float_params);
+    check(float_output.find("\"label\":\"_\"") != std::string::npos,
+          "completion.pattern_open_float_contains_wildcard");
+    check(float_output.find("\"label\":\"0.0\"") != std::string::npos,
+          "completion.pattern_open_float_contains_literal");
+    check(float_output.find("\"label\":\"NoFloat\"") == std::string::npos,
+          "completion.pattern_open_float_excludes_outer_enum_variant");
+    check(float_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_open_float_excludes_struct_symbol");
+
+    const auto string_position = position_of(source, "SomeString(_)");
+    const std::string string_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(string_position.line) + R"(,"character":)" +
+        std::to_string(string_position.character + 11) + R"(}})";
+    const auto string_output =
+        run_handler_request(source, "textDocument/completion", string_params);
+    check(string_output.find("\"label\":\"_\"") != std::string::npos,
+          "completion.pattern_open_string_contains_wildcard");
+    check(string_output.find("String literal pattern") != std::string::npos,
+          "completion.pattern_open_string_contains_literal");
+    check(string_output.find("\"label\":\"NoString\"") == std::string::npos,
+          "completion.pattern_open_string_excludes_outer_enum_variant");
+    check(string_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_open_string_excludes_struct_symbol");
+
+    const auto bounded_string_position = position_of(source, "SomeName(_)");
+    const std::string bounded_string_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(bounded_string_position.line) + R"(,"character":)" +
+        std::to_string(bounded_string_position.character + 9) + R"(}})";
+    const auto bounded_string_output =
+        run_handler_request(source, "textDocument/completion", bounded_string_params);
+    check(bounded_string_output.find("\"label\":\"_\"") != std::string::npos,
+          "completion.pattern_bounded_string_contains_wildcard");
+    check(bounded_string_output.find("String literal pattern") == std::string::npos,
+          "completion.pattern_bounded_string_excludes_unproven_literal");
+    check(bounded_string_output.find("\"label\":\"NoName\"") == std::string::npos,
+          "completion.pattern_bounded_string_excludes_outer_enum_variant");
+    check(bounded_string_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_bounded_string_excludes_struct_symbol");
+}
+
 void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
     const std::string source = "enum Level {\n"
                                "    Low,\n"
@@ -9472,6 +9578,7 @@ int main() {
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_bool_pattern_context_uses_typed_pattern_facts();
     test_completion_bounded_int_pattern_context_uses_typed_pattern_facts();
+    test_completion_open_primitive_pattern_context_uses_typed_pattern_facts();
     test_completion_pattern_variants_emit_payload_snippets_when_supported();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
