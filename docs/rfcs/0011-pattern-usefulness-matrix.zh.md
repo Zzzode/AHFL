@@ -231,10 +231,11 @@ Migration:
 18. 当前已实现 pattern usefulness diagnostic taxonomy 已与代码和 `docs/reference/error-codes.zh.md` 对齐：稳定用户码保持在 `typecheck.MATCH_MISSING_PATTERNS`、`typecheck.MATCH_UNREACHABLE_ARM`、`typecheck.MATCH_OVERLAP`、`typecheck.MATCH_REDUNDANT_PATTERN` 和 `typecheck.UNREACHABLE_IF_LET_ELSE`；未实现的 range pattern 不预留 placeholder code。
 19. LSP pattern binding hover v1 已落库：hover index 会遍历 `TypedProgram::patterns` 中的 `TypedPatternBinding` fact，为 `match` 和 `if let` pattern binding 声明位点注册 `LocalBinding` hover target；hover payload 在没有 expression fact 的声明位点仍显示 binding 名称和 typed pattern 推导出的类型。
 20. `if let` 源语法和 AST 已迁移到通用 `PatternSyntax`：grammar 直接消费 `pattern` rule，frontend、formatter、semantic tokens、IR lowering 和 typechecker 共用 match pattern surface；旧 `IfLetPatternSyntax` 和 statement-local typed-pattern 构造路径已删除。
+21. LSP pattern enum variant completion v1 已落库：completion 在光标位于 `TypedProgram::patterns` 的 pattern range 内时，使用最小 containing typed pattern 的 `matched_type` 查询 `TypeEnvironment::get_enum`，只返回该 scrutinee enum 的 variant 候选；`match`、`if let` 和 nested enum payload pattern 均由 handler 回归测试覆盖。
 
 尚未完成：
 
-1. 未来 destructuring UX、completion、signatureHelp 和更深 IDE 编辑序列还没有统一消费 typed pattern fact store。
+1. 未来 destructuring UX 仍需继续推进：struct payload field completion、payload pattern snippet/editing、signatureHelp 和更深 IDE 编辑序列还没有统一消费 typed pattern fact store。
 2. range pattern、typed-pattern-driven LSP diagnostics 的最终稳定化仍未实现。
 
 ## Test Plan

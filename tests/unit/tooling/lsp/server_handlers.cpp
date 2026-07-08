@@ -7587,6 +7587,83 @@ void test_completion_type_member_enum_state_and_workflow_contexts() {
           "completion.expression_contains_workflow_node");
 }
 
+void test_completion_pattern_context_uses_typed_pattern_facts() {
+    const std::string source = "enum Choice {\n"
+                               "    First,\n"
+                               "    Second,\n"
+                               "}\n"
+                               "\n"
+                               "enum Other {\n"
+                               "    Alien,\n"
+                               "}\n"
+                               "\n"
+                               "enum Wrap {\n"
+                               "    Item(Choice),\n"
+                               "    Empty,\n"
+                               "}\n"
+                               "\n"
+                               "fn use_match(choice: Choice) -> Int effect Pure decreases 0 {\n"
+                               "    return match choice {\n"
+                               "        _ => 0,\n"
+                               "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_if_let(choice: Choice) -> Int effect Pure decreases 0 {\n"
+                               "    if let _ = choice {\n"
+                               "        return 1;\n"
+                               "    } else {\n"
+                               "        return 0;\n"
+                               "    }\n"
+                               "}\n"
+                               "\n"
+                               "fn use_nested(wrap: Wrap) -> Int effect Pure decreases 0 {\n"
+                               "    return match wrap {\n"
+                               "        Item(_) => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto wildcard_position = position_of(source, "_ => 0");
+    const std::string wildcard_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(wildcard_position.line) + R"(,"character":)" +
+        std::to_string(wildcard_position.character) + R"(}})";
+    const auto wildcard_output =
+        run_handler_request(source, "textDocument/completion", wildcard_params);
+    check(wildcard_output.find("\"label\":\"First\"") != std::string::npos,
+          "completion.pattern_match_contains_first");
+    check(wildcard_output.find("\"label\":\"Second\"") != std::string::npos,
+          "completion.pattern_match_contains_second");
+    check(wildcard_output.find("\"label\":\"Alien\"") == std::string::npos,
+          "completion.pattern_match_excludes_other_enum");
+
+    const auto if_let_position = position_of(source, "if let _");
+    const std::string if_let_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(if_let_position.line) + R"(,"character":)" +
+        std::to_string(if_let_position.character + 7) + R"(}})";
+    const auto if_let_output =
+        run_handler_request(source, "textDocument/completion", if_let_params);
+    check(if_let_output.find("\"label\":\"First\"") != std::string::npos,
+          "completion.pattern_if_let_contains_first");
+    check(if_let_output.find("\"label\":\"Second\"") != std::string::npos,
+          "completion.pattern_if_let_contains_second");
+    check(if_let_output.find("\"label\":\"Alien\"") == std::string::npos,
+          "completion.pattern_if_let_excludes_other_enum");
+
+    const auto nested_position = position_of(source, "Item(_)");
+    const std::string nested_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(nested_position.line) + R"(,"character":)" +
+        std::to_string(nested_position.character + 5) + R"(}})";
+    const auto nested_output =
+        run_handler_request(source, "textDocument/completion", nested_params);
+    check(nested_output.find("\"label\":\"First\"") != std::string::npos,
+          "completion.pattern_nested_contains_payload_first");
+    check(nested_output.find("\"label\":\"Empty\"") == std::string::npos,
+          "completion.pattern_nested_excludes_outer_variant");
+}
+
 void test_rename_rejects_keyword_and_conflict() {
     const std::string source = "struct Msg {\n"
                                "    value: String;\n"
@@ -8643,6 +8720,7 @@ int main() {
     test_signature_help_capability();
     test_signature_help_keyword_family();
     test_completion_type_member_enum_state_and_workflow_contexts();
+    test_completion_pattern_context_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();
     test_diagnostics_reflect_document_version();

@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <unordered_set>
@@ -1571,6 +1572,59 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
+void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
+                                           const EnumTypeInfo &enum_info) {
+    for (const auto &variant : enum_info.variants) {
+        CompletionItem item;
+        item.label = variant.name;
+        item.kind = CompletionItemKind::Enum;
+        item.detail = "enum pattern " + enum_info.canonical_name;
+        items.push_back(std::move(item));
+    }
+}
+
+[[nodiscard]] const TypedPattern *find_typed_pattern_at(const TypedProgram &program,
+                                                        std::optional<SourceId> source_id,
+                                                        std::size_t offset) {
+    const TypedPattern *best = nullptr;
+    std::size_t best_width = std::numeric_limits<std::size_t>::max();
+    for (const auto &pattern : program.patterns) {
+        if (!same_source(pattern.source_id, source_id) || !contains(pattern.range, offset)) {
+            continue;
+        }
+        const auto width = pattern.range.end_offset - pattern.range.begin_offset;
+        if (best == nullptr || width < best_width) {
+            best = &pattern;
+            best_width = width;
+        }
+    }
+    return best;
+}
+
+[[nodiscard]] bool push_pattern_context_completions(std::vector<CompletionItem> &items,
+                                                    const LspAnalysisSnapshot &snapshot,
+                                                    const LspSourceSnapshot &source,
+                                                    std::size_t offset) {
+    if (!snapshot.type_check_result) {
+        return false;
+    }
+    const auto *program = snapshot.typed_program();
+    if (program == nullptr) {
+        return false;
+    }
+    const auto *pattern = find_typed_pattern_at(*program, source.source_id, offset);
+    if (pattern == nullptr || pattern->matched_type == nullptr) {
+        return false;
+    }
+    const auto enum_info = snapshot.type_check_result->environment.get_enum(*pattern->matched_type);
+    if (!enum_info.has_value()) {
+        return false;
+    }
+
+    push_pattern_enum_variant_completions(items, enum_info->get());
+    return true;
+}
+
 [[nodiscard]] std::string callable_signature(const CapabilityTypeInfo &capability) {
     std::string label = capability.canonical_name + "(";
     for (std::size_t index = 0; index < capability.params.size(); ++index) {
@@ -2137,6 +2191,10 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
 
     if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
         push_member_completions(items, *snapshot, *source, offset, *root);
+    } else if (push_pattern_context_completions(items, *snapshot, *source, offset)) {
+        // Pattern-aware completion is type-directed. Once the cursor is inside
+        // a typed pattern, generic expression symbols would be noisy and can
+        // offer symbols that are not valid constructors for this scrutinee.
     } else if (looks_like_type_position(*source->source, offset)) {
         for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
             if (!symbol_visible_for_completion(*snapshot, *source, symbol)) {
