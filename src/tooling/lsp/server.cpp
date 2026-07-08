@@ -18,6 +18,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_set>
 #include <variant>
@@ -58,6 +59,8 @@ constexpr std::string_view kExpressionKeywords[] = {
     "always",
     "eventually",
 };
+
+constexpr std::size_t kMaxBoundedIntLiteralPatternCompletions = 64;
 
 constexpr std::string_view kAllKeywords[] = {
     "agent",   "workflow", "flow",     "contract",   "capability", "predicate",
@@ -2392,6 +2395,59 @@ void push_bool_pattern_completions(std::vector<CompletionItem> &items) {
     }
 }
 
+[[nodiscard]] std::optional<std::size_t>
+bounded_int_literal_completion_count(const types::BoundedIntT &bounds) {
+    if (bounds.maximum < bounds.minimum) {
+        return std::nullopt;
+    }
+
+    std::size_t count = 1;
+    std::int64_t value = bounds.minimum;
+    while (value != bounds.maximum) {
+        if (count >= kMaxBoundedIntLiteralPatternCompletions ||
+            value == std::numeric_limits<std::int64_t>::max()) {
+            return std::nullopt;
+        }
+        ++value;
+        ++count;
+    }
+    return count;
+}
+
+[[nodiscard]] std::string bounded_int_range_pattern_label(const types::BoundedIntT &bounds) {
+    return std::to_string(bounds.minimum) + ".." + std::to_string(bounds.maximum);
+}
+
+void push_bounded_int_pattern_completions(std::vector<CompletionItem> &items,
+                                          const types::BoundedIntT &bounds) {
+    if (bounds.maximum < bounds.minimum) {
+        return;
+    }
+
+    if (bounded_int_literal_completion_count(bounds).has_value()) {
+        std::int64_t value = bounds.minimum;
+        while (true) {
+            CompletionItem item;
+            item.label = std::to_string(value);
+            item.kind = CompletionItemKind::Constant;
+            item.detail = "bounded Int pattern";
+            items.push_back(std::move(item));
+            if (value == bounds.maximum) {
+                break;
+            }
+            ++value;
+        }
+    }
+
+    if (bounds.minimum != bounds.maximum) {
+        CompletionItem item;
+        item.label = bounded_int_range_pattern_label(bounds);
+        item.kind = CompletionItemKind::Constant;
+        item.detail = "bounded Int range pattern";
+        items.push_back(std::move(item));
+    }
+}
+
 void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
                                            const TypeEnvironment &environment,
                                            const EnumTypeInfo &enum_info,
@@ -2629,6 +2685,11 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);
         primitive.has_value() && *primitive == PrimitiveKind::Bool) {
         push_bool_pattern_completions(items);
+        return true;
+    }
+    if (const auto *bounded_int = pattern->matched_type->get_if<types::BoundedIntT>();
+        bounded_int != nullptr) {
+        push_bounded_int_pattern_completions(items, *bounded_int);
         return true;
     }
 

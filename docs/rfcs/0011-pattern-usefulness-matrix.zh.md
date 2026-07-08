@@ -257,10 +257,11 @@ Migration:
 43. Witness cap symbolic fallback 已落库：finite constructor product 的 witness 枚举触达 `PatternUsefulnessOptions::max_witnesses` 时，matrix 不再用部分 witness 集合继续证明穷尽性，而是切换到 bounded-int interval / symbolic closed-space analyzer；如果闭合结构化 domain 可分析，仍能精确给出缺失 witness（例如 `Pair(True, True)`），避免大型 product 被错误判为 exhaustive。
 44. LSP nested enum payload snippet choices 已落库：tuple enum variant pattern completion、struct enum variant pattern completion 和 struct payload field completion 现在会读取 payload `TypePtr` 与 `TypeEnvironment`，当 payload 类型本身是 enum 时，在 snippet placeholder 中提供该 enum 的 unit variant choices 与 `_` fallback；handler 回归测试覆盖 `Pair(Level, String)`、`Data { label: Level }` 和字段补全三条路径。
 45. LSP Bool literal pattern completion 已落库：pattern completion 会读取最小 containing typed pattern 的 `matched_type`，当 domain 是 primitive `Bool` 时只返回 `true` / `false` literal pattern 候选，并阻止普通表达式符号或无关 enum variant 混入 pattern 位置；handler 回归测试覆盖该 typed primitive domain。
+46. LSP bounded Int pattern completion v1 已落库：pattern completion 直接读取 `types::BoundedIntT` payload，小闭区间会返回域内整数字面量和完整 range pattern（例如 `0` / `1` / `2` / `0..2`），大闭区间只返回完整 range pattern（例如 `0..100`），不枚举大型 domain，也不让普通表达式符号或外层 enum variant 混入 bounded Int pattern 位置。
 
 尚未完成：
 
-1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store；pattern binding 基础导航与 rename v1、documentHighlight v1、selectionRange v1、struct payload field snippet completion v1、nested enum payload snippet choices 和 Bool literal pattern completion v1 已完成。
+1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store；pattern binding 基础导航与 rename v1、documentHighlight v1、selectionRange v1、struct payload field snippet completion v1、nested enum payload snippet choices、Bool literal pattern completion v1 和 bounded Int pattern completion v1 已完成。
 2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/`、finite variable-divisor 精确 `%`、divisor-dominates oversized exact `%`、quotient-partition large-domain exact `%` 和 bounded String concatenation range inference，Decimal multiplication product-scale semantics 与显式 Decimal division target-scale / rounding API 已落库；未来 Float refinement semantics 仍未稳定。
 3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续只剩更深 destructuring 编辑序列的 UX 产品化。
 
@@ -270,7 +271,7 @@ Migration:
 2. Typecheck diagnostics tests: non-exhaustive match, unreachable arm, redundant or-pattern, invalid range, non-Int range mismatch, bounded Int literal/arithmetic/division/modulo assignability, bounded String literal/concatenation assignability and large bounded enum payload witnesses.
 3. Witness golden tests: enum payload, nested enum, bool, Result/Option and open Int with default.
 4. if-let tests: else reachable/unreachable and narrowing preservation.
-5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets, struct payload field snippets, Bool literal pattern completion, pattern payload signatureHelp, lexical pattern binding navigation/rename, local-binding documentHighlight and pattern-aware selectionRange.
+5. LSP tests: diagnostics ranges, related information, quick fix availability, multi-line unreachable-arm edits, unreachable if-let else edits, redundant or-pattern branch edits, payload completion snippets, struct payload field snippets, Bool literal pattern completion, bounded Int pattern completion, pattern payload signatureHelp, lexical pattern binding navigation/rename, local-binding documentHighlight and pattern-aware selectionRange.
 6. Regression tests proving RFC 0001 enum payload and RFC 0002 optional narrowing behavior remain stable.
 
 ## Rollout and Stabilization
@@ -370,3 +371,4 @@ Stabilized exit criteria:
 - 2026-07-09: Synchronized the pattern semantics reference and stable diagnostic surface with the implemented RFC0011 state. `core-language.zh.md` now includes Int range pattern and if-let usefulness semantics, and the unused legacy `*_NOT_YET_SUPPORTED` typecheck diagnostics were removed from the diagnostics SoT and error-code reference.
 - 2026-07-09: Added witness-cap symbolic fallback for closed constructor products. `analyze_pattern_usefulness()` now refuses to prove exhaustiveness from a partial materialized witness set and falls back to interval / symbolic closed-space analysis when `max_witnesses` is reached.
 - 2026-07-09: Added typed primitive domain completion for Bool patterns. LSP pattern completion now returns only `true` / `false` in Bool pattern contexts and does not leak generic expression symbols into that pattern domain.
+- 2026-07-09: Added typed bounded Int pattern completion. LSP pattern completion now enumerates small `Int(min, max)` domains, offers a range pattern for larger domains, and suppresses unrelated expression-symbol completion in bounded Int pattern contexts.

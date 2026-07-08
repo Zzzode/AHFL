@@ -7951,6 +7951,72 @@ void test_completion_bool_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_bool_excludes_outer_enum_variant");
 }
 
+void test_completion_bounded_int_pattern_context_uses_typed_pattern_facts() {
+    const std::string source = "struct Noise {}\n"
+                               "\n"
+                               "enum MaybeTiny {\n"
+                               "    Some(Int(0, 2)),\n"
+                               "    None,\n"
+                               "}\n"
+                               "\n"
+                               "enum MaybeWide {\n"
+                               "    Wide(Int(0, 100)),\n"
+                               "    Empty,\n"
+                               "}\n"
+                               "\n"
+                               "fn use_tiny(maybe: MaybeTiny) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe {\n"
+                               "        Some(_) => 1,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_wide(maybe: MaybeWide) -> Int effect Pure decreases 0 {\n"
+                               "    return match maybe {\n"
+                               "        Wide(_) => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto tiny_position = position_of(source, "Some(_)");
+    const std::string tiny_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(tiny_position.line) + R"(,"character":)" +
+        std::to_string(tiny_position.character + 5) + R"(}})";
+
+    const auto tiny_output = run_handler_request(source, "textDocument/completion", tiny_params);
+    check(tiny_output.find("\"label\":\"0\"") != std::string::npos,
+          "completion.pattern_bounded_int_contains_zero");
+    check(tiny_output.find("\"label\":\"1\"") != std::string::npos,
+          "completion.pattern_bounded_int_contains_one");
+    check(tiny_output.find("\"label\":\"2\"") != std::string::npos,
+          "completion.pattern_bounded_int_contains_two");
+    check(tiny_output.find("\"label\":\"0..2\"") != std::string::npos,
+          "completion.pattern_bounded_int_contains_range");
+    check(tiny_output.find("\"label\":\"3\"") == std::string::npos,
+          "completion.pattern_bounded_int_excludes_out_of_domain_literal");
+    check(tiny_output.find("\"label\":\"None\"") == std::string::npos,
+          "completion.pattern_bounded_int_excludes_outer_enum_variant");
+    check(tiny_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_bounded_int_excludes_struct_symbol");
+
+    const auto wide_position = position_of(source, "Wide(_)");
+    const std::string wide_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(wide_position.line) + R"(,"character":)" +
+        std::to_string(wide_position.character + 5) + R"(}})";
+
+    const auto wide_output = run_handler_request(source, "textDocument/completion", wide_params);
+    check(wide_output.find("\"label\":\"0..100\"") != std::string::npos,
+          "completion.pattern_bounded_int_wide_contains_range");
+    check(wide_output.find("\"label\":\"42\"") == std::string::npos,
+          "completion.pattern_bounded_int_wide_excludes_materialized_literal");
+    check(wide_output.find("\"label\":\"Empty\"") == std::string::npos,
+          "completion.pattern_bounded_int_wide_excludes_outer_enum_variant");
+    check(wide_output.find("\"label\":\"Noise\"") == std::string::npos,
+          "completion.pattern_bounded_int_wide_excludes_struct_symbol");
+}
+
 void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
     const std::string source = "enum Level {\n"
                                "    Low,\n"
@@ -9405,6 +9471,7 @@ int main() {
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_bool_pattern_context_uses_typed_pattern_facts();
+    test_completion_bounded_int_pattern_context_uses_typed_pattern_facts();
     test_completion_pattern_variants_emit_payload_snippets_when_supported();
     test_completion_struct_variant_fields_uses_typed_pattern_facts();
     test_rename_rejects_keyword_and_conflict();
