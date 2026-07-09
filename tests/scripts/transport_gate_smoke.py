@@ -32,6 +32,31 @@ REQUIRED_BENCHMARK_TRANSPORTS = (
 )
 
 
+def owner_decision_artifact(*, decision: str = "go") -> dict[str, object]:
+    artifact: dict[str, object] = {
+        "schema": "ahfl.native_grpc_owner_decision.v1",
+        "rfc": "0004-native-grpc-transport",
+        "decision": decision,
+        "owner": "runtime-owner",
+        "signed_off_at": "2026-07-08T00:00:00Z",
+        "decision_record": "docs/plans/evidence/decision.json",
+        "scope": "native transport decision gate smoke fixture",
+        "rationale": "machine-checkable owner decision fixture",
+    }
+    if decision == "go":
+        artifact["required_before_implementation"] = [
+            "benchmark",
+            "build_matrix",
+            "dependency_policy",
+            "feature_flag",
+            "fallback_semantics",
+            "test_strategy",
+        ]
+    else:
+        artifact["continued_transport_scope"] = "maintain grpc_json_transcoding only"
+    return artifact
+
+
 def build_matrix_artifact() -> dict[str, object]:
     platforms = []
     for platform in ("linux", "macos", "windows"):
@@ -167,6 +192,8 @@ def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
 
 
 def artifact_payload(ref: str) -> dict[str, object]:
+    if ref.endswith("/runtime_owner_decision.json"):
+        return owner_decision_artifact()
     if ref.endswith("/benchmark.json"):
         return benchmark_artifact()
     if ref.endswith("/build_matrix.json"):
@@ -263,6 +290,17 @@ def test_accepted_requires_owner_decision(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "runtime_owner_decision")
 
 
+def test_accepted_allows_structured_owner_decision(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(
+            root,
+            status="accepted",
+            evidence=evidence(decision_state="go", complete_gates={"runtime_owner_decision"}),
+        )
+        assert_passes(run_checker(checker, root))
+
+
 def test_implementing_requires_complete_gate_evidence(checker: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -310,6 +348,41 @@ def test_complete_gate_rejects_missing_repo_artifact(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "does not exist")
 
 
+def test_complete_owner_decision_rejects_invalid_artifact_schema(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+        )
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_owner_decision.v1")
+
+
+def test_complete_owner_decision_rejects_decision_mismatch(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(owner_decision_artifact(decision="no-go"), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "must match")
+
+
+def test_rejected_allows_structured_no_go_owner_decision(checker: Path) -> None:
+    fixture = evidence(decision_state="no-go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="rejected", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(owner_decision_artifact(decision="no-go"), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert_passes(run_checker(checker, root))
+
+
 def test_complete_benchmark_rejects_invalid_artifact_schema(checker: Path) -> None:
     fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
     with tempfile.TemporaryDirectory() as tmp:
@@ -352,10 +425,14 @@ def main() -> int:
     checker = Path(sys.argv[1]).resolve()
     test_draft_rejects_implementation_markers(checker)
     test_accepted_requires_owner_decision(checker)
+    test_accepted_allows_structured_owner_decision(checker)
     test_implementing_requires_complete_gate_evidence(checker)
     test_implementing_allows_markers_after_complete_evidence(checker)
     test_complete_gate_rejects_placeholder_evidence(checker)
     test_complete_gate_rejects_missing_repo_artifact(checker)
+    test_complete_owner_decision_rejects_invalid_artifact_schema(checker)
+    test_complete_owner_decision_rejects_decision_mismatch(checker)
+    test_rejected_allows_structured_no_go_owner_decision(checker)
     test_complete_benchmark_rejects_invalid_artifact_schema(checker)
     test_complete_benchmark_requires_local_structured_artifact(checker)
     test_complete_build_matrix_rejects_invalid_artifact_schema(checker)

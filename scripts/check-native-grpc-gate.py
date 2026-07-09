@@ -21,6 +21,7 @@ ACCEPTED_STATUSES = {"accepted"}
 IMPLEMENTATION_ALLOWED_STATUSES = {"implementing", "implemented", "stabilized"}
 NO_GO_STATUSES = {"postponed", "rejected", "out-of-scope"}
 EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
+OWNER_DECISION_SCHEMA = "ahfl.native_grpc_owner_decision.v1"
 BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark.v1"
 BUILD_MATRIX_SCHEMA = "ahfl.native_grpc_build_matrix.v1"
 DEPENDENCY_POLICY_SCHEMA = "ahfl.native_grpc_dependency_policy.v1"
@@ -85,6 +86,7 @@ REQUIRED_GATES: tuple[str, ...] = (
     "fallback_semantics",
     "test_strategy",
 )
+OWNER_DECISION_GO_CONDITIONS = tuple(gate for gate in REQUIRED_GATES if gate != "runtime_owner_decision")
 SKIP_DIRS = {
     ".git",
     ".cache",
@@ -353,6 +355,61 @@ def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: s
         failures.append(f"{rel}: artifact schema must be {schema!r}")
     if data.get("rfc") != EXPECTED_RFC:
         failures.append(f"{rel}: artifact rfc must be {EXPECTED_RFC!r}")
+    return failures
+
+
+def validate_owner_decision_artifact(
+    root: Path,
+    path: Path,
+    expected_decision_state: object,
+) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid owner decision JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: owner decision artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, OWNER_DECISION_SCHEMA)
+    decision = data.get("decision")
+    if decision not in {"go", "no-go"}:
+        failures.append(f"{rel}: decision must be 'go' or 'no-go'")
+    elif expected_decision_state not in {"go", "no-go"}:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: decision.state must be 'go' or 'no-go' "
+            "when runtime_owner_decision is complete"
+        )
+    elif decision != expected_decision_state:
+        failures.append(
+            f"{rel}: decision {decision!r} must match "
+            f"{DECISION_EVIDENCE_REL} decision.state {expected_decision_state!r}"
+        )
+
+    for field in ("owner", "signed_off_at", "decision_record", "scope", "rationale"):
+        failures.extend(validate_non_empty_string(data.get(field), f"{rel}: {field}"))
+
+    if decision == "go":
+        conditions = data.get("required_before_implementation")
+        failures.extend(
+            validate_string_list(conditions, f"{rel}: required_before_implementation")
+        )
+        if isinstance(conditions, list):
+            missing_conditions = sorted(
+                set(OWNER_DECISION_GO_CONDITIONS)
+                - {item for item in conditions if isinstance(item, str)}
+            )
+            if missing_conditions:
+                failures.append(
+                    f"{rel}: required_before_implementation missing gates {missing_conditions}"
+                )
+    elif decision == "no-go":
+        failures.extend(
+            validate_non_empty_string(
+                data.get("continued_transport_scope"),
+                f"{rel}: continued_transport_scope",
+            )
+        )
     return failures
 
 
@@ -627,6 +684,20 @@ def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list
             )
         for artifact in artifacts:
             failures.extend(validator(root, artifact))
+
+    if gate_is_complete(evidence, "runtime_owner_decision"):
+        artifacts = [
+            path
+            for path in complete_local_artifacts.get("runtime_owner_decision", [])
+            if path.suffix == ".json"
+        ]
+        if not artifacts:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.runtime_owner_decision requires at least one "
+                f"repository-local JSON artifact with schema {OWNER_DECISION_SCHEMA!r}"
+            )
+        for artifact in artifacts:
+            failures.extend(validate_owner_decision_artifact(root, artifact, decision_state))
     return failures
 
 
