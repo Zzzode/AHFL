@@ -361,7 +361,7 @@ def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: s
 def validate_owner_decision_artifact(
     root: Path,
     path: Path,
-    expected_decision_state: object,
+    expected_decision: dict[str, object],
 ) -> list[str]:
     rel = display_path(root, path)
     try:
@@ -372,6 +372,7 @@ def validate_owner_decision_artifact(
         return [f"{rel}: owner decision artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, OWNER_DECISION_SCHEMA)
+    expected_decision_state = expected_decision.get("state")
     decision = data.get("decision")
     if decision not in {"go", "no-go"}:
         failures.append(f"{rel}: decision must be 'go' or 'no-go'")
@@ -388,6 +389,26 @@ def validate_owner_decision_artifact(
 
     for field in ("owner", "signed_off_at", "decision_record", "scope", "rationale"):
         failures.extend(validate_non_empty_string(data.get(field), f"{rel}: {field}"))
+
+    mirrored_fields = (
+        ("owner", "owner"),
+        ("signed_off_at", "signed_off_at"),
+        ("decision_record", "record"),
+    )
+    for artifact_field, decision_field in mirrored_fields:
+        artifact_value = data.get(artifact_field)
+        expected_value = expected_decision.get(decision_field)
+        if (
+            isinstance(artifact_value, str)
+            and artifact_value
+            and isinstance(expected_value, str)
+            and expected_value
+            and artifact_value != expected_value
+        ):
+            failures.append(
+                f"{rel}: {artifact_field} {artifact_value!r} must match "
+                f"{DECISION_EVIDENCE_REL} decision.{decision_field} {expected_value!r}"
+            )
 
     if decision == "go":
         conditions = data.get("required_before_implementation")
@@ -697,7 +718,7 @@ def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list
                 f"repository-local JSON artifact with schema {OWNER_DECISION_SCHEMA!r}"
             )
         for artifact in artifacts:
-            failures.extend(validate_owner_decision_artifact(root, artifact, decision_state))
+            failures.extend(validate_owner_decision_artifact(root, artifact, decision))
     return failures
 
 

@@ -31,7 +31,7 @@
 `runtime_owner_decision` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_owner_decision.v1`。该 artifact 是 RFC0004 从 `draft` 进入 `accepted`、`postponed` 或 `rejected` 的唯一机器可复核 owner sign-off 入口，必须包含：
 
 1. `decision`：只能是 `go` 或 `no-go`，且必须与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.state` 完全一致。
-2. `owner`、`signed_off_at`、`decision_record`、`scope`、`rationale`：均为非空字符串。
+2. `owner`、`signed_off_at`、`decision_record`、`scope`、`rationale`：均为非空字符串；其中 `owner`、`signed_off_at`、`decision_record` 必须分别与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.owner`、`decision.signed_off_at`、`decision.record` 完全一致。
 3. `decision = "go"` 时，`required_before_implementation` 必须列出进入 `implementing` 前仍需完成的 gate：`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`。
 4. `decision = "no-go"` 时，`continued_transport_scope` 必须说明继续维护现有 `grpc_json_transcoding` 路径的范围。
 

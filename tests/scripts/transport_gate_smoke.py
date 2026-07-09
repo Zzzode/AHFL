@@ -32,14 +32,20 @@ REQUIRED_BENCHMARK_TRANSPORTS = (
 )
 
 
-def owner_decision_artifact(*, decision: str = "go") -> dict[str, object]:
+def owner_decision_artifact(
+    *,
+    decision: str = "go",
+    owner: str = "runtime-owner",
+    signed_off_at: str = "2026-07-08T00:00:00Z",
+    decision_record: str = "docs/plans/evidence/decision.json",
+) -> dict[str, object]:
     artifact: dict[str, object] = {
         "schema": "ahfl.native_grpc_owner_decision.v1",
         "rfc": "0004-native-grpc-transport",
         "decision": decision,
-        "owner": "runtime-owner",
-        "signed_off_at": "2026-07-08T00:00:00Z",
-        "decision_record": "docs/plans/evidence/decision.json",
+        "owner": owner,
+        "signed_off_at": signed_off_at,
+        "decision_record": decision_record,
         "scope": "native transport decision gate smoke fixture",
         "rationale": "machine-checkable owner decision fixture",
     }
@@ -242,7 +248,7 @@ def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None
         "decision": {
             "state": decision_state,
             "owner": "runtime-owner" if decision_state != "pending" else "",
-            "signed_off_at": "2026-07-08" if decision_state != "pending" else "",
+            "signed_off_at": "2026-07-08T00:00:00Z" if decision_state != "pending" else "",
             "record": "docs/plans/evidence/decision.json" if decision_state != "pending" else "",
         },
         "gates": gates,
@@ -371,6 +377,19 @@ def test_complete_owner_decision_rejects_decision_mismatch(checker: Path) -> Non
         assert_fails(run_checker(checker, root), "must match")
 
 
+def test_complete_owner_decision_rejects_mirrored_field_mismatch(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(owner_decision_artifact(decision_record="docs/plans/evidence/other.json"), indent=2)
+            + "\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "decision_record")
+
+
 def test_rejected_allows_structured_no_go_owner_decision(checker: Path) -> None:
     fixture = evidence(decision_state="no-go", complete_gates={"runtime_owner_decision"})
     with tempfile.TemporaryDirectory() as tmp:
@@ -432,6 +451,7 @@ def main() -> int:
     test_complete_gate_rejects_missing_repo_artifact(checker)
     test_complete_owner_decision_rejects_invalid_artifact_schema(checker)
     test_complete_owner_decision_rejects_decision_mismatch(checker)
+    test_complete_owner_decision_rejects_mirrored_field_mismatch(checker)
     test_rejected_allows_structured_no_go_owner_decision(checker)
     test_complete_benchmark_rejects_invalid_artifact_schema(checker)
     test_complete_benchmark_requires_local_structured_artifact(checker)
