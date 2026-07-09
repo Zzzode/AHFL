@@ -23,6 +23,15 @@ add_test(NAME ahfl.docs.ir_sync_gate
     COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-ir-doc-sync.py"
 )
 
+add_test(NAME ahfl.docs.rfc_check
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-rfc.py"
+)
+
+add_test(NAME ahfl.docs.rfc_check_smoke
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/tests/scripts/rfc_check_smoke.py"
+            "${PROJECT_SOURCE_DIR}/scripts/check-rfc.py"
+)
+
 function(ahfl_label_tests)
     set(multi_value_args LABELS TESTS)
     cmake_parse_arguments(AHFL "" "" "${multi_value_args}" ${ARGN})

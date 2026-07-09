@@ -9,6 +9,7 @@ dependency-free.
 from __future__ import annotations
 
 import ast
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -16,7 +17,8 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = DEFAULT_REPO_ROOT
 RFC_DIR = REPO_ROOT / "docs" / "rfcs"
 INDEX_FILE = RFC_DIR / "index.yml"
 TEMPLATE_FILE = RFC_DIR / "0000-template.zh.md"
@@ -113,6 +115,14 @@ class Issue:
 
     def format(self) -> str:
         return f"{self.path.relative_to(REPO_ROOT)}: {self.message}"
+
+
+def configure_paths(root: Path) -> None:
+    global REPO_ROOT, RFC_DIR, INDEX_FILE, TEMPLATE_FILE
+    REPO_ROOT = root.resolve()
+    RFC_DIR = REPO_ROOT / "docs" / "rfcs"
+    INDEX_FILE = RFC_DIR / "index.yml"
+    TEMPLATE_FILE = RFC_DIR / "0000-template.zh.md"
 
 
 def parse_scalar(raw: str) -> Any:
@@ -416,7 +426,48 @@ def compare_index_entry(path: Path, meta: dict[str, Any], entry: dict[str, Any],
         issues.append(Issue(INDEX_FILE, f"{path.name} index field '{key}' is forbidden; use canonical RFC ids only"))
 
 
-def main() -> int:
+def check_index_updated(index: dict[str, Any],
+                        canonical_meta_by_file: dict[str, dict[str, Any]],
+                        issues: list[Issue]) -> None:
+    updated = str(index.get("updated", ""))
+    if not updated:
+        issues.append(Issue(INDEX_FILE, "index.yml must contain updated field"))
+        return
+    if not ISO_DATE_RE.match(updated):
+        issues.append(Issue(INDEX_FILE, "index.yml field 'updated' must be YYYY-MM-DD"))
+        return
+    rfc_updated_values = [
+        str(meta.get("updated", ""))
+        for meta in canonical_meta_by_file.values()
+        if ISO_DATE_RE.match(str(meta.get("updated", "")))
+    ]
+    if not rfc_updated_values:
+        return
+    newest_rfc_updated = max(rfc_updated_values)
+    if updated < newest_rfc_updated:
+        issues.append(
+            Issue(
+                INDEX_FILE,
+                "index.yml updated date must be at least the newest canonical RFC updated date "
+                f"({newest_rfc_updated})",
+            )
+        )
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_REPO_ROOT,
+        help="repository root to check; defaults to this script's repository",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    configure_paths(args.root)
     issues: list[Issue] = []
 
     if not RFC_DIR.exists():
@@ -454,12 +505,16 @@ def main() -> int:
 
     check_index(index, canonical_files, issues)
 
+    canonical_meta_by_file: dict[str, dict[str, Any]] = {}
     for path in canonical_files:
         meta, body = load_frontmatter(path, issues)
+        canonical_meta_by_file[path.name] = meta
         check_canonical(path, meta, body, issues)
         entry = index_entries.get(path.name)
         if isinstance(entry, dict):
             compare_index_entry(path, meta, entry, issues)
+
+    check_index_updated(index, canonical_meta_by_file, issues)
 
     template_meta, template_body = load_frontmatter(TEMPLATE_FILE, issues)
     if str(template_meta.get("rfc", "")) != "0000":
