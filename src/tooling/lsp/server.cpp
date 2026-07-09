@@ -2355,9 +2355,9 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
         if (index > 0) {
             snippet += ", ";
         }
-        snippet += variant.fields[index].name + ": " +
-                   pattern_payload_snippet_placeholder(
-                       environment, variant.fields[index].type, index + 1);
+        snippet +=
+            variant.fields[index].name + ": " +
+            pattern_payload_snippet_placeholder(environment, variant.fields[index].type, index + 1);
     }
     snippet += " }";
     return snippet;
@@ -2385,6 +2385,39 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
+[[nodiscard]] std::optional<SourceRange> wildcard_pattern_replacement_range_at(
+    const SourceFile &source, const TypedPattern &pattern, std::size_t offset) {
+    if (pattern.kind != TypedPatternKind::Wildcard ||
+        pattern.range.begin_offset >= pattern.range.end_offset ||
+        pattern.range.end_offset > source.content.size() || !contains(pattern.range, offset)) {
+        return std::nullopt;
+    }
+    const auto text = std::string_view{source.content}.substr(
+        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
+    if (text != "_") {
+        return std::nullopt;
+    }
+    return pattern.range;
+}
+
+void apply_completion_text_edit(std::vector<CompletionItem> &items,
+                                const SourceFile &source,
+                                std::optional<SourceRange> replacement_range) {
+    if (!replacement_range.has_value()) {
+        return;
+    }
+    const auto range = to_lsp_range(source, *replacement_range);
+    for (auto &item : items) {
+        std::string replacement =
+            item.insert_text.empty() ? item.label : std::move(item.insert_text);
+        item.insert_text.clear();
+        item.text_edit = TextEdit{
+            .range = range,
+            .new_text = std::move(replacement),
+        };
+    }
+}
+
 void push_bool_pattern_completions(std::vector<CompletionItem> &items) {
     for (const std::string_view literal : {"true", "false"}) {
         CompletionItem item;
@@ -2395,8 +2428,7 @@ void push_bool_pattern_completions(std::vector<CompletionItem> &items) {
     }
 }
 
-void push_wildcard_pattern_completion(std::vector<CompletionItem> &items,
-                                      std::string_view detail) {
+void push_wildcard_pattern_completion(std::vector<CompletionItem> &items, std::string_view detail) {
     CompletionItem item;
     item.label = "_";
     item.kind = CompletionItemKind::Constant;
@@ -2404,12 +2436,12 @@ void push_wildcard_pattern_completion(std::vector<CompletionItem> &items,
     items.push_back(std::move(item));
 }
 
-void push_literal_pattern_completion(std::vector<CompletionItem> &items,
-                                     std::string label,
-                                     std::string detail,
-                                     std::string insert_text = {},
-                                     std::optional<InsertTextFormat> insert_text_format =
-                                         std::nullopt) {
+void push_literal_pattern_completion(
+    std::vector<CompletionItem> &items,
+    std::string label,
+    std::string detail,
+    std::string insert_text = {},
+    std::optional<InsertTextFormat> insert_text_format = std::nullopt) {
     CompletionItem item;
     item.label = std::move(label);
     item.kind = CompletionItemKind::Constant;
@@ -2428,11 +2460,8 @@ void push_open_primitive_pattern_completions(std::vector<CompletionItem> &items,
     case PrimitiveKind::Int:
         push_literal_pattern_completion(items, "0", "Int literal pattern");
         if (snippet_support) {
-            push_literal_pattern_completion(items,
-                                            "0..0",
-                                            "Int range pattern",
-                                            "${1:0}..${2:0}",
-                                            InsertTextFormat::Snippet);
+            push_literal_pattern_completion(
+                items, "0..0", "Int range pattern", "${1:0}..${2:0}", InsertTextFormat::Snippet);
         } else {
             push_literal_pattern_completion(items, "0..0", "Int range pattern");
         }
@@ -2815,6 +2844,52 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     return cursor->pattern;
 }
 
+[[nodiscard]] bool push_typed_pattern_domain_completions(std::vector<CompletionItem> &items,
+                                                         const SourceFile &source,
+                                                         const TypeEnvironment &environment,
+                                                         const TypedPattern &pattern,
+                                                         std::size_t offset,
+                                                         bool snippet_support) {
+    if (pattern.matched_type == nullptr) {
+        return false;
+    }
+    const auto replacement_range = wildcard_pattern_replacement_range_at(source, pattern, offset);
+
+    if (const auto primitive = primitive_kind_for_type(*pattern.matched_type);
+        primitive.has_value() && *primitive == PrimitiveKind::Bool) {
+        push_bool_pattern_completions(items);
+        apply_completion_text_edit(items, source, replacement_range);
+        return true;
+    }
+    if (const auto *bounded_int = pattern.matched_type->get_if<types::BoundedIntT>();
+        bounded_int != nullptr) {
+        push_bounded_int_pattern_completions(items, *bounded_int);
+        apply_completion_text_edit(items, source, replacement_range);
+        return true;
+    }
+    if (pattern.matched_type->holds<types::BoundedStringT>()) {
+        push_bounded_string_pattern_completions(
+            items, *pattern.matched_type->get_if<types::BoundedStringT>());
+        apply_completion_text_edit(items, source, replacement_range);
+        return true;
+    }
+    if (const auto primitive = primitive_kind_for_type(*pattern.matched_type);
+        primitive.has_value()) {
+        push_open_primitive_pattern_completions(items, *primitive, snippet_support);
+        apply_completion_text_edit(items, source, replacement_range);
+        return true;
+    }
+
+    const auto enum_info = environment.get_enum(*pattern.matched_type);
+    if (!enum_info.has_value()) {
+        return false;
+    }
+
+    push_pattern_enum_variant_completions(items, environment, enum_info->get(), snippet_support);
+    apply_completion_text_edit(items, source, replacement_range);
+    return true;
+}
+
 [[nodiscard]] bool push_pattern_context_completions(std::vector<CompletionItem> &items,
                                                     const LspAnalysisSnapshot &snapshot,
                                                     const LspSourceSnapshot &source,
@@ -2827,8 +2902,18 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     if (program == nullptr) {
         return false;
     }
+    const auto *pattern = find_typed_pattern_at(*program, source.source_id, offset);
     const auto *field_pattern =
         find_struct_variant_pattern_at(*program, *source.source, source.source_id, offset);
+    if (pattern != nullptr && field_pattern != nullptr && pattern != field_pattern &&
+        push_typed_pattern_domain_completions(items,
+                                              *source.source,
+                                              snapshot.type_check_result->environment,
+                                              *pattern,
+                                              offset,
+                                              snippet_support)) {
+        return true;
+    }
     if (field_pattern != nullptr && field_pattern->enum_symbol.has_value()) {
         const auto enum_info =
             snapshot.type_check_result->environment.get_enum(*field_pattern->enum_symbol);
@@ -2849,39 +2934,15 @@ find_variant_payload_pattern_at(const TypedProgram &program,
         }
     }
 
-    const auto *pattern = find_typed_pattern_at(*program, source.source_id, offset);
-    if (pattern == nullptr || pattern->matched_type == nullptr) {
+    if (pattern == nullptr) {
         return false;
     }
-    if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);
-        primitive.has_value() && *primitive == PrimitiveKind::Bool) {
-        push_bool_pattern_completions(items);
-        return true;
-    }
-    if (const auto *bounded_int = pattern->matched_type->get_if<types::BoundedIntT>();
-        bounded_int != nullptr) {
-        push_bounded_int_pattern_completions(items, *bounded_int);
-        return true;
-    }
-    if (pattern->matched_type->holds<types::BoundedStringT>()) {
-        push_bounded_string_pattern_completions(
-            items, *pattern->matched_type->get_if<types::BoundedStringT>());
-        return true;
-    }
-    if (const auto primitive = primitive_kind_for_type(*pattern->matched_type);
-        primitive.has_value()) {
-        push_open_primitive_pattern_completions(items, *primitive, snippet_support);
-        return true;
-    }
-
-    const auto enum_info = snapshot.type_check_result->environment.get_enum(*pattern->matched_type);
-    if (!enum_info.has_value()) {
-        return false;
-    }
-
-    push_pattern_enum_variant_completions(
-        items, snapshot.type_check_result->environment, enum_info->get(), snippet_support);
-    return true;
+    return push_typed_pattern_domain_completions(items,
+                                                 *source.source,
+                                                 snapshot.type_check_result->environment,
+                                                 *pattern,
+                                                 offset,
+                                                 snippet_support);
 }
 
 [[nodiscard]] std::optional<SignatureHelp> pattern_signature_help(

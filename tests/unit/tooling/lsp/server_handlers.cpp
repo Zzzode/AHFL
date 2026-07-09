@@ -7940,6 +7940,20 @@ void test_completion_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_match_contains_second");
     check(wildcard_output.find("\"label\":\"Alien\"") == std::string::npos,
           "completion.pattern_match_excludes_other_enum");
+    const auto wildcard_end = position_after(wildcard_position, "_");
+    check(wildcard_output.find("\"textEdit\"") != std::string::npos,
+          "completion.pattern_match_wildcard_uses_text_edit");
+    check(wildcard_output.find("\"newText\":\"First\"") != std::string::npos,
+          "completion.pattern_match_wildcard_replaces_with_first");
+    check(wildcard_output.find("\"newText\":\"Second\"") != std::string::npos,
+          "completion.pattern_match_wildcard_replaces_with_second");
+    check(wildcard_output.find(R"("start":{"line":)" + std::to_string(wildcard_position.line) +
+                               R"(,"character":)" + std::to_string(wildcard_position.character) +
+                               "}") != std::string::npos &&
+              wildcard_output.find(R"("end":{"line":)" + std::to_string(wildcard_end.line) +
+                                   R"(,"character":)" + std::to_string(wildcard_end.character) +
+                                   "}") != std::string::npos,
+          "completion.pattern_match_wildcard_text_edit_range");
 
     const auto if_let_position = position_of(source, "if let _");
     const std::string if_let_params =
@@ -8073,54 +8087,55 @@ void test_completion_bounded_int_pattern_context_uses_typed_pattern_facts() {
 }
 
 void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
-    const std::string source = "struct Noise {}\n"
-                               "\n"
-                               "enum MaybeInt {\n"
-                               "    SomeInt(Int),\n"
-                               "    NoInt,\n"
-                               "}\n"
-                               "\n"
-                               "enum MaybeFloat {\n"
-                               "    SomeFloat(Float),\n"
-                               "    NoFloat,\n"
-                               "}\n"
-                               "\n"
-                               "enum MaybeString {\n"
-                               "    SomeString(String),\n"
-                               "    NoString,\n"
-                               "}\n"
-                               "\n"
-                               "enum MaybeBoundedString {\n"
-                               "    SomeName(String(1, 3)),\n"
-                               "    NoName,\n"
-                               "}\n"
-                               "\n"
-                               "enum MaybeEmptyString {\n"
-                               "    SomeEmpty(String(0, 0)),\n"
-                               "    NoEmpty,\n"
-                               "}\n"
-                               "\n"
-                               "fn use_int(maybe: MaybeInt) -> Int effect Pure decreases 0 {\n"
-                               "    return match maybe { SomeInt(_) => 1, NoInt => 0 };\n"
-                               "}\n"
-                               "\n"
-                               "fn use_float(maybe: MaybeFloat) -> Int effect Pure decreases 0 {\n"
-                               "    return match maybe { SomeFloat(_) => 1, NoFloat => 0 };\n"
-                               "}\n"
-                               "\n"
-                               "fn use_string(maybe: MaybeString) -> Int effect Pure decreases 0 {\n"
-                               "    return match maybe { SomeString(_) => 1, NoString => 0 };\n"
-                               "}\n"
-                               "\n"
-                               "fn use_bounded_string(maybe: MaybeBoundedString) -> Int effect Pure "
-                               "decreases 0 {\n"
-                               "    return match maybe { SomeName(_) => 1, NoName => 0 };\n"
-                               "}\n"
-                               "\n"
-                               "fn use_empty_string(maybe: MaybeEmptyString) -> Int effect Pure "
-                               "decreases 0 {\n"
-                               "    return match maybe { SomeEmpty(_) => 1, NoEmpty => 0 };\n"
-                               "}\n";
+    const std::string source =
+        "struct Noise {}\n"
+        "\n"
+        "enum MaybeInt {\n"
+        "    SomeInt(Int),\n"
+        "    NoInt,\n"
+        "}\n"
+        "\n"
+        "enum MaybeFloat {\n"
+        "    SomeFloat(Float),\n"
+        "    NoFloat,\n"
+        "}\n"
+        "\n"
+        "enum MaybeString {\n"
+        "    SomeString(String),\n"
+        "    NoString,\n"
+        "}\n"
+        "\n"
+        "enum MaybeBoundedString {\n"
+        "    SomeName(String(1, 3)),\n"
+        "    NoName,\n"
+        "}\n"
+        "\n"
+        "enum MaybeEmptyString {\n"
+        "    SomeEmpty(String(0, 0)),\n"
+        "    NoEmpty,\n"
+        "}\n"
+        "\n"
+        "fn use_int(maybe: MaybeInt) -> Int effect Pure decreases 0 {\n"
+        "    return match maybe { SomeInt(_) => 1, NoInt => 0 };\n"
+        "}\n"
+        "\n"
+        "fn use_float(maybe: MaybeFloat) -> Int effect Pure decreases 0 {\n"
+        "    return match maybe { SomeFloat(_) => 1, NoFloat => 0 };\n"
+        "}\n"
+        "\n"
+        "fn use_string(maybe: MaybeString) -> Int effect Pure decreases 0 {\n"
+        "    return match maybe { SomeString(_) => 1, NoString => 0 };\n"
+        "}\n"
+        "\n"
+        "fn use_bounded_string(maybe: MaybeBoundedString) -> Int effect Pure "
+        "decreases 0 {\n"
+        "    return match maybe { SomeName(_) => 1, NoName => 0 };\n"
+        "}\n"
+        "\n"
+        "fn use_empty_string(maybe: MaybeEmptyString) -> Int effect Pure "
+        "decreases 0 {\n"
+        "    return match maybe { SomeEmpty(_) => 1, NoEmpty => 0 };\n"
+        "}\n";
 
     const auto int_position = position_of(source, "SomeInt(_)");
     const std::string int_params =
@@ -8144,8 +8159,7 @@ void test_completion_open_primitive_pattern_context_uses_typed_pattern_facts() {
         R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
         std::to_string(float_position.line) + R"(,"character":)" +
         std::to_string(float_position.character + 10) + R"(}})";
-    const auto float_output =
-        run_handler_request(source, "textDocument/completion", float_params);
+    const auto float_output = run_handler_request(source, "textDocument/completion", float_params);
     check(float_output.find("\"label\":\"_\"") != std::string::npos,
           "completion.pattern_open_float_contains_wildcard");
     check(float_output.find("\"label\":\"0.0\"") != std::string::npos,
@@ -8223,6 +8237,7 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
                                "}\n";
 
     const auto wildcard_position = position_of(source, "_ => 0");
+    const auto wildcard_end = position_after(wildcard_position, "_");
     const std::string completion_params =
         R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
         std::to_string(wildcard_position.line) + R"(,"character":)" +
@@ -8250,13 +8265,19 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
 
     check(snippet_output.find("\"label\":\"Pair\"") != std::string::npos,
           "completion.pattern_snippet_tuple_label");
-    check(snippet_output.find("\"insertText\":\"Pair(${1|Low,High,_|}, ${2:_})\"") !=
+    check(snippet_output.find("\"newText\":\"Pair(${1|Low,High,_|}, ${2:_})\"") !=
               std::string::npos,
-          "completion.pattern_snippet_tuple_uses_nested_enum_choices");
-    check(snippet_output.find(
-              "\"insertText\":\"Data { code: ${1:_}, label: ${2|Low,High,_|} }\"") !=
+          "completion.pattern_snippet_tuple_text_edit_uses_nested_enum_choices");
+    check(snippet_output.find("\"newText\":\"Data { code: ${1:_}, label: ${2|Low,High,_|} }\"") !=
               std::string::npos,
-          "completion.pattern_snippet_struct_uses_nested_enum_choices");
+          "completion.pattern_snippet_struct_text_edit_uses_nested_enum_choices");
+    check(snippet_output.find(R"("start":{"line":)" + std::to_string(wildcard_position.line) +
+                              R"(,"character":)" + std::to_string(wildcard_position.character) +
+                              "}") != std::string::npos &&
+              snippet_output.find(R"("end":{"line":)" + std::to_string(wildcard_end.line) +
+                                  R"(,"character":)" + std::to_string(wildcard_end.character) +
+                                  "}") != std::string::npos,
+          "completion.pattern_snippet_wildcard_text_edit_range");
     check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
           "completion.pattern_snippet_insert_text_format");
 }
@@ -8285,6 +8306,14 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
                                "    } else {\n"
                                "        return 0;\n"
                                "    }\n"
+                               "}\n"
+                               "\n"
+                               "fn use_nested_payload(packet: Packet) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { label: _ } => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
                                "}\n";
 
     const auto empty_fields_position = position_of(source, "Data { .. }");
@@ -8348,6 +8377,34 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
           "completion.pattern_struct_fields_snippet_text_edit_range");
     check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
           "completion.pattern_struct_fields_snippet_insert_text_format");
+
+    const auto nested_payload_position = position_of(source, "Data { label: _ }");
+    const auto nested_payload_wildcard = position_after(nested_payload_position, "Data { label: ");
+    const auto nested_payload_wildcard_end = position_after(nested_payload_wildcard, "_");
+    const std::string nested_payload_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(nested_payload_position.line) + R"(,"character":)" +
+        std::to_string(nested_payload_position.character + 14) + R"(}})";
+    const auto nested_payload_output =
+        run_handler_request(source, "textDocument/completion", nested_payload_params);
+    check(nested_payload_output.find("\"label\":\"Low\"") != std::string::npos,
+          "completion.pattern_struct_payload_child_contains_low");
+    check(nested_payload_output.find("\"label\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_child_contains_high");
+    check(nested_payload_output.find("\"label\":\"code\"") == std::string::npos,
+          "completion.pattern_struct_payload_child_excludes_parent_field_completion");
+    check(nested_payload_output.find("\"newText\":\"Low\"") != std::string::npos &&
+              nested_payload_output.find("\"newText\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_child_replaces_wildcard");
+    check(nested_payload_output.find(
+              R"("start":{"line":)" + std::to_string(nested_payload_wildcard.line) +
+              R"(,"character":)" + std::to_string(nested_payload_wildcard.character) + "}") !=
+                  std::string::npos &&
+              nested_payload_output.find(
+                  R"("end":{"line":)" + std::to_string(nested_payload_wildcard_end.line) +
+                  R"(,"character":)" + std::to_string(nested_payload_wildcard_end.character) +
+                  "}") != std::string::npos,
+          "completion.pattern_struct_payload_child_text_edit_range");
 }
 
 void test_rename_rejects_keyword_and_conflict() {
