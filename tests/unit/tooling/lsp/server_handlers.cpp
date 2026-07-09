@@ -8040,6 +8040,22 @@ void test_completion_bounded_int_pattern_context_uses_typed_pattern_facts() {
                                "    };\n"
                                "}\n"
                                "\n"
+                               "fn use_tiny_literal(maybe: MaybeTiny) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match maybe {\n"
+                               "        Some(1) => 1,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_tiny_range(maybe: MaybeTiny) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match maybe {\n"
+                               "        Some(0..1) => 1,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n"
+                               "\n"
                                "fn use_wide(maybe: MaybeWide) -> Int effect Pure decreases 0 {\n"
                                "    return match maybe {\n"
                                "        Wide(_) => 1,\n"
@@ -8068,6 +8084,45 @@ void test_completion_bounded_int_pattern_context_uses_typed_pattern_facts() {
           "completion.pattern_bounded_int_excludes_outer_enum_variant");
     check(tiny_output.find("\"label\":\"Noise\"") == std::string::npos,
           "completion.pattern_bounded_int_excludes_struct_symbol");
+
+    const auto tiny_literal_position = position_of(source, "Some(1)");
+    const auto tiny_literal_start = position_after(tiny_literal_position, "Some(");
+    const auto tiny_literal_end = position_after(tiny_literal_start, "1");
+    const std::string tiny_literal_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(tiny_literal_start.line) + R"(,"character":)" +
+        std::to_string(tiny_literal_start.character) + R"(}})";
+    const auto tiny_literal_output =
+        run_handler_request(source, "textDocument/completion", tiny_literal_params);
+    check(tiny_literal_output.find("\"newText\":\"0\"") != std::string::npos &&
+              tiny_literal_output.find("\"newText\":\"0..2\"") != std::string::npos,
+          "completion.pattern_bounded_int_literal_uses_text_edit");
+    check(tiny_literal_output.find(
+              R"("start":{"line":)" + std::to_string(tiny_literal_start.line) + R"(,"character":)" +
+              std::to_string(tiny_literal_start.character) + "}") != std::string::npos &&
+              tiny_literal_output.find(
+                  R"("end":{"line":)" + std::to_string(tiny_literal_end.line) + R"(,"character":)" +
+                  std::to_string(tiny_literal_end.character) + "}") != std::string::npos,
+          "completion.pattern_bounded_int_literal_text_edit_range");
+
+    const auto tiny_range_position = position_of(source, "Some(0..1)");
+    const auto tiny_range_start = position_after(tiny_range_position, "Some(");
+    const auto tiny_range_end = position_after(tiny_range_start, "0..1");
+    const std::string tiny_range_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(tiny_range_start.line) + R"(,"character":)" +
+        std::to_string(tiny_range_start.character + 1) + R"(}})";
+    const auto tiny_range_output =
+        run_handler_request(source, "textDocument/completion", tiny_range_params);
+    check(tiny_range_output.find("\"newText\":\"0..2\"") != std::string::npos,
+          "completion.pattern_bounded_int_range_uses_text_edit");
+    check(tiny_range_output.find(R"("start":{"line":)" + std::to_string(tiny_range_start.line) +
+                                 R"(,"character":)" + std::to_string(tiny_range_start.character) +
+                                 "}") != std::string::npos &&
+              tiny_range_output.find(R"("end":{"line":)" + std::to_string(tiny_range_end.line) +
+                                     R"(,"character":)" + std::to_string(tiny_range_end.character) +
+                                     "}") != std::string::npos,
+          "completion.pattern_bounded_int_range_text_edit_range");
 
     const auto wide_position = position_of(source, "Wide(_)");
     const std::string wide_params =
@@ -8314,6 +8369,14 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
                                "        Data { label: _ } => 1,\n"
                                "        Empty => 0,\n"
                                "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_nested_payload_existing(packet: Packet) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { label: Low } => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
                                "}\n";
 
     const auto empty_fields_position = position_of(source, "Data { .. }");
@@ -8405,6 +8468,34 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
                   R"(,"character":)" + std::to_string(nested_payload_wildcard_end.character) +
                   "}") != std::string::npos,
           "completion.pattern_struct_payload_child_text_edit_range");
+
+    const auto nested_payload_existing_position = position_of(source, "Data { label: Low }");
+    const auto nested_payload_existing_token =
+        position_after(nested_payload_existing_position, "Data { label: ");
+    const auto nested_payload_existing_end = position_after(nested_payload_existing_token, "Low");
+    const std::string nested_payload_existing_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(nested_payload_existing_token.line) + R"(,"character":)" +
+        std::to_string(nested_payload_existing_token.character + 1) + R"(}})";
+    const auto nested_payload_existing_output =
+        run_handler_request(source, "textDocument/completion", nested_payload_existing_params);
+    check(nested_payload_existing_output.find("\"label\":\"Low\"") != std::string::npos,
+          "completion.pattern_struct_payload_existing_child_contains_low");
+    check(nested_payload_existing_output.find("\"label\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_existing_child_contains_high");
+    check(nested_payload_existing_output.find("\"label\":\"code\"") == std::string::npos,
+          "completion.pattern_struct_payload_existing_child_excludes_parent_field_completion");
+    check(nested_payload_existing_output.find("\"newText\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_existing_child_replaces_variant");
+    check(nested_payload_existing_output.find(
+              R"("start":{"line":)" + std::to_string(nested_payload_existing_token.line) +
+              R"(,"character":)" + std::to_string(nested_payload_existing_token.character) + "}") !=
+                  std::string::npos &&
+              nested_payload_existing_output.find(
+                  R"("end":{"line":)" + std::to_string(nested_payload_existing_end.line) +
+                  R"(,"character":)" + std::to_string(nested_payload_existing_end.character) +
+                  "}") != std::string::npos,
+          "completion.pattern_struct_payload_existing_child_text_edit_range");
 }
 
 void test_rename_rejects_keyword_and_conflict() {

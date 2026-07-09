@@ -2385,19 +2385,60 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
     }
 }
 
-[[nodiscard]] std::optional<SourceRange> wildcard_pattern_replacement_range_at(
+[[nodiscard]] std::string_view pattern_source_text(const SourceFile &source,
+                                                   const TypedPattern &pattern) {
+    if (pattern.range.begin_offset >= pattern.range.end_offset ||
+        pattern.range.end_offset > source.content.size()) {
+        return {};
+    }
+    return std::string_view{source.content}.substr(
+        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
+}
+
+[[nodiscard]] bool is_single_line_source_fragment(std::string_view text) {
+    return !text.empty() && text.find('\n') == std::string_view::npos &&
+           text.find('\r') == std::string_view::npos;
+}
+
+[[nodiscard]] std::optional<SourceRange> pattern_completion_replacement_range_at(
     const SourceFile &source, const TypedPattern &pattern, std::size_t offset) {
-    if (pattern.kind != TypedPatternKind::Wildcard ||
-        pattern.range.begin_offset >= pattern.range.end_offset ||
+    if (pattern.range.begin_offset >= pattern.range.end_offset ||
         pattern.range.end_offset > source.content.size() || !contains(pattern.range, offset)) {
         return std::nullopt;
     }
-    const auto text = std::string_view{source.content}.substr(
-        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
-    if (text != "_") {
+    const auto text = pattern_source_text(source, pattern);
+    if (!is_single_line_source_fragment(text)) {
         return std::nullopt;
     }
-    return pattern.range;
+    switch (pattern.kind) {
+    case TypedPatternKind::Wildcard:
+        if (text == "_") {
+            return pattern.range;
+        }
+        break;
+    case TypedPatternKind::Literal:
+        if (pattern.children.empty()) {
+            return pattern.range;
+        }
+        break;
+    case TypedPatternKind::IntRange:
+        if (pattern.children.empty() && text.find("..") != std::string_view::npos) {
+            return pattern.range;
+        }
+        break;
+    case TypedPatternKind::Variant:
+        if (pattern.children.empty() &&
+            pattern.variant_payload_kind == EnumVariantPayloadKind::Unit &&
+            text == pattern.variant_name && is_identifier(text)) {
+            return pattern.range;
+        }
+        break;
+    case TypedPatternKind::Binding:
+    case TypedPatternKind::Tuple:
+    case TypedPatternKind::Or:
+        break;
+    }
+    return std::nullopt;
 }
 
 void apply_completion_text_edit(std::vector<CompletionItem> &items,
@@ -2853,7 +2894,7 @@ find_variant_payload_pattern_at(const TypedProgram &program,
     if (pattern.matched_type == nullptr) {
         return false;
     }
-    const auto replacement_range = wildcard_pattern_replacement_range_at(source, pattern, offset);
+    const auto replacement_range = pattern_completion_replacement_range_at(source, pattern, offset);
 
     if (const auto primitive = primitive_kind_for_type(*pattern.matched_type);
         primitive.has_value() && *primitive == PrimitiveKind::Bool) {
