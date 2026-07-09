@@ -8284,6 +8284,9 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
                                "\n"
                                "enum Packet {\n"
                                "    Empty,\n"
+                               "    Flag(Bool),\n"
+                               "    Tiny(Int(0, 2)),\n"
+                               "    EmptyName(String(0, 0)),\n"
                                "    Pair(Level, String),\n"
                                "    Data { code: Int, label: Level },\n"
                                "}\n"
@@ -8323,13 +8326,20 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
 
     check(snippet_output.find("\"label\":\"Pair\"") != std::string::npos,
           "completion.pattern_snippet_tuple_label");
+    check(snippet_output.find("\"newText\":\"Flag(${1|true,false,_|})\"") != std::string::npos,
+          "completion.pattern_snippet_bool_payload_choices");
+    check(snippet_output.find("\"newText\":\"Tiny(${1|0,1,2,0..2,_|})\"") != std::string::npos,
+          "completion.pattern_snippet_bounded_int_payload_choices");
+    check(snippet_output.find("\"newText\":\"EmptyName(${1|\\\"\\\",_|})\"") != std::string::npos,
+          "completion.pattern_snippet_empty_string_payload_choices");
     check(snippet_output.find("\"newText\":\"Pair(${1|Low,High,Wrap(_),PairLevel(_\\\\, "
-                              "_),Tagged { code: _ },_|}, ${2:_})\"") != std::string::npos,
-          "completion.pattern_snippet_tuple_text_edit_uses_nested_enum_payload_choices");
-    check(snippet_output.find("\"newText\":\"Data { code: ${1:_}, label: "
+                              "_),Tagged { code: _ },_|}, ${2|\\\"\\\",_|})\"") !=
+              std::string::npos,
+          "completion.pattern_snippet_tuple_text_edit_uses_typed_payload_choices");
+    check(snippet_output.find("\"newText\":\"Data { code: ${1|0,0..0,_|}, label: "
                               "${2|Low,High,Wrap(_),PairLevel(_\\\\, _),Tagged { code: _ },_|} "
                               "}\"") != std::string::npos,
-          "completion.pattern_snippet_struct_text_edit_uses_nested_enum_payload_choices");
+          "completion.pattern_snippet_struct_text_edit_uses_typed_payload_choices");
     check(snippet_output.find(R"("start":{"line":)" + std::to_string(wildcard_position.line) +
                               R"(,"character":)" + std::to_string(wildcard_position.character) +
                               "}") != std::string::npos &&

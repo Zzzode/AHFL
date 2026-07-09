@@ -2323,6 +2323,29 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     return snippet;
 }
 
+[[nodiscard]] std::optional<std::size_t>
+bounded_int_literal_completion_count(const types::BoundedIntT &bounds) {
+    if (bounds.maximum < bounds.minimum) {
+        return std::nullopt;
+    }
+
+    std::size_t count = 1;
+    std::int64_t value = bounds.minimum;
+    while (value != bounds.maximum) {
+        if (count >= kMaxBoundedIntLiteralPatternCompletions ||
+            value == std::numeric_limits<std::int64_t>::max()) {
+            return std::nullopt;
+        }
+        ++value;
+        ++count;
+    }
+    return count;
+}
+
+[[nodiscard]] std::string bounded_int_range_pattern_label(const types::BoundedIntT &bounds) {
+    return std::to_string(bounds.minimum) + ".." + std::to_string(bounds.maximum);
+}
+
 [[nodiscard]] std::optional<std::string>
 nested_enum_variant_pattern_choice(const EnumVariantInfo &variant) {
     if (!is_identifier(variant.name)) {
@@ -2359,11 +2382,75 @@ nested_enum_variant_pattern_choice(const EnumVariantInfo &variant) {
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<std::vector<std::string>>
+primitive_pattern_snippet_choices(TypePtr payload_type) {
+    if (payload_type == nullptr) {
+        return std::nullopt;
+    }
+
+    if (const auto *bounded_int = payload_type->get_if<types::BoundedIntT>();
+        bounded_int != nullptr) {
+        if (bounded_int->maximum < bounded_int->minimum) {
+            return std::nullopt;
+        }
+        std::vector<std::string> choices;
+        if (bounded_int_literal_completion_count(*bounded_int).has_value()) {
+            std::int64_t value = bounded_int->minimum;
+            while (true) {
+                choices.push_back(std::to_string(value));
+                if (value == bounded_int->maximum) {
+                    break;
+                }
+                ++value;
+            }
+        }
+        if (bounded_int->minimum != bounded_int->maximum) {
+            choices.push_back(bounded_int_range_pattern_label(*bounded_int));
+        }
+        choices.push_back("_");
+        return choices;
+    }
+
+    if (const auto *bounded_string = payload_type->get_if<types::BoundedStringT>();
+        bounded_string != nullptr) {
+        if (bounded_string->minimum == 0 && bounded_string->maximum == 0) {
+            return std::vector<std::string>{"\"\"", "_"};
+        }
+        return std::nullopt;
+    }
+
+    const auto primitive = primitive_kind_for_type(*payload_type);
+    if (!primitive.has_value()) {
+        return std::nullopt;
+    }
+    switch (*primitive) {
+    case PrimitiveKind::Bool:
+        return std::vector<std::string>{"true", "false", "_"};
+    case PrimitiveKind::Int:
+        return std::vector<std::string>{"0", "0..0", "_"};
+    case PrimitiveKind::Float:
+        return std::vector<std::string>{"0.0", "_"};
+    case PrimitiveKind::String:
+        return std::vector<std::string>{"\"\"", "_"};
+    case PrimitiveKind::Unit:
+    case PrimitiveKind::UUID:
+    case PrimitiveKind::Timestamp:
+    case PrimitiveKind::Duration:
+    case PrimitiveKind::Decimal:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 [[nodiscard]] std::string pattern_payload_snippet_placeholder(const TypeEnvironment &environment,
                                                               TypePtr payload_type,
                                                               std::size_t tabstop) {
     if (payload_type == nullptr) {
         return snippet_placeholder(tabstop, "_");
+    }
+
+    if (const auto choices = primitive_pattern_snippet_choices(payload_type); choices.has_value()) {
+        return snippet_choice_placeholder(tabstop, *choices);
     }
 
     const auto enum_info = environment.get_enum(*payload_type);
@@ -2581,29 +2668,6 @@ void push_bounded_string_pattern_completions(std::vector<CompletionItem> &items,
     if (bounds.minimum == 0 && bounds.maximum == 0) {
         push_literal_pattern_completion(items, "\"\"", "String literal pattern");
     }
-}
-
-[[nodiscard]] std::optional<std::size_t>
-bounded_int_literal_completion_count(const types::BoundedIntT &bounds) {
-    if (bounds.maximum < bounds.minimum) {
-        return std::nullopt;
-    }
-
-    std::size_t count = 1;
-    std::int64_t value = bounds.minimum;
-    while (value != bounds.maximum) {
-        if (count >= kMaxBoundedIntLiteralPatternCompletions ||
-            value == std::numeric_limits<std::int64_t>::max()) {
-            return std::nullopt;
-        }
-        ++value;
-        ++count;
-    }
-    return count;
-}
-
-[[nodiscard]] std::string bounded_int_range_pattern_label(const types::BoundedIntT &bounds) {
-    return std::to_string(bounds.minimum) + ".." + std::to_string(bounds.maximum);
 }
 
 void push_bounded_int_pattern_completions(std::vector<CompletionItem> &items,
