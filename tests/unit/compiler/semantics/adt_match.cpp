@@ -800,6 +800,20 @@ enum MaybeText { Some(String), None, }
     CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") >= 1);
 }
 
+TEST_CASE("open Float payload canonicalizes equivalent numeric literal patterns") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum MaybeFloat { Some(Float), None, }
+)AHFL",
+        "MaybeFloat",
+        "MaybeFloat::None",
+        "match ctx.value { Some(1.0) => 1, Some(1.00) => 2, Some(_) => 3, None => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_UNREACHABLE_ARM") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OVERLAP") >= 1);
+}
+
 TEST_CASE("empty bounded String payload literal proves singleton coverage") {
     const auto source = wrap_in_flow(
         R"AHFL(

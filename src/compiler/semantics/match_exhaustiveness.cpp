@@ -3,9 +3,12 @@
 #include "ahfl/compiler/semantics/pattern_usefulness.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <charconv>
+#include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -489,10 +492,28 @@ ensure_domain_for_type(MatchMatrixLowering &lowering, TypePtr type, std::vector<
     return decoded;
 }
 
+[[nodiscard]] std::optional<std::string> canonical_float_literal_key(std::string_view spelling) {
+    try {
+        std::size_t parsed_size = 0;
+        const double value = std::stod(std::string{spelling}, &parsed_size);
+        if (parsed_size != spelling.size()) {
+            return std::nullopt;
+        }
+        return std::string{"f64:"} + std::to_string(std::bit_cast<std::uint64_t>(value));
+    } catch (const std::invalid_argument &) {
+        return std::nullopt;
+    } catch (const std::out_of_range &) {
+        return std::nullopt;
+    }
+}
+
 [[nodiscard]] std::optional<std::string> canonical_open_literal_key(OpenLiteralDomainKind kind,
                                                                     std::string_view spelling) {
     if (kind == OpenLiteralDomainKind::String) {
         return decode_string_literal_spelling(spelling);
+    }
+    if (kind == OpenLiteralDomainKind::Float) {
+        return canonical_float_literal_key(spelling);
     }
     return std::string{spelling};
 }
