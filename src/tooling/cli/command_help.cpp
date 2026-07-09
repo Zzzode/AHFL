@@ -46,7 +46,9 @@ namespace ahfl::cli {
 void print_usage(std::ostream &out, bool show_internal) {
     out << "Usage:\n"
         << "  ahflc check [options] [<input.ahfl>]\n"
-        << "  ahflc run --workflow <name> --input '<json>' [options] [<input.ahfl>]\n"
+        << "  ahflc run --input '<json>' [options]\n"
+        << "  ahflc run --manifest <ahfl.toml> --input '<json>' [options]\n"
+        << "  ahflc run --workflow <name> --input '<json>' [options] <input.ahfl>\n"
         << "  ahflc fmt [--check] <input.ahfl|dir>...\n"
         << "  ahflc fmt [--check] --manifest <ahfl.toml>\n"
         << "  ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>\n"
@@ -134,7 +136,7 @@ void print_usage(std::ostream &out, bool show_internal) {
 
     // Options grouped by scope
     out << "\nInput Options:\n"
-        << "  --manifest <path>           AHFL package manifest (ahfl.toml)\n"
+        << "  --manifest <path>           AHFL package manifest (default: ./ahfl.toml)\n"
         << "  --workspace <path>          AHFL workspace manifest (ahfl.workspace.toml)\n"
         << "  --package <name>            Workspace package name with --workspace\n"
         << "  --sysroot <path>            AHFL sysroot root or std/ahfl.toml\n"
@@ -142,7 +144,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  --capability-mocks <path>   Capability mock input; run uses it as LLM tools\n";
 
     out << "\nRuntime Options:\n"
-        << "  --workflow <canonical>      Target workflow (multi-workflow packages)\n"
+        << "  --workflow <canonical>      Target workflow; package run defaults to manifest entry\n"
         << "  --input <json>              Runtime input JSON for run\n"
         << "  --llm-config <path>         LLM config for run (default: ~/.ahfl/llm_config.json)\n"
         << "  --llm-observability <path>  Write secret-free LLM provider observability JSON\n"

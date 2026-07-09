@@ -2224,7 +2224,7 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
                           std::ostream &out,
                           std::ostream &err) {
     if (!options.workflow_name.has_value()) {
-        err << "error: run requires --workflow\n";
+        err << "error: run requires --workflow or package workflow entry\n";
         return 2;
     }
     if (!options.runtime_input_json.has_value()) {

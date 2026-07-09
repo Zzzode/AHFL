@@ -228,8 +228,8 @@ int main() {
           "runtime session remains package-aware");
     check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitSmv),
           "emit-smv is package-aware");
-    check(!ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::RunWorkflow),
-          "run does not require package metadata");
+    check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::RunWorkflow),
+          "run is package-aware for multi-file workflow execution");
     check(durable_store_emit_commands_have_artifact_printers(),
           "durable-store emit commands map to artifact printers");
     check(durable_store_artifact_printers_have_emit_commands(),
@@ -303,6 +303,34 @@ int main() {
               "parse_options: run capability bindings captured");
         check(options.positional.size() == 1 && options.positional.front() == "app.ahfl",
               "parse_options: run input file captured");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "run",
+            "--manifest",
+            "app/ahfl.toml",
+            "--input",
+            "{\"message\":\"hello\"}",
+            "--llm-config",
+            "llm.json",
+        };
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(),
+              "parse_options: package run without explicit workflow has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::RunWorkflow,
+              "parse_options: package run command selected");
+        check(options.manifest_path.has_value() && *options.manifest_path == "app/ahfl.toml",
+              "parse_options: package run manifest captured");
+        check(!options.workflow_name.has_value(),
+              "parse_options: package run leaves workflow for manifest entry inference");
+        check(options.runtime_input_json.has_value() &&
+                  *options.runtime_input_json == "{\"message\":\"hello\"}",
+              "parse_options: package run input captured");
+        check(options.llm_config_descriptor.has_value() &&
+                  *options.llm_config_descriptor == "llm.json",
+              "parse_options: package run llm config captured");
     }
 
     {

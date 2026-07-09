@@ -4001,6 +4001,26 @@ add_test(NAME ahflc.emit_summary.manifest.workflow_value_flow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.run.manifest.entry_workflow_default
+    COMMAND $<TARGET_FILE:ahflc> run
+            --manifest "${AHFL_TESTS_DIR}/integration/package_golden/ok_workflow_value_flow/ahfl.toml"
+            --sysroot "${PROJECT_SOURCE_DIR}"
+            --input "{\"_type\":\"ir::workflow_value_flow::Request\",\"value\":\"package-entry\"}"
+            --llm-config "${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json"
+)
+set_tests_properties(ahflc.run.manifest.entry_workflow_default PROPERTIES
+    PASS_REGULAR_EXPRESSION "Workflow: ir::workflow_value_flow::ValueFlowWorkflow"
+)
+
+add_test(NAME ahflc.run.default_manifest.entry_workflow_default
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DWORKING_DIRECTORY=${AHFL_TESTS_DIR}/integration/package_golden/ok_workflow_value_flow"
+            "-DAHFLC_ARGS=run\;--sysroot\;${PROJECT_SOURCE_DIR}\;--input\;{\"_type\":\"ir::workflow_value_flow::Request\",\"value\":\"package-entry\"}\;--llm-config\;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json"
+            "-DEXPECTED_REGEX=Workflow: ir::workflow_value_flow::ValueFlowWorkflow"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunCommandRegex.cmake"
+)
+
 add_test(NAME ahflc.emit_smv.decreases.ok_decreases_length_self
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

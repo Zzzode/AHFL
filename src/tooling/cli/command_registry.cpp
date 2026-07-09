@@ -93,7 +93,7 @@ emit_command(CommandKind kind,
 
 constexpr CommandSpec kCommandSpecs[] = {
     command(CommandKind::Check, "check", 0),
-    command(CommandKind::RunWorkflow, "run", 109, 106),
+    command(CommandKind::RunWorkflow, "run", 109, 106, kNotListed, 51),
     command(CommandKind::Format, "fmt", kNotListed, 109),
     command(CommandKind::InitSingleFile, "init-single-file"),
     routed_command(

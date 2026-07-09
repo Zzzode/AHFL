@@ -14,6 +14,7 @@
 #include <optional>
 #include <ostream>
 #include <span>
+#include <string>
 #include <string_view>
 
 namespace ahfl::package_graph {
@@ -81,6 +82,7 @@ class CliDriver final {
     [[nodiscard]] ExitCode run_analysis(const InputT &input, MaybeSourceFile source_file);
 
     CommandLineOptions options_;
+    std::string default_manifest_path_;
     std::optional<CommandKind> effective_command_;
     ahfl::Frontend frontend_;
     std::optional<ahfl::handoff::PackageMetadata> package_metadata_;

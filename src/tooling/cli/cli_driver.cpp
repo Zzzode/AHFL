@@ -738,6 +738,35 @@ selected_action_supports_package_graph_input(const CommandLineOptions &options,
            options.positional.size() == 1;
 }
 
+[[nodiscard]] bool command_can_default_to_cwd_manifest(const CommandLineOptions &options,
+                                                       std::optional<CommandKind> command) {
+    return command != CommandKind::Format && !is_public_api_diff_command(command) &&
+           (selected_action_supports_package_graph_input(options, command) ||
+            is_package_graph_descriptor_dump(command)) &&
+           !options.manifest_path.has_value() && !options.workspace_manifest_path.has_value() &&
+           options.positional.empty();
+}
+
+void apply_default_cwd_manifest(CommandLineOptions &options,
+                                std::optional<CommandKind> command,
+                                std::string &default_manifest_path) {
+    if (!command_can_default_to_cwd_manifest(options, command)) {
+        return;
+    }
+
+    std::error_code error;
+    const auto current_directory = std::filesystem::current_path(error);
+    if (error) {
+        return;
+    }
+    const auto manifest_path = normalize_manifest_path(current_directory / "ahfl.toml");
+    const auto manifest_exists = std::filesystem::is_regular_file(manifest_path, error);
+    if (!error && manifest_exists) {
+        default_manifest_path = manifest_path.generic_string();
+        options.manifest_path = default_manifest_path;
+    }
+}
+
 [[nodiscard]] bool workspace_package_is_selected(const CommandLineOptions &options,
                                                  std::optional<CommandKind> command) {
     return options.package_name.has_value() && uses_package_graph_workspace(options, command);
@@ -1720,6 +1749,7 @@ ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
     diag_consumer_ = make_diagnostic_consumer("text", std::cerr);
 
     effective_command_ = infer_effective_command(options_);
+    apply_default_cwd_manifest(options_, effective_command_, default_manifest_path_);
 
     if (auto status = validate_options(); status.has_value()) {
         return *status;
@@ -2271,8 +2301,12 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (effective_command_ == CommandKind::RunWorkflow && !options_.workflow_name.has_value()) {
-        std::cerr << "error: run requires --workflow\n";
+    const bool run_can_use_package_entry_workflow =
+        effective_command_ == CommandKind::RunWorkflow &&
+        (options_.manifest_path.has_value() || package_graph_workspace);
+    if (effective_command_ == CommandKind::RunWorkflow && !options_.workflow_name.has_value() &&
+        !run_can_use_package_entry_workflow) {
+        std::cerr << "error: run requires --workflow or package workflow entry\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -3482,10 +3516,25 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
         build_memory_report_snapshot(input, source_file, type_check_result, ir_program);
 
     if (effective_command_ == CommandKind::RunWorkflow) {
-        if (options_.optimize_requested) {
-            run_requested_semantic_optimization_pipeline(ir_program, options_, std::cerr);
+        auto run_options = options_;
+        if (!run_options.workflow_name.has_value()) {
+            if (package_metadata_ptr == nullptr ||
+                !package_metadata_ptr->entry_target.has_value()) {
+                std::cerr << "error: run requires --workflow or package workflow entry\n";
+                return ExitCode::UsageError;
+            }
+            const auto &entry = *package_metadata_ptr->entry_target;
+            if (entry.kind != ahfl::handoff::ExecutableKind::Workflow) {
+                std::cerr << "error: run package entry '" << entry.canonical_name
+                          << "' is an agent; target entry must be a workflow\n";
+                return ExitCode::UsageError;
+            }
+            run_options.workflow_name = std::string_view{entry.canonical_name};
         }
-        const auto status = run_workflow_with_llm(ir_program, options_, std::cout, std::cerr);
+        if (options_.optimize_requested) {
+            run_requested_semantic_optimization_pipeline(ir_program, run_options, std::cerr);
+        }
+        const auto status = run_workflow_with_llm(ir_program, run_options, std::cout, std::cerr);
         return status == 0 ? ExitCode::Success : ExitCode::CompileError;
     }
 
