@@ -20,6 +20,49 @@ REQUIRED_GATES = (
     "test_strategy",
 )
 
+REQUIRED_BENCHMARK_SCENARIOS = (
+    "small_unary",
+    "large_structured_response",
+    "high_concurrency",
+)
+
+REQUIRED_BENCHMARK_TRANSPORTS = (
+    "grpc_json_transcoding",
+    "native_grpc",
+)
+
+
+def benchmark_artifact() -> dict[str, object]:
+    runs: list[dict[str, object]] = []
+    for scenario in REQUIRED_BENCHMARK_SCENARIOS:
+        for transport in REQUIRED_BENCHMARK_TRANSPORTS:
+            runs.append(
+                {
+                    "scenario": scenario,
+                    "transport": transport,
+                    "metrics": {
+                        "p50_latency_ms": 1.0,
+                        "p95_latency_ms": 2.0,
+                        "p99_latency_ms": 3.0,
+                        "throughput_qps": 1000.0,
+                        "cpu_time_ms": 10.0,
+                        "peak_rss_bytes": 1048576,
+                        "serialized_payload_bytes": 128,
+                    },
+                }
+            )
+    return {
+        "schema": "ahfl.native_grpc_benchmark.v1",
+        "rfc": "0004-native-grpc-transport",
+        "environment": {
+            "platform": "test-platform",
+            "runner": "transport_gate_smoke",
+            "cpu_model": "test-cpu",
+            "timestamp": "2026-07-08T00:00:00Z",
+        },
+        "runs": runs,
+    }
+
 
 def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
     refs: set[str] = set()
@@ -42,6 +85,12 @@ def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
     return refs
 
 
+def artifact_payload(ref: str) -> dict[str, object]:
+    if ref.endswith("/benchmark.json"):
+        return benchmark_artifact()
+    return {"artifact": ref}
+
+
 def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
     (root / "docs" / "rfcs").mkdir(parents=True)
     (root / "docs" / "plans").mkdir(parents=True)
@@ -54,7 +103,7 @@ def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
     for ref in collect_artifact_refs(evidence):
         artifact = root / ref
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_text(json.dumps({"artifact": ref}, indent=2) + "\n", encoding="utf-8")
+        artifact.write_text(json.dumps(artifact_payload(ref), indent=2) + "\n", encoding="utf-8")
 
 
 def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None = None) -> dict[str, object]:
@@ -170,6 +219,30 @@ def test_complete_gate_rejects_missing_repo_artifact(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "does not exist")
 
 
+def test_complete_benchmark_rejects_invalid_artifact_schema(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "benchmark.json").write_text(
+            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+        )
+        assert_fails(run_checker(checker, root), "benchmark artifact schema")
+
+
+def test_complete_benchmark_requires_local_structured_artifact(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    benchmark_gate = gates["benchmark"]
+    assert isinstance(benchmark_gate, dict)
+    benchmark_gate["evidence"] = ["https://example.invalid/native-grpc-benchmark.json"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        assert_fails(run_checker(checker, root), "repository-local JSON artifact")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: transport_gate_smoke.py <check-native-grpc-gate.py>", file=sys.stderr)
@@ -181,6 +254,8 @@ def main() -> int:
     test_implementing_allows_markers_after_complete_evidence(checker)
     test_complete_gate_rejects_placeholder_evidence(checker)
     test_complete_gate_rejects_missing_repo_artifact(checker)
+    test_complete_benchmark_rejects_invalid_artifact_schema(checker)
+    test_complete_benchmark_requires_local_structured_artifact(checker)
     print("transport gate smoke tests passed")
     return 0
 

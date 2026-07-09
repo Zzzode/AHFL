@@ -21,11 +21,30 @@ ACCEPTED_STATUSES = {"accepted"}
 IMPLEMENTATION_ALLOWED_STATUSES = {"implementing", "implemented", "stabilized"}
 NO_GO_STATUSES = {"postponed", "rejected", "out-of-scope"}
 EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
+BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark.v1"
 EXPECTED_RFC = "0004-native-grpc-transport"
 GATE_STATUSES = {"missing", "planned", "complete", "not_applicable"}
 DECISION_STATES = {"pending", "go", "no-go"}
 STALE_EVIDENCE_RE = re.compile(r"\b(?:TBD|TODO|DEFERRED|PLACEHOLDER)\b", re.IGNORECASE)
 ALLOWED_REMOTE_EVIDENCE_SCHEMES = {"http", "https"}
+REQUIRED_BENCHMARK_SCENARIOS = {
+    "small_unary",
+    "large_structured_response",
+    "high_concurrency",
+}
+REQUIRED_BENCHMARK_TRANSPORTS = {
+    "grpc_json_transcoding",
+    "native_grpc",
+}
+REQUIRED_BENCHMARK_METRICS = {
+    "p50_latency_ms",
+    "p95_latency_ms",
+    "p99_latency_ms",
+    "throughput_qps",
+    "cpu_time_ms",
+    "peak_rss_bytes",
+    "serialized_payload_bytes",
+}
 REQUIRED_GATES: tuple[str, ...] = (
     "runtime_owner_decision",
     "benchmark",
@@ -257,6 +276,100 @@ def validate_artifact_reference(root: Path, ref: str, context: str) -> list[str]
     return failures
 
 
+def local_artifact_path(root: Path, ref: str) -> Path | None:
+    parsed = urlparse(ref)
+    if parsed.scheme:
+        return None
+    candidate = Path(ref)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return None
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    return resolved
+
+
+def validate_numeric_metric(value: object, path: str) -> list[str]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return [f"{path} must be a number"]
+    if value < 0:
+        return [f"{path} must be non-negative"]
+    return []
+
+
+def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid benchmark JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: benchmark artifact must be a JSON object"]
+
+    failures: list[str] = []
+    if data.get("schema") != BENCHMARK_SCHEMA:
+        failures.append(f"{rel}: benchmark artifact schema must be {BENCHMARK_SCHEMA!r}")
+    if data.get("rfc") != EXPECTED_RFC:
+        failures.append(f"{rel}: benchmark artifact rfc must be {EXPECTED_RFC!r}")
+
+    environment = data.get("environment")
+    if not isinstance(environment, dict):
+        failures.append(f"{rel}: benchmark artifact environment must be an object")
+    else:
+        for field in ("platform", "runner", "cpu_model", "timestamp"):
+            value = environment.get(field)
+            if not isinstance(value, str) or not value:
+                failures.append(f"{rel}: benchmark environment.{field} must be a non-empty string")
+
+    runs = data.get("runs")
+    if not isinstance(runs, list) or not runs:
+        failures.append(f"{rel}: benchmark artifact runs must be a non-empty array")
+        return failures
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for index, run in enumerate(runs):
+        run_path = f"{rel}: runs[{index}]"
+        if not isinstance(run, dict):
+            failures.append(f"{run_path} must be an object")
+            continue
+        scenario = run.get("scenario")
+        transport = run.get("transport")
+        if scenario not in REQUIRED_BENCHMARK_SCENARIOS:
+            failures.append(
+                f"{run_path}.scenario must be one of {sorted(REQUIRED_BENCHMARK_SCENARIOS)}"
+            )
+        if transport not in REQUIRED_BENCHMARK_TRANSPORTS:
+            failures.append(
+                f"{run_path}.transport must be one of {sorted(REQUIRED_BENCHMARK_TRANSPORTS)}"
+            )
+        if isinstance(scenario, str) and isinstance(transport, str):
+            seen_pairs.add((scenario, transport))
+
+        metrics = run.get("metrics")
+        if not isinstance(metrics, dict):
+            failures.append(f"{run_path}.metrics must be an object")
+            continue
+        for metric in REQUIRED_BENCHMARK_METRICS:
+            if metric not in metrics:
+                failures.append(f"{run_path}.metrics.{metric} is required")
+                continue
+            failures.extend(validate_numeric_metric(metrics[metric], f"{run_path}.metrics.{metric}"))
+
+    expected_pairs = {
+        (scenario, transport)
+        for scenario in REQUIRED_BENCHMARK_SCENARIOS
+        for transport in REQUIRED_BENCHMARK_TRANSPORTS
+    }
+    missing_pairs = sorted(expected_pairs - seen_pairs)
+    if missing_pairs:
+        failures.append(f"{rel}: benchmark artifact missing scenario/transport pairs {missing_pairs}")
+    return failures
+
+
 def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list[str]:
     failures: list[str] = []
 
@@ -274,6 +387,7 @@ def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list
         if isinstance(record, str) and record:
             failures.extend(validate_artifact_reference(root, record, "decision.record"))
 
+    complete_local_artifacts: dict[str, list[Path]] = {}
     for gate, gate_value in gates_object(evidence).items():
         if not isinstance(gate_value, dict):
             continue
@@ -285,6 +399,20 @@ def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list
         for index, ref in enumerate(evidence_refs):
             if isinstance(ref, str):
                 failures.extend(validate_artifact_reference(root, ref, f"gates.{gate}.evidence[{index}]"))
+                local_path = local_artifact_path(root, ref)
+                if local_path is not None and gate_value.get("status") == "complete":
+                    complete_local_artifacts.setdefault(gate, []).append(local_path)
+    if gate_is_complete(evidence, "benchmark"):
+        benchmark_artifacts = [
+            path for path in complete_local_artifacts.get("benchmark", []) if path.suffix == ".json"
+        ]
+        if not benchmark_artifacts:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.benchmark requires at least one "
+                f"repository-local JSON artifact with schema {BENCHMARK_SCHEMA!r}"
+            )
+        for artifact in benchmark_artifacts:
+            failures.extend(validate_benchmark_artifact(root, artifact))
     return failures
 
 

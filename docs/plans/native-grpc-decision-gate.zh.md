@@ -38,6 +38,15 @@ Benchmark 至少包含：
 
 Benchmark 必须固定输入、输出 schema 和 mock server 行为；不得依赖外部 provider 或公网延迟。
 
+`benchmark` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_benchmark.v1`。该 artifact 至少包含：
+
+1. `environment.platform`、`environment.runner`、`environment.cpu_model`、`environment.timestamp`。
+2. `runs[]` 覆盖三类 workload：`small_unary`、`large_structured_response`、`high_concurrency`。
+3. 每类 workload 同时覆盖 `grpc_json_transcoding` 与 `native_grpc` 两个 transport。
+4. 每个 run 的 `metrics` 必须包含 `p50_latency_ms`、`p95_latency_ms`、`p99_latency_ms`、`throughput_qps`、`cpu_time_ms`、`peak_rss_bytes` 和 `serialized_payload_bytes`。
+
+远端 URL 可以作为补充证据，但不能替代这份仓库内结构化 benchmark artifact；否则 owner review 无法复核三类 workload 和两个 transport 是否真的被测过。
+
 ## Build Requirements
 
 三平台评估必须记录：
@@ -85,5 +94,6 @@ No-Go 决策必须写回 RFC0004：
 4. feature flag 策略已有 RFC 草案描述，但未实现。
 5. 仓库级机器门禁已落地：`scripts/check-native-grpc-gate.py` 会在 RFC0004 仍为 `draft` 时拒绝 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract；该脚本已接入 CTest 与 CI。
 6. Evidence artifact 引用门禁已落地：`complete` gate 和 Go/No-Go decision record 必须引用 `http(s)` URL 或仓库内真实存在的相对 artifact path；占位 URI、陈旧标记和路径逃逸都会 fail closed。
-7. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
-8. 因此 RFC0004 必须保持 `draft`，不能进入实现。
+7. Benchmark artifact 结构化门禁已落地：`benchmark` gate 一旦标记为 `complete`，必须引用至少一份仓库内 `ahfl.native_grpc_benchmark.v1` JSON artifact，且覆盖三类 workload、两个 transport 和完整指标集合。
+8. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
+9. 因此 RFC0004 必须保持 `draft`，不能进入实现。
