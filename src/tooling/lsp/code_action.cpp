@@ -123,6 +123,7 @@ constexpr std::string_view kCodeMatchRedundantPattern = "typecheck.MATCH_REDUNDA
 constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF_LET_ELSE";
 constexpr std::string_view kCodeInvalidRangePattern = "typecheck.INVALID_RANGE_PATTERN";
 constexpr std::string_view kCodeMissingVariantField = "typecheck.MISSING_VARIANT_FIELD";
+constexpr std::string_view kCodeUnexpectedVariantField = "typecheck.UNEXPECTED_VARIANT_FIELD";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -890,6 +891,117 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
+[[nodiscard]] bool field_horizontal_space(char c) noexcept {
+    return c == ' ' || c == '\t';
+}
+
+[[nodiscard]] bool only_field_horizontal_space(std::string_view text) noexcept {
+    return std::all_of(text.begin(), text.end(), field_horizontal_space);
+}
+
+[[nodiscard]] bool source_safe_field_tail(std::string_view text) noexcept {
+    std::size_t cursor = 0;
+    while (cursor < text.size() && field_horizontal_space(text[cursor])) {
+        ++cursor;
+    }
+    if (cursor == text.size()) {
+        return true;
+    }
+    if (text[cursor] != ',') {
+        return false;
+    }
+    ++cursor;
+    while (cursor < text.size() && field_horizontal_space(text[cursor])) {
+        ++cursor;
+    }
+    return cursor == text.size();
+}
+
+[[nodiscard]] std::optional<Range>
+unexpected_variant_field_delete_range(const std::string &source, const LspDiagnostic &diag) {
+    const auto start = position_to_offset(source, diag.range.start);
+    const auto end = position_to_offset(source, diag.range.end);
+    if (start >= end || end > source.size()) {
+        return std::nullopt;
+    }
+    if (!source_safe_multiline_pattern_fragment(
+            std::string_view(source).substr(start, end - start))) {
+        return std::nullopt;
+    }
+
+    const auto line_start = source.rfind('\n', start == 0 ? 0 : start - 1);
+    const auto delete_line_start = line_start == std::string::npos ? 0 : line_start + 1;
+    const auto line_end = source.find('\n', end);
+    const auto delete_line_end = line_end == std::string::npos ? source.size() : line_end + 1;
+    const auto suffix_end = line_end == std::string::npos ? source.size() : line_end;
+    const auto prefix =
+        std::string_view(source).substr(delete_line_start, start - delete_line_start);
+    const auto suffix = std::string_view(source).substr(end, suffix_end - end);
+    if (only_field_horizontal_space(prefix) && source_safe_field_tail(suffix)) {
+        return Range{offset_to_position(source, delete_line_start),
+                     offset_to_position(source, delete_line_end)};
+    }
+
+    std::size_t left = start;
+    while (left > 0 && field_horizontal_space(source[left - 1])) {
+        --left;
+    }
+    if (left > 0 && source[left - 1] == ',') {
+        std::size_t delete_end = end;
+        while (delete_end < source.size() && field_horizontal_space(source[delete_end])) {
+            ++delete_end;
+        }
+        return Range{offset_to_position(source, left - 1), offset_to_position(source, delete_end)};
+    }
+
+    std::size_t right = end;
+    while (right < source.size() && field_horizontal_space(source[right])) {
+        ++right;
+    }
+    if (right < source.size() && source[right] == ',') {
+        ++right;
+        while (right < source.size() && field_horizontal_space(source[right])) {
+            ++right;
+        }
+        return Range{offset_to_position(source, start), offset_to_position(source, right)};
+    }
+
+    while (right < source.size() && field_horizontal_space(source[right])) {
+        ++right;
+    }
+    return Range{offset_to_position(source, left), offset_to_position(source, right)};
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_unexpected_variant_field(const std::string &source,
+                                                                    const LspDiagnostic &diag) {
+    const auto context = single_diagnostic_data(diag, "variant_field_context");
+    const auto unexpected_field = single_diagnostic_data(diag, "unexpected_field");
+    if (!context.has_value() || *context != "pattern" || !unexpected_field.has_value() ||
+        !source_safe_identifier(*unexpected_field)) {
+        return std::nullopt;
+    }
+
+    const auto delete_range = unexpected_variant_field_delete_range(source, diag);
+    if (!delete_range.has_value()) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range = *delete_range;
+    edit.new_text = "";
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Remove unexpected variant field `" + *unexpected_field + "`";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 [[nodiscard]] std::optional<CodeAction> qf_match_unreachable_arm(const std::string &source,
                                                                  const LspDiagnostic &diag) {
     const auto arm_line = diag.range.start.line;
@@ -1517,6 +1629,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeMissingVariantField) {
             if (auto a = qf_missing_variant_field(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeUnexpectedVariantField) {
+            if (auto a = qf_unexpected_variant_field(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

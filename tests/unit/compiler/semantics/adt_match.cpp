@@ -2347,6 +2347,18 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "UNEXPECTED_VARIANT_FIELD"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "UNEXPECTED_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("unexpected_field");
+    const auto context = diagnostic->data.find("variant_field_context");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    REQUIRE(context != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"extra"});
+    CHECK(context->second == std::vector<std::string>{"pattern"});
 }
 
 TEST_CASE("tuple pattern on struct variant reports INVALID_ENUM_VARIANT_SHAPE") {
@@ -2479,6 +2491,18 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "UNEXPECTED_VARIANT_FIELD"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "UNEXPECTED_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("unexpected_field");
+    const auto context = diagnostic->data.find("variant_field_context");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    REQUIRE(context != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"extra"});
+    CHECK(context->second == std::vector<std::string>{"constructor"});
 }
 
 // ---------------------------------------------------------------------------

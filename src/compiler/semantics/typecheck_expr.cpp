@@ -2725,11 +2725,20 @@ class ExpressionChecker final {
                             }
                             const auto field = variant_info->get().find_field(field_pattern->name);
                             if (!field.has_value()) {
+                                std::map<std::string, std::vector<std::string>> data;
+                                data.emplace("variant_name",
+                                             std::vector<std::string>{std::string(variant_name)});
+                                data.emplace("unexpected_field",
+                                             std::vector<std::string>{field_pattern->name});
+                                data.emplace("variant_field_context",
+                                             std::vector<std::string>{"pattern"});
                                 services_.typecheck_error_here(
                                     error_codes::typecheck::UnexpectedVariantField,
                                     messages::typecheck::UnexpectedVariantField.format_with(
                                         std::string(variant_name), field_pattern->name),
-                                    field_pattern->range);
+                                    field_pattern->range,
+                                    {},
+                                    std::move(data));
                                 continue;
                             }
                             matched_fields.insert(field_pattern->name);
@@ -3146,11 +3155,17 @@ class ExpressionChecker final {
             }
             const auto field = variant->get().find_field(field_init->field_name);
             if (!field.has_value()) {
+                std::map<std::string, std::vector<std::string>> data;
+                data.emplace("variant_name", std::vector<std::string>{variant_name});
+                data.emplace("unexpected_field", std::vector<std::string>{field_init->field_name});
+                data.emplace("variant_field_context", std::vector<std::string>{"constructor"});
                 services_.typecheck_error_here(
                     error_codes::typecheck::UnexpectedVariantField,
                     messages::typecheck::UnexpectedVariantField.format_with(variant_name,
                                                                             field_init->field_name),
-                    field_init->range);
+                    field_init->range,
+                    {},
+                    std::move(data));
                 continue;
             }
             const auto expected = is_generic

@@ -2137,6 +2137,11 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 
 **触发条件**：struct variant pattern 或 struct-form variant constructor 使用了未声明字段。
 
+**Structured data**：
+- `variant_name`：出现多余字段的 struct-form enum variant 名称。
+- `unexpected_field`：多余字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
+- `variant_field_context`：字段出现位置，当前取值为 `pattern` 或 `constructor`。LSP 自动删除 quick fix 只在 `pattern` 上启用；constructor 场景需要用户确认是删除字段还是修改构造数据。
+
 **最小复现**：
 ```ahfl
 module repro;
@@ -2149,6 +2154,7 @@ const p: Packet = Packet::Data { code: 1, extra: 2 };
 **常见修复**：
 - 删除多余字段，或在 variant 声明中正式添加该字段。
 - 检查字段拼写和大小写。
+- 支持 LSP quick fix 的客户端可在 struct variant pattern 场景应用 `Remove unexpected variant field`，source-safe 删除单行或多行 destructuring 中的多余字段。
 
 **Related codes**：`MISSING_VARIANT_FIELD`、`DUPLICATE_VARIANT_FIELD`、`UNKNOWN_FIELD`。
 
