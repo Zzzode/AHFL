@@ -27,6 +27,8 @@ REQUIRED_BENCHMARK_SCENARIOS = (
 )
 
 REQUIRED_BENCHMARK_TRANSPORTS = (
+    "http_json",
+    "http2_json_optimized",
     "grpc_json_transcoding",
     "native_grpc",
 )
@@ -136,7 +138,7 @@ def feature_flag_artifact() -> dict[str, object]:
         "schema": "ahfl.native_grpc_feature_flag.v1",
         "rfc": "0004-native-grpc-transport",
         "build_flag": "AHFL_ENABLE_" + "GRPC_NATIVE",
-        "runtime_config": "runtime.transport.native_grpc",
+        "runtime_config": "runtime.transport." + "native_grpc",
         "default_enabled": False,
         "disabled_diagnostics": ["runtime.grpc_native.disabled"],
         "release_evidence_gate": "ahfl.runtime.native_grpc_release_evidence",
@@ -215,11 +217,17 @@ def artifact_payload(ref: str) -> dict[str, object]:
     return {"artifact": ref}
 
 
-def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
+def write_repo(
+    root: Path,
+    *,
+    status: str,
+    evidence: dict[str, object],
+    updated: str = "2026-07-08",
+) -> None:
     (root / "docs" / "rfcs").mkdir(parents=True)
     (root / "docs" / "plans").mkdir(parents=True)
     (root / "docs" / "rfcs" / "0004-native-grpc-transport.zh.md").write_text(
-        f"---\nstatus: {status}\n---\n\n# RFC0004\n", encoding="utf-8"
+        f"---\nstatus: {status}\nupdated: {updated}\n---\n\n# RFC0004\n", encoding="utf-8"
     )
     (root / "docs" / "plans" / "native-grpc-decision-evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -244,7 +252,7 @@ def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None
     return {
         "schema": "ahfl.native_grpc_decision_evidence.v1",
         "rfc": "0004-native-grpc-transport",
-        "updated_at": "2026-07-08",
+        "updated_at": "2026-07-08T00:00:00Z",
         "decision": {
             "state": decision_state,
             "owner": "runtime-owner" if decision_state != "pending" else "",
@@ -287,6 +295,49 @@ def test_draft_rejects_implementation_markers(checker: Path) -> None:
             "option(AHFL_ENABLE_" + "GRPC_NATIVE \"test\" OFF)\n", encoding="utf-8"
         )
         assert_fails(run_checker(checker, root), "native gRPC build flag")
+
+
+def test_draft_rejects_json_build_flag_marker(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=evidence())
+        (root / "CMakePresets.json").write_text(
+            json.dumps(
+                {
+                    "version": 8,
+                    "configurePresets": [
+                        {
+                            "name": "native",
+                            "cacheVariables": {
+                                "AHFL_ENABLE_" + "GRPC_NATIVE": "ON",
+                            },
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "native gRPC build flag")
+
+
+def test_draft_rejects_toml_runtime_config_marker(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=evidence())
+        (root / "ahfl.toml").write_text(
+            "[runtime.transport]\n" + "native_" + "grpc = true\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "native gRPC runtime config")
+
+
+def test_rejects_unknown_rfc_status(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="almost_accepted", evidence=evidence())
+        assert_fails(run_checker(checker, root), "status must be one of")
 
 
 def test_accepted_requires_owner_decision(checker: Path) -> None:
@@ -345,6 +396,142 @@ def test_rejects_unknown_gate_field(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "gates.benchmark contains unknown field")
 
 
+def test_rejects_non_utc_updated_at(checker: Path) -> None:
+    fixture = evidence()
+    fixture["updated_at"] = "2026-07-08"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "updated_at must be a UTC timestamp")
+
+
+def test_rejects_calendar_invalid_updated_at(checker: Path) -> None:
+    fixture = evidence()
+    fixture["updated_at"] = "2026-02-30T00:00:00Z"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "updated_at must be a valid UTC timestamp")
+
+
+def test_rejects_stale_decision_evidence_for_updated_rfc(checker: Path) -> None:
+    fixture = evidence()
+    fixture["updated_at"] = "2026-07-08T00:00:00Z"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture, updated="2026-07-09")
+        assert_fails(run_checker(checker, root), "updated_at date must be on or after")
+
+
+def test_rejects_non_standard_json_constant_in_decision_evidence(checker: Path) -> None:
+    fixture = evidence()
+    fixture["updated_at"] = float("nan")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        result = run_checker(checker, root)
+        assert_fails(result, "invalid decision evidence JSON")
+        assert_fails(result, "non-standard JSON constant 'NaN' is not allowed")
+
+
+def test_rejects_pending_decision_with_signoff_fields(checker: Path) -> None:
+    fixture = evidence()
+    decision = fixture["decision"]
+    assert isinstance(decision, dict)
+    decision["owner"] = "runtime-owner"
+    decision["signed_off_at"] = "2026-07-08T00:00:00Z"
+    decision["record"] = "docs/plans/evidence/decision.json"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "decision.owner must be an empty string")
+
+
+def test_rejects_go_decision_with_invalid_signed_off_at(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    decision = fixture["decision"]
+    assert isinstance(decision, dict)
+    decision["signed_off_at"] = "2026-07-08"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "decision.signed_off_at must be a UTC timestamp")
+
+
+def test_rejects_go_decision_without_owner_gate(checker: Path) -> None:
+    fixture = evidence(decision_state="go")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "requires a complete runtime_owner_decision gate")
+
+
+def test_rejects_pending_decision_with_complete_owner_gate(checker: Path) -> None:
+    fixture = evidence(complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "cannot have a complete runtime_owner_decision gate")
+
+
+def test_rejects_duplicate_gate_evidence(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    runtime_gate = gates["runtime_owner_decision"]
+    assert isinstance(runtime_gate, dict)
+    runtime_gate["evidence"] = [
+        "docs/plans/evidence/runtime_owner_decision.json",
+        "docs/plans/evidence/runtime_owner_decision.json",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "must not contain duplicate entries")
+
+
+def test_missing_gate_rejects_evidence(checker: Path) -> None:
+    fixture = evidence()
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    benchmark_gate = gates["benchmark"]
+    assert isinstance(benchmark_gate, dict)
+    benchmark_gate["evidence"] = ["docs/plans/evidence/benchmark.json"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "must be empty when status is 'missing'")
+
+
+def test_complete_gate_rejects_empty_evidence(checker: Path) -> None:
+    fixture = evidence()
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    benchmark_gate = gates["benchmark"]
+    assert isinstance(benchmark_gate, dict)
+    benchmark_gate["status"] = "complete"
+    benchmark_gate["evidence"] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "must be non-empty when status is 'complete'")
+
+
+def test_incomplete_gate_statuses_reject_evidence(checker: Path) -> None:
+    for status in ("planned", "not_applicable"):
+        fixture = evidence()
+        gates = fixture["gates"]
+        assert isinstance(gates, dict)
+        benchmark_gate = gates["benchmark"]
+        assert isinstance(benchmark_gate, dict)
+        benchmark_gate["status"] = status
+        benchmark_gate["evidence"] = ["docs/plans/evidence/benchmark.json"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_repo(root, status="draft", evidence=fixture)
+            assert_fails(run_checker(checker, root), f"must be empty when status is {status!r}")
+
+
 def test_accepted_allows_structured_owner_decision(checker: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -354,6 +541,17 @@ def test_accepted_allows_structured_owner_decision(checker: Path) -> None:
             evidence=evidence(decision_state="go", complete_gates={"runtime_owner_decision"}),
         )
         assert_passes(run_checker(checker, root))
+
+
+def test_draft_rejects_signed_owner_decision(checker: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(
+            root,
+            status="draft",
+            evidence=evidence(decision_state="go", complete_gates={"runtime_owner_decision"}),
+        )
+        assert_fails(run_checker(checker, root), "status 'draft' requires decision.state == 'pending'")
 
 
 def test_implementing_requires_complete_gate_evidence(checker: Path) -> None:
@@ -391,7 +589,65 @@ def test_complete_gate_rejects_placeholder_evidence(checker: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         write_repo(root, status="accepted", evidence=fixture)
-        assert_fails(run_checker(checker, root), "http(s) URL or an existing repository-relative artifact path")
+        assert_fails(run_checker(checker, root), "absolute https URL without credentials or fragments")
+
+
+def test_rejects_http_remote_evidence_reference(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    runtime_gate = gates["runtime_owner_decision"]
+    assert isinstance(runtime_gate, dict)
+    runtime_gate["evidence"] = ["http://example.invalid/native-grpc-owner-decision.json"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "absolute https URL without credentials or fragments")
+
+
+def test_rejects_incomplete_https_remote_evidence_reference(checker: Path) -> None:
+    bad_refs = (
+        "https://example.invalid",
+        "https://user@example.invalid/native-grpc-owner-decision.json",
+        "https://example.invalid/native-grpc-owner-decision.json#section",
+    )
+    for ref in bad_refs:
+        fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+        gates = fixture["gates"]
+        assert isinstance(gates, dict)
+        runtime_gate = gates["runtime_owner_decision"]
+        assert isinstance(runtime_gate, dict)
+        runtime_gate["evidence"] = [ref]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_repo(root, status="accepted", evidence=fixture)
+            assert_fails(run_checker(checker, root), "absolute https URL without credentials or fragments")
+
+
+def test_rejects_non_posix_local_evidence_reference(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    runtime_gate = gates["runtime_owner_decision"]
+    assert isinstance(runtime_gate, dict)
+    runtime_gate["evidence"] = [r"docs\plans\evidence\runtime_owner_decision.json"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "must use POSIX path separators")
+
+
+def test_rejects_control_character_evidence_reference(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    runtime_gate = gates["runtime_owner_decision"]
+    assert isinstance(runtime_gate, dict)
+    runtime_gate["evidence"] = ["docs/plans/evidence/runtime_owner_decision.json\n"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "must not contain control characters")
 
 
 def test_complete_gate_rejects_missing_repo_artifact(checker: Path) -> None:
@@ -452,6 +708,25 @@ def test_complete_owner_decision_rejects_condition_field_mismatch(checker: Path)
         )
         assert_fails(run_checker(checker, root), "only allowed for no-go decisions")
 
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        artifact = owner_decision_artifact()
+        artifact["required_before_implementation"] = [
+            "benchmark",
+            "benchmark",
+            "unknown_gate",
+        ]
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(artifact, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        result = run_checker(checker, root)
+        assert_fails(result, "must not contain duplicate entries")
+        assert_fails(result, "contains unknown gates")
+        assert_fails(result, "missing gates")
+
     fixture = evidence(decision_state="no-go", complete_gates={"runtime_owner_decision"})
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -501,6 +776,56 @@ def test_complete_benchmark_requires_local_structured_artifact(checker: Path) ->
         assert_fails(run_checker(checker, root), "repository-local JSON artifact")
 
 
+def test_complete_benchmark_rejects_invalid_environment_timestamp(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "benchmark.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["environment"]["timestamp"] = "2026-07-08"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "benchmark environment.timestamp must be a UTC timestamp")
+
+
+def test_complete_benchmark_rejects_calendar_invalid_environment_timestamp(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "benchmark.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["environment"]["timestamp"] = "2026-02-30T00:00:00Z"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "benchmark environment.timestamp must be a valid UTC timestamp")
+
+
+def test_complete_benchmark_rejects_non_standard_metric_constant(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "benchmark.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["runs"][0]["metrics"]["p95_latency_ms"] = float("nan")
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        result = run_checker(checker, root)
+        assert_fails(result, "invalid benchmark JSON")
+        assert_fails(result, "non-standard JSON constant 'NaN' is not allowed")
+
+
+def test_complete_benchmark_rejects_duplicate_scenario_transport_pair(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "benchmark.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["runs"][1] = dict(data["runs"][0])
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "duplicates benchmark scenario/transport pair")
+
+
 def test_complete_build_matrix_rejects_invalid_artifact_schema(checker: Path) -> None:
     fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
     with tempfile.TemporaryDirectory() as tmp:
@@ -510,6 +835,150 @@ def test_complete_build_matrix_rejects_invalid_artifact_schema(checker: Path) ->
             json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
         )
         assert_fails(run_checker(checker, root), "ahfl.native_grpc_build_matrix.v1")
+
+
+def test_complete_build_matrix_rejects_duplicate_platform(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "build_matrix.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["platforms"][1] = dict(data["platforms"][0])
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "duplicates build matrix platform")
+
+
+def test_complete_feature_flag_rejects_duplicate_disabled_diagnostics(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "feature_flag.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["disabled_diagnostics"] = [
+            "runtime.grpc_native.disabled",
+            "runtime.grpc_native.disabled",
+        ]
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "disabled_diagnostics must not contain duplicate entries")
+
+
+def test_complete_feature_flag_rejects_wrong_runtime_config(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "feature_flag.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["runtime_config"] = "runtime.transport.grpc_native"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(
+            run_checker(checker, root),
+            "runtime_config must be 'runtime.transport." + "native_grpc'",
+        )
+
+
+def test_complete_feature_flag_rejects_wrong_release_evidence_gate(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "feature_flag.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["release_evidence_gate"] = "runtime.grpc_native.release"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(
+            run_checker(checker, root),
+            "release_evidence_gate must be 'ahfl.runtime.native_grpc_release_evidence'",
+        )
+
+
+def test_complete_feature_flag_rejects_unscoped_disabled_diagnostic(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "feature_flag.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["disabled_diagnostics"] = ["runtime.transport.disabled"]
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "must start with 'runtime.grpc_native.'")
+
+
+def test_complete_fallback_semantics_rejects_duplicate_scenario(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "fallback_semantics.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["scenarios"][1] = dict(data["scenarios"][0])
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "duplicates fallback scenario")
+
+
+def test_complete_fallback_semantics_rejects_non_json_fallback_transport(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "fallback_semantics.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["scenarios"][0]["fallback_transport"] = "native_grpc"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "fallback_transport must be one of")
+
+
+def test_complete_fallback_semantics_rejects_fail_open_scenario(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "fallback_semantics.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["scenarios"][0]["fail_closed"] = False
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "fail_closed must be true")
+
+
+def test_complete_fallback_semantics_rejects_unscoped_diagnostic(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "fallback_semantics.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["scenarios"][0]["diagnostic"] = "runtime.transport.timeout"
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "diagnostic must start with 'runtime.grpc_native.'")
+
+
+def test_complete_test_strategy_rejects_duplicate_test_names(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "test_strategy.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["coverage"][0]["tests"] = [
+            "ahfl.runtime.grpc_native.unit",
+            "ahfl.runtime.grpc_native.unit",
+        ]
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "coverage[0].tests must not contain duplicate entries")
+
+
+def test_complete_test_strategy_rejects_duplicate_coverage_area(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        artifact = root / "docs" / "plans" / "evidence" / "test_strategy.json"
+        data = json.loads(artifact.read_text(encoding="utf-8"))
+        data["coverage"][1] = dict(data["coverage"][0])
+        artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        assert_fails(run_checker(checker, root), "duplicates test coverage area")
 
 
 def test_complete_structured_artifacts_reject_unknown_fields(checker: Path) -> None:
@@ -546,15 +1015,35 @@ def main() -> int:
         return 2
     checker = Path(sys.argv[1]).resolve()
     test_draft_rejects_implementation_markers(checker)
+    test_draft_rejects_json_build_flag_marker(checker)
+    test_draft_rejects_toml_runtime_config_marker(checker)
+    test_rejects_unknown_rfc_status(checker)
     test_accepted_requires_owner_decision(checker)
     test_rejects_unknown_gate_name(checker)
     test_rejects_unknown_top_level_field(checker)
     test_rejects_unknown_decision_field(checker)
     test_rejects_unknown_gate_field(checker)
+    test_rejects_non_utc_updated_at(checker)
+    test_rejects_calendar_invalid_updated_at(checker)
+    test_rejects_stale_decision_evidence_for_updated_rfc(checker)
+    test_rejects_non_standard_json_constant_in_decision_evidence(checker)
+    test_rejects_pending_decision_with_signoff_fields(checker)
+    test_rejects_go_decision_with_invalid_signed_off_at(checker)
+    test_rejects_go_decision_without_owner_gate(checker)
+    test_rejects_pending_decision_with_complete_owner_gate(checker)
+    test_rejects_duplicate_gate_evidence(checker)
+    test_missing_gate_rejects_evidence(checker)
+    test_complete_gate_rejects_empty_evidence(checker)
+    test_incomplete_gate_statuses_reject_evidence(checker)
     test_accepted_allows_structured_owner_decision(checker)
+    test_draft_rejects_signed_owner_decision(checker)
     test_implementing_requires_complete_gate_evidence(checker)
     test_implementing_allows_markers_after_complete_evidence(checker)
     test_complete_gate_rejects_placeholder_evidence(checker)
+    test_rejects_http_remote_evidence_reference(checker)
+    test_rejects_incomplete_https_remote_evidence_reference(checker)
+    test_rejects_non_posix_local_evidence_reference(checker)
+    test_rejects_control_character_evidence_reference(checker)
     test_complete_gate_rejects_missing_repo_artifact(checker)
     test_complete_owner_decision_rejects_invalid_artifact_schema(checker)
     test_complete_owner_decision_rejects_decision_mismatch(checker)
@@ -563,7 +1052,22 @@ def main() -> int:
     test_rejected_allows_structured_no_go_owner_decision(checker)
     test_complete_benchmark_rejects_invalid_artifact_schema(checker)
     test_complete_benchmark_requires_local_structured_artifact(checker)
+    test_complete_benchmark_rejects_invalid_environment_timestamp(checker)
+    test_complete_benchmark_rejects_calendar_invalid_environment_timestamp(checker)
+    test_complete_benchmark_rejects_non_standard_metric_constant(checker)
+    test_complete_benchmark_rejects_duplicate_scenario_transport_pair(checker)
     test_complete_build_matrix_rejects_invalid_artifact_schema(checker)
+    test_complete_build_matrix_rejects_duplicate_platform(checker)
+    test_complete_feature_flag_rejects_duplicate_disabled_diagnostics(checker)
+    test_complete_feature_flag_rejects_wrong_runtime_config(checker)
+    test_complete_feature_flag_rejects_wrong_release_evidence_gate(checker)
+    test_complete_feature_flag_rejects_unscoped_disabled_diagnostic(checker)
+    test_complete_fallback_semantics_rejects_duplicate_scenario(checker)
+    test_complete_fallback_semantics_rejects_non_json_fallback_transport(checker)
+    test_complete_fallback_semantics_rejects_fail_open_scenario(checker)
+    test_complete_fallback_semantics_rejects_unscoped_diagnostic(checker)
+    test_complete_test_strategy_rejects_duplicate_test_names(checker)
+    test_complete_test_strategy_rejects_duplicate_coverage_area(checker)
     test_complete_structured_artifacts_reject_unknown_fields(checker)
     print("transport gate smoke tests passed")
     return 0

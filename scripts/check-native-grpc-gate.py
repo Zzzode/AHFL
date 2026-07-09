@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -17,9 +19,11 @@ DECISION_GATE_REL = Path("docs") / "plans" / "native-grpc-decision-gate.zh.md"
 DECISION_EVIDENCE_REL = Path("docs") / "plans" / "native-grpc-decision-evidence.json"
 SELF = Path(__file__).resolve()
 
+DRAFT_STATUSES = {"draft"}
 ACCEPTED_STATUSES = {"accepted"}
 IMPLEMENTATION_ALLOWED_STATUSES = {"implementing", "implemented", "stabilized"}
 NO_GO_STATUSES = {"postponed", "rejected", "out-of-scope"}
+KNOWN_RFC_STATUSES = DRAFT_STATUSES | ACCEPTED_STATUSES | IMPLEMENTATION_ALLOWED_STATUSES | NO_GO_STATUSES
 EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
 OWNER_DECISION_SCHEMA = "ahfl.native_grpc_owner_decision.v1"
 BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark.v1"
@@ -29,16 +33,28 @@ FEATURE_FLAG_SCHEMA = "ahfl.native_grpc_feature_flag.v1"
 FALLBACK_SEMANTICS_SCHEMA = "ahfl.native_grpc_fallback_semantics.v1"
 TEST_STRATEGY_SCHEMA = "ahfl.native_grpc_test_strategy.v1"
 EXPECTED_RFC = "0004-native-grpc-transport"
+EXPECTED_RUNTIME_CONFIG = "runtime.transport.native_grpc"
+EXPECTED_RELEASE_EVIDENCE_GATE = "ahfl.runtime.native_grpc_release_evidence"
+EXPECTED_FALLBACK_TRANSPORTS = {
+    "grpc_json_transcoding",
+    "http_json",
+}
+RUNTIME_GRPC_NATIVE_DIAGNOSTIC_PREFIX = "runtime.grpc_native."
 GATE_STATUSES = {"missing", "planned", "complete", "not_applicable"}
 DECISION_STATES = {"pending", "go", "no-go"}
 STALE_EVIDENCE_RE = re.compile(r"\b(?:TBD|TODO|DEFERRED|PLACEHOLDER)\b", re.IGNORECASE)
-ALLOWED_REMOTE_EVIDENCE_SCHEMES = {"http", "https"}
+CONTROL_CHARACTER_RE = re.compile(r"[\x00-\x1f\x7f]")
+ALLOWED_REMOTE_EVIDENCE_SCHEMES = {"https"}
+UTC_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+RFC_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 REQUIRED_BENCHMARK_SCENARIOS = {
     "small_unary",
     "large_structured_response",
     "high_concurrency",
 }
 REQUIRED_BENCHMARK_TRANSPORTS = {
+    "http_json",
+    "http2_json_optimized",
     "grpc_json_transcoding",
     "native_grpc",
 }
@@ -157,7 +173,9 @@ SCAN_SUFFIXES = {
     ".h",
     ".proto",
     ".py",
+    ".json",
     ".sh",
+    ".toml",
     ".yml",
     ".yaml",
     ".txt",
@@ -166,6 +184,13 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "native gRPC build flag",
         re.compile(r"\bAHFL_ENABLE_GRPC_NATIVE\b"),
+    ),
+    (
+        "native gRPC runtime config",
+        re.compile(
+            r"\bruntime\.transport\.native_grpc\b|"
+            r"\[\s*runtime\s*\.\s*transport\s*\][\s\S]{0,512}\bnative_grpc\b"
+        ),
     ),
     (
         "native gRPC C++ include",
@@ -202,6 +227,27 @@ FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+class StrictJsonConstantError(ValueError):
+    """Raised when Python's permissive JSON parser accepts non-standard constants."""
+
+
+def reject_json_constant(value: str) -> object:
+    raise StrictJsonConstantError(f"non-standard JSON constant {value!r} is not allowed")
+
+
+def load_json_strict(text: str) -> object:
+    return json.loads(text, parse_constant=reject_json_constant)
+
+
+def read_json_strict(path: Path, rel: Path | str, kind: str) -> tuple[object | None, list[str]]:
+    try:
+        return load_json_strict(path.read_text(encoding="utf-8")), []
+    except json.JSONDecodeError as exc:
+        return None, [f"{rel}:{exc.lineno}: invalid {kind} JSON: {exc.msg}"]
+    except StrictJsonConstantError as exc:
+        return None, [f"{rel}: invalid {kind} JSON: {exc}"]
+
+
 def display_path(root: Path, path: Path) -> Path:
     try:
         return path.relative_to(root)
@@ -209,7 +255,7 @@ def display_path(root: Path, path: Path) -> Path:
         return path
 
 
-def frontmatter_status(root: Path, path: Path) -> str:
+def frontmatter_value(root: Path, path: Path, field: str) -> str:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         raise RuntimeError(f"{display_path(root, path)}: missing YAML frontmatter")
@@ -217,9 +263,17 @@ def frontmatter_status(root: Path, path: Path) -> str:
     if end == -1:
         raise RuntimeError(f"{display_path(root, path)}: unterminated YAML frontmatter")
     for line in text[4:end].splitlines():
-        if line.startswith("status:"):
+        if line.startswith(f"{field}:"):
             return line.split(":", 1)[1].strip().strip("\"'")
-    raise RuntimeError(f"{display_path(root, path)}: missing status field")
+    raise RuntimeError(f"{display_path(root, path)}: missing {field} field")
+
+
+def frontmatter_status(root: Path, path: Path) -> str:
+    return frontmatter_value(root, path, "status")
+
+
+def frontmatter_updated(root: Path, path: Path) -> str:
+    return frontmatter_value(root, path, "updated")
 
 
 def relative_to_root(root: Path, path: Path) -> Path:
@@ -260,10 +314,9 @@ def read_decision_evidence(root: Path) -> tuple[dict[str, object] | None, list[s
     path = root / DECISION_EVIDENCE_REL
     if not path.exists():
         return None, [f"{DECISION_EVIDENCE_REL}: missing native gRPC decision evidence file"]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return None, [f"{DECISION_EVIDENCE_REL}:{exc.lineno}: invalid JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, DECISION_EVIDENCE_REL, "decision evidence")
+    if failures:
+        return None, failures
     if not isinstance(data, dict):
         return None, [f"{DECISION_EVIDENCE_REL}: top-level value must be an object"]
     return data, []
@@ -284,6 +337,7 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
         )
     if evidence.get("rfc") != EXPECTED_RFC:
         failures.append(f"{DECISION_EVIDENCE_REL}: rfc must be {EXPECTED_RFC!r}")
+    failures.extend(validate_utc_timestamp(evidence.get("updated_at"), f"{DECISION_EVIDENCE_REL}: updated_at"))
 
     decision = evidence.get("decision")
     if not isinstance(decision, dict):
@@ -300,6 +354,28 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
             failures.append(
                 f"{DECISION_EVIDENCE_REL}: decision.state must be one of "
                 f"{sorted(DECISION_STATES)}"
+            )
+        if state == "pending":
+            for field in ("owner", "signed_off_at", "record"):
+                failures.extend(
+                    validate_empty_string(
+                        decision.get(field),
+                        f"{DECISION_EVIDENCE_REL}: decision.{field}",
+                    )
+                )
+        elif state in {"go", "no-go"}:
+            for field in ("owner", "record"):
+                failures.extend(
+                    validate_non_empty_string(
+                        decision.get(field),
+                        f"{DECISION_EVIDENCE_REL}: decision.{field}",
+                    )
+                )
+            failures.extend(
+                validate_utc_timestamp(
+                    decision.get("signed_off_at"),
+                    f"{DECISION_EVIDENCE_REL}: decision.signed_off_at",
+                )
             )
 
     gates = evidence.get("gates")
@@ -331,15 +407,60 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
                 f"{DECISION_EVIDENCE_REL}: gates.{gate}.status must be one of "
                 f"{sorted(GATE_STATUSES)}"
             )
+        failures.extend(
+            validate_non_empty_string(
+                gate_value.get("owner"),
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.owner",
+            )
+        )
+        failures.extend(
+            validate_non_empty_string(
+                gate_value.get("notes"),
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.notes",
+            )
+        )
         evidence_refs = gate_value.get("evidence")
-        if evidence_refs is not None and (
-            not isinstance(evidence_refs, list)
-            or not all(isinstance(item, str) and item for item in evidence_refs)
+        if not isinstance(evidence_refs, list) or not all(
+            isinstance(item, str) and item for item in evidence_refs
         ):
             failures.append(
                 f"{DECISION_EVIDENCE_REL}: gates.{gate}.evidence must be a list of "
-                "non-empty strings when present"
+                "non-empty strings"
             )
+        failures.extend(
+            validate_unique_strings(
+                evidence_refs,
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.evidence",
+            )
+        )
+        if status == "missing" and isinstance(evidence_refs, list) and evidence_refs:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.evidence must be empty "
+                "when status is 'missing'"
+            )
+        if status == "complete" and isinstance(evidence_refs, list) and not evidence_refs:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.evidence must be non-empty "
+                "when status is 'complete'"
+            )
+        if status in {"planned", "not_applicable"} and isinstance(evidence_refs, list) and evidence_refs:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.{gate}.evidence must be empty "
+                f"when status is {status!r}"
+            )
+
+    decision_state = decision.get("state") if isinstance(decision, dict) else None
+    runtime_owner_complete = gate_is_complete(evidence, "runtime_owner_decision")
+    if decision_state in {"go", "no-go"} and not runtime_owner_complete:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: decision.state {decision_state!r} requires "
+            "a complete runtime_owner_decision gate with evidence"
+        )
+    if decision_state == "pending" and runtime_owner_complete:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: decision.state 'pending' cannot have a "
+            "complete runtime_owner_decision gate"
+        )
     return failures
 
 
@@ -348,14 +469,34 @@ def validate_artifact_reference(root: Path, ref: str, context: str) -> list[str]
     if STALE_EVIDENCE_RE.search(ref):
         failures.append(f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} is stale")
         return failures
+    if CONTROL_CHARACTER_RE.search(ref):
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} must not "
+            "contain control characters"
+        )
+        return failures
+    if "\\" in ref:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} must use "
+            "POSIX path separators or an https URL"
+        )
+        return failures
 
     parsed = urlparse(ref)
     if parsed.scheme:
-        if parsed.scheme in ALLOWED_REMOTE_EVIDENCE_SCHEMES and parsed.netloc:
+        if (
+            parsed.scheme in ALLOWED_REMOTE_EVIDENCE_SCHEMES
+            and parsed.netloc
+            and parsed.path not in {"", "/"}
+            and not parsed.username
+            and not parsed.password
+            and not parsed.fragment
+        ):
             return failures
         failures.append(
             f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} must be an "
-            "http(s) URL or an existing repository-relative artifact path"
+            "absolute https URL without credentials or fragments and with a non-empty "
+            "path, or an existing repository-relative artifact path"
         )
         return failures
 
@@ -385,6 +526,8 @@ def validate_artifact_reference(root: Path, ref: str, context: str) -> list[str]
 
 
 def local_artifact_path(root: Path, ref: str) -> Path | None:
+    if CONTROL_CHARACTER_RE.search(ref) or "\\" in ref:
+        return None
     parsed = urlparse(ref)
     if parsed.scheme:
         return None
@@ -404,6 +547,8 @@ def local_artifact_path(root: Path, ref: str) -> Path | None:
 def validate_numeric_metric(value: object, path: str) -> list[str]:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return [f"{path} must be a number"]
+    if not math.isfinite(value):
+        return [f"{path} must be finite"]
     if value < 0:
         return [f"{path} must be non-negative"]
     return []
@@ -415,13 +560,65 @@ def validate_non_empty_string(value: object, path: str) -> list[str]:
     return []
 
 
+def validate_empty_string(value: object, path: str) -> list[str]:
+    if value != "":
+        return [f"{path} must be an empty string"]
+    return []
+
+
+def validate_utc_timestamp(value: object, path: str) -> list[str]:
+    if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
+        return [f"{path} must be a UTC timestamp formatted as YYYY-MM-DDTHH:MM:SSZ"]
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return [f"{path} must be a valid UTC timestamp formatted as YYYY-MM-DDTHH:MM:SSZ"]
+    return []
+
+
+def validate_evidence_freshness(evidence: dict[str, object], rfc_updated: str) -> list[str]:
+    if not RFC_DATE_RE.fullmatch(rfc_updated):
+        return [f"{RFC0004_REL}: updated must be a date formatted as YYYY-MM-DD"]
+    updated_at = evidence.get("updated_at")
+    if not isinstance(updated_at, str) or not UTC_TIMESTAMP_RE.fullmatch(updated_at):
+        return []
+    try:
+        evidence_date = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ").date()
+        rfc_date = datetime.strptime(rfc_updated, "%Y-%m-%d").date()
+    except ValueError:
+        return []
+    if evidence_date < rfc_date:
+        return [
+            f"{DECISION_EVIDENCE_REL}: updated_at date must be on or after "
+            f"{RFC0004_REL} updated date {rfc_updated!r}"
+        ]
+    return []
+
+
 def validate_string_list(value: object, path: str) -> list[str]:
     if not isinstance(value, list) or not value:
         return [f"{path} must be a non-empty array"]
     failures: list[str] = []
     for index, item in enumerate(value):
         failures.extend(validate_non_empty_string(item, f"{path}[{index}]"))
+    failures.extend(validate_unique_strings(value, path))
     return failures
+
+
+def validate_unique_strings(value: object, path: str) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        if item in seen:
+            duplicates.add(item)
+        seen.add(item)
+    if duplicates:
+        return [f"{path} must not contain duplicate entries {sorted(duplicates)}"]
+    return []
 
 
 def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: str) -> list[str]:
@@ -453,10 +650,9 @@ def validate_owner_decision_artifact(
     expected_decision: dict[str, object],
 ) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid owner decision JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "owner decision")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: owner decision artifact must be a JSON object"]
 
@@ -479,6 +675,7 @@ def validate_owner_decision_artifact(
 
     for field in ("owner", "signed_off_at", "decision_record", "scope", "rationale"):
         failures.extend(validate_non_empty_string(data.get(field), f"{rel}: {field}"))
+    failures.extend(validate_utc_timestamp(data.get("signed_off_at"), f"{rel}: signed_off_at"))
 
     mirrored_fields = (
         ("owner", "owner"),
@@ -508,13 +705,19 @@ def validate_owner_decision_artifact(
             validate_string_list(conditions, f"{rel}: required_before_implementation")
         )
         if isinstance(conditions, list):
+            actual_conditions = {item for item in conditions if isinstance(item, str)}
             missing_conditions = sorted(
                 set(OWNER_DECISION_GO_CONDITIONS)
-                - {item for item in conditions if isinstance(item, str)}
+                - actual_conditions
             )
             if missing_conditions:
                 failures.append(
                     f"{rel}: required_before_implementation missing gates {missing_conditions}"
+                )
+            unknown_conditions = sorted(actual_conditions - set(OWNER_DECISION_GO_CONDITIONS))
+            if unknown_conditions:
+                failures.append(
+                    f"{rel}: required_before_implementation contains unknown gates {unknown_conditions}"
                 )
     elif decision == "no-go":
         if "required_before_implementation" in data:
@@ -530,10 +733,9 @@ def validate_owner_decision_artifact(
 
 def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid benchmark JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "benchmark")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: benchmark artifact must be a JSON object"]
 
@@ -552,10 +754,19 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
                 context="environment",
             )
         )
-        for field in ("platform", "runner", "cpu_model", "timestamp"):
-            value = environment.get(field)
-            if not isinstance(value, str) or not value:
-                failures.append(f"{rel}: benchmark environment.{field} must be a non-empty string")
+        for field in ("platform", "runner", "cpu_model"):
+            failures.extend(
+                validate_non_empty_string(
+                    environment.get(field),
+                    f"{rel}: benchmark environment.{field}",
+                )
+            )
+        failures.extend(
+            validate_utc_timestamp(
+                environment.get("timestamp"),
+                f"{rel}: benchmark environment.timestamp",
+            )
+        )
 
     runs = data.get("runs")
     if not isinstance(runs, list) or not runs:
@@ -580,7 +791,10 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
                 f"{run_path}.transport must be one of {sorted(REQUIRED_BENCHMARK_TRANSPORTS)}"
             )
         if isinstance(scenario, str) and isinstance(transport, str):
-            seen_pairs.add((scenario, transport))
+            pair = (scenario, transport)
+            if pair in seen_pairs:
+                failures.append(f"{run_path} duplicates benchmark scenario/transport pair {pair}")
+            seen_pairs.add(pair)
 
         metrics = run.get("metrics")
         if not isinstance(metrics, dict):
@@ -613,10 +827,9 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
 
 def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid build matrix JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "build matrix")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: build matrix artifact must be a JSON object"]
 
@@ -640,6 +853,8 @@ def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
         if platform_name not in REQUIRED_BUILD_PLATFORMS:
             failures.append(f"{platform_path}.platform must be one of {sorted(REQUIRED_BUILD_PLATFORMS)}")
         elif isinstance(platform_name, str):
+            if platform_name in seen_platforms:
+                failures.append(f"{platform_path}.platform duplicates build matrix platform {platform_name!r}")
             seen_platforms.add(platform_name)
         for field in REQUIRED_BUILD_TEXT_FIELDS:
             failures.extend(validate_non_empty_string(platform.get(field), f"{platform_path}.{field}"))
@@ -657,10 +872,9 @@ def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
 
 def validate_dependency_policy_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid dependency policy JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "dependency policy")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: dependency policy artifact must be a JSON object"]
 
@@ -680,10 +894,9 @@ def validate_dependency_policy_artifact(root: Path, path: Path) -> list[str]:
 
 def validate_feature_flag_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid feature flag JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "feature flag")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: feature flag artifact must be a JSON object"]
 
@@ -693,18 +906,27 @@ def validate_feature_flag_artifact(root: Path, path: Path) -> list[str]:
         failures.append(f"{rel}: build_flag must be 'AHFL_ENABLE_GRPC_NATIVE'")
     if data.get("default_enabled") is not False:
         failures.append(f"{rel}: default_enabled must be false until native transport release evidence is complete")
-    failures.extend(validate_non_empty_string(data.get("runtime_config"), f"{rel}: runtime_config"))
+    if data.get("runtime_config") != EXPECTED_RUNTIME_CONFIG:
+        failures.append(f"{rel}: runtime_config must be {EXPECTED_RUNTIME_CONFIG!r}")
     failures.extend(validate_string_list(data.get("disabled_diagnostics"), f"{rel}: disabled_diagnostics"))
-    failures.extend(validate_non_empty_string(data.get("release_evidence_gate"), f"{rel}: release_evidence_gate"))
+    disabled_diagnostics = data.get("disabled_diagnostics")
+    if isinstance(disabled_diagnostics, list):
+        for index, diagnostic in enumerate(disabled_diagnostics):
+            if isinstance(diagnostic, str) and not diagnostic.startswith(RUNTIME_GRPC_NATIVE_DIAGNOSTIC_PREFIX):
+                failures.append(
+                    f"{rel}: disabled_diagnostics[{index}] must start with "
+                    f"{RUNTIME_GRPC_NATIVE_DIAGNOSTIC_PREFIX!r}"
+                )
+    if data.get("release_evidence_gate") != EXPECTED_RELEASE_EVIDENCE_GATE:
+        failures.append(f"{rel}: release_evidence_gate must be {EXPECTED_RELEASE_EVIDENCE_GATE!r}")
     return failures
 
 
 def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid fallback semantics JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "fallback semantics")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: fallback semantics artifact must be a JSON object"]
 
@@ -728,11 +950,23 @@ def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
         if name not in REQUIRED_FALLBACK_SCENARIOS:
             failures.append(f"{scenario_path}.scenario must be one of {sorted(REQUIRED_FALLBACK_SCENARIOS)}")
         elif isinstance(name, str):
+            if name in seen_scenarios:
+                failures.append(f"{scenario_path}.scenario duplicates fallback scenario {name!r}")
             seen_scenarios.add(name)
-        for field in ("behavior", "diagnostic", "fallback_transport"):
-            failures.extend(validate_non_empty_string(scenario.get(field), f"{scenario_path}.{field}"))
-        if not isinstance(scenario.get("fail_closed"), bool):
-            failures.append(f"{scenario_path}.fail_closed must be a boolean")
+        failures.extend(validate_non_empty_string(scenario.get("behavior"), f"{scenario_path}.behavior"))
+        diagnostic = scenario.get("diagnostic")
+        failures.extend(validate_non_empty_string(diagnostic, f"{scenario_path}.diagnostic"))
+        if isinstance(diagnostic, str) and not diagnostic.startswith(RUNTIME_GRPC_NATIVE_DIAGNOSTIC_PREFIX):
+            failures.append(
+                f"{scenario_path}.diagnostic must start with {RUNTIME_GRPC_NATIVE_DIAGNOSTIC_PREFIX!r}"
+            )
+        if scenario.get("fallback_transport") not in EXPECTED_FALLBACK_TRANSPORTS:
+            failures.append(
+                f"{scenario_path}.fallback_transport must be one of "
+                f"{sorted(EXPECTED_FALLBACK_TRANSPORTS)}"
+            )
+        if scenario.get("fail_closed") is not True:
+            failures.append(f"{scenario_path}.fail_closed must be true")
 
     missing_scenarios = sorted(REQUIRED_FALLBACK_SCENARIOS - seen_scenarios)
     if missing_scenarios:
@@ -742,10 +976,9 @@ def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
 
 def validate_test_strategy_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        return [f"{rel}:{exc.lineno}: invalid test strategy JSON: {exc.msg}"]
+    data, failures = read_json_strict(path, rel, "test strategy")
+    if failures:
+        return failures
     if not isinstance(data, dict):
         return [f"{rel}: test strategy artifact must be a JSON object"]
 
@@ -767,6 +1000,8 @@ def validate_test_strategy_artifact(root: Path, path: Path) -> list[str]:
         if area not in REQUIRED_TEST_AREAS:
             failures.append(f"{entry_path}.area must be one of {sorted(REQUIRED_TEST_AREAS)}")
         elif isinstance(area, str):
+            if area in seen_areas:
+                failures.append(f"{entry_path}.area duplicates test coverage area {area!r}")
             seen_areas.add(area)
         failures.extend(validate_string_list(entry.get("tests"), f"{entry_path}.tests"))
 
@@ -869,6 +1104,17 @@ def validate_status_transition(status: str, evidence: dict[str, object]) -> list
     decision = decision_object(evidence)
     decision_state = decision.get("state")
 
+    if status not in KNOWN_RFC_STATUSES:
+        failures.append(
+            f"{RFC0004_REL}: status must be one of {sorted(KNOWN_RFC_STATUSES)}, got {status!r}"
+        )
+
+    if status in DRAFT_STATUSES and decision_state != "pending":
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: RFC0004 status {status!r} requires "
+            "decision.state == 'pending'"
+        )
+
     if status in ACCEPTED_STATUSES:
         if decision_state != "go":
             failures.append(
@@ -918,7 +1164,7 @@ def scan_native_markers(root: Path, status: str) -> list[str]:
             continue
         if re.search(r"\bnative[_-]grpc\b", path.name, re.IGNORECASE):
             failures.append(
-                f"{relative_to_root(root, path)}: native gRPC source file is forbidden while RFC0004 "
+                f"{relative_to_root(root, path)}: native gRPC implementation artifact is forbidden while RFC0004 "
                 f"status is {status!r}. Complete the native gRPC decision gate first."
             )
             continue
@@ -952,12 +1198,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     root = args.root.resolve()
-    status = frontmatter_status(root, root / RFC0004_REL)
+    rfc_path = root / RFC0004_REL
+    status = frontmatter_status(root, rfc_path)
+    rfc_updated = frontmatter_updated(root, rfc_path)
 
     evidence, evidence_failures = read_decision_evidence(root)
     failures = list(evidence_failures)
     if evidence is not None:
         failures.extend(validate_evidence_shape(evidence))
+        failures.extend(validate_evidence_freshness(evidence, rfc_updated))
         failures.extend(validate_evidence_artifacts(root, evidence))
         failures.extend(validate_status_transition(status, evidence))
 

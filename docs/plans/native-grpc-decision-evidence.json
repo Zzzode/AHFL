@@ -1,7 +1,7 @@
 {
   "schema": "ahfl.native_grpc_decision_evidence.v1",
   "rfc": "0004-native-grpc-transport",
-  "updated_at": "2026-07-08",
+  "updated_at": "2026-07-09T00:00:00Z",
   "decision": {
     "state": "pending",
     "owner": "",
@@ -19,7 +19,7 @@
       "status": "missing",
       "owner": "runtime + QE",
       "evidence": [],
-      "notes": "Required before native transport implementation markers are allowed."
+      "notes": "Required before native transport implementation markers are allowed; must compare http_json, http2_json_optimized, grpc_json_transcoding, and native_grpc."
     },
     "build_matrix": {
       "status": "missing",
@@ -43,7 +43,7 @@
       "status": "missing",
       "owner": "runtime owner",
       "evidence": [],
-      "notes": "Must define unavailable transport, schema mismatch, timeout, and fallback behavior."
+      "notes": "Must define fail-closed behavior and any explicit fallback to grpc_json_transcoding or http_json for unavailable transport, schema mismatch, transport failure, and timeout."
     },
     "test_strategy": {
       "status": "missing",
