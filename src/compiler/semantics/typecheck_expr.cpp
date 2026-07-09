@@ -2749,11 +2749,19 @@ class ExpressionChecker final {
                         if (!has_rest) {
                             for (const auto &field : variant_info->get().fields) {
                                 if (!matched_fields.contains(field.name)) {
+                                    std::map<std::string, std::vector<std::string>> data;
+                                    data.emplace(
+                                        "variant_name",
+                                        std::vector<std::string>{std::string(variant_name)});
+                                    data.emplace("missing_field",
+                                                 std::vector<std::string>{field.name});
                                     services_.typecheck_error_here(
                                         error_codes::typecheck::MissingVariantField,
                                         messages::typecheck::MissingVariantField.format_with(
                                             std::string(variant_name), field.name),
-                                        range);
+                                        range,
+                                        {},
+                                        std::move(data));
                                 }
                             }
                         }

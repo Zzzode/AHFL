@@ -2294,6 +2294,23 @@ void test_match_missing_patterns_diagnostic_exposes_structured_witness_data() {
           "diagnostics.match_missing_patterns.structured_witness_data");
 }
 
+void test_missing_variant_field_diagnostic_exposes_structured_data() {
+    const std::string source = "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                               "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { code } => code,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto output = diagnostics_output_for_source(source);
+    check(output.find("typecheck.MISSING_VARIANT_FIELD") != std::string::npos,
+          "diagnostics.missing_variant_field.code");
+    check(output.find(R"("data":{"missing_field":["label"],"variant_name":["Data"]})") !=
+              std::string::npos,
+          "diagnostics.missing_variant_field.structured_data");
+}
+
 void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto root = make_temp_project("project_cross_file");
     const auto main_path = root / "src" / "main.ahfl";
@@ -9059,6 +9076,113 @@ void test_code_action_qf_match_missing_patterns_requires_structured_witnesses() 
           "codeAction.qf_match_missing_structured_data.required_for_action");
 }
 
+void test_code_action_qf_missing_variant_field_inserts_pattern_field() {
+    const std::string inline_source = "module lsp::variant_field_qf;\n"
+                                      "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                                      "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                                      "    return match packet {\n"
+                                      "        Data { code } => code,\n"
+                                      "        Empty => 0,\n"
+                                      "    };\n"
+                                      "}\n";
+
+    const auto inline_start = position_of(inline_source, "Data { code }");
+    const auto inline_end = position_after(inline_start, "Data { code }");
+
+    LspDiagnostic inline_diag;
+    inline_diag.code = "typecheck.MISSING_VARIANT_FIELD";
+    inline_diag.severity = DiagnosticSeverity::Error;
+    inline_diag.message = "struct variant pattern for 'Data' is missing field 'label'";
+    inline_diag.range = Range{inline_start, inline_end};
+    inline_diag.data["variant_name"] = {"Data"};
+    inline_diag.data["missing_field"] = {"label"};
+
+    const auto inline_actions =
+        ahfl::lsp::compute_code_actions(inline_source, inline_diag.range, {inline_diag});
+
+    const CodeAction *inline_qf = nullptr;
+    for (const auto &action : inline_actions) {
+        if (action.title == "Insert missing variant field `label`") {
+            inline_qf = &action;
+            break;
+        }
+    }
+    check(inline_qf != nullptr, "codeAction.qf_missing_variant_field.inline_action_found");
+    if (inline_qf == nullptr || !inline_qf->edit.has_value())
+        return;
+
+    std::size_t inline_total_edits = 0;
+    bool inline_inserts_field = false;
+    for (const auto &[uri_key, edits] : inline_qf->edit->changes) {
+        inline_total_edits += edits.size();
+        for (const auto &edit : edits) {
+            inline_inserts_field = inline_inserts_field ||
+                                   (edit.range.start.line == inline_start.line &&
+                                    edit.range.start.character == inline_start.character + 11 &&
+                                    edit.range.end.line == inline_start.line &&
+                                    edit.range.end.character == inline_start.character + 12 &&
+                                    edit.new_text == ", label ");
+        }
+    }
+    check(inline_total_edits == 1, "codeAction.qf_missing_variant_field.inline_single_edit");
+    check(inline_inserts_field, "codeAction.qf_missing_variant_field.inline_inserts_field");
+
+    const std::string multiline_source =
+        "module lsp::variant_field_qf;\n"
+        "enum Packet { Data { code: Int, label: String }, Empty }\n"
+        "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+        "    return match packet {\n"
+        "        Data {\n"
+        "            code,\n"
+        "        } => code,\n"
+        "        Empty => 0,\n"
+        "    };\n"
+        "}\n";
+
+    const auto multiline_start = position_of(multiline_source, "Data {\n");
+    const auto multiline_end = position_after(multiline_start,
+                                              "Data {\n"
+                                              "            code,\n"
+                                              "        }");
+
+    LspDiagnostic multiline_diag;
+    multiline_diag.code = "typecheck.MISSING_VARIANT_FIELD";
+    multiline_diag.severity = DiagnosticSeverity::Error;
+    multiline_diag.message = "struct variant pattern for 'Data' is missing field 'label'";
+    multiline_diag.range = Range{multiline_start, multiline_end};
+    multiline_diag.data["variant_name"] = {"Data"};
+    multiline_diag.data["missing_field"] = {"label"};
+
+    const auto multiline_actions =
+        ahfl::lsp::compute_code_actions(multiline_source, multiline_diag.range, {multiline_diag});
+
+    const CodeAction *multiline_qf = nullptr;
+    for (const auto &action : multiline_actions) {
+        if (action.title == "Insert missing variant field `label`") {
+            multiline_qf = &action;
+            break;
+        }
+    }
+    check(multiline_qf != nullptr, "codeAction.qf_missing_variant_field.multiline_action_found");
+    if (multiline_qf == nullptr || !multiline_qf->edit.has_value())
+        return;
+
+    std::size_t multiline_total_edits = 0;
+    bool multiline_inserts_field = false;
+    for (const auto &[uri_key, edits] : multiline_qf->edit->changes) {
+        multiline_total_edits += edits.size();
+        for (const auto &edit : edits) {
+            multiline_inserts_field =
+                multiline_inserts_field ||
+                (edit.range.start.line == 6 && edit.range.start.character == 0 &&
+                 edit.range.end.line == 6 && edit.range.end.character == 0 &&
+                 edit.new_text == "            label,\n");
+        }
+    }
+    check(multiline_total_edits == 1, "codeAction.qf_missing_variant_field.multiline_single_edit");
+    check(multiline_inserts_field, "codeAction.qf_missing_variant_field.multiline_inserts_field");
+}
+
 void test_code_action_qf_match_unreachable_arm_removes_arm_line() {
     const std::string source = "module lsp::match_qf;\n"
                                "enum E { A, B }\n"
@@ -9678,6 +9802,7 @@ int main() {
     test_project_input_source_cache_is_distinct_from_open_overlays();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_match_missing_patterns_diagnostic_exposes_structured_witness_data();
+    test_missing_variant_field_diagnostic_exposes_structured_data();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_workspace_symbol_uses_root_index_without_open_documents();
@@ -9751,6 +9876,7 @@ int main() {
     test_code_action_qf_match_missing_patterns_keeps_struct_witness_fields();
     test_code_action_qf_match_missing_patterns_inserts_multiline_witness_arm();
     test_code_action_qf_match_missing_patterns_requires_structured_witnesses();
+    test_code_action_qf_missing_variant_field_inserts_pattern_field();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
     test_code_action_qf_match_redundant_pattern_removes_or_branch();

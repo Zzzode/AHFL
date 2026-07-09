@@ -2323,6 +2323,14 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "MISSING_VARIANT_FIELD"));
+    const auto *diagnostic = find_diagnostic_with_code(result.diagnostics, "MISSING_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("missing_field");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"label"});
 }
 
 TEST_CASE("struct variant pattern unexpected field reports UNEXPECTED_VARIANT_FIELD") {

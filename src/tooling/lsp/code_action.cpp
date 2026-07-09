@@ -122,6 +122,7 @@ constexpr std::string_view kCodeMatchUnreachableArm = "typecheck.MATCH_UNREACHAB
 constexpr std::string_view kCodeMatchRedundantPattern = "typecheck.MATCH_REDUNDANT_PATTERN";
 constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF_LET_ELSE";
 constexpr std::string_view kCodeInvalidRangePattern = "typecheck.INVALID_RANGE_PATTERN";
+constexpr std::string_view kCodeMissingVariantField = "typecheck.MISSING_VARIANT_FIELD";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -673,6 +674,26 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return witnesses;
 }
 
+[[nodiscard]] std::optional<std::string> single_diagnostic_data(const LspDiagnostic &diag,
+                                                                std::string_view key) {
+    const auto found = diag.data.find(std::string(key));
+    if (found == diag.data.end() || found->second.size() != 1) {
+        return std::nullopt;
+    }
+    return found->second.front();
+}
+
+[[nodiscard]] bool source_safe_identifier(std::string_view text) noexcept {
+    if (text.empty()) {
+        return false;
+    }
+    const auto first = static_cast<unsigned char>(text.front());
+    if (!(std::isalpha(first) || text.front() == '_')) {
+        return false;
+    }
+    return std::all_of(text.begin(), text.end(), is_identifier_char);
+}
+
 [[nodiscard]] std::string indent_pattern_fragment_for_arm(std::string_view pattern,
                                                           std::string_view arm_indent) {
     std::string text;
@@ -753,6 +774,115 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     } else {
         action.title = "Insert missing match arms";
     }
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
+[[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> find_struct_variant_pattern_braces(
+    const std::string &source, const LspDiagnostic &diag, std::string_view variant_name) {
+    const auto range_start = position_to_offset(source, diag.range.start);
+    const auto range_end = position_to_offset(source, diag.range.end);
+    if (range_start >= range_end || range_end > source.size() || variant_name.empty()) {
+        return std::nullopt;
+    }
+
+    std::size_t variant_pos = source.find(variant_name, range_start);
+    while (variant_pos != std::string::npos && variant_pos < range_end) {
+        if (is_keyword_at(source, variant_pos, variant_name)) {
+            break;
+        }
+        variant_pos = source.find(variant_name, variant_pos + 1);
+    }
+    if (variant_pos == std::string::npos || variant_pos >= range_end) {
+        return std::nullopt;
+    }
+
+    const auto open_brace = source.find('{', variant_pos + variant_name.size());
+    if (open_brace == std::string::npos || open_brace >= range_end) {
+        return std::nullopt;
+    }
+    const auto close_brace = find_matching_close_brace(source, open_brace);
+    if (!close_brace.has_value() || *close_brace > range_end) {
+        return std::nullopt;
+    }
+    return std::pair{open_brace, *close_brace};
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_missing_variant_field(const std::string &source,
+                                                                 const LspDiagnostic &diag) {
+    const auto variant_name = single_diagnostic_data(diag, "variant_name");
+    const auto missing_field = single_diagnostic_data(diag, "missing_field");
+    if (!variant_name.has_value() || !missing_field.has_value() ||
+        !source_safe_identifier(*variant_name) || !source_safe_identifier(*missing_field)) {
+        return std::nullopt;
+    }
+
+    const auto braces = find_struct_variant_pattern_braces(source, diag, *variant_name);
+    if (!braces.has_value()) {
+        return std::nullopt;
+    }
+    const auto [open_brace, close_brace] = *braces;
+    const std::string_view content(source.data() + open_brace + 1, close_brace - open_brace - 1);
+
+    TextEdit edit;
+    if (content.find('\n') == std::string_view::npos) {
+        std::size_t content_end = close_brace;
+        while (content_end > open_brace + 1 &&
+               (source[content_end - 1] == ' ' || source[content_end - 1] == '\t')) {
+            --content_end;
+        }
+        const bool has_existing_field = content_end > open_brace + 1;
+        edit.range.start =
+            offset_to_position(source, has_existing_field ? content_end : open_brace + 1);
+        edit.range.end = offset_to_position(source, close_brace);
+        edit.new_text =
+            has_existing_field ? ", " + *missing_field + " " : " " + *missing_field + " ";
+    } else {
+        const auto close_line_start_offset =
+            line_start_offset(source, offset_to_position(source, close_brace).line);
+        const auto close_prefix = std::string_view(source).substr(
+            close_line_start_offset, close_brace - close_line_start_offset);
+        if (!std::all_of(close_prefix.begin(), close_prefix.end(), [](char c) {
+                return c == ' ' || c == '\t';
+            })) {
+            return std::nullopt;
+        }
+
+        std::size_t last_non_space = close_brace;
+        while (last_non_space > open_brace + 1 &&
+               std::isspace(static_cast<unsigned char>(source[last_non_space - 1]))) {
+            --last_non_space;
+        }
+        if (last_non_space == open_brace + 1 || source[last_non_space - 1] == ',') {
+            edit.range.start = offset_to_position(source, close_line_start_offset);
+            edit.range.end = edit.range.start;
+            edit.new_text = std::string(close_prefix) + "    " + *missing_field + ",\n";
+        } else if (source[last_non_space - 1] == '{') {
+            edit.range.start = offset_to_position(source, close_line_start_offset);
+            edit.range.end = edit.range.start;
+            edit.new_text = std::string(close_prefix) + "    " + *missing_field + ",\n";
+        } else {
+            const auto gap = std::string_view(source).substr(
+                last_non_space, close_line_start_offset - last_non_space);
+            if (!std::all_of(gap.begin(), gap.end(), [](char c) {
+                    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+                })) {
+                return std::nullopt;
+            }
+            edit.range.start = offset_to_position(source, last_non_space);
+            edit.range.end = offset_to_position(source, close_line_start_offset);
+            edit.new_text = ",\n" + std::string(close_prefix) + "    " + *missing_field + ",\n";
+        }
+    }
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Insert missing variant field `" + *missing_field + "`";
     action.kind = CodeActionKind::QuickFix;
     action.is_preferred = true;
     action.diagnostics = {diag};
@@ -1087,15 +1217,6 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
-[[nodiscard]] std::optional<std::string> single_diagnostic_data(const LspDiagnostic &diag,
-                                                                std::string_view key) {
-    const auto found = diag.data.find(std::string(key));
-    if (found == diag.data.end() || found->second.size() != 1) {
-        return std::nullopt;
-    }
-    return found->second.front();
-}
-
 [[nodiscard]] bool source_safe_signed_int_bound(std::string_view bound) noexcept {
     if (bound.empty()) {
         return false;
@@ -1392,6 +1513,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeInvalidRangePattern) {
             if (auto a = qf_invalid_range_pattern(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeMissingVariantField) {
+            if (auto a = qf_missing_variant_field(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

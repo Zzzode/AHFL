@@ -2101,6 +2101,10 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 
 **触发条件**：struct variant pattern 没有使用 `..`，但未列出某个声明字段。
 
+**Structured data**：
+- `variant_name`：缺字段的 struct-form enum variant 名称。
+- `missing_field`：缺失字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
+
 **最小复现**：
 ```ahfl
 module repro;
@@ -2117,6 +2121,7 @@ fn f(p: Packet) -> Int effect Pure decreases 0 {
 **常见修复**：
 - 补齐缺失字段，例如 `Data { code, label }`。
 - 若有意忽略剩余字段，使用 `Data { code, .. }`。
+- 支持 LSP quick fix 的客户端可应用 `Insert missing variant field`，在单行或多行 struct variant pattern 内插入缺失字段。
 
 **Related codes**：`UNEXPECTED_VARIANT_FIELD`、`INVALID_ENUM_VARIANT_SHAPE`、`MATCH_MISSING_PATTERNS`。
 
