@@ -90,6 +90,52 @@ OWNER_DECISION_GO_CONDITIONS = tuple(gate for gate in REQUIRED_GATES if gate != 
 EVIDENCE_KEYS = {"schema", "rfc", "updated_at", "decision", "gates"}
 DECISION_KEYS = {"state", "owner", "signed_off_at", "record"}
 GATE_KEYS = {"status", "owner", "evidence", "notes"}
+OWNER_DECISION_KEYS = {
+    "schema",
+    "rfc",
+    "decision",
+    "owner",
+    "signed_off_at",
+    "decision_record",
+    "scope",
+    "rationale",
+    "required_before_implementation",
+    "continued_transport_scope",
+}
+BENCHMARK_KEYS = {"schema", "rfc", "environment", "runs"}
+BENCHMARK_ENVIRONMENT_KEYS = {"platform", "runner", "cpu_model", "timestamp"}
+BENCHMARK_RUN_KEYS = {"scenario", "transport", "metrics"}
+BUILD_MATRIX_KEYS = {"schema", "rfc", "platforms"}
+BUILD_PLATFORM_KEYS = {"platform"} | REQUIRED_BUILD_TEXT_FIELDS | REQUIRED_BUILD_NUMERIC_FIELDS
+DEPENDENCY_POLICY_KEYS = {
+    "schema",
+    "rfc",
+    "dependency_source",
+    "license_review",
+    "vendoring_policy",
+    "cache_policy",
+    "local_setup_impact",
+    "approved_by",
+}
+FEATURE_FLAG_KEYS = {
+    "schema",
+    "rfc",
+    "build_flag",
+    "runtime_config",
+    "default_enabled",
+    "disabled_diagnostics",
+    "release_evidence_gate",
+}
+FALLBACK_SEMANTICS_KEYS = {"schema", "rfc", "scenarios"}
+FALLBACK_SCENARIO_KEYS = {
+    "scenario",
+    "behavior",
+    "diagnostic",
+    "fallback_transport",
+    "fail_closed",
+}
+TEST_STRATEGY_KEYS = {"schema", "rfc", "coverage"}
+TEST_COVERAGE_KEYS = {"area", "tests"}
 SKIP_DIRS = {
     ".git",
     ".cache",
@@ -387,6 +433,20 @@ def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: s
     return failures
 
 
+def validate_allowed_fields(
+    data: dict[str, object],
+    rel: Path | str,
+    allowed: set[str],
+    *,
+    context: str = "",
+) -> list[str]:
+    unknown = sorted(str(key) for key in data if key not in allowed)
+    if not unknown:
+        return []
+    subject = f"{rel}: {context}" if context else f"{rel}"
+    return [f"{subject} contains unknown field(s) {unknown}; allowed fields are {sorted(allowed)}"]
+
+
 def validate_owner_decision_artifact(
     root: Path,
     path: Path,
@@ -401,6 +461,7 @@ def validate_owner_decision_artifact(
         return [f"{rel}: owner decision artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, OWNER_DECISION_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, OWNER_DECISION_KEYS))
     expected_decision_state = expected_decision.get("state")
     decision = data.get("decision")
     if decision not in {"go", "no-go"}:
@@ -440,6 +501,8 @@ def validate_owner_decision_artifact(
             )
 
     if decision == "go":
+        if "continued_transport_scope" in data:
+            failures.append(f"{rel}: continued_transport_scope is only allowed for no-go decisions")
         conditions = data.get("required_before_implementation")
         failures.extend(
             validate_string_list(conditions, f"{rel}: required_before_implementation")
@@ -454,6 +517,8 @@ def validate_owner_decision_artifact(
                     f"{rel}: required_before_implementation missing gates {missing_conditions}"
                 )
     elif decision == "no-go":
+        if "required_before_implementation" in data:
+            failures.append(f"{rel}: required_before_implementation is only allowed for go decisions")
         failures.extend(
             validate_non_empty_string(
                 data.get("continued_transport_scope"),
@@ -473,11 +538,20 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: benchmark artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, BENCHMARK_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, BENCHMARK_KEYS))
 
     environment = data.get("environment")
     if not isinstance(environment, dict):
         failures.append(f"{rel}: benchmark artifact environment must be an object")
     else:
+        failures.extend(
+            validate_allowed_fields(
+                environment,
+                rel,
+                BENCHMARK_ENVIRONMENT_KEYS,
+                context="environment",
+            )
+        )
         for field in ("platform", "runner", "cpu_model", "timestamp"):
             value = environment.get(field)
             if not isinstance(value, str) or not value:
@@ -494,6 +568,7 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
         if not isinstance(run, dict):
             failures.append(f"{run_path} must be an object")
             continue
+        failures.extend(validate_allowed_fields(run, rel, BENCHMARK_RUN_KEYS, context=f"runs[{index}]"))
         scenario = run.get("scenario")
         transport = run.get("transport")
         if scenario not in REQUIRED_BENCHMARK_SCENARIOS:
@@ -511,6 +586,14 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
         if not isinstance(metrics, dict):
             failures.append(f"{run_path}.metrics must be an object")
             continue
+        failures.extend(
+            validate_allowed_fields(
+                metrics,
+                rel,
+                REQUIRED_BENCHMARK_METRICS,
+                context=f"runs[{index}].metrics",
+            )
+        )
         for metric in REQUIRED_BENCHMARK_METRICS:
             if metric not in metrics:
                 failures.append(f"{run_path}.metrics.{metric} is required")
@@ -538,6 +621,7 @@ def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: build matrix artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, BUILD_MATRIX_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, BUILD_MATRIX_KEYS))
     platforms = data.get("platforms")
     if not isinstance(platforms, list) or not platforms:
         failures.append(f"{rel}: build matrix platforms must be a non-empty array")
@@ -549,6 +633,9 @@ def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
         if not isinstance(platform, dict):
             failures.append(f"{platform_path} must be an object")
             continue
+        failures.extend(
+            validate_allowed_fields(platform, rel, BUILD_PLATFORM_KEYS, context=f"platforms[{index}]")
+        )
         platform_name = platform.get("platform")
         if platform_name not in REQUIRED_BUILD_PLATFORMS:
             failures.append(f"{platform_path}.platform must be one of {sorted(REQUIRED_BUILD_PLATFORMS)}")
@@ -578,6 +665,7 @@ def validate_dependency_policy_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: dependency policy artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, DEPENDENCY_POLICY_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, DEPENDENCY_POLICY_KEYS))
     for field in (
         "dependency_source",
         "license_review",
@@ -600,6 +688,7 @@ def validate_feature_flag_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: feature flag artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, FEATURE_FLAG_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, FEATURE_FLAG_KEYS))
     if data.get("build_flag") != "AHFL_ENABLE_GRPC_NATIVE":
         failures.append(f"{rel}: build_flag must be 'AHFL_ENABLE_GRPC_NATIVE'")
     if data.get("default_enabled") is not False:
@@ -620,6 +709,7 @@ def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: fallback semantics artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, FALLBACK_SEMANTICS_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, FALLBACK_SEMANTICS_KEYS))
     scenarios = data.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
         failures.append(f"{rel}: fallback scenarios must be a non-empty array")
@@ -631,6 +721,9 @@ def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
         if not isinstance(scenario, dict):
             failures.append(f"{scenario_path} must be an object")
             continue
+        failures.extend(
+            validate_allowed_fields(scenario, rel, FALLBACK_SCENARIO_KEYS, context=f"scenarios[{index}]")
+        )
         name = scenario.get("scenario")
         if name not in REQUIRED_FALLBACK_SCENARIOS:
             failures.append(f"{scenario_path}.scenario must be one of {sorted(REQUIRED_FALLBACK_SCENARIOS)}")
@@ -657,6 +750,7 @@ def validate_test_strategy_artifact(root: Path, path: Path) -> list[str]:
         return [f"{rel}: test strategy artifact must be a JSON object"]
 
     failures = validate_artifact_header(data, rel, TEST_STRATEGY_SCHEMA)
+    failures.extend(validate_allowed_fields(data, rel, TEST_STRATEGY_KEYS))
     coverage = data.get("coverage")
     if not isinstance(coverage, list) or not coverage:
         failures.append(f"{rel}: test strategy coverage must be a non-empty array")
@@ -668,6 +762,7 @@ def validate_test_strategy_artifact(root: Path, path: Path) -> list[str]:
         if not isinstance(entry, dict):
             failures.append(f"{entry_path} must be an object")
             continue
+        failures.extend(validate_allowed_fields(entry, rel, TEST_COVERAGE_KEYS, context=f"coverage[{index}]"))
         area = entry.get("area")
         if area not in REQUIRED_TEST_AREAS:
             failures.append(f"{entry_path}.area must be one of {sorted(REQUIRED_TEST_AREAS)}")

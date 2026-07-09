@@ -32,10 +32,12 @@
 
 1. `decision`：只能是 `go` 或 `no-go`，且必须与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.state` 完全一致。
 2. `owner`、`signed_off_at`、`decision_record`、`scope`、`rationale`：均为非空字符串；其中 `owner`、`signed_off_at`、`decision_record` 必须分别与 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json) 的 `decision.owner`、`decision.signed_off_at`、`decision.record` 完全一致。
-3. `decision = "go"` 时，`required_before_implementation` 必须列出进入 `implementing` 前仍需完成的 gate：`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`。
-4. `decision = "no-go"` 时，`continued_transport_scope` 必须说明继续维护现有 `grpc_json_transcoding` 路径的范围。
+3. `decision = "go"` 时，`required_before_implementation` 必须列出进入 `implementing` 前仍需完成的 gate：`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`；`continued_transport_scope` 不允许出现。
+4. `decision = "no-go"` 时，`continued_transport_scope` 必须说明继续维护现有 `grpc_json_transcoding` 路径的范围；`required_before_implementation` 不允许出现。
 
 远端 URL 可以作为会议记录或审批系统的补充链接，但不能替代这份仓库内结构化 owner decision artifact；否则机器门禁无法证明 signed-off decision 与 RFC 状态一致。
+
+所有 `ahfl.native_grpc_*.v1` gate artifact 均为 closed schema：顶层对象和嵌套对象不得携带本文列出的字段之外的额外字段。任何 schema 扩展都必须同步更新 `scripts/check-native-grpc-gate.py`、`tests/scripts/transport_gate_smoke.py` 和本文档。
 
 ## Benchmark Requirements
 

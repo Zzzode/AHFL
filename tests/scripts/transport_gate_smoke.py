@@ -439,6 +439,32 @@ def test_complete_owner_decision_rejects_mirrored_field_mismatch(checker: Path) 
         assert_fails(run_checker(checker, root), "decision_record")
 
 
+def test_complete_owner_decision_rejects_condition_field_mismatch(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        artifact = owner_decision_artifact()
+        artifact["continued_transport_scope"] = "not valid for go"
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(artifact, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "only allowed for no-go decisions")
+
+    fixture = evidence(decision_state="no-go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="rejected", evidence=fixture)
+        artifact = owner_decision_artifact(decision="no-go")
+        artifact["required_before_implementation"] = ["benchmark"]
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").write_text(
+            json.dumps(artifact, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert_fails(run_checker(checker, root), "only allowed for go decisions")
+
+
 def test_rejected_allows_structured_no_go_owner_decision(checker: Path) -> None:
     fixture = evidence(decision_state="no-go", complete_gates={"runtime_owner_decision"})
     with tempfile.TemporaryDirectory() as tmp:
@@ -486,6 +512,34 @@ def test_complete_build_matrix_rejects_invalid_artifact_schema(checker: Path) ->
         assert_fails(run_checker(checker, root), "ahfl.native_grpc_build_matrix.v1")
 
 
+def test_complete_structured_artifacts_reject_unknown_fields(checker: Path) -> None:
+    cases = [
+        ("runtime_owner_decision.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("benchmark.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("benchmark.json", lambda data: data["environment"].__setitem__("extra", "unexpected")),
+        ("benchmark.json", lambda data: data["runs"][0].__setitem__("extra", "unexpected")),
+        ("benchmark.json", lambda data: data["runs"][0]["metrics"].__setitem__("extra", 1)),
+        ("build_matrix.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("build_matrix.json", lambda data: data["platforms"][0].__setitem__("extra", "unexpected")),
+        ("dependency_policy.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("feature_flag.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("fallback_semantics.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("fallback_semantics.json", lambda data: data["scenarios"][0].__setitem__("extra", "unexpected")),
+        ("test_strategy.json", lambda data: data.__setitem__("extra", "unexpected")),
+        ("test_strategy.json", lambda data: data["coverage"][0].__setitem__("extra", "unexpected")),
+    ]
+    for file_name, mutate in cases:
+        fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_repo(root, status="implementing", evidence=fixture)
+            artifact = root / "docs" / "plans" / "evidence" / file_name
+            data = json.loads(artifact.read_text(encoding="utf-8"))
+            mutate(data)
+            artifact.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            assert_fails(run_checker(checker, root), "unknown field")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: transport_gate_smoke.py <check-native-grpc-gate.py>", file=sys.stderr)
@@ -505,10 +559,12 @@ def main() -> int:
     test_complete_owner_decision_rejects_invalid_artifact_schema(checker)
     test_complete_owner_decision_rejects_decision_mismatch(checker)
     test_complete_owner_decision_rejects_mirrored_field_mismatch(checker)
+    test_complete_owner_decision_rejects_condition_field_mismatch(checker)
     test_rejected_allows_structured_no_go_owner_decision(checker)
     test_complete_benchmark_rejects_invalid_artifact_schema(checker)
     test_complete_benchmark_requires_local_structured_artifact(checker)
     test_complete_build_matrix_rejects_invalid_artifact_schema(checker)
+    test_complete_structured_artifacts_reject_unknown_fields(checker)
     print("transport gate smoke tests passed")
     return 0
 
