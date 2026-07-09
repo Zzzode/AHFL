@@ -795,13 +795,8 @@ void TypeCheckPass::build_agent_types() {
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
                 .input_type = resolve_type(*decl.get().input_type),
-                // Wave-20 QW-4: `context` clause is now optional at the
-                // grammar. When the user omits it we fall back to an
-                // anonymous struct type (empty fields — equivalent to no
-                // mutable state) AND emit a diagnostic telling them how to
-                // declare a context type (AHFL grammar requires input →
-                // context → output, but omitting context is allowed for
-                // stateless agents).
+                // Omitted context means stateless agent state. Use Unit and
+                // emit a semantic diagnostic that can drive an LSP quick fix.
                 .context_type = decl.get().context_type != nullptr
                                     ? resolve_type(*decl.get().context_type)
                                     : make_type(TypeKind::Unit),
@@ -820,18 +815,16 @@ void TypeCheckPass::build_agent_types() {
                 .quota = {},
             };
 
-            // Wave-20 QW-4: helpful diagnostics when optional fields are
-            // omitted. These replace the old opaque ANTLR "mismatched input
-            // 'output' expecting 'context'" (pre-QW-4 parse error) with a
-            // friendly semantic-level note.
+            // Helpful diagnostics when optional agent fields are omitted.
             if (decl.get().context_type == nullptr) {
                 auto builder =
                     result_.diagnostics.warning()
                         .code(error_codes::typecheck::AgentContextOmitted)
                         .message(messages::typecheck::AgentContextMissingNote, info.canonical_name)
                         .range(decl.get().range)
-                        .with_note("hint: insert `context: StructType;` between `input` and "
-                                   "`output` sections to give this agent mutable state",
+                        .with_note("hint: insert `context: Unit;` between `input` and `output` "
+                                   "sections for an explicit stateless agent, or use a named "
+                                   "context type when mutable state is required",
                                    decl.get().range);
                 if (current_source_ != nullptr) {
                     std::move(builder).source(current_source_->source).emit();
@@ -859,9 +852,8 @@ void TypeCheckPass::build_agent_types() {
 
             check_schema_boundary_decl_type(
                 info.input_type, SchemaBoundaryKind::AgentInput, decl.get().input_type->range);
-            // Wave-20 QW-4: when `context` is omitted (QW-4 grammar relaxed) we
-            // pass the synthetic empty struct type and the agent's whole range
-            // as the diagnostic anchor so warnings don't reference nullptr.
+            // When `context` is omitted, pass the synthetic Unit context and
+            // the agent's whole range as the diagnostic anchor.
             check_schema_boundary_decl_type(info.context_type,
                                             SchemaBoundaryKind::AgentContextDefault,
                                             decl.get().context_type != nullptr

@@ -624,12 +624,9 @@ class ProgramBuilder {
             declaration->input_type = build_type_syntax(
                 require(require(agent_decl->get().inputDecl(), "agent input is missing").type_(),
                         "agent input type is missing"));
-            // Wave-20 QW-4: `context` clause is optional on the grammar. When the
-            // user omits it (e.g. `agent A { input: X; output: Y; ... }`) we
-            // leave `context_type == nullptr` and let the typechecker emit a
-            // friendly "agent missing context type" diagnostic (see
-            // build_agent_types) instead of the parser's unreadable
-            // "mismatched input 'output' expecting 'context'" ANTLR message.
+            // `context` is optional. When omitted, leave
+            // `context_type == nullptr` so typecheck can emit a semantic
+            // diagnostic plus quick fix.
             if (const auto ctx_decl = borrow(agent_decl->get().contextDecl())) {
                 declaration->context_type = build_type_syntax(
                     require(ctx_decl->get().type_(), "agent context type is missing"));
@@ -654,11 +651,8 @@ class ProgramBuilder {
                         "agent final states list is missing"));
             declaration->final_states_range =
                 context_range(*agent_decl->get().finalDecl(), source_);
-            // Wave-20 QW-4: `capabilities` clause is optional on the grammar.
-            // When omitted, keep capabilities == empty vector and install a
-            // zero-length range so downstream diagnostics (e.g. "agent
-            // requires capability `Foo` but declares none") can point the
-            // user at the agent's opening keyword range with a helpful note.
+            // `capabilities` is optional. When omitted, keep the vector empty
+            // and use the agent range for downstream diagnostics.
             if (const auto caps_decl = borrow(agent_decl->get().capabilitiesDecl())) {
                 declaration->capabilities =
                     build_ident_list_opt(borrow(caps_decl->get().identListOpt()));

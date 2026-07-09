@@ -739,7 +739,7 @@ fn f() -> Int effect Pure decreases 0 { return 42[0]; }
 | SoT | `diagnostics.hpp:200`（无模板） |
 | MessageTemplate | 无；由 agent 声明检查点拼接具体说明 |
 
-**触发条件**：`agent` 块内字段类型、capability 类型或上下文对象类型不符合 agent 语义（例如非 struct、不可构造）。
+**触发条件**：`agent` 块内字段类型、capability 类型或上下文对象类型不符合 agent 语义（例如 input/output 非 struct、stateful context 既不是 struct 也不是 `Unit`、不可构造）。
 
 **最小复现**：
 ```ahfl
@@ -758,7 +758,8 @@ agent A {
 ```
 
 **常见修复**：
-- `ctx` / 上下文字段一律使用 struct 类型。
+- stateless agent 可省略 `context` 或显式写 `context: Unit;`。
+- stateful `ctx` / 上下文字段使用命名 struct 类型。
 - capability 列表中只允许声明已定义的 capability，不允许嵌套谓词等复杂表达式。
 
 **Related codes**：`UNKNOWN_CAPABILITY`、`CAPABILITY_NOT_ALLOWED`。

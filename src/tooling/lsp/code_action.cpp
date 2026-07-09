@@ -125,7 +125,7 @@ constexpr std::string_view kCodeInvalidRangePattern = "typecheck.INVALID_RANGE_P
 constexpr std::string_view kCodeMissingVariantField = "typecheck.MISSING_VARIANT_FIELD";
 constexpr std::string_view kCodeUnexpectedVariantField = "typecheck.UNEXPECTED_VARIANT_FIELD";
 constexpr std::string_view kCodeDuplicateVariantField = "typecheck.DUPLICATE_VARIANT_FIELD";
-// Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
+// Optional-agent-section diagnostics -> insertion quick fixes.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
 constexpr std::string_view kCodeAgentCapabilitiesOmitted = "typecheck.AGENT_CAPABILITIES_OMITTED";
@@ -1444,7 +1444,7 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
 }
 
 // ---------------------------------------------------------------------------
-// QF-4: AGENT_CONTEXT_OMITTED → insert "context: struct { };" after input.
+// QF-4: AGENT_CONTEXT_OMITTED -> insert "context: Unit;" after input.
 // ---------------------------------------------------------------------------
 
 // Grammar (AHFL.g4 agentDecl):
@@ -1453,7 +1453,7 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
 //
 // Diagnostic range covers the whole agent block. We scan inside this range
 // for the `;` that closes inputDecl, then walk forward to find `output:` and
-// insert a `context: struct { };` line between the two, preserving indent.
+// insert a `context: Unit;` line between the two, preserving indent.
 [[nodiscard]] std::optional<CodeAction> qf_agent_context_omitted(const std::string &source,
                                                                  const LspDiagnostic &diag) {
     const std::size_t block_start =
@@ -1495,13 +1495,13 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
     TextEdit edit;
     edit.range.start = offset_to_position(source, insert_pos);
     edit.range.end = edit.range.start; // pure insert
-    edit.new_text = indent + "context: struct { };\n";
+    edit.new_text = indent + "context: Unit;\n";
 
     WorkspaceEdit ws_edit;
     ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
 
     CodeAction action;
-    action.title = "Insert `context: struct { };` clause";
+    action.title = "Insert `context: Unit;` clause";
     action.kind = CodeActionKind::QuickFix;
     action.is_preferred = true;
     action.diagnostics = {diag};
@@ -1565,7 +1565,7 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
             scan = nl + 1;
             continue;
         }
-        if (trimmed.substr(0, 9) == "quota:" || trimmed.substr(0, 11) == "transition" ||
+        if (trimmed.starts_with("quota:") || trimmed.starts_with("transition") ||
             trimmed[0] == '}') {
             break; // insert BEFORE this line
         }
@@ -1583,11 +1583,14 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
         ++indent_check;
     }
     std::size_t indent_len = indent_check - scan;
+    std::string fallback_indent;
     if (indent_len == 0) {
         // Fallback: 4 spaces (the project default formatter indent).
         indent_len = 4;
+        fallback_indent.assign(indent_len, ' ');
     }
-    const std::string indent(source, scan, indent_len);
+    const std::string indent =
+        fallback_indent.empty() ? std::string(source, scan, indent_len) : fallback_indent;
 
     TextEdit edit;
     edit.range.start = offset_to_position(source, scan);

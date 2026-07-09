@@ -2425,6 +2425,46 @@ agent BadContextDefaultAgent {
                               "actual type 'WiderConfig' declared here in module"));
 }
 
+TEST_CASE("Omitted agent context uses Unit without invalid schema error") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: Int;
+}
+
+struct Response {
+    value: Int;
+}
+
+agent StatelessAgent {
+    input: Request;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    transition Done -> Done;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("omitted_agent_context.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    CHECK_FALSE(type_result.has_errors());
+    CHECK(type_result.diagnostics.has_warning());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.AGENT_CONTEXT_OMITTED") ==
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics,
+                                     "typecheck.AGENT_CAPABILITIES_OMITTED") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_AGENT_TYPE") == 0);
+}
+
 TEST_CASE("Type diagnostics preserve assignment expectation through some literals") {
     const std::string source = R"AHFL(
 struct Request {

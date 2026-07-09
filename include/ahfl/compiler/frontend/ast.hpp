@@ -1413,19 +1413,19 @@ struct PredicateDecl final : Decl {
 /// Defines a finite-state-machine Agent:
 ///   agent Name {
 ///       input: InputType;
-///       context: CtxType;
+///       context: CtxType;          // optional; omitted agents use Unit context
 ///       output: OutputType;
 ///       states: [Init, Processing, Done];
 ///       initial: Init;
 ///       final: [Done];
-///       capabilities: [Cap1, Cap2];
+///       capabilities: [Cap1, Cap2]; // optional; omitted agents declare no capabilities
 ///       transitions { Init -> Processing; Processing -> Done; }
 ///       quota { max_tool_calls: 10; }
 ///   }
 struct AgentDecl final : Decl {
     std::string name;
     Owned<TypeSyntax> input_type;                     // input type
-    Owned<TypeSyntax> context_type;                   // context type (mutable state)
+    Owned<TypeSyntax> context_type;                   // optional context type (mutable state)
     Owned<TypeSyntax> output_type;                    // output type
     std::vector<std::string> states;                  // set of states
     ahfl::SourceRange states_range;                   // range of the states clause

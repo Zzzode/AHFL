@@ -933,7 +933,6 @@ class AstInvariantValidator final {
             const auto &node = static_cast<const AgentDecl &>(declaration);
             require(!node.name.empty(), node.range, "AgentDecl is missing name");
             require(node.input_type != nullptr, node.range, "AgentDecl is missing input_type");
-            require(node.context_type != nullptr, node.range, "AgentDecl is missing context_type");
             require(node.output_type != nullptr, node.range, "AgentDecl is missing output_type");
             if (node.input_type) {
                 validate_type(*node.input_type);

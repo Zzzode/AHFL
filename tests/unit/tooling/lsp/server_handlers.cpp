@@ -8862,12 +8862,8 @@ void test_hover_target_tie_break_order_contract() {
     //     group against any other priority-0 sibling.
     //
     // FIXTURE RATIONALE:
-    //   Earlier versions relied on (a) QW-4 lint (blocked: parser requires
-    //   `capabilities` clause), then on (b) `self::K` inside a flow state
-    //   (blocked: top-level const refs are not accessible from runtime flow
-    //   contexts).  The simplest reliable shape is a flow-block `let` that
-    //   assigns a plain Int literal (1) to a Bool-typed local binding.
-    //   Typechecker fires typecheck.TYPE_MISMATCH at the literal range; the
+    //   A flow-block `let` assigning an Int literal to a Bool-typed local
+    //   binding gives a stable diagnostic target at the literal range. The
     //   range also hosts a literal-expression target, so we get a same-range
     //   tie.
     const std::string diag_source = "struct Ctx {\n"
@@ -9011,27 +9007,6 @@ void test_code_action_qf_wrong_arity_placeholder() {
           "codeAction.qf_arity.edit_has_non_empty_new_text");
 }
 
-// NOTE 2026-06-29: The ANTLR-generated parser shipped in the repo has NOT
-// been regenerated since the Wave-20 QW-4 grammar change that relaxed
-// `context:` and `capabilities:` from required to optional.  As a result,
-// any source that omits these clauses still emits *Error*-severity parser
-// diagnostics ("mismatched input 'output' expecting 'context'"), which in
-// turn trip the `!parse_result->has_errors()` gate in analysis_service.cpp
-// and prevent typecheck from running at all — so the QW-4 typecheck
-// warnings can never actually be produced end-to-end through the LSP in the
-// current build.
-//
-// The test strategy therefore directly exercises the pure
-// `compute_code_actions(source, range, diagnostics)` function with
-// hand-constructed `LspDiagnostic` objects that carry the exact codes the
-// QW-4 typecheck pass would emit (`typecheck.AGENT_CONTEXT_OMITTED` /
-// `...CAPABILITIES_OMITTED`).  This fully validates: (a) dispatch on the
-// code string, (b) TextEdit insertion location, (c) human-readable title,
-// (d) isPreferred + kind flags.  Once `scripts/regenerate-parser.sh` has
-// been re-run and the generated files committed, these fixtures can be
-// upgraded to end-to-end LSP tests (the source code payloads below are
-// already written to match the post-regen "valid AHFL" shape).
-
 using ahfl::lsp::CodeAction;
 using ahfl::lsp::CodeActionKind;
 using ahfl::lsp::DiagnosticSeverity;
@@ -9041,96 +9016,68 @@ using ahfl::lsp::Range;
 using ahfl::lsp::TextEdit;
 using ahfl::lsp::WorkspaceEdit;
 
-// Wave-21 A-2 (1/2): QF for AGENT_CONTEXT_OMITTED — inserts
-// "context: struct { };" between input and output.
+std::string agent_optional_fields_source() {
+    return "module app::main;\n"
+           "\n"
+           "struct M {\n"
+           "    v: Int;\n"
+           "}\n"
+           "\n"
+           "agent A {\n"
+           "    input: M;\n"
+           "    output: M;\n"
+           "    states: [Init, Done];\n"
+           "    initial: Init;\n"
+           "    final: [Done];\n"
+           "    transition Init -> Done;\n"
+           "}\n"
+           "\n"
+           "flow for A {\n"
+           "    state Init {\n"
+           "        goto Done;\n"
+           "    }\n"
+           "    state Done {\n"
+           "        return input;\n"
+           "    }\n"
+           "}\n";
+}
+
 void test_code_action_qf_agent_context() {
-    // NOTE: The source deliberately includes `context:` and `capabilities:`
-    // clauses so it parses cleanly with the pre-QW-4-regen parser.  The
-    // *diagnostic* we inject is the one that would have been emitted by
-    // typecheck for the same agent without those clauses — the QF pure
-    // function only cares about the diagnostic range + code and does not
-    // re-check the source.
-    const std::string source = "struct M { v: String; }\n"
-                               "\n"
-                               "agent A {\n"
-                               "    input: M;\n"
-                               "    context: M;\n"
-                               "    output: M;\n"
-                               "    states: [Init, Done];\n"
-                               "    initial: Init;\n"
-                               "    final: [Done];\n"
-                               "    capabilities: [];\n"
-                               "    transition Init -> Done;\n"
-                               "}\n"
-                               "\n"
-                               "flow for A {\n"
-                               "    state Init {\n"
-                               "        return input;\n"
-                               "    }\n"
-                               "}\n";
-    // The diagnostic covers the full agent declaration (lines 2..11),
-    // exactly as the QW-4 typecheck pass emits it (range set to
-    // `decl.get().range` in typecheck_decls.cpp:784).
-    LspDiagnostic diag;
-    diag.code = "typecheck.AGENT_CONTEXT_OMITTED";
-    diag.severity = DiagnosticSeverity::Warning;
-    diag.message = "agent 'A' is declared without a `context:` clause";
-    diag.range = Range{Position{2, 0}, Position{11, 1}};
+    const auto root = make_temp_project("agent_context_qf");
+    const auto main_path = root / "src" / "main.ahfl";
+    const std::string source = agent_optional_fields_source();
+    write_package_manifest(root, "agent-context-qf", "app", "\"main\"");
+    write_file(main_path, source);
 
-    const Range cursor_range{Position{3, 4}, Position{3, 9}}; // inside `input:` line
-    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    const auto input_start = position_of(source, "input: M;");
+    const auto input_end = position_after(input_start, "input: M;");
+    const auto input_range = range_fragment(input_start, input_end);
 
-    // Find the context-QF action (organize-imports or other siblings may
-    // also be returned if they match the range).
-    const CodeAction *qf = nullptr;
-    for (const auto &a : actions) {
-        if (a.title.find("context: struct { };") != std::string::npos ||
-            ((a.title.find("Insert") != std::string::npos) &&
-             (a.title.find("context") != std::string::npos))) {
-            qf = &a;
-            break;
-        }
-    }
-    check(qf != nullptr, "codeAction.qf_ctx.action_found");
-    if (qf == nullptr)
-        return;
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":{"textDocument":{"uri":")" +
+            uri + R"("},)" + input_range + R"(}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
 
-    // 1. Human-readable title carries the inserted clause verbatim so the
-    //    IDE preview matches what will be written.
-    check(qf->title.find("Insert `context: struct { };` clause") != std::string::npos,
+    const auto diagnostics = response_body_for_id(output, 2);
+    const auto code_actions = response_body_for_id(output, 3);
+
+    check(diagnostics.find("typecheck.AGENT_CONTEXT_OMITTED") != std::string::npos,
+          "codeAction.qf_ctx.diagnostic_from_typecheck");
+    check(diagnostics.find("internal AST invariant violation") == std::string::npos,
+          "codeAction.qf_ctx.no_ast_invariant_error");
+    check(code_actions.find("Insert `context: Unit;` clause") != std::string::npos,
           "codeAction.qf_ctx.title_mentions_insert_context");
-    // 2. kind == quickfix (the `only:["quickfix"]` client filter will pick it).
-    check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_ctx.kind_is_quickfix");
-    // 3. isPreferred so clients with "apply preferred quickfix" shortcuts
-    //    default to this (it is the only valid remediation).
-    check(qf->is_preferred, "codeAction.qf_ctx.marked_preferred");
-    // 4. The workspace edit must contain *exactly one* TextEdit and its
-    //    payload must contain the new `context: struct { };` declaration.
-    check(qf->edit.has_value(), "codeAction.qf_ctx.has_workspace_edit");
-    if (!qf->edit.has_value())
-        return;
-
-    std::size_t total_edits = 0;
-    bool found_struct_clause = false;
-    bool found_non_empty = false;
-    Position insert_pos{0, 0};
-    for (const auto &[uri_key, edits] : qf->edit->changes) {
-        total_edits += edits.size();
-        for (const auto &e : edits) {
-            if (e.new_text.find("context: struct { };") != std::string::npos)
-                found_struct_clause = true;
-            if (!e.new_text.empty())
-                found_non_empty = true;
-            insert_pos = e.range.start;
-        }
-    }
-    check(total_edits >= 1, "codeAction.qf_ctx.at_least_one_text_edit");
-    check(found_struct_clause, "codeAction.qf_ctx.edit_inserts_struct_empty");
-    check(found_non_empty, "codeAction.qf_ctx.edit_has_non_empty_new_text");
-    // 5. Insertion position must be AFTER the input-decl line (line 3 =
-    //    `    input: M;`) so the new clause lands between `input:` and
-    //    `output:` (AHFL schema order).
-    check(insert_pos.line >= 4 && insert_pos.line <= 5,
+    check(code_actions.find("\"kind\":\"quickfix\"") != std::string::npos,
+          "codeAction.qf_ctx.kind_is_quickfix");
+    check(code_actions.find("\"newText\":\"    context: Unit;\\n\"") != std::string::npos,
+          "codeAction.qf_ctx.edit_inserts_unit_context");
+    check(code_actions.find(R"("start":{"line":8,"character":0})") != std::string::npos,
           "codeAction.qf_ctx.insertion_between_input_and_output");
 }
 
@@ -9994,100 +9941,43 @@ void test_code_action_qf_invalid_range_pattern_swaps_bounds() {
     check(swaps_only_range_pattern, "codeAction.qf_invalid_range.swaps_bounds");
 }
 
-// Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
-// "capabilities: [];" before the first transition line.
-//
-// See NOTE block above test_code_action_qf_agent_context for why this is a
-// pure unit test rather than an LSP end-to-end test.
 void test_code_action_qf_agent_capabilities() {
-    // Source includes a `context:` line (so only AGENT_CAPABILITIES_OMITTED
-    // would fire) and provides an explicit `transition Init -> Done;` line
-    // so the QF has a concrete insertion anchor (it inserts `capabilities:
-    // [];` right before the first transition).
-    //
-    // As in QF-ctx, the source itself includes both clauses so the parser
-    // is happy; the diagnostic is injected by the test.
-    const std::string source = "struct M { v: String; }\n"
-                               "\n"
-                               "agent A {\n"
-                               "    input: M;\n"
-                               "    context: M;\n"
-                               "    output: M;\n"
-                               "    states: [Init, Done];\n"
-                               "    initial: Init;\n"
-                               "    final: [Done];\n"
-                               "    capabilities: [];\n"
-                               "    transition Init -> Done;\n"
-                               "}\n"
-                               "\n"
-                               "flow for A {\n"
-                               "    state Init {\n"
-                               "        return input;\n"
-                               "    }\n"
-                               "}\n";
-    // Diagnostic range = full agent declaration (lines 2..11) — matches
-    // typecheck_decls.cpp:805 which sets `decl.get().range`.
-    LspDiagnostic diag;
-    diag.code = "typecheck.AGENT_CAPABILITIES_OMITTED";
-    diag.severity = DiagnosticSeverity::Warning;
-    diag.message = "agent 'A' declares no capabilities (explicit `capabilities: [];` recommended)";
-    diag.range = Range{Position{2, 0}, Position{11, 1}};
+    const auto root = make_temp_project("agent_capabilities_qf");
+    const auto main_path = root / "src" / "main.ahfl";
+    const std::string source = agent_optional_fields_source();
+    write_package_manifest(root, "agent-capabilities-qf", "app", "\"main\"");
+    write_file(main_path, source);
 
-    const Range cursor_range{Position{10, 4}, Position{10, 24}}; // on `transition Init -> Done;`
-    const auto actions = ahfl::lsp::compute_code_actions(source, cursor_range, {diag});
+    const auto uri = AnalysisService::uri_from_path(main_path);
+    const auto transition_start = position_of(source, "transition Init -> Done;");
+    const auto transition_end = position_after(transition_start, "transition Init -> Done;");
+    const auto transition_range = range_fragment(transition_start, transition_end);
 
-    const CodeAction *qf = nullptr;
-    for (const auto &a : actions) {
-        if (a.title.find("capabilities: [];") != std::string::npos ||
-            ((a.title.find("Insert") != std::string::npos) &&
-             (a.title.find("capabilities") != std::string::npos))) {
-            qf = &a;
-            break;
-        }
-    }
-    check(qf != nullptr, "codeAction.qf_caps.action_found");
-    if (qf == nullptr)
-        return;
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+            uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"textDocument/codeAction","params":{"textDocument":{"uri":")" +
+            uri + R"("},)" + transition_range + R"(}})",
+        R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+    });
 
-    // 1. Title verbatim matches QW-4 lint UX copy.
-    check(qf->title.find("Insert empty `capabilities: [];` clause") != std::string::npos,
+    const auto diagnostics = response_body_for_id(output, 2);
+    const auto code_actions = response_body_for_id(output, 3);
+
+    check(diagnostics.find("typecheck.AGENT_CAPABILITIES_OMITTED") != std::string::npos,
+          "codeAction.qf_caps.diagnostic_from_typecheck");
+    check(diagnostics.find("internal AST invariant violation") == std::string::npos,
+          "codeAction.qf_caps.no_ast_invariant_error");
+    check(code_actions.find("Insert empty `capabilities: [];` clause") != std::string::npos,
           "codeAction.qf_caps.title_mentions_insert_capabilities");
-    // 2. kind == quickfix.
-    check(qf->kind == CodeActionKind::QuickFix, "codeAction.qf_caps.kind_is_quickfix");
-    // 3. isPreferred.
-    check(qf->is_preferred, "codeAction.qf_caps.marked_preferred");
-    // 4. Workspace edit contains the expected insertion text and the
-    //    insert position is before the first transition (i.e. on a line
-    //    strictly less than the transition line = line 10).
-    check(qf->edit.has_value(), "codeAction.qf_caps.has_workspace_edit");
-    if (!qf->edit.has_value())
-        return;
-
-    std::size_t total_edits = 0;
-    bool found_empty_array = false;
-    bool found_non_empty = false;
-    Position insert_pos{0, 0};
-    for (const auto &[uri_key, edits] : qf->edit->changes) {
-        total_edits += edits.size();
-        for (const auto &e : edits) {
-            if (e.new_text.find("capabilities: [];") != std::string::npos)
-                found_empty_array = true;
-            if (!e.new_text.empty())
-                found_non_empty = true;
-            insert_pos = e.range.start;
-        }
-    }
-    check(total_edits >= 1, "codeAction.qf_caps.at_least_one_text_edit");
-    check(found_empty_array, "codeAction.qf_caps.edit_inserts_empty_array");
-    check(found_non_empty, "codeAction.qf_caps.edit_has_non_empty_new_text");
-    // 5. Insertion must be AFTER the `final:` line (line 8) and BEFORE the
-    //    closing `}` of the agent (line 11).  The QF deliberately skips any
-    //    existing `capabilities:` line (as it does when re-running on an
-    //    already-fixed source), so any position in the (8, 11] range is
-    //    semantically valid — in this fixture line 11 is the exact insert
-    //    point right before the closing brace of `agent A { ... }`.
-    check(insert_pos.line > 8 && insert_pos.line <= 11,
-          "codeAction.qf_caps.insertion_between_final_and_closing_brace");
+    check(code_actions.find("\"kind\":\"quickfix\"") != std::string::npos,
+          "codeAction.qf_caps.kind_is_quickfix");
+    check(code_actions.find("\"newText\":\"    capabilities: [];\\n\"") != std::string::npos,
+          "codeAction.qf_caps.edit_inserts_empty_array");
+    check(code_actions.find(R"("start":{"line":12,"character":0})") != std::string::npos,
+          "codeAction.qf_caps.insertion_before_transition");
 }
 
 void test_diagnostic_related_information_surfaces_for_multi_module_mismatch() {

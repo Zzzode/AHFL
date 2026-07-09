@@ -2092,6 +2092,9 @@ void TypeCheckPass::check_schema_boundary_decl_type(const TypePtr &type,
     if (!type || is_error_type(*type) || type->holds<types::StructT>()) {
         return;
     }
+    if (boundary == SchemaBoundaryKind::AgentContextDefault && type->holds<types::UnitT>()) {
+        return;
+    }
 
     typecheck_error_here(
         error_codes::typecheck::InvalidAgentType,

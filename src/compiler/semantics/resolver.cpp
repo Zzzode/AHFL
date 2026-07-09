@@ -482,7 +482,9 @@ class ResolverPass final {
 
         if (current_pass_ == Pass::ResolveReferences) {
             resolve_type(*node.input_type);
-            resolve_type(*node.context_type);
+            if (node.context_type) {
+                resolve_type(*node.context_type);
+            }
             resolve_type(*node.output_type);
         }
     }
