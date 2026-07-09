@@ -824,7 +824,9 @@ pub fn marker() -> Int effect Pure decreases 0 {{
             "Data { level: Level, count: Int(0, 2), empty: String(0, 0) }" in source,
             "RFC0011 fixture must include nested enum, bounded Int and String singleton payloads",
         )
+        require("Value(Int)" in source, "RFC0011 fixture must include an open Int payload")
         require("count: 0..1" in source, "RFC0011 fixture must include an Int range pattern")
+        require("Value(_)" in source, "RFC0011 fixture must include an open-domain wildcard arm")
         require('empty: ""' in source, "RFC0011 fixture must include a String singleton pattern")
         self.command_item(
             evidence_id="rfc0011.pattern_matrix.representative_cases",
@@ -834,8 +836,8 @@ pub fn marker() -> Int effect Pure decreases 0 {{
             parse_json=False,
             validate=lambda text: require("ok: checked 1 source(s)" in text, text),
             summary=(
-                "Checked representative RFC0011 nested enum payload, bounded Int range and "
-                "String singleton pattern cases through the real package checker."
+                "Checked representative RFC0011 nested enum payload, open Int default, "
+                "bounded Int range and String singleton pattern cases through the real package checker."
             ),
         )
 

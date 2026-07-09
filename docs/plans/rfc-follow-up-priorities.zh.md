@@ -66,7 +66,7 @@
    - 新增：LSP binding-pattern replacement completion 已落库；`Data { label: chosen }` 这类 nested payload binding 位置会替换 `chosen` token，而不是在绑定名旁裸插入 enum / primitive pattern 候选。
    - 新增：LSP primitive payload snippet choices 已落库；tuple/struct enum variant pattern snippets 和 struct payload field snippets 会按 payload `TypePtr` 为 Bool、open primitive literal skeleton、bounded Int 和 `String(0,0)` 生成 choices，未稳定 domain 继续保守使用 wildcard placeholder。
    - 新增：LSP struct variant missing-field quick fix 已从裸字段 shorthand 改为插入 `field: _`，修复缺失字段时只恢复合法 pattern 结构，不额外引入用户没有明确声明的 pattern binding。
-   - 新增：RFC0011 representative release evidence 已落库；`ctest -L release-evidence-archive` 会通过 `rfc0011.pattern_matrix.representative_cases` 固化 nested enum payload、bounded Int range 和 `String(0,0)` singleton pattern 的真实 package check。
+   - 新增：RFC0011 representative release evidence 已落库；`ctest -L release-evidence-archive` 会通过 `rfc0011.pattern_matrix.representative_cases` 固化 finite enum、nested enum payload、open Int default arm、bounded Int range 和 `String(0,0)` singleton pattern 的真实 package check。
    - 仍需等 struct payload destructuring、更深非 literal refinement propagation、未来 Float refinement semantics 和更深 pattern binding UX 的语言语义稳定后进入 accepted / full implementing。
    - RFC 0011 以完整 usefulness matrix 为目标，避免在 RFC 0003 内提前冻结半成熟 pattern 域。
    - 剩余核心工作：future 更深 code-action / editing UX 继续消费 typed pattern HIR；numeric range 后续继续沿用 AST / TypedPattern / IR 一等 numeric range/bounds fact，不能退回字符串反解析；bounded String 当前覆盖 expected-type literal singleton、区间校验、concatenation range inference 和 `String(0,0)` singleton pattern matrix，不声明非 singleton string pattern domain 已进入 matrix。

@@ -10,6 +10,11 @@ enum Packet {
     Data { level: Level, count: Int(0, 2), empty: String(0, 0) },
 }
 
+enum Signal {
+    Done,
+    Value(Int),
+}
+
 fn classify(packet: Packet) -> Int effect Pure decreases 0 {
     return match packet {
         Empty => 0,
@@ -17,5 +22,13 @@ fn classify(packet: Packet) -> Int effect Pure decreases 0 {
         Data { level: Low, count: 2, empty: "" } => 2,
         Data { level: High, count: 0, empty: "" } => 3,
         Data { level: High, count: 1..2, empty: "" } => 4,
+    };
+}
+
+fn classify_signal(signal: Signal) -> Int effect Pure decreases 0 {
+    return match signal {
+        Done => 0,
+        Value(0..1) => 1,
+        Value(_) => 2,
     };
 }
