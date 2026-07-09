@@ -9368,7 +9368,7 @@ void test_code_action_qf_missing_variant_field_inserts_pattern_field() {
                                     edit.range.start.character == inline_start.character + 11 &&
                                     edit.range.end.line == inline_start.line &&
                                     edit.range.end.character == inline_start.character + 12 &&
-                                    edit.new_text == ", label ");
+                                    edit.new_text == ", label: _ ");
         }
     }
     check(inline_total_edits == 1, "codeAction.qf_missing_variant_field.inline_single_edit");
@@ -9423,7 +9423,7 @@ void test_code_action_qf_missing_variant_field_inserts_pattern_field() {
                 multiline_inserts_field ||
                 (edit.range.start.line == 6 && edit.range.start.character == 0 &&
                  edit.range.end.line == 6 && edit.range.end.character == 0 &&
-                 edit.new_text == "            label,\n");
+                 edit.new_text == "            label: _,\n");
         }
     }
     check(multiline_total_edits == 1, "codeAction.qf_missing_variant_field.multiline_single_edit");

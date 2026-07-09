@@ -828,6 +828,7 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     }
     const auto [open_brace, close_brace] = *braces;
     const std::string_view content(source.data() + open_brace + 1, close_brace - open_brace - 1);
+    const std::string field_pattern = *missing_field + ": _";
 
     TextEdit edit;
     if (content.find('\n') == std::string_view::npos) {
@@ -840,8 +841,7 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
         edit.range.start =
             offset_to_position(source, has_existing_field ? content_end : open_brace + 1);
         edit.range.end = offset_to_position(source, close_brace);
-        edit.new_text =
-            has_existing_field ? ", " + *missing_field + " " : " " + *missing_field + " ";
+        edit.new_text = has_existing_field ? ", " + field_pattern + " " : " " + field_pattern + " ";
     } else {
         const auto close_line_start_offset =
             line_start_offset(source, offset_to_position(source, close_brace).line);
@@ -861,11 +861,11 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
         if (last_non_space == open_brace + 1 || source[last_non_space - 1] == ',') {
             edit.range.start = offset_to_position(source, close_line_start_offset);
             edit.range.end = edit.range.start;
-            edit.new_text = std::string(close_prefix) + "    " + *missing_field + ",\n";
+            edit.new_text = std::string(close_prefix) + "    " + field_pattern + ",\n";
         } else if (source[last_non_space - 1] == '{') {
             edit.range.start = offset_to_position(source, close_line_start_offset);
             edit.range.end = edit.range.start;
-            edit.new_text = std::string(close_prefix) + "    " + *missing_field + ",\n";
+            edit.new_text = std::string(close_prefix) + "    " + field_pattern + ",\n";
         } else {
             const auto gap = std::string_view(source).substr(
                 last_non_space, close_line_start_offset - last_non_space);
@@ -876,7 +876,7 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
             }
             edit.range.start = offset_to_position(source, last_non_space);
             edit.range.end = offset_to_position(source, close_line_start_offset);
-            edit.new_text = ",\n" + std::string(close_prefix) + "    " + *missing_field + ",\n";
+            edit.new_text = ",\n" + std::string(close_prefix) + "    " + field_pattern + ",\n";
         }
     }
 
