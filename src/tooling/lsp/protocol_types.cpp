@@ -87,6 +87,9 @@ std::unique_ptr<json::JsonValue> serialize_completion_item(const CompletionItem 
     if (!item.insert_text.empty()) {
         obj->set("insertText", json::JsonValue::make_string(item.insert_text));
     }
+    if (item.text_edit.has_value()) {
+        obj->set("textEdit", serialize_text_edit(*item.text_edit));
+    }
     if (item.insert_text_format.has_value()) {
         obj->set("insertTextFormat",
                  json::JsonValue::make_int(static_cast<int64_t>(*item.insert_text_format)));

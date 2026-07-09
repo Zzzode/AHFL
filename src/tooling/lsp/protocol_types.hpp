@@ -109,6 +109,7 @@ struct CompletionItem {
     CompletionItemKind kind{CompletionItemKind::Text};
     std::string detail;
     std::string insert_text;
+    std::optional<TextEdit> text_edit;
     std::optional<InsertTextFormat> insert_text_format;
 };
 

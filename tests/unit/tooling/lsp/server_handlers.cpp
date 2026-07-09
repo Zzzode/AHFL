@@ -8300,6 +8300,15 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
           "completion.pattern_struct_fields_contains_label");
     check(empty_fields_output.find("\"label\":\"Empty\"") == std::string::npos,
           "completion.pattern_struct_fields_excludes_enum_variant");
+    check(empty_fields_output.find("\"textEdit\"") != std::string::npos,
+          "completion.pattern_struct_fields_rest_uses_text_edit");
+    check(empty_fields_output.find("\"newText\":\"code\"") != std::string::npos,
+          "completion.pattern_struct_fields_rest_replaces_rest_with_code");
+    check(empty_fields_output.find("\"newText\":\"label\"") != std::string::npos,
+          "completion.pattern_struct_fields_rest_replaces_rest_with_label");
+    check(empty_fields_output.find(R"("start":{"line":12,"character":15})") != std::string::npos &&
+              empty_fields_output.find(R"("end":{"line":12,"character":17})") != std::string::npos,
+          "completion.pattern_struct_fields_rest_text_edit_range");
 
     const auto used_field_position = position_of(source, "Data { code, .. }");
     const std::string used_field_params =
@@ -8332,9 +8341,11 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
           "completion.pattern_struct_fields_snippet_keeps_unused_label");
     check(snippet_output.find("\"label\":\"code\"") == std::string::npos,
           "completion.pattern_struct_fields_snippet_filters_used_code");
-    check(snippet_output.find("\"insertText\":\"label: ${1|Low,High,_|}\"") !=
-              std::string::npos,
-          "completion.pattern_struct_fields_snippet_uses_nested_enum_choices");
+    check(snippet_output.find("\"newText\":\"label: ${1|Low,High,_|}\"") != std::string::npos,
+          "completion.pattern_struct_fields_snippet_text_edit_uses_nested_enum_choices");
+    check(snippet_output.find(R"("start":{"line":18,"character":24})") != std::string::npos &&
+              snippet_output.find(R"("end":{"line":18,"character":26})") != std::string::npos,
+          "completion.pattern_struct_fields_snippet_text_edit_range");
     check(snippet_output.find("\"insertTextFormat\":2") != std::string::npos,
           "completion.pattern_struct_fields_snippet_insert_text_format");
 }

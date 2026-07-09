@@ -2514,12 +2514,106 @@ void push_bounded_int_pattern_completions(std::vector<CompletionItem> &items,
     }
 }
 
+[[nodiscard]] bool is_rest_pattern_boundary(char ch) noexcept {
+    return ch == '\0' || std::isspace(static_cast<unsigned char>(ch)) || ch == ',' || ch == '{' ||
+           ch == '}';
+}
+
+[[nodiscard]] std::optional<SourceRange> struct_variant_rest_pattern_range_at(
+    const SourceFile &source, const TypedPattern &pattern, std::size_t offset) {
+    if (pattern.variant_payload_kind != EnumVariantPayloadKind::Struct ||
+        pattern.range.begin_offset >= pattern.range.end_offset ||
+        pattern.range.end_offset > source.content.size()) {
+        return std::nullopt;
+    }
+
+    const auto text = std::string_view{source.content}.substr(
+        pattern.range.begin_offset, pattern.range.end_offset - pattern.range.begin_offset);
+    const auto open = text.find('{');
+    const auto close = text.rfind('}');
+    if (open == std::string_view::npos || close == std::string_view::npos || open >= close) {
+        return std::nullopt;
+    }
+
+    const auto open_offset = pattern.range.begin_offset + open;
+    const auto close_offset = pattern.range.begin_offset + close;
+    if (offset < open_offset || offset > close_offset) {
+        return std::nullopt;
+    }
+
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int bracket_depth = 0;
+    bool in_string = false;
+    bool escaping = false;
+    for (std::size_t index = open_offset + 1; index + 1 < close_offset; ++index) {
+        const char ch = source.content[index];
+        if (in_string) {
+            if (escaping) {
+                escaping = false;
+            } else if (ch == '\\') {
+                escaping = true;
+            } else if (ch == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            in_string = true;
+            continue;
+        }
+        if (ch == '(') {
+            ++paren_depth;
+            continue;
+        }
+        if (ch == ')' && paren_depth > 0) {
+            --paren_depth;
+            continue;
+        }
+        if (ch == '{') {
+            ++brace_depth;
+            continue;
+        }
+        if (ch == '}' && brace_depth > 0) {
+            --brace_depth;
+            continue;
+        }
+        if (ch == '[') {
+            ++bracket_depth;
+            continue;
+        }
+        if (ch == ']' && bracket_depth > 0) {
+            --bracket_depth;
+            continue;
+        }
+        if (paren_depth != 0 || brace_depth != 0 || bracket_depth != 0 || ch != '.' ||
+            source.content[index + 1] != '.') {
+            continue;
+        }
+
+        const char before = index == open_offset + 1 ? '\0' : source.content[index - 1];
+        const char after = index + 2 >= close_offset ? '\0' : source.content[index + 2];
+        if (!is_rest_pattern_boundary(before) || !is_rest_pattern_boundary(after)) {
+            continue;
+        }
+
+        const auto rest_end = index + 2;
+        if (index <= offset && offset <= rest_end) {
+            return SourceRange{.begin_offset = index, .end_offset = rest_end};
+        }
+    }
+    return std::nullopt;
+}
+
 void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
+                                           const SourceFile &source,
                                            const TypeEnvironment &environment,
                                            const EnumTypeInfo &enum_info,
                                            const EnumVariantInfo &variant_info,
                                            const TypedPattern &pattern,
+                                           std::size_t offset,
                                            bool snippet_support) {
+    const auto rest_range = struct_variant_rest_pattern_range_at(source, pattern, offset);
     std::unordered_set<std::string> used_fields;
     used_fields.reserve(pattern.children.size());
     for (const auto &child : pattern.children) {
@@ -2536,10 +2630,19 @@ void push_struct_variant_field_completions(std::vector<CompletionItem> &items,
         item.label = field.name;
         item.kind = CompletionItemKind::Variable;
         item.detail = "field " + enum_info.canonical_name + "::" + variant_info.name;
+        std::string replacement = field.name;
         if (snippet_support) {
-            item.insert_text =
+            replacement =
                 field.name + ": " + pattern_payload_snippet_placeholder(environment, field.type, 1);
             item.insert_text_format = InsertTextFormat::Snippet;
+        }
+        if (rest_range.has_value()) {
+            item.text_edit = TextEdit{
+                .range = to_lsp_range(source, *rest_range),
+                .new_text = std::move(replacement),
+            };
+        } else {
+            item.insert_text = std::move(replacement);
         }
         items.push_back(std::move(item));
     }
@@ -2734,10 +2837,12 @@ find_variant_payload_pattern_at(const TypedProgram &program,
             if (variant_info.has_value() &&
                 variant_info->get().payload_kind == EnumVariantPayloadKind::Struct) {
                 push_struct_variant_field_completions(items,
+                                                      *source.source,
                                                       snapshot.type_check_result->environment,
                                                       enum_info->get(),
                                                       variant_info->get(),
                                                       *field_pattern,
+                                                      offset,
                                                       snippet_support);
                 return true;
             }
