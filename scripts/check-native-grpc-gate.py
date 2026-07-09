@@ -245,6 +245,13 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
         failures.append(f"{DECISION_EVIDENCE_REL}: gates must be an object")
         return failures
 
+    unknown_gates = sorted(str(gate) for gate in gates if gate not in REQUIRED_GATES)
+    if unknown_gates:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: gates contains unknown gate(s) {unknown_gates}; "
+            f"allowed gates are {list(REQUIRED_GATES)}"
+        )
+
     for gate in REQUIRED_GATES:
         gate_value = gates.get(gate)
         if not isinstance(gate_value, dict):

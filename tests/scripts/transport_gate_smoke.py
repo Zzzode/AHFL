@@ -296,6 +296,22 @@ def test_accepted_requires_owner_decision(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "runtime_owner_decision")
 
 
+def test_rejects_unknown_gate_name(checker: Path) -> None:
+    fixture = evidence()
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    gates["benchmarks"] = {
+        "status": "complete",
+        "owner": "owner",
+        "evidence": ["docs/plans/evidence/benchmark.json"],
+        "notes": "typo fixture",
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "unknown gate")
+
+
 def test_accepted_allows_structured_owner_decision(checker: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -444,6 +460,7 @@ def main() -> int:
     checker = Path(sys.argv[1]).resolve()
     test_draft_rejects_implementation_markers(checker)
     test_accepted_requires_owner_decision(checker)
+    test_rejects_unknown_gate_name(checker)
     test_accepted_allows_structured_owner_decision(checker)
     test_implementing_requires_complete_gate_evidence(checker)
     test_implementing_allows_markers_after_complete_evidence(checker)

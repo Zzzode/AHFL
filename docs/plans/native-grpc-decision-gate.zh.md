@@ -99,6 +99,7 @@ No-Go 决策必须写回 RFC0004：
 
 `scripts/check-native-grpc-gate.py` 现在同时检查 RFC 状态、实现 marker 和结构化证据：
 
+0. `native-grpc-decision-evidence.json` 的 `gates` 只能包含 Gate Matrix 中定义的七个 gate：`runtime_owner_decision`、`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`；未知 gate 名一律 fail closed，防止 typo 或私有门槛绕过审计。
 1. `draft`：允许 `native-grpc-decision-evidence.json` 中 gate 仍为 `missing` / `planned`，但仓库禁止 native gRPC build flag、C++ gRPC/Protobuf dependency wiring、native proto service contract 和 `native-grpc` 源文件。
 2. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；仍不允许 implementation marker。
 3. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
