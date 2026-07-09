@@ -1505,6 +1505,7 @@ TypeKey type_key_for_type_with_defs(const Type &type, const DefBySymbolMap *def_
            previous.artifact_reachable == current.artifact_reachable &&
            previous.local_name == current.local_name &&
            previous.canonical_name == current.canonical_name &&
+           previous.completeness == current.completeness &&
            source_range_equal(previous.declaration_range, current.declaration_range) &&
            source_range_equal(previous.selection_range, current.selection_range);
 }
@@ -1515,7 +1516,9 @@ TypeKey type_key_for_type_with_defs(const Type &type, const DefBySymbolMap *def_
     return previous.package_id == current.package_id &&
            previous.source_unit_id == current.source_unit_id &&
            previous.reference_kind == current.reference_kind &&
-           mapped_target == current.target_def && source_range_equal(previous.range, current.range);
+           mapped_target == current.target_def &&
+           previous.completeness == current.completeness &&
+           source_range_equal(previous.range, current.range);
 }
 
 [[nodiscard]] bool impl_fact_matches_current(const ImplFact &previous,

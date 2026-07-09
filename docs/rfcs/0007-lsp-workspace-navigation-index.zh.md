@@ -5,7 +5,7 @@ status: "stabilized"
 area: ["compiler", "stdlib", "tooling"]
 stability: "developer-facing"
 created: "2026-07-04"
-updated: "2026-07-07"
+updated: "2026-07-09"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -410,7 +410,7 @@ RFC 0006 已定义 active sysroot。RFC 0007 只补充 LSP index behavior：
 5. `implemented`：LSP handler 不再通过扩大 semantic entry files 获得 package-wide navigation candidates。
 6. `stabilized`：release evidence 覆盖 ordinary user package、source-sysroot std development、multi-root workspace 和 VS Code extension bundled sysroot。
 
-当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 ordinary user package、source-sysroot std development、VSIX bundled sysroot contract 和 multi-root toolchain profile contract。RFC 0007 v1 的稳定范围是语义图与导航索引分离、primitive home、implementation/reference/CodeLens facts、rename v1、open overlay invalidation 和 multi-root profile isolation；fact-level incremental remap 属于二期性能工作，不阻塞 v1 稳定化。
+当前状态为 `stabilized`。2026-07-07 release evidence archive 已覆盖 ordinary user package、source-sysroot std development、VSIX bundled sysroot contract 和 multi-root toolchain profile contract。RFC 0007 v1 的稳定范围是语义图与导航索引分离、primitive home、implementation/reference/CodeLens facts、rename v1、open overlay invalidation、multi-root profile isolation、进程内 previous-index fact remap 和 stale completeness reuse guard。后续只保留 UX / performance polish；磁盘持久索引、remote index server、daemon 共享索引和跨 checkout cache 仍是 non-goal。
 
 ## Alternatives
 
@@ -440,8 +440,9 @@ v1 稳定范围已收口以下决策：
 - 2026-07-05: Implemented PackageGraph-derived `SourceUnitId` identity, opaque source-unit lookup, structured `PrimitiveKind` / `TypeKey` primitive homes, and index-owned `DefId` / `WorkspaceImplId` / `ReferenceFactId` flat stores.
 - 2026-07-05: Migrated `definition`, `typeDefinition`, `implementation`, `references`, `workspace/symbol`, and CodeLens to consume `LspWorkspaceIndex` / lazy sysroot index facts without injecting exported std modules into `SemanticSourceGraph`.
 - 2026-07-05: Added tests for source-sysroot primitive impl candidates, ordinary user lazy sysroot indexing, path dependency exports, open overlays, partial parse/resolve/typecheck facts, stable ordering, cache invalidation, and multi-root toolchain profile isolation.
-- 2026-07-07: Marked stabilized after the release evidence archive covered ordinary user package, source-sysroot std development, VSIX bundled sysroot, and multi-root toolchain profile contracts; fact-level incremental remap remains RFC 0007 phase II follow-up work.
+- 2026-07-07: Marked stabilized after the release evidence archive covered ordinary user package, source-sysroot std development, VSIX bundled sysroot, and multi-root toolchain profile contracts; fact-level incremental remap was still outside the stable v1 scope at that time.
 - 2026-07-07: Added `SymbolFact::fingerprint` numeric drift-detection identity and handler coverage proving stable fingerprints across index rebuilds.
-- 2026-07-07: Reclassified rename, references, CodeLens, and implementation candidate display as implemented v1 index consumers; kept fact-level incremental remap and public API publish compatibility guards as separate follow-up work.
+- 2026-07-07: Reclassified rename, references, CodeLens, and implementation candidate display as implemented v1 index consumers; kept fact-level incremental remap and public API publish compatibility guards as separate follow-up work at that point.
 - 2026-07-07: Scoped LSP snapshot and root/sysroot index overlay revision keys to actually referenced source units, so unrelated open document edits no longer force current package snapshot/index rebuilds.
 - 2026-07-08: Implemented in-process previous-index remap for unchanged `SourceUnitId` facts. `LspWorkspaceIndexInput::previous_index` now lets snapshot, workspace-root, and sysroot indexes reuse unchanged symbol/reference/impl facts after remapping old `DefId` references through `SymbolFact::fingerprint`; handler tests cover one-source edits preserving unchanged-source facts and remapped reference/implementation queries.
+- 2026-07-09: Hardened previous-index remap against stale completeness reuse. Symbol/reference facts are reused only when their `FactCompleteness` matches the current fact, so an unchanged source that previously emitted only parsed skeleton facts can upgrade to resolved facts after another source's resolver error is fixed.

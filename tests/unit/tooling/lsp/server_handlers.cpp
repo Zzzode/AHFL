@@ -3415,6 +3415,101 @@ void test_workspace_index_reuses_unchanged_source_unit_facts() {
     }
 }
 
+void test_workspace_index_does_not_reuse_stale_completeness_facts() {
+    const auto root = make_temp_project("workspace_index_incremental_completeness");
+    const auto source_root = root / "src";
+    const auto a_path = source_root / "a.ahfl";
+    const auto b_path = source_root / "b.ahfl";
+
+    const std::string a_source_broken = "module app::a;\n"
+                                        "import app::b as b;\n"
+                                        "\n"
+                                        "struct A {\n"
+                                        "    payload: Missing;\n"
+                                        "}\n";
+    const std::string a_source_fixed = "module app::a;\n"
+                                       "import app::b as b;\n"
+                                       "\n"
+                                       "struct A {\n"
+                                       "    payload: b::B;\n"
+                                       "}\n";
+    const std::string b_source = "module app::b;\n"
+                                 "\n"
+                                 "struct B {}\n";
+    write_file(a_path, a_source_broken);
+    write_file(b_path, b_source);
+
+    const auto package_id = ahfl::package_graph::PackageId{0};
+    const auto make_input = [&](std::uint64_t revision,
+                                const LspWorkspaceIndex *previous_index = nullptr) {
+        ahfl::ProjectInput project;
+        project.entry_files = {a_path, b_path};
+        project.module_roots.push_back(ahfl::ProjectInput::ModuleRoot{
+            .prefix = "app",
+            .root = source_root,
+            .exported_modules = {"a"},
+            .dependency_prefixes = {},
+        });
+        return LspWorkspaceIndexInput{
+            .project = std::move(project),
+            .scope =
+                NavigationIndexScope{
+                    .package_roots =
+                        {
+                            LspIndexPackageRoot{
+                                .package_id = package_id,
+                                .module_root = source_root,
+                            },
+                        },
+                    .source_units =
+                        {
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{0},
+                                .package_id = package_id,
+                                .path = a_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                            LspIndexSourceUnitSeed{
+                                .source_unit_id = SourceUnitId{1},
+                                .package_id = package_id,
+                                .path = b_path,
+                                .scope_kinds = {LspNavigationIndexSourceKind::PackageExport},
+                            },
+                        },
+                },
+            .metadata =
+                NavigationIndexMetadata{
+                    .revision = revision,
+                    .index_schema_version = "test-index-schema",
+                    .index_identity_schema_version = "test-identity-schema",
+                },
+            .previous_index = previous_index,
+        };
+    };
+
+    const ahfl::Frontend frontend;
+    auto first = build_lsp_workspace_index(frontend, make_input(1));
+    const auto *first_b_symbol = index_symbol_for_canonical_name(first, "app::b::B");
+    check(first_b_symbol != nullptr,
+          "workspace_index.incremental_completeness.first_b_symbol_exists");
+    if (first_b_symbol != nullptr) {
+        check(first_b_symbol->completeness == FactCompleteness::Parsed,
+              "workspace_index.incremental_completeness.first_b_symbol_is_parsed");
+    }
+
+    write_file(a_path, a_source_fixed);
+    auto second = build_lsp_workspace_index(frontend, make_input(2, &first));
+    const auto *second_b_symbol = index_symbol_for_canonical_name(second, "app::b::B");
+    check(second_b_symbol != nullptr,
+          "workspace_index.incremental_completeness.second_b_symbol_exists");
+    check(second.reuse_stats().reused_source_units == 1,
+          "workspace_index.incremental_completeness.reuses_unchanged_source");
+    if (second_b_symbol != nullptr) {
+        check(second_b_symbol->completeness == FactCompleteness::Resolved,
+              "workspace_index.incremental_completeness.upgrades_to_resolved");
+    }
+}
+
 void test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails() {
     const auto root = make_temp_project("project_index_partial_typecheck");
     const auto main_path = root / "src" / "main.ahfl";
@@ -10195,6 +10290,7 @@ int main() {
     test_workspace_index_queries_sort_by_package_source_and_order();
     test_workspace_index_assigns_source_units_by_scope_order();
     test_workspace_index_reuses_unchanged_source_unit_facts();
+    test_workspace_index_does_not_reuse_stale_completeness_facts();
     test_workspace_symbol_keeps_index_facts_when_exported_module_typecheck_fails();
     test_workspace_symbol_keeps_parse_facts_when_exported_module_resolve_fails();
     test_workspace_symbol_keeps_parse_skeleton_when_exported_module_parse_fails();
