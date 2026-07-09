@@ -121,6 +121,7 @@ constexpr std::string_view kCodeMatchMissingPatterns = "typecheck.MATCH_MISSING_
 constexpr std::string_view kCodeMatchUnreachableArm = "typecheck.MATCH_UNREACHABLE_ARM";
 constexpr std::string_view kCodeMatchRedundantPattern = "typecheck.MATCH_REDUNDANT_PATTERN";
 constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF_LET_ELSE";
+constexpr std::string_view kCodeInvalidRangePattern = "typecheck.INVALID_RANGE_PATTERN";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -1086,6 +1087,68 @@ structured_missing_pattern_witnesses(const LspDiagnostic &diag) {
     return action;
 }
 
+[[nodiscard]] std::optional<std::string> single_diagnostic_data(const LspDiagnostic &diag,
+                                                                std::string_view key) {
+    const auto found = diag.data.find(std::string(key));
+    if (found == diag.data.end() || found->second.size() != 1) {
+        return std::nullopt;
+    }
+    return found->second.front();
+}
+
+[[nodiscard]] bool source_safe_signed_int_bound(std::string_view bound) noexcept {
+    if (bound.empty()) {
+        return false;
+    }
+    std::size_t cursor = 0;
+    if (bound.front() == '-') {
+        cursor = 1;
+        if (cursor == bound.size()) {
+            return false;
+        }
+    }
+    return std::all_of(bound.begin() + static_cast<std::ptrdiff_t>(cursor),
+                       bound.end(),
+                       [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+}
+
+[[nodiscard]] std::optional<CodeAction> qf_invalid_range_pattern(const std::string &source,
+                                                                 const LspDiagnostic &diag) {
+    const auto start_bound = single_diagnostic_data(diag, "range_start");
+    const auto end_bound = single_diagnostic_data(diag, "range_end");
+    if (!start_bound.has_value() || !end_bound.has_value() ||
+        !source_safe_signed_int_bound(*start_bound) || !source_safe_signed_int_bound(*end_bound)) {
+        return std::nullopt;
+    }
+
+    const auto range_start = position_to_offset(source, diag.range.start);
+    const auto range_end = position_to_offset(source, diag.range.end);
+    if (range_start >= range_end || range_end > source.size()) {
+        return std::nullopt;
+    }
+
+    const std::string original = *start_bound + ".." + *end_bound;
+    if (trim_copy(std::string_view(source).substr(range_start, range_end - range_start)) !=
+        original) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range = diag.range;
+    edit.new_text = *end_bound + ".." + *start_bound;
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Swap range pattern bounds";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 // ---------------------------------------------------------------------------
 // Organize Imports (existing, preserved)
 // ---------------------------------------------------------------------------
@@ -1325,6 +1388,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeUnreachableIfLetElse) {
             if (auto a = qf_unreachable_if_let_else(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeInvalidRangePattern) {
+            if (auto a = qf_invalid_range_pattern(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

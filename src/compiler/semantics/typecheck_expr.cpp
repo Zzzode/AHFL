@@ -2314,11 +2314,16 @@ class ExpressionChecker final {
                                  TypePtr scrutinee_type,
                                  SourceRange range) const {
         if (range_pattern.start > range_pattern.end) {
+            std::map<std::string, std::vector<std::string>> data;
+            data.emplace("range_start", std::vector<std::string>{range_pattern.start_spelling});
+            data.emplace("range_end", std::vector<std::string>{range_pattern.end_spelling});
             services_.typecheck_error_here(
                 error_codes::typecheck::InvalidRangePattern,
                 messages::typecheck::InvalidRangePattern.format_with(range_pattern.start_spelling,
                                                                      range_pattern.end_spelling),
-                range);
+                range,
+                {},
+                std::move(data));
         }
         if (scrutinee_type == nullptr || is_error_type(*scrutinee_type)) {
             return;

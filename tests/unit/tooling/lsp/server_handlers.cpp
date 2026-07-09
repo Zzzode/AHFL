@@ -9327,6 +9327,58 @@ void test_code_action_qf_unreachable_if_let_else_removes_else_branch() {
           "codeAction.qf_if_let_unreachable_else.preserves_following_statement");
 }
 
+void test_code_action_qf_invalid_range_pattern_swaps_bounds() {
+    const std::string source = "module lsp::range_qf;\n"
+                               "enum Maybe { Some(Int), None }\n"
+                               "fn f(value: Maybe) -> Int effect Pure decreases 0 {\n"
+                               "    return match value {\n"
+                               "        Some(-1..-3) => 1,\n"
+                               "        Some(_) => 2,\n"
+                               "        None => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto range_start = position_of(source, "-1..-3");
+    const auto range_end = position_after(range_start, "-1..-3");
+
+    LspDiagnostic diag;
+    diag.code = "typecheck.INVALID_RANGE_PATTERN";
+    diag.severity = DiagnosticSeverity::Error;
+    diag.message = "invalid range pattern: lower bound -1 exceeds upper bound -3";
+    diag.range = Range{range_start, range_end};
+    diag.data["range_start"] = {"-1"};
+    diag.data["range_end"] = {"-3"};
+
+    const auto actions = ahfl::lsp::compute_code_actions(source, diag.range, {diag});
+
+    const CodeAction *qf = nullptr;
+    for (const auto &action : actions) {
+        if (action.title == "Swap range pattern bounds") {
+            qf = &action;
+            break;
+        }
+    }
+    check(qf != nullptr, "codeAction.qf_invalid_range.action_found");
+    if (qf == nullptr || !qf->edit.has_value())
+        return;
+
+    std::size_t total_edits = 0;
+    bool swaps_only_range_pattern = false;
+    for (const auto &[uri_key, edits] : qf->edit->changes) {
+        total_edits += edits.size();
+        for (const auto &edit : edits) {
+            swaps_only_range_pattern =
+                swaps_only_range_pattern ||
+                (edit.range.start.line == range_start.line &&
+                 edit.range.start.character == range_start.character &&
+                 edit.range.end.line == range_end.line &&
+                 edit.range.end.character == range_end.character && edit.new_text == "-3..-1");
+        }
+    }
+    check(total_edits == 1, "codeAction.qf_invalid_range.single_text_edit");
+    check(swaps_only_range_pattern, "codeAction.qf_invalid_range.swaps_bounds");
+}
+
 // Wave-21 A-2 (2/2): QF for AGENT_CAPABILITIES_OMITTED — inserts
 // "capabilities: [];" before the first transition line.
 //
@@ -9704,6 +9756,7 @@ int main() {
     test_code_action_qf_match_redundant_pattern_removes_or_branch();
     test_code_action_qf_match_redundant_pattern_removes_multiline_or_branch();
     test_code_action_qf_unreachable_if_let_else_removes_else_branch();
+    test_code_action_qf_invalid_range_pattern_swaps_bounds();
     test_code_action_qf_agent_context();
     test_code_action_qf_agent_capabilities();
     test_hover_struct_literal_shows_construct_summary();

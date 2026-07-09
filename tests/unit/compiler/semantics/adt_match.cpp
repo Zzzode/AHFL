@@ -751,7 +751,14 @@ enum MaybeInt { Some(Int), None, }
         "match ctx.value { Some(-1..-3) => 1, Some(_) => 2, None => 0 }");
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
-    CHECK(has_diagnostic_code(result, "INVALID_RANGE_PATTERN"));
+    const auto *diagnostic = find_diagnostic_with_code(result.diagnostics, "INVALID_RANGE_PATTERN");
+    REQUIRE(diagnostic != nullptr);
+    const auto start = diagnostic->data.find("range_start");
+    const auto end = diagnostic->data.find("range_end");
+    REQUIRE(start != diagnostic->data.end());
+    REQUIRE(end != diagnostic->data.end());
+    CHECK(start->second == std::vector<std::string>{"-1"});
+    CHECK(end->second == std::vector<std::string>{"-3"});
 }
 
 TEST_CASE("Int range pattern on Bool payload reports type mismatch") {
