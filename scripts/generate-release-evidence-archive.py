@@ -817,6 +817,28 @@ pub fn marker() -> Int effect Pure decreases 0 {{
             summary="Checked active std package as source sysroot without duplicate package/module errors.",
         )
 
+    def pattern_matrix_evidence(self) -> None:
+        fixture = self.repo / "tests/integration/rfc0011_pattern_matrix"
+        source = (fixture / "src/main.ahfl").read_text(encoding="utf-8")
+        require(
+            "Data { level: Level, count: Int(0, 2), empty: String(0, 0) }" in source,
+            "RFC0011 fixture must include nested enum, bounded Int and String singleton payloads",
+        )
+        require("count: 0..1" in source, "RFC0011 fixture must include an Int range pattern")
+        require('empty: ""' in source, "RFC0011 fixture must include a String singleton pattern")
+        self.command_item(
+            evidence_id="rfc0011.pattern_matrix.representative_cases",
+            covers=["RFC0011"],
+            args=["check", "--manifest", str(fixture / "ahfl.toml"), "--sysroot", str(self.repo)],
+            artifact_name="pattern/rfc0011-pattern-matrix-check.txt",
+            parse_json=False,
+            validate=lambda text: require("ok: checked 1 source(s)" in text, text),
+            summary=(
+                "Checked representative RFC0011 nested enum payload, bounded Int range and "
+                "String singleton pattern cases through the real package checker."
+            ),
+        )
+
     def vscode_bundled_sysroot_evidence(self) -> None:
         package_script = (self.repo / "scripts/package-vscode-vsix-release.sh").read_text(
             encoding="utf-8"
@@ -989,6 +1011,7 @@ def main() -> int:
     builder.package_and_sysroot_evidence()
     builder.public_api_evidence()
     builder.registry_publish_evidence()
+    builder.pattern_matrix_evidence()
     builder.vscode_bundled_sysroot_evidence()
     builder.lsp_multi_root_evidence()
     manifest = builder.write_manifest()

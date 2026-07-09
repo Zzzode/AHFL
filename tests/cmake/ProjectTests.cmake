@@ -2485,7 +2485,7 @@ add_test(NAME ahfl.release_evidence_archive.smoke
             --out-dir "${CMAKE_CURRENT_BINARY_DIR}/release-evidence-archive"
 )
 set_tests_properties(ahfl.release_evidence_archive.smoke PROPERTIES
-    LABELS "release-evidence-archive;rfc0005;rfc0006;rfc0007;rfc0009;rfc0010"
+    LABELS "release-evidence-archive;rfc0005;rfc0006;rfc0007;rfc0009;rfc0010;rfc0011"
 )
 
 add_test(NAME ahflc.check.manifest_rejects_std_directory_sysroot_input

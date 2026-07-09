@@ -271,6 +271,7 @@ Migration:
 56. Nested enum payload variant skeleton choices 已落库：LSP snippet placeholder 不再只列出 nested enum 的 unit variants；当 payload 类型本身是 enum 时，tuple payload variant 会以 `Variant(_, ...)` skeleton 出现在 choice placeholder 中，struct payload variant 会以 `Variant { field: _ }` skeleton 出现，并保留 `_` fallback。choice 文本会做 LSP snippet grammar 转义，避免多字段 tuple / struct skeleton 中的逗号破坏 placeholder。
 57. Binding-pattern replacement completion 已落库：当 completion 位于 source-safe 单个 identifier binding pattern 上时，LSP 会用标准 `CompletionItem.textEdit` 替换当前 binding token；例如 `Data { label: chosen }` 中选择 `Low` 会替换 `chosen`，不会在 token 旁裸插入。该能力仍只消费 typed pattern matched-type facts，并且不自动替换 tuple / or-pattern 或带 nested child 的复合 binding。
 58. Primitive payload snippet choices 已落库：tuple/struct enum variant pattern snippets 和 struct payload field snippets 的 payload placeholder 现在会消费 payload `TypePtr`，为 `Bool` 提供 `true` / `false` / `_` choices，为 open `Int` / `Float` / `String` 提供与 pattern completion 一致的 source-safe literal skeleton choices，为 bounded Int 提供小域 literal / range choices 或大域 range choice，为 `String(0,0)` 提供 `""` / `_` choices；其他非闭合或未稳定 primitive/refinement domain 仍保守使用 `${n:_}`。
+59. Release evidence archive 覆盖已落库：仓库级 `scripts/generate-release-evidence-archive.py` 现在生成 `rfc0011.pattern_matrix.representative_cases`，通过真实 `ahflc check --manifest tests/integration/rfc0011_pattern_matrix/ahfl.toml --sysroot <repo>` 固化 nested enum payload、bounded Int range 和 `String(0,0)` singleton pattern 的代表用例。
 
 尚未完成：
 
@@ -311,7 +312,7 @@ Stabilized exit criteria:
 
 1. `docs/spec/core-language.zh.md` describes full pattern semantics. 状态：v1 已覆盖现有 `Pattern` surface、Int range pattern、literal/open-domain coverage、guard exhaustiveness、if-let usefulness 与 narrowing 规则；未来 Float refinement semantics 仍需另行稳定。
 2. `docs/reference/error-codes.zh.md` lists stable pattern diagnostics. 状态：v1 已列出现行 pattern 诊断码，并删除不再发射的旧阶段 `*_NOT_YET_SUPPORTED` 占位码。
-3. Release evidence includes representative finite/open/nested pattern cases.
+3. Release evidence includes representative finite/open/nested pattern cases. 状态：`rfc0011.pattern_matrix.representative_cases` 已进入仓库级 release evidence archive，覆盖 nested enum payload、bounded Int range 和 `String(0,0)` singleton pattern 的真实 package check。
 
 ## Alternatives
 
@@ -401,3 +402,4 @@ Stabilized exit criteria:
 - 2026-07-09: Added binding-pattern replacement completion. Pattern completions now replace source-safe identifier binding tokens such as `Data { label: chosen }` via `CompletionItem.textEdit` while still leaving tuple, or-pattern and nested binding structures manual.
 - 2026-07-09: Added primitive payload snippet choices. Pattern snippets now derive payload placeholder choices from `TypePtr` for Bool, open primitive literal skeletons, bounded Int domains and `String(0,0)` while keeping unstable/open refinement domains conservative.
 - 2026-07-09: Refined the struct variant missing-field quick fix to insert `field: _` instead of shorthand field bindings, keeping the edit conservative while preserving the existing structured-diagnostic gate.
+- 2026-07-09: Added RFC0011 representative pattern matrix release evidence. The repository release evidence archive now checks a package fixture covering nested enum payload, bounded Int range and `String(0,0)` singleton patterns.

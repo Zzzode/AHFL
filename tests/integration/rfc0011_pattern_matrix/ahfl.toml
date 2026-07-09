@@ -1,0 +1,21 @@
+manifest_version = 1
+
+[package]
+name = "rfc0011-pattern-matrix"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "rfc0011_pattern_matrix"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.lib]
+kind = "library"
+entry = "src/main.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }
