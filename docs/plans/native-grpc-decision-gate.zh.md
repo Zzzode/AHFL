@@ -99,11 +99,12 @@ No-Go 决策必须写回 RFC0004：
 
 `scripts/check-native-grpc-gate.py` 现在同时检查 RFC 状态、实现 marker 和结构化证据：
 
-0. `native-grpc-decision-evidence.json` 的 `gates` 只能包含 Gate Matrix 中定义的七个 gate：`runtime_owner_decision`、`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`；未知 gate 名一律 fail closed，防止 typo 或私有门槛绕过审计。
-1. `draft`：允许 `native-grpc-decision-evidence.json` 中 gate 仍为 `missing` / `planned`，但仓库禁止 native gRPC build flag、C++ gRPC/Protobuf dependency wiring、native proto service contract 和 `native-grpc` 源文件。
-2. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；仍不允许 implementation marker。
-3. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
-4. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；native implementation marker 仍禁止。
+1. `native-grpc-decision-evidence.json` 的 `gates` 只能包含 Gate Matrix 中定义的七个 gate：`runtime_owner_decision`、`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy`；未知 gate 名一律 fail closed，防止 typo 或私有门槛绕过审计。
+2. `native-grpc-decision-evidence.json` 是 closed schema：顶层只允许 `schema`、`rfc`、`updated_at`、`decision`、`gates`；`decision` 只允许 `state`、`owner`、`signed_off_at`、`record`；每个 gate 只允许 `status`、`owner`、`evidence`、`notes`。新增字段必须先更新 checker、测试和本文档。
+3. `draft`：允许 `native-grpc-decision-evidence.json` 中 gate 仍为 `missing` / `planned`，但仓库禁止 native gRPC build flag、C++ gRPC/Protobuf dependency wiring、native proto service contract 和 `native-grpc` 源文件。
+4. `accepted`：必须有 `decision.state = "go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；仍不允许 implementation marker。
+5. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
+6. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete`，且带仓库内 `ahfl.native_grpc_owner_decision.v1` JSON artifact；native implementation marker 仍禁止。
 
 证据引用必须指向可复核 artifact，例如 benchmark 报告、CI run、三平台 build log、dependency review、feature flag design、fallback semantics test matrix 或 release evidence archive 条目。空字符串、口头描述和没有 artifact 的 `complete` 状态都不能作为完成证据。机器门禁会拒绝 `TBD` / `TODO` / `DEFERRED` / `PLACEHOLDER` 证据引用、拒绝非 `http(s)` 的占位 URI，并要求仓库内相对路径 evidence artifact 真实存在且不能逃逸仓库根目录。
 

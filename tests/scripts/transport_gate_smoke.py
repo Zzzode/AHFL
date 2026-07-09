@@ -312,6 +312,39 @@ def test_rejects_unknown_gate_name(checker: Path) -> None:
         assert_fails(run_checker(checker, root), "unknown gate")
 
 
+def test_rejects_unknown_top_level_field(checker: Path) -> None:
+    fixture = evidence()
+    fixture["extra"] = "unexpected"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "unknown field")
+
+
+def test_rejects_unknown_decision_field(checker: Path) -> None:
+    fixture = evidence()
+    decision = fixture["decision"]
+    assert isinstance(decision, dict)
+    decision["approver"] = "unexpected"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "decision contains unknown field")
+
+
+def test_rejects_unknown_gate_field(checker: Path) -> None:
+    fixture = evidence()
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    benchmark_gate = gates["benchmark"]
+    assert isinstance(benchmark_gate, dict)
+    benchmark_gate["artifact"] = "unexpected"
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="draft", evidence=fixture)
+        assert_fails(run_checker(checker, root), "gates.benchmark contains unknown field")
+
+
 def test_accepted_allows_structured_owner_decision(checker: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -461,6 +494,9 @@ def main() -> int:
     test_draft_rejects_implementation_markers(checker)
     test_accepted_requires_owner_decision(checker)
     test_rejects_unknown_gate_name(checker)
+    test_rejects_unknown_top_level_field(checker)
+    test_rejects_unknown_decision_field(checker)
+    test_rejects_unknown_gate_field(checker)
     test_accepted_allows_structured_owner_decision(checker)
     test_implementing_requires_complete_gate_evidence(checker)
     test_implementing_allows_markers_after_complete_evidence(checker)

@@ -87,6 +87,9 @@ REQUIRED_GATES: tuple[str, ...] = (
     "test_strategy",
 )
 OWNER_DECISION_GO_CONDITIONS = tuple(gate for gate in REQUIRED_GATES if gate != "runtime_owner_decision")
+EVIDENCE_KEYS = {"schema", "rfc", "updated_at", "decision", "gates"}
+DECISION_KEYS = {"state", "owner", "signed_off_at", "record"}
+GATE_KEYS = {"status", "owner", "evidence", "notes"}
 SKIP_DIRS = {
     ".git",
     ".cache",
@@ -222,6 +225,13 @@ def read_decision_evidence(root: Path) -> tuple[dict[str, object] | None, list[s
 
 def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
     failures: list[str] = []
+    unknown_evidence_keys = sorted(str(key) for key in evidence if key not in EVIDENCE_KEYS)
+    if unknown_evidence_keys:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: contains unknown field(s) {unknown_evidence_keys}; "
+            f"allowed fields are {sorted(EVIDENCE_KEYS)}"
+        )
+
     if evidence.get("schema") != EVIDENCE_SCHEMA:
         failures.append(
             f"{DECISION_EVIDENCE_REL}: schema must be {EVIDENCE_SCHEMA!r}"
@@ -233,6 +243,12 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
     if not isinstance(decision, dict):
         failures.append(f"{DECISION_EVIDENCE_REL}: decision must be an object")
     else:
+        unknown_decision_keys = sorted(str(key) for key in decision if key not in DECISION_KEYS)
+        if unknown_decision_keys:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: decision contains unknown field(s) "
+                f"{unknown_decision_keys}; allowed fields are {sorted(DECISION_KEYS)}"
+            )
         state = decision.get("state")
         if state not in DECISION_STATES:
             failures.append(
@@ -257,6 +273,12 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
         if not isinstance(gate_value, dict):
             failures.append(f"{DECISION_EVIDENCE_REL}: gates.{gate} must be an object")
             continue
+        unknown_gate_keys = sorted(str(key) for key in gate_value if key not in GATE_KEYS)
+        if unknown_gate_keys:
+            failures.append(
+                f"{DECISION_EVIDENCE_REL}: gates.{gate} contains unknown field(s) "
+                f"{unknown_gate_keys}; allowed fields are {sorted(GATE_KEYS)}"
+            )
         status = gate_value.get("status")
         if status not in GATE_STATUSES:
             failures.append(
