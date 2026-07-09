@@ -22,6 +22,11 @@ IMPLEMENTATION_ALLOWED_STATUSES = {"implementing", "implemented", "stabilized"}
 NO_GO_STATUSES = {"postponed", "rejected", "out-of-scope"}
 EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
 BENCHMARK_SCHEMA = "ahfl.native_grpc_benchmark.v1"
+BUILD_MATRIX_SCHEMA = "ahfl.native_grpc_build_matrix.v1"
+DEPENDENCY_POLICY_SCHEMA = "ahfl.native_grpc_dependency_policy.v1"
+FEATURE_FLAG_SCHEMA = "ahfl.native_grpc_feature_flag.v1"
+FALLBACK_SEMANTICS_SCHEMA = "ahfl.native_grpc_fallback_semantics.v1"
+TEST_STRATEGY_SCHEMA = "ahfl.native_grpc_test_strategy.v1"
 EXPECTED_RFC = "0004-native-grpc-transport"
 GATE_STATUSES = {"missing", "planned", "complete", "not_applicable"}
 DECISION_STATES = {"pending", "go", "no-go"}
@@ -44,6 +49,32 @@ REQUIRED_BENCHMARK_METRICS = {
     "cpu_time_ms",
     "peak_rss_bytes",
     "serialized_payload_bytes",
+}
+REQUIRED_BUILD_PLATFORMS = {"linux", "macos", "windows"}
+REQUIRED_BUILD_NUMERIC_FIELDS = {
+    "clean_configure_seconds",
+    "clean_build_seconds",
+    "incremental_build_seconds",
+    "binary_size_delta_bytes",
+}
+REQUIRED_BUILD_TEXT_FIELDS = {
+    "dependency_source",
+    "ci_cache_strategy",
+    "failure_mode",
+    "local_setup_impact",
+}
+REQUIRED_FALLBACK_SCENARIOS = {
+    "native_unavailable",
+    "schema_mismatch",
+    "transport_failure",
+    "timeout",
+}
+REQUIRED_TEST_AREAS = {
+    "unit",
+    "integration",
+    "mock_server",
+    "capability_binding",
+    "release_evidence",
 }
 REQUIRED_GATES: tuple[str, ...] = (
     "runtime_owner_decision",
@@ -301,6 +332,30 @@ def validate_numeric_metric(value: object, path: str) -> list[str]:
     return []
 
 
+def validate_non_empty_string(value: object, path: str) -> list[str]:
+    if not isinstance(value, str) or not value:
+        return [f"{path} must be a non-empty string"]
+    return []
+
+
+def validate_string_list(value: object, path: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        return [f"{path} must be a non-empty array"]
+    failures: list[str] = []
+    for index, item in enumerate(value):
+        failures.extend(validate_non_empty_string(item, f"{path}[{index}]"))
+    return failures
+
+
+def validate_artifact_header(data: dict[str, object], rel: Path | str, schema: str) -> list[str]:
+    failures: list[str] = []
+    if data.get("schema") != schema:
+        failures.append(f"{rel}: artifact schema must be {schema!r}")
+    if data.get("rfc") != EXPECTED_RFC:
+        failures.append(f"{rel}: artifact rfc must be {EXPECTED_RFC!r}")
+    return failures
+
+
 def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
     rel = display_path(root, path)
     try:
@@ -310,11 +365,7 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
     if not isinstance(data, dict):
         return [f"{rel}: benchmark artifact must be a JSON object"]
 
-    failures: list[str] = []
-    if data.get("schema") != BENCHMARK_SCHEMA:
-        failures.append(f"{rel}: benchmark artifact schema must be {BENCHMARK_SCHEMA!r}")
-    if data.get("rfc") != EXPECTED_RFC:
-        failures.append(f"{rel}: benchmark artifact rfc must be {EXPECTED_RFC!r}")
+    failures = validate_artifact_header(data, rel, BENCHMARK_SCHEMA)
 
     environment = data.get("environment")
     if not isinstance(environment, dict):
@@ -370,6 +421,169 @@ def validate_benchmark_artifact(root: Path, path: Path) -> list[str]:
     return failures
 
 
+def validate_build_matrix_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid build matrix JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: build matrix artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, BUILD_MATRIX_SCHEMA)
+    platforms = data.get("platforms")
+    if not isinstance(platforms, list) or not platforms:
+        failures.append(f"{rel}: build matrix platforms must be a non-empty array")
+        return failures
+
+    seen_platforms: set[str] = set()
+    for index, platform in enumerate(platforms):
+        platform_path = f"{rel}: platforms[{index}]"
+        if not isinstance(platform, dict):
+            failures.append(f"{platform_path} must be an object")
+            continue
+        platform_name = platform.get("platform")
+        if platform_name not in REQUIRED_BUILD_PLATFORMS:
+            failures.append(f"{platform_path}.platform must be one of {sorted(REQUIRED_BUILD_PLATFORMS)}")
+        elif isinstance(platform_name, str):
+            seen_platforms.add(platform_name)
+        for field in REQUIRED_BUILD_TEXT_FIELDS:
+            failures.extend(validate_non_empty_string(platform.get(field), f"{platform_path}.{field}"))
+        for field in REQUIRED_BUILD_NUMERIC_FIELDS:
+            if field not in platform:
+                failures.append(f"{platform_path}.{field} is required")
+                continue
+            failures.extend(validate_numeric_metric(platform[field], f"{platform_path}.{field}"))
+
+    missing_platforms = sorted(REQUIRED_BUILD_PLATFORMS - seen_platforms)
+    if missing_platforms:
+        failures.append(f"{rel}: build matrix missing platforms {missing_platforms}")
+    return failures
+
+
+def validate_dependency_policy_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid dependency policy JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: dependency policy artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, DEPENDENCY_POLICY_SCHEMA)
+    for field in (
+        "dependency_source",
+        "license_review",
+        "vendoring_policy",
+        "cache_policy",
+        "local_setup_impact",
+        "approved_by",
+    ):
+        failures.extend(validate_non_empty_string(data.get(field), f"{rel}: {field}"))
+    return failures
+
+
+def validate_feature_flag_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid feature flag JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: feature flag artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, FEATURE_FLAG_SCHEMA)
+    if data.get("build_flag") != "AHFL_ENABLE_GRPC_NATIVE":
+        failures.append(f"{rel}: build_flag must be 'AHFL_ENABLE_GRPC_NATIVE'")
+    if data.get("default_enabled") is not False:
+        failures.append(f"{rel}: default_enabled must be false until native transport release evidence is complete")
+    failures.extend(validate_non_empty_string(data.get("runtime_config"), f"{rel}: runtime_config"))
+    failures.extend(validate_string_list(data.get("disabled_diagnostics"), f"{rel}: disabled_diagnostics"))
+    failures.extend(validate_non_empty_string(data.get("release_evidence_gate"), f"{rel}: release_evidence_gate"))
+    return failures
+
+
+def validate_fallback_semantics_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid fallback semantics JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: fallback semantics artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, FALLBACK_SEMANTICS_SCHEMA)
+    scenarios = data.get("scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        failures.append(f"{rel}: fallback scenarios must be a non-empty array")
+        return failures
+
+    seen_scenarios: set[str] = set()
+    for index, scenario in enumerate(scenarios):
+        scenario_path = f"{rel}: scenarios[{index}]"
+        if not isinstance(scenario, dict):
+            failures.append(f"{scenario_path} must be an object")
+            continue
+        name = scenario.get("scenario")
+        if name not in REQUIRED_FALLBACK_SCENARIOS:
+            failures.append(f"{scenario_path}.scenario must be one of {sorted(REQUIRED_FALLBACK_SCENARIOS)}")
+        elif isinstance(name, str):
+            seen_scenarios.add(name)
+        for field in ("behavior", "diagnostic", "fallback_transport"):
+            failures.extend(validate_non_empty_string(scenario.get(field), f"{scenario_path}.{field}"))
+        if not isinstance(scenario.get("fail_closed"), bool):
+            failures.append(f"{scenario_path}.fail_closed must be a boolean")
+
+    missing_scenarios = sorted(REQUIRED_FALLBACK_SCENARIOS - seen_scenarios)
+    if missing_scenarios:
+        failures.append(f"{rel}: fallback semantics missing scenarios {missing_scenarios}")
+    return failures
+
+
+def validate_test_strategy_artifact(root: Path, path: Path) -> list[str]:
+    rel = display_path(root, path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{rel}:{exc.lineno}: invalid test strategy JSON: {exc.msg}"]
+    if not isinstance(data, dict):
+        return [f"{rel}: test strategy artifact must be a JSON object"]
+
+    failures = validate_artifact_header(data, rel, TEST_STRATEGY_SCHEMA)
+    coverage = data.get("coverage")
+    if not isinstance(coverage, list) or not coverage:
+        failures.append(f"{rel}: test strategy coverage must be a non-empty array")
+        return failures
+
+    seen_areas: set[str] = set()
+    for index, entry in enumerate(coverage):
+        entry_path = f"{rel}: coverage[{index}]"
+        if not isinstance(entry, dict):
+            failures.append(f"{entry_path} must be an object")
+            continue
+        area = entry.get("area")
+        if area not in REQUIRED_TEST_AREAS:
+            failures.append(f"{entry_path}.area must be one of {sorted(REQUIRED_TEST_AREAS)}")
+        elif isinstance(area, str):
+            seen_areas.add(area)
+        failures.extend(validate_string_list(entry.get("tests"), f"{entry_path}.tests"))
+
+    missing_areas = sorted(REQUIRED_TEST_AREAS - seen_areas)
+    if missing_areas:
+        failures.append(f"{rel}: test strategy missing coverage areas {missing_areas}")
+    return failures
+
+
+STRUCTURED_GATE_VALIDATORS = {
+    "benchmark": (BENCHMARK_SCHEMA, validate_benchmark_artifact),
+    "build_matrix": (BUILD_MATRIX_SCHEMA, validate_build_matrix_artifact),
+    "dependency_policy": (DEPENDENCY_POLICY_SCHEMA, validate_dependency_policy_artifact),
+    "feature_flag": (FEATURE_FLAG_SCHEMA, validate_feature_flag_artifact),
+    "fallback_semantics": (FALLBACK_SEMANTICS_SCHEMA, validate_fallback_semantics_artifact),
+    "test_strategy": (TEST_STRATEGY_SCHEMA, validate_test_strategy_artifact),
+}
+
+
 def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list[str]:
     failures: list[str] = []
 
@@ -402,17 +616,17 @@ def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list
                 local_path = local_artifact_path(root, ref)
                 if local_path is not None and gate_value.get("status") == "complete":
                     complete_local_artifacts.setdefault(gate, []).append(local_path)
-    if gate_is_complete(evidence, "benchmark"):
-        benchmark_artifacts = [
-            path for path in complete_local_artifacts.get("benchmark", []) if path.suffix == ".json"
-        ]
-        if not benchmark_artifacts:
+    for gate, (schema, validator) in STRUCTURED_GATE_VALIDATORS.items():
+        if not gate_is_complete(evidence, gate):
+            continue
+        artifacts = [path for path in complete_local_artifacts.get(gate, []) if path.suffix == ".json"]
+        if not artifacts:
             failures.append(
-                f"{DECISION_EVIDENCE_REL}: gates.benchmark requires at least one "
-                f"repository-local JSON artifact with schema {BENCHMARK_SCHEMA!r}"
+                f"{DECISION_EVIDENCE_REL}: gates.{gate} requires at least one "
+                f"repository-local JSON artifact with schema {schema!r}"
             )
-        for artifact in benchmark_artifacts:
-            failures.extend(validate_benchmark_artifact(root, artifact))
+        for artifact in artifacts:
+            failures.extend(validator(root, artifact))
     return failures
 
 

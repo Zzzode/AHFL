@@ -32,6 +32,29 @@ REQUIRED_BENCHMARK_TRANSPORTS = (
 )
 
 
+def build_matrix_artifact() -> dict[str, object]:
+    platforms = []
+    for platform in ("linux", "macos", "windows"):
+        platforms.append(
+            {
+                "platform": platform,
+                "dependency_source": "system package manager",
+                "clean_configure_seconds": 1.0,
+                "clean_build_seconds": 2.0,
+                "incremental_build_seconds": 0.5,
+                "binary_size_delta_bytes": 4096,
+                "ci_cache_strategy": "cache by dependency digest",
+                "failure_mode": "fail closed on missing dependency",
+                "local_setup_impact": "documented setup step",
+            }
+        )
+    return {
+        "schema": "ahfl.native_grpc_build_matrix.v1",
+        "rfc": "0004-native-grpc-transport",
+        "platforms": platforms,
+    }
+
+
 def benchmark_artifact() -> dict[str, object]:
     runs: list[dict[str, object]] = []
     for scenario in REQUIRED_BENCHMARK_SCENARIOS:
@@ -64,6 +87,64 @@ def benchmark_artifact() -> dict[str, object]:
     }
 
 
+def dependency_policy_artifact() -> dict[str, object]:
+    return {
+        "schema": "ahfl.native_grpc_dependency_policy.v1",
+        "rfc": "0004-native-grpc-transport",
+        "dependency_source": "system package manager or vendored cache",
+        "license_review": "Apache-2.0 compatible dependency review",
+        "vendoring_policy": "no vendoring without process owner approval",
+        "cache_policy": "content-addressed CI cache",
+        "local_setup_impact": "documented local installation steps",
+        "approved_by": "process-owner",
+    }
+
+
+def feature_flag_artifact() -> dict[str, object]:
+    return {
+        "schema": "ahfl.native_grpc_feature_flag.v1",
+        "rfc": "0004-native-grpc-transport",
+        "build_flag": "AHFL_ENABLE_" + "GRPC_NATIVE",
+        "runtime_config": "runtime.transport.native_grpc",
+        "default_enabled": False,
+        "disabled_diagnostics": ["runtime.grpc_native.disabled"],
+        "release_evidence_gate": "ahfl.runtime.native_grpc_release_evidence",
+    }
+
+
+def fallback_semantics_artifact() -> dict[str, object]:
+    scenarios = []
+    for scenario in ("native_unavailable", "schema_mismatch", "transport_failure", "timeout"):
+        scenarios.append(
+            {
+                "scenario": scenario,
+                "behavior": "fail closed unless explicit fallback is configured",
+                "diagnostic": f"runtime.grpc_native.{scenario}",
+                "fallback_transport": "grpc_json_transcoding",
+                "fail_closed": True,
+            }
+        )
+    return {
+        "schema": "ahfl.native_grpc_fallback_semantics.v1",
+        "rfc": "0004-native-grpc-transport",
+        "scenarios": scenarios,
+    }
+
+
+def test_strategy_artifact() -> dict[str, object]:
+    return {
+        "schema": "ahfl.native_grpc_test_strategy.v1",
+        "rfc": "0004-native-grpc-transport",
+        "coverage": [
+            {"area": "unit", "tests": ["ahfl.runtime.grpc_native.unit"]},
+            {"area": "integration", "tests": ["ahfl.runtime.grpc_native.integration"]},
+            {"area": "mock_server", "tests": ["ahfl.runtime.grpc_native.mock_server"]},
+            {"area": "capability_binding", "tests": ["ahfl.runtime.grpc_native.capability_binding"]},
+            {"area": "release_evidence", "tests": ["ahfl.runtime.grpc_native.release_evidence"]},
+        ],
+    }
+
+
 def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
     refs: set[str] = set()
     decision = evidence.get("decision")
@@ -88,6 +169,16 @@ def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
 def artifact_payload(ref: str) -> dict[str, object]:
     if ref.endswith("/benchmark.json"):
         return benchmark_artifact()
+    if ref.endswith("/build_matrix.json"):
+        return build_matrix_artifact()
+    if ref.endswith("/dependency_policy.json"):
+        return dependency_policy_artifact()
+    if ref.endswith("/feature_flag.json"):
+        return feature_flag_artifact()
+    if ref.endswith("/fallback_semantics.json"):
+        return fallback_semantics_artifact()
+    if ref.endswith("/test_strategy.json"):
+        return test_strategy_artifact()
     return {"artifact": ref}
 
 
@@ -227,7 +318,7 @@ def test_complete_benchmark_rejects_invalid_artifact_schema(checker: Path) -> No
         (root / "docs" / "plans" / "evidence" / "benchmark.json").write_text(
             json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
         )
-        assert_fails(run_checker(checker, root), "benchmark artifact schema")
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_benchmark.v1")
 
 
 def test_complete_benchmark_requires_local_structured_artifact(checker: Path) -> None:
@@ -243,6 +334,17 @@ def test_complete_benchmark_requires_local_structured_artifact(checker: Path) ->
         assert_fails(run_checker(checker, root), "repository-local JSON artifact")
 
 
+def test_complete_build_matrix_rejects_invalid_artifact_schema(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates=set(REQUIRED_GATES))
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="implementing", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "build_matrix.json").write_text(
+            json.dumps({"schema": "wrong"}, indent=2) + "\n", encoding="utf-8"
+        )
+        assert_fails(run_checker(checker, root), "ahfl.native_grpc_build_matrix.v1")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: transport_gate_smoke.py <check-native-grpc-gate.py>", file=sys.stderr)
@@ -256,6 +358,7 @@ def main() -> int:
     test_complete_gate_rejects_missing_repo_artifact(checker)
     test_complete_benchmark_rejects_invalid_artifact_schema(checker)
     test_complete_benchmark_requires_local_structured_artifact(checker)
+    test_complete_build_matrix_rejects_invalid_artifact_schema(checker)
     print("transport gate smoke tests passed")
     return 0
 

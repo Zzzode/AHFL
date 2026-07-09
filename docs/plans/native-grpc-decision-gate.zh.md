@@ -59,6 +59,17 @@ Benchmark 必须固定输入、输出 schema 和 mock server 行为；不得依�
 6. CI cache strategy。
 7. Failure mode and local developer setup impact。
 
+`build_matrix` gate 标记为 `complete` 时，至少一个 evidence reference 必须是仓库内真实存在的 JSON artifact，schema 为 `ahfl.native_grpc_build_matrix.v1`。该 artifact 必须覆盖 `linux`、`macos`、`windows` 三个平台，并为每个平台记录 dependency source、clean configure/build time、incremental build time、binary size delta、CI cache strategy、failure mode 和 local setup impact。
+
+其余实现前置 gate 也必须有仓库内结构化 JSON artifact：
+
+1. `dependency_policy`：`ahfl.native_grpc_dependency_policy.v1`，记录 dependency source、license review、vendoring/cache policy、local setup impact 和 process owner approval。
+2. `feature_flag`：`ahfl.native_grpc_feature_flag.v1`，记录 `AHFL_ENABLE_GRPC_NATIVE` build flag、runtime config、默认关闭策略、disabled diagnostics 和 release evidence gate。
+3. `fallback_semantics`：`ahfl.native_grpc_fallback_semantics.v1`，覆盖 `native_unavailable`、`schema_mismatch`、`transport_failure`、`timeout` 四类场景的 fail-closed / fallback 行为、diagnostic 和 fallback transport。
+4. `test_strategy`：`ahfl.native_grpc_test_strategy.v1`，覆盖 unit、integration、mock server、capability binding 和 release evidence 五类测试入口。
+
+这些 schema artifact 不代替 owner sign-off；它们只保证 RFC0004 一旦从 `draft` 推进到实现阶段，所有实现前置证据都具备机器可复核结构。
+
 ## Decision Outputs
 
 Go 决策必须写回 RFC0004：
@@ -94,6 +105,6 @@ No-Go 决策必须写回 RFC0004：
 4. feature flag 策略已有 RFC 草案描述，但未实现。
 5. 仓库级机器门禁已落地：`scripts/check-native-grpc-gate.py` 会在 RFC0004 仍为 `draft` 时拒绝 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract；该脚本已接入 CTest 与 CI。
 6. Evidence artifact 引用门禁已落地：`complete` gate 和 Go/No-Go decision record 必须引用 `http(s)` URL 或仓库内真实存在的相对 artifact path；占位 URI、陈旧标记和路径逃逸都会 fail closed。
-7. Benchmark artifact 结构化门禁已落地：`benchmark` gate 一旦标记为 `complete`，必须引用至少一份仓库内 `ahfl.native_grpc_benchmark.v1` JSON artifact，且覆盖三类 workload、两个 transport 和完整指标集合。
+7. 结构化 gate artifact 门禁已落地：`benchmark`、`build_matrix`、`dependency_policy`、`feature_flag`、`fallback_semantics` 和 `test_strategy` gate 一旦标记为 `complete`，必须引用至少一份仓库内对应 schema JSON artifact。
 8. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
 9. 因此 RFC0004 必须保持 `draft`，不能进入实现。
