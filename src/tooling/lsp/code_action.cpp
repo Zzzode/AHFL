@@ -124,6 +124,7 @@ constexpr std::string_view kCodeUnreachableIfLetElse = "typecheck.UNREACHABLE_IF
 constexpr std::string_view kCodeInvalidRangePattern = "typecheck.INVALID_RANGE_PATTERN";
 constexpr std::string_view kCodeMissingVariantField = "typecheck.MISSING_VARIANT_FIELD";
 constexpr std::string_view kCodeUnexpectedVariantField = "typecheck.UNEXPECTED_VARIANT_FIELD";
+constexpr std::string_view kCodeDuplicateVariantField = "typecheck.DUPLICATE_VARIANT_FIELD";
 // Wave-21 A-2: QW-4 two new optional-agent-section warnings → insert TextEdit.
 // Full code = "typecheck.AGENT_CONTEXT_OMITTED" / "...CAPABILITIES_OMITTED".
 constexpr std::string_view kCodeAgentContextOmitted = "typecheck.AGENT_CONTEXT_OMITTED";
@@ -1002,6 +1003,36 @@ unexpected_variant_field_delete_range(const std::string &source, const LspDiagno
     return action;
 }
 
+[[nodiscard]] std::optional<CodeAction> qf_duplicate_variant_field(const std::string &source,
+                                                                   const LspDiagnostic &diag) {
+    const auto context = single_diagnostic_data(diag, "variant_field_context");
+    const auto duplicate_field = single_diagnostic_data(diag, "duplicate_field");
+    if (!context.has_value() || *context != "pattern" || !duplicate_field.has_value() ||
+        !source_safe_identifier(*duplicate_field)) {
+        return std::nullopt;
+    }
+
+    const auto delete_range = unexpected_variant_field_delete_range(source, diag);
+    if (!delete_range.has_value()) {
+        return std::nullopt;
+    }
+
+    TextEdit edit;
+    edit.range = *delete_range;
+    edit.new_text = "";
+
+    WorkspaceEdit ws_edit;
+    ws_edit.changes.emplace("", std::vector<TextEdit>{std::move(edit)});
+
+    CodeAction action;
+    action.title = "Remove duplicate variant field `" + *duplicate_field + "`";
+    action.kind = CodeActionKind::QuickFix;
+    action.is_preferred = true;
+    action.diagnostics = {diag};
+    action.edit = std::move(ws_edit);
+    return action;
+}
+
 [[nodiscard]] std::optional<CodeAction> qf_match_unreachable_arm(const std::string &source,
                                                                  const LspDiagnostic &diag) {
     const auto arm_line = diag.range.start.line;
@@ -1633,6 +1664,10 @@ std::vector<CodeAction> compute_code_actions(const std::string &source,
             }
         } else if (diag.code == kCodeUnexpectedVariantField) {
             if (auto a = qf_unexpected_variant_field(source, diag)) {
+                actions.push_back(std::move(*a));
+            }
+        } else if (diag.code == kCodeDuplicateVariantField) {
+            if (auto a = qf_duplicate_variant_field(source, diag)) {
                 actions.push_back(std::move(*a));
             }
         } else if (diag.code == kCodeAgentContextOmitted) {

@@ -2189,6 +2189,18 @@ enum Packet {
     const auto result = typecheck_source(source);
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "DUPLICATE_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("duplicate_field");
+    const auto context = diagnostic->data.find("variant_field_context");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    REQUIRE(context != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"code"});
+    CHECK(context->second == std::vector<std::string>{"declaration"});
 }
 
 TEST_CASE("struct variant pattern duplicate field reports DUPLICATE_VARIANT_FIELD") {
@@ -2206,6 +2218,18 @@ enum Packet {
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
     CHECK_FALSE(has_diagnostic_code(result, "DUPLICATE_FIELD"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "DUPLICATE_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("duplicate_field");
+    const auto context = diagnostic->data.find("variant_field_context");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    REQUIRE(context != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"code"});
+    CHECK(context->second == std::vector<std::string>{"pattern"});
 }
 
 TEST_CASE("struct variant pattern binds named fields") {
@@ -2475,6 +2499,18 @@ enum Packet {
     CHECK(result.has_errors());
     CHECK(has_diagnostic_code(result, "DUPLICATE_VARIANT_FIELD"));
     CHECK_FALSE(has_diagnostic_code(result, "DUPLICATE_FIELD"));
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "DUPLICATE_VARIANT_FIELD");
+    REQUIRE(diagnostic != nullptr);
+    const auto variant = diagnostic->data.find("variant_name");
+    const auto field = diagnostic->data.find("duplicate_field");
+    const auto context = diagnostic->data.find("variant_field_context");
+    REQUIRE(variant != diagnostic->data.end());
+    REQUIRE(field != diagnostic->data.end());
+    REQUIRE(context != diagnostic->data.end());
+    CHECK(variant->second == std::vector<std::string>{"Data"});
+    CHECK(field->second == std::vector<std::string>{"code"});
+    CHECK(context->second == std::vector<std::string>{"constructor"});
 }
 
 TEST_CASE("struct variant constructor unexpected field reports UNEXPECTED_VARIANT_FIELD") {

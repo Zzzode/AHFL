@@ -2716,11 +2716,20 @@ class ExpressionChecker final {
                                 continue;
                             }
                             if (!seen_fields.insert(field_pattern->name).second) {
+                                std::map<std::string, std::vector<std::string>> data;
+                                data.emplace("variant_name",
+                                             std::vector<std::string>{std::string(variant_name)});
+                                data.emplace("duplicate_field",
+                                             std::vector<std::string>{field_pattern->name});
+                                data.emplace("variant_field_context",
+                                             std::vector<std::string>{"pattern"});
                                 services_.typecheck_error_here(
                                     error_codes::typecheck::DuplicateVariantField,
                                     messages::typecheck::DuplicateEnumVariantField.format_with(
                                         field_pattern->name, std::string(variant_name)),
-                                    field_pattern->range);
+                                    field_pattern->range,
+                                    {},
+                                    std::move(data));
                                 continue;
                             }
                             const auto field = variant_info->get().find_field(field_pattern->name);
@@ -3146,11 +3155,17 @@ class ExpressionChecker final {
         ExprEffect effect = ExprEffect::Pure;
         for (const auto &field_init : literal.fields) {
             if (!seen_fields.insert(field_init->field_name).second) {
+                std::map<std::string, std::vector<std::string>> data;
+                data.emplace("variant_name", std::vector<std::string>{variant_name});
+                data.emplace("duplicate_field", std::vector<std::string>{field_init->field_name});
+                data.emplace("variant_field_context", std::vector<std::string>{"constructor"});
                 services_.typecheck_error_here(
                     error_codes::typecheck::DuplicateVariantField,
                     messages::typecheck::DuplicateEnumVariantField.format_with(
                         field_init->field_name, variant_name),
-                    field_init->range);
+                    field_init->range,
+                    {},
+                    std::move(data));
                 continue;
             }
             const auto field = variant->get().find_field(field_init->field_name);

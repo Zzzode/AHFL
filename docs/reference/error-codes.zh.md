@@ -652,7 +652,12 @@ enum E { A, B, A }
 | SoT | `diagnostics.hpp` |
 | MessageTemplate | `duplicate field '{}' in enum variant '{}'` |
 
-**触发条件**：struct-form enum variant 声明中，同一字段名出现多次。
+**触发条件**：struct-form enum variant 声明、struct variant pattern 或 struct-form variant constructor 中，同一字段名出现多次。
+
+**Structured data**：
+- `variant_name`：出现重复字段的 struct-form enum variant 名称。
+- `duplicate_field`：重复字段名。LSP quick fix 只消费该结构化字段名，不反解析 diagnostic message。
+- `variant_field_context`：字段出现位置，当前取值为 `declaration`、`pattern` 或 `constructor`。LSP 自动删除 quick fix 只在 `pattern` 上启用；declaration / constructor 场景需要用户确认保留哪一个字段语义。
 
 **最小复现**：
 ```ahfl
@@ -665,6 +670,7 @@ enum Packet {
 **常见修复**：
 - 删除重复字段，或把两个字段改成语义清晰的不同名字。
 - 若需要两个同类型位置值，使用 tuple variant `Data(Int, String)`；若需要命名字段，字段名必须唯一。
+- 支持 LSP quick fix 的客户端可在 struct variant pattern 场景应用 `Remove duplicate variant field`，source-safe 删除单行或多行 destructuring 中的重复字段。
 
 **Related codes**：`DUPLICATE_VARIANT`、`INVALID_ENUM_VARIANT_SHAPE`、`TYPE_MISMATCH`。
 

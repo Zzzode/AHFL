@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -653,11 +654,18 @@ void TypeCheckPass::build_enum_types() {
                 variant_info.fields.reserve(variant->named_fields.size());
                 for (const auto &field : variant->named_fields) {
                     if (!seen_fields.insert(field->name).second) {
+                        std::map<std::string, std::vector<std::string>> data;
+                        data.emplace("variant_name", std::vector<std::string>{variant->name});
+                        data.emplace("duplicate_field", std::vector<std::string>{field->name});
+                        data.emplace("variant_field_context",
+                                     std::vector<std::string>{"declaration"});
                         typecheck_error_here(
                             error_codes::typecheck::DuplicateVariantField,
                             messages::typecheck::DuplicateEnumVariantField.format_with(
                                 field->name, variant->name),
-                            field->range);
+                            field->range,
+                            {},
+                            std::move(data));
                     }
                     variant_info.fields.push_back(EnumVariantFieldInfo{
                         .name = field->name,

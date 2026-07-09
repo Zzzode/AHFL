@@ -2330,6 +2330,25 @@ void test_unexpected_variant_field_diagnostic_exposes_structured_data() {
         "diagnostics.unexpected_variant_field.structured_data");
 }
 
+void test_duplicate_variant_field_diagnostic_exposes_structured_data() {
+    const std::string source = "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                               "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { code, code: _, .. } => code,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
+                               "}\n";
+
+    const auto output = diagnostics_output_for_source(source);
+    check(output.find("typecheck.DUPLICATE_VARIANT_FIELD") != std::string::npos,
+          "diagnostics.duplicate_variant_field.code");
+    check(
+        output.find(
+            R"("data":{"duplicate_field":["code"],"variant_field_context":["pattern"],"variant_name":["Data"]})") !=
+            std::string::npos,
+        "diagnostics.duplicate_variant_field.structured_data");
+}
+
 void test_project_definition_workspace_symbol_and_rename_cross_file() {
     const auto root = make_temp_project("project_cross_file");
     const auto main_path = root / "src" / "main.ahfl";
@@ -9324,6 +9343,128 @@ void test_code_action_qf_unexpected_variant_field_removes_pattern_field() {
     check(!constructor_qf_found, "codeAction.qf_unexpected_variant_field.rejects_constructor");
 }
 
+void test_code_action_qf_duplicate_variant_field_removes_pattern_field() {
+    const std::string inline_source = "module lsp::variant_field_qf;\n"
+                                      "enum Packet { Data { code: Int, label: String }, Empty }\n"
+                                      "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+                                      "    return match packet {\n"
+                                      "        Data { code, code: _, label } => code,\n"
+                                      "        Empty => 0,\n"
+                                      "    };\n"
+                                      "}\n";
+
+    const auto inline_start = position_of(inline_source, "code: _");
+    const auto inline_end = position_after(inline_start, "code: _");
+
+    LspDiagnostic inline_diag;
+    inline_diag.code = "typecheck.DUPLICATE_VARIANT_FIELD";
+    inline_diag.severity = DiagnosticSeverity::Error;
+    inline_diag.message = "duplicate field 'code' in enum variant 'Data'";
+    inline_diag.range = Range{inline_start, inline_end};
+    inline_diag.data["variant_name"] = {"Data"};
+    inline_diag.data["duplicate_field"] = {"code"};
+    inline_diag.data["variant_field_context"] = {"pattern"};
+
+    const auto inline_actions =
+        ahfl::lsp::compute_code_actions(inline_source, inline_diag.range, {inline_diag});
+
+    const CodeAction *inline_qf = nullptr;
+    for (const auto &action : inline_actions) {
+        if (action.title == "Remove duplicate variant field `code`") {
+            inline_qf = &action;
+            break;
+        }
+    }
+    check(inline_qf != nullptr, "codeAction.qf_duplicate_variant_field.inline_action_found");
+    if (inline_qf == nullptr || !inline_qf->edit.has_value())
+        return;
+
+    const auto inline_delete_start = position_of(inline_source, ", code: _");
+    std::size_t inline_total_edits = 0;
+    bool inline_removes_field = false;
+    for (const auto &[uri_key, edits] : inline_qf->edit->changes) {
+        inline_total_edits += edits.size();
+        for (const auto &edit : edits) {
+            inline_removes_field =
+                inline_removes_field ||
+                (edit.range.start.line == inline_delete_start.line &&
+                 edit.range.start.character == inline_delete_start.character &&
+                 edit.range.end.line == inline_end.line &&
+                 edit.range.end.character == inline_end.character && edit.new_text.empty());
+        }
+    }
+    check(inline_total_edits == 1, "codeAction.qf_duplicate_variant_field.inline_single_edit");
+    check(inline_removes_field, "codeAction.qf_duplicate_variant_field.inline_removes_field");
+
+    const std::string multiline_source =
+        "module lsp::variant_field_qf;\n"
+        "enum Packet { Data { code: Int, label: String }, Empty }\n"
+        "fn f(packet: Packet) -> Int effect Pure decreases 0 {\n"
+        "    return match packet {\n"
+        "        Data {\n"
+        "            code,\n"
+        "            code: _,\n"
+        "            label,\n"
+        "        } => code,\n"
+        "        Empty => 0,\n"
+        "    };\n"
+        "}\n";
+
+    const auto multiline_start = position_of(multiline_source, "code: _");
+    const auto multiline_end = position_after(multiline_start, "code: _");
+
+    LspDiagnostic multiline_diag;
+    multiline_diag.code = "typecheck.DUPLICATE_VARIANT_FIELD";
+    multiline_diag.severity = DiagnosticSeverity::Error;
+    multiline_diag.message = "duplicate field 'code' in enum variant 'Data'";
+    multiline_diag.range = Range{multiline_start, multiline_end};
+    multiline_diag.data["variant_name"] = {"Data"};
+    multiline_diag.data["duplicate_field"] = {"code"};
+    multiline_diag.data["variant_field_context"] = {"pattern"};
+
+    const auto multiline_actions =
+        ahfl::lsp::compute_code_actions(multiline_source, multiline_diag.range, {multiline_diag});
+
+    const CodeAction *multiline_qf = nullptr;
+    for (const auto &action : multiline_actions) {
+        if (action.title == "Remove duplicate variant field `code`") {
+            multiline_qf = &action;
+            break;
+        }
+    }
+    check(multiline_qf != nullptr, "codeAction.qf_duplicate_variant_field.multiline_action_found");
+    if (multiline_qf == nullptr || !multiline_qf->edit.has_value())
+        return;
+
+    std::size_t multiline_total_edits = 0;
+    bool multiline_removes_field_line = false;
+    for (const auto &[uri_key, edits] : multiline_qf->edit->changes) {
+        multiline_total_edits += edits.size();
+        for (const auto &edit : edits) {
+            multiline_removes_field_line =
+                multiline_removes_field_line ||
+                (edit.range.start.line == multiline_start.line && edit.range.start.character == 0 &&
+                 edit.range.end.line == multiline_start.line + 1 && edit.range.end.character == 0 &&
+                 edit.new_text.empty());
+        }
+    }
+    check(multiline_total_edits == 1,
+          "codeAction.qf_duplicate_variant_field.multiline_single_edit");
+    check(multiline_removes_field_line,
+          "codeAction.qf_duplicate_variant_field.multiline_removes_field_line");
+
+    LspDiagnostic constructor_diag = inline_diag;
+    constructor_diag.data["variant_field_context"] = {"constructor"};
+    const auto constructor_actions =
+        ahfl::lsp::compute_code_actions(inline_source, constructor_diag.range, {constructor_diag});
+    bool constructor_qf_found = false;
+    for (const auto &action : constructor_actions) {
+        constructor_qf_found =
+            constructor_qf_found || action.title == "Remove duplicate variant field `code`";
+    }
+    check(!constructor_qf_found, "codeAction.qf_duplicate_variant_field.rejects_constructor");
+}
+
 void test_code_action_qf_match_unreachable_arm_removes_arm_line() {
     const std::string source = "module lsp::match_qf;\n"
                                "enum E { A, B }\n"
@@ -9945,6 +10086,7 @@ int main() {
     test_match_missing_patterns_diagnostic_exposes_structured_witness_data();
     test_missing_variant_field_diagnostic_exposes_structured_data();
     test_unexpected_variant_field_diagnostic_exposes_structured_data();
+    test_duplicate_variant_field_diagnostic_exposes_structured_data();
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_workspace_symbol_uses_root_index_without_open_documents();
@@ -10020,6 +10162,7 @@ int main() {
     test_code_action_qf_match_missing_patterns_requires_structured_witnesses();
     test_code_action_qf_missing_variant_field_inserts_pattern_field();
     test_code_action_qf_unexpected_variant_field_removes_pattern_field();
+    test_code_action_qf_duplicate_variant_field_removes_pattern_field();
     test_code_action_qf_match_unreachable_arm_removes_arm_line();
     test_code_action_qf_match_unreachable_arm_removes_multiline_pattern_arm();
     test_code_action_qf_match_redundant_pattern_removes_or_branch();
