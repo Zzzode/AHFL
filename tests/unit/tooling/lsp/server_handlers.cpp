@@ -8277,6 +8277,9 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
     const std::string source = "enum Level {\n"
                                "    Low,\n"
                                "    High,\n"
+                               "    Wrap(String),\n"
+                               "    PairLevel(String, Int),\n"
+                               "    Tagged { code: Int },\n"
                                "}\n"
                                "\n"
                                "enum Packet {\n"
@@ -8320,12 +8323,13 @@ void test_completion_pattern_variants_emit_payload_snippets_when_supported() {
 
     check(snippet_output.find("\"label\":\"Pair\"") != std::string::npos,
           "completion.pattern_snippet_tuple_label");
-    check(snippet_output.find("\"newText\":\"Pair(${1|Low,High,_|}, ${2:_})\"") !=
-              std::string::npos,
-          "completion.pattern_snippet_tuple_text_edit_uses_nested_enum_choices");
-    check(snippet_output.find("\"newText\":\"Data { code: ${1:_}, label: ${2|Low,High,_|} }\"") !=
-              std::string::npos,
-          "completion.pattern_snippet_struct_text_edit_uses_nested_enum_choices");
+    check(snippet_output.find("\"newText\":\"Pair(${1|Low,High,Wrap(_),PairLevel(_\\\\, "
+                              "_),Tagged { code: _ },_|}, ${2:_})\"") != std::string::npos,
+          "completion.pattern_snippet_tuple_text_edit_uses_nested_enum_payload_choices");
+    check(snippet_output.find("\"newText\":\"Data { code: ${1:_}, label: "
+                              "${2|Low,High,Wrap(_),PairLevel(_\\\\, _),Tagged { code: _ },_|} "
+                              "}\"") != std::string::npos,
+          "completion.pattern_snippet_struct_text_edit_uses_nested_enum_payload_choices");
     check(snippet_output.find(R"("start":{"line":)" + std::to_string(wildcard_position.line) +
                               R"(,"character":)" + std::to_string(wildcard_position.character) +
                               "}") != std::string::npos &&

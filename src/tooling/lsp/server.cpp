@@ -2298,6 +2298,18 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     return "${" + std::to_string(tabstop) + ":" + std::string(fallback) + "}";
 }
 
+[[nodiscard]] std::string snippet_choice_escape(std::string_view text) {
+    std::string escaped;
+    escaped.reserve(text.size());
+    for (const char ch : text) {
+        if (ch == '\\' || ch == ',' || ch == '|') {
+            escaped += '\\';
+        }
+        escaped += ch;
+    }
+    return escaped;
+}
+
 [[nodiscard]] std::string snippet_choice_placeholder(std::size_t tabstop,
                                                      const std::vector<std::string> &choices) {
     std::string snippet = "${" + std::to_string(tabstop) + "|";
@@ -2305,10 +2317,46 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
         if (index > 0) {
             snippet += ",";
         }
-        snippet += choices[index];
+        snippet += snippet_choice_escape(choices[index]);
     }
     snippet += "|}";
     return snippet;
+}
+
+[[nodiscard]] std::optional<std::string>
+nested_enum_variant_pattern_choice(const EnumVariantInfo &variant) {
+    if (!is_identifier(variant.name)) {
+        return std::nullopt;
+    }
+    if (variant.payload_kind == EnumVariantPayloadKind::Unit) {
+        return variant.name;
+    }
+    if (variant.payload_kind == EnumVariantPayloadKind::Tuple) {
+        std::string choice = variant.name + "(";
+        for (std::size_t index = 0; index < variant.payload.size(); ++index) {
+            if (index > 0) {
+                choice += ", ";
+            }
+            choice += "_";
+        }
+        choice += ")";
+        return choice;
+    }
+    if (variant.payload_kind == EnumVariantPayloadKind::Struct) {
+        std::string choice = variant.name + " { ";
+        for (std::size_t index = 0; index < variant.fields.size(); ++index) {
+            if (!is_identifier(variant.fields[index].name)) {
+                return std::nullopt;
+            }
+            if (index > 0) {
+                choice += ", ";
+            }
+            choice += variant.fields[index].name + ": _";
+        }
+        choice += " }";
+        return choice;
+    }
+    return std::nullopt;
 }
 
 [[nodiscard]] std::string pattern_payload_snippet_placeholder(const TypeEnvironment &environment,
@@ -2326,8 +2374,8 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
     std::vector<std::string> choices;
     choices.reserve(enum_info->get().variants.size() + 1);
     for (const auto &variant : enum_info->get().variants) {
-        if (variant.payload_kind == EnumVariantPayloadKind::Unit) {
-            choices.push_back(variant.name);
+        if (const auto choice = nested_enum_variant_pattern_choice(variant); choice.has_value()) {
+            choices.push_back(*choice);
         }
     }
     choices.push_back("_");
