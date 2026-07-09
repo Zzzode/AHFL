@@ -1,0 +1,10 @@
+{
+  "_type": "execution_demo::types::IncidentRequest",
+  "ticket_id": "INC-1002",
+  "service": "billing",
+  "severity": {
+    "_enum": "execution_demo::types::Severity",
+    "_variant": "Low"
+  },
+  "customer_impact": false
+}

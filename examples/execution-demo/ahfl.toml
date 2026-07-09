@@ -1,0 +1,27 @@
+manifest_version = 1
+
+[package]
+name = "execution-demo"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "execution_demo"
+root = "src"
+
+[exports]
+modules = ["main", "types", "intake", "decision", "response"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "execution_demo::main::IncidentWorkflow"
+exports = [
+  { kind = "workflow", name = "execution_demo::main::IncidentWorkflow" },
+  { kind = "agent", name = "execution_demo::intake::IntakeAgent" },
+  { kind = "agent", name = "execution_demo::decision::DecisionAgent" },
+  { kind = "agent", name = "execution_demo::response::ResponderAgent" },
+]
+
+[dependencies]
+std = { source = "sysroot" }

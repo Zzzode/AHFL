@@ -1,0 +1,50 @@
+module execution_demo::decision;
+
+import execution_demo::types as types;
+
+pub agent DecisionAgent {
+    input: types::IntakeResult;
+    context: types::DecisionContext;
+    output: types::DecisionResult;
+    states: [Init, Evaluate, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Evaluate;
+    transition Evaluate -> Done;
+}
+
+flow for DecisionAgent {
+    state Init {
+        goto Evaluate;
+    }
+
+    state Evaluate {
+        if input.severity == types::Severity::High {
+            ctx.channel = types::Channel::OnCall;
+            ctx.action = types::Action::Escalate;
+            ctx.reason = "high severity incident";
+        } else {
+            if input.customer_impact {
+                ctx.channel = types::Channel::OnCall;
+                ctx.action = types::Action::Escalate;
+                ctx.reason = "customer impact detected";
+            } else {
+                ctx.channel = types::Channel::SelfServe;
+                ctx.action = types::Action::AutoReply;
+                ctx.reason = "low risk self-serve response";
+            }
+        }
+
+        goto Done;
+    }
+
+    state Done {
+        return types::DecisionResult {
+            channel: ctx.channel,
+            action: ctx.action,
+            reason: ctx.reason,
+        };
+    }
+}

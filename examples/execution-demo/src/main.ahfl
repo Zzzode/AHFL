@@ -1,0 +1,27 @@
+module execution_demo::main;
+
+import execution_demo::decision as decision;
+import execution_demo::intake as intake;
+import execution_demo::response as response;
+import execution_demo::types as types;
+
+pub workflow IncidentWorkflow {
+    input: types::IncidentRequest;
+    output: types::IncidentResponse;
+
+    node intake: intake::IntakeAgent(input);
+    node decide: decision::DecisionAgent(intake) after [intake];
+    node respond: response::ResponderAgent(types::ResponseInput {
+        ticket_id: intake.ticket_id,
+        service: intake.normalized_service,
+        channel: decide.channel,
+        action: decide.action,
+        reason: decide.reason,
+    }) after [intake, decide];
+
+    safety: always (not running(decide) or completed(intake));
+    safety: always (not running(respond) or completed(decide));
+    liveness: eventually completed(respond, Done);
+
+    return: respond;
+}

@@ -1,0 +1,10 @@
+{
+  "_type": "execution_demo::types::IncidentRequest",
+  "ticket_id": "INC-1001",
+  "service": "checkout",
+  "severity": {
+    "_enum": "execution_demo::types::Severity",
+    "_variant": "High"
+  },
+  "customer_impact": true
+}

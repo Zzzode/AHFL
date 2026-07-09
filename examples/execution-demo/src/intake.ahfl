@@ -1,0 +1,37 @@
+module execution_demo::intake;
+
+import execution_demo::types as types;
+
+pub agent IntakeAgent {
+    input: types::IncidentRequest;
+    context: types::IntakeContext;
+    output: types::IntakeResult;
+    states: [Init, Normalize, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Normalize;
+    transition Normalize -> Done;
+}
+
+flow for IntakeAgent {
+    state Init {
+        goto Normalize;
+    }
+
+    state Normalize {
+        ctx.normalized_service = input.service;
+        goto Done;
+    }
+
+    state Done {
+        return types::IntakeResult {
+            ticket_id: input.ticket_id,
+            service: input.service,
+            severity: input.severity,
+            customer_impact: input.customer_impact,
+            normalized_service: ctx.normalized_service,
+        };
+    }
+}

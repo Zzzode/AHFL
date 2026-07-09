@@ -1,0 +1,71 @@
+module execution_demo::types;
+
+pub enum Severity {
+    Low,
+    High,
+}
+
+pub enum Channel {
+    SelfServe,
+    OnCall,
+}
+
+pub enum Action {
+    AutoReply,
+    Escalate,
+}
+
+pub struct IncidentRequest {
+    ticket_id: String;
+    service: String;
+    severity: Severity;
+    customer_impact: Bool;
+}
+
+pub struct IntakeContext {
+    normalized_service: String = "pending";
+}
+
+pub struct IntakeResult {
+    ticket_id: String;
+    service: String;
+    severity: Severity;
+    customer_impact: Bool;
+    normalized_service: String;
+}
+
+pub struct DecisionContext {
+    channel: Channel = Channel::SelfServe;
+    action: Action = Action::AutoReply;
+    reason: String = "queued";
+}
+
+pub struct DecisionResult {
+    channel: Channel;
+    action: Action;
+    reason: String;
+}
+
+pub struct ResponseInput {
+    ticket_id: String;
+    service: String;
+    channel: Channel;
+    action: Action;
+    reason: String;
+}
+
+pub struct ResponderContext {
+    summary: String = "not started";
+}
+
+pub struct GeneratedSummary {
+    summary: String;
+}
+
+pub struct IncidentResponse {
+    ticket_id: String;
+    service: String;
+    channel: Channel;
+    action: Action;
+    summary: String;
+}

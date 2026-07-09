@@ -1,0 +1,47 @@
+module execution_demo::response;
+
+import execution_demo::types as types;
+
+capability DraftIncidentSummary(request: types::ResponseInput) -> types::GeneratedSummary;
+
+pub agent ResponderAgent {
+    input: types::ResponseInput;
+    context: types::ResponderContext;
+    output: types::IncidentResponse;
+    states: [Init, Compose, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftIncidentSummary];
+
+    transition Init -> Compose;
+    transition Compose -> Done;
+}
+
+flow for ResponderAgent {
+    state Init {
+        goto Compose;
+    }
+
+    state Compose {
+        let draft = DraftIncidentSummary(types::ResponseInput {
+            ticket_id: input.ticket_id,
+            service: input.service,
+            channel: input.channel,
+            action: input.action,
+            reason: input.reason,
+        });
+        ctx.summary = draft.summary;
+
+        goto Done;
+    }
+
+    state Done {
+        return types::IncidentResponse {
+            ticket_id: input.ticket_id,
+            service: input.service,
+            channel: input.channel,
+            action: input.action,
+            summary: ctx.summary,
+        };
+    }
+}
