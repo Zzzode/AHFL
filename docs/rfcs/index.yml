@@ -63,7 +63,7 @@ rfcs:
     stability: "stable-artifact"
   - rfc: "0011"
     title: "Pattern Usefulness Matrix"
-    status: "draft"
+    status: "stabilized"
     file: "0011-pattern-usefulness-matrix.zh.md"
     area: ["language", "compiler", "tooling"]
-    stability: "experimental"
+    stability: "stable-language"

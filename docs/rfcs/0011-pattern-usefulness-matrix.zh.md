@@ -1,9 +1,9 @@
 ---
 rfc: "0011"
 title: "Pattern Usefulness Matrix"
-status: "draft"
+status: "stabilized"
 area: ["language", "compiler", "tooling"]
-stability: "experimental"
+stability: "stable-language"
 created: "2026-07-07"
 updated: "2026-07-09"
 authors: ["LLM-orchestrated"]
@@ -211,7 +211,7 @@ Migration:
 
 ## Current Implementation Status
 
-截至 2026-07-09，本 RFC 仍保持 `draft`，但多条编译器基础设施切片已经落库：
+截至 2026-07-09，本 RFC 的 v1 语义已经稳定化；后续 Float refinement、非 singleton string domain 和更深 LSP 编辑 UX 属于 post-v1 扩展，不阻塞当前 stable-language contract：
 
 1. `PatternUsefulnessContext` 提供 ID-based flat stores：`PatternDomainId`、`PatternConstructorId`、`PatternId` 作为 canonical identity；字符串仅用于 witness/debug rendering。
 2. `analyze_pattern_usefulness()` 已支持 finite constructor domains、nested constructor payload、or-pattern branch redundancy、guarded row 不参与 exhaustiveness、wildcard unreachable row 和 missing witness construction。
@@ -225,7 +225,7 @@ Migration:
 10. `match_exhaustiveness` matrix consumer 已迁移到 typed pattern root rows：typechecker 传递每个 match arm 的 `TypedProgram::patterns` root index、source range 和 guard exhaustiveness flag，matrix analyzer 从 typed pattern flat store lowering 到 constructor matrix，不再为常规 typed match 重新从 AST pattern lower 一套局部结构。
 11. `if let` statement 的 typed pattern fact 已落库：typechecker 会把 `if let` 根 pattern 写入 `TypedProgram::patterns`，并在 `TypedStatement::pattern_index` 记录 root index；typed HIR JSON round-trip 和 monomorphization remap 已覆盖该 statement-local pattern reference。
 12. `if let` 的第一条 usefulness consumer 已落库：typechecker 使用同一个 typed-row matrix analyzer 判断 `if let` pattern 是否覆盖 enum 全部 constructor，并在 `else` 分支不可达时发出 `typecheck.UNREACHABLE_IF_LET_ELSE` warning；单 constructor / 多 constructor enum 回归测试已覆盖。
-13. LSP pattern quick fixes v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 只从结构化 `Diagnostic.data["missing_witnesses"]` 插入具体 missing arms（例如 `B => <TODO>,`、`Data { flag: false, other: false } => <TODO>,` 或多行 struct payload witness arm）；当结构化 payload 缺失、为空或 witness 不是 source-safe pattern fragment 时，LSP 不提供 missing-pattern rewrite，避免从用户文案反解析语义或插入过宽 wildcard arm；`typecheck.MATCH_UNREACHABLE_ARM` 可在诊断 range 对应 source-safe match arm 时删除整条 unreachable arm，覆盖单行 arm 和多行 struct payload destructuring pattern arm。handler 单元测试覆盖编辑位置、struct witness 字段逗号解析、多行 witness 插入、结构化 payload gate、unreachable-arm deletion 和 quickfix metadata。
+13. LSP pattern quick fixes v1 已落库：`typecheck.MATCH_MISSING_PATTERNS` 只从结构化 `Diagnostic.data["missing_witnesses"]` 插入具体 missing arms（例如 `B => <expr>,`、`Data { flag: false, other: false } => <expr>,` 或多行 struct payload witness arm）；当结构化 payload 缺失、为空或 witness 不是 source-safe pattern fragment 时，LSP 不提供 missing-pattern rewrite，避免从用户文案反解析语义或插入过宽 wildcard arm；`typecheck.MATCH_UNREACHABLE_ARM` 可在诊断 range 对应 source-safe match arm 时删除整条 unreachable arm，覆盖单行 arm 和多行 struct payload destructuring pattern arm。handler 单元测试覆盖编辑位置、struct witness 字段逗号解析、多行 witness 插入、结构化 payload gate、unreachable-arm deletion 和 quickfix metadata。
 14. `if let` narrowing consumer 已迁移到 typed pattern fact store：typechecker 从 `TypedStatement::pattern_index` 指向的 `TypedProgram::patterns` root 派生 then/else `FlowFacts` 和 branch-local payload bindings，保留 RFC 0002 Option narrowing 行为，同时避免 flow narrowing 再从 AST pattern 重新推导一套并行语义。
 15. `MATCH_MISSING_PATTERNS` structured witness diagnostic payload 已落库：base diagnostic JSON、LSP protocol diagnostic JSON 和 typecheck emission 都会保留 `missing_witnesses` 字段；LSP diagnostics 回归测试覆盖从真实 typechecker 诊断到 JSON-RPC 输出的结构化 witness 数据。
 16. 非 Bool open literal usefulness 已落库：Int / Float / String 类开放 payload domain 会保留 `_` 默认 witness，并把已出现 literal 降为 singleton constructor；String literal singleton identity 使用 decoded value，Float literal singleton identity 使用解析后的 binary64 值，source spelling 只用于渲染，因此等价 escape 写法或等价 Float 拼写不会产生两个不同 constructor；`Some(1), None` 不再错误地证明 `Option<Int>` exhaustiveness，`Some(_)` 才覆盖开放剩余值，重复 literal 会继续产生 unreachable / overlap warning。
@@ -273,11 +273,11 @@ Migration:
 58. Primitive payload snippet choices 已落库：tuple/struct enum variant pattern snippets 和 struct payload field snippets 的 payload placeholder 现在会消费 payload `TypePtr`，为 `Bool` 提供 `true` / `false` / `_` choices，为 open `Int` / `Float` / `String` 提供与 pattern completion 一致的 source-safe literal skeleton choices，为 bounded Int 提供小域 literal / range choices 或大域 range choice，为 `String(0,0)` 提供 `""` / `_` choices；其他非闭合或未稳定 primitive/refinement domain 仍保守使用 `${n:_}`。
 59. Release evidence archive 覆盖已落库：仓库级 `scripts/generate-release-evidence-archive.py` 现在生成 `rfc0011.pattern_matrix.representative_cases`，通过真实 `ahflc check --manifest tests/integration/rfc0011_pattern_matrix/ahfl.toml --sysroot <repo>` 固化 finite enum、nested enum payload、open Int default arm、bounded Int range 和 `String(0,0)` singleton pattern 的代表用例。
 
-尚未完成：
+v1 后续扩展（不阻塞 stabilized）：
 
-1. 未来 destructuring UX 仍需继续推进：更深 completion / code-action 编辑序列还需要继续消费 typed pattern fact store；pattern binding 基础导航与 rename v1、documentHighlight v1、selectionRange v1、struct payload field snippet completion v1、struct variant rest-pattern-aware field completion textEdit v1、wildcard-pattern replacement completion v1、leaf-pattern replacement completion v1、binding-pattern replacement completion v1、struct payload child-pattern priority completion v1、struct variant missing-field quick fix v1、struct variant unexpected-field quick fix v1、struct variant duplicate-field quick fix v1、nested enum payload snippet choices、nested enum payload variant skeleton choices、primitive payload snippet choices、Bool literal pattern completion v1、bounded Int pattern completion v1 和 open primitive pattern completion v1 已完成。
-2. range pattern v1 仍只覆盖 signed integer literal 闭区间；非 literal refinement propagation 已有 bounded operand `+` / `-` / `*`、非零 `/`、finite variable-divisor 精确 `%`、divisor-dominates oversized exact `%`、quotient-partition large-domain exact `%` 和 bounded String concatenation range inference，Decimal multiplication product-scale semantics 与显式 Decimal division target-scale / rounding API 已落库；未来 Float refinement semantics 仍未稳定。
-3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续只剩更深 destructuring 编辑序列的 UX 产品化。
+1. 更深 destructuring editing UX 可继续消费 typed pattern fact store，但 tuple / or-pattern / nested binding 的自动编辑必须保持 source-safe edit contract；无法证明 source-safe 时继续保持手动编辑。
+2. range pattern v1 稳定范围是 signed integer literal 闭区间；bounded Int、bounded String singleton、Decimal product-scale 和显式 Decimal division policy 已进入当前 contract。未来 Float refinement semantics 和非 singleton string pattern domain 必须另行设计，不能默认为 RFC0011 v1 的一部分。
+3. typed-pattern-driven LSP diagnostics 已完成结构化 missing witness code-action gate；后续产品化重点是更深 destructuring 编辑序列和更细的 snippet UX，不改变 matrix canonical identity。
 
 ## Test Plan
 
@@ -328,7 +328,7 @@ Stabilized exit criteria:
 ## Open Questions
 
 1. Closed for v1: or-pattern syntax and signed Int range pattern syntax have both landed. Future ordering questions are migration/product rollout questions, not RFC0011 semantic blockers.
-2. `Int(min, max)` 已有 source syntax 和大型嵌套 bounded product matrix 支持；literal/refinement inference 应采用什么边界，才能在不牺牲可判定性的前提下继续喂给完整矩阵？
+2. Post-v1: `Int(min, max)` 已有 source syntax 和大型嵌套 bounded product matrix 支持；更激进的 literal/refinement inference 边界属于后续扩展，不能牺牲 v1 的可判定 matrix contract。
 3. Closed for v1: missing witness rendering uses the scrutinee enum context and emits source-safe variant pattern fragments, while keeping canonical identity in `PatternConstructorId` / typed facts rather than display strings. If AHFL later requires qualification-sensitive variant pattern spelling, that belongs in a follow-up LSP/source-edit display policy and must not alter matrix identity.
 
 ## Decision History
@@ -403,3 +403,4 @@ Stabilized exit criteria:
 - 2026-07-09: Added primitive payload snippet choices. Pattern snippets now derive payload placeholder choices from `TypePtr` for Bool, open primitive literal skeletons, bounded Int domains and `String(0,0)` while keeping unstable/open refinement domains conservative.
 - 2026-07-09: Refined the struct variant missing-field quick fix to insert `field: _` instead of shorthand field bindings, keeping the edit conservative while preserving the existing structured-diagnostic gate.
 - 2026-07-09: Added RFC0011 representative pattern matrix release evidence. The repository release evidence archive now checks a package fixture covering finite enum, nested enum payload, open Int default, bounded Int range and `String(0,0)` singleton patterns.
+- 2026-07-09: Stabilized RFC0011 as a stable-language RFC after spec/reference synchronization and representative release evidence; Float refinement and deeper destructuring editing remain post-v1 extensions.
