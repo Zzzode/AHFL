@@ -1920,6 +1920,8 @@ ahfl_label_tests(
         ahflc.run.llm_secret_manager.smoke
         ahflc.run.capability_bindings.smoke
         ahflc.run.input_schema.fail_missing_field
+        ahflc.run.manifest.entry_workflow_default
+        ahflc.run.default_manifest.entry_workflow_default
 )
 
 ahfl_label_tests(
@@ -1932,6 +1934,8 @@ ahfl_label_tests(
     LABELS ahfl-v0.57 v0.57-grpc-transport
     TESTS
         ahfl.runtime.grpc_transport_all
+        ahfl.runtime.native_grpc_gate
+        ahfl.runtime.transport_gate_smoke
 )
 
 ahfl_label_tests(
@@ -2151,6 +2155,8 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-docs
     TESTS
         ahfl.docs.ir_sync_gate
+        ahfl.docs.rfc_check
+        ahfl.docs.rfc_check_smoke
 )
 
 ahfl_label_tests(
@@ -2175,6 +2181,9 @@ ahfl_label_tests(
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-quality-gates
     TESTS
+        ahfl.architecture.boundaries
+        ahfl.runtime.native_grpc_gate
+        ahfl.runtime.transport_gate_smoke
         ahfl.fuzz.parser_check
         ahfl.fuzz.typecheck_check
         ahfl.fuzz.smv_emitter_check
