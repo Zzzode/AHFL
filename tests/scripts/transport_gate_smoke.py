@@ -21,6 +21,27 @@ REQUIRED_GATES = (
 )
 
 
+def collect_artifact_refs(evidence: dict[str, object]) -> set[str]:
+    refs: set[str] = set()
+    decision = evidence.get("decision")
+    if isinstance(decision, dict):
+        record = decision.get("record")
+        if isinstance(record, str) and record and "://" not in record:
+            refs.add(record)
+    gates = evidence.get("gates")
+    if isinstance(gates, dict):
+        for gate_value in gates.values():
+            if not isinstance(gate_value, dict):
+                continue
+            evidence_refs = gate_value.get("evidence")
+            if not isinstance(evidence_refs, list):
+                continue
+            for ref in evidence_refs:
+                if isinstance(ref, str) and ref and "://" not in ref:
+                    refs.add(ref)
+    return refs
+
+
 def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
     (root / "docs" / "rfcs").mkdir(parents=True)
     (root / "docs" / "plans").mkdir(parents=True)
@@ -30,6 +51,10 @@ def write_repo(root: Path, *, status: str, evidence: dict[str, object]) -> None:
     (root / "docs" / "plans" / "native-grpc-decision-evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    for ref in collect_artifact_refs(evidence):
+        artifact = root / ref
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(json.dumps({"artifact": ref}, indent=2) + "\n", encoding="utf-8")
 
 
 def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None = None) -> dict[str, object]:
@@ -40,7 +65,7 @@ def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None
         gates[gate] = {
             "status": "complete" if is_complete else "missing",
             "owner": "owner",
-            "evidence": [f"evidence://{gate}"] if is_complete else [],
+            "evidence": [f"docs/plans/evidence/{gate}.json"] if is_complete else [],
             "notes": "test fixture",
         }
     return {
@@ -51,7 +76,7 @@ def evidence(*, decision_state: str = "pending", complete_gates: set[str] | None
             "state": decision_state,
             "owner": "runtime-owner" if decision_state != "pending" else "",
             "signed_off_at": "2026-07-08" if decision_state != "pending" else "",
-            "record": "evidence://decision" if decision_state != "pending" else "",
+            "record": "docs/plans/evidence/decision.json" if decision_state != "pending" else "",
         },
         "gates": gates,
     }
@@ -123,6 +148,28 @@ def test_implementing_allows_markers_after_complete_evidence(checker: Path) -> N
         assert_passes(run_checker(checker, root))
 
 
+def test_complete_gate_rejects_placeholder_evidence(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    gates = fixture["gates"]
+    assert isinstance(gates, dict)
+    runtime_gate = gates["runtime_owner_decision"]
+    assert isinstance(runtime_gate, dict)
+    runtime_gate["evidence"] = ["evidence://runtime_owner_decision"]
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        assert_fails(run_checker(checker, root), "http(s) URL or an existing repository-relative artifact path")
+
+
+def test_complete_gate_rejects_missing_repo_artifact(checker: Path) -> None:
+    fixture = evidence(decision_state="go", complete_gates={"runtime_owner_decision"})
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        write_repo(root, status="accepted", evidence=fixture)
+        (root / "docs" / "plans" / "evidence" / "runtime_owner_decision.json").unlink()
+        assert_fails(run_checker(checker, root), "does not exist")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: transport_gate_smoke.py <check-native-grpc-gate.py>", file=sys.stderr)
@@ -132,6 +179,8 @@ def main() -> int:
     test_accepted_requires_owner_decision(checker)
     test_implementing_requires_complete_gate_evidence(checker)
     test_implementing_allows_markers_after_complete_evidence(checker)
+    test_complete_gate_rejects_placeholder_evidence(checker)
+    test_complete_gate_rejects_missing_repo_artifact(checker)
     print("transport gate smoke tests passed")
     return 0
 

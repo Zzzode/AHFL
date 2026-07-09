@@ -8,6 +8,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,8 @@ EVIDENCE_SCHEMA = "ahfl.native_grpc_decision_evidence.v1"
 EXPECTED_RFC = "0004-native-grpc-transport"
 GATE_STATUSES = {"missing", "planned", "complete", "not_applicable"}
 DECISION_STATES = {"pending", "go", "no-go"}
+STALE_EVIDENCE_RE = re.compile(r"\b(?:TBD|TODO|DEFERRED|PLACEHOLDER)\b", re.IGNORECASE)
+ALLOWED_REMOTE_EVIDENCE_SCHEMES = {"http", "https"}
 REQUIRED_GATES: tuple[str, ...] = (
     "runtime_owner_decision",
     "benchmark",
@@ -213,6 +216,78 @@ def validate_evidence_shape(evidence: dict[str, object]) -> list[str]:
     return failures
 
 
+def validate_artifact_reference(root: Path, ref: str, context: str) -> list[str]:
+    failures: list[str] = []
+    if STALE_EVIDENCE_RE.search(ref):
+        failures.append(f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} is stale")
+        return failures
+
+    parsed = urlparse(ref)
+    if parsed.scheme:
+        if parsed.scheme in ALLOWED_REMOTE_EVIDENCE_SCHEMES and parsed.netloc:
+            return failures
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} must be an "
+            "http(s) URL or an existing repository-relative artifact path"
+        )
+        return failures
+
+    candidate = Path(ref)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} must stay "
+            "inside the repository"
+        )
+        return failures
+
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence reference {ref!r} escapes "
+            "the repository"
+        )
+        return failures
+
+    if not resolved.exists() or not resolved.is_file():
+        failures.append(
+            f"{DECISION_EVIDENCE_REL}: {context} evidence artifact {ref!r} does not exist"
+        )
+    return failures
+
+
+def validate_evidence_artifacts(root: Path, evidence: dict[str, object]) -> list[str]:
+    failures: list[str] = []
+
+    decision = decision_object(evidence)
+    decision_state = decision.get("state")
+    if decision_state in {"go", "no-go"}:
+        for field in ("owner", "signed_off_at", "record"):
+            value = decision.get(field)
+            if not isinstance(value, str) or not value:
+                failures.append(
+                    f"{DECISION_EVIDENCE_REL}: decision.{field} must be a non-empty string "
+                    f"when decision.state is {decision_state!r}"
+                )
+        record = decision.get("record")
+        if isinstance(record, str) and record:
+            failures.extend(validate_artifact_reference(root, record, "decision.record"))
+
+    for gate, gate_value in gates_object(evidence).items():
+        if not isinstance(gate_value, dict):
+            continue
+        evidence_refs = gate_value.get("evidence")
+        if not isinstance(evidence_refs, list):
+            continue
+        if gate_value.get("status") != "complete" and not evidence_refs:
+            continue
+        for index, ref in enumerate(evidence_refs):
+            if isinstance(ref, str):
+                failures.extend(validate_artifact_reference(root, ref, f"gates.{gate}.evidence[{index}]"))
+    return failures
+
+
 def decision_object(evidence: dict[str, object]) -> dict[str, object]:
     decision = evidence.get("decision")
     return decision if isinstance(decision, dict) else {}
@@ -325,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     failures = list(evidence_failures)
     if evidence is not None:
         failures.extend(validate_evidence_shape(evidence))
+        failures.extend(validate_evidence_artifacts(root, evidence))
         failures.extend(validate_status_transition(status, evidence))
 
     marker_failures = scan_native_markers(root, status)

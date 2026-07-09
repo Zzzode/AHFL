@@ -73,7 +73,7 @@ No-Go 决策必须写回 RFC0004：
 3. `implementing` / `implemented` / `stabilized`：必须有 `decision.state = "go"`，并且所有 gate 都为 `complete` 且带 evidence 引用；此后才允许 native implementation marker。
 4. `postponed` / `rejected` / `out-of-scope`：必须有 `decision.state = "no-go"`，并且 `runtime_owner_decision` gate 为 `complete` 且带 evidence 引用；native implementation marker 仍禁止。
 
-证据引用必须指向可复核 artifact，例如 benchmark 报告、CI run、三平台 build log、dependency review、feature flag design、fallback semantics test matrix 或 release evidence archive 条目。空字符串、口头描述和没有 artifact 的 `complete` 状态都不能作为完成证据。
+证据引用必须指向可复核 artifact，例如 benchmark 报告、CI run、三平台 build log、dependency review、feature flag design、fallback semantics test matrix 或 release evidence archive 条目。空字符串、口头描述和没有 artifact 的 `complete` 状态都不能作为完成证据。机器门禁会拒绝 `TBD` / `TODO` / `DEFERRED` / `PLACEHOLDER` 证据引用、拒绝非 `http(s)` 的占位 URI，并要求仓库内相对路径 evidence artifact 真实存在且不能逃逸仓库根目录。
 
 ## Current State
 
@@ -84,5 +84,6 @@ No-Go 决策必须写回 RFC0004：
 3. 三平台 build evidence 未完成。
 4. feature flag 策略已有 RFC 草案描述，但未实现。
 5. 仓库级机器门禁已落地：`scripts/check-native-grpc-gate.py` 会在 RFC0004 仍为 `draft` 时拒绝 native gRPC build flag、C++ gRPC/Protobuf dependency wiring 和 native proto service contract；该脚本已接入 CTest 与 CI。
-6. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
-7. 因此 RFC0004 必须保持 `draft`，不能进入实现。
+6. Evidence artifact 引用门禁已落地：`complete` gate 和 Go/No-Go decision record 必须引用 `http(s)` URL 或仓库内真实存在的相对 artifact path；占位 URI、陈旧标记和路径逃逸都会 fail closed。
+7. 结构化证据文件已落到 [native-grpc-decision-evidence.json](./native-grpc-decision-evidence.json)，当前 `decision.state` 为 `pending`，所有 gate 均为 `missing`。
+8. 因此 RFC0004 必须保持 `draft`，不能进入实现。
