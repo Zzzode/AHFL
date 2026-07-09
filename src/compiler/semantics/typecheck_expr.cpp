@@ -1259,6 +1259,13 @@ class ExpressionCheckerServices final {
         return false;
     }
 
+    [[nodiscard]] bool types_equivalent(const Type &lhs, const Type &rhs) const {
+        if (is_error_type(lhs) || is_error_type(rhs)) {
+            return true;
+        }
+        return ahfl::are_types_equivalent(lhs, rhs, relations_);
+    }
+
     [[nodiscard]] bool check_assignable(const Type &source,
                                         const Type &target,
                                         SourceRange range,
@@ -2340,8 +2347,44 @@ class ExpressionChecker final {
         std::uint32_t typed_pattern_index{UINT32_MAX};
     };
 
+    struct PatternBindingRecord {
+        TypePtr type{nullptr};
+        SourceRange range;
+    };
+
+    using PatternBindingRecords = std::map<std::string, PatternBindingRecord>;
+
     [[nodiscard]] TypePtr typed_pattern_matched_type(TypePtr scrutinee_type) const {
         return scrutinee_type != nullptr ? scrutinee_type : values_.make_error_type();
+    }
+
+    [[nodiscard]] bool record_pattern_binding(std::string name,
+                                              TypePtr type,
+                                              SourceRange range,
+                                              BindingMap &bindings,
+                                              PatternBindingRecords &pattern_bindings) const {
+        const auto [iter, inserted] =
+            pattern_bindings.emplace(name, PatternBindingRecord{.type = type, .range = range});
+        if (!inserted && (iter->second.type == nullptr || !is_error_type(*iter->second.type))) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::MatchDuplicateBinding,
+                messages::typecheck::MatchDuplicateBinding.format_with(name),
+                range);
+            return false;
+        }
+
+        bindings[std::move(name)] = type != nullptr ? type : values_.make_error_type();
+        return true;
+    }
+
+    void report_or_pattern_binding_mismatch(std::string_view name,
+                                            SourceRange range,
+                                            std::vector<Diagnostic::Related> notes = {}) const {
+        services_.typecheck_error_here(
+            error_codes::typecheck::MatchOrPatternBindingMismatch,
+            messages::typecheck::MatchOrPatternBindingMismatch.format_with(std::string{name}),
+            range,
+            std::move(notes));
     }
 
     [[nodiscard]] LoweredPattern lowered_pattern(bool irrefutable, TypedPattern typed) const {
@@ -2399,6 +2442,17 @@ class ExpressionChecker final {
                   std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
                   BindingMap &bindings,
                   SourceRange range) const {
+        PatternBindingRecords pattern_bindings;
+        return lower_pattern(pattern, scrutinee_type, enum_info, bindings, range, pattern_bindings);
+    }
+
+    [[nodiscard]] LoweredPattern
+    lower_pattern(const ast::PatternSyntax &pattern,
+                  TypePtr scrutinee_type,
+                  std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                  BindingMap &bindings,
+                  SourceRange range,
+                  PatternBindingRecords &pattern_bindings) const {
         std::optional<EnumTypeInfo> derived_enum_info_storage;
         auto effective_enum_info = enum_info;
         if (!effective_enum_info.has_value()) {
@@ -2493,14 +2547,8 @@ class ExpressionChecker final {
                             .type = binding_type,
                             .range = range,
                         });
-                        const auto [iter, inserted] = bindings.emplace(binding.name, binding_type);
-                        if (!inserted && (!iter->second || !is_error_type(*iter->second))) {
-                            services_.typecheck_error_here(
-                                error_codes::typecheck::MatchDuplicateBinding,
-                                messages::typecheck::MatchDuplicateBinding.format_with(
-                                    binding.name),
-                                range);
-                        }
+                        (void)record_pattern_binding(
+                            binding.name, binding_type, range, bindings, pattern_bindings);
                     }
                     std::vector<TypedPatternChild> children;
                     bool nested_irrefutable = true;
@@ -2509,7 +2557,8 @@ class ExpressionChecker final {
                                                           scrutinee_type,
                                                           effective_enum_info,
                                                           bindings,
-                                                          binding.nested->range);
+                                                          binding.nested->range,
+                                                          pattern_bindings);
                         children.push_back(TypedPatternChild{
                             .pattern_index = nested.typed_pattern_index,
                             .name = "nested",
@@ -2538,7 +2587,8 @@ class ExpressionChecker final {
                                                        scrutinee_type,
                                                        effective_enum_info,
                                                        bindings,
-                                                       element->range);
+                                                       element->range,
+                                                       pattern_bindings);
                         children.push_back(TypedPatternChild{
                             .pattern_index = sub.typed_pattern_index,
                             .name = std::to_string(children.size()),
@@ -2635,7 +2685,8 @@ class ExpressionChecker final {
                                                            payload[index],
                                                            std::nullopt,
                                                            bindings,
-                                                           variant.subpatterns[index]->range);
+                                                           variant.subpatterns[index]->range,
+                                                           pattern_bindings);
                             children.push_back(TypedPatternChild{
                                 .pattern_index = sub.typed_pattern_index,
                                 .name = std::to_string(index),
@@ -2687,7 +2738,8 @@ class ExpressionChecker final {
                                                                field->get().type,
                                                                std::nullopt,
                                                                bindings,
-                                                               field_pattern->pattern->range);
+                                                               field_pattern->pattern->range,
+                                                               pattern_bindings);
                                 children.push_back(TypedPatternChild{
                                     .pattern_index = sub.typed_pattern_index,
                                     .name = field_pattern->name,
@@ -2717,21 +2769,91 @@ class ExpressionChecker final {
                 },
                 [&](const ast::OrPattern &or_pattern) {
                     // An or-pattern is catch-all only if every branch is. We
-                    // lower every branch so branch-local bindings and payload
-                    // shape errors are surfaced. The first-version requirement
-                    // is that all branches bind equivalent names; we do not yet
-                    // enforce that here.
+                    // lower every branch in its own binding scope, then merge
+                    // only the bindings that appear with equivalent types in
+                    // every branch. This matches Rust's invariant and avoids
+                    // leaking a binding that may not exist at runtime.
                     bool all_irrefutable = true;
+                    bool branch_bindings_valid = true;
+                    std::optional<PatternBindingRecords> expected_branch_bindings;
                     std::vector<TypedPatternChild> children;
                     children.reserve(or_pattern.branches.size());
-                    for (const auto &branch : or_pattern.branches) {
-                        const auto sub = lower_pattern(
-                            *branch, scrutinee_type, effective_enum_info, bindings, branch->range);
+                    for (std::size_t branch_index = 0; branch_index < or_pattern.branches.size();
+                         ++branch_index) {
+                        const auto &branch = or_pattern.branches[branch_index];
+                        BindingMap branch_context = bindings;
+                        PatternBindingRecords branch_pattern_bindings;
+                        const auto sub = lower_pattern(*branch,
+                                                       scrutinee_type,
+                                                       effective_enum_info,
+                                                       branch_context,
+                                                       branch->range,
+                                                       branch_pattern_bindings);
                         children.push_back(TypedPatternChild{
                             .pattern_index = sub.typed_pattern_index,
                             .name = std::to_string(children.size()),
                         });
                         all_irrefutable = all_irrefutable && sub.irrefutable;
+
+                        if (!expected_branch_bindings.has_value()) {
+                            expected_branch_bindings = branch_pattern_bindings;
+                            continue;
+                        }
+
+                        for (const auto &[name, expected] : *expected_branch_bindings) {
+                            const auto actual = branch_pattern_bindings.find(name);
+                            if (actual == branch_pattern_bindings.end()) {
+                                branch_bindings_valid = false;
+                                report_or_pattern_binding_mismatch(
+                                    name,
+                                    branch->range,
+                                    std::vector<Diagnostic::Related>{Diagnostic::Related{
+                                        .message = "binding appears in the first branch here",
+                                        .range = expected.range,
+                                    }});
+                                continue;
+                            }
+                            if (expected.type != nullptr && actual->second.type != nullptr &&
+                                !services_.types_equivalent(*expected.type, *actual->second.type)) {
+                                branch_bindings_valid = false;
+                                report_or_pattern_binding_mismatch(
+                                    name,
+                                    actual->second.range,
+                                    std::vector<Diagnostic::Related>{
+                                        Diagnostic::Related{
+                                            .message = "first branch binding type: " +
+                                                       expected.type->describe(),
+                                            .range = expected.range,
+                                        },
+                                        Diagnostic::Related{
+                                            .message = "this branch binding type: " +
+                                                       actual->second.type->describe(),
+                                            .range = actual->second.range,
+                                        },
+                                    });
+                            }
+                        }
+
+                        for (const auto &[name, actual] : branch_pattern_bindings) {
+                            if (expected_branch_bindings->contains(name)) {
+                                continue;
+                            }
+                            branch_bindings_valid = false;
+                            report_or_pattern_binding_mismatch(
+                                name,
+                                actual.range,
+                                std::vector<Diagnostic::Related>{Diagnostic::Related{
+                                    .message = "binding is absent from the first branch",
+                                    .range = or_pattern.branches.front()->range,
+                                }});
+                        }
+                    }
+
+                    if (branch_bindings_valid && expected_branch_bindings.has_value()) {
+                        for (const auto &[name, record] : *expected_branch_bindings) {
+                            (void)record_pattern_binding(
+                                name, record.type, record.range, bindings, pattern_bindings);
+                        }
                     }
                     TypedPattern typed;
                     typed.kind = TypedPatternKind::Or;

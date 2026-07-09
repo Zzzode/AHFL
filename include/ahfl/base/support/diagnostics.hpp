@@ -272,6 +272,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchArmTypeMismatch{
     "MATCH_ARM_TYPE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
     "MATCH_DUPLICATE_BINDING"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchOrPatternBindingMismatch{
+    "MATCH_OR_PATTERN_BINDING_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
     "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidRangePattern{
@@ -586,6 +588,8 @@ inline constexpr MessageTemplate UnreachableIfLetElse{"this if-let else branch i
 inline constexpr MessageTemplate MatchArmTypeMismatch{
     "match arm body type mismatch: expected {}, got {}"};
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
+inline constexpr MessageTemplate MatchOrPatternBindingMismatch{
+    "or-pattern binding '{}' must appear with equivalent types in every branch"};
 inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
     "match binding '{}' expects type {}, got payload slot type {}"};
 inline constexpr MessageTemplate InvalidRangePattern{

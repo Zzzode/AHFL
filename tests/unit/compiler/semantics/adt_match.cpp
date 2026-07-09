@@ -603,6 +603,71 @@ enum MaybeBool { Some(Bool), None, }
     CHECK(related_contains(*diagnostic, "previously covered by arm #2"));
 }
 
+TEST_CASE("or-pattern branches may bind the same name when types match") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Choice { A(Int), B(Int), C, }
+)AHFL",
+        "Choice",
+        "Choice::C",
+        "match ctx.value { A(x) | B(x) => x, C => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_DUPLICATE_BINDING") == 0);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_OR_PATTERN_BINDING_MISMATCH") == 0);
+}
+
+TEST_CASE("or-pattern branches must bind the same names") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Choice { A(Int), B(Int), C, }
+)AHFL",
+        "Choice",
+        "Choice::C",
+        "match ctx.value { A(x) | B(_) => 0, C => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_OR_PATTERN_BINDING_MISMATCH");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->message.find("x") != std::string::npos);
+    CHECK(related_contains(*diagnostic, "binding appears in the first branch here"));
+}
+
+TEST_CASE("or-pattern branch bindings must have equivalent types") {
+    const auto source = wrap_in_flow(
+        R"AHFL(
+enum Choice { A(Int), B(String), C, }
+)AHFL",
+        "Choice",
+        "Choice::C",
+        "match ctx.value { A(x) | B(x) => 0, C => 0 }");
+    const auto result = typecheck_source(source);
+    CHECK(result.has_errors());
+    const auto *diagnostic =
+        find_diagnostic_with_code(result.diagnostics, "MATCH_OR_PATTERN_BINDING_MISMATCH");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(related_contains(*diagnostic, "first branch binding type: Int"));
+    CHECK(related_contains(*diagnostic, "this branch binding type: String"));
+}
+
+TEST_CASE("pattern binding shadows outer local without duplicate binding diagnostic") {
+    const auto source = module_preamble() + R"AHFL(
+enum Maybe { Some(Int), None, }
+
+fn f(value: Maybe) -> Int effect Pure decreases 0 {
+    let x: Int = 42;
+    return match value {
+        Some(x) => x,
+        None => 0,
+    };
+}
+)AHFL";
+    const auto result = typecheck_source(source);
+    CHECK_FALSE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "MATCH_DUPLICATE_BINDING") == 0);
+}
+
 TEST_CASE("if-let over single-constructor enum reports unreachable else") {
     const auto result = typecheck_source(module_preamble() + R"AHFL(
 enum Only { Some(Int) }

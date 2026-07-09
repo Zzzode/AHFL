@@ -2386,7 +2386,37 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 - 将各槽位使用不同名字；要表达两槽相等，改用 guard 或 `if` 判定。
 - 不关心的槽使用 `_` 占位。
 
-**Related codes**：`SHADOWED_BINDING`、`MATCH_VARIANT_PAYLOAD_ARITY`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`。
+**Related codes**：`SHADOWED_BINDING`、`MATCH_OR_PATTERN_BINDING_MISMATCH`、`MATCH_VARIANT_PAYLOAD_ARITY`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`。
+
+---
+
+### MATCH_OR_PATTERN_BINDING_MISMATCH
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.MATCH_OR_PATTERN_BINDING_MISMATCH` |
+| SoT | `diagnostics.hpp` |
+| MessageTemplate | `or-pattern binding '{}' must appear with equivalent types in every branch` |
+
+**触发条件**：同一个 or-pattern 中，各分支没有绑定同一组名字，或同名 binding 在不同分支推导出不等价的类型。
+
+**最小复现**：
+```ahfl
+module repro;
+enum P { A(Int), B(String) }
+fn f(p: P) -> Int effect Pure decreases 0 {
+    return match p {
+        A(x) | B(x) => 0
+    };
+}
+```
+
+**常见修复**：
+- 让每个分支绑定相同名字，并确保对应 payload 类型一致。
+- 如果某个分支不需要值，所有分支都改用 `_`，或拆成多个 match arm。
+- 不要依赖外层同名变量来补齐缺失分支 binding；pattern binding 会形成 arm-local 作用域。
+
+**Related codes**：`MATCH_DUPLICATE_BINDING`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`、`TYPE_MISMATCH`。
 
 ---
 
