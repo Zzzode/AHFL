@@ -8381,6 +8381,14 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
                                "        Data { label: Low } => 1,\n"
                                "        Empty => 0,\n"
                                "    };\n"
+                               "}\n"
+                               "\n"
+                               "fn use_nested_payload_binding(packet: Packet) -> Int effect Pure "
+                               "decreases 0 {\n"
+                               "    return match packet {\n"
+                               "        Data { label: chosen } => 1,\n"
+                               "        Empty => 0,\n"
+                               "    };\n"
                                "}\n";
 
     const auto empty_fields_position = position_of(source, "Data { .. }");
@@ -8500,6 +8508,34 @@ void test_completion_struct_variant_fields_uses_typed_pattern_facts() {
                   R"(,"character":)" + std::to_string(nested_payload_existing_end.character) +
                   "}") != std::string::npos,
           "completion.pattern_struct_payload_existing_child_text_edit_range");
+
+    const auto nested_payload_binding_position = position_of(source, "Data { label: chosen }");
+    const auto nested_payload_binding_token =
+        position_after(nested_payload_binding_position, "Data { label: ");
+    const auto nested_payload_binding_end = position_after(nested_payload_binding_token, "chosen");
+    const std::string nested_payload_binding_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":)" +
+        std::to_string(nested_payload_binding_token.line) + R"(,"character":)" +
+        std::to_string(nested_payload_binding_token.character + 2) + R"(}})";
+    const auto nested_payload_binding_output =
+        run_handler_request(source, "textDocument/completion", nested_payload_binding_params);
+    check(nested_payload_binding_output.find("\"label\":\"Low\"") != std::string::npos,
+          "completion.pattern_struct_payload_binding_contains_low");
+    check(nested_payload_binding_output.find("\"label\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_binding_contains_high");
+    check(nested_payload_binding_output.find("\"label\":\"code\"") == std::string::npos,
+          "completion.pattern_struct_payload_binding_excludes_parent_field_completion");
+    check(nested_payload_binding_output.find("\"newText\":\"High\"") != std::string::npos,
+          "completion.pattern_struct_payload_binding_replaces_binding");
+    check(nested_payload_binding_output.find(
+              R"("start":{"line":)" + std::to_string(nested_payload_binding_token.line) +
+              R"(,"character":)" + std::to_string(nested_payload_binding_token.character) + "}") !=
+                  std::string::npos &&
+              nested_payload_binding_output.find(
+                  R"("end":{"line":)" + std::to_string(nested_payload_binding_end.line) +
+                  R"(,"character":)" + std::to_string(nested_payload_binding_end.character) +
+                  "}") != std::string::npos,
+          "completion.pattern_struct_payload_binding_text_edit_range");
 }
 
 void test_rename_rejects_keyword_and_conflict() {

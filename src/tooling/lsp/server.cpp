@@ -2482,6 +2482,10 @@ void push_pattern_enum_variant_completions(std::vector<CompletionItem> &items,
         }
         break;
     case TypedPatternKind::Binding:
+        if (pattern.children.empty() && is_identifier(text)) {
+            return pattern.range;
+        }
+        break;
     case TypedPatternKind::Tuple:
     case TypedPatternKind::Or:
         break;
