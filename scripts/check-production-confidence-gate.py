@@ -40,12 +40,16 @@ def positive_integer(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def validate_contract(value: Any) -> list[str]:
     failures: list[str] = []
     if not isinstance(value, dict):
         return ["production confidence contract must be an object"]
-    if value.get("schema") != "ahfl.production-confidence-gate.v1":
-        failures.append("contract schema must be ahfl.production-confidence-gate.v1")
+    if value.get("schema") != "ahfl.production-confidence-gate.v2":
+        failures.append("contract schema must be ahfl.production-confidence-gate.v2")
     evidence = value.get("evidence")
     if not isinstance(evidence, dict):
         failures.append("evidence must be an object")
@@ -64,6 +68,30 @@ def validate_contract(value: Any) -> list[str]:
     ratio = value.get("maximum_last_quartile_growth_ratio")
     if not finite_number(ratio) or float(ratio) < 0:
         failures.append("maximum_last_quartile_growth_ratio must be non-negative")
+    environment = value.get("required_execution_environment")
+    if not isinstance(environment, dict):
+        failures.append("required_execution_environment must be an object")
+    else:
+        if environment.get("kind") != "ci":
+            failures.append("required_execution_environment.kind must be 'ci'")
+        if environment.get("provider") != "github-actions":
+            failures.append(
+                "required_execution_environment.provider must be 'github-actions'"
+            )
+        for field in ("repository", "workflow_file", "job"):
+            if not non_empty_string(environment.get(field)):
+                failures.append(
+                    f"required_execution_environment.{field} must not be empty"
+                )
+        allowed_events = environment.get("allowed_events")
+        if (
+            not isinstance(allowed_events, list)
+            or not allowed_events
+            or any(not non_empty_string(event) for event in allowed_events)
+        ):
+            failures.append(
+                "required_execution_environment.allowed_events must contain event names"
+            )
     return failures
 
 
@@ -131,6 +159,43 @@ def validate_evidence(
         )
     if evidence.get("kind") != "hour-scale":
         failures.append("kind must be 'hour-scale'")
+    required_environment = contract["required_execution_environment"]
+    execution_environment = evidence.get("execution_environment")
+    if not isinstance(execution_environment, dict):
+        failures.append("execution_environment must be an object")
+    else:
+        if execution_environment.get("kind") != required_environment["kind"]:
+            failures.append("execution_environment.kind mismatch")
+        if execution_environment.get("provider") != required_environment["provider"]:
+            failures.append("execution_environment.provider mismatch")
+        if execution_environment.get("repository") != required_environment["repository"]:
+            failures.append("execution_environment.repository mismatch")
+        expected_workflow_prefix = (
+            f"{required_environment['repository']}/"
+            f"{required_environment['workflow_file']}@"
+        )
+        workflow_ref = execution_environment.get("workflow_ref")
+        if (
+            not isinstance(workflow_ref, str)
+            or not workflow_ref.startswith(expected_workflow_prefix)
+        ):
+            failures.append("execution_environment.workflow_ref mismatch")
+        if execution_environment.get("event_name") not in required_environment[
+            "allowed_events"
+        ]:
+            failures.append("execution_environment.event_name is not allowed")
+        if execution_environment.get("job") != required_environment["job"]:
+            failures.append("execution_environment.job mismatch")
+        for field in (
+            "run_id",
+            "run_attempt",
+            "runner_os",
+            "runner_arch",
+        ):
+            if not non_empty_string(execution_environment.get(field)):
+                failures.append(f"execution_environment.{field} must not be empty")
+        if execution_environment.get("commit_sha") != revision:
+            failures.append("execution_environment.commit_sha must equal source_revision")
     if evidence.get("process_model") != "single-long-lived-worker":
         failures.append("process_model must be 'single-long-lived-worker'")
     if evidence.get("reference_workflow") != "examples/execution-demo":
@@ -200,7 +265,7 @@ def make_report(
     current_revision: str,
 ) -> dict[str, Any]:
     return {
-        "schema": "ahfl.production-confidence-gate-report.v1",
+        "schema": "ahfl.production-confidence-gate-report.v2",
         "status": status,
         "source_revision": source_revision,
         "current_source_revision": current_revision,
@@ -208,6 +273,9 @@ def make_report(
         "minimum_duration_seconds": contract["minimum_duration_seconds"],
         "minimum_iterations": contract["minimum_iterations"],
         "minimum_provider_retries": contract["minimum_provider_retries"],
+        "required_execution_environment": contract[
+            "required_execution_environment"
+        ],
         "maximum_last_quartile_growth_ratio": contract[
             "maximum_last_quartile_growth_ratio"
         ],

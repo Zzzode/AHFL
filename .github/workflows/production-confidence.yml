@@ -34,6 +34,8 @@ jobs:
           --target ahfl_reference_workflow_recovery_worker
 
       - name: Run hour-scale soak
+        # The harness verifies GitHub Actions provenance and rejects local execution
+        # before it creates a work directory or starts the worker.
         run: >-
           python3 tests/scripts/reference_workflow_long_soak.py
           --worker build/dev/tests/ahfl_reference_workflow_recovery_worker

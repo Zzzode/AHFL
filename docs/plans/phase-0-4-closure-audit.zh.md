@@ -65,7 +65,7 @@ Provider 内部 cache、streaming 和 secret lifecycle vectors 只用于 provide
 | OTel adapter | canonical events -> OTLP-compatible JSON spans | 当前不包含 SDK/collector transport | Bounded 闭环 |
 | CLI/sysroot/VSIX/version migration | clean-prefix install、platform VSIX isolated install、schema rejection | 未做公开 Marketplace 发布 | Beta 闭环 |
 | Bounded soak | 30 秒下限、至少 12 次；event/request count稳定 | 非 hour-scale | Bounded 闭环 |
-| Hour-scale soak / RSS / allocator trend | single-long-lived-worker harness、nightly workflow、revision-bound evidence checker | 以 live `production-confidence` gate 判定；不在文档缓存 ready 状态 | Live gate |
+| Hour-scale soak / RSS / allocator trend | CI-only single-long-lived-worker harness、nightly workflow、GitHub Actions provenance 与 revision-bound evidence checker | 本地禁止运行 hour-scale；以 live `production-confidence` gate 判定，不在文档缓存 ready 状态 | Live gate |
 
 正式合同：
 
@@ -82,9 +82,13 @@ gate 会验证 evidence schema、当前 source revision、soak threshold、四�
 python3 scripts/check-production-confidence-gate.py --require-ready
 ```
 
-该 gate 要求同一长生命周期 worker 至少运行 3600 秒与 100 次，provider request/event
-count 稳定，RSS 与 allocator 指标有限且末四分位增长不超过合同阈值。文档不静态声称
-ready；源码变更会让旧 hour-scale evidence 立即 stale。
+该命令只检查 evidence，不启动长任务。正式 hour-scale 任务只能通过 GitHub Actions
+中的 `Production Confidence` workflow（nightly schedule 或 `workflow_dispatch`）
+运行；本地调用 `--contract-kind hour-scale` 会在创建目录和启动 worker 前立即失败。
+Gate 要求 evidence 带匹配 repository、workflow、event、job、commit SHA 和 run ID 的
+GitHub Actions provenance；同一长生命周期 worker 至少运行 3600 秒与 100 次，
+provider request/event count 稳定，RSS 与 allocator 指标有限且末四分位增长不超过
+合同阈值。文档不静态声称 ready；源码变更会让旧 hour-scale evidence 立即 stale。
 
 ## Phase 4：生态扩展
 

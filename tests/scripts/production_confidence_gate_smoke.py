@@ -51,15 +51,23 @@ def write_contract(root: Path) -> None:
     (root / "config/production-confidence-gate.json").write_text(
         json.dumps(
             {
-                "schema": "ahfl.production-confidence-gate.v1",
+                "schema": "ahfl.production-confidence-gate.v2",
                 "evidence": {
                     "path": "build/release-evidence/production-confidence/hour-scale-soak.json",
-                    "schema": "ahfl.production-confidence-soak.v1",
+                    "schema": "ahfl.production-confidence-soak.v2",
                 },
                 "minimum_duration_seconds": 3600,
                 "minimum_iterations": 100,
                 "minimum_provider_retries": 1,
                 "maximum_last_quartile_growth_ratio": 0.20,
+                "required_execution_environment": {
+                    "kind": "ci",
+                    "provider": "github-actions",
+                    "repository": "Zzzode/AHFL",
+                    "workflow_file": ".github/workflows/production-confidence.yml",
+                    "job": "hour-scale-soak",
+                    "allowed_events": ["schedule", "workflow_dispatch"],
+                },
             }
         )
         + "\n",
@@ -81,10 +89,23 @@ def metric() -> dict[str, object]:
 
 def evidence(revision: str) -> dict[str, object]:
     return {
-        "schema": "ahfl.production-confidence-soak.v1",
+        "schema": "ahfl.production-confidence-soak.v2",
         "status": "passed",
         "source_revision": revision,
         "kind": "hour-scale",
+        "execution_environment": {
+            "kind": "ci",
+            "provider": "github-actions",
+            "repository": "Zzzode/AHFL",
+            "workflow_ref": "Zzzode/AHFL/.github/workflows/production-confidence.yml@refs/heads/develop",
+            "event_name": "schedule",
+            "run_id": "123456789",
+            "run_attempt": "1",
+            "job": "hour-scale-soak",
+            "runner_os": "Linux",
+            "runner_arch": "X64",
+            "commit_sha": revision,
+        },
         "process_model": "single-long-lived-worker",
         "reference_workflow": "examples/execution-demo",
         "duration_seconds": 3600.5,
@@ -136,6 +157,28 @@ def main() -> int:
             ("few iterations", lambda value: value.update(iterations=99)),
             ("wrong request count", lambda value: value.update(provider_request_count=100)),
             ("no provider retry", lambda value: value.update(provider_retry_count=0)),
+            (
+                "local execution",
+                lambda value: value["execution_environment"].update(kind="local"),
+            ),
+            (
+                "wrong CI provider",
+                lambda value: value["execution_environment"].update(provider="generic-ci"),
+            ),
+            (
+                "wrong CI commit",
+                lambda value: value["execution_environment"].update(commit_sha="other-revision"),
+            ),
+            (
+                "wrong CI workflow",
+                lambda value: value["execution_environment"].update(
+                    workflow_ref="Zzzode/AHFL/.github/workflows/ci.yml@refs/heads/develop"
+                ),
+            ),
+            (
+                "wrong CI job",
+                lambda value: value["execution_environment"].update(job="build-and-test"),
+            ),
             ("event count zero", lambda value: value.update(stable_event_count=0)),
             (
                 "wrong process model",

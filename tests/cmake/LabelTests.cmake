@@ -460,6 +460,7 @@ ahfl_label_tests(
     TESTS
         ahfl.product.production_confidence_gate_contract
         ahfl.product.production_confidence_gate_smoke
+        ahfl.product.production_confidence_ci_only_smoke
         ahfl.reference_workflow.long_soak_smoke
 )
 

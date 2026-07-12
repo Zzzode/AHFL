@@ -155,9 +155,11 @@ projection builder 返回结构化 `std::expected` 错误。无效 event stream�
 4. OpenTelemetry SDK / collector transport；当前只提供从 canonical events 派生的 OTLP-compatible JSON adapter。
 5. Web Playground、Marketplace adapter 或第三方框架 wrapper。
 6. 真实部署环境的跨平台长期趋势与 production-ready 声明。当前 hour-scale
-   production-confidence gate 只在单一长生命周期 reference worker 上验证至少 3600 秒、
-   RSS/allocator 趋势和一次受控 provider 断连后的 canonical retry；它不能替代真实
-   provider、目标平台和部署拓扑复跑。
+   production-confidence gate 是 CI-only：只有仓库的
+   `.github/workflows/production-confidence.yml` GitHub Actions job 可以启动
+   `hour-scale` 模式。本地只允许 2 秒 smoke。CI job 在单一长生命周期 reference
+   worker 上验证至少 3600 秒、RSS/allocator 趋势和一次受控 provider 断连后的
+   canonical retry；它不能替代真实 provider、目标平台和部署拓扑复跑。
 
 ## 变更规则
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import statistics
 import subprocess
@@ -83,6 +84,78 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def load_required_execution_environment(repo: Path) -> dict[str, object]:
+    contract_path = repo / "config/production-confidence-gate.json"
+    try:
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(
+            f"error: hour-scale soak cannot load its CI contract: {error}"
+        ) from error
+    required = contract.get("required_execution_environment")
+    if not isinstance(required, dict):
+        raise SystemExit(
+            "error: hour-scale soak CI contract is missing required_execution_environment"
+        )
+    return required
+
+
+def github_actions_provenance(
+    repo: Path, source_revision: str
+) -> dict[str, str]:
+    required = load_required_execution_environment(repo)
+    repository = str(required.get("repository", ""))
+    workflow_file = str(required.get("workflow_file", ""))
+    job = str(required.get("job", ""))
+    allowed_events = required.get("allowed_events")
+    environment = os.environ
+    workflow_ref = environment.get("GITHUB_WORKFLOW_REF", "")
+    event_name = environment.get("GITHUB_EVENT_NAME", "")
+    failures: list[str] = []
+
+    if environment.get("CI") != "true" or environment.get("GITHUB_ACTIONS") != "true":
+        failures.append("GitHub Actions runner markers are absent")
+    if environment.get("GITHUB_REPOSITORY") != repository:
+        failures.append("GITHUB_REPOSITORY does not match the release contract")
+    if not workflow_ref.startswith(f"{repository}/{workflow_file}@"):
+        failures.append("GITHUB_WORKFLOW_REF is not the production-confidence workflow")
+    if environment.get("GITHUB_JOB") != job:
+        failures.append("GITHUB_JOB is not the hour-scale soak job")
+    if not isinstance(allowed_events, list) or event_name not in allowed_events:
+        failures.append("GITHUB_EVENT_NAME is not an allowed release-evidence event")
+    if environment.get("GITHUB_SHA") != source_revision:
+        failures.append("GITHUB_SHA does not match the current source revision")
+    for name in (
+        "GITHUB_RUN_ID",
+        "GITHUB_RUN_ATTEMPT",
+        "RUNNER_OS",
+        "RUNNER_ARCH",
+    ):
+        if not environment.get(name, "").strip():
+            failures.append(f"{name} is missing")
+
+    if failures:
+        raise SystemExit(
+            "error: hour-scale soak is CI-only and may run only in the "
+            "Production Confidence GitHub Actions workflow: "
+            + "; ".join(failures)
+        )
+
+    return {
+        "kind": "ci",
+        "provider": "github-actions",
+        "repository": repository,
+        "workflow_ref": workflow_ref,
+        "event_name": event_name,
+        "run_id": environment["GITHUB_RUN_ID"],
+        "run_attempt": environment["GITHUB_RUN_ATTEMPT"],
+        "job": job,
+        "runner_os": environment["RUNNER_OS"],
+        "runner_arch": environment["RUNNER_ARCH"],
+        "commit_sha": environment["GITHUB_SHA"],
+    }
+
+
 def run_worker(
     worker: Path,
     repo: Path,
@@ -116,11 +189,19 @@ def main() -> int:
     evidence = args.evidence_path.resolve()
     require(args.minimum_seconds > 0, "minimum seconds must be positive")
     require(args.minimum_iterations > 0, "minimum iterations must be positive")
+    source_revision = compute_source_revision(repo)
+    execution_environment: dict[str, str]
     if args.contract_kind == "hour-scale":
         require(
             args.minimum_seconds >= 3600,
             "hour-scale contract requires at least 3600 seconds",
         )
+        execution_environment = github_actions_provenance(repo, source_revision)
+    else:
+        execution_environment = {
+            "kind": "local-smoke",
+            "provider": "developer-test",
+        }
 
     if work.exists():
         shutil.rmtree(work)
@@ -204,10 +285,11 @@ def main() -> int:
     evidence.write_text(
         json.dumps(
             {
-                "schema": "ahfl.production-confidence-soak.v1",
+                "schema": "ahfl.production-confidence-soak.v2",
                 "status": "passed",
-                "source_revision": compute_source_revision(repo),
+                "source_revision": source_revision,
                 "kind": args.contract_kind,
+                "execution_environment": execution_environment,
                 "process_model": "single-long-lived-worker",
                 "reference_workflow": "examples/execution-demo",
                 "duration_seconds": elapsed,

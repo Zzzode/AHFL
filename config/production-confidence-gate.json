@@ -1,11 +1,22 @@
 {
-  "schema": "ahfl.production-confidence-gate.v1",
+  "schema": "ahfl.production-confidence-gate.v2",
   "evidence": {
     "path": "build/release-evidence/production-confidence/hour-scale-soak.json",
-    "schema": "ahfl.production-confidence-soak.v1"
+    "schema": "ahfl.production-confidence-soak.v2"
   },
   "minimum_duration_seconds": 3600,
   "minimum_iterations": 100,
   "minimum_provider_retries": 1,
-  "maximum_last_quartile_growth_ratio": 0.2
+  "maximum_last_quartile_growth_ratio": 0.2,
+  "required_execution_environment": {
+    "kind": "ci",
+    "provider": "github-actions",
+    "repository": "Zzzode/AHFL",
+    "workflow_file": ".github/workflows/production-confidence.yml",
+    "job": "hour-scale-soak",
+    "allowed_events": [
+      "schedule",
+      "workflow_dispatch"
+    ]
+  }
 }

@@ -76,6 +76,13 @@ add_test(NAME ahfl.product.production_confidence_gate_smoke
             "${PROJECT_SOURCE_DIR}/scripts/check-production-confidence-gate.py"
 )
 
+add_test(NAME ahfl.product.production_confidence_ci_only_smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${PROJECT_SOURCE_DIR}/tests/scripts/production_confidence_ci_only_smoke.py"
+            "${PROJECT_SOURCE_DIR}/tests/scripts/reference_workflow_long_soak.py"
+            "${PROJECT_SOURCE_DIR}"
+)
+
 add_test(NAME ahfl.reference_workflow.long_soak_smoke
     COMMAND ${Python3_EXECUTABLE}
             "${PROJECT_SOURCE_DIR}/tests/scripts/reference_workflow_long_soak.py"

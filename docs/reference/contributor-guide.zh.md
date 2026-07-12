@@ -145,6 +145,13 @@ ctest --preset test-dev --output-on-failure
 且 `provider_request_count` 必须严格等于 workflow iterations 加 canonical retry 数；
 不能通过直接修改 evidence revision 或计数绕过真实重跑。
 
+不要在开发机运行 `--contract-kind hour-scale`。harness 会在创建工作目录或启动
+worker 之前验证 GitHub Actions、仓库、workflow、event、job 和 commit SHA，并立即
+拒绝本地执行。开发机和普通 CI 只运行 `ahfl.reference_workflow.long_soak_smoke`
+（2 秒）；正式 3600 秒任务只能由 `Production Confidence` workflow 的 nightly
+schedule 或 `workflow_dispatch` 启动。`check-production-confidence-gate.py` 可以在
+本地读取已下载 evidence，但只接受带匹配 GitHub Actions provenance 的 v2 evidence。
+
 runtime kernel 变更至少覆盖：
 
 ```bash
