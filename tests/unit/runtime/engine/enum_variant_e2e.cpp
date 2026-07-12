@@ -21,18 +21,21 @@ using namespace ahfl::runtime;
 using namespace ahfl::tests::runtime_e2e;
 
 void assert_ticket_response(const WorkflowResult &result, TestStats &stats) {
-    stats.check(result.status == WorkflowStatus::Completed, "enum_variant.status_completed");
+    stats.check(result.status() == WorkflowStatus::Completed, "enum_variant.status_completed");
     stats.check(!result.has_errors(), "enum_variant.no_errors");
-    stats.check(result.execution_order.size() == 1, "enum_variant.exec_order_size");
-    if (!result.execution_order.empty()) {
-        stats.check(result.execution_order.front() == "inspect", "enum_variant.exec_order_name");
+    stats.check(result.report.execution_order.size() == 1, "enum_variant.exec_order_size");
+    if (!result.report.execution_order.empty()) {
+        const auto *node = result.metadata.node(result.report.execution_order.front());
+        stats.check(node != nullptr && node->display_name == "inspect",
+                    "enum_variant.exec_order_name");
     }
-    stats.check(result.output.has_value(), "enum_variant.has_output");
-    if (!result.output.has_value()) {
+    const auto *output = result.output();
+    stats.check(output != nullptr, "enum_variant.has_output");
+    if (output == nullptr) {
         return;
     }
 
-    const auto *response = std::get_if<StructValue>(&result.output->node);
+    const auto *response = std::get_if<StructValue>(&output->node);
     stats.check(response != nullptr, "enum_variant.output_is_struct");
     if (response == nullptr) {
         return;

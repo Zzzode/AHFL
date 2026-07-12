@@ -25,14 +25,21 @@ namespace {
     return "unknown";
 }
 
-[[nodiscard]] evaluator::EvalResult make_capability_error(std::string message) {
+[[nodiscard]] evaluator::EvalResult make_capability_error(std::string message,
+                                                          std::string diagnostic_code = {}) {
     evaluator::EvalResult result;
     result.value = evaluator::make_none();
-    std::move(result.diagnostics)
-        .error()
-        .message(std::move(message))
-        .code(error_codes::backend::ExecutionError)
-        .emit();
+    if (diagnostic_code.empty()) {
+        result.diagnostics.error()
+            .message(std::move(message))
+            .code(error_codes::backend::ExecutionError)
+            .emit();
+    } else {
+        result.diagnostics.error()
+            .message(std::move(message))
+            .code(std::move(diagnostic_code))
+            .emit();
+    }
     return result;
 }
 
@@ -50,10 +57,19 @@ namespace {
 [[nodiscard]] evaluator::EvalResult
 capability_call_result_to_eval_result(const std::string &callee, CapabilityCallResult call_result) {
     if (call_result.status == CapabilityCallStatus::Success) {
-        return evaluator::EvalResult{
+        evaluator::EvalResult result{
             call_result.value.has_value() ? std::move(*call_result.value) : evaluator::make_none(),
             {},
         };
+        if (call_result.usage.has_value()) {
+            for (const auto &notice : call_result.usage->notices) {
+                result.diagnostics.warning()
+                    .message(notice.message)
+                    .code(notice.diagnostic_code)
+                    .emit();
+            }
+        }
+        return result;
     }
 
     std::string message = "capability '" + callee + "' failed with status " +
@@ -65,7 +81,7 @@ capability_call_result_to_eval_result(const std::string &callee, CapabilityCallR
     if (call_result.attempts > 0) {
         message += " (attempts=" + std::to_string(call_result.attempts) + ")";
     }
-    return make_capability_error(std::move(message));
+    return make_capability_error(std::move(message), std::move(call_result.diagnostic_code));
 }
 
 template <typename InvokeCall>
@@ -105,7 +121,7 @@ template <typename InvokeCall>
             return evaluator::eval_intrinsic_with_args(call.callee, std::move(arg_values),
                                                        current_ctx);
         }
-        return invoke_call(call.callee, arg_values);
+        return invoke_call(call, arg_values);
     };
 
     return evaluator::eval_expr(expr, eval_ctx, call_eval);
@@ -119,17 +135,17 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
     return eval_expr_with_capability_call_handler(
         expr,
         eval_ctx,
-        [registry](const std::string &callee,
+        [registry](const ir::CallExpr &call,
                    const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
             if (registry == nullptr) {
                 return make_unknown_capability_error("capability registry is null when invoking '" +
-                                                     callee + "'");
+                                                     call.callee + "'");
             }
-            if (!registry->has(callee)) {
-                return make_unknown_capability_error("unknown capability '" + callee + "'");
+            if (!registry->has(call.callee)) {
+                return make_unknown_capability_error("unknown capability '" + call.callee + "'");
             }
-            return capability_call_result_to_eval_result(callee,
-                                                         registry->invoke(callee, arg_values));
+            return capability_call_result_to_eval_result(
+                call.callee, registry->invoke(call.callee, arg_values));
         });
 }
 
@@ -139,13 +155,14 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
     return eval_expr_with_capability_call_handler(
         expr,
         eval_ctx,
-        [&invoker](const std::string &callee,
+        [&invoker](const ir::CallExpr &call,
                    const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
             if (!invoker) {
                 return make_unknown_capability_error("capability invoker is empty when invoking '" +
-                                                     callee + "'");
+                                                     call.callee + "'");
             }
-            return capability_call_result_to_eval_result(callee, invoker(callee, arg_values));
+            return capability_call_result_to_eval_result(call.callee,
+                                                         invoker(call.callee, arg_values));
         });
 }
 
@@ -157,14 +174,16 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
         expr,
         eval_ctx,
         [&invoker,
-         &context](const std::string &callee,
+         &context](const ir::CallExpr &call,
                    const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
             if (!invoker) {
                 return make_unknown_capability_error("capability invoker is empty when invoking '" +
-                                                     callee + "'");
+                                                     call.callee + "'");
             }
-            return capability_call_result_to_eval_result(callee,
-                                                         invoker(context, callee, arg_values));
+            auto call_context = context;
+            call_context.source_capability_symbol_id = call.callee_ref.id;
+            return capability_call_result_to_eval_result(
+                call.callee, invoker(call_context, call.callee, arg_values));
         });
 }
 

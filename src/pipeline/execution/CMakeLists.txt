@@ -1,9 +1,6 @@
 add_library(ahfl_pipeline_execution STATIC
     dry_run/mock.cpp
     dry_run/runner.cpp
-    runtime_session/session.cpp
-    execution_journal/journal.cpp
-    replay_view/replay.cpp
 )
 
 target_link_libraries(ahfl_pipeline_execution

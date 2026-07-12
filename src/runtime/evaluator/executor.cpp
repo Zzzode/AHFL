@@ -42,14 +42,20 @@ constexpr const char *kRequiresFailedDefault = "requires violation";
 constexpr const char *kUnwrapNoneDefault = "unwrap failed: value is None";
 constexpr const char *kUnreachableDefault = "unreachable executed";
 
-ExecResult make_continue() {
-    return ExecResult{ExecContinue{}, {}};
+ExecResult make_continue(DiagnosticBag diagnostics = {}) {
+    return ExecResult{ExecContinue{}, std::move(diagnostics)};
 }
 
 ExecResult make_exec_error(std::string message) {
     ExecResult result;
     result.outcome = ExecContinue{};
     std::move(result.diagnostics.error()).message(std::move(message)).emit();
+    return result;
+}
+
+[[nodiscard]] ExecResult prepend_diagnostics(DiagnosticBag diagnostics, ExecResult result) {
+    diagnostics.append(result.diagnostics);
+    result.diagnostics = std::move(diagnostics);
     return result;
 }
 
@@ -128,7 +134,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 ctx.bind_local(node.name, std::move(eval_result.value));
-                return make_continue();
+                return make_continue(std::move(eval_result.diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::AssignStatement>) {
                 // Only allow assignment to ctx.field paths
@@ -149,7 +155,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 ctx.assign_ctx(path.members[0], std::move(eval_result.value));
-                return make_continue();
+                return make_continue(std::move(eval_result.diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::IfStatement>) {
                 // Evaluate the condition expression
@@ -162,20 +168,25 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
                 if (!bv) {
-                    return make_exec_error("if condition must evaluate to Bool");
+                    return prepend_diagnostics(std::move(cond_result.diagnostics),
+                                               make_exec_error(
+                                                   "if condition must evaluate to Bool"));
                 }
+                auto diagnostics = std::move(cond_result.diagnostics);
                 if (bv->value) {
                     // then branch
                     if (node.then_block) {
-                        return exec_block(*node.then_block, ctx);
+                        return prepend_diagnostics(
+                            std::move(diagnostics), exec_block(*node.then_block, ctx));
                     }
-                    return make_continue();
+                    return make_continue(std::move(diagnostics));
                 }
                 // else branch
                 if (node.else_block) {
-                    return exec_block(*node.else_block, ctx);
+                    return prepend_diagnostics(
+                        std::move(diagnostics), exec_block(*node.else_block, ctx));
                 }
-                return make_continue();
+                return make_continue(std::move(diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::IfLetStatement>) {
                 if (!node.scrutinee) {
@@ -185,6 +196,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 if (scrutinee_result.has_errors()) {
                     return wrap_expression_errors(std::move(scrutinee_result));
                 }
+                auto diagnostics = std::move(scrutinee_result.diagnostics);
 
                 PatternBindings bindings;
                 if (match_pattern(node.pattern, scrutinee_result.value, bindings)) {
@@ -205,13 +217,14 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                             ctx.eval_ctx.erase_local(name);
                         }
                     }
-                    return result;
+                    return prepend_diagnostics(std::move(diagnostics), std::move(result));
                 }
 
                 if (node.else_block) {
-                    return exec_block(*node.else_block, ctx);
+                    return prepend_diagnostics(
+                        std::move(diagnostics), exec_block(*node.else_block, ctx));
                 }
-                return make_continue();
+                return make_continue(std::move(diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::GotoStatement>) {
                 return ExecResult{ExecGoto{node.target_state}, {}};
@@ -224,7 +237,10 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 if (eval_result.has_errors()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
-                return ExecResult{ExecReturn{std::move(eval_result.value)}, {}};
+                return ExecResult{
+                    ExecReturn{std::move(eval_result.value)},
+                    std::move(eval_result.diagnostics),
+                };
 
             } else if constexpr (std::is_same_v<T, ir::AssertStatement>) {
                 if (!node.condition) {
@@ -236,16 +252,18 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
                 if (!bv) {
-                    return make_exec_error("assert condition must evaluate to Bool");
+                    return prepend_diagnostics(
+                        std::move(cond_result.diagnostics),
+                        make_exec_error("assert condition must evaluate to Bool"));
                 }
                 if (!bv->value) {
                     return ExecResult{
                         ExecAssertFailed{
                             AssertionKind::ASSERT_CLAUSE,
                             eval_failure_message(ctx, node.message, kAssertFailedDefault)},
-                        {}};
+                        std::move(cond_result.diagnostics)};
                 }
-                return make_continue();
+                return make_continue(std::move(cond_result.diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::UnwrapStatement>) {
                 // P4-01: "assert is Some" — fail if the operand is the None
@@ -260,22 +278,17 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return wrap_expression_errors(std::move(op_result));
                 }
                 const bool is_some = [](const Value &v) {
-                    if (std::holds_alternative<NoneValue>(v.node))
-                        return false;
-                    if (const auto *opt = std::get_if<OptionalValue>(&v.node)) {
-                        return opt->inner != nullptr;
+                    if (is_optional(v)) {
+                        return ahfl::evaluator::is_some(v);
                     }
-                    if (const auto *ev = std::get_if<EnumValue>(&v.node)) {
-                        return ev->variant != "None";
-                    }
-                    // Any non-None, non-empty payload counts as truthy.
                     return true;
                 }(op_result.value);
                 if (!is_some) {
                     return ExecResult{
-                        ExecAssertFailed{AssertionKind::UNWRAP_NONE, kUnwrapNoneDefault}, {}};
+                        ExecAssertFailed{AssertionKind::UNWRAP_NONE, kUnwrapNoneDefault},
+                        std::move(op_result.diagnostics)};
                 }
-                return make_continue();
+                return make_continue(std::move(op_result.diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::RequiresStatement>) {
                 if (!node.condition) {
@@ -287,16 +300,18 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
                 if (!bv) {
-                    return make_exec_error("requires condition must evaluate to Bool");
+                    return prepend_diagnostics(
+                        std::move(cond_result.diagnostics),
+                        make_exec_error("requires condition must evaluate to Bool"));
                 }
                 if (!bv->value) {
                     return ExecResult{
                         ExecAssertFailed{
                             AssertionKind::REQUIRES_VIOLATION,
                             eval_failure_message(ctx, node.message, kRequiresFailedDefault)},
-                        {}};
+                        std::move(cond_result.diagnostics)};
                 }
-                return make_continue();
+                return make_continue(std::move(cond_result.diagnostics));
 
             } else if constexpr (std::is_same_v<T, ir::UnreachableStatement>) {
                 // Unconditional runtime failure.  `unreachable;` is the user
@@ -316,7 +331,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 if (eval_result.has_errors()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
-                return make_continue();
+                return make_continue(std::move(eval_result.diagnostics));
             }
         },
         stmt.node);
@@ -327,16 +342,19 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
 // ============================================================================
 
 ExecResult exec_block(const ir::Block &block, ExecContext &ctx) {
+    DiagnosticBag diagnostics;
     for (const auto &stmt_ptr : block.statements) {
         if (!stmt_ptr)
             continue;
         auto result = exec_statement(*stmt_ptr, ctx);
+        diagnostics.append(result.diagnostics);
         // If there are errors or control flow is non-Continue, return immediately
         if (result.has_errors() || !std::holds_alternative<ExecContinue>(result.outcome)) {
+            result.diagnostics = std::move(diagnostics);
             return result;
         }
     }
-    return make_continue();
+    return make_continue(std::move(diagnostics));
 }
 
 } // namespace ahfl::evaluator

@@ -27,6 +27,29 @@ namespace ahfl::evaluator {
 namespace {
 
 void write_json_impl(const Value &v, std::ostream &out) {
+    if (const auto *items = list_items(v)) {
+        out << '[';
+        for (std::size_t i = 0; i < items->size(); ++i) {
+            if (i > 0)
+                out << ',';
+            if ((*items)[i]) {
+                write_json_impl(*(*items)[i], out);
+            } else {
+                out << "null";
+            }
+        }
+        out << ']';
+        return;
+    }
+    if (is_optional(v)) {
+        if (const auto *inner = optional_inner(v)) {
+            write_json_impl(*inner, out);
+        } else {
+            out << "null";
+        }
+        return;
+    }
+
     std::visit(
         [&out](const auto &inner) {
             using T = std::decay_t<decltype(inner)>;
@@ -190,34 +213,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
             }
         },
         v.node);
-
-    // Emit list / optional via nominal accessors so the serialization never
-    // spells the variant tag names directly. The canonical JSON shape is:
-    // lists serialize as JSON arrays, optional values as the inner value
-    // (or null when empty). Deserialization mirrors this one shape; the
-    // deprecated explicit wrapper keys ("list"/"some"/"none"/"optional"
-    // and their "_"-prefixed aliases) are no longer accepted on input.
-    if (const auto *items = list_items(v)) {
-        out << '[';
-        for (std::size_t i = 0; i < items->size(); ++i) {
-            if (i > 0)
-                out << ',';
-            if ((*items)[i]) {
-                write_json_impl(*(*items)[i], out);
-            } else {
-                out << "null";
-            }
-        }
-        out << ']';
-        return;
-    }
-    if (is_optional(v)) {
-        if (const auto *inner = optional_inner(v)) {
-            write_json_impl(*inner, out);
-        } else {
-            out << "null";
-        }
-    }
 }
 
 } // namespace

@@ -246,13 +246,6 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                     }
                 }
                 return true;
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                const auto *r = std::get_if<OptionalValue>(&rhs.node);
-                if (!inner.inner && !r->inner)
-                    return true;
-                if (!inner.inner || !r->inner)
-                    return false;
-                return structurally_equal(*inner.inner, *r->inner);
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 const auto *r = std::get_if<CallableValue>(&rhs.node);
                 return inner.body == r->body &&
@@ -321,8 +314,6 @@ ValueKind value_kind(const Value &v) {
                     return ValueKind::Optional;
                 }
                 return ValueKind::Enum;
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                return ValueKind::Optional;
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 return ValueKind::Callable;
             } else if constexpr (std::is_same_v<T, SetValue>) {
@@ -397,9 +388,10 @@ void print_value(const Value &v, std::ostream &out) {
                 out << "]";
             } else if constexpr (std::is_same_v<T, EnumValue>) {
                 if (inner.enum_name == "std::option::Option") {
-                    if (inner.variant == "Some" && inner.associated) {
+                    if (inner.variant == "Some" && inner.payload.size() == 1 &&
+                        inner.payload.front()) {
                         out << "some(";
-                        print_value(*inner.associated, out);
+                        print_value(*inner.payload.front(), out);
                         out << ")";
                     } else {
                         out << "none";
@@ -417,10 +409,6 @@ void print_value(const Value &v, std::ostream &out) {
                                 out << "<null>";
                             }
                         }
-                        out << ")";
-                    } else if (inner.associated) {
-                        out << "(";
-                        print_value(*inner.associated, out);
                         out << ")";
                     } else if (!inner.named_payload.empty()) {
                         out << " { ";
@@ -445,14 +433,6 @@ void print_value(const Value &v, std::ostream &out) {
                         }
                         out << " }";
                     }
-                }
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                if (inner.inner) {
-                    out << "some(";
-                    print_value(*inner.inner, out);
-                    out << ")";
-                } else {
-                    out << "none";
                 }
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 out << "<lambda/" << inner.params.size() << ">";
@@ -498,14 +478,6 @@ void print_value(const Value &v, std::ostream &out) {
 // ============================================================================
 // Convenience constructor implementations
 // ============================================================================
-
-Value make_optional_some(Value inner) {
-    return Value{OptionalValue{std::make_unique<Value>(std::move(inner))}};
-}
-
-Value make_optional_none() {
-    return Value{OptionalValue{nullptr}};
-}
 
 Value make_callable(std::vector<std::string> params,
                     const ir::Expr *body,
@@ -701,15 +673,7 @@ Value clone_value(const Value &v) {
                         ev.named_payload.emplace(name, nullptr);
                     }
                 }
-                if (inner.associated) {
-                    ev.associated = std::make_unique<Value>(clone_value(*inner.associated));
-                }
                 return Value{std::move(ev)};
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                if (inner.inner) {
-                    return make_optional_some(clone_value(*inner.inner));
-                }
-                return make_optional_none();
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 return make_callable(inner.params, inner.body, inner.captured_context);
             } else if constexpr (std::is_same_v<T, SetValue>) {

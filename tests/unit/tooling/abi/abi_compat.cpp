@@ -18,28 +18,23 @@ int main() {
 
     // Test 1: current_version returns valid version for each domain
     {
-        auto v1 = ahfl::abi::current_version(ahfl::abi::AbiDomain::DurableStore);
-        auto v2 = ahfl::abi::current_version(ahfl::abi::AbiDomain::Executor);
-        auto v3 = ahfl::abi::current_version(ahfl::abi::AbiDomain::Persistence);
-        auto v4 = ahfl::abi::current_version(ahfl::abi::AbiDomain::IR);
-        auto v5 = ahfl::abi::current_version(ahfl::abi::AbiDomain::Package);
-        auto v6 = ahfl::abi::current_version(ahfl::abi::AbiDomain::RuntimeSession);
+        auto executor = ahfl::abi::current_version(ahfl::abi::AbiDomain::Executor);
+        auto ir = ahfl::abi::current_version(ahfl::abi::AbiDomain::IR);
+        auto package = ahfl::abi::current_version(ahfl::abi::AbiDomain::Package);
 
-        bool all_valid = (v1.major > 0) && (v2.major > 0) && (v3.major > 0) &&
-                         (v4.major > 0) && (v5.major > 0) && (v6.major > 0) &&
-                         (!v1.schema_hash.empty()) && (!v2.schema_hash.empty()) &&
-                         (!v3.schema_hash.empty()) && (!v4.schema_hash.empty()) &&
-                         (!v5.schema_hash.empty()) && (!v6.schema_hash.empty()) &&
-                         (ahfl::abi::domain_name(ahfl::abi::AbiDomain::DurableStore) == "DurableStore") &&
-                         (ahfl::abi::format_version(v1) == "1.0.0");
+        bool all_valid = (executor.major > 0) && (ir.major > 0) && (package.major > 0) &&
+                         (!executor.schema_hash.empty()) && (!ir.schema_hash.empty()) &&
+                         (!package.schema_hash.empty()) &&
+                         (ahfl::abi::domain_name(ahfl::abi::AbiDomain::Executor) == "Executor") &&
+                         (ahfl::abi::format_version(executor) == "1.1.0");
         check(all_valid, "current_version returns valid version for each domain");
     }
 
     // Test 2: check_compatibility: same version -> FullyCompatible
     {
-        auto v = ahfl::abi::current_version(ahfl::abi::AbiDomain::DurableStore);
+        auto v = ahfl::abi::current_version(ahfl::abi::AbiDomain::Executor);
         auto result = ahfl::abi::check_compatibility(
-            ahfl::abi::AbiDomain::DurableStore, v, v);
+            ahfl::abi::AbiDomain::Executor, v, v);
         check(result.level == ahfl::abi::CompatibilityLevel::FullyCompatible,
               "check_compatibility: same version is FullyCompatible");
     }

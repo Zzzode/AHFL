@@ -1025,6 +1025,17 @@ class DiagnosticBag {
         return diagnostics_;
     }
 
+    void apply_default_range(std::optional<SourceRange> range) {
+        if (!range.has_value()) {
+            return;
+        }
+        for (auto &diagnostic : diagnostics_) {
+            if (!diagnostic.range.has_value()) {
+                diagnostic.range = range;
+            }
+        }
+    }
+
     void append(const DiagnosticBag &other) {
         error_count_ += other.error_count_;
         warning_count_ += other.warning_count_;

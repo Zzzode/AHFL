@@ -12,6 +12,7 @@ src/compiler/syntax/parser/generated/*.tokens
 log/
 .codex
 llm_config.json
+examples/execution-demo/llm_config.glm.json
 tools/vscode/node_modules/
 tools/vscode/.vscode-test/
 tools/vscode/out/

@@ -55,6 +55,7 @@ class CliDriver final {
     [[nodiscard]] std::optional<ExitCode> validate_options();
 
     [[nodiscard]] std::optional<ExitCode> load_package_and_mocks();
+    [[nodiscard]] std::optional<ExitCode> apply_run_manifest_options();
 
     [[nodiscard]] ExitCode run_observed();
 
@@ -83,6 +84,11 @@ class CliDriver final {
 
     CommandLineOptions options_;
     std::string default_manifest_path_;
+    std::string manifest_run_input_;
+    std::string manifest_run_llm_config_;
+    std::string manifest_run_target_;
+    std::string manifest_run_output_format_;
+    std::string manifest_run_verbosity_;
     std::optional<CommandKind> effective_command_;
     ahfl::Frontend frontend_;
     std::optional<ahfl::handoff::PackageMetadata> package_metadata_;

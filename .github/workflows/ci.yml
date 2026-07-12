@@ -30,6 +30,21 @@ jobs:
       - name: Check RFC registry
         run: python3 scripts/check-rfc.py
 
+      - name: Enforce beta product scope freeze
+        run: python3 scripts/check-product-scope-freeze.py
+
+      - name: Validate beta gate contract
+        run: python3 scripts/check-beta-gate.py
+
+      - name: Validate controlled-pilot gate contract
+        run: python3 scripts/check-controlled-pilot-gate.py
+
+      - name: Validate production-confidence gate contract
+        run: python3 scripts/check-production-confidence-gate.py
+
+      - name: Validate execution demo secret contract
+        run: python3 scripts/check-execution-demo-secret.py
+
       - name: Check native gRPC decision gate
         run: python3 scripts/check-native-grpc-gate.py
 
@@ -57,15 +72,10 @@ jobs:
       - name: Check formatting
         run: cmake --build --preset build-format-check
 
-      # .ahfl formatter gate (M3-2). Runs ahflc fmt --check over the formatter
-      # golden fixtures. Currently continue-on-error because the formatter is
-      # non-idempotent / destructive on generics (corelib-support-workplan §3.5
-      # #8) — it reports drift without blocking CI. Drop continue-on-error and
-      # widen GATE_DIRS to std/ once the formatter is realigned to the grammar.
+      # Blocking lossless/idempotence gate over std/ and formatter fixtures.
       - name: Build ahflc (for fmt --check)
         run: cmake --build --preset build-dev --target ahflc
       - name: Check .ahfl formatting
-        continue-on-error: true
         run: AHFLC=build/dev/src/tooling/cli/ahflc scripts/ci-format-check.sh
 
   build-and-test:
@@ -104,8 +114,25 @@ jobs:
       - name: Build
         run: cmake --build --preset build-dev
 
-      - name: Run test suite
-        run: ctest --preset test-dev --output-on-failure --no-label-summary
+      - name: Run controlled-pilot gate
+        run: >-
+          ctest --preset test-dev --output-on-failure --no-label-summary
+          -L '^ahfl-controlled-pilot$'
+
+      - name: Regenerate and require beta evidence
+        run: >-
+          ctest --preset test-dev --output-on-failure --no-label-summary
+          -L '^ahfl-beta-gate$'
+
+      - name: Validate production-confidence harness
+        run: >-
+          ctest --preset test-dev --output-on-failure --no-label-summary
+          -L '^ahfl-production-confidence-contract$'
+
+      - name: Run remaining test suite
+        run: >-
+          ctest --preset test-dev --output-on-failure --no-label-summary
+          -LE '^(ahfl-controlled-pilot|ahfl-beta-gate|ahfl-production-confidence-contract)$'
 
   asan-linux:
     name: ASan UBSan (Linux)

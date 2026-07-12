@@ -9,6 +9,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "ahfl/runtime/execution_renderer.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
@@ -171,87 +172,20 @@ CapabilityRegistry create_mock_registry() {
 // ============================================================================
 
 void print_execution_trace(const WorkflowResult &result) {
-    std::cout << "\n=== Workflow Execution Trace ===\n";
-
-    // Status
-    std::cout << "Status: ";
-    switch (result.status) {
-    case WorkflowStatus::Completed:
-        std::cout << "Completed\n";
-        break;
-    case WorkflowStatus::NodeFailed:
-        std::cout << "NodeFailed\n";
-        break;
-    case WorkflowStatus::DependencyFailed:
-        std::cout << "DependencyFailed\n";
-        break;
-    case WorkflowStatus::EvalError:
-        std::cout << "EvalError\n";
-        break;
+    const auto rendered = render_execution_result(
+        result, ExecutionOutputOptions{.format = ExecutionOutputFormat::Human}, std::cout);
+    if (!rendered.has_value()) {
+        std::cout << "render error: " << rendered.error() << '\n';
     }
-    std::cout << "\n";
+}
 
-    // Execution order
-    std::cout << "Execution Order: [";
-    for (std::size_t i = 0; i < result.execution_order.size(); ++i) {
-        if (i > 0)
-            std::cout << ", ";
-        std::cout << result.execution_order[i];
+[[nodiscard]] std::string_view
+execution_node_name(const WorkflowResult &result, std::size_t execution_index) {
+    if (execution_index >= result.report.execution_order.size()) {
+        return {};
     }
-    std::cout << "]\n\n";
-
-    // Node results
-    std::cout << "Node Results:\n";
-    for (const auto &nr : result.node_results) {
-        std::cout << "  [" << nr.execution_index << "] " << nr.node_name << " -> " << nr.target;
-        std::cout << " (status: ";
-        switch (nr.status) {
-        case AgentStatus::Completed:
-            std::cout << "Completed";
-            break;
-        case AgentStatus::Failed:
-            std::cout << "Failed";
-            break;
-        case AgentStatus::Running:
-            std::cout << "Running";
-            break;
-        case AgentStatus::QuotaExceeded:
-            std::cout << "QuotaExceeded";
-            break;
-        case AgentStatus::InvalidTransition:
-            std::cout << "InvalidTransition";
-            break;
-        case AgentStatus::InfiniteLoop:
-            std::cout << "InfiniteLoop";
-            break;
-        }
-        std::cout << ")\n";
-
-        // Print the output value
-        if (nr.output.has_value()) {
-            std::cout << "      Output: ";
-            print_value(*nr.output, std::cout);
-            std::cout << "\n";
-        }
-    }
-    std::cout << "\n";
-
-    // Final output
-    std::cout << "Final Output: ";
-    if (result.output.has_value()) {
-        print_value(*result.output, std::cout);
-    } else {
-        std::cout << "(none)";
-    }
-    std::cout << "\n";
-
-    // Error messages
-    if (result.has_errors()) {
-        std::cout << "\nErrors:\n";
-        result.diagnostics.render(std::cout);
-    }
-
-    std::cout << "=== End of Trace ===\n\n";
+    const auto *node = result.metadata.node(result.report.execution_order[execution_index]);
+    return node != nullptr ? std::string_view{node->display_name} : std::string_view{};
 }
 
 // ============================================================================
@@ -269,7 +203,7 @@ int test_priority_low_handling_path(const ir::Program &program) {
     config.capability_invoker = registry.as_invoker();
 
     // Create runtime
-    WorkflowRuntime runtime(program, config);
+    WorkflowRuntime runtime(program, std::move(config));
 
     // Prepare input: SupportRequest { user_id, message, priority }
     Value input = make_struct("SupportRequest",
@@ -288,21 +222,22 @@ int test_priority_low_handling_path(const ir::Program &program) {
     print_execution_trace(result);
 
     // Verify results
-    check(result.status == WorkflowStatus::Completed, "low.status_completed");
+    check(result.status() == WorkflowStatus::Completed, "low.status_completed");
     check(!result.has_errors(), "low.no_errors");
 
     // Execution order: [classify, support, summary]
-    check(result.execution_order.size() == 3, "low.exec_order_size_3");
-    if (result.execution_order.size() >= 3) {
-        check(result.execution_order[0] == "classify", "low.order_0_classify");
-        check(result.execution_order[1] == "support", "low.order_1_support");
-        check(result.execution_order[2] == "summary", "low.order_2_summary");
+    check(result.report.execution_order.size() == 3, "low.exec_order_size_3");
+    if (result.report.execution_order.size() >= 3) {
+        check(execution_node_name(result, 0) == "classify", "low.order_0_classify");
+        check(execution_node_name(result, 1) == "support", "low.order_1_support");
+        check(execution_node_name(result, 2) == "summary", "low.order_2_summary");
     }
 
     // Verify the final output
-    check(result.output.has_value(), "low.has_output");
-    if (result.output.has_value()) {
-        auto *sv = std::get_if<StructValue>(&result.output->node);
+    const auto *output = result.output();
+    check(output != nullptr, "low.has_output");
+    if (output != nullptr) {
+        const auto *sv = std::get_if<StructValue>(&output->node);
         check(sv != nullptr, "low.output_is_struct");
         if (sv) {
             // Verify category = Technical
@@ -325,8 +260,11 @@ int test_priority_low_handling_path(const ir::Program &program) {
     }
 
     // Verify all nodes completed
-    for (const auto &nr : result.node_results) {
-        check(nr.status == AgentStatus::Completed, "low.node_completed_" + nr.node_name);
+    for (const auto &node : result.report.nodes) {
+        const auto *metadata = result.metadata.node(node.node);
+        check(node.status == NodeReportStatus::Completed,
+              "low.node_completed_" +
+                  (metadata != nullptr ? metadata->display_name : std::string{"unknown"}));
     }
 
     return (pass_count == test_count) ? 0 : 1;
@@ -347,7 +285,7 @@ int test_priority_high_escalated_path(const ir::Program &program) {
     config.capability_invoker = registry.as_invoker();
 
     // Create runtime
-    WorkflowRuntime runtime(program, config);
+    WorkflowRuntime runtime(program, std::move(config));
 
     // Prepare input: SupportRequest { priority: High }
     Value input =
@@ -367,16 +305,17 @@ int test_priority_high_escalated_path(const ir::Program &program) {
     print_execution_trace(result);
 
     // Verify results
-    check(result.status == WorkflowStatus::Completed, "high.status_completed");
+    check(result.status() == WorkflowStatus::Completed, "high.status_completed");
     check(!result.has_errors(), "high.no_errors");
 
     // Execution order: [classify, support, summary]
-    check(result.execution_order.size() == 3, "high.exec_order_size_3");
+    check(result.report.execution_order.size() == 3, "high.exec_order_size_3");
 
     // Verify the final output
-    check(result.output.has_value(), "high.has_output");
-    if (result.output.has_value()) {
-        auto *sv = std::get_if<StructValue>(&result.output->node);
+    const auto *output = result.output();
+    check(output != nullptr, "high.has_output");
+    if (output != nullptr) {
+        const auto *sv = std::get_if<StructValue>(&output->node);
         check(sv != nullptr, "high.output_is_struct");
         if (sv) {
             // Verify category = Technical (from classify)
@@ -398,12 +337,15 @@ int test_priority_high_escalated_path(const ir::Program &program) {
     // Verify that the support node's output contains the Escalated-path response
     // (HandleTechnical is called instead of HandleGeneral)
     bool found_support_node = false;
-    for (const auto &nr : result.node_results) {
-        if (nr.node_name == "support") {
+    for (const auto &node : result.report.nodes) {
+        const auto *metadata = result.metadata.node(node.node);
+        if (metadata != nullptr && metadata->display_name == "support") {
             found_support_node = true;
-            check(nr.status == AgentStatus::Completed, "high.support_completed");
-            if (nr.output.has_value()) {
-                auto *sv = std::get_if<StructValue>(&nr.output->node);
+            check(node.status == NodeReportStatus::Completed, "high.support_completed");
+            const auto *node_value =
+                node.output.has_value() ? result.value(*node.output) : nullptr;
+            if (node_value != nullptr) {
+                const auto *sv = std::get_if<StructValue>(&node_value->node);
                 if (sv) {
                     auto resp_it = sv->fields.find("response");
                     if (resp_it != sv->fields.end()) {

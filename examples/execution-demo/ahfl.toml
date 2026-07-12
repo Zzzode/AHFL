@@ -23,5 +23,15 @@ exports = [
   { kind = "agent", name = "execution_demo::response::ResponderAgent" },
 ]
 
+[run]
+target = "workflow"
+input = "inputs/high-severity.json"
+llm_config = "llm_config.example.json"
+output_format = "human"
+verbosity = "normal"
+
+[run.profiles.low-risk]
+input = "inputs/low-risk.json"
+
 [dependencies]
 std = { source = "sysroot" }

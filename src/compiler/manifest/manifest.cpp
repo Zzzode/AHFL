@@ -147,6 +147,29 @@ read_required_string(const Value &table,
     return static_cast<int>(entry->value->integer_value);
 }
 
+[[nodiscard]] std::optional<std::string>
+read_optional_string(const Value &table,
+                     std::string_view key,
+                     std::string_view display,
+                     std::vector<ManifestDiagnostic> &diagnostics) {
+    const auto *entry = find_entry(table, key);
+    if (entry == nullptr) {
+        return std::nullopt;
+    }
+    if (entry->value->kind != ValueKind::String) {
+        add_diag(diagnostics,
+                 kType,
+                 "manifest field '" + std::string(display) + "' must be a string",
+                 entry->value_range);
+        return std::nullopt;
+    }
+    if (entry->value->string_value.empty()) {
+        reject_empty_string(display, entry->value_range, diagnostics);
+        return std::nullopt;
+    }
+    return entry->value->string_value;
+}
+
 [[nodiscard]] std::vector<std::string>
 read_string_array(const Value &table,
                   std::string_view key,
@@ -773,6 +796,180 @@ read_targets(const Value &root, std::vector<ManifestDiagnostic> &diagnostics) {
     return targets;
 }
 
+void validate_run_profile_name(std::string_view value,
+                               SourceRange range,
+                               std::vector<ManifestDiagnostic> &diagnostics) {
+    const bool is_kebab = matches_regex(value, "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$");
+    const bool is_snake = matches_regex(value, "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$");
+    if (!is_kebab && !is_snake) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 "run profile name must be kebab-case or snake_case",
+                 range);
+    }
+}
+
+void validate_run_path(std::string_view value,
+                       std::string_view display,
+                       SourceRange range,
+                       std::vector<ManifestDiagnostic> &diagnostics) {
+    const std::filesystem::path path{std::string{value}};
+    const auto normalized = path.lexically_normal();
+    const bool escapes_root =
+        normalized == ".." || std::any_of(normalized.begin(),
+                                          normalized.end(),
+                                          [](const auto &part) { return part == ".."; });
+    if (value.empty() || path.is_absolute() || escapes_root) {
+        add_diag(diagnostics,
+                 kPathEscape,
+                 std::string(display) + " must be a relative path inside the package",
+                 range);
+    }
+}
+
+void validate_run_output_format(std::string_view value,
+                                std::string_view display,
+                                SourceRange range,
+                                std::vector<ManifestDiagnostic> &diagnostics) {
+    if (!contains({"human", "json", "jsonl", "quiet"}, value)) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 std::string(display) + " must be human, json, jsonl, or quiet",
+                 range);
+    }
+}
+
+void validate_run_verbosity(std::string_view value,
+                            std::string_view display,
+                            SourceRange range,
+                            std::vector<ManifestDiagnostic> &diagnostics) {
+    if (!contains({"normal", "verbose", "trace"}, value)) {
+        add_diag(diagnostics,
+                 kInvalidValue,
+                 std::string(display) + " must be normal, verbose, or trace",
+                 range);
+    }
+}
+
+[[nodiscard]] std::optional<RunManifest>
+read_run(const Value &root,
+         const std::vector<TargetManifest> &targets,
+         std::vector<ManifestDiagnostic> &diagnostics) {
+    const auto *run = find_value(root, "run");
+    if (run == nullptr) {
+        return std::nullopt;
+    }
+    if (run->kind != ValueKind::Table) {
+        add_diag(diagnostics, kType, "manifest field 'run' must be a table", run->range);
+        return std::nullopt;
+    }
+    reject_unknown_fields(*run,
+                          {"target", "input", "llm_config", "output_format", "verbosity", "profiles"},
+                          "run.",
+                          diagnostics);
+
+    RunManifest result;
+    result.range = run->range;
+    result.target = read_optional_string(*run, "target", "run.target", diagnostics).value_or("");
+    result.input = read_optional_string(*run, "input", "run.input", diagnostics).value_or("");
+    result.llm_config =
+        read_optional_string(*run, "llm_config", "run.llm_config", diagnostics).value_or("");
+    result.output_format =
+        read_optional_string(*run, "output_format", "run.output_format", diagnostics)
+            .value_or("human");
+    result.verbosity =
+        read_optional_string(*run, "verbosity", "run.verbosity", diagnostics).value_or("normal");
+
+    if (!result.target.empty()) {
+        const auto found = std::find_if(targets.begin(), targets.end(), [&](const auto &target) {
+            return target.name == result.target && target.kind == "handoff";
+        });
+        if (found == targets.end()) {
+            add_diag(diagnostics,
+                     kInvalidValue,
+                     "run.target references unknown target '" + result.target + "'",
+                     run->range);
+        }
+    }
+    if (!result.input.empty()) {
+        validate_run_path(result.input, "run.input", run->range, diagnostics);
+    }
+    if (!result.llm_config.empty()) {
+        validate_run_path(result.llm_config, "run.llm_config", run->range, diagnostics);
+    }
+    validate_run_output_format(result.output_format, "run.output_format", run->range, diagnostics);
+    validate_run_verbosity(result.verbosity, "run.verbosity", run->range, diagnostics);
+
+    if (const auto *profiles = find_value(*run, "profiles"); profiles != nullptr) {
+        if (profiles->kind != ValueKind::Table) {
+            add_diag(
+                diagnostics, kType, "manifest field 'run.profiles' must be a table", profiles->range);
+        } else {
+            for (const auto &entry : profiles->table_fields) {
+                if (entry.value->kind != ValueKind::Table) {
+                    add_diag(diagnostics,
+                             kType,
+                             "run profile must be a table",
+                             entry.value_range);
+                    continue;
+                }
+                validate_run_profile_name(entry.key, entry.key_range, diagnostics);
+                reject_unknown_fields(*entry.value,
+                                      {"target", "input", "llm_config", "output_format", "verbosity"},
+                                      "run.profiles." + entry.key + ".",
+                                      diagnostics);
+                RunProfileManifest profile;
+                profile.name = entry.key;
+                profile.range = entry.value_range;
+                profile.target = read_optional_string(
+                    *entry.value, "target", "run profile target", diagnostics);
+                profile.input =
+                    read_optional_string(*entry.value, "input", "run profile input", diagnostics);
+                profile.llm_config = read_optional_string(
+                    *entry.value, "llm_config", "run profile llm_config", diagnostics);
+                profile.output_format = read_optional_string(
+                    *entry.value, "output_format", "run profile output_format", diagnostics);
+                profile.verbosity = read_optional_string(
+                    *entry.value, "verbosity", "run profile verbosity", diagnostics);
+                if (profile.target.has_value()) {
+                    const auto found =
+                        std::find_if(targets.begin(), targets.end(), [&](const auto &target) {
+                            return target.name == *profile.target && target.kind == "handoff";
+                        });
+                    if (found == targets.end()) {
+                        add_diag(diagnostics,
+                                 kInvalidValue,
+                                 "run profile target references unknown target '" +
+                                     *profile.target + "'",
+                                 profile.range);
+                    }
+                }
+                if (profile.input.has_value()) {
+                    validate_run_path(*profile.input, "run profile input", profile.range, diagnostics);
+                }
+                if (profile.llm_config.has_value()) {
+                    validate_run_path(*profile.llm_config,
+                                      "run profile llm_config",
+                                      profile.range,
+                                      diagnostics);
+                }
+                if (profile.output_format.has_value()) {
+                    validate_run_output_format(*profile.output_format,
+                                               "run profile output_format",
+                                               profile.range,
+                                               diagnostics);
+                }
+                if (profile.verbosity.has_value()) {
+                    validate_run_verbosity(
+                        *profile.verbosity, "run profile verbosity", profile.range, diagnostics);
+                }
+                result.profiles.push_back(std::move(profile));
+            }
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
@@ -790,6 +987,7 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
                            "module",
                            "exports",
                            "targets",
+                           "run",
                            "dependencies",
                            "prelude",
                            "compiler_intrinsics"},
@@ -960,6 +1158,7 @@ ManifestResult<PackageManifest> parse_package_manifest(std::string_view input) {
                  "non standard-library package must declare at least one target",
                  root.range);
     }
+    manifest.run = read_run(root, manifest.targets, result.diagnostics);
     manifest.dependencies = read_dependencies(root, manifest.manifest_version, result.diagnostics);
 
     if (!result.has_errors()) {

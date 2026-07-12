@@ -1,7 +1,6 @@
 #pragma once
 
 #include "ahfl/compiler/backends/driver.hpp"
-#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <optional>
 #include <ostream>
@@ -31,32 +30,6 @@ enum class CommandKind {
     EmitOptIrJson,
     EmitNativeJson,
     EmitExecutionPlan,
-    EmitExecutionJournal,
-    EmitReplayView,
-    EmitAuditReport,
-    EmitSchedulerSnapshot,
-    EmitCheckpointRecord,
-    EmitCheckpointReview,
-    EmitPersistenceDescriptor,
-    EmitPersistenceReview,
-    EmitExportManifest,
-    EmitExportReview,
-    EmitStoreImportDescriptor,
-    EmitStoreImportReview,
-    EmitDurableStoreImportRequest,
-    EmitDurableStoreImportReview,
-    EmitDurableStoreImportDecision,
-    EmitDurableStoreImportReceipt,
-    EmitDurableStoreImportReceiptPersistenceRequest,
-    EmitDurableStoreImportDecisionReview,
-    EmitDurableStoreImportReceiptReview,
-    EmitDurableStoreImportReceiptPersistenceReview,
-    EmitDurableStoreImportReceiptPersistenceResponse,
-    EmitDurableStoreImportReceiptPersistenceResponseReview,
-    EmitDurableStoreImportAdapterExecution,
-    EmitDurableStoreImportRecoveryPreview,
-    EmitSchedulerReview,
-    EmitRuntimeSession,
     EmitDryRunTrace,
     EmitPackageReview,
     EmitPublicApi,
@@ -76,7 +49,6 @@ enum class CommandKind {
 
 struct CommandLineOptions {
     std::optional<CommandKind> selected_command;
-    std::optional<ProviderArtifactKind> selected_provider_artifact;
     bool dump_ast_requested{false};
     bool dump_types_requested{false};
     std::optional<std::string_view> package_name;
@@ -89,8 +61,11 @@ struct CommandLineOptions {
     std::optional<std::string_view> target_name;
     std::optional<std::string_view> workflow_name;
     std::optional<std::string_view> runtime_input_json;
+    std::optional<std::string_view> runtime_input_file;
     std::optional<std::string_view> llm_config_descriptor;
-    std::optional<std::string_view> llm_observability_path;
+    std::optional<std::string_view> run_profile;
+    std::optional<std::string_view> execution_output_format;
+    std::optional<std::string_view> execution_verbosity;
     std::optional<std::string_view> input_fixture;
     std::optional<std::string_view> run_id;
     std::optional<std::string_view> formal_backend;
@@ -113,7 +88,6 @@ struct CommandLineOptions {
     std::optional<std::string_view> public_api_from_version;
     std::optional<std::string_view> public_api_to_version;
     std::optional<std::string_view> package_yank_reason;
-    bool show_internal_artifacts{false};
     bool format_check_requested{false};
     bool public_api_semver_gate_requested{false};
     bool package_publish_dry_run_requested{false};
@@ -122,7 +96,6 @@ struct CommandLineOptions {
 
 struct SelectedAction {
     std::optional<CommandKind> command;
-    std::optional<ProviderArtifactKind> provider_artifact;
 };
 
 enum class CommandListKind {
@@ -178,7 +151,6 @@ core_backend_for_command(std::optional<CommandKind> command);
 [[nodiscard]] bool is_core_backend_command(CommandKind command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
-void set_provider_artifact_option(CommandLineOptions &options, ProviderArtifactKind artifact);
-void print_usage(std::ostream &out, bool show_internal = false);
+void print_usage(std::ostream &out);
 
 } // namespace ahfl::cli

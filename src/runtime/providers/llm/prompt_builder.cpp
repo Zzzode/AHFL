@@ -88,17 +88,25 @@ std::string PromptBuilder::value_to_string(const evaluator::Value &val) const {
             } else if constexpr (std::is_same_v<T, evaluator::StringValue>) {
                 oss << "\"" << v.value << "\"";
             } else if constexpr (std::is_same_v<T, evaluator::EnumValue>) {
-                // P5.11a transition: render nominal Option as some(x) / none
                 if (v.enum_name == "std::option::Option") {
-                    if (v.variant == "Some" && v.associated) {
-                        oss << "some(" << value_to_string(*v.associated) << ")";
+                    if (v.variant == "Some" && v.payload.size() == 1 && v.payload.front()) {
+                        oss << "some(" << value_to_string(*v.payload.front()) << ")";
                     } else {
                         oss << "none";
                     }
                 } else {
                     oss << v.enum_name << "." << v.variant;
-                    if (v.associated) {
-                        oss << "(" << value_to_string(*v.associated) << ")";
+                    if (!v.payload.empty()) {
+                        oss << "(";
+                        for (std::size_t index = 0; index < v.payload.size(); ++index) {
+                            if (index != 0) {
+                                oss << ", ";
+                            }
+                            if (v.payload[index]) {
+                                oss << value_to_string(*v.payload[index]);
+                            }
+                        }
+                        oss << ")";
                     }
                 }
             } else if constexpr (std::is_same_v<T, evaluator::StructValue>) {

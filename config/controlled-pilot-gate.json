@@ -1,0 +1,25 @@
+{
+  "schema": "ahfl.controlled-pilot-gate.v1",
+  "reference_workflow": "examples/execution-demo",
+  "evidence": {
+    "path": "build/release-evidence/pilot/reference-workflow-production-matrix.json",
+    "schema": "ahfl.controlled-pilot-evidence.v1"
+  },
+  "minimums": {
+    "soak_kind": "bounded-ci-soak",
+    "iterations": 12,
+    "duration_seconds": 30
+  },
+  "required_faults": [
+    "disconnect",
+    "rate_limit",
+    "timeout",
+    "partial_response"
+  ],
+  "required_tests": {
+    "process_crash": "ahfl.reference_workflow.recovery_smoke",
+    "recovery_schema": "ahfl.runtime.workflow_recovery_all",
+    "otel_adapter": "ahfl.runtime.execution_otel_all",
+    "provider_budget": "ahflc.run.llm_provider_runtime.smoke"
+  }
+}

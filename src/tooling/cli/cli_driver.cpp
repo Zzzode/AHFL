@@ -24,7 +24,6 @@
 #include "tooling/cli/cli_analysis_helpers.hpp"
 #include "tooling/cli/option_table.hpp"
 #include "tooling/cli/pipeline_runner.hpp"
-#include "tooling/cli/provider/pipeline_durable_store_import_provider.hpp"
 #include "tooling/cli/workflow_run.hpp"
 #include "tooling/formatter/format_config.hpp"
 #include "tooling/formatter/formatter.hpp"
@@ -216,15 +215,15 @@ detached_source_unit_diagnostics(const ahfl::ast::Program &program,
         .emit();
 
     for (const auto &declaration : program.declarations) {
-        if (!declaration || declaration->kind != ahfl::ast::NodeKind::ImportDecl) {
+        const auto *import_decl = std::get_if<ahfl::ast::ImportDecl>(&declaration);
+        if (import_decl == nullptr) {
             continue;
         }
-        const auto &import_decl = static_cast<const ahfl::ast::ImportDecl &>(*declaration);
-        diagnostics.error(import_decl.range)
+        diagnostics.error(import_decl->range)
             .code("E::detached_import")
             .message("import declarations require an AHFL package manifest")
             .with_note("import: " +
-                       (import_decl.path ? qualified_name_text(*import_decl.path) : std::string{}))
+                       (import_decl->path ? qualified_name_text(*import_decl->path) : std::string{}))
             .with_note("add ahfl.toml, or run ahflc with --manifest")
             .emit();
     }
@@ -326,11 +325,9 @@ detached_source_unit_diagnostics(const ahfl::ast::Program &program,
 [[nodiscard]] std::optional<std::string>
 module_name_from_program(const ahfl::ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration && declaration->kind == ahfl::ast::NodeKind::ModuleDecl) {
-            const auto &module = static_cast<const ahfl::ast::ModuleDecl &>(*declaration);
-            if (module.name) {
-                return module.name->spelling();
-            }
+        const auto *module = std::get_if<ahfl::ast::ModuleDecl>(&declaration);
+        if (module != nullptr && module->name) {
+            return module->name->spelling();
         }
     }
     return std::nullopt;
@@ -714,8 +711,8 @@ sysroot_package(const ahfl::package_graph::PackageGraph &graph) {
 [[nodiscard]] bool
 selected_action_supports_package_graph_input(const CommandLineOptions &options,
                                              std::optional<CommandKind> command) {
-    return command_supports_package_graph_input(command) ||
-           options.selected_provider_artifact.has_value();
+    (void)options;
+    return command_supports_package_graph_input(command);
 }
 
 [[nodiscard]] bool uses_package_graph_workspace(const CommandLineOptions &options,
@@ -2028,8 +2025,7 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.workspace_manifest_path.has_value() && !package_graph_workspace) {
         std::cerr << "error: --workspace is only supported with check, fmt, emit native-json, "
-                     "package artifact commands, provider artifact commands, and dump "
-                     "package-graph/lockfile\n";
+                     "package artifact commands, and dump package-graph/lockfile\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2050,8 +2046,8 @@ std::optional<ExitCode> CliDriver::validate_options() {
         if (!selected_action_supports_package_graph_input(options_, effective_command_) &&
             !package_graph_descriptor_dump) {
             std::cerr << "error: --manifest is currently only supported with check, fmt, emit "
-                         "native-json, package artifact commands, provider artifact commands, "
-                         "and dump package-graph/lockfile\n";
+                         "native-json, package artifact commands, and dump "
+                         "package-graph/lockfile\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -2312,8 +2308,9 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (effective_command_ == CommandKind::RunWorkflow &&
-        !options_.runtime_input_json.has_value()) {
-        std::cerr << "error: run requires --input\n";
+        !options_.runtime_input_json.has_value() && !options_.runtime_input_file.has_value() &&
+        !run_can_use_package_entry_workflow) {
+        std::cerr << "error: run requires --input, --input-file, or [run].input\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -2368,11 +2365,94 @@ std::optional<ExitCode> CliDriver::load_package_and_mocks() {
     return std::nullopt;
 }
 
+std::optional<ExitCode> CliDriver::apply_run_manifest_options() {
+    if (effective_command_ != CommandKind::RunWorkflow || !options_.manifest_path.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto manifest_path =
+        normalize_manifest_path(std::filesystem::path(std::string(*options_.manifest_path)));
+    auto manifest = load_package_manifest_for_discovery(manifest_path, std::cerr);
+    if (!manifest.has_value()) {
+        return ExitCode::CompileError;
+    }
+    if (!manifest->run.has_value()) {
+        if (!options_.runtime_input_json.has_value() && !options_.runtime_input_file.has_value()) {
+            std::cerr << "error: run requires --input, --input-file, or [run].input\n";
+            return ExitCode::UsageError;
+        }
+        return std::nullopt;
+    }
+
+    const auto &run = *manifest->run;
+    const ahfl::manifest::RunProfileManifest *profile = nullptr;
+    if (options_.run_profile.has_value()) {
+        const auto found =
+            std::find_if(run.profiles.begin(), run.profiles.end(), [&](const auto &candidate) {
+                return candidate.name == *options_.run_profile;
+            });
+        if (found == run.profiles.end()) {
+            std::cerr << "error: run profile '" << *options_.run_profile
+                      << "' is not declared in ahfl.toml\n";
+            return ExitCode::UsageError;
+        }
+        profile = &*found;
+    }
+
+    const auto package_root = manifest_path.parent_path();
+    if (!options_.target_name.has_value()) {
+        const auto target =
+            profile != nullptr && profile->target.has_value() ? *profile->target : run.target;
+        if (!target.empty()) {
+            manifest_run_target_ = target;
+            options_.target_name = manifest_run_target_;
+        }
+    }
+    if (!options_.runtime_input_json.has_value() && !options_.runtime_input_file.has_value()) {
+        const auto input =
+            profile != nullptr && profile->input.has_value() ? *profile->input : run.input;
+        if (!input.empty()) {
+            manifest_run_input_ = normalize_manifest_path(package_root / input).generic_string();
+            options_.runtime_input_file = manifest_run_input_;
+        }
+    }
+    if (!options_.llm_config_descriptor.has_value()) {
+        const auto llm_config = profile != nullptr && profile->llm_config.has_value()
+                                    ? *profile->llm_config
+                                    : run.llm_config;
+        if (!llm_config.empty()) {
+            manifest_run_llm_config_ =
+                normalize_manifest_path(package_root / llm_config).generic_string();
+            options_.llm_config_descriptor = manifest_run_llm_config_;
+        }
+    }
+    if (!options_.execution_output_format.has_value()) {
+        manifest_run_output_format_ =
+            profile != nullptr && profile->output_format.has_value() ? *profile->output_format
+                                                                     : run.output_format;
+        options_.execution_output_format = manifest_run_output_format_;
+    }
+    if (!options_.execution_verbosity.has_value()) {
+        manifest_run_verbosity_ = profile != nullptr && profile->verbosity.has_value()
+                                      ? *profile->verbosity
+                                      : run.verbosity;
+        options_.execution_verbosity = manifest_run_verbosity_;
+    }
+    if (!options_.runtime_input_json.has_value() && !options_.runtime_input_file.has_value()) {
+        std::cerr << "error: run requires --input, --input-file, or [run].input\n";
+        return ExitCode::UsageError;
+    }
+    return std::nullopt;
+}
+
 ExitCode CliDriver::run_observed() {
     const auto started = std::chrono::steady_clock::now();
     ExitCode status = ExitCode::Success;
     if (auto load_status = load_package_and_mocks(); load_status.has_value()) {
         status = *load_status;
+    } else if (auto run_config_status = apply_run_manifest_options();
+               run_config_status.has_value()) {
+        status = *run_config_status;
     } else {
         status = execute();
     }
@@ -3557,20 +3637,6 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
         if (effective_command_ == CommandKind::VerifyFormal) {
             return verify_formal_program(ir_program, options_) == 0 ? ExitCode::Success
                                                                     : ExitCode::CompileError;
-        }
-
-        if (options_.selected_provider_artifact.has_value()) {
-            if (capability_mock_set_ptr == nullptr) {
-                std::cerr << "internal error: provider artifact command missing capability mocks\n";
-                return ExitCode::CompileError;
-            }
-            const auto status =
-                emit_provider_artifact_with_diagnostics(*options_.selected_provider_artifact,
-                                                        ir_program,
-                                                        metadata_validation.metadata,
-                                                        *capability_mock_set_ptr,
-                                                        options_);
-            return status == 0 ? ExitCode::Success : ExitCode::CompileError;
         }
 
         if (effective_command_.has_value() && handles_package_command(*effective_command_)) {

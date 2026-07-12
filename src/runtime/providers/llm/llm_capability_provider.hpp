@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -218,8 +219,37 @@ class LLMCapabilityProvider {
         std::size_t total_tokens{0};
         double total_cost_usd{0.0};
     };
-    mutable std::unordered_map<std::string, CumulativeBudgetTotals> workflow_budget_totals_;
-    mutable std::unordered_map<std::string, CumulativeBudgetTotals> node_budget_totals_;
+    struct WorkflowBudgetKey {
+        runtime::RunId run;
+        runtime::WorkflowId workflow;
+
+        [[nodiscard]] friend bool operator==(const WorkflowBudgetKey &,
+                                             const WorkflowBudgetKey &) noexcept = default;
+    };
+    struct WorkflowBudgetKeyHash {
+        [[nodiscard]] std::size_t operator()(const WorkflowBudgetKey &key) const noexcept {
+            return (key.run.index() * 1315423911U) ^ key.workflow.index();
+        }
+    };
+    struct NodeBudgetKey {
+        runtime::RunId run;
+        runtime::WorkflowId workflow;
+        runtime::WorkflowNodeId node;
+
+        [[nodiscard]] friend bool operator==(const NodeBudgetKey &,
+                                             const NodeBudgetKey &) noexcept = default;
+    };
+    struct NodeBudgetKeyHash {
+        [[nodiscard]] std::size_t operator()(const NodeBudgetKey &key) const noexcept {
+            return ((key.run.index() * 1315423911U) ^
+                    (key.workflow.index() * 2654435761U)) ^
+                   key.node.index();
+        }
+    };
+    mutable std::unordered_map<WorkflowBudgetKey, CumulativeBudgetTotals, WorkflowBudgetKeyHash>
+        workflow_budget_totals_;
+    mutable std::unordered_map<NodeBudgetKey, CumulativeBudgetTotals, NodeBudgetKeyHash>
+        node_budget_totals_;
 
     // Tool calling state
     std::vector<ToolDefinition> tools_;
@@ -239,6 +269,10 @@ class LLMCapabilityProvider {
     // Build a full multi-turn request JSON with tool definitions
     [[nodiscard]] std::string
     build_full_request_json(const std::vector<std::pair<std::string, std::string>> &messages) const;
+    [[nodiscard]] runtime::CapabilityCallResult invoke_with_context_impl(
+        const runtime::CapabilityInvocationContext &context,
+        const std::string &capability_name,
+        const std::vector<evaluator::Value> &args);
 
     struct ProviderCandidate {
         std::string name;
@@ -248,17 +282,21 @@ class LLMCapabilityProvider {
         HttpResponse response;
         std::size_t attempts{0};
         std::string provider_name;
+        std::optional<runtime::CapabilityUsage> usage;
+    };
+    struct UsagePolicyOutcome {
+        runtime::CapabilityUsage usage;
+        std::optional<runtime::CapabilityCallResult> rejection;
     };
 
     [[nodiscard]] std::vector<ProviderCandidate> provider_candidates() const;
     [[nodiscard]] HttpResponse send_chat_completion(const LLMProviderConfig &config,
                                                     const std::string &request_json) const;
-    [[nodiscard]] std::optional<ProviderHttpResult> chat_with_provider_fallback(
+    [[nodiscard]] std::expected<ProviderHttpResult, runtime::CapabilityCallResult>
+    chat_with_provider_fallback(
         std::string_view capability_name,
         const runtime::CapabilityInvocationContext &context,
-        const std::function<std::string(const LLMProviderConfig &)> &request_factory,
-        std::string &error_message,
-        std::size_t &attempts) const;
+        const std::function<std::string(const LLMProviderConfig &)> &request_factory) const;
     void record_response_cache_event(LLMResponseCacheAuditEventKind kind,
                                      const std::string &system_prompt,
                                      const std::string &user_prompt,
@@ -268,11 +306,13 @@ class LLMCapabilityProvider {
     void load_persistent_response_cache();
     void persist_response_cache_snapshot();
     void record_provider_health_event(LLMProviderHealthEvent event) const;
-    void record_token_usage_event(std::string_view provider_name,
-                                  std::string_view capability_name,
-                                  const runtime::CapabilityInvocationContext &context,
-                                  const LLMProviderConfig &config,
-                                  const std::string &response_body) const;
+    [[nodiscard]] std::optional<UsagePolicyOutcome>
+    record_token_usage_event(std::string_view provider_name,
+                             std::string_view capability_name,
+                             const runtime::CapabilityInvocationContext &context,
+                             const LLMProviderConfig &config,
+                             const std::string &response_body,
+                             std::size_t attempts) const;
     void record_token_budget_event(LLMTokenBudgetEvent event) const;
 };
 

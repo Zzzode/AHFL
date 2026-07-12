@@ -50,6 +50,26 @@ struct TargetManifest {
     SourceRange range{};
 };
 
+struct RunProfileManifest {
+    std::string name;
+    std::optional<std::string> target;
+    std::optional<std::string> input;
+    std::optional<std::string> llm_config;
+    std::optional<std::string> output_format;
+    std::optional<std::string> verbosity;
+    SourceRange range{};
+};
+
+struct RunManifest {
+    std::string target;
+    std::string input;
+    std::string llm_config;
+    std::string output_format{"human"};
+    std::string verbosity{"normal"};
+    std::vector<RunProfileManifest> profiles;
+    SourceRange range{};
+};
+
 struct PackageManifest {
     int manifest_version{0};
     std::string package_name;
@@ -63,6 +83,7 @@ struct PackageManifest {
     std::optional<std::string> prelude_injection;
     std::vector<std::string> compiler_intrinsics_allow;
     std::vector<TargetManifest> targets;
+    std::optional<RunManifest> run;
     std::vector<DependencySpec> dependencies;
 };
 

@@ -270,10 +270,8 @@ EvalResult call_mangled(const RuntimeFunctionTable &table,
                 return make_call_error("Option::Some expects one argument");
             auto inner = eval_expr(*args.front(), ctx_arg, *call_eval_arg);
             if (inner.has_errors()) return inner;
-            return EvalResult{
-                make_enum("std::option::Option", "Some",
-                          std::make_unique<Value>(std::move(inner.value))),
-                std::move(inner.diagnostics)};
+            return EvalResult{make_option_some(std::move(inner.value)),
+                              std::move(inner.diagnostics)};
         }
         if (name == "std::result::Result::Ok" || name == "std::result::Result::Err") {
             if (args.size() != 1 || !args.front())

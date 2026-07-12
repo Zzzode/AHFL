@@ -1064,8 +1064,7 @@ void test_eval_with_capability_call() {
     auto optional_result =
         eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
     check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
-    // P5.11a + P5.11b dual-aware: nominal accessor optional_inner() covers
-    // both legacy OptionalValue and nominal EnumValue Option.
+    // Option is represented canonically as a nominal EnumValue.
     const auto *optional_result_inner = ahfl::evaluator::optional_inner(optional_result.value);
     auto *optional_inner = optional_result_inner != nullptr
                                ? std::get_if<StringValue>(&optional_result_inner->node)
@@ -1108,6 +1107,28 @@ void test_eval_with_capability_call() {
 
     auto unknown_result = eval_expr_with_capabilities(expr2, eval_ctx, &registry);
     check(unknown_result.has_errors(), "eval_cap.unknown_cap_error");
+
+    Expr ranged_expr;
+    ranged_expr.source_range =
+        ahfl::SourceRange{.begin_offset = 10, .end_offset = 20};
+    CallExpr failing_call;
+    failing_call.callee = "failing_cap";
+    ranged_expr.node = std::move(failing_call);
+    CapabilityInvoker failing_invoker =
+        [](const std::string &, const std::vector<Value> &) -> CapabilityCallResult {
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .error_message = "provider unavailable",
+        };
+    };
+    auto ranged_result =
+        eval_expr_with_capabilities(ranged_expr, eval_ctx, failing_invoker);
+    check(ranged_result.has_errors(), "eval_cap.ranged_failure_has_error");
+    const auto &ranged_diagnostics = ranged_result.diagnostics.entries();
+    check(!ranged_diagnostics.empty() && ranged_diagnostics.front().range.has_value() &&
+              ranged_diagnostics.front().range->begin_offset == 10 &&
+              ranged_diagnostics.front().range->end_offset == 20,
+          "eval_cap.ranged_failure_preserves_call_site");
 }
 
 } // anonymous namespace

@@ -63,19 +63,11 @@ struct ListValue {
 struct EnumValue {
     std::string enum_name;
     std::string variant;
-    // Vector payload: Result-style multi-field variants (base HEAD convention).
+    // Positional enum payload. Unit variants keep this empty; tuple variants
+    // store one entry per declared payload field.
     std::vector<std::unique_ptr<Value>> payload;
     // Named payload: RFC 0001 struct enum variants.
     std::unordered_map<std::string, std::unique_ptr<Value>> named_payload;
-    // Associated single payload: nominal Option::Some & similar single-data
-    // variants (P5.11a evaluator-internal construction).
-    std::unique_ptr<Value> associated; // nullable
-};
-
-// Kept for external API compatibility (JSON, response validator, prompt builder).
-// Evaluator-internal construction uses the nominal EnumValue option below.
-struct OptionalValue {
-    std::unique_ptr<Value> inner; // nullptr means none
 };
 
 struct CallableValue {
@@ -124,7 +116,6 @@ using ValueNode = std::variant<NoneValue,
                                StructValue,
                                ListValue,
                                EnumValue,
-                               OptionalValue,
                                SetValue,
                                MapValue,
                                UuidValue,
@@ -204,60 +195,41 @@ void print_value(const Value &v, std::ostream &out);
     return nullptr;
 }
 
-// Optional accessors -------------------------------------------------------
-// Dual-aware (P5.11a + P5.11b transition): recognise both legacy OptionalValue
-// and the nominal EnumValue std::option::Option produced by the evaluator.
+// Option accessors ---------------------------------------------------------
 [[nodiscard]] inline bool is_optional(const Value &v) {
-    if (std::holds_alternative<OptionalValue>(v.node))
-        return true;
-    if (const auto *ev = std::get_if<EnumValue>(&v.node);
-        ev != nullptr && ev->enum_name == "std::option::Option")
-        return true;
-    return false;
-}
-
-[[nodiscard]] inline OptionalValue *get_optional_if(Value &v) {
-    return std::get_if<OptionalValue>(&v.node);
-}
-
-[[nodiscard]] inline const OptionalValue *get_optional_if(const Value &v) {
-    return std::get_if<OptionalValue>(&v.node);
+    const auto *value = std::get_if<EnumValue>(&v.node);
+    return value != nullptr && value->enum_name == "std::option::Option";
 }
 
 [[nodiscard]] inline bool is_some(const Value &v) {
-    if (const auto *ov = get_optional_if(v))
-        return ov->inner != nullptr;
-    if (const auto *ev = std::get_if<EnumValue>(&v.node);
-        ev != nullptr && ev->enum_name == "std::option::Option")
-        return ev->variant == "Some" && ev->associated != nullptr;
-    return false;
+    const auto *value = std::get_if<EnumValue>(&v.node);
+    return value != nullptr && value->enum_name == "std::option::Option" &&
+           value->variant == "Some" && value->payload.size() == 1 &&
+           value->payload.front() != nullptr;
 }
 
 [[nodiscard]] inline bool is_optional_none(const Value &v) {
-    if (const auto *ov = get_optional_if(v))
-        return ov->inner == nullptr;
-    if (const auto *ev = std::get_if<EnumValue>(&v.node);
-        ev != nullptr && ev->enum_name == "std::option::Option")
-        return ev->variant == "None";
-    return false;
+    const auto *value = std::get_if<EnumValue>(&v.node);
+    return value != nullptr && value->enum_name == "std::option::Option" &&
+           value->variant == "None" && value->payload.empty();
 }
 
 [[nodiscard]] inline const Value *optional_inner(const Value &v) {
-    if (const auto *ov = get_optional_if(v))
-        return ov->inner.get();
-    if (const auto *ev = std::get_if<EnumValue>(&v.node);
-        ev != nullptr && ev->enum_name == "std::option::Option")
-        return ev->variant == "Some" ? ev->associated.get() : nullptr;
-    return nullptr;
+    const auto *value = std::get_if<EnumValue>(&v.node);
+    if (value == nullptr || value->enum_name != "std::option::Option" ||
+        value->variant != "Some" || value->payload.size() != 1) {
+        return nullptr;
+    }
+    return value->payload.front().get();
 }
 
 [[nodiscard]] inline Value *optional_inner(Value &v) {
-    if (auto *ov = get_optional_if(v))
-        return ov->inner.get();
-    if (auto *ev = std::get_if<EnumValue>(&v.node);
-        ev != nullptr && ev->enum_name == "std::option::Option")
-        return ev->variant == "Some" ? ev->associated.get() : nullptr;
-    return nullptr;
+    auto *value = std::get_if<EnumValue>(&v.node);
+    if (value == nullptr || value->enum_name != "std::option::Option" ||
+        value->variant != "Some" || value->payload.size() != 1) {
+        return nullptr;
+    }
+    return value->payload.front().get();
 }
 
 // ============================================================================
@@ -302,41 +274,27 @@ void print_value(const Value &v, std::ostream &out);
 [[nodiscard]] Value
 make_enum(std::string enum_name, std::string variant, std::vector<Value> payload);
 
+[[nodiscard]] inline Value
+make_enum(std::string enum_name, std::string variant, Value payload) {
+    std::vector<Value> values;
+    values.push_back(std::move(payload));
+    return make_enum(std::move(enum_name), std::move(variant), std::move(values));
+}
+
 [[nodiscard]] Value
 make_enum(std::string enum_name,
           std::string variant,
           std::unordered_map<std::string, Value> named_payload);
 
-[[nodiscard]] inline Value make_enum(std::string enum_name,
-                                     std::string variant,
-                                     std::unique_ptr<Value> associated) {
-    return Value{EnumValue{
-        .enum_name = std::move(enum_name),
-        .variant = std::move(variant),
-        .associated = std::move(associated),
-    }};
-}
-
-// Nominal option constructors (evaluator-internal representation)
 [[nodiscard]] inline Value make_option_some(Value inner) {
-    return Value{EnumValue{
-        .enum_name = "std::option::Option",
-        .variant = "Some",
-        .associated = std::make_unique<Value>(std::move(inner)),
-    }};
+    std::vector<Value> payload;
+    payload.push_back(std::move(inner));
+    return make_enum("std::option::Option", "Some", std::move(payload));
 }
 
 [[nodiscard]] inline Value make_option_none() {
-    return Value{EnumValue{
-        .enum_name = "std::option::Option",
-        .variant = "None",
-    }};
+    return make_enum("std::option::Option", "None");
 }
-
-// Legacy constructors — kept for external JSON/compatibility consumers (P5.11b)
-[[nodiscard]] Value make_optional_some(Value inner);
-
-[[nodiscard]] Value make_optional_none();
 
 [[nodiscard]] Value make_callable(std::vector<std::string> params,
                                   const ir::Expr *body,

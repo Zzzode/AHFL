@@ -6,12 +6,9 @@
 namespace ahfl::abi {
 
 enum class AbiDomain {
-    DurableStore,
     Executor,
-    Persistence,
     IR,
-    Package,
-    RuntimeSession
+    Package
 };
 
 struct AbiVersion {

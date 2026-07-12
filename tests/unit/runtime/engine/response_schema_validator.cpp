@@ -277,17 +277,19 @@ void test_canonical_name_validation() {
 
 void test_optional_validation() {
     auto schema = make_optional_of(TypeRefKind::Int);
-    check(validate_value_against_schema(make_none(), schema).valid, "optional.none_valid");
-    check(validate_value_against_schema(make_int(42), schema).valid, "optional.inner_valid");
+    check(!validate_value_against_schema(make_none(), schema).valid,
+          "optional.raw_none_rejected");
+    check(!validate_value_against_schema(make_int(42), schema).valid,
+          "optional.raw_inner_rejected");
     check(!validate_value_against_schema(make_string("x"), schema).valid, "optional.inner_invalid");
 
     auto nominal = make_nominal_generic(
         TypeRefKind::Enum, "std::option::Option", type_args(make_type(TypeRefKind::Int)));
-    check(validate_value_against_schema(make_optional_none(), nominal).valid,
+    check(validate_value_against_schema(make_option_none(), nominal).valid,
           "optional.nominal_none_valid");
-    check(validate_value_against_schema(make_optional_some(make_int(42)), nominal).valid,
+    check(validate_value_against_schema(make_option_some(make_int(42)), nominal).valid,
           "optional.nominal_some_valid");
-    check(!validate_value_against_schema(make_optional_some(make_string("x")), nominal).valid,
+    check(!validate_value_against_schema(make_option_some(make_string("x")), nominal).valid,
           "optional.nominal_inner_invalid");
 }
 

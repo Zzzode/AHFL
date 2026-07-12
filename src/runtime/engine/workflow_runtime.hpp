@@ -3,14 +3,17 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
+#include "ahfl/runtime/execution_event.hpp"
+#include "ahfl/runtime/execution_metadata.hpp"
+#include "ahfl/runtime/execution_report.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 #include "runtime/evaluator/value.hpp"
@@ -25,23 +28,18 @@ enum class WorkflowStatus {
     EvalError,
 };
 
-// Execution result of a single node
-struct NodeExecutionResult {
-    std::string node_name;
-    std::string target;
-    AgentStatus status;
-    std::optional<Value> output;
-    std::size_t execution_index;
-};
-
 // Workflow execution result
 struct WorkflowResult {
-    WorkflowStatus status;
-    std::optional<Value> output;
-    std::vector<std::string> execution_order;
-    std::vector<NodeExecutionResult> node_results;
+    ExecutionMetadataStore metadata;
+    ExecutionEventStore events;
+    ExecutionReport report;
+    std::vector<Value> values;
     DiagnosticBag diagnostics;
+
     [[nodiscard]] bool has_errors() const;
+    [[nodiscard]] WorkflowStatus status() const noexcept;
+    [[nodiscard]] const Value *value(RuntimeValueId id) const noexcept;
+    [[nodiscard]] const Value *output() const noexcept;
 };
 
 // Workflow runtime configuration
@@ -49,6 +47,14 @@ struct WorkflowRuntimeConfig {
     QuotaConfig default_agent_quota;
     std::optional<CapabilityInvoker> capability_invoker;
     std::optional<ContextualCapabilityInvoker> contextual_capability_invoker;
+    std::function<bool()> cancellation_requested;
+    std::function<bool()> interruption_requested;
+    std::optional<CheckpointId> resume_checkpoint;
+    std::function<std::optional<CheckpointId>(WorkflowNodeId)> checkpoint_after_node;
+    std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
+    WorkflowRecoveryStore *recovery_store{nullptr};
+    std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
+        capability_result_observer;
 };
 
 // Workflow runtime
@@ -64,21 +70,19 @@ class WorkflowRuntime {
     ir::ProgramIndex index_;
     WorkflowRuntimeConfig config_;
 
-    // Declaration lookup
+    // Source-boundary declaration lookup. Runtime execution materializes these
+    // names into strong IDs before scheduling starts.
     [[nodiscard]] const ir::WorkflowDecl *find_workflow(const std::string &name) const;
     [[nodiscard]] const ir::AgentDecl *find_agent(const std::string &name) const;
     [[nodiscard]] const ir::FlowDecl *find_flow(const std::string &agent_name) const;
 
-    // DAG scheduling
-    [[nodiscard]] std::vector<const ir::WorkflowNode *>
-    topological_sort(const ir::WorkflowDecl &workflow) const;
-
-    // Evaluate a workflow expression (node input and workflow return share the same runtime seam)
-    [[nodiscard]] evaluator::EvalResult
-    eval_workflow_expression(const ir::Expr &expr,
-                             const Value &workflow_input,
-                             const std::unordered_map<std::string, Value> &node_outputs,
-                             const CapabilityInvocationContext &context = {}) const;
+    [[nodiscard]] evaluator::EvalResult eval_workflow_expression(
+        const ir::Expr &expr,
+        const Value &workflow_input,
+        const std::vector<std::optional<RuntimeValueId>> &node_outputs,
+        const WorkflowResult &result,
+        const ContextualCapabilityInvoker *runtime_invoker,
+        const CapabilityInvocationContext &context = {}) const;
 };
 
 } // namespace ahfl::runtime

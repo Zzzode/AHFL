@@ -61,6 +61,10 @@ void AgentRuntime::set_invocation_context(CapabilityInvocationContext context) {
     invocation_context_ = std::move(context);
 }
 
+void AgentRuntime::set_state_entered_observer(StateEnteredObserver observer) {
+    state_entered_observer_ = std::move(observer);
+}
+
 // ============================================================================
 // Core Execution Loop
 // ============================================================================
@@ -75,6 +79,10 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
     result.current_state = std::move(start_state);
     result.visited_states.insert(result.current_state);
     result.stats.start_time = std::chrono::steady_clock::now();
+    if (state_entered_observer_ && invocation_context_.agent_id.valid()) {
+        invocation_context_.agent_state_id =
+            state_entered_observer_(invocation_context_.agent_id, result.current_state);
+    }
 
     // Initialize execution context
     evaluator::ExecContext exec_ctx;
@@ -190,6 +198,10 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
             result.stats.state_transitions++;
             result.current_state = goto_out->target_state;
             result.visited_states.insert(result.current_state);
+            if (state_entered_observer_ && invocation_context_.agent_id.valid()) {
+                invocation_context_.agent_state_id =
+                    state_entered_observer_(invocation_context_.agent_id, result.current_state);
+            }
 
             // Infinite loop detection
             visit_counts[result.current_state]++;

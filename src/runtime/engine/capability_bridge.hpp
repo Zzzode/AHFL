@@ -12,6 +12,7 @@
 
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/types.hpp"
+#include "ahfl/runtime/execution_event.hpp"
 #include "runtime/engine/capability_transport_adapter.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/providers/secret/auth_provider.hpp"
@@ -27,6 +28,14 @@ struct CapabilityInvocationContext {
     std::string state_name;
     std::size_t workflow_node_execution_index{0};
     bool has_workflow_node_context{false};
+    RunId run_id;
+    WorkflowId workflow_id;
+    WorkflowNodeId workflow_node_id;
+    AgentId agent_id;
+    AgentStateId agent_state_id;
+    CapabilityId capability_id;
+    InvocationId invocation_id;
+    std::optional<std::size_t> source_capability_symbol_id;
 };
 
 // Capability call status
@@ -38,12 +47,28 @@ enum class CapabilityCallStatus {
     CircuitOpen,
 };
 
+struct CapabilityUsage {
+    std::size_t prompt_tokens{0};
+    std::size_t completion_tokens{0};
+    std::size_t total_tokens{0};
+    double total_cost_usd{0.0};
+    bool cost_estimated{false};
+    std::vector<CapabilityPolicyNotice> notices;
+};
+
 // Capability call result
 struct CapabilityCallResult {
     CapabilityCallStatus status{CapabilityCallStatus::Error};
     std::optional<Value> value;
     std::string error_message;
     std::size_t attempts{1};
+    std::optional<CapabilityFailureKind> failure_kind;
+    bool provider_degraded{false};
+    std::string degraded_provider_name;
+    std::string selected_provider_name;
+    bool cache_hit{false};
+    std::string diagnostic_code;
+    std::optional<CapabilityUsage> usage;
 };
 
 using CapabilityInvoker =

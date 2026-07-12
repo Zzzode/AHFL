@@ -4,6 +4,7 @@
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "base/json/json_value.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
+#include "ahfl/runtime/execution_renderer.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/response_schema_validator.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
@@ -38,21 +39,15 @@
 namespace ahfl::cli {
 namespace {
 
-using ahfl::evaluator::print_value;
 using ahfl::evaluator::value_from_json;
 using ahfl::evaluator::value_to_json;
 using ahfl::llm_provider::LLMCapabilityProvider;
-using ahfl::llm_provider::LLMProviderHealthEvent;
-using ahfl::llm_provider::LLMProviderHealthEventKind;
-using ahfl::llm_provider::LLMResponseCacheAuditEventKind;
-using ahfl::llm_provider::LLMStreamingEventKind;
 using ahfl::llm_provider::LLMTokenBudgetEventKind;
 using ahfl::llm_provider::load_config;
 using ahfl::llm_provider::ToolCall;
 using ahfl::llm_provider::ToolCallResult;
 using ahfl::llm_provider::ToolDefinition;
 using ahfl::llm_provider::validate_config;
-using ahfl::runtime::AgentStatus;
 using ahfl::runtime::CapabilityCallStatus;
 using ahfl::runtime::CapabilityRegistry;
 using ahfl::runtime::CapabilityResponseFormat;
@@ -63,10 +58,8 @@ using ahfl::runtime::make_grpc_json_transcoding_capability;
 using ahfl::runtime::make_http_capability;
 using ahfl::runtime::RetryConfig;
 using ahfl::runtime::TimeoutConfig;
-using ahfl::runtime::WorkflowResult;
 using ahfl::runtime::WorkflowRuntime;
 using ahfl::runtime::WorkflowRuntimeConfig;
-using ahfl::runtime::WorkflowStatus;
 using ahfl::secret::AuthConfig;
 using ahfl::secret::AuthScheme;
 using ahfl::secret::CloudSecretManagerConfig;
@@ -91,6 +84,33 @@ llm_config_path_from_options(const CommandLineOptions &options) {
         return std::filesystem::path(std::string(*options.llm_config_descriptor));
     }
     return default_llm_config_path();
+}
+
+[[nodiscard]] ahfl::runtime::ExecutionOutputFormat
+execution_output_format_from_options(const CommandLineOptions &options) {
+    const auto format = options.execution_output_format.value_or("human");
+    if (format == "json") {
+        return ahfl::runtime::ExecutionOutputFormat::Json;
+    }
+    if (format == "jsonl") {
+        return ahfl::runtime::ExecutionOutputFormat::JsonLines;
+    }
+    if (format == "quiet") {
+        return ahfl::runtime::ExecutionOutputFormat::Quiet;
+    }
+    return ahfl::runtime::ExecutionOutputFormat::Human;
+}
+
+[[nodiscard]] ahfl::runtime::ExecutionVerbosity
+execution_verbosity_from_options(const CommandLineOptions &options) {
+    const auto verbosity = options.execution_verbosity.value_or("normal");
+    if (verbosity == "verbose") {
+        return ahfl::runtime::ExecutionVerbosity::Verbose;
+    }
+    if (verbosity == "trace") {
+        return ahfl::runtime::ExecutionVerbosity::Trace;
+    }
+    return ahfl::runtime::ExecutionVerbosity::Normal;
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -1423,799 +1443,6 @@ void install_runtime_tools(LLMCapabilityProvider &provider, RuntimeToolSet runti
     return true;
 }
 
-[[nodiscard]] const char *workflow_status_name(WorkflowStatus status) {
-    switch (status) {
-    case WorkflowStatus::Completed:
-        return "Completed";
-    case WorkflowStatus::NodeFailed:
-        return "NodeFailed";
-    case WorkflowStatus::DependencyFailed:
-        return "DependencyFailed";
-    case WorkflowStatus::EvalError:
-        return "EvalError";
-    }
-    return "Unknown";
-}
-
-[[nodiscard]] const char *agent_status_name(AgentStatus status) {
-    switch (status) {
-    case AgentStatus::Running:
-        return "Running";
-    case AgentStatus::Completed:
-        return "Completed";
-    case AgentStatus::Failed:
-        return "Failed";
-    case AgentStatus::QuotaExceeded:
-        return "QuotaExceeded";
-    case AgentStatus::InvalidTransition:
-        return "InvalidTransition";
-    case AgentStatus::InfiniteLoop:
-        return "InfiniteLoop";
-    }
-    return "Unknown";
-}
-
-[[nodiscard]] const char *cache_event_kind_name(LLMResponseCacheAuditEventKind kind) {
-    switch (kind) {
-    case LLMResponseCacheAuditEventKind::Miss:
-        return "miss";
-    case LLMResponseCacheAuditEventKind::Hit:
-        return "hit";
-    case LLMResponseCacheAuditEventKind::Write:
-        return "write";
-    case LLMResponseCacheAuditEventKind::Invalidated:
-        return "invalidated";
-    case LLMResponseCacheAuditEventKind::SnapshotLoaded:
-        return "snapshot_loaded";
-    case LLMResponseCacheAuditEventKind::SnapshotPersisted:
-        return "snapshot_persisted";
-    case LLMResponseCacheAuditEventKind::SnapshotLoadFailed:
-        return "snapshot_load_failed";
-    case LLMResponseCacheAuditEventKind::SnapshotPersistFailed:
-        return "snapshot_persist_failed";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] const char *provider_health_event_kind_name(LLMProviderHealthEventKind kind) {
-    switch (kind) {
-    case LLMProviderHealthEventKind::ProviderDegraded:
-        return "provider_degraded";
-    case LLMProviderHealthEventKind::FallbackSelected:
-        return "fallback_selected";
-    case LLMProviderHealthEventKind::FallbackExhausted:
-        return "fallback_exhausted";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] const char *streaming_event_kind_name(LLMStreamingEventKind kind) {
-    switch (kind) {
-    case LLMStreamingEventKind::Chunk:
-        return "chunk";
-    case LLMStreamingEventKind::Completed:
-        return "completed";
-    case LLMStreamingEventKind::Interrupted:
-        return "interrupted";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] const char *token_budget_event_kind_name(LLMTokenBudgetEventKind kind) {
-    switch (kind) {
-    case LLMTokenBudgetEventKind::PromptAccepted:
-        return "prompt_accepted";
-    case LLMTokenBudgetEventKind::PromptTruncated:
-        return "prompt_truncated";
-    case LLMTokenBudgetEventKind::PromptRejected:
-        return "prompt_rejected";
-    case LLMTokenBudgetEventKind::UsageWithinBudget:
-        return "usage_within_budget";
-    case LLMTokenBudgetEventKind::UsageExceededBudget:
-        return "usage_exceeded_budget";
-    case LLMTokenBudgetEventKind::CostWithinBudget:
-        return "cost_within_budget";
-    case LLMTokenBudgetEventKind::CostExceededBudget:
-        return "cost_exceeded_budget";
-    case LLMTokenBudgetEventKind::WorkflowUsageWithinBudget:
-        return "workflow_usage_within_budget";
-    case LLMTokenBudgetEventKind::WorkflowUsageExceededBudget:
-        return "workflow_usage_exceeded_budget";
-    case LLMTokenBudgetEventKind::NodeUsageWithinBudget:
-        return "node_usage_within_budget";
-    case LLMTokenBudgetEventKind::NodeUsageExceededBudget:
-        return "node_usage_exceeded_budget";
-    case LLMTokenBudgetEventKind::WorkflowCostWithinBudget:
-        return "workflow_cost_within_budget";
-    case LLMTokenBudgetEventKind::WorkflowCostExceededBudget:
-        return "workflow_cost_exceeded_budget";
-    case LLMTokenBudgetEventKind::NodeCostWithinBudget:
-        return "node_cost_within_budget";
-    case LLMTokenBudgetEventKind::NodeCostExceededBudget:
-        return "node_cost_exceeded_budget";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] const char *secret_access_event_kind_name(ahfl::secret::SecretAccessEventKind kind) {
-    switch (kind) {
-    case ahfl::secret::SecretAccessEventKind::Resolve:
-        return "resolve";
-    case ahfl::secret::SecretAccessEventKind::Refresh:
-        return "refresh";
-    }
-    return "unknown";
-}
-
-[[nodiscard]] std::string secret_handle_prefix(std::string_view key) {
-    const auto separator = key.find(':');
-    if (separator == std::string_view::npos || separator == 0) {
-        return "unqualified";
-    }
-    return std::string(key.substr(0, separator));
-}
-
-[[nodiscard]] std::unique_ptr<ahfl::json::JsonValue> json_size(std::size_t value) {
-    return ahfl::json::JsonValue::make_int(static_cast<std::int64_t>(value));
-}
-
-struct ProviderDegradationSummary {
-    std::string status{"healthy"};
-    std::string outcome{"healthy"};
-    std::string source_provider;
-    std::string selected_provider;
-    std::vector<std::string> degraded_providers;
-    std::size_t total_attempts{0};
-    bool fallback_exhausted{false};
-    bool secret_free{true};
-};
-
-[[nodiscard]] ProviderDegradationSummary
-provider_degradation_summary(const std::vector<LLMProviderHealthEvent> &events) {
-    ProviderDegradationSummary summary;
-    std::unordered_set<std::string> seen_degraded;
-    bool saw_selected = false;
-    bool saw_degraded = false;
-
-    for (const auto &event : events) {
-        summary.total_attempts = std::max(summary.total_attempts, event.attempts_after);
-        summary.secret_free = summary.secret_free && event.secret_free;
-        switch (event.kind) {
-        case LLMProviderHealthEventKind::ProviderDegraded:
-            saw_degraded = true;
-            if (!event.provider_name.empty() && seen_degraded.insert(event.provider_name).second) {
-                summary.degraded_providers.push_back(event.provider_name);
-            }
-            break;
-        case LLMProviderHealthEventKind::FallbackSelected:
-            saw_selected = true;
-            summary.source_provider = event.provider_name;
-            summary.selected_provider = event.selected_provider_name;
-            break;
-        case LLMProviderHealthEventKind::FallbackExhausted:
-            summary.fallback_exhausted = true;
-            break;
-        }
-    }
-
-    if (saw_selected) {
-        summary.status = "recovered";
-        summary.outcome = "fallback_selected";
-    } else if (summary.fallback_exhausted) {
-        summary.status = "exhausted";
-        summary.outcome = "fallback_exhausted";
-    } else if (saw_degraded) {
-        summary.status = "degraded";
-        summary.outcome = "provider_degraded";
-    }
-    return summary;
-}
-
-[[nodiscard]] std::unique_ptr<ahfl::json::JsonValue>
-build_provider_degradation_summary_json(const ProviderDegradationSummary &summary) {
-    auto object = ahfl::json::JsonValue::make_object();
-    object->set("schema",
-                ahfl::json::JsonValue::make_string("ahfl.llm_provider_degradation_summary.v0"));
-    object->set("secret_free", ahfl::json::JsonValue::make_bool(summary.secret_free));
-    object->set("status", ahfl::json::JsonValue::make_string(summary.status));
-    object->set("outcome", ahfl::json::JsonValue::make_string(summary.outcome));
-    object->set("source_provider", ahfl::json::JsonValue::make_string(summary.source_provider));
-    object->set("selected_provider", ahfl::json::JsonValue::make_string(summary.selected_provider));
-    object->set("total_attempts", json_size(summary.total_attempts));
-    object->set("fallback_exhausted", ahfl::json::JsonValue::make_bool(summary.fallback_exhausted));
-    object->set("degraded_provider_count", json_size(summary.degraded_providers.size()));
-
-    auto degraded = ahfl::json::JsonValue::make_array();
-    for (const auto &provider_name : summary.degraded_providers) {
-        degraded->push(ahfl::json::JsonValue::make_string(provider_name));
-    }
-    object->set("degraded_providers", std::move(degraded));
-    return object;
-}
-
-[[nodiscard]] std::unique_ptr<ahfl::json::JsonValue>
-build_llm_provider_observability_json(const LLMCapabilityProvider &provider,
-                                      const ahfl::secret::SecretAuditLog *secret_audit_log) {
-    const auto &cache_events = provider.response_cache_audit_events();
-    const auto &health_events = provider.provider_health_events();
-    const auto &streaming_events = provider.streaming_events();
-    const auto &token_usage_events = provider.token_usage_events();
-    const auto &token_budget_events = provider.token_budget_events();
-    const auto secret_event_count =
-        secret_audit_log == nullptr ? std::size_t{0} : secret_audit_log->events().size();
-
-    auto root = ahfl::json::JsonValue::make_object();
-    root->set("schema", ahfl::json::JsonValue::make_string("ahfl.llm_provider_observability.v0"));
-    root->set("secret_free", ahfl::json::JsonValue::make_bool(true));
-    root->set("cache_event_count", json_size(cache_events.size()));
-    root->set("provider_health_event_count", json_size(health_events.size()));
-    root->set("streaming_event_count", json_size(streaming_events.size()));
-    root->set("token_usage_event_count", json_size(token_usage_events.size()));
-    root->set("token_budget_event_count", json_size(token_budget_events.size()));
-    root->set("secret_lifecycle_event_count", json_size(secret_event_count));
-
-    auto cache_array = ahfl::json::JsonValue::make_array();
-    for (std::size_t index = 0; index < cache_events.size(); ++index) {
-        const auto &event = cache_events[index];
-        auto item = ahfl::json::JsonValue::make_object();
-        item->set("index", json_size(index));
-        item->set("kind", ahfl::json::JsonValue::make_string(cache_event_kind_name(event.kind)));
-        item->set("model", ahfl::json::JsonValue::make_string(event.model));
-        item->set("cache_key_version", ahfl::json::JsonValue::make_string(event.cache_key_version));
-        item->set("key_fingerprint", ahfl::json::JsonValue::make_string(event.key_fingerprint));
-        item->set("system_prompt_bytes", json_size(event.system_prompt_bytes));
-        item->set("user_prompt_bytes", json_size(event.user_prompt_bytes));
-        item->set("response_bytes", json_size(event.response_bytes));
-        item->set("cache_size_after", json_size(event.cache_size_after));
-        item->set("snapshot_entry_count", json_size(event.snapshot_entry_count));
-        item->set("persistent", ahfl::json::JsonValue::make_bool(event.persistent));
-        item->set("secret_free", ahfl::json::JsonValue::make_bool(event.secret_free));
-        cache_array->push(std::move(item));
-    }
-    root->set("cache_events", std::move(cache_array));
-
-    auto health_array = ahfl::json::JsonValue::make_array();
-    for (std::size_t index = 0; index < health_events.size(); ++index) {
-        const auto &event = health_events[index];
-        auto item = ahfl::json::JsonValue::make_object();
-        item->set("index", json_size(index));
-        item->set("kind",
-                  ahfl::json::JsonValue::make_string(provider_health_event_kind_name(event.kind)));
-        item->set("provider", ahfl::json::JsonValue::make_string(event.provider_name));
-        item->set("selected_provider",
-                  ahfl::json::JsonValue::make_string(event.selected_provider_name));
-        item->set("status_code", ahfl::json::JsonValue::make_int(event.status_code));
-        item->set("attempts_after", json_size(event.attempts_after));
-        item->set("secret_free", ahfl::json::JsonValue::make_bool(event.secret_free));
-        health_array->push(std::move(item));
-    }
-    root->set("provider_health_events", std::move(health_array));
-    root->set("provider_degradation_summary",
-              build_provider_degradation_summary_json(provider_degradation_summary(health_events)));
-
-    auto stream_array = ahfl::json::JsonValue::make_array();
-    for (std::size_t index = 0; index < streaming_events.size(); ++index) {
-        const auto &event = streaming_events[index];
-        auto item = ahfl::json::JsonValue::make_object();
-        item->set("index", json_size(index));
-        item->set("kind",
-                  ahfl::json::JsonValue::make_string(streaming_event_kind_name(event.kind)));
-        item->set("provider", ahfl::json::JsonValue::make_string(event.provider_name));
-        item->set("chunk_index", json_size(event.chunk_index));
-        item->set("chunk_bytes", json_size(event.chunk_bytes));
-        item->set("total_content_bytes", json_size(event.total_content_bytes));
-        item->set("completed", ahfl::json::JsonValue::make_bool(event.completed));
-        item->set("secret_free", ahfl::json::JsonValue::make_bool(event.secret_free));
-        stream_array->push(std::move(item));
-    }
-    root->set("streaming_events", std::move(stream_array));
-
-    auto token_usage_array = ahfl::json::JsonValue::make_array();
-    for (std::size_t index = 0; index < token_usage_events.size(); ++index) {
-        const auto &event = token_usage_events[index];
-        auto item = ahfl::json::JsonValue::make_object();
-        item->set("index", json_size(index));
-        item->set("provider", ahfl::json::JsonValue::make_string(event.provider_name));
-        item->set("model", ahfl::json::JsonValue::make_string(event.model));
-        item->set("workflow", ahfl::json::JsonValue::make_string(event.workflow_name));
-        item->set("workflow_node", ahfl::json::JsonValue::make_string(event.workflow_node_name));
-        item->set("agent", ahfl::json::JsonValue::make_string(event.agent_name));
-        item->set("state", ahfl::json::JsonValue::make_string(event.state_name));
-        item->set("workflow_node_execution_index", json_size(event.workflow_node_execution_index));
-        item->set("has_workflow_node_context",
-                  ahfl::json::JsonValue::make_bool(event.has_workflow_node_context));
-        item->set("prompt_tokens", json_size(event.prompt_tokens));
-        item->set("completion_tokens", json_size(event.completion_tokens));
-        item->set("total_tokens", json_size(event.total_tokens));
-        item->set("prompt_cost_usd", ahfl::json::JsonValue::make_float(event.prompt_cost_usd));
-        item->set("completion_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.completion_cost_usd));
-        item->set("total_cost_usd", ahfl::json::JsonValue::make_float(event.total_cost_usd));
-        item->set("cost_estimated", ahfl::json::JsonValue::make_bool(event.cost_estimated));
-        item->set("secret_free", ahfl::json::JsonValue::make_bool(event.secret_free));
-        token_usage_array->push(std::move(item));
-    }
-    root->set("token_usage_events", std::move(token_usage_array));
-
-    auto token_budget_array = ahfl::json::JsonValue::make_array();
-    for (std::size_t index = 0; index < token_budget_events.size(); ++index) {
-        const auto &event = token_budget_events[index];
-        auto item = ahfl::json::JsonValue::make_object();
-        item->set("index", json_size(index));
-        item->set("kind",
-                  ahfl::json::JsonValue::make_string(token_budget_event_kind_name(event.kind)));
-        item->set("provider", ahfl::json::JsonValue::make_string(event.provider_name));
-        item->set("model", ahfl::json::JsonValue::make_string(event.model));
-        item->set("capability", ahfl::json::JsonValue::make_string(event.capability_name));
-        item->set("workflow", ahfl::json::JsonValue::make_string(event.workflow_name));
-        item->set("workflow_node", ahfl::json::JsonValue::make_string(event.workflow_node_name));
-        item->set("agent", ahfl::json::JsonValue::make_string(event.agent_name));
-        item->set("state", ahfl::json::JsonValue::make_string(event.state_name));
-        item->set("workflow_node_execution_index", json_size(event.workflow_node_execution_index));
-        item->set("has_workflow_node_context",
-                  ahfl::json::JsonValue::make_bool(event.has_workflow_node_context));
-        item->set("max_total_tokens", json_size(event.max_total_tokens));
-        item->set("max_prompt_tokens", json_size(event.max_prompt_tokens));
-        item->set("max_response_tokens", json_size(event.max_response_tokens));
-        item->set("max_workflow_total_tokens", json_size(event.max_workflow_total_tokens));
-        item->set("max_node_total_tokens", json_size(event.max_node_total_tokens));
-        item->set("effective_prompt_tokens", json_size(event.effective_prompt_tokens));
-        item->set("system_prompt_tokens", json_size(event.system_prompt_tokens));
-        item->set("user_prompt_tokens_before", json_size(event.user_prompt_tokens_before));
-        item->set("user_prompt_tokens_after", json_size(event.user_prompt_tokens_after));
-        item->set("prompt_tokens", json_size(event.prompt_tokens));
-        item->set("completion_tokens", json_size(event.completion_tokens));
-        item->set("total_tokens", json_size(event.total_tokens));
-        item->set("cumulative_workflow_tokens", json_size(event.cumulative_workflow_tokens));
-        item->set("cumulative_node_tokens", json_size(event.cumulative_node_tokens));
-        item->set("max_total_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.max_total_cost_usd));
-        item->set("max_workflow_total_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.max_workflow_total_cost_usd));
-        item->set("max_node_total_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.max_node_total_cost_usd));
-        item->set("total_cost_usd", ahfl::json::JsonValue::make_float(event.total_cost_usd));
-        item->set("cumulative_workflow_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.cumulative_workflow_cost_usd));
-        item->set("cumulative_node_cost_usd",
-                  ahfl::json::JsonValue::make_float(event.cumulative_node_cost_usd));
-        item->set("truncated", ahfl::json::JsonValue::make_bool(event.truncated));
-        item->set("policy", ahfl::json::JsonValue::make_string(event.policy));
-        item->set("message", ahfl::json::JsonValue::make_string(event.message));
-        item->set("diagnostic_code", ahfl::json::JsonValue::make_string(event.diagnostic_code));
-        item->set("secret_free", ahfl::json::JsonValue::make_bool(event.secret_free));
-        token_budget_array->push(std::move(item));
-    }
-    root->set("token_budget_events", std::move(token_budget_array));
-
-    auto secret_array = ahfl::json::JsonValue::make_array();
-    if (secret_audit_log != nullptr) {
-        const auto &secret_events = secret_audit_log->events();
-        for (std::size_t index = 0; index < secret_events.size(); ++index) {
-            const auto &event = secret_events[index];
-            auto item = ahfl::json::JsonValue::make_object();
-            item->set("index", json_size(index));
-            item->set(
-                "kind",
-                ahfl::json::JsonValue::make_string(secret_access_event_kind_name(event.kind)));
-            item->set("provider_prefix",
-                      ahfl::json::JsonValue::make_string(secret_handle_prefix(event.key)));
-            item->set("key_fingerprint",
-                      ahfl::json::JsonValue::make_string(hex_hash(fnv1a_hash(event.key))));
-            item->set("accessor", ahfl::json::JsonValue::make_string(event.accessor));
-            item->set("success", ahfl::json::JsonValue::make_bool(event.success));
-            item->set("secret_free", ahfl::json::JsonValue::make_bool(true));
-            secret_array->push(std::move(item));
-        }
-    }
-    root->set("secret_lifecycle_events", std::move(secret_array));
-
-    return root;
-}
-
-[[nodiscard]] bool
-write_llm_provider_observability_json(const LLMCapabilityProvider &provider,
-                                      const std::filesystem::path &path,
-                                      const ahfl::secret::SecretAuditLog *secret_audit_log,
-                                      std::ostream &err) {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file.is_open()) {
-        err << "error: failed to open LLM observability output: " << ahfl::display_path(path)
-            << '\n';
-        return false;
-    }
-
-    auto root = build_llm_provider_observability_json(provider, secret_audit_log);
-    file << ahfl::json::serialize_json(*root) << '\n';
-    if (!file.good()) {
-        err << "error: failed to write LLM observability output: " << ahfl::display_path(path)
-            << '\n';
-        return false;
-    }
-    return true;
-}
-
-void print_llm_provider_observability(const LLMCapabilityProvider &provider,
-                                      const ahfl::secret::SecretAuditLog *secret_audit_log,
-                                      std::ostream &out) {
-    const auto &cache_events = provider.response_cache_audit_events();
-    const auto &health_events = provider.provider_health_events();
-    const auto &streaming_events = provider.streaming_events();
-    const auto &token_usage_events = provider.token_usage_events();
-    const auto &token_budget_events = provider.token_budget_events();
-    const auto secret_event_count =
-        secret_audit_log == nullptr ? std::size_t{0} : secret_audit_log->events().size();
-    if (cache_events.empty() && health_events.empty() && streaming_events.empty() &&
-        token_usage_events.empty() && token_budget_events.empty() && secret_event_count == 0) {
-        return;
-    }
-
-    out << "\n--- LLM Provider Observability ---\n";
-    out << "Cache Events: " << cache_events.size() << '\n';
-    for (std::size_t index = 0; index < cache_events.size(); ++index) {
-        const auto &event = cache_events[index];
-        out << "    cache[" << index << "]: kind=" << cache_event_kind_name(event.kind)
-            << " model=" << event.model << " key_version=" << event.cache_key_version
-            << " key_fingerprint=" << event.key_fingerprint
-            << " system_prompt_bytes=" << event.system_prompt_bytes
-            << " user_prompt_bytes=" << event.user_prompt_bytes
-            << " response_bytes=" << event.response_bytes
-            << " cache_size_after=" << event.cache_size_after
-            << " snapshot_entry_count=" << event.snapshot_entry_count
-            << " persistent=" << (event.persistent ? "true" : "false")
-            << " secret_free=" << (event.secret_free ? "true" : "false") << '\n';
-    }
-
-    out << "Provider Health Events: " << health_events.size() << '\n';
-    for (std::size_t index = 0; index < health_events.size(); ++index) {
-        const auto &event = health_events[index];
-        out << "    health[" << index << "]: kind=" << provider_health_event_kind_name(event.kind)
-            << " provider=" << event.provider_name << " selected=" << event.selected_provider_name
-            << " status_code=" << event.status_code << " attempts_after=" << event.attempts_after
-            << " secret_free=" << (event.secret_free ? "true" : "false") << '\n';
-    }
-
-    const auto degradation_summary = provider_degradation_summary(health_events);
-    out << "Provider Degradation Summary: status=" << degradation_summary.status
-        << " outcome=" << degradation_summary.outcome
-        << " degraded_provider_count=" << degradation_summary.degraded_providers.size()
-        << " selected_provider=" << degradation_summary.selected_provider
-        << " total_attempts=" << degradation_summary.total_attempts
-        << " secret_free=" << (degradation_summary.secret_free ? "true" : "false") << '\n';
-
-    out << "Streaming Events: " << streaming_events.size() << '\n';
-    for (std::size_t index = 0; index < streaming_events.size(); ++index) {
-        const auto &event = streaming_events[index];
-        out << "    stream[" << index << "]: kind=" << streaming_event_kind_name(event.kind)
-            << " provider=" << event.provider_name << " chunk_index=" << event.chunk_index
-            << " chunk_bytes=" << event.chunk_bytes
-            << " total_content_bytes=" << event.total_content_bytes
-            << " completed=" << (event.completed ? "true" : "false")
-            << " secret_free=" << (event.secret_free ? "true" : "false") << '\n';
-    }
-
-    out << "Token Usage Events: " << token_usage_events.size() << '\n';
-    for (std::size_t index = 0; index < token_usage_events.size(); ++index) {
-        const auto &event = token_usage_events[index];
-        out << "    usage[" << index << "]: provider=" << event.provider_name
-            << " model=" << event.model << " workflow=" << event.workflow_name
-            << " node=" << event.workflow_node_name << " agent=" << event.agent_name
-            << " state=" << event.state_name
-            << " node_index=" << event.workflow_node_execution_index
-            << " prompt_tokens=" << event.prompt_tokens
-            << " completion_tokens=" << event.completion_tokens
-            << " total_tokens=" << event.total_tokens
-            << " prompt_cost_usd=" << event.prompt_cost_usd
-            << " completion_cost_usd=" << event.completion_cost_usd
-            << " total_cost_usd=" << event.total_cost_usd
-            << " cost_estimated=" << (event.cost_estimated ? "true" : "false")
-            << " secret_free=" << (event.secret_free ? "true" : "false") << '\n';
-    }
-
-    out << "Token Budget Events: " << token_budget_events.size() << '\n';
-    for (std::size_t index = 0; index < token_budget_events.size(); ++index) {
-        const auto &event = token_budget_events[index];
-        out << "    budget[" << index << "]: kind=" << token_budget_event_kind_name(event.kind)
-            << " provider=" << event.provider_name << " model=" << event.model
-            << " capability=" << event.capability_name << " workflow=" << event.workflow_name
-            << " node=" << event.workflow_node_name << " agent=" << event.agent_name
-            << " state=" << event.state_name
-            << " node_index=" << event.workflow_node_execution_index
-            << " max_total_tokens=" << event.max_total_tokens
-            << " max_prompt_tokens=" << event.max_prompt_tokens
-            << " max_response_tokens=" << event.max_response_tokens
-            << " max_workflow_total_tokens=" << event.max_workflow_total_tokens
-            << " max_node_total_tokens=" << event.max_node_total_tokens
-            << " effective_prompt_tokens=" << event.effective_prompt_tokens
-            << " system_prompt_tokens=" << event.system_prompt_tokens
-            << " user_prompt_tokens_before=" << event.user_prompt_tokens_before
-            << " user_prompt_tokens_after=" << event.user_prompt_tokens_after
-            << " prompt_tokens=" << event.prompt_tokens
-            << " completion_tokens=" << event.completion_tokens
-            << " total_tokens=" << event.total_tokens
-            << " cumulative_workflow_tokens=" << event.cumulative_workflow_tokens
-            << " cumulative_node_tokens=" << event.cumulative_node_tokens
-            << " max_total_cost_usd=" << event.max_total_cost_usd
-            << " max_workflow_total_cost_usd=" << event.max_workflow_total_cost_usd
-            << " max_node_total_cost_usd=" << event.max_node_total_cost_usd
-            << " total_cost_usd=" << event.total_cost_usd
-            << " cumulative_workflow_cost_usd=" << event.cumulative_workflow_cost_usd
-            << " cumulative_node_cost_usd=" << event.cumulative_node_cost_usd
-            << " truncated=" << (event.truncated ? "true" : "false") << " policy=" << event.policy
-            << " diagnostic_code=" << event.diagnostic_code
-            << " secret_free=" << (event.secret_free ? "true" : "false") << '\n';
-    }
-
-    out << "Secret Lifecycle Events: " << secret_event_count << '\n';
-    if (secret_audit_log != nullptr) {
-        const auto &secret_events = secret_audit_log->events();
-        for (std::size_t index = 0; index < secret_events.size(); ++index) {
-            const auto &event = secret_events[index];
-            out << "    secret[" << index << "]: kind=" << secret_access_event_kind_name(event.kind)
-                << " provider_prefix=" << secret_handle_prefix(event.key)
-                << " key_fingerprint=" << hex_hash(fnv1a_hash(event.key))
-                << " accessor=" << event.accessor
-                << " success=" << (event.success ? "true" : "false") << " secret_free=true\n";
-        }
-    }
-}
-
-[[nodiscard]] std::string
-event_capability_name(const ahfl::llm_provider::LLMTokenBudgetEvent &event) {
-    return event.capability_name.empty() ? std::string{"<unknown>"} : event.capability_name;
-}
-
-[[nodiscard]] std::string event_budget_scope(const ahfl::llm_provider::LLMTokenBudgetEvent &event) {
-    switch (event.kind) {
-    case LLMTokenBudgetEventKind::WorkflowUsageWithinBudget:
-    case LLMTokenBudgetEventKind::WorkflowUsageExceededBudget:
-    case LLMTokenBudgetEventKind::WorkflowCostWithinBudget:
-    case LLMTokenBudgetEventKind::WorkflowCostExceededBudget:
-        return "workflow '" +
-               (event.workflow_name.empty() ? std::string{"<direct>"} : event.workflow_name) + "'";
-    case LLMTokenBudgetEventKind::NodeUsageWithinBudget:
-    case LLMTokenBudgetEventKind::NodeUsageExceededBudget:
-    case LLMTokenBudgetEventKind::NodeCostWithinBudget:
-    case LLMTokenBudgetEventKind::NodeCostExceededBudget:
-        return "workflow node '" + event.workflow_node_name + "'";
-    default:
-        return "capability '" + event_capability_name(event) + "'";
-    }
-}
-
-[[nodiscard]] std::string event_context_note(const ahfl::llm_provider::LLMTokenBudgetEvent &event) {
-    std::string note = "workflow=" + event.workflow_name + ", node=" + event.workflow_node_name +
-                       ", agent=" + event.agent_name + ", state=" + event.state_name;
-    if (event.has_workflow_node_context) {
-        note += ", node_index=" + std::to_string(event.workflow_node_execution_index);
-    }
-    return note;
-}
-
-[[nodiscard]] bool emit_llm_token_budget_policy_diagnostics(const LLMCapabilityProvider &provider,
-                                                            std::ostream &err) {
-    ahfl::DiagnosticBag diagnostics;
-    bool policy_failed = false;
-
-    for (const auto &event : provider.token_budget_events()) {
-        if (event.kind == LLMTokenBudgetEventKind::PromptRejected) {
-            diagnostics.error()
-                .code(ahfl::error_codes::runtime::LLMPromptBudgetRejected)
-                .message("LLM prompt budget rejected for capability '" +
-                         event_capability_name(event) + "'")
-                .with_note("configured max_total_tokens=" + std::to_string(event.max_total_tokens) +
-                           ", max_prompt_tokens=" + std::to_string(event.max_prompt_tokens) +
-                           ", max_response_tokens=" + std::to_string(event.max_response_tokens))
-                .with_note(
-                    "estimated system_prompt_tokens=" + std::to_string(event.system_prompt_tokens) +
-                    ", user_prompt_tokens_before=" +
-                    std::to_string(event.user_prompt_tokens_before) +
-                    ", effective_prompt_tokens=" + std::to_string(event.effective_prompt_tokens))
-                .emit();
-            continue;
-        }
-
-        if (event.kind == LLMTokenBudgetEventKind::UsageExceededBudget) {
-            const bool warn_only = event.policy == "warn";
-            policy_failed = policy_failed || !warn_only;
-            if (warn_only) {
-                diagnostics.warning()
-                    .code(ahfl::error_codes::runtime::LLMTokenBudgetExceeded)
-                    .message("LLM token budget policy warned for capability '" +
-                             event_capability_name(event) + "'")
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reported total_tokens=" + std::to_string(event.total_tokens) +
-                               " while max_total_tokens=" + std::to_string(event.max_total_tokens))
-                    .with_note(
-                        "token_budget_policy=" + event.policy +
-                        "; reduce prompt/response usage or raise max_total_tokens in the LLM "
-                        "config before rerunning")
-                    .emit();
-            } else {
-                diagnostics.error()
-                    .code(ahfl::error_codes::runtime::LLMTokenBudgetExceeded)
-                    .message("LLM token budget policy failed for capability '" +
-                             event_capability_name(event) + "'")
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reported total_tokens=" + std::to_string(event.total_tokens) +
-                               " while max_total_tokens=" + std::to_string(event.max_total_tokens))
-                    .with_note(
-                        "token_budget_policy=" + event.policy +
-                        "; reduce prompt/response usage or raise max_total_tokens in the LLM "
-                        "config before rerunning")
-                    .emit();
-            }
-        }
-
-        if (event.kind == LLMTokenBudgetEventKind::CostExceededBudget) {
-            const bool warn_only = event.policy == "warn";
-            policy_failed = policy_failed || !warn_only;
-            if (warn_only) {
-                diagnostics.warning()
-                    .code(ahfl::error_codes::runtime::LLMCostBudgetExceeded)
-                    .message("LLM cost budget policy warned for capability '" +
-                             event_capability_name(event) + "'")
-                    .with_note(
-                        "provider '" + event.provider_name + "' model '" + event.model +
-                        "' estimated total_cost_usd=" + std::to_string(event.total_cost_usd) +
-                        " while max_total_cost_usd=" + std::to_string(event.max_total_cost_usd))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce usage/cost rates or raise max_total_cost_usd in the LLM "
-                               "config before rerunning")
-                    .emit();
-            } else {
-                diagnostics.error()
-                    .code(ahfl::error_codes::runtime::LLMCostBudgetExceeded)
-                    .message("LLM cost budget policy failed for capability '" +
-                             event_capability_name(event) + "'")
-                    .with_note(
-                        "provider '" + event.provider_name + "' model '" + event.model +
-                        "' estimated total_cost_usd=" + std::to_string(event.total_cost_usd) +
-                        " while max_total_cost_usd=" + std::to_string(event.max_total_cost_usd))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce usage/cost rates or raise max_total_cost_usd in the LLM "
-                               "config before rerunning")
-                    .emit();
-            }
-        }
-
-        if (event.kind == LLMTokenBudgetEventKind::WorkflowUsageExceededBudget ||
-            event.kind == LLMTokenBudgetEventKind::NodeUsageExceededBudget) {
-            const bool warn_only = event.policy == "warn";
-            policy_failed = policy_failed || !warn_only;
-            const auto max_tokens =
-                event.kind == LLMTokenBudgetEventKind::WorkflowUsageExceededBudget
-                    ? event.max_workflow_total_tokens
-                    : event.max_node_total_tokens;
-            const auto cumulative_tokens =
-                event.kind == LLMTokenBudgetEventKind::WorkflowUsageExceededBudget
-                    ? event.cumulative_workflow_tokens
-                    : event.cumulative_node_tokens;
-            if (warn_only) {
-                diagnostics.warning()
-                    .code(ahfl::error_codes::runtime::LLMTokenBudgetExceeded)
-                    .message("LLM cumulative token budget policy warned for " +
-                             event_budget_scope(event))
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reached cumulative_tokens=" + std::to_string(cumulative_tokens) +
-                               " while max_cumulative_tokens=" + std::to_string(max_tokens))
-                    .with_note(event_context_note(event))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce workflow/node LLM usage or raise the cumulative token "
-                               "budget before rerunning")
-                    .emit();
-            } else {
-                diagnostics.error()
-                    .code(ahfl::error_codes::runtime::LLMTokenBudgetExceeded)
-                    .message("LLM cumulative token budget policy failed for " +
-                             event_budget_scope(event))
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reached cumulative_tokens=" + std::to_string(cumulative_tokens) +
-                               " while max_cumulative_tokens=" + std::to_string(max_tokens))
-                    .with_note(event_context_note(event))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce workflow/node LLM usage or raise the cumulative token "
-                               "budget before rerunning")
-                    .emit();
-            }
-        }
-
-        if (event.kind == LLMTokenBudgetEventKind::WorkflowCostExceededBudget ||
-            event.kind == LLMTokenBudgetEventKind::NodeCostExceededBudget) {
-            const bool warn_only = event.policy == "warn";
-            policy_failed = policy_failed || !warn_only;
-            const auto max_cost = event.kind == LLMTokenBudgetEventKind::WorkflowCostExceededBudget
-                                      ? event.max_workflow_total_cost_usd
-                                      : event.max_node_total_cost_usd;
-            const auto cumulative_cost =
-                event.kind == LLMTokenBudgetEventKind::WorkflowCostExceededBudget
-                    ? event.cumulative_workflow_cost_usd
-                    : event.cumulative_node_cost_usd;
-            if (warn_only) {
-                diagnostics.warning()
-                    .code(ahfl::error_codes::runtime::LLMCostBudgetExceeded)
-                    .message("LLM cumulative cost budget policy warned for " +
-                             event_budget_scope(event))
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reached cumulative_cost_usd=" + std::to_string(cumulative_cost) +
-                               " while max_cumulative_cost_usd=" + std::to_string(max_cost))
-                    .with_note(event_context_note(event))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce workflow/node LLM usage or raise the cumulative cost "
-                               "budget before rerunning")
-                    .emit();
-            } else {
-                diagnostics.error()
-                    .code(ahfl::error_codes::runtime::LLMCostBudgetExceeded)
-                    .message("LLM cumulative cost budget policy failed for " +
-                             event_budget_scope(event))
-                    .with_note("provider '" + event.provider_name + "' model '" + event.model +
-                               "' reached cumulative_cost_usd=" + std::to_string(cumulative_cost) +
-                               " while max_cumulative_cost_usd=" + std::to_string(max_cost))
-                    .with_note(event_context_note(event))
-                    .with_note("token_budget_policy=" + event.policy +
-                               "; reduce workflow/node LLM usage or raise the cumulative cost "
-                               "budget before rerunning")
-                    .emit();
-            }
-        }
-    }
-
-    if (diagnostics.has_error() || diagnostics.has_warning()) {
-        diagnostics.render(err, std::nullopt, true);
-    }
-    return policy_failed;
-}
-
-void print_workflow_result(const WorkflowResult &result,
-                           std::string_view workflow_name,
-                           const std::filesystem::path &config_path,
-                           std::string_view model_name,
-                           std::ostream &out) {
-    out << "\n=== AHFL Workflow Execution ===\n"
-        << "Workflow: " << workflow_name << '\n'
-        << "LLM Config: " << config_path << " (model: " << model_name << ")\n"
-        << "\n--- Execution ---\n"
-        << "Status: " << workflow_status_name(result.status) << '\n'
-        << "Execution Order: ";
-
-    for (std::size_t index = 0; index < result.execution_order.size(); ++index) {
-        if (index > 0) {
-            out << " -> ";
-        }
-        out << result.execution_order[index];
-    }
-    out << "\n\n--- Node Results ---\n";
-
-    for (const auto &node_result : result.node_results) {
-        out << "[" << node_result.execution_index << "] " << node_result.node_name;
-        if (!node_result.target.empty()) {
-            out << " (" << node_result.target << ")";
-        }
-        out << ": " << agent_status_name(node_result.status) << '\n';
-
-        if (node_result.output.has_value()) {
-            out << "    Output: ";
-            print_value(*node_result.output, out);
-            out << '\n';
-        }
-    }
-
-    out << "\n--- Final Output ---\n";
-    if (result.output.has_value()) {
-        print_value(*result.output, out);
-    } else {
-        out << "(none)";
-    }
-    out << '\n';
-
-    if (result.has_errors()) {
-        out << "\n--- Errors ---\n";
-        result.diagnostics.render(out);
-    }
-
-    out << '\n';
-}
 
 } // namespace
 
@@ -2227,8 +1454,8 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         err << "error: run requires --workflow or package workflow entry\n";
         return 2;
     }
-    if (!options.runtime_input_json.has_value()) {
-        err << "error: run requires --input\n";
+    if (!options.runtime_input_json.has_value() && !options.runtime_input_file.has_value()) {
+        err << "error: run requires --input, --input-file, or [run].input\n";
         return 2;
     }
 
@@ -2265,9 +1492,20 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         }
     }
 
-    auto input_value = ahfl::evaluator::value_from_json(*options.runtime_input_json);
+    std::string runtime_input;
+    if (options.runtime_input_json.has_value()) {
+        runtime_input = std::string(*options.runtime_input_json);
+    } else {
+        const auto input_path = std::filesystem::path(std::string(*options.runtime_input_file));
+        auto content = read_text_file(input_path, "runtime input", err);
+        if (!content.has_value()) {
+            return 1;
+        }
+        runtime_input = std::move(*content);
+    }
+    auto input_value = ahfl::evaluator::value_from_json(runtime_input);
     if (!input_value.has_value()) {
-        err << "error: failed to parse --input JSON\n";
+        err << "error: failed to parse runtime input JSON\n";
         return 1;
     }
 
@@ -2312,20 +1550,22 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     WorkflowRuntime runtime(program, std::move(runtime_config));
     auto result = runtime.run(workflow_name, std::move(*input_value));
 
-    print_workflow_result(result, workflow_name, config_path, llm_config.model, out);
-    print_llm_provider_observability(llm_provider, &secrets->audit_log(), out);
-    if (options.llm_observability_path.has_value() &&
-        !write_llm_provider_observability_json(
-            llm_provider,
-            std::filesystem::path(std::string(*options.llm_observability_path)),
-            &secrets->audit_log(),
-            err)) {
+    const auto render_result = ahfl::runtime::render_execution_result(
+        result,
+        ahfl::runtime::ExecutionOutputOptions{
+            .format = execution_output_format_from_options(options),
+            .verbosity = execution_verbosity_from_options(options),
+        },
+        out);
+    if (!render_result.has_value()) {
+        err << "error: " << render_result.error() << '\n';
         return 1;
     }
-    const bool token_budget_policy_failed =
-        emit_llm_token_budget_policy_diagnostics(llm_provider, err);
-    return result.status == WorkflowStatus::Completed && !result.has_errors() &&
-                   !token_budget_policy_failed
+    if (result.diagnostics.has_error() || result.diagnostics.has_warning()) {
+        result.diagnostics.render(err, std::nullopt, true);
+    }
+    return result.status() == ahfl::runtime::WorkflowStatus::Completed && !result.has_errors() &&
+                   result.report.status == ahfl::runtime::RunTerminalStatus::Completed
                ? 0
                : 1;
 }

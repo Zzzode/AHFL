@@ -883,15 +883,13 @@ EvalResult builtin_cmp_raw_compare(const std::vector<Value> &args, const EvalCon
 EvalResult builtin_result_ok(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 1)
         return arg_count_error(1, args.size());
-    return EvalResult{make_enum("std::result::Result", "Ok",
-                                std::make_unique<Value>(clone_value(args[0]))), {}};
+    return EvalResult{make_enum("std::result::Result", "Ok", clone_value(args[0])), {}};
 }
 
 EvalResult builtin_result_err(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (args.size() != 1)
         return arg_count_error(1, args.size());
-    return EvalResult{make_enum("std::result::Result", "Err",
-                                std::make_unique<Value>(clone_value(args[0]))), {}};
+    return EvalResult{make_enum("std::result::Result", "Err", clone_value(args[0])), {}};
 }
 
 EvalResult builtin_option_some(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
@@ -999,9 +997,9 @@ EvalResult builtin_uuid_from_string(const std::vector<Value> &args, const EvalCo
     if (!sv)
         return make_error("uuid_from_string: argument must be a String");
     if (auto v = make_uuid(sv->value)) {
-        return EvalResult{make_optional_some(std::move(*v)), {}};
+        return EvalResult{make_option_some(std::move(*v)), {}};
     }
-    return EvalResult{make_optional_none(), {}};
+    return EvalResult{make_option_none(), {}};
 }
 
 EvalResult builtin_uuid_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
@@ -1067,7 +1065,8 @@ void json_escape(std::string &out, std::string_view in) {
             return true;
         }
         if (var == "JBool") {
-            const Value *p = ev->associated.get();
+            const Value *p =
+                ev->payload.size() == 1 ? ev->payload.front().get() : nullptr;
             if (p == nullptr) return false;
             const auto *bv = std::get_if<BoolValue>(&p->node);
             if (bv == nullptr) return false;
@@ -1075,7 +1074,8 @@ void json_escape(std::string &out, std::string_view in) {
             return true;
         }
         if (var == "JInt") {
-            const Value *p = ev->associated.get();
+            const Value *p =
+                ev->payload.size() == 1 ? ev->payload.front().get() : nullptr;
             if (p == nullptr) return false;
             const auto *iv = std::get_if<IntValue>(&p->node);
             if (iv == nullptr) return false;
@@ -1083,7 +1083,8 @@ void json_escape(std::string &out, std::string_view in) {
             return true;
         }
         if (var == "JFloat") {
-            const Value *p = ev->associated.get();
+            const Value *p =
+                ev->payload.size() == 1 ? ev->payload.front().get() : nullptr;
             if (p == nullptr) return false;
             const auto *fv = std::get_if<FloatValue>(&p->node);
             if (fv == nullptr) return false;
@@ -1093,7 +1094,8 @@ void json_escape(std::string &out, std::string_view in) {
             return true;
         }
         if (var == "JText") {
-            const Value *p = ev->associated.get();
+            const Value *p =
+                ev->payload.size() == 1 ? ev->payload.front().get() : nullptr;
             if (p == nullptr) return false;
             const auto *sv = std::get_if<StringValue>(&p->node);
             if (sv == nullptr) return false;
@@ -1101,29 +1103,29 @@ void json_escape(std::string &out, std::string_view in) {
             return true;
         }
         if (var == "JList") {
-            // Payload is a List<...> via associated->ListValue or a payload vector.
-            if (ev->associated) {
-                if (const auto *lv = std::get_if<ListValue>(&ev->associated->node)) {
-                    return emit_enum_payload_list(lv->items, out);
-                }
+            if (ev->payload.size() != 1 || !ev->payload.front()) {
+                return false;
             }
-            return emit_enum_payload_list(ev->payload, out);
+            const auto *list = std::get_if<ListValue>(&ev->payload.front()->node);
+            return list != nullptr && emit_enum_payload_list(list->items, out);
         }
         if (var == "JEntries") {
-            // Emit as a JSON object: key-value pairs.
+            if (ev->payload.size() != 1 || !ev->payload.front()) {
+                return false;
+            }
+            const auto *map = std::get_if<MapValue>(&ev->payload.front()->node);
+            if (map == nullptr) {
+                return false;
+            }
             out.push_back('{');
-            if (ev->associated) {
-                if (const auto *mv = std::get_if<MapValue>(&ev->associated->node)) {
-                    for (size_t i = 0; i < mv->entries.size(); ++i) {
-                        if (i != 0) out.push_back(',');
-                        const Value *k = mv->entries[i].first.get();
-                        const auto *ksv = std::get_if<StringValue>(&k->node);
-                        if (ksv == nullptr) return false;
-                        json_escape(out, ksv->value);
-                        out.push_back(':');
-                        if (!emit_value(*mv->entries[i].second, out)) return false;
-                    }
-                }
+            for (size_t i = 0; i < map->entries.size(); ++i) {
+                if (i != 0) out.push_back(',');
+                const Value *key = map->entries[i].first.get();
+                const auto *string_key = std::get_if<StringValue>(&key->node);
+                if (string_key == nullptr) return false;
+                json_escape(out, string_key->value);
+                out.push_back(':');
+                if (!emit_value(*map->entries[i].second, out)) return false;
             }
             out.push_back('}');
             return true;
@@ -1208,12 +1210,10 @@ struct Parser {
     }
     std::optional<JsonV> parse_bool() {
         if (expect("true")) {
-            return make_enum("std::json::JsonValue", "JBool",
-                             std::make_unique<Value>(make_bool(true)));
+            return make_enum("std::json::JsonValue", "JBool", make_bool(true));
         }
         if (expect("false")) {
-            return make_enum("std::json::JsonValue", "JBool",
-                             std::make_unique<Value>(make_bool(false)));
+            return make_enum("std::json::JsonValue", "JBool", make_bool(false));
         }
         return std::nullopt;
     }
@@ -1245,22 +1245,19 @@ struct Parser {
         if (is_float) {
             try {
                 double d = std::stod(lexeme);
-                return make_enum("std::json::JsonValue", "JFloat",
-                                 std::make_unique<Value>(make_float(d)));
+                return make_enum("std::json::JsonValue", "JFloat", make_float(d));
             } catch (...) {
                 return std::nullopt;
             }
         } else {
             try {
                 int64_t i = std::stoll(lexeme);
-                return make_enum("std::json::JsonValue", "JInt",
-                                 std::make_unique<Value>(make_int(i)));
+                return make_enum("std::json::JsonValue", "JInt", make_int(i));
             } catch (...) {
                 // Overflow — try double.
                 try {
                     double d = std::stod(lexeme);
-                    return make_enum("std::json::JsonValue", "JFloat",
-                                     std::make_unique<Value>(make_float(d)));
+                    return make_enum("std::json::JsonValue", "JFloat", make_float(d));
                 } catch (...) {
                     return std::nullopt;
                 }
@@ -1321,8 +1318,7 @@ struct Parser {
     std::optional<JsonV> parse_string() {
         auto s = parse_raw_string();
         if (!s) return std::nullopt;
-        return make_enum("std::json::JsonValue", "JText",
-                         std::make_unique<Value>(make_string(std::move(*s))));
+        return make_enum("std::json::JsonValue", "JText", make_string(std::move(*s)));
     }
     std::optional<JsonV> parse_array() {
         if (!expect('[')) return std::nullopt;
@@ -1342,9 +1338,7 @@ struct Parser {
             }
         }
         if (!expect(']')) return std::nullopt;
-        auto list_val = std::make_unique<Value>();
-        list_val->node = std::move(list);
-        return make_enum("std::json::JsonValue", "JList", std::move(list_val));
+        return make_enum("std::json::JsonValue", "JList", Value{std::move(list)});
     }
     std::optional<JsonV> parse_object() {
         if (!expect('{')) return std::nullopt;
@@ -1382,9 +1376,7 @@ struct Parser {
             }
         }
         if (!expect('}')) return std::nullopt;
-        auto map_val = std::make_unique<Value>();
-        map_val->node = std::move(map);
-        return make_enum("std::json::JsonValue", "JEntries", std::move(map_val));
+        return make_enum("std::json::JsonValue", "JEntries", Value{std::move(map)});
     }
 };
 
@@ -1400,13 +1392,13 @@ EvalResult builtin_json_parse_raw(const std::vector<Value> &args, const EvalCont
     json_impl::Parser p{std::string_view(sv->value), 0};
     auto result = p.parse_value();
     if (!result) {
-        return EvalResult{make_optional_none(), {}};
+        return EvalResult{make_option_none(), {}};
     }
     p.skip_ws();
     if (!p.eof()) {
-        return EvalResult{make_optional_none(), {}};
+        return EvalResult{make_option_none(), {}};
     }
-    return EvalResult{make_optional_some(std::move(*result)), {}};
+    return EvalResult{make_option_some(std::move(*result)), {}};
 }
 
 /// json_emit_raw(v: JsonValue) -> String

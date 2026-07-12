@@ -22,8 +22,6 @@ add_library(ahfl_pipeline_validation INTERFACE)
 target_include_directories(ahfl_pipeline_validation INTERFACE ${PROJECT_SOURCE_DIR}/src)
 
 add_subdirectory(pipeline/execution)
-add_subdirectory(pipeline/observation)
-add_subdirectory(pipeline/persistence)
 add_subdirectory(runtime/evaluator)
 add_subdirectory(runtime/engine)
 add_subdirectory(runtime/providers/llm)
@@ -65,8 +63,6 @@ target_link_libraries(ahfl_runtime_bundle
         ahfl_pipeline_execution
         ahfl_runtime_evaluator
         ahfl_runtime_engine
-        ahfl_pipeline_observation
-        ahfl_pipeline_durable_store_import
         ahfl_verification_formal
         ahfl_runtime_provider_llm
         ahfl_runtime_provider_secret

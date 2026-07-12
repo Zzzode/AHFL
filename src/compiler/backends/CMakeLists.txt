@@ -16,61 +16,23 @@ if(AHFL_ENABLE_BACKEND_FORMAL)
     ahfl_apply_project_warnings(ahfl_compiler_backend_smv)
 endif()
 
-# --- Pipeline observation/persistence/execution backends ---
+# --- Pipeline handoff and deterministic dry-run backends ---
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     add_library(ahfl_compiler_backend_pipeline_common STATIC
         pipeline/json_helpers.cpp
-        pipeline/review_helpers.cpp
     )
 
     target_link_libraries(ahfl_compiler_backend_pipeline_common
         PUBLIC
             ahfl_compiler_ir
-            ahfl_pipeline_observation
-            ahfl_pipeline_persistence
             ahfl_pipeline_execution
             ahfl_compiler_handoff
     )
 
     ahfl_apply_project_warnings(ahfl_compiler_backend_pipeline_common)
 
-    # -- Observation domain --
-    add_library(ahfl_compiler_backend_pipeline_observation STATIC
-        pipeline/audit_report.cpp
-        pipeline/scheduler_snapshot.cpp
-        pipeline/checkpoint_record.cpp
-        pipeline/checkpoint_review.cpp
-        pipeline/scheduler_review.cpp
-    )
-
-    target_link_libraries(ahfl_compiler_backend_pipeline_observation
-        PUBLIC ahfl_compiler_backend_pipeline_common
-    )
-
-    ahfl_apply_project_warnings(ahfl_compiler_backend_pipeline_observation)
-
-    # -- Persistence domain --
-    add_library(ahfl_compiler_backend_pipeline_persistence STATIC
-        pipeline/persistence_descriptor.cpp
-        pipeline/persistence_review.cpp
-        pipeline/persistence_export_manifest.cpp
-        pipeline/persistence_export_review.cpp
-        pipeline/store_import_descriptor.cpp
-        pipeline/store_import_review.cpp
-    )
-
-    target_link_libraries(ahfl_compiler_backend_pipeline_persistence
-        PUBLIC ahfl_compiler_backend_pipeline_common
-    )
-
-    ahfl_apply_project_warnings(ahfl_compiler_backend_pipeline_persistence)
-
-    # -- Execution domain --
     add_library(ahfl_compiler_backend_pipeline_execution STATIC
-        pipeline/execution_journal.cpp
-        pipeline/replay_view.cpp
         pipeline/dry_run_trace.cpp
-        pipeline/runtime_session.cpp
     )
 
     target_link_libraries(ahfl_compiler_backend_pipeline_execution
@@ -158,8 +120,6 @@ endif()
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     list(APPEND _backend_targets
         ahfl_compiler_backend_pipeline_common
-        ahfl_compiler_backend_pipeline_observation
-        ahfl_compiler_backend_pipeline_persistence
         ahfl_compiler_backend_pipeline_execution
         ahfl_compiler_backend_pipeline_handoff
         ahfl_compiler_backend_assurance
@@ -192,8 +152,6 @@ if(AHFL_ENABLE_BACKEND_FORMAL)
 endif()
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     target_link_libraries(ahfl_compiler_backends PUBLIC
-        ahfl_compiler_backend_pipeline_observation
-        ahfl_compiler_backend_pipeline_persistence
         ahfl_compiler_backend_pipeline_execution
         ahfl_compiler_backend_pipeline_handoff
         ahfl_compiler_backend_assurance

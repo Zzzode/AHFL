@@ -1,0 +1,67 @@
+{
+  "schema": "ahfl.readme-capabilities.v1",
+  "claims": [
+    {
+      "id": "BETA-01",
+      "evidence_schema": "ahfl.beta-evidence.run-profiles.v1",
+      "english": "Manifest run profiles launch the reference workflow without repeated CLI configuration.",
+      "chinese": "Manifest run profile 可直接启动 reference workflow，无需重复提供 CLI 配置。"
+    },
+    {
+      "id": "BETA-02",
+      "evidence_schema": "ahfl.beta-evidence.runtime-identity.v1",
+      "english": "Runtime workflow, node, agent, capability, invocation, value, and event associations use strong numeric IDs.",
+      "chinese": "Runtime 的 workflow、node、agent、capability、invocation、value 与 event 关联使用强类型数值 ID。"
+    },
+    {
+      "id": "BETA-03",
+      "evidence_schema": "ahfl.beta-evidence.event-projections.v1",
+      "english": "One flat event store drives human, JSON, JSONL, replay, and audit projections.",
+      "chinese": "单一 flat event store 驱动 human、JSON、JSONL、replay 与 audit 投影。"
+    },
+    {
+      "id": "BETA-04",
+      "evidence_schema": "ahfl.beta-evidence.lifecycle-matrix.v1",
+      "english": "Accepted success and failure lifecycle paths have unique terminal events.",
+      "chinese": "已接受的成功与失败生命周期路径都具有唯一 terminal event。"
+    },
+    {
+      "id": "BETA-05",
+      "evidence_schema": "ahfl.beta-evidence.formatter-idempotence.v1",
+      "english": "The AHFL formatter is lossless and idempotent over std/ and formatter fixtures, and its CI gate is blocking.",
+      "chinese": "AHFL formatter 对 std/ 与 formatter fixtures 无损且幂等，并由阻断式 CI gate 检查。"
+    },
+    {
+      "id": "BETA-06",
+      "evidence_schema": "ahfl.beta-evidence.stdlib-container-migration.v1",
+      "english": "Core containers resolve as nominal stdlib generics with no legacy runtime Option representation or migration flag.",
+      "chinese": "核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。"
+    },
+    {
+      "id": "BETA-07",
+      "evidence_schema": "ahfl.beta-evidence.reference-workflow-recovery.v1",
+      "english": "The reference workflow passes local HTTP provider fault injection, SIGKILL restart, operator-approved resume, partial-write recovery, and side-effect deduplication.",
+      "chinese": "Reference workflow 已通过本地 HTTP provider 故障注入、SIGKILL 重启、operator approval 恢复、partial-write recovery 与副作用去重。"
+    },
+    {
+      "id": "BETA-08",
+      "evidence_schema": "ahfl.beta-evidence.install-smoke.v1",
+      "english": "Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.",
+      "chinese": "Clean-prefix 安装包含 ahflc、ahfl-lsp 与 sysroot；platform VSIX 包含 release LSP 与 sysroot，并通过隔离安装。"
+    },
+    {
+      "id": "BETA-10",
+      "evidence_schema": "ahfl.beta-evidence.product-scope-freeze.v1",
+      "english": "The beta product surface is frozen; new actions, backends, and artifacts require an accepted RFC.",
+      "chinese": "Beta 产品面保持冻结；新增 action、backend 或 artifact 必须先有 accepted RFC。"
+    }
+  ],
+  "forbidden_claim_patterns": [
+    "production[- ]ready",
+    "production grade",
+    "native gRPC.{0,40}(supported|ready|available)",
+    "multi[- ]region.{0,40}(supported|ready|available)",
+    "official package registry.{0,40}(supported|ready|available)",
+    "Marketplace.{0,40}published"
+  ]
+}

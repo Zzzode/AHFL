@@ -237,8 +237,8 @@ def write_config(
     )
 
 
-def run_ahflc(ahflc, source_path, config_path, observability_path, env):
-    return subprocess.run(
+def run_ahflc(ahflc, source_path, config_path, events_path, env):
+    result = subprocess.run(
         [
             ahflc,
             "run",
@@ -248,8 +248,10 @@ def run_ahflc(ahflc, source_path, config_path, observability_path, env):
             '{"_type":"smoke::Request","value":"hello"}',
             "--llm-config",
             str(config_path),
-            "--llm-observability",
-            str(observability_path),
+            "--output-format",
+            "jsonl",
+            "--verbosity",
+            "trace",
             str(source_path),
         ],
         env=env,
@@ -258,6 +260,8 @@ def run_ahflc(ahflc, source_path, config_path, observability_path, env):
         text=True,
         timeout=20,
     )
+    events_path.write_text(result.stdout, encoding="utf-8")
+    return result
 
 
 def assert_secret_free_text(text, forbidden_values, label):
@@ -273,34 +277,20 @@ def assert_success_artifact(
     expected_provider_prefix=None,
 ):
     if not path.exists():
-        raise AssertionError(f"missing LLM observability artifact: {path}")
+        raise AssertionError(f"missing canonical execution event stream: {path}")
     text = path.read_text(encoding="utf-8")
-    assert_secret_free_text(text, forbidden_values, "LLM observability artifact")
-    artifact = json.loads(text)
-    if artifact.get("schema") != "ahfl.llm_provider_observability.v0":
-        raise AssertionError(f"unexpected schema: {artifact.get('schema')!r}")
-    if artifact.get("secret_free") is not True:
-        raise AssertionError("artifact is not marked secret_free")
-    if not expect_secret_refresh:
-        return
-
-    lifecycle_events = artifact.get("secret_lifecycle_events", [])
-    lifecycle_kinds = [event.get("kind") for event in lifecycle_events]
-    if "refresh" not in lifecycle_kinds or "resolve" not in lifecycle_kinds:
-        raise AssertionError(f"missing refresh/resolve lifecycle events: {artifact}")
-    if artifact.get("secret_lifecycle_event_count") != len(lifecycle_events):
-        raise AssertionError("secret_lifecycle_event_count does not match lifecycle events")
-    if expected_provider_prefix is not None:
-        prefixes = {event.get("provider_prefix") for event in lifecycle_events}
-        if expected_provider_prefix not in prefixes:
-            raise AssertionError(
-                f"missing provider prefix {expected_provider_prefix!r} in {lifecycle_events!r}"
-            )
-    for event in lifecycle_events:
-        if "key_fingerprint" not in event:
-            raise AssertionError(f"lifecycle event missing fingerprint: {event!r}")
-        if event.get("secret_free") is not True:
-            raise AssertionError(f"lifecycle event not marked secret_free: {event!r}")
+    assert_secret_free_text(text, forbidden_values, "canonical execution event stream")
+    events = [json.loads(line) for line in text.splitlines() if line]
+    if not events:
+        raise AssertionError("canonical execution event stream is empty")
+    if any(event.get("schema") != "ahfl.run-event" for event in events):
+        raise AssertionError(f"unexpected execution event schema: {events!r}")
+    if [event.get("event_id") for event in events] != list(range(len(events))):
+        raise AssertionError(f"execution event ids are not contiguous: {events!r}")
+    if events[-1].get("type") != "run_completed":
+        raise AssertionError(f"execution event stream lacks terminal run event: {events!r}")
+    if events[-1].get("payload", {}).get("status") != "completed":
+        raise AssertionError(f"secret-backed run did not complete: {events[-1]!r}")
 
 
 def run_secret_case(ahflc, run_dir, source_path, provider_kind, mode):

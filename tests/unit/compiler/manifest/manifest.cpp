@@ -160,6 +160,117 @@ risk-model = { source = "registry", registry = "default", version = "^2.1.0" }
     CHECK(has_message(result.diagnostics, "unsupported dependency source 'registry'"));
 }
 
+TEST_CASE("Package manifest parses default run configuration and sparse profiles") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "execution-demo"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "execution_demo"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "execution_demo::main::IncidentWorkflow"
+exports = [{ kind = "workflow", name = "execution_demo::main::IncidentWorkflow" }]
+
+[run]
+target = "workflow"
+input = "inputs/high-severity.json"
+llm_config = "llm_config.example.json"
+output_format = "human"
+verbosity = "normal"
+
+[run.profiles.low-risk]
+input = "inputs/low-risk.json"
+output_format = "json"
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE_FALSE(result.has_errors());
+    REQUIRE(result.manifest.has_value());
+    REQUIRE(result.manifest->run.has_value());
+    CHECK(result.manifest->run->target == "workflow");
+    CHECK(result.manifest->run->input == "inputs/high-severity.json");
+    CHECK(result.manifest->run->llm_config == "llm_config.example.json");
+    CHECK(result.manifest->run->output_format == "human");
+    CHECK(result.manifest->run->verbosity == "normal");
+    REQUIRE(result.manifest->run->profiles.size() == 1);
+    const auto &profile = result.manifest->run->profiles.front();
+    CHECK(profile.name == "low-risk");
+    REQUIRE(profile.input.has_value());
+    CHECK(*profile.input == "inputs/low-risk.json");
+    CHECK_FALSE(profile.llm_config.has_value());
+    REQUIRE(profile.output_format.has_value());
+    CHECK(*profile.output_format == "json");
+    CHECK_FALSE(profile.verbosity.has_value());
+
+    const auto canonical = ahfl::manifest::canonicalize_package_manifest(*result.manifest);
+    CHECK(canonical.find("[run]\ntarget = \"workflow\"\ninput = "
+                         "\"inputs/high-severity.json\"") != std::string::npos);
+    CHECK(canonical.find("[run.profiles.low-risk]\ninput = \"inputs/low-risk.json\"") !=
+          std::string::npos);
+}
+
+TEST_CASE("Package manifest rejects invalid run formats and escaping paths") {
+    constexpr std::string_view input = R"TOML(manifest_version = 1
+
+[package]
+name = "execution-demo"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "execution_demo"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "execution_demo::main::IncidentWorkflow"
+exports = [{ kind = "workflow", name = "execution_demo::main::IncidentWorkflow" }]
+
+[run]
+target = "missing"
+input = "../secret.json"
+llm_config = "/tmp/llm.json"
+output_format = "xml"
+verbosity = "debug"
+
+[run.profiles."Bad Profile"]
+input = "inputs/low.json"
+
+[dependencies]
+std = { source = "sysroot" }
+)TOML";
+
+    const auto result = ahfl::manifest::parse_package_manifest(input);
+    REQUIRE(result.has_errors());
+    CHECK(has_message(result.diagnostics, "run.target references unknown target 'missing'"));
+    CHECK(has_message(result.diagnostics, "run.input must be a relative path inside the package"));
+    CHECK(has_message(result.diagnostics,
+                      "run.llm_config must be a relative path inside the package"));
+    CHECK(has_message(result.diagnostics,
+                      "run.output_format must be human, json, jsonl, or quiet"));
+    CHECK(has_message(result.diagnostics,
+                      "run.verbosity must be normal, verbose, or trace"));
+    CHECK(has_message(result.diagnostics,
+                      "run profile name must be kebab-case or snake_case"));
+}
+
 TEST_CASE("Package manifest canonicalization is schema ordered and formatting insensitive") {
     constexpr std::string_view first = R"TOML(manifest_version = 1
 

@@ -25,7 +25,17 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/compiler/syntax/parser/generated/
 # M0-4 / blocker B4.
 install(DIRECTORY ${PROJECT_SOURCE_DIR}/std/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/ahfl/std
-    FILES_MATCHING PATTERN "*.ahfl"
+    FILES_MATCHING
+        PATTERN "*.ahfl"
+        PATTERN "ahfl.toml"
+)
+
+# User-facing toolchain executables. Keep these outside AHFLTargets: consumers
+# link the public CMake target, while end users execute the installed tools.
+install(TARGETS
+    ahflc
+    ahfl-lsp
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 # Libraries
@@ -50,16 +60,8 @@ set(AHFL_INTERNAL_INSTALL_TARGETS
     ahfl_compiler_assurance
     ahfl_compiler_handoff
     ahfl_pipeline_execution
-    ahfl_pipeline_observation
-    ahfl_pipeline_persistence
-    ahfl_pipeline_durable_store_import_core
-    ahfl_pipeline_durable_store_import_providers
-    ahfl_pipeline_durable_store_import_artifacts
-    ahfl_pipeline_durable_store_import
     ahfl_compiler_backend_smv
     ahfl_compiler_backend_pipeline_common
-    ahfl_compiler_backend_pipeline_observation
-    ahfl_compiler_backend_pipeline_persistence
     ahfl_compiler_backend_pipeline_execution
     ahfl_compiler_backend_pipeline_handoff
     ahfl_compiler_backend_assurance

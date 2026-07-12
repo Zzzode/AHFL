@@ -64,6 +64,9 @@ class AgentRuntime {
     void set_capability_invoker(CapabilityInvoker invoker);
     void set_contextual_capability_invoker(ContextualCapabilityInvoker invoker);
     void set_invocation_context(CapabilityInvocationContext context);
+    using StateEnteredObserver =
+        std::function<AgentStateId(AgentId agent, std::string_view state_name)>;
+    void set_state_entered_observer(StateEnteredObserver observer);
 
     // Execute the agent, starting from the initial state
     [[nodiscard]] AgentResult run(Value input);
@@ -78,6 +81,7 @@ class AgentRuntime {
     CapabilityInvoker capability_invoker_;
     ContextualCapabilityInvoker contextual_capability_invoker_;
     CapabilityInvocationContext invocation_context_;
+    StateEnteredObserver state_entered_observer_;
 
     // Find the state handler
     [[nodiscard]] const ir::StateHandler *find_handler(const std::string &state_name) const;

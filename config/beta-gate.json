@@ -1,0 +1,107 @@
+{
+  "schema": "ahfl.beta-gate.v1",
+  "rfc": "0012",
+  "tracking_issue": "https://github.com/Zzzode/AHFL/issues/16",
+  "criteria": [
+    {
+      "id": "BETA-01",
+      "title": "Manifest run profiles launch without repeated CLI configuration",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/run-profiles.json",
+          "schema": "ahfl.beta-evidence.run-profiles.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-02",
+      "title": "Runtime associations use strong numeric identity",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/runtime-identity.json",
+          "schema": "ahfl.beta-evidence.runtime-identity.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-03",
+      "title": "One event store drives human JSON JSONL replay and audit",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/event-projections.json",
+          "schema": "ahfl.beta-evidence.event-projections.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-04",
+      "title": "All accepted lifecycle paths have unique terminal events",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/lifecycle-matrix.json",
+          "schema": "ahfl.beta-evidence.lifecycle-matrix.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-05",
+      "title": "Formatter is idempotent and blocking in CI",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/formatter-idempotence.json",
+          "schema": "ahfl.beta-evidence.formatter-idempotence.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-06",
+      "title": "Beta package path has no legacy container semantic fallback",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/stdlib-container-migration.json",
+          "schema": "ahfl.beta-evidence.stdlib-container-migration.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-07",
+      "title": "Reference workflow passes fault injection and crash recovery",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/reference-workflow-recovery.json",
+          "schema": "ahfl.beta-evidence.reference-workflow-recovery.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-08",
+      "title": "CLI sysroot and VSIX install in clean environments",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/install-smoke.json",
+          "schema": "ahfl.beta-evidence.install-smoke.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-09",
+      "title": "README capability claims are release-evidence backed",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/readme-capabilities.json",
+          "schema": "ahfl.beta-evidence.readme-capabilities.v1"
+        }
+      ]
+    },
+    {
+      "id": "BETA-10",
+      "title": "Product scope freeze remains intact",
+      "evidence": [
+        {
+          "path": "build/release-evidence/beta/product-scope-freeze.json",
+          "schema": "ahfl.beta-evidence.product-scope-freeze.v1"
+        }
+      ]
+    }
+  ]
+}

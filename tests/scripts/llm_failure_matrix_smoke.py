@@ -433,7 +433,7 @@ def run_ahflc(
     ahflc,
     source_path,
     config_path,
-    observability_path,
+    events_path,
     capability_mocks_path=None,
     tool_catalog_path=None,
 ):
@@ -448,15 +448,17 @@ def run_ahflc(
         '{"_type":"smoke::Request","value":"hello"}',
         "--llm-config",
         str(config_path),
-        "--llm-observability",
-        str(observability_path),
+        "--output-format",
+        "jsonl",
+        "--verbosity",
+        "trace",
     ]
     if capability_mocks_path is not None:
         command.extend(["--capability-mocks", str(capability_mocks_path)])
     if tool_catalog_path is not None:
         command.extend(["--tool-catalog", str(tool_catalog_path)])
     command.append(str(source_path))
-    return subprocess.run(
+    result = subprocess.run(
         command,
         env=env,
         stdout=subprocess.PIPE,
@@ -464,59 +466,69 @@ def run_ahflc(
         text=True,
         timeout=20,
     )
+    events_path.write_text(result.stdout, encoding="utf-8")
+    return result
 
 
-def load_artifact(path):
+def load_events(path):
     if not path.exists():
-        raise AssertionError(f"missing observability artifact: {path}")
+        raise AssertionError(f"missing canonical execution event stream: {path}")
     text = path.read_text(encoding="utf-8")
     if "failure-matrix-secret" in text:
-        raise AssertionError("secret value leaked into LLM observability artifact")
-    artifact = json.loads(text)
-    if artifact.get("schema") != "ahfl.llm_provider_observability.v0":
-        raise AssertionError(f"unexpected schema: {artifact.get('schema')!r}")
-    if artifact.get("secret_free") is not True:
-        raise AssertionError("artifact is not marked secret_free")
-    return artifact
+        raise AssertionError("secret value leaked into canonical execution events")
+    events = [json.loads(line) for line in text.splitlines() if line]
+    if any(event.get("schema") != "ahfl.run-event" for event in events):
+        raise AssertionError(f"unexpected execution event schema: {events!r}")
+    if [event.get("event_id") for event in events] != list(range(len(events))):
+        raise AssertionError(f"execution event ids are not contiguous: {events!r}")
+    return events
 
 
-def assert_contains(values, expected, label):
-    if expected not in values:
-        raise AssertionError(f"{label} missing {expected!r}: {values!r}")
-
-
-def assert_degradation_summary(artifact, *, outcome, status, selected_provider, degraded):
-    summary = artifact.get("provider_degradation_summary")
-    if not isinstance(summary, dict):
-        raise AssertionError(f"missing provider_degradation_summary: {artifact}")
-    if summary.get("schema") != "ahfl.llm_provider_degradation_summary.v0":
-        raise AssertionError(f"unexpected degradation summary schema: {summary}")
-    if summary.get("secret_free") is not True:
-        raise AssertionError(f"degradation summary is not secret-free: {summary}")
-    if summary.get("outcome") != outcome:
-        raise AssertionError(f"unexpected degradation outcome: {summary}")
-    if summary.get("status") != status:
-        raise AssertionError(f"unexpected degradation status: {summary}")
-    if summary.get("selected_provider") != selected_provider:
-        raise AssertionError(f"unexpected selected provider: {summary}")
-    degraded_providers = summary.get("degraded_providers")
-    if not isinstance(degraded_providers, list):
-        raise AssertionError(f"degraded_providers is not a list: {summary}")
-    for provider in degraded:
-        assert_contains(degraded_providers, provider, "degraded providers")
-    if summary.get("degraded_provider_count") != len(degraded_providers):
-        raise AssertionError(f"degraded provider count mismatch: {summary}")
-    if summary.get("fallback_exhausted") != (outcome == "fallback_exhausted"):
-        raise AssertionError(f"fallback_exhausted mismatch: {summary}")
-    if summary.get("total_attempts", 0) < len(degraded):
-        raise AssertionError(f"total_attempts does not cover degraded providers: {summary}")
+def assert_terminal_execution(path, expected_status):
+    events = load_events(path)
+    if not events:
+        raise AssertionError("canonical execution event stream is empty")
+    types = [event.get("type") for event in events]
+    for required in ("run_started", "workflow_started", "capability_started", "run_completed"):
+        if required not in types:
+            raise AssertionError(f"execution event stream lacks {required}: {events!r}")
+    if events[-1].get("type") != "run_completed":
+        raise AssertionError(f"run terminal event is not last: {events!r}")
+    if events[-1].get("payload", {}).get("status") != expected_status:
+        raise AssertionError(
+            f"run status is not {expected_status!r}: {events[-1]!r}"
+        )
+    terminal_capabilities = types.count("capability_completed") + types.count(
+        "capability_failed"
+    )
+    if terminal_capabilities != types.count("capability_started"):
+        raise AssertionError(f"capability terminal invariant failed: {events!r}")
+    if expected_status == "failed":
+        materialized = [
+            event.get("payload", {}).get("diagnostic")
+            for event in events
+            if event.get("type") in ("capability_failed", "node_failed", "workflow_failed")
+            and isinstance(event.get("payload", {}).get("diagnostic"), dict)
+        ]
+        if not materialized:
+            raise AssertionError(f"failed run has no materialized diagnostic: {events!r}")
+        if not any(
+            diagnostic.get("message")
+            and diagnostic.get("code")
+            and isinstance(diagnostic.get("range"), dict)
+            for diagnostic in materialized
+        ):
+            raise AssertionError(
+                f"failed run diagnostic lacks code, message, or source range: {materialized!r}"
+            )
+    return events
 
 
 def run_auth_failure(ahflc, work_dir, source_path):
     server = start_server(UnauthorizedHandler)
     try:
         config_path = work_dir / "auth_failure_config.json"
-        observability_path = work_dir / "auth_failure_observability.json"
+        events_path = work_dir / "auth_failure_events.jsonl"
         config_path.write_text(
             json.dumps(
                 {
@@ -531,7 +543,7 @@ def run_auth_failure(ahflc, work_dir, source_path):
             ),
             encoding="utf-8",
         )
-        result = run_ahflc(ahflc, source_path, config_path, observability_path)
+        result = run_ahflc(ahflc, source_path, config_path, events_path)
     finally:
         stop_servers(server)
 
@@ -541,26 +553,9 @@ def run_auth_failure(ahflc, work_dir, source_path):
     if "status=401" not in combined_output:
         raise AssertionError(f"missing HTTP 401 authentication diagnostic:\n{combined_output}")
 
-    artifact = load_artifact(observability_path)
-    health_kinds = [event.get("kind") for event in artifact.get("provider_health_events", [])]
-    cache_kinds = [event.get("kind") for event in artifact.get("cache_events", [])]
-    assert_contains(cache_kinds, "miss", "auth failure cache events")
-    assert_contains(health_kinds, "provider_degraded", "auth failure health events")
-    assert_contains(health_kinds, "fallback_exhausted", "auth failure health events")
-
-    degraded = [
-        event.get("provider")
-        for event in artifact.get("provider_health_events", [])
-        if event.get("kind") == "provider_degraded"
-    ]
-    assert_contains(degraded, "primary", "degraded providers")
-    assert_degradation_summary(
-        artifact,
-        outcome="fallback_exhausted",
-        status="exhausted",
-        selected_provider="",
-        degraded=["primary"],
-    )
+    events = assert_terminal_execution(events_path, "failed")
+    if not any(event.get("type") == "capability_failed" for event in events):
+        raise AssertionError(f"auth failure lacks capability_failed event: {events!r}")
 
 
 def run_fallback_exhausted(ahflc, work_dir, source_path):
@@ -568,7 +563,7 @@ def run_fallback_exhausted(ahflc, work_dir, source_path):
     backup = start_server(FailingHandler)
     try:
         config_path = work_dir / "fallback_exhausted_config.json"
-        observability_path = work_dir / "fallback_exhausted_observability.json"
+        events_path = work_dir / "fallback_exhausted_events.jsonl"
         config_path.write_text(
             json.dumps(
                 {
@@ -592,7 +587,7 @@ def run_fallback_exhausted(ahflc, work_dir, source_path):
             ),
             encoding="utf-8",
         )
-        result = run_ahflc(ahflc, source_path, config_path, observability_path)
+        result = run_ahflc(ahflc, source_path, config_path, events_path)
     finally:
         stop_servers(primary, backup)
 
@@ -602,34 +597,17 @@ def run_fallback_exhausted(ahflc, work_dir, source_path):
     if "LLM provider fallback exhausted" not in combined_output:
         raise AssertionError(f"missing fallback exhausted diagnostic:\n{combined_output}")
 
-    artifact = load_artifact(observability_path)
-    health_kinds = [event.get("kind") for event in artifact.get("provider_health_events", [])]
-    cache_kinds = [event.get("kind") for event in artifact.get("cache_events", [])]
-    assert_contains(cache_kinds, "miss", "fallback exhausted cache events")
-    assert_contains(health_kinds, "provider_degraded", "fallback exhausted health events")
-    assert_contains(health_kinds, "fallback_exhausted", "fallback exhausted health events")
-
-    degraded = [
-        event.get("provider")
-        for event in artifact.get("provider_health_events", [])
-        if event.get("kind") == "provider_degraded"
-    ]
-    assert_contains(degraded, "primary", "degraded providers")
-    assert_contains(degraded, "backup", "degraded providers")
-    assert_degradation_summary(
-        artifact,
-        outcome="fallback_exhausted",
-        status="exhausted",
-        selected_provider="",
-        degraded=["primary", "backup"],
-    )
+    events = assert_terminal_execution(events_path, "failed")
+    types = [event.get("type") for event in events]
+    if types.count("capability_failed") != types.count("capability_started"):
+        raise AssertionError(f"fallback exhaustion lacks paired capability failure: {events!r}")
 
 
 def run_stream_interrupted(ahflc, work_dir, source_path):
     server = start_server(InterruptedStreamingHandler)
     try:
         config_path = work_dir / "stream_interrupted_config.json"
-        observability_path = work_dir / "stream_interrupted_observability.json"
+        events_path = work_dir / "stream_interrupted_events.jsonl"
         config_path.write_text(
             json.dumps(
                 {
@@ -645,7 +623,7 @@ def run_stream_interrupted(ahflc, work_dir, source_path):
             ),
             encoding="utf-8",
         )
-        result = run_ahflc(ahflc, source_path, config_path, observability_path)
+        result = run_ahflc(ahflc, source_path, config_path, events_path)
     finally:
         stop_servers(server)
 
@@ -655,12 +633,7 @@ def run_stream_interrupted(ahflc, work_dir, source_path):
     if "incomplete LLM streaming response: missing [DONE]" not in combined_output:
         raise AssertionError(f"missing interrupted streaming diagnostic:\n{combined_output}")
 
-    artifact = load_artifact(observability_path)
-    cache_kinds = [event.get("kind") for event in artifact.get("cache_events", [])]
-    stream_kinds = [event.get("kind") for event in artifact.get("streaming_events", [])]
-    assert_contains(cache_kinds, "miss", "interrupted streaming cache events")
-    assert_contains(stream_kinds, "chunk", "interrupted streaming events")
-    assert_contains(stream_kinds, "interrupted", "interrupted streaming events")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_tool_catalog_success(ahflc, work_dir, source_path):
@@ -669,7 +642,7 @@ def run_tool_catalog_success(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_catalog_success_config.json"
         tool_catalog_path = work_dir / "tool_catalog_success_catalog.json"
-        observability_path = work_dir / "tool_catalog_success_observability.json"
+        events_path = work_dir / "tool_catalog_success_events.jsonl"
         write_tool_catalog(tool_catalog_path)
         config_path.write_text(
             json.dumps(
@@ -687,7 +660,7 @@ def run_tool_catalog_success(ahflc, work_dir, source_path):
             ahflc,
             source_path,
             config_path,
-            observability_path,
+            events_path,
             tool_catalog_path=tool_catalog_path,
         )
     finally:
@@ -697,34 +670,25 @@ def run_tool_catalog_success(ahflc, work_dir, source_path):
         raise AssertionError(
             "tool catalog run unexpectedly failed:\n" + result.stdout + result.stderr
         )
-    if "catalog-success" not in result.stdout + result.stderr:
-        raise AssertionError(
-            "tool catalog run did not return catalog-success:\n"
-            + result.stdout
-            + result.stderr
-        )
     if len(ToolCatalogSuccessHandler.request_bodies) != 2:
         raise AssertionError(
             "tool catalog run should perform exactly two provider requests"
         )
 
-    artifact = load_artifact(observability_path)
-    if artifact.get("cache_event_count") != 0:
-        raise AssertionError("tool catalog success should not emit cache events")
-
-
-def assert_tool_failure_artifact(observability_path, label):
-    artifact = load_artifact(observability_path)
-    if artifact.get("cache_event_count") != 0:
-        raise AssertionError(f"{label} should not emit cache events")
-    if artifact.get("streaming_event_count") != 0:
-        raise AssertionError(f"{label} should not emit streaming events")
+    events = assert_terminal_execution(events_path, "completed")
+    completed = [event for event in events if event.get("type") == "capability_completed"]
+    if len(completed) != 1:
+        raise AssertionError(f"tool catalog run lacks capability completion: {events!r}")
+    if completed[0].get("payload", {}).get("output_value_id") is None:
+        raise AssertionError(
+            f"tool catalog completion does not reference its result value: {completed[0]!r}"
+        )
 
 
 def run_tool_catalog_invalid_schema(ahflc, work_dir, source_path):
     config_path = work_dir / "tool_catalog_invalid_schema_config.json"
     tool_catalog_path = work_dir / "tool_catalog_invalid_schema_catalog.json"
-    observability_path = work_dir / "tool_catalog_invalid_schema_observability.json"
+    events_path = work_dir / "tool_catalog_invalid_schema_events.jsonl"
     write_invalid_tool_catalog(tool_catalog_path)
     config_path.write_text(
         json.dumps(
@@ -742,7 +706,7 @@ def run_tool_catalog_invalid_schema(ahflc, work_dir, source_path):
         ahflc,
         source_path,
         config_path,
-        observability_path,
+        events_path,
         tool_catalog_path=tool_catalog_path,
     )
 
@@ -759,7 +723,7 @@ def run_tool_catalog_invalid_args(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_catalog_invalid_args_config.json"
         tool_catalog_path = work_dir / "tool_catalog_invalid_args_catalog.json"
-        observability_path = work_dir / "tool_catalog_invalid_args_observability.json"
+        events_path = work_dir / "tool_catalog_invalid_args_events.jsonl"
         write_tool_catalog(tool_catalog_path)
         config_path.write_text(
             json.dumps(
@@ -777,7 +741,7 @@ def run_tool_catalog_invalid_args(ahflc, work_dir, source_path):
             ahflc,
             source_path,
             config_path,
-            observability_path,
+            events_path,
             tool_catalog_path=tool_catalog_path,
         )
     finally:
@@ -791,7 +755,7 @@ def run_tool_catalog_invalid_args(ahflc, work_dir, source_path):
         raise AssertionError(
             f"missing catalog invalid tool arguments diagnostic:\n{combined_output}"
         )
-    assert_tool_failure_artifact(observability_path, "catalog invalid args")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_tool_catalog_unknown_tool(ahflc, work_dir, source_path):
@@ -799,7 +763,7 @@ def run_tool_catalog_unknown_tool(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_catalog_unknown_tool_config.json"
         tool_catalog_path = work_dir / "tool_catalog_unknown_tool_catalog.json"
-        observability_path = work_dir / "tool_catalog_unknown_tool_observability.json"
+        events_path = work_dir / "tool_catalog_unknown_tool_events.jsonl"
         write_tool_catalog(tool_catalog_path)
         config_path.write_text(
             json.dumps(
@@ -817,7 +781,7 @@ def run_tool_catalog_unknown_tool(ahflc, work_dir, source_path):
             ahflc,
             source_path,
             config_path,
-            observability_path,
+            events_path,
             tool_catalog_path=tool_catalog_path,
         )
     finally:
@@ -832,7 +796,7 @@ def run_tool_catalog_unknown_tool(ahflc, work_dir, source_path):
     )
     if expected not in combined_output:
         raise AssertionError(f"missing catalog unknown tool diagnostic:\n{combined_output}")
-    assert_tool_failure_artifact(observability_path, "catalog unknown tool")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_tool_catalog_error(ahflc, work_dir, source_path):
@@ -840,7 +804,7 @@ def run_tool_catalog_error(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_catalog_error_config.json"
         tool_catalog_path = work_dir / "tool_catalog_error_catalog.json"
-        observability_path = work_dir / "tool_catalog_error_observability.json"
+        events_path = work_dir / "tool_catalog_error_events.jsonl"
         write_tool_catalog(
             tool_catalog_path,
             [
@@ -871,7 +835,7 @@ def run_tool_catalog_error(ahflc, work_dir, source_path):
             ahflc,
             source_path,
             config_path,
-            observability_path,
+            events_path,
             tool_catalog_path=tool_catalog_path,
         )
     finally:
@@ -883,7 +847,7 @@ def run_tool_catalog_error(ahflc, work_dir, source_path):
     expected = "tool call failed for 'catalog_failure': catalog tool failure"
     if expected not in combined_output:
         raise AssertionError(f"missing catalog error tool diagnostic:\n{combined_output}")
-    assert_tool_failure_artifact(observability_path, "catalog error tool")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_tool_catalog_timeout(ahflc, work_dir, source_path):
@@ -891,7 +855,7 @@ def run_tool_catalog_timeout(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_catalog_timeout_config.json"
         tool_catalog_path = work_dir / "tool_catalog_timeout_catalog.json"
-        observability_path = work_dir / "tool_catalog_timeout_observability.json"
+        events_path = work_dir / "tool_catalog_timeout_events.jsonl"
         write_tool_catalog(
             tool_catalog_path,
             [
@@ -922,7 +886,7 @@ def run_tool_catalog_timeout(ahflc, work_dir, source_path):
             ahflc,
             source_path,
             config_path,
-            observability_path,
+            events_path,
             tool_catalog_path=tool_catalog_path,
         )
     finally:
@@ -934,7 +898,7 @@ def run_tool_catalog_timeout(ahflc, work_dir, source_path):
     expected = "tool call failed for 'catalog_timeout': tool timed out after 25ms"
     if expected not in combined_output:
         raise AssertionError(f"missing catalog timeout tool diagnostic:\n{combined_output}")
-    assert_tool_failure_artifact(observability_path, "catalog timeout tool")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_tool_invalid_args(ahflc, work_dir, source_path):
@@ -942,7 +906,7 @@ def run_tool_invalid_args(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "tool_invalid_args_config.json"
         mocks_path = work_dir / "tool_invalid_args_mocks.json"
-        observability_path = work_dir / "tool_invalid_args_observability.json"
+        events_path = work_dir / "tool_invalid_args_events.jsonl"
         write_mock_tools(mocks_path)
         config_path.write_text(
             json.dumps(
@@ -957,7 +921,7 @@ def run_tool_invalid_args(ahflc, work_dir, source_path):
             encoding="utf-8",
         )
         result = run_ahflc(
-            ahflc, source_path, config_path, observability_path, mocks_path
+            ahflc, source_path, config_path, events_path, mocks_path
         )
     finally:
         stop_servers(server)
@@ -971,11 +935,7 @@ def run_tool_invalid_args(ahflc, work_dir, source_path):
             f"missing invalid tool arguments diagnostic:\n{combined_output}"
         )
 
-    artifact = load_artifact(observability_path)
-    if artifact.get("cache_event_count") != 0:
-        raise AssertionError("tool invalid args should not emit cache events")
-    if artifact.get("streaming_event_count") != 0:
-        raise AssertionError("tool invalid args should not emit streaming events")
+    assert_terminal_execution(events_path, "failed")
 
 
 def run_unknown_tool(ahflc, work_dir, source_path):
@@ -983,7 +943,7 @@ def run_unknown_tool(ahflc, work_dir, source_path):
     try:
         config_path = work_dir / "unknown_tool_config.json"
         mocks_path = work_dir / "unknown_tool_mocks.json"
-        observability_path = work_dir / "unknown_tool_observability.json"
+        events_path = work_dir / "unknown_tool_events.jsonl"
         write_mock_tools(mocks_path)
         config_path.write_text(
             json.dumps(
@@ -998,7 +958,7 @@ def run_unknown_tool(ahflc, work_dir, source_path):
             encoding="utf-8",
         )
         result = run_ahflc(
-            ahflc, source_path, config_path, observability_path, mocks_path
+            ahflc, source_path, config_path, events_path, mocks_path
         )
     finally:
         stop_servers(server)
@@ -1013,11 +973,7 @@ def run_unknown_tool(ahflc, work_dir, source_path):
     if expected not in combined_output:
         raise AssertionError(f"missing unknown tool diagnostic:\n{combined_output}")
 
-    artifact = load_artifact(observability_path)
-    if artifact.get("cache_event_count") != 0:
-        raise AssertionError("unknown tool should not emit cache events")
-    if artifact.get("streaming_event_count") != 0:
-        raise AssertionError("unknown tool should not emit streaming events")
+    assert_terminal_execution(events_path, "failed")
 
 
 def main():

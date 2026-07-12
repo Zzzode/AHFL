@@ -42,18 +42,21 @@ void assert_inspect_response(const WorkflowResult &result,
                              std::int64_t expected_value) {
     const auto prefix = std::string{"if_let."} + std::string{case_name};
 
-    stats.check(result.status == WorkflowStatus::Completed, prefix + ".status_completed");
+    stats.check(result.status() == WorkflowStatus::Completed, prefix + ".status_completed");
     stats.check(!result.has_errors(), prefix + ".no_errors");
-    stats.check(result.execution_order.size() == 1, prefix + ".exec_order_size");
-    if (!result.execution_order.empty()) {
-        stats.check(result.execution_order.front() == "inspect", prefix + ".exec_order_name");
+    stats.check(result.report.execution_order.size() == 1, prefix + ".exec_order_size");
+    if (!result.report.execution_order.empty()) {
+        const auto *node = result.metadata.node(result.report.execution_order.front());
+        stats.check(node != nullptr && node->display_name == "inspect",
+                    prefix + ".exec_order_name");
     }
-    stats.check(result.output.has_value(), prefix + ".has_output");
-    if (!result.output.has_value()) {
+    const auto *output = result.output();
+    stats.check(output != nullptr, prefix + ".has_output");
+    if (output == nullptr) {
         return;
     }
 
-    const auto *response = std::get_if<StructValue>(&result.output->node);
+    const auto *response = std::get_if<StructValue>(&output->node);
     stats.check(response != nullptr, prefix + ".output_is_struct");
     if (response == nullptr) {
         return;

@@ -86,168 +86,6 @@ target_link_libraries(ahfl_dry_run_tests
 )
 ahfl_apply_project_warnings(ahfl_dry_run_tests)
 
-add_executable(ahfl_runtime_engine_session_tests
-    unit/pipeline/execution/runtime_session/session.cpp
-)
-target_link_libraries(ahfl_runtime_engine_session_tests
-    PRIVATE
-        ahfl_pipeline_execution
-)
-ahfl_apply_project_warnings(ahfl_runtime_engine_session_tests)
-
-add_executable(ahfl_execution_journal_tests
-    unit/pipeline/execution/execution_journal/journal.cpp
-)
-target_link_libraries(ahfl_execution_journal_tests
-    PRIVATE
-        ahfl_pipeline_execution
-)
-ahfl_apply_project_warnings(ahfl_execution_journal_tests)
-
-add_executable(ahfl_tooling_replay_view_tests
-    unit/pipeline/execution/replay_view/replay.cpp
-)
-target_link_libraries(ahfl_tooling_replay_view_tests
-    PRIVATE
-        ahfl_pipeline_execution
-)
-ahfl_apply_project_warnings(ahfl_tooling_replay_view_tests)
-
-add_executable(ahfl_audit_report_tests
-    unit/pipeline/observation/audit_report/report.cpp
-)
-target_link_libraries(ahfl_audit_report_tests
-    PRIVATE
-        ahfl_pipeline_observation
-)
-ahfl_apply_project_warnings(ahfl_audit_report_tests)
-
-add_executable(ahfl_scheduler_snapshot_tests
-    unit/pipeline/observation/scheduler_snapshot/snapshot.cpp
-)
-target_link_libraries(ahfl_scheduler_snapshot_tests
-    PRIVATE
-        ahfl_pipeline_observation
-)
-ahfl_apply_project_warnings(ahfl_scheduler_snapshot_tests)
-
-add_executable(ahfl_checkpoint_record_tests
-    unit/pipeline/observation/checkpoint_record/record.cpp
-)
-target_link_libraries(ahfl_checkpoint_record_tests
-    PRIVATE
-        ahfl_pipeline_observation
-)
-ahfl_apply_project_warnings(ahfl_checkpoint_record_tests)
-
-add_executable(ahfl_pipeline_persistence_descriptor_tests
-    unit/pipeline/persistence/descriptor/descriptor.cpp
-)
-target_link_libraries(ahfl_pipeline_persistence_descriptor_tests
-    PRIVATE
-        ahfl_pipeline_persistence
-)
-ahfl_apply_project_warnings(ahfl_pipeline_persistence_descriptor_tests)
-
-add_executable(ahfl_pipeline_persistence_export_tests
-    unit/pipeline/persistence/export/manifest.cpp
-)
-target_link_libraries(ahfl_pipeline_persistence_export_tests
-    PRIVATE
-        ahfl_pipeline_persistence
-)
-ahfl_apply_project_warnings(ahfl_pipeline_persistence_export_tests)
-
-add_executable(ahfl_store_import_tests
-    unit/pipeline/persistence/store_import/descriptor.cpp
-)
-target_link_libraries(ahfl_store_import_tests
-    PRIVATE
-        ahfl_pipeline_persistence
-)
-ahfl_apply_project_warnings(ahfl_store_import_tests)
-
-add_executable(ahfl_pipeline_durable_store_import_tests
-    unit/pipeline/persistence/durable_store_import/request.cpp
-)
-target_link_libraries(ahfl_pipeline_durable_store_import_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_tests)
-
-add_executable(ahfl_pipeline_durable_store_import_decision_tests
-    unit/pipeline/persistence/durable_store_import/decision.cpp
-)
-target_link_libraries(ahfl_pipeline_durable_store_import_decision_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_decision_tests)
-
-add_executable(ahfl_schema_compatibility_tests
-    unit/pipeline/persistence/durable_store_import/provider/schema_compatibility/schema_compatibility.cpp
-)
-target_link_libraries(ahfl_schema_compatibility_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_schema_compatibility_tests)
-
-add_executable(ahfl_config_bundle_validation_tests
-    unit/pipeline/persistence/durable_store_import/provider/config_bundle/config_bundle_validation.cpp
-)
-target_link_libraries(ahfl_config_bundle_validation_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_config_bundle_validation_tests)
-
-add_executable(ahfl_release_evidence_archive_tests
-    unit/pipeline/persistence/durable_store_import/provider/release_evidence/release_evidence_archive.cpp
-)
-target_link_libraries(ahfl_release_evidence_archive_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_release_evidence_archive_tests)
-
-add_executable(ahfl_approval_workflow_tests
-    unit/pipeline/persistence/durable_store_import/provider/approval/approval_workflow.cpp
-)
-target_link_libraries(ahfl_approval_workflow_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_approval_workflow_tests)
-
-add_executable(ahfl_opt_in_guard_tests
-    unit/pipeline/persistence/durable_store_import/provider/opt_in_guard/opt_in_guard.cpp
-)
-target_link_libraries(ahfl_opt_in_guard_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_opt_in_guard_tests)
-
-add_executable(ahfl_runtime_engine_policy_tests
-    unit/pipeline/persistence/durable_store_import/provider/runtime_policy/runtime_policy.cpp
-)
-target_link_libraries(ahfl_runtime_engine_policy_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_runtime_engine_policy_tests)
-
-add_executable(ahfl_production_integration_tests
-    unit/pipeline/persistence/durable_store_import/provider/production_integration/production_integration_dry_run.cpp
-)
-target_link_libraries(ahfl_production_integration_tests
-    PRIVATE
-        ahfl_pipeline_durable_store_import
-)
-ahfl_apply_project_warnings(ahfl_production_integration_tests)
-
 add_executable(ahfl_runtime_evaluator_tests
     unit/runtime/evaluator/evaluator.cpp
 )
@@ -283,6 +121,74 @@ target_link_libraries(ahfl_workflow_runtime_tests
         ahfl_runtime_engine
 )
 ahfl_apply_project_warnings(ahfl_workflow_runtime_tests)
+
+add_executable(ahfl_execution_event_tests
+    unit/runtime/engine/execution_event.cpp
+)
+target_link_libraries(ahfl_execution_event_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_execution_event_tests)
+
+add_executable(ahfl_execution_report_tests
+    unit/runtime/engine/execution_report.cpp
+)
+target_link_libraries(ahfl_execution_report_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_execution_report_tests)
+
+add_executable(ahfl_execution_metadata_tests
+    unit/runtime/engine/execution_metadata.cpp
+)
+target_link_libraries(ahfl_execution_metadata_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_execution_metadata_tests)
+
+add_executable(ahfl_execution_renderer_tests
+    unit/runtime/engine/execution_renderer.cpp
+)
+target_link_libraries(ahfl_execution_renderer_tests
+    PRIVATE
+        ahfl_runtime_engine
+        ahfl_base_json
+)
+target_include_directories(ahfl_execution_renderer_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_execution_renderer_tests)
+
+add_executable(ahfl_execution_projection_tests
+    unit/runtime/engine/execution_projection.cpp
+)
+target_link_libraries(ahfl_execution_projection_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+target_include_directories(ahfl_execution_projection_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_execution_projection_tests)
+
+add_executable(ahfl_execution_otel_tests
+    unit/runtime/engine/execution_otel.cpp
+)
+target_link_libraries(ahfl_execution_otel_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_execution_otel_tests)
+
+add_executable(ahfl_workflow_recovery_tests
+    unit/runtime/engine/workflow_recovery.cpp
+)
+target_link_libraries(ahfl_workflow_recovery_tests
+    PRIVATE
+        ahfl_runtime_engine
+        doctest
+)
+target_include_directories(ahfl_workflow_recovery_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_workflow_recovery_tests)
 
 add_executable(ahfl_capability_bridge_tests
     unit/runtime/engine/capability_bridge.cpp
@@ -337,6 +243,22 @@ target_link_libraries(ahfl_runtime_provider_llm_tests
         ahfl_runtime_provider_llm
 )
 ahfl_apply_project_warnings(ahfl_runtime_provider_llm_tests)
+
+add_executable(ahfl_reference_workflow_recovery_worker
+    integration/reference_workflow_recovery_worker.cpp
+)
+target_link_libraries(ahfl_reference_workflow_recovery_worker
+    PRIVATE
+        ahfl_compiler_package_graph
+        ahfl_compiler_ir
+        ahfl_runtime_provider_llm
+)
+target_include_directories(ahfl_reference_workflow_recovery_worker
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+ahfl_apply_project_warnings(ahfl_reference_workflow_recovery_worker)
 
 add_executable(ahfl_value_json_tests
     unit/runtime/evaluator/value_json.cpp
@@ -753,6 +675,7 @@ target_link_libraries(ahfl_assurance_obligations_tests
     PRIVATE
         ahfl_compiler_ir
         ahfl_compiler_assurance
+        ahfl_compiler_backends
         ahfl_runtime_evaluator
         doctest
 )
@@ -911,6 +834,16 @@ target_link_libraries(ahfl_sha256_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_sha256_tests)
+
+add_executable(ahfl_atomic_file_tests
+    unit/base/support/atomic_file.cpp
+)
+target_link_libraries(ahfl_atomic_file_tests
+    PRIVATE
+        ahfl_base_support
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_atomic_file_tests)
 
 add_executable(ahfl_version_tests
     unit/base/support/version.cpp
@@ -1075,7 +1008,6 @@ add_executable(ahfl_cli_command_routing_tests
 )
 target_link_libraries(ahfl_cli_command_routing_tests
     PRIVATE
-        ahfl_pipeline_durable_store_import
         ahfl_cli_command_catalog
         ahfl_base_public
 )
@@ -1124,24 +1056,6 @@ ahfl_apply_project_warnings(ahfl_property_smv_tests)
 # Test targets that directly include internal src/ headers need PRIVATE access
 foreach(_tgt
     ahfl_dry_run_tests
-    ahfl_runtime_engine_session_tests
-    ahfl_execution_journal_tests
-    ahfl_tooling_replay_view_tests
-    ahfl_audit_report_tests
-    ahfl_scheduler_snapshot_tests
-    ahfl_checkpoint_record_tests
-    ahfl_pipeline_persistence_descriptor_tests
-    ahfl_pipeline_persistence_export_tests
-    ahfl_store_import_tests
-    ahfl_pipeline_durable_store_import_tests
-    ahfl_pipeline_durable_store_import_decision_tests
-    ahfl_schema_compatibility_tests
-    ahfl_config_bundle_validation_tests
-    ahfl_release_evidence_archive_tests
-    ahfl_approval_workflow_tests
-    ahfl_opt_in_guard_tests
-    ahfl_runtime_engine_policy_tests
-    ahfl_production_integration_tests
     ahfl_compiler_handoff_package_compat_tests
     ahfl_compiler_backends_registry_tests
     ahfl_cli_command_routing_tests
@@ -1149,12 +1063,14 @@ foreach(_tgt
     ahfl_executor_tests
     ahfl_agent_runtime_tests
     ahfl_workflow_runtime_tests
+    ahfl_workflow_recovery_tests
     ahfl_capability_bridge_tests
     ahfl_response_schema_validator_tests
     ahfl_e2e_workflow_tests
     ahfl_enum_variant_e2e_tests
     ahfl_if_let_e2e_tests
     ahfl_runtime_provider_llm_tests
+    ahfl_reference_workflow_recovery_worker
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
     ahfl_http_transport_tests
@@ -1168,6 +1084,7 @@ foreach(_tgt
     ahfl_base_trait_impl_diagnostics_tests
     ahfl_base_diagnostics_code_smoke_tests
     ahfl_sha256_tests
+    ahfl_atomic_file_tests
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests

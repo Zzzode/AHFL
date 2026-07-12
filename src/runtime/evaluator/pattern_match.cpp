@@ -39,13 +39,7 @@ bind_pattern_name(PatternBindings &bindings, std::string_view name, const Value 
 
 [[nodiscard]] bool match_literal_pattern(std::string_view spelling, const Value &value) {
     if (spelling == "none") {
-        if (std::holds_alternative<NoneValue>(value.node)) {
-            return true;
-        }
-        if (const auto *optional = std::get_if<OptionalValue>(&value.node); optional != nullptr) {
-            return optional->inner == nullptr;
-        }
-        return false;
+        return is_optional_none(value);
     }
     if (spelling == "true" || spelling == "false") {
         const auto *boolean = std::get_if<BoolValue>(&value.node);
@@ -69,22 +63,6 @@ bind_pattern_name(PatternBindings &bindings, std::string_view name, const Value 
                                          const Value &value,
                                          PatternBindings &bindings) {
     const auto variant_name = last_path_segment(pattern.path);
-    if (const auto *optional = std::get_if<OptionalValue>(&value.node); optional != nullptr) {
-        if (variant_name == "None") {
-            return optional->inner == nullptr && pattern.subpatterns.empty();
-        }
-        if (variant_name != "Some" || optional->inner == nullptr) {
-            return false;
-        }
-        if (pattern.subpatterns.empty()) {
-            return true;
-        }
-        if (pattern.subpatterns.size() != 1 || !pattern.subpatterns.front()) {
-            return false;
-        }
-        return match_pattern(*pattern.subpatterns.front(), *optional->inner, bindings);
-    }
-
     const auto *enum_value = std::get_if<EnumValue>(&value.node);
     if (enum_value == nullptr || enum_value->variant != variant_name) {
         return false;
@@ -111,12 +89,10 @@ bind_pattern_name(PatternBindings &bindings, std::string_view name, const Value 
         return true;
     }
 
-    const bool has_associated = enum_value->associated != nullptr;
-    const bool has_payload_vec = !enum_value->payload.empty();
-    if (!has_associated && !has_payload_vec) {
+    if (enum_value->payload.empty()) {
         return false;
     }
-    if (has_payload_vec && pattern.subpatterns.size() == enum_value->payload.size()) {
+    if (pattern.subpatterns.size() == enum_value->payload.size()) {
         for (std::size_t index = 0; index < pattern.subpatterns.size(); ++index) {
             if (!pattern.subpatterns[index] || !enum_value->payload[index]) {
                 return false;
@@ -127,12 +103,6 @@ bind_pattern_name(PatternBindings &bindings, std::string_view name, const Value 
             }
         }
         return true;
-    }
-    if (has_associated && pattern.subpatterns.size() == 1) {
-        if (!pattern.subpatterns.front()) {
-            return false;
-        }
-        return match_pattern(*pattern.subpatterns.front(), *enum_value->associated, bindings);
     }
     return false;
 }

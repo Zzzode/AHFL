@@ -1,0 +1,10 @@
+{
+  "schema": "ahfl.production-confidence-gate.v1",
+  "evidence": {
+    "path": "build/release-evidence/production-confidence/hour-scale-soak.json",
+    "schema": "ahfl.production-confidence-soak.v1"
+  },
+  "minimum_duration_seconds": 3600,
+  "minimum_iterations": 100,
+  "maximum_last_quartile_growth_ratio": 0.2
+}

@@ -3,6 +3,7 @@
 // Validates the functionality of PromptBuilder, ResponseParser, LLMProviderConfig, and LLMCapabilityProvider
 
 #include "ahfl/compiler/ir/ir.hpp"
+#include "base/support/atomic_file.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/value.hpp"
@@ -1212,9 +1213,14 @@ void test_llm_capability_provider_records_usage_budget_exceeded() {
     args.push_back(make_string("My server is down"));
     auto result = provider.invoke("ClassifyMessage", args);
 
-    check(result.status == CapabilityCallStatus::Success,
-          "provider.usage_budget_exceeded.status_success");
-    check(result.value.has_value(), "provider.usage_budget_exceeded.has_value");
+    check(result.status == CapabilityCallStatus::Error,
+          "provider.usage_budget_exceeded.status_error");
+    check(!result.value.has_value(), "provider.usage_budget_exceeded.no_value");
+    check(result.failure_kind == ahfl::runtime::CapabilityFailureKind::BudgetRejected,
+          "provider.usage_budget_exceeded.failure_kind");
+    check(result.diagnostic_code ==
+              ahfl::error_codes::runtime::LLMTokenBudgetExceeded.full_code(),
+          "provider.usage_budget_exceeded.result_diagnostic_code");
 
     const auto &budget_events = provider.token_budget_events();
     check(budget_events.size() == 2, "provider.usage_budget_exceeded.event_count");
@@ -1285,6 +1291,14 @@ void test_llm_capability_provider_applies_capability_budget_policy() {
           "provider.capability_budget.status_success");
     check(result.value.has_value(), "provider.capability_budget.has_value");
     check(request_max_tokens == 7, "provider.capability_budget.request_max_tokens");
+    check(result.usage.has_value(), "provider.capability_budget.has_usage");
+    check(result.usage.has_value() && result.usage->notices.size() == 1,
+          "provider.capability_budget.notice_count");
+    if (result.usage.has_value() && result.usage->notices.size() == 1) {
+        check(result.usage->notices[0].diagnostic_code ==
+                  ahfl::error_codes::runtime::LLMCostBudgetExceeded.full_code(),
+              "provider.capability_budget.notice_code");
+    }
 
     const auto &budget_events = provider.token_budget_events();
     check(budget_events.size() == 3, "provider.capability_budget.event_count");
@@ -1343,6 +1357,10 @@ void test_llm_capability_provider_records_workflow_node_cumulative_budget() {
         .state_name = "Done",
         .workflow_node_execution_index = 2,
         .has_workflow_node_context = true,
+        .run_id = ahfl::runtime::RunId{0},
+        .workflow_id = ahfl::runtime::WorkflowId{0},
+        .workflow_node_id = ahfl::runtime::WorkflowNodeId{2},
+        .agent_id = ahfl::runtime::AgentId{0},
     };
 
     std::vector<Value> args;
@@ -1352,8 +1370,10 @@ void test_llm_capability_provider_records_workflow_node_cumulative_budget() {
 
     check(first.status == CapabilityCallStatus::Success,
           "provider.cumulative_budget.first_success");
-    check(second.status == CapabilityCallStatus::Success,
-          "provider.cumulative_budget.second_success");
+    check(second.status == CapabilityCallStatus::Error,
+          "provider.cumulative_budget.second_rejected");
+    check(second.failure_kind == ahfl::runtime::CapabilityFailureKind::BudgetRejected,
+          "provider.cumulative_budget.second_failure_kind");
 
     const auto &budget_events = provider.token_budget_events();
     check(budget_events.size() == 8, "provider.cumulative_budget.event_count");
@@ -1625,6 +1645,8 @@ void test_llm_capability_provider_uses_response_cache_when_enabled() {
     check(second.status == CapabilityCallStatus::Success, "provider.cache.second_success");
     check(first.attempts == 1, "provider.cache.first_attempt");
     check(second.attempts == 0, "provider.cache.second_attempt_cache_hit");
+    check(!first.cache_hit, "provider.cache.first_not_cache_hit");
+    check(second.cache_hit, "provider.cache.second_cache_hit");
     check(request_count == 1, "provider.cache.single_http_request");
 
     const auto &events = provider.response_cache_audit_events();
@@ -1697,6 +1719,7 @@ void test_llm_capability_provider_persists_response_cache() {
         check(result.status == CapabilityCallStatus::Success,
               "provider.persistent_cache.first_success");
         check(result.value.has_value(), "provider.persistent_cache.first_has_value");
+        check(!result.cache_hit, "provider.persistent_cache.first_not_cache_hit");
 
         const auto &events = provider.response_cache_audit_events();
         bool saw_persist = false;
@@ -1720,6 +1743,12 @@ void test_llm_capability_provider_persists_response_cache() {
           "provider.persistent_cache.no_prompt_leak");
     check(cache_text.str().find("ahfl.llm_response_cache.v0") != std::string::npos,
           "provider.persistent_cache.schema");
+    {
+        std::ofstream partial(
+            ahfl::support::atomic_temporary_path(cache_path),
+            std::ios::binary | std::ios::trunc);
+        partial << R"({"schema":"partial)";
+    }
 
     {
         LLMCapabilityProvider provider(
@@ -1742,6 +1771,7 @@ void test_llm_capability_provider_persists_response_cache() {
         check(result.status == CapabilityCallStatus::Success,
               "provider.persistent_cache.second_success");
         check(result.value.has_value(), "provider.persistent_cache.second_has_value");
+        check(result.cache_hit, "provider.persistent_cache.second_cache_hit");
 
         const auto &events = provider.response_cache_audit_events();
         bool saw_load = false;
@@ -1763,6 +1793,9 @@ void test_llm_capability_provider_persists_response_cache() {
     }
 
     check(request_count == 1, "provider.persistent_cache.second_no_http");
+    check(std::filesystem::exists(ahfl::support::atomic_temporary_path(cache_path)),
+          "provider.persistent_cache.partial_temp_ignored");
+    std::filesystem::remove(ahfl::support::atomic_temporary_path(cache_path));
     std::filesystem::remove(cache_path);
 }
 

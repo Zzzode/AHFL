@@ -142,27 +142,27 @@ struct ApiEntry {
 }
 
 [[nodiscard]] std::string declaration_name(const ahfl::ast::Decl &decl) {
-    switch (decl.kind) {
+    switch (ahfl::ast::decl_kind(decl)) {
     case ahfl::ast::NodeKind::ConstDecl:
-        return static_cast<const ahfl::ast::ConstDecl &>(decl).name;
+        return std::get<ahfl::ast::ConstDecl>(decl).name;
     case ahfl::ast::NodeKind::TypeAliasDecl:
-        return static_cast<const ahfl::ast::TypeAliasDecl &>(decl).name;
+        return std::get<ahfl::ast::TypeAliasDecl>(decl).name;
     case ahfl::ast::NodeKind::StructDecl:
-        return static_cast<const ahfl::ast::StructDecl &>(decl).name;
+        return std::get<ahfl::ast::StructDecl>(decl).name;
     case ahfl::ast::NodeKind::EnumDecl:
-        return static_cast<const ahfl::ast::EnumDecl &>(decl).name;
+        return std::get<ahfl::ast::EnumDecl>(decl).name;
     case ahfl::ast::NodeKind::CapabilityDecl:
-        return static_cast<const ahfl::ast::CapabilityDecl &>(decl).name;
+        return std::get<ahfl::ast::CapabilityDecl>(decl).name;
     case ahfl::ast::NodeKind::PredicateDecl:
-        return static_cast<const ahfl::ast::PredicateDecl &>(decl).name;
+        return std::get<ahfl::ast::PredicateDecl>(decl).name;
     case ahfl::ast::NodeKind::AgentDecl:
-        return static_cast<const ahfl::ast::AgentDecl &>(decl).name;
+        return std::get<ahfl::ast::AgentDecl>(decl).name;
     case ahfl::ast::NodeKind::WorkflowDecl:
-        return static_cast<const ahfl::ast::WorkflowDecl &>(decl).name;
+        return std::get<ahfl::ast::WorkflowDecl>(decl).name;
     case ahfl::ast::NodeKind::FnDecl:
-        return static_cast<const ahfl::ast::FnDecl &>(decl).name;
+        return std::get<ahfl::ast::FnDecl>(decl).name;
     case ahfl::ast::NodeKind::TraitDecl:
-        return static_cast<const ahfl::ast::TraitDecl &>(decl).name;
+        return std::get<ahfl::ast::TraitDecl>(decl).name;
     default:
         return {};
     }
@@ -188,11 +188,11 @@ struct ApiEntry {
         return nullptr;
     }
     for (const auto &decl : source->program->declarations) {
-        if (!decl || !symbol_kind_matches_decl(symbol.kind, decl->kind)) {
+        if (!symbol_kind_matches_decl(symbol.kind, ahfl::ast::decl_kind(decl))) {
             continue;
         }
-        if (declaration_name(*decl) == symbol.local_name) {
-            return decl.get();
+        if (declaration_name(decl) == symbol.local_name) {
+            return &decl;
         }
     }
     return nullptr;
@@ -218,12 +218,12 @@ struct ApiEntry {
         return nullptr;
     }
     for (const auto &decl : source->program->declarations) {
-        if (!decl || decl->kind != ahfl::ast::NodeKind::UseDecl) {
+        const auto *use_decl = std::get_if<ahfl::ast::UseDecl>(&decl);
+        if (use_decl == nullptr) {
             continue;
         }
-        const auto &use_decl = static_cast<const ahfl::ast::UseDecl &>(*decl);
-        if (use_decl_public_name(use_decl) == alias.local_name) {
-            return &use_decl;
+        if (use_decl_public_name(*use_decl) == alias.local_name) {
+            return use_decl;
         }
     }
     return nullptr;
@@ -747,7 +747,7 @@ trait_signature(const ahfl::ast::TraitDecl &decl) {
 fallback_signature(const ahfl::Symbol &symbol, const ahfl::ast::Decl *decl) {
     std::string text = symbol_kind_name(symbol.kind) + " " + symbol.local_name;
     if (decl != nullptr) {
-        text = decl->headline();
+        text = ahfl::ast::decl_headline(*decl);
     }
     return {text, base_signature_json(symbol_kind_name(symbol.kind), text)};
 }
@@ -758,27 +758,27 @@ signature_for_symbol(const ahfl::Symbol &symbol, const ahfl::ast::Decl *decl) {
         return fallback_signature(symbol, decl);
     }
 
-    switch (decl->kind) {
+    switch (ahfl::ast::decl_kind(*decl)) {
     case ahfl::ast::NodeKind::ConstDecl:
-        return const_signature(static_cast<const ahfl::ast::ConstDecl &>(*decl));
+        return const_signature(std::get<ahfl::ast::ConstDecl>(*decl));
     case ahfl::ast::NodeKind::TypeAliasDecl:
-        return type_alias_signature(static_cast<const ahfl::ast::TypeAliasDecl &>(*decl));
+        return type_alias_signature(std::get<ahfl::ast::TypeAliasDecl>(*decl));
     case ahfl::ast::NodeKind::StructDecl:
-        return struct_signature(static_cast<const ahfl::ast::StructDecl &>(*decl));
+        return struct_signature(std::get<ahfl::ast::StructDecl>(*decl));
     case ahfl::ast::NodeKind::EnumDecl:
-        return enum_signature(static_cast<const ahfl::ast::EnumDecl &>(*decl));
+        return enum_signature(std::get<ahfl::ast::EnumDecl>(*decl));
     case ahfl::ast::NodeKind::CapabilityDecl:
-        return capability_signature(static_cast<const ahfl::ast::CapabilityDecl &>(*decl));
+        return capability_signature(std::get<ahfl::ast::CapabilityDecl>(*decl));
     case ahfl::ast::NodeKind::PredicateDecl:
-        return predicate_signature(static_cast<const ahfl::ast::PredicateDecl &>(*decl));
+        return predicate_signature(std::get<ahfl::ast::PredicateDecl>(*decl));
     case ahfl::ast::NodeKind::AgentDecl:
-        return agent_signature(static_cast<const ahfl::ast::AgentDecl &>(*decl));
+        return agent_signature(std::get<ahfl::ast::AgentDecl>(*decl));
     case ahfl::ast::NodeKind::WorkflowDecl:
-        return workflow_signature(static_cast<const ahfl::ast::WorkflowDecl &>(*decl));
+        return workflow_signature(std::get<ahfl::ast::WorkflowDecl>(*decl));
     case ahfl::ast::NodeKind::FnDecl:
-        return function_signature(static_cast<const ahfl::ast::FnDecl &>(*decl));
+        return function_signature(std::get<ahfl::ast::FnDecl>(*decl));
     case ahfl::ast::NodeKind::TraitDecl:
-        return trait_signature(static_cast<const ahfl::ast::TraitDecl &>(*decl));
+        return trait_signature(std::get<ahfl::ast::TraitDecl>(*decl));
     default:
         return fallback_signature(symbol, decl);
     }

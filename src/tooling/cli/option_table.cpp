@@ -52,12 +52,24 @@ void set_runtime_input(CommandLineOptions &opts, std::optional<std::string_view>
     opts.runtime_input_json = val;
 }
 
+void set_runtime_input_file(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.runtime_input_file = val;
+}
+
 void set_llm_config(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.llm_config_descriptor = val;
 }
 
-void set_llm_observability(CommandLineOptions &opts, std::optional<std::string_view> val) {
-    opts.llm_observability_path = val;
+void set_run_profile(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.run_profile = val;
+}
+
+void set_execution_output_format(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.execution_output_format = val;
+}
+
+void set_execution_verbosity(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.execution_verbosity = val;
 }
 
 void set_input_fixture(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -142,10 +154,6 @@ void set_structured_log(CommandLineOptions &opts, std::optional<std::string_view
 
 void set_memory_report(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.memory_report_path = val;
-}
-
-void set_show_internal(CommandLineOptions &opts, std::optional<std::string_view>) {
-    opts.show_internal_artifacts = true;
 }
 
 void set_format_check(CommandLineOptions &opts, std::optional<std::string_view>) {
@@ -237,18 +245,36 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_runtime_input,
      "Runtime input JSON for run",
      "a JSON string"},
+    {"--input-file",
+     "",
+     OptionArgKind::RequiredValue,
+     set_runtime_input_file,
+     "Runtime input JSON file for run",
+     "an input path"},
     {"--llm-config",
      "",
      OptionArgKind::RequiredValue,
      set_llm_config,
      "LLM provider config for run",
      "a config path"},
-    {"--llm-observability",
+    {"--profile",
      "",
      OptionArgKind::RequiredValue,
-     set_llm_observability,
-     "Write secret-free LLM provider observability JSON for run",
-     "an output path"},
+     set_run_profile,
+     "Named run profile from ahfl.toml",
+     "a profile name"},
+    {"--output-format",
+     "",
+     OptionArgKind::RequiredValue,
+     set_execution_output_format,
+     "Execution output format: human, json, jsonl, or quiet",
+     "human|json|jsonl|quiet"},
+    {"--verbosity",
+     "",
+     OptionArgKind::RequiredValue,
+     set_execution_verbosity,
+     "Execution detail level: normal, verbose, or trace",
+     "normal|verbose|trace"},
     {"--input-fixture",
      "",
      OptionArgKind::RequiredValue,
@@ -380,12 +406,6 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_public_api_to_version,
      "Next package version for emit public-api-diff --semver-gate",
      "a SemVer version"},
-    {"--show-hidden",
-     "",
-     OptionArgKind::Flag,
-     set_show_internal,
-     "Show hidden internal artifacts in help and allow their emission",
-     ""},
     {"--check", "", OptionArgKind::Flag, set_format_check, "Check formatting without writing", ""},
 };
 
@@ -441,8 +461,7 @@ struct SplitOptionResult {
 }
 
 [[nodiscard]] bool can_select_action(const CommandLineOptions &options) {
-    return !options.selected_command.has_value() &&
-           !options.selected_provider_artifact.has_value() && options.positional.empty();
+    return !options.selected_command.has_value() && options.positional.empty();
 }
 
 [[nodiscard]] bool has_target_argument(std::span<const std::string_view> arguments,
@@ -459,27 +478,6 @@ struct SplitOptionResult {
     std::cerr << "error: " << message << "\n";
     print_usage(std::cerr);
     return ParseResult{true, 2};
-}
-
-[[nodiscard]] std::optional<ParseResult> select_provider_artifact_from_arguments(
-    std::span<const std::string_view> arguments, std::size_t &index, CommandLineOptions &options) {
-    if (!has_target_argument(arguments, index)) {
-        return usage_error("'emit-provider-artifact' requires a provider artifact name");
-    }
-
-    const auto artifact_id = arguments[++index];
-    const auto artifact = resolve_provider_artifact(artifact_id, options.show_internal_artifacts);
-    if (!artifact.has_value()) {
-        std::cerr << "error: unknown provider artifact '" << artifact_id << "'\n";
-        print_usage(std::cerr);
-        return ParseResult{true, 2};
-    }
-    if (!can_select_action(options)) {
-        return usage_error("provider artifact action cannot be combined with another action");
-    }
-
-    set_provider_artifact_option(options, *artifact);
-    return std::nullopt;
 }
 
 [[nodiscard]] std::optional<ParseResult>
@@ -509,7 +507,7 @@ select_action_group_from_arguments(ActionGroup group,
     }
 
     const auto artifact_id = arguments[++index];
-    const auto command = resolve_subcommand(group, artifact_id, options.show_internal_artifacts);
+    const auto command = resolve_subcommand(group, artifact_id);
     if (!command.has_value()) {
         std::cerr << "error: unknown artifact '" << artifact_id << "' for action '" << action_token
                   << "'\n";
@@ -543,19 +541,12 @@ select_action_group_from_arguments(ActionGroup group,
 
 [[nodiscard]] std::optional<ParseResult>
 parse_options_from_table(std::span<const std::string_view> arguments, CommandLineOptions &options) {
-    for (const auto argument : arguments) {
-        if (argument == "--show-hidden") {
-            options.show_internal_artifacts = true;
-            break;
-        }
-    }
-
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const auto argument = arguments[index];
 
         // Special case: --help / -h triggers immediate exit.
         if (argument == "--help" || argument == "-h") {
-            print_usage(std::cout, options.show_internal_artifacts);
+            print_usage(std::cout);
             return ParseResult{true, 0};
         }
 
@@ -579,16 +570,6 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         // Try "--name=value" style (required / repeatable values only).
         if (auto split = try_split_equals_option(argument); split.spec != nullptr) {
             split.spec->setter(options, split.value);
-            continue;
-        }
-
-        // Internal provider artifacts are diagnostic fixtures, not user-facing emit artifacts.
-        if (argument == "emit-provider-artifact") {
-            if (const auto result =
-                    select_provider_artifact_from_arguments(arguments, index, options);
-                result.has_value()) {
-                return *result;
-            }
             continue;
         }
 
@@ -640,6 +621,20 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         options.positional.push_back(argument);
     }
 
+    if (options.runtime_input_json.has_value() && options.runtime_input_file.has_value()) {
+        return usage_error("--input cannot be combined with --input-file");
+    }
+    if (options.execution_output_format.has_value() &&
+        options.execution_output_format != "human" &&
+        options.execution_output_format != "json" &&
+        options.execution_output_format != "jsonl" &&
+        options.execution_output_format != "quiet") {
+        return usage_error("--output-format must be human, json, jsonl, or quiet");
+    }
+    if (options.execution_verbosity.has_value() && options.execution_verbosity != "normal" &&
+        options.execution_verbosity != "verbose" && options.execution_verbosity != "trace") {
+        return usage_error("--verbosity must be normal, verbose, or trace");
+    }
     return std::nullopt;
 }
 

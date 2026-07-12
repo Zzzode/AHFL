@@ -104,10 +104,6 @@ bool deep_equal(const Value &lhs, const Value &rhs) {
         }
         return true;
     }
-    if (auto *lo = std::get_if<OptionalValue>(&lhs.node)) {
-        const auto *ro = std::get_if<OptionalValue>(&rhs.node);
-        return deep_equal_value_ptr(lo->inner, ro->inner);
-    }
     if (is_none(lhs) && is_none(rhs))
         return true;
     // Scalar kinds: rely on existing evaluator-side primitive equality.
@@ -328,43 +324,23 @@ eval_call_arguments(const ir::CallExpr &expr,
 }
 
 struct OptionReader {
-    bool is_optional;
-    bool is_none;            // meaningful only when is_optional
-    const Value *inner;      // inner when is_optional && !is_none, nullptr otherwise
+    bool is_none;
+    const Value *inner;
 };
 
-[[nodiscard]] OptionReader read_option(const Value &value) noexcept {
-    if (const auto *ov = std::get_if<OptionalValue>(&value.node)) {
-        if (ov->inner == nullptr) return {true, true, nullptr};
-        return {true, false, ov->inner.get()};
+[[nodiscard]] std::optional<OptionReader> read_option(const Value &value) noexcept {
+    const auto *option = std::get_if<EnumValue>(&value.node);
+    if (option == nullptr || option->enum_name != "std::option::Option") {
+        return std::nullopt;
     }
-    if (const auto *ev = std::get_if<EnumValue>(&value.node)) {
-        if (ev->enum_name != "std::option::Option") return {false, false, nullptr};
-        if (ev->variant == "None") return {true, true, nullptr};
-        if (ev->variant == "Some") {
-            const Value *inner = ev->associated.get();
-            if (inner == nullptr && !ev->payload.empty()) inner = ev->payload.front().get();
-            return {true, false, inner};
-        }
+    if (option->variant == "None" && option->payload.empty()) {
+        return OptionReader{.is_none = true, .inner = nullptr};
     }
-    return {false, false, nullptr};
-}
-
-[[nodiscard]] const OptionalValue *as_option(const Value &value) noexcept {
-    // P5 Big Bang: Option is nominal EnumValue now. Retain legacy OptionalValue
-    // path only for construction sites that have not been migrated yet.
-    if (auto *legacy = std::get_if<OptionalValue>(&value.node)) return legacy;
-    // Fall back to a thread-local conversion for the const OptionalValue*
-    // return type (read_option is the preferred dual-path API).
-    thread_local OptionalValue cached;
-    auto reader = read_option(value);
-    if (!reader.is_optional) return nullptr;
-    if (reader.is_none) {
-        cached = OptionalValue{.inner = nullptr};
-    } else {
-        cached = OptionalValue{.inner = reader.inner ? std::make_unique<Value>(clone_value(*reader.inner)) : nullptr};
+    if (option->variant == "Some" && option->payload.size() == 1 &&
+        option->payload.front() != nullptr) {
+        return OptionReader{.is_none = false, .inner = option->payload.front().get()};
     }
-    return &cached;
+    return std::nullopt;
 }
 
 [[nodiscard]] const EnumValue *as_result(const Value &value) noexcept {
@@ -470,9 +446,9 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
     };
 
     const auto option_payload = [&](const Value &value,
-                                    std::string_view operation) -> const OptionalValue * {
-        const auto *option = as_option(value);
-        if (option == nullptr) {
+                                    std::string_view operation) -> std::optional<OptionReader> {
+        auto option = read_option(value);
+        if (!option.has_value()) {
             std::move(diagnostics.error())
                 .message(std::string{operation} + ": first argument must be Option")
                 .emit();
@@ -565,7 +541,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(1)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
         }
@@ -577,17 +553,17 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(2)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         const auto *callable = require_callable_arg(1, callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
         }
         if (option->inner == nullptr) {
-            return append_diagnostics(EvalResult{make_optional_none(), {}}, std::move(diagnostics));
+            return append_diagnostics(EvalResult{make_option_none(), {}}, std::move(diagnostics));
         }
         EvalResult mapped = invoke_unary_callable(*callable, *option->inner, call_eval);
         if (callee == "std::option::map" && !mapped.has_errors()) {
-            mapped.value = make_optional_some(std::move(mapped.value));
+            mapped.value = make_option_some(std::move(mapped.value));
         }
         return append_diagnostics(std::move(mapped), std::move(diagnostics));
     }
@@ -595,13 +571,13 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(2)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         const auto *callable = require_callable_arg(1, callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
         }
         if (option->inner != nullptr) {
-            return append_diagnostics(EvalResult{make_optional_some(clone_value(*option->inner)), {}},
+            return append_diagnostics(EvalResult{make_option_some(clone_value(*option->inner)), {}},
                                       std::move(diagnostics));
         }
         EvalResult alternative = invoke_callable_value(*callable, {}, call_eval);
@@ -611,13 +587,13 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(2)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         const auto *callable = require_callable_arg(1, callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
         }
         if (option->inner == nullptr) {
-            return append_diagnostics(EvalResult{make_optional_none(), {}}, std::move(diagnostics));
+            return append_diagnostics(EvalResult{make_option_none(), {}}, std::move(diagnostics));
         }
         EvalResult keep = invoke_unary_callable(*callable, *option->inner, call_eval);
         if (keep.has_errors()) {
@@ -628,8 +604,8 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
             return call_type_error(callee, "predicate must return Bool", std::move(diagnostics));
         }
         return append_diagnostics(
-            EvalResult{bool_value->value ? make_optional_some(clone_value(*option->inner))
-                                         : make_optional_none(),
+            EvalResult{bool_value->value ? make_option_some(clone_value(*option->inner))
+                                         : make_option_none(),
                        std::move(keep.diagnostics)},
             std::move(diagnostics));
     }
@@ -637,7 +613,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(2)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
         }
@@ -650,7 +626,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         if (auto error = arity(2)) {
             return std::move(*error);
         }
-        const auto *option = option_payload(args[0], callee);
+        const auto option = option_payload(args[0], callee);
         const auto *callable = require_callable_arg(1, callee);
         if (auto error = fail_if_diagnostics()) {
             return std::move(*error);
@@ -756,8 +732,8 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         const bool want_ok = callee == "std::result::ok";
         return append_diagnostics(
             EvalResult{(result->variant == "Ok") == want_ok
-                           ? make_optional_some(clone_value(*result->payload.front()))
-                           : make_optional_none(),
+                           ? make_option_some(clone_value(*result->payload.front()))
+                           : make_option_none(),
                        {}},
             std::move(diagnostics));
     }
@@ -812,10 +788,12 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         }
         if (item_index < 0 || static_cast<std::size_t>(item_index) >= list->items.size() ||
             list->items[static_cast<std::size_t>(item_index)] == nullptr) {
-            return append_diagnostics(EvalResult{make_optional_none(), {}}, std::move(diagnostics));
+            return append_diagnostics(EvalResult{make_option_none(), {}}, std::move(diagnostics));
         }
         return append_diagnostics(
-            EvalResult{make_optional_some(clone_value(*list->items[static_cast<std::size_t>(item_index)])), {}},
+            EvalResult{make_option_some(
+                           clone_value(*list->items[static_cast<std::size_t>(item_index)])),
+                       {}},
             std::move(diagnostics));
     }
     if (callee == "std::collections::append") {
@@ -965,12 +943,12 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
             if (!entry.second) {
                 return call_type_error(callee, "map entry value is missing", std::move(diagnostics));
             }
-            return append_diagnostics(EvalResult{make_optional_some(clone_value(*entry.second)), {}},
+            return append_diagnostics(EvalResult{make_option_some(clone_value(*entry.second)), {}},
                                       std::move(diagnostics));
         }
         return append_diagnostics(
             EvalResult{callee == "std::collections::contains_key" ? make_bool(false)
-                                                                  : make_optional_none(),
+                                                                  : make_option_none(),
                        {}},
             std::move(diagnostics));
     }
@@ -1262,7 +1240,6 @@ eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallE
                 std::holds_alternative<UuidValue>(lnode) ||
                 std::holds_alternative<TimestampValue>(lnode) ||
                 std::holds_alternative<ListValue>(lnode) ||
-                std::holds_alternative<OptionalValue>(lnode) ||
                 std::holds_alternative<EnumValue>(lnode) ||
                 std::holds_alternative<StructValue>(lnode)) {
                 return EvalResult{make_bool(deep_equal(lhs.value, rhs.value)), {}};
@@ -1300,7 +1277,6 @@ eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallE
                 std::holds_alternative<UuidValue>(lnode) ||
                 std::holds_alternative<TimestampValue>(lnode) ||
                 std::holds_alternative<ListValue>(lnode) ||
-                std::holds_alternative<OptionalValue>(lnode) ||
                 std::holds_alternative<EnumValue>(lnode) ||
                 std::holds_alternative<StructValue>(lnode)) {
                 return EvalResult{make_bool(!deep_equal(lhs.value, rhs.value)), {}};
@@ -1600,10 +1576,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
         if (inner.has_errors()) {
             return inner;
         }
-        // Nominal pattern: EnumValue with `associated` field set to the payload
-        return EvalResult{make_enum("std::option::Option", "Some",
-                                    std::make_unique<Value>(std::move(inner.value))),
-                          std::move(inner.diagnostics)};
+        return EvalResult{make_option_some(std::move(inner.value)), std::move(inner.diagnostics)};
     }
     if (expr.callee == "std::result::Result::Ok" || expr.callee == "std::result::Result::Err") {
         if (expr.arguments.size() != 1) {
@@ -1783,7 +1756,14 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
 }
 
 EvalResult
-eval_call_expr(const ir::CallExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
+eval_call_expr(const ir::CallExpr &expr,
+               const ir::SourceRangeOpt &source_range,
+               const EvalContext &ctx,
+               const CallEvalFn *call_eval) {
+    const auto with_call_range = [&](EvalResult result) {
+        result.diagnostics.apply_default_range(source_range);
+        return result;
+    };
     if (auto callee_value = ctx.get_local(expr.callee); callee_value.has_value()) {
         const auto *callable = std::get_if<CallableValue>(&callee_value->node);
         if (callable != nullptr) {
@@ -1792,25 +1772,26 @@ eval_call_expr(const ir::CallExpr &expr, const EvalContext &ctx, const CallEvalF
             DiagnosticBag diags;
             for (const auto &arg_ref : expr.arguments) {
                 if (!arg_ref) {
-                    return make_error("callable call: null argument expression");
+                    return with_call_range(
+                        make_error("callable call: null argument expression"));
                 }
                 EvalResult arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
                 if (arg_result.has_errors()) {
                     diags.append(std::move(arg_result.diagnostics));
-                    return EvalResult{make_none(), std::move(diags)};
+                    return with_call_range(EvalResult{make_none(), std::move(diags)});
                 }
                 diags.append(std::move(arg_result.diagnostics));
                 args.push_back(std::move(arg_result.value));
             }
             EvalResult result = invoke_callable_value(*callable, args, call_eval);
             result.diagnostics.append(std::move(diags));
-            return result;
+            return with_call_range(std::move(result));
         }
     }
     if (call_eval != nullptr && *call_eval) {
-        return (*call_eval)(expr, ctx);
+        return with_call_range((*call_eval)(expr, ctx));
     }
-    return eval_intrinsic_call(expr, ctx, call_eval);
+    return with_call_range(eval_intrinsic_call(expr, ctx, call_eval));
 }
 
 // ============================================================================
@@ -1833,11 +1814,9 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
     }
     const Value &v = op_result.value;
 
-    // P5 Big Bang (nominal Option): EnumValue carries variant name + payload.
-    // Prioritize this path over the legacy OptionalValue/NoneValue fallbacks
-    // so that std::option::Option::{Some,None} values always unwrap correctly.
     if (const auto *ev = std::get_if<EnumValue>(&v.node)) {
-        if (ev->variant == "None") {
+        if (ev->enum_name == "std::option::Option" && ev->variant == "None" &&
+            ev->payload.empty()) {
             std::string msg = kUnwrapExprDefault;
             if (expr.fallback_none_message) {
                 auto msg_result = eval_expr_impl(*expr.fallback_none_message, ctx, call_eval);
@@ -1850,43 +1829,16 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
             }
             return make_error(std::move(msg));
         }
-        if (ev->variant == "Some") {
-            // Single-payload nominal Some: both `associated` (nominal
-            // evaluator-internal fast path) and `payload[0]` (AST / ADT
-            // construction) are supported.  op_result is local, so we can
-            // move the payload out — the caller only receives the unwrapped
-            // inner value, not the Some wrapper.
-            EvalResult out;
-            if (ev->associated) {
-                out.value = Value{std::move(*ev->associated).node};
-                *const_cast<std::unique_ptr<Value> *>(&ev->associated) = nullptr;
-                return out;
-            }
-            if (!ev->payload.empty() && ev->payload.front() != nullptr) {
+        if (ev->enum_name == "std::option::Option" && ev->variant == "Some") {
+            if (ev->payload.size() == 1 && ev->payload.front() != nullptr) {
+                EvalResult out;
                 out.value = Value{std::move(*ev->payload.front()).node};
                 return out;
             }
-            return make_error(
-                "UnwrapExpr: Option::Some variant has no accessible payload");
+            return make_error("UnwrapExpr: Option::Some variant has invalid payload");
         }
-        // Non-Option enum value.  Don't unwrap — report the actual variant
-        // so users can see the real problem.
         return make_error(std::string("UnwrapExpr: expected Optional<T>, got enum '") +
                           ev->enum_name + "' variant '" + ev->variant + "'");
-    }
-
-    // Legacy runtime fallbacks (retain for compat with older stdlib / test
-    // fixtures that build OptionalValue / NoneValue directly).
-    if (const auto *opt = std::get_if<OptionalValue>(&v.node)) {
-        if (opt->inner != nullptr) {
-            EvalResult out;
-            out.value = Value{std::move(*opt->inner).node};
-            return out;
-        }
-        return make_error(kUnwrapExprDefault);
-    }
-    if (std::holds_alternative<NoneValue>(v.node)) {
-        return make_error(kUnwrapExprDefault);
     }
     // Any other value shape: unwrap() is defined only for Optional<T>.  Fail
     // loudly instead of silently returning the value — the typechecker should
@@ -1902,7 +1854,7 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
 EvalResult
 eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     return std::visit(
-        [&ctx, call_eval](const auto &node) -> EvalResult {
+        [&expr, &ctx, call_eval](const auto &node) -> EvalResult {
             using T = std::decay_t<decltype(node)>;
             if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
                 return eval_bool_literal(node, ctx);
@@ -1921,7 +1873,7 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
             } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
                 return eval_qualified_value_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
-                return eval_call_expr(node, ctx, call_eval);
+                return eval_call_expr(node, expr.source_range, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::LambdaExpr>) {
                 return eval_lambda_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
@@ -2054,9 +2006,7 @@ EvalResult eval_intrinsic_with_args(const std::string &callee,
         if (args.size() != 1) {
             return make_error("Option::Some expects one argument");
         }
-        return EvalResult{make_enum("std::option::Option", "Some",
-                                    std::make_unique<Value>(std::move(args.front()))),
-                          {}};
+        return EvalResult{make_option_some(std::move(args.front())), {}};
     }
     if (callee == "std::result::Result::Ok" || callee == "std::result::Result::Err") {
         if (args.size() != 1) {

@@ -2,6 +2,7 @@
 
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 
+#include "base/support/atomic_file.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/providers/llm/streaming.hpp"
@@ -182,21 +183,6 @@ void apply_invocation_context(LLMTokenBudgetEvent &event,
     event.has_workflow_node_context = context.has_workflow_node_context;
 }
 
-[[nodiscard]] std::string workflow_budget_key(const runtime::CapabilityInvocationContext &context) {
-    return context.workflow_name.empty() ? std::string{"<direct>"} : context.workflow_name;
-}
-
-[[nodiscard]] std::optional<std::string>
-node_budget_key(const runtime::CapabilityInvocationContext &context) {
-    if (!context.has_workflow_node_context || context.workflow_node_name.empty()) {
-        return std::nullopt;
-    }
-    std::string key = workflow_budget_key(context);
-    key.push_back('\0');
-    key += context.workflow_node_name;
-    return key;
-}
-
 [[nodiscard]] std::string http_failure_summary(std::string_view provider_name,
                                                const HttpResponse &response) {
     std::string summary(provider_name);
@@ -362,19 +348,7 @@ read_response_cache_snapshot_file(const std::filesystem::path &path) {
 
 [[nodiscard]] bool write_response_cache_snapshot_file(const std::filesystem::path &path,
                                                       std::string_view content) {
-    if (path.has_parent_path()) {
-        std::error_code ec;
-        std::filesystem::create_directories(path.parent_path(), ec);
-        if (ec) {
-            return false;
-        }
-    }
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file.is_open()) {
-        return false;
-    }
-    file << content;
-    return file.good();
+    return ahfl::support::atomic_replace_text(path, content).has_value();
 }
 
 } // namespace
@@ -524,20 +498,22 @@ void LLMCapabilityProvider::record_token_budget_event(LLMTokenBudgetEvent event)
     token_budget_events_.push_back(std::move(event));
 }
 
-void LLMCapabilityProvider::record_token_usage_event(
+std::optional<LLMCapabilityProvider::UsagePolicyOutcome>
+LLMCapabilityProvider::record_token_usage_event(
     std::string_view provider_name,
     std::string_view capability_name,
     const runtime::CapabilityInvocationContext &context,
     const LLMProviderConfig &config,
-    const std::string &response_body) const {
+    const std::string &response_body,
+    std::size_t attempts) const {
     auto parsed = ahfl::json::parse_json(response_body);
     if (!parsed.has_value() || !*parsed) {
-        return;
+        return std::nullopt;
     }
 
     const auto *usage = (*parsed)->get("usage");
     if (usage == nullptr || !usage->is_object()) {
-        return;
+        return std::nullopt;
     }
 
     const auto prompt_tokens = non_negative_size_field(*usage, "prompt_tokens").value_or(0);
@@ -553,6 +529,28 @@ void LLMCapabilityProvider::record_token_usage_event(
     const auto total_cost = prompt_cost + completion_cost;
     const auto has_cost_budget = config.max_total_cost_usd > 0.0;
     const auto cost_exceeded_budget = has_cost_budget && total_cost > config.max_total_cost_usd;
+    std::optional<runtime::CapabilityCallResult> policy_rejection;
+    std::vector<runtime::CapabilityPolicyNotice> notices;
+    const auto reject = [&](std::string message, std::string diagnostic_code) {
+        if (config.token_budget_policy == "warn") {
+            notices.push_back(runtime::CapabilityPolicyNotice{
+                .diagnostic_code = std::move(diagnostic_code),
+                .message = std::move(message),
+            });
+            return;
+        }
+        if (policy_rejection.has_value()) {
+            return;
+        }
+        policy_rejection = runtime::CapabilityCallResult{
+            .status = runtime::CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = std::move(message),
+            .attempts = attempts,
+            .failure_kind = runtime::CapabilityFailureKind::BudgetRejected,
+            .diagnostic_code = std::move(diagnostic_code),
+        };
+    };
 
     LLMTokenUsageEvent usage_event{
         .provider_name = std::string(provider_name),
@@ -595,6 +593,12 @@ void LLMCapabilityProvider::record_token_usage_event(
     };
     apply_invocation_context(usage_budget_event, context);
     record_token_budget_event(std::move(usage_budget_event));
+    if (usage_exceeded_budget) {
+        reject("LLM provider '" + std::string(provider_name) + "' reported total_tokens=" +
+                   std::to_string(total_tokens) + " while max_total_tokens=" +
+                   std::to_string(config.max_total_tokens),
+               ahfl::error_codes::runtime::LLMTokenBudgetExceeded.full_code());
+    }
 
     if (has_cost_budget) {
         LLMTokenBudgetEvent cost_budget_event{
@@ -622,12 +626,22 @@ void LLMCapabilityProvider::record_token_usage_event(
         };
         apply_invocation_context(cost_budget_event, context);
         record_token_budget_event(std::move(cost_budget_event));
+        if (cost_exceeded_budget) {
+            reject("LLM provider '" + std::string(provider_name) +
+                       "' estimated total_cost_usd=" + std::to_string(total_cost) +
+                       " while max_total_cost_usd=" +
+                       std::to_string(config.max_total_cost_usd),
+                   ahfl::error_codes::runtime::LLMCostBudgetExceeded.full_code());
+        }
     }
 
     const auto has_workflow_token_budget = config.max_workflow_total_tokens > 0;
     const auto has_workflow_cost_budget = config.max_workflow_total_cost_usd > 0.0;
     if (has_workflow_token_budget || has_workflow_cost_budget) {
-        auto &totals = workflow_budget_totals_[workflow_budget_key(context)];
+        auto &totals = workflow_budget_totals_[WorkflowBudgetKey{
+            .run = context.run_id,
+            .workflow = context.workflow_id,
+        }];
         totals.total_tokens += total_tokens;
         totals.total_cost_usd += total_cost;
         if (has_workflow_token_budget) {
@@ -659,6 +673,13 @@ void LLMCapabilityProvider::record_token_usage_event(
             };
             apply_invocation_context(workflow_token_event, context);
             record_token_budget_event(std::move(workflow_token_event));
+            if (exceeded) {
+                reject("LLM workflow cumulative_tokens=" +
+                           std::to_string(totals.total_tokens) +
+                           " while max_workflow_total_tokens=" +
+                           std::to_string(max_workflow_tokens),
+                       ahfl::error_codes::runtime::LLMTokenBudgetExceeded.full_code());
+            }
         }
         if (has_workflow_cost_budget) {
             const auto exceeded = totals.total_cost_usd > config.max_workflow_total_cost_usd;
@@ -689,16 +710,28 @@ void LLMCapabilityProvider::record_token_usage_event(
             };
             apply_invocation_context(workflow_cost_event, context);
             record_token_budget_event(std::move(workflow_cost_event));
+            if (exceeded) {
+                reject("LLM workflow cumulative_cost_usd=" +
+                           std::to_string(totals.total_cost_usd) +
+                           " while max_workflow_total_cost_usd=" +
+                           std::to_string(config.max_workflow_total_cost_usd),
+                       ahfl::error_codes::runtime::LLMCostBudgetExceeded.full_code());
+            }
         }
     }
 
-    const auto maybe_node_key = node_budget_key(context);
     const auto has_node_token_budget =
-        maybe_node_key.has_value() && config.max_node_total_tokens > 0;
+        context.has_workflow_node_context && context.workflow_node_id.valid() &&
+        config.max_node_total_tokens > 0;
     const auto has_node_cost_budget =
-        maybe_node_key.has_value() && config.max_node_total_cost_usd > 0.0;
+        context.has_workflow_node_context && context.workflow_node_id.valid() &&
+        config.max_node_total_cost_usd > 0.0;
     if (has_node_token_budget || has_node_cost_budget) {
-        auto &totals = node_budget_totals_[*maybe_node_key];
+        auto &totals = node_budget_totals_[NodeBudgetKey{
+            .run = context.run_id,
+            .workflow = context.workflow_id,
+            .node = context.workflow_node_id,
+        }];
         totals.total_tokens += total_tokens;
         totals.total_cost_usd += total_cost;
         if (has_node_token_budget) {
@@ -729,6 +762,13 @@ void LLMCapabilityProvider::record_token_usage_event(
             };
             apply_invocation_context(node_token_event, context);
             record_token_budget_event(std::move(node_token_event));
+            if (exceeded) {
+                reject("LLM workflow node cumulative_tokens=" +
+                           std::to_string(totals.total_tokens) +
+                           " while max_node_total_tokens=" +
+                           std::to_string(max_node_tokens),
+                       ahfl::error_codes::runtime::LLMTokenBudgetExceeded.full_code());
+            }
         }
         if (has_node_cost_budget) {
             const auto exceeded = totals.total_cost_usd > config.max_node_total_cost_usd;
@@ -759,8 +799,28 @@ void LLMCapabilityProvider::record_token_usage_event(
             };
             apply_invocation_context(node_cost_event, context);
             record_token_budget_event(std::move(node_cost_event));
+            if (exceeded) {
+                reject("LLM workflow node cumulative_cost_usd=" +
+                           std::to_string(totals.total_cost_usd) +
+                           " while max_node_total_cost_usd=" +
+                           std::to_string(config.max_node_total_cost_usd),
+                       ahfl::error_codes::runtime::LLMCostBudgetExceeded.full_code());
+            }
         }
     }
+    return UsagePolicyOutcome{
+        .usage =
+            runtime::CapabilityUsage{
+                .prompt_tokens = prompt_tokens,
+                .completion_tokens = completion_tokens,
+                .total_tokens = total_tokens,
+                .total_cost_usd = total_cost,
+                .cost_estimated = config.prompt_token_cost_per_million > 0.0 ||
+                                  config.completion_token_cost_per_million > 0.0,
+                .notices = std::move(notices),
+            },
+        .rejection = std::move(policy_rejection),
+    };
 }
 
 std::string LLMCapabilityProvider::build_request_json(const LLMProviderConfig &config,
@@ -893,13 +953,11 @@ HttpResponse LLMCapabilityProvider::send_chat_completion(const LLMProviderConfig
     return client.chat_completions(request_json);
 }
 
-std::optional<LLMCapabilityProvider::ProviderHttpResult>
+std::expected<LLMCapabilityProvider::ProviderHttpResult, runtime::CapabilityCallResult>
 LLMCapabilityProvider::chat_with_provider_fallback(
     std::string_view capability_name,
     const runtime::CapabilityInvocationContext &context,
-    const std::function<std::string(const LLMProviderConfig &)> &request_factory,
-    std::string &error_message,
-    std::size_t &attempts) const {
+    const std::function<std::string(const LLMProviderConfig &)> &request_factory) const {
     std::vector<std::string> failures;
     std::vector<std::string> degraded_providers;
     std::size_t total_attempts = 0;
@@ -912,8 +970,16 @@ LLMCapabilityProvider::chat_with_provider_fallback(
             ++total_attempts;
             response = send_chat_completion(candidate_config, request_json);
             if (response.success()) {
-                record_token_usage_event(
-                    candidate.name, capability_name, context, candidate_config, response.body);
+                auto usage = record_token_usage_event(candidate.name,
+                                                      capability_name,
+                                                      context,
+                                                      candidate_config,
+                                                      response.body,
+                                                      total_attempts);
+                if (usage.has_value() && usage->rejection.has_value()) {
+                    usage->rejection->usage = usage->usage;
+                    return std::unexpected(std::move(*usage->rejection));
+                }
                 if (!failures.empty()) {
                     record_provider_health_event(LLMProviderHealthEvent{
                         .kind = LLMProviderHealthEventKind::FallbackSelected,
@@ -926,11 +992,13 @@ LLMCapabilityProvider::chat_with_provider_fallback(
                         .secret_free = true,
                     });
                 }
-                attempts = total_attempts;
                 return ProviderHttpResult{
                     .response = std::move(response),
                     .attempts = total_attempts,
                     .provider_name = candidate.name,
+                    .usage = usage.has_value()
+                                 ? std::optional<runtime::CapabilityUsage>{usage->usage}
+                                 : std::nullopt,
                 };
             }
         }
@@ -960,7 +1028,7 @@ LLMCapabilityProvider::chat_with_provider_fallback(
             message << failures[index];
         }
     }
-    error_message = message.str();
+    auto error_message = message.str();
     record_provider_health_event(LLMProviderHealthEvent{
         .kind = LLMProviderHealthEventKind::FallbackExhausted,
         .provider_name = {},
@@ -970,8 +1038,12 @@ LLMCapabilityProvider::chat_with_provider_fallback(
         .message = error_message,
         .secret_free = true,
     });
-    attempts = total_attempts;
-    return std::nullopt;
+    return std::unexpected(runtime::CapabilityCallResult{
+        .status = runtime::CapabilityCallStatus::Error,
+        .value = std::nullopt,
+        .error_message = std::move(error_message),
+        .attempts = total_attempts,
+    });
 }
 
 LLMResponseContent LLMCapabilityProvider::extract_response(const std::string &response_body) const {
@@ -1053,6 +1125,36 @@ runtime::CapabilityCallResult
 LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationContext &context,
                                            const std::string &capability_name,
                                            const std::vector<evaluator::Value> &args) {
+    const auto health_event_start = provider_health_events_.size();
+    auto result = invoke_with_context_impl(context, capability_name, args);
+    for (std::size_t index = health_event_start; index < provider_health_events_.size(); ++index) {
+        const auto &event = provider_health_events_[index];
+        switch (event.kind) {
+        case LLMProviderHealthEventKind::ProviderDegraded:
+            result.provider_degraded = true;
+            if (result.degraded_provider_name.empty()) {
+                result.degraded_provider_name = event.provider_name;
+            }
+            break;
+        case LLMProviderHealthEventKind::FallbackSelected:
+            result.provider_degraded = true;
+            if (result.degraded_provider_name.empty()) {
+                result.degraded_provider_name = event.provider_name;
+            }
+            result.selected_provider_name = event.selected_provider_name;
+            break;
+        case LLMProviderHealthEventKind::FallbackExhausted:
+            result.provider_degraded = true;
+            break;
+        }
+    }
+    return result;
+}
+
+runtime::CapabilityCallResult LLMCapabilityProvider::invoke_with_context_impl(
+    const runtime::CapabilityInvocationContext &context,
+    const std::string &capability_name,
+    const std::vector<evaluator::Value> &args) {
     // Look up the capability's return type
     std::string return_type;
     if (const auto *capability = index_.find_capability(capability_name); capability != nullptr) {
@@ -1082,6 +1184,9 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
             .value = std::nullopt,
             .error_message = *prompt_budget.error,
             .attempts = 0,
+            .failure_kind = runtime::CapabilityFailureKind::BudgetRejected,
+            .diagnostic_code =
+                ahfl::error_codes::runtime::LLMPromptBudgetRejected.full_code(),
         };
     }
 
@@ -1101,6 +1206,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
                         .value = std::move(*result.value),
                         .error_message = {},
                         .attempts = 0,
+                        .cache_hit = true,
                     };
                 }
                 record_response_cache_event(LLMResponseCacheAuditEventKind::Invalidated,
@@ -1114,25 +1220,19 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
             }
         }
 
-        std::string fallback_error;
-        std::size_t attempts = 0;
         auto http_result = chat_with_provider_fallback(
             capability_name,
             context,
             [&](const LLMProviderConfig &provider_config) {
                 return build_request_json(provider_config, system_prompt, user_prompt);
-            },
-            fallback_error,
-            attempts);
+            });
 
         if (!http_result.has_value()) {
-            return runtime::CapabilityCallResult{
-                .status = config_.max_retries > 0 ? runtime::CapabilityCallStatus::RetryExhausted
-                                                  : runtime::CapabilityCallStatus::Error,
-                .value = std::nullopt,
-                .error_message = std::move(fallback_error),
-                .attempts = attempts,
-            };
+            auto failure = std::move(http_result.error());
+            if (!failure.failure_kind.has_value() && config_.max_retries > 0) {
+                failure.status = runtime::CapabilityCallStatus::RetryExhausted;
+            }
+            return failure;
         }
 
         std::string content;
@@ -1148,6 +1248,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
                     .value = std::nullopt,
                     .error_message = "incomplete LLM streaming response: missing [DONE]",
                     .attempts = http_result->attempts,
+                    .failure_kind = runtime::CapabilityFailureKind::Interrupted,
                 };
             }
             content = std::move(stream.content);
@@ -1187,6 +1288,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
             .value = std::move(*result.value),
             .error_message = {},
             .attempts = http_result->attempts,
+            .usage = http_result->usage,
         };
     }
 
@@ -1246,21 +1348,18 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
             return ahfl::json::serialize_json(*root);
         };
 
-        std::string fallback_error;
-        std::size_t round_attempts = 0;
-        auto http_result = chat_with_provider_fallback(
-            capability_name, context, build_tool_request, fallback_error, round_attempts);
-        total_attempts += round_attempts;
+        auto http_result =
+            chat_with_provider_fallback(capability_name, context, build_tool_request);
 
         if (!http_result.has_value()) {
-            return runtime::CapabilityCallResult{
-                .status = config_.max_retries > 0 ? runtime::CapabilityCallStatus::RetryExhausted
-                                                  : runtime::CapabilityCallStatus::Error,
-                .value = std::nullopt,
-                .error_message = std::move(fallback_error),
-                .attempts = total_attempts,
-            };
+            auto failure = std::move(http_result.error());
+            failure.attempts += total_attempts;
+            if (!failure.failure_kind.has_value() && config_.max_retries > 0) {
+                failure.status = runtime::CapabilityCallStatus::RetryExhausted;
+            }
+            return failure;
         }
+        total_attempts += http_result->attempts;
 
         // Parse structured response
         LLMResponseContent llm_response = extract_response(http_result->response.body);
@@ -1293,6 +1392,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
                 .value = std::move(*result.value),
                 .error_message = {},
                 .attempts = static_cast<std::size_t>(total_attempts),
+                .usage = http_result->usage,
             };
         }
 

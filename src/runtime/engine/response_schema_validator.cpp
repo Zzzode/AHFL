@@ -168,37 +168,22 @@ namespace {
     }
 
     if (is_nominal_std_option(expected)) {
-        if (is_none(value)) {
-            return SchemaValidationResult::ok();
-        }
-        // P5.11a + P5.11b dual-aware: check nominal EnumValue Option (Some/None
-        // with associated payload) first, then legacy OptionalValue via the
-        // nominal accessor.
         if (const auto *ev = std::get_if<evaluator::EnumValue>(&value.node);
             ev != nullptr && ev->enum_name == "std::option::Option") {
-            if (ev->variant == "None") {
+            if (ev->variant == "None" && ev->payload.empty()) {
                 return SchemaValidationResult::ok();
             }
-            if (ev->variant == "Some" && ev->associated) {
+            if (ev->variant == "Some" && ev->payload.size() == 1 && ev->payload.front()) {
                 if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
-                    return check(*ev->associated, *inner_type, index, path);
+                    return check(*ev->payload.front(), *inner_type, index, path);
                 }
                 return SchemaValidationResult::ok();
             }
-            // Unknown Option variant: fall through to bare inner-type check.
-        } else if (auto *opt = evaluator::get_optional_if(value)) {
-            if (!opt->inner) {
-                return SchemaValidationResult::ok();
-            }
-            if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
-                return check(*opt->inner, *inner_type, index, path);
-            }
-            return SchemaValidationResult::ok();
+            return SchemaValidationResult::fail(
+                at_path(path, "invalid std::option::Option runtime value"));
         }
-        if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
-            return check(value, *inner_type, index, path);
-        }
-        return SchemaValidationResult::ok();
+        return SchemaValidationResult::fail(
+            at_path(path, "expected Optional but got " + std::string(kind_label(value))));
     }
 
     if (expected.kind == Kind::Bool) {

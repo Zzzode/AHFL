@@ -1,0 +1,57 @@
+name: Production Confidence
+
+on:
+  schedule:
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-confidence-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  hour-scale-soak:
+    name: Hour-scale Reference Workflow Soak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      - name: Configure
+        run: cmake --preset dev -DAHFL_WARNINGS_AS_ERRORS=ON
+
+      - name: Build reference worker
+        run: >-
+          cmake --build --preset build-dev
+          --target ahfl_reference_workflow_recovery_worker
+
+      - name: Run hour-scale soak
+        run: >-
+          python3 tests/scripts/reference_workflow_long_soak.py
+          --worker build/dev/tests/ahfl_reference_workflow_recovery_worker
+          --repo-root .
+          --work-dir build/dev/tests/runtime/reference-workflow-hour-scale
+          --minimum-seconds 3600
+          --minimum-iterations 100
+          --contract-kind hour-scale
+          --evidence-path
+          build/release-evidence/production-confidence/hour-scale-soak.json
+
+      - name: Require production confidence
+        run: python3 scripts/check-production-confidence-gate.py --require-ready
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahfl-production-confidence-${{ github.sha }}
+          path: build/release-evidence/production-confidence/
+          if-no-files-found: error

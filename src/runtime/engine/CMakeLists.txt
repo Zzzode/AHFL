@@ -1,6 +1,13 @@
 add_library(ahfl_runtime_engine STATIC
+    execution_event.cpp
+    execution_metadata.cpp
+    execution_otel.cpp
+    execution_projection.cpp
+    execution_renderer.cpp
+    execution_report.cpp
     agent_runtime.cpp
     workflow_runtime.cpp
+    workflow_recovery.cpp
     capability_bridge.cpp
     capability_eval.cpp
     capability_transport_adapter.cpp

@@ -102,10 +102,10 @@ void test_serialize_struct() {
 }
 
 void test_serialize_optional() {
-    auto some = make_optional_some(make_int(99));
+    auto some = make_option_some(make_int(99));
     check(value_to_json(some) == "99", "serialize.optional_some");
 
-    auto none = make_optional_none();
+    auto none = make_option_none();
     check(value_to_json(none) == "null", "serialize.optional_none");
 }
 
@@ -338,9 +338,9 @@ void test_parse_canonical_optional_shape() {
     }
 
     // Roundtrip of explicit nominal Option values matches canonical shape.
-    auto some_val = make_optional_some(make_int(99));
+    auto some_val = make_option_some(make_int(99));
     check(value_to_json(some_val) == "99", "canonical.some_serialize");
-    auto none_val = make_optional_none();
+    auto none_val = make_option_none();
     check(value_to_json(none_val) == "null", "canonical.none_serialize");
 }
 

@@ -122,6 +122,19 @@ sorted_targets(const std::vector<TargetManifest> &targets) {
     return sorted;
 }
 
+[[nodiscard]] std::vector<const RunProfileManifest *>
+sorted_run_profiles(const std::vector<RunProfileManifest> &profiles) {
+    std::vector<const RunProfileManifest *> sorted;
+    sorted.reserve(profiles.size());
+    for (const auto &profile : profiles) {
+        sorted.push_back(&profile);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const auto *lhs, const auto *rhs) {
+        return lhs->name < rhs->name;
+    });
+    return sorted;
+}
+
 void append_dependency(std::ostream &out, const DependencySpec &dependency) {
     out << dependency.key << " = { source = ";
     append_basic_string(out, dependency.source);
@@ -198,6 +211,39 @@ std::string canonicalize_package_manifest(const PackageManifest &manifest) {
             out << "\n[[targets." << target->name << ".capability_bindings]]\n";
             append_key_value(out, "capability", binding.capability);
             append_key_value(out, "binding_key", binding.binding_key);
+        }
+    }
+
+    if (manifest.run.has_value()) {
+        out << "\n[run]\n";
+        if (!manifest.run->target.empty()) {
+            append_key_value(out, "target", manifest.run->target);
+        }
+        if (!manifest.run->input.empty()) {
+            append_key_value(out, "input", manifest.run->input);
+        }
+        if (!manifest.run->llm_config.empty()) {
+            append_key_value(out, "llm_config", manifest.run->llm_config);
+        }
+        append_key_value(out, "output_format", manifest.run->output_format);
+        append_key_value(out, "verbosity", manifest.run->verbosity);
+        for (const auto *profile : sorted_run_profiles(manifest.run->profiles)) {
+            out << "\n[run.profiles." << profile->name << "]\n";
+            if (profile->target.has_value()) {
+                append_key_value(out, "target", *profile->target);
+            }
+            if (profile->input.has_value()) {
+                append_key_value(out, "input", *profile->input);
+            }
+            if (profile->llm_config.has_value()) {
+                append_key_value(out, "llm_config", *profile->llm_config);
+            }
+            if (profile->output_format.has_value()) {
+                append_key_value(out, "output_format", *profile->output_format);
+            }
+            if (profile->verbosity.has_value()) {
+                append_key_value(out, "verbosity", *profile->verbosity);
+            }
         }
     }
 

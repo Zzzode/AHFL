@@ -337,11 +337,20 @@ add_test(NAME ahflc.run.llm_tools.fail_invalid_capability_mocks
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
-add_test(NAME ahflc.run.llm_observability.smoke
+add_test(NAME ahflc.run.llm_provider_runtime.smoke
     COMMAND ${Python3_EXECUTABLE}
-            "${AHFL_TESTS_DIR}/scripts/llm_observability_smoke.py"
+            "${AHFL_TESTS_DIR}/scripts/llm_provider_runtime_smoke.py"
             $<TARGET_FILE:ahflc>
-            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-observability-smoke"
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-provider-runtime-smoke"
+)
+
+add_test(NAME ahflc.run.profile_and_output_contract.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/run_profile_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/run-profile-smoke"
+            "${PROJECT_SOURCE_DIR}/build/release-evidence/beta/run-profiles.json"
 )
 
 add_test(NAME ahflc.run.llm_failure_matrix.smoke

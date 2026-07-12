@@ -43,11 +43,11 @@ namespace ahfl::cli {
 // print_usage
 // ---------------------------------------------------------------------------
 
-void print_usage(std::ostream &out, bool show_internal) {
+void print_usage(std::ostream &out) {
     out << "Usage:\n"
         << "  ahflc check [options] [<input.ahfl>]\n"
-        << "  ahflc run --input '<json>' [options]\n"
-        << "  ahflc run --manifest <ahfl.toml> --input '<json>' [options]\n"
+        << "  ahflc run [options]\n"
+        << "  ahflc run --manifest <ahfl.toml> [options]\n"
         << "  ahflc run --workflow <name> --input '<json>' [options] <input.ahfl>\n"
         << "  ahflc fmt [--check] <input.ahfl|dir>...\n"
         << "  ahflc fmt [--check] --manifest <ahfl.toml>\n"
@@ -90,20 +90,6 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "    opt-ir-json                Optimization IR JSON artifact\n"
         << "    native-json                Native backend JSON\n"
         << "    execution-plan             Execution plan for workflows\n"
-        << "    execution-journal          Execution journal trace\n"
-        << "    replay-view                Replay view snapshot\n"
-        << "    audit-report               Audit trail report\n"
-        << "    scheduler-snapshot         Scheduler state snapshot\n"
-        << "    scheduler-review           Scheduler review output\n"
-        << "    checkpoint-record          Checkpoint record\n"
-        << "    checkpoint-review          Checkpoint review\n"
-        << "    persistence-descriptor     Persistence layer descriptor\n"
-        << "    persistence-review         Persistence review\n"
-        << "    export-manifest            Export manifest\n"
-        << "    export-review              Export review\n"
-        << "    store-import-descriptor    Store import descriptor\n"
-        << "    store-import-review        Store import review\n"
-        << "    runtime-session            Runtime session snapshot\n"
         << "    dry-run-trace              Dry-run execution trace\n"
         << "    package-review             Package-level review\n"
         << "    public-api                 Package public API JSON snapshot\n"
@@ -113,23 +99,6 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "    summary                    Human-readable summary\n"
         << "    smv                        NuSMV model (for verify)\n"
         << "    assurance-json             Assurance model (for validate)\n";
-
-    // Store pipeline (durable-store-import artifacts under store/)
-    out << "\n  Store Pipeline (store/...):\n";
-    for (const auto command : command_list(CommandListKind::Action)) {
-        auto name = command_name(command);
-        if (name.starts_with("emit-durable-store-import-")) {
-            out << "    " << command_short_name(command) << '\n';
-        }
-    }
-
-    if (show_internal) {
-        out << "\n  Internal Provider Artifacts "
-               "(ahflc emit-provider-artifact <provider/artifact>):\n";
-        for (const auto &artifact : provider_artifact_descriptors()) {
-            out << "    provider/" << artifact.artifact_id << '\n';
-        }
-    }
 
     // Dump targets
     out << "\n  Dump targets: ast, types, package-graph, lockfile\n";
@@ -146,8 +115,11 @@ void print_usage(std::ostream &out, bool show_internal) {
     out << "\nRuntime Options:\n"
         << "  --workflow <canonical>      Target workflow; package run defaults to manifest entry\n"
         << "  --input <json>              Runtime input JSON for run\n"
+        << "  --input-file <path>         Runtime input JSON file for run\n"
         << "  --llm-config <path>         LLM config for run (default: ~/.ahfl/llm_config.json)\n"
-        << "  --llm-observability <path>  Write secret-free LLM provider observability JSON\n"
+        << "  --profile <name>            Named run profile from ahfl.toml\n"
+        << "  --output-format <format>    human, json, jsonl, or quiet\n"
+        << "  --verbosity <level>         normal, verbose, or trace\n"
         << "  --tool-catalog <path>       Runtime tool catalog exposed as LLM tools\n"
         << "  --capability-bindings <path>  HTTP/gRPC capability binding config for run\n"
         << "  --input-fixture <fixture>   Runtime fixture selection\n"
@@ -170,7 +142,6 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  --formal-model-out <path>  Write SMV model to file\n";
 
     out << "\nGeneral Options:\n"
-        << "  --show-hidden              Show hidden internal diagnostic artifacts\n"
         << "  --check                    Check formatting without writing (fmt only)\n"
         << "  --explain                  Verbose diagnostic output\n"
         << "  -O                         Enable optimization passes\n"
