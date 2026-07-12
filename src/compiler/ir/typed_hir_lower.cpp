@@ -669,13 +669,13 @@ class TypedIrLowerer final {
 
     [[nodiscard]] static const ast::ExprSyntax *find_match_expr_in_decl(const ast::Decl &decl,
                                                                         const TypedExpr &typed) {
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl: {
-            const auto &value = static_cast<const ast::ConstDecl &>(decl);
+            const auto &value = std::get<ast::ConstDecl>(decl);
             return value.value ? find_match_expr_in_expr(*value.value, typed) : nullptr;
         }
         case ast::NodeKind::StructDecl: {
-            const auto &value = static_cast<const ast::StructDecl &>(decl);
+            const auto &value = std::get<ast::StructDecl>(decl);
             for (const auto &field : value.fields) {
                 if (field && field->default_value) {
                     if (const auto *found = find_match_expr_in_expr(*field->default_value, typed);
@@ -687,7 +687,7 @@ class TypedIrLowerer final {
             return nullptr;
         }
         case ast::NodeKind::ContractDecl: {
-            const auto &value = static_cast<const ast::ContractDecl &>(decl);
+            const auto &value = std::get<ast::ContractDecl>(decl);
             for (const auto &clause : value.clauses) {
                 if (clause && clause->expr) {
                     if (const auto *found = find_match_expr_in_expr(*clause->expr, typed);
@@ -699,7 +699,7 @@ class TypedIrLowerer final {
             return nullptr;
         }
         case ast::NodeKind::FlowDecl: {
-            const auto &value = static_cast<const ast::FlowDecl &>(decl);
+            const auto &value = std::get<ast::FlowDecl>(decl);
             for (const auto &handler : value.state_handlers) {
                 if (handler && handler->body) {
                     if (const auto *found = find_match_expr_in_block(*handler->body, typed);
@@ -711,7 +711,7 @@ class TypedIrLowerer final {
             return nullptr;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &value = static_cast<const ast::WorkflowDecl &>(decl);
+            const auto &value = std::get<ast::WorkflowDecl>(decl);
             for (const auto &node : value.nodes) {
                 if (node && node->input) {
                     if (const auto *found = find_match_expr_in_expr(*node->input, typed);
@@ -724,11 +724,11 @@ class TypedIrLowerer final {
                                       : nullptr;
         }
         case ast::NodeKind::FnDecl: {
-            const auto &value = static_cast<const ast::FnDecl &>(decl);
+            const auto &value = std::get<ast::FnDecl>(decl);
             return value.body ? find_match_expr_in_block(*value.body, typed) : nullptr;
         }
         case ast::NodeKind::ImplDecl: {
-            const auto &value = static_cast<const ast::ImplDecl &>(decl);
+            const auto &value = std::get<ast::ImplDecl>(decl);
             for (const auto &method : value.methods) {
                 if (method && method->body) {
                     if (const auto *found = find_match_expr_in_block(*method->body, typed);
@@ -819,9 +819,9 @@ class TypedIrLowerer final {
             return nullptr;
         };
 
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::FlowDecl: {
-            const auto &flow = static_cast<const ast::FlowDecl &>(decl);
+            const auto &flow = std::get<ast::FlowDecl>(decl);
             for (const auto &handler : flow.state_handlers) {
                 if (handler && handler->body) {
                     if (const auto *found = find_block(*handler->body); found != nullptr) {
@@ -832,11 +832,11 @@ class TypedIrLowerer final {
             return nullptr;
         }
         case ast::NodeKind::FnDecl: {
-            const auto &fn = static_cast<const ast::FnDecl &>(decl);
+            const auto &fn = std::get<ast::FnDecl>(decl);
             return fn.body ? find_block(*fn.body) : nullptr;
         }
         case ast::NodeKind::ImplDecl: {
-            const auto &impl = static_cast<const ast::ImplDecl &>(decl);
+            const auto &impl = std::get<ast::ImplDecl>(decl);
             for (const auto &method : impl.methods) {
                 if (method && method->body) {
                     if (const auto *found = find_block(*method->body); found != nullptr) {
@@ -881,11 +881,9 @@ class TypedIrLowerer final {
             return nullptr;
         }
         for (const auto &decl : program->declarations) {
-            if (decl) {
-                if (const auto *found = find_if_let_stmt_in_decl(*decl, typed.range);
-                    found != nullptr) {
-                    return found;
-                }
+            if (const auto *found = find_if_let_stmt_in_decl(decl, typed.range);
+                found != nullptr) {
+                return found;
             }
         }
         return nullptr;
@@ -906,10 +904,8 @@ class TypedIrLowerer final {
             return nullptr;
         }
         for (const auto &decl : program->declarations) {
-            if (decl) {
-                if (const auto *found = find_match_expr_in_decl(*decl, typed); found != nullptr) {
-                    return found;
-                }
+            if (const auto *found = find_match_expr_in_decl(decl, typed); found != nullptr) {
+                return found;
             }
         }
         return nullptr;
@@ -1651,7 +1647,16 @@ class TypedIrLowerer final {
                                   range);
         }
         ir::ExprRef visit_call(const TypedExpr &e) const {
-            ir::CallExpr call{.callee = self.render_call_target(e), .arguments = {}};
+            ir::CallExpr call{
+                .callee = self.render_call_target(e),
+                .arguments = {},
+                .callee_ref =
+                    e.resolved_symbol.has_value()
+                        ? self.symbol_ref_from_symbol(
+                              self.typed_program_->find_symbol(*e.resolved_symbol),
+                              "call target")
+                        : ir::SymbolRef{},
+            };
             for (const auto &child : e.children) {
                 if (child.role != TypedExprChildRole::Argument)
                     continue;
@@ -1969,6 +1974,7 @@ class TypedIrLowerer final {
         if (result != nullptr) {
             result->resolved_type =
                 expr.type != nullptr ? type_ref_from_type(*expr.type) : ir::TypeRef{};
+            result->effect = expr.effect;
         }
         return result;
     }
@@ -2467,6 +2473,12 @@ class TypedIrLowerer final {
                    expr.node);
     }
 
+    void collect_expression_summary(const ir::Expr &expr,
+                                    ir::StateHandler::Summary &summary) const {
+        summary.inferred_effect = join_effects(summary.inferred_effect, expr.effect);
+        collect_called_targets_from_expr(expr, summary.called_targets);
+    }
+
     void merge_flow_summary(ir::StateHandler::Summary &target,
                             const ir::StateHandler::Summary &other) const {
         for (const auto &gt : other.goto_targets)
@@ -2475,6 +2487,7 @@ class TypedIrLowerer final {
             push_unique_path(target.assigned_paths, ap);
         for (const auto &ct : other.called_targets)
             push_unique_value(target.called_targets, ct);
+        target.inferred_effect = join_effects(target.inferred_effect, other.inferred_effect);
         target.may_return = target.may_return || other.may_return;
         target.assert_count += other.assert_count;
     }
@@ -2583,18 +2596,18 @@ class TypedIrLowerer final {
             Overloaded{
                 [this](const ir::LetStatement &value) {
                     ir::StateHandler::Summary s;
-                    collect_called_targets_from_expr(*value.initializer, s.called_targets);
+                    collect_expression_summary(*value.initializer, s);
                     return s;
                 },
                 [this](const ir::AssignStatement &value) {
                     ir::StateHandler::Summary s;
                     push_unique_path(s.assigned_paths, value.target);
-                    collect_called_targets_from_expr(*value.value, s.called_targets);
+                    collect_expression_summary(*value.value, s);
                     return s;
                 },
                 [this](const ir::IfStatement &value) {
                     ir::StateHandler::Summary s;
-                    collect_called_targets_from_expr(*value.condition, s.called_targets);
+                    collect_expression_summary(*value.condition, s);
                     const auto then_summary = summarize_block(*value.then_block);
                     merge_flow_summary(s, then_summary);
                     ir::StateHandler::Summary else_summary;
@@ -2609,7 +2622,7 @@ class TypedIrLowerer final {
                 [this](const ir::IfLetStatement &value) {
                     ir::StateHandler::Summary s;
                     if (value.scrutinee) {
-                        collect_called_targets_from_expr(*value.scrutinee, s.called_targets);
+                        collect_expression_summary(*value.scrutinee, s);
                     }
                     const auto then_summary = value.then_block ? summarize_block(*value.then_block)
                                                                : ir::StateHandler::Summary{};
@@ -2634,16 +2647,16 @@ class TypedIrLowerer final {
                 [this](const ir::ReturnStatement &value) {
                     ir::StateHandler::Summary s;
                     if (value.value)
-                        collect_called_targets_from_expr(*value.value, s.called_targets);
+                        collect_expression_summary(*value.value, s);
                     s.may_return = true;
                     s.may_fallthrough = false;
                     return s;
                 },
                 [this](const ir::AssertStatement &value) {
                     ir::StateHandler::Summary s;
-                    collect_called_targets_from_expr(*value.condition, s.called_targets);
+                    collect_expression_summary(*value.condition, s);
                     if (value.message) {
-                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                        collect_expression_summary(*value.message, s);
                     }
                     s.assert_count = 1;
                     return s;
@@ -2651,7 +2664,7 @@ class TypedIrLowerer final {
                 [this](const ir::UnwrapStatement &value) {
                     ir::StateHandler::Summary s;
                     if (value.operand) {
-                        collect_called_targets_from_expr(*value.operand, s.called_targets);
+                        collect_expression_summary(*value.operand, s);
                     }
                     s.assert_count = 1;
                     return s;
@@ -2659,10 +2672,10 @@ class TypedIrLowerer final {
                 [this](const ir::RequiresStatement &value) {
                     ir::StateHandler::Summary s;
                     if (value.condition) {
-                        collect_called_targets_from_expr(*value.condition, s.called_targets);
+                        collect_expression_summary(*value.condition, s);
                     }
                     if (value.message) {
-                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                        collect_expression_summary(*value.message, s);
                     }
                     s.assert_count = 1;
                     return s;
@@ -2670,7 +2683,7 @@ class TypedIrLowerer final {
                 [this](const ir::UnreachableStatement &value) {
                     ir::StateHandler::Summary s;
                     if (value.message) {
-                        collect_called_targets_from_expr(*value.message, s.called_targets);
+                        collect_expression_summary(*value.message, s);
                     }
                     s.assert_count = 1;
                     s.may_fallthrough = false;
@@ -2678,7 +2691,7 @@ class TypedIrLowerer final {
                 },
                 [this](const ir::ExprStatement &value) {
                     ir::StateHandler::Summary s;
-                    collect_called_targets_from_expr(*value.expr, s.called_targets);
+                    collect_expression_summary(*value.expr, s);
                     return s;
                 },
             },

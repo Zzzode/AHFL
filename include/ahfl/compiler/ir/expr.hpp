@@ -11,6 +11,7 @@
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/ir/types.hpp"
+#include "ahfl/compiler/semantics/effects.hpp"
 
 namespace ahfl::ir {
 
@@ -206,6 +207,7 @@ struct QualifiedValueExpr {
 struct CallExpr {
     std::string callee;             // Callee name (capability name)
     std::vector<ExprRef> arguments; // Argument list
+    SymbolRef callee_ref{};         // Resolved identity; strings are display/diagnostic only
 };
 
 /// Pure lambda expression lowered from a typed closure.
@@ -327,6 +329,7 @@ struct Expr {
     ExprNode node;
     SourceRangeOpt source_range;
     TypeRef resolved_type; // Populated during lowering; kind=Unresolved if unavailable
+    ExprEffect effect{ExprEffect::Unknown}; // Inferred by Sema; backend/formal input
     std::uint32_t id{0};   // Monotonic node ID assigned during lowering (E-2)
 };
 

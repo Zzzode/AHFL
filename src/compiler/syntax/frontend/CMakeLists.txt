@@ -1,7 +1,6 @@
 add_library(ahfl_compiler_syntax STATIC
     ast.cpp
     ast_printer.cpp
-    desugar.cpp
     frontend.cpp
     project.cpp
 )

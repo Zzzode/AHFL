@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.ir.v1",
+  "format_version": "ahfl.ir.v2",
   "formal_observations": [
     {
       "symbol": "workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0",
@@ -100,6 +100,7 @@
           "default_value": {
             "kind": "string_literal",
             "id": 0,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 122,
               "end_offset": 128
@@ -269,6 +270,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -286,6 +288,7 @@
                 "condition": {
                   "kind": "path",
                   "id": 1,
+                  "effect": "pure",
                   "source_range": {
                     "begin_offset": 581,
                     "end_offset": 603
@@ -353,6 +356,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -387,6 +391,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -419,6 +424,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -436,6 +442,7 @@
                 "value": {
                   "kind": "struct_literal",
                   "id": 3,
+                  "effect": "pure",
                   "source_range": {
                     "begin_offset": 818,
                     "end_offset": 864
@@ -452,6 +459,7 @@
                       "value": {
                         "kind": "path",
                         "id": 2,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 846,
                           "end_offset": 853
@@ -533,6 +541,7 @@
           "input": {
             "kind": "path",
             "id": 5,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 976,
               "end_offset": 981
@@ -576,6 +585,7 @@
           "input": {
             "kind": "path",
             "id": 6,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 1013,
               "end_offset": 1018
@@ -686,6 +696,7 @@
               "expr": {
                 "kind": "path",
                 "id": 7,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 1140,
                   "end_offset": 1162
@@ -737,6 +748,7 @@
       "return_value": {
         "kind": "path",
         "id": 4,
+        "effect": "pure",
         "source_range": {
           "begin_offset": 1228,
           "end_offset": 1234

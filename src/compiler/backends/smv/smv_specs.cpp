@@ -201,6 +201,13 @@ void SmvPrinter::collect_effect_obligation_specs() {
                         continue;
                     }
 
+                    if (is_effect_pure(summary->inferred_effect)) {
+                        specs_.push_back(
+                            "LTLSPEC FALSE -- typed effect missing for capability call " +
+                            called_target);
+                        continue;
+                    }
+
                     const auto &effect = capability->get().effect;
                     const auto effect_kind = capability_effect_kind_name(effect.kind);
                     const auto effect_event =

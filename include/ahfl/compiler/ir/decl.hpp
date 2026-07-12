@@ -247,6 +247,7 @@ struct StateHandler {
         bool may_fallthrough{true};              // Whether it may fall through to the end
         std::vector<Path> assigned_paths;        // Paths that get assigned
         std::vector<std::string> called_targets; // Capabilities called
+        ExprEffect inferred_effect{ExprEffect::Pure}; // Joined Typed HIR expression effect
         std::size_t assert_count{0};             // Number of assert statements
     };
 

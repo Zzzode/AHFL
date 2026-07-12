@@ -106,30 +106,32 @@ MaybeCRef<Symbol> DeclarationIndexBuilder::find_local(SymbolNamespace name_space
 
 void DeclarationIndexBuilder::index_program_declarations(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        switch (declaration->kind) {
+        const auto declaration_kind = ast::decl_kind(declaration);
+        const auto declaration_range = ast::decl_range(declaration);
+        switch (declaration_kind) {
         case ast::NodeKind::ModuleDecl: {
-            const auto &decl = static_cast<const ast::ModuleDecl &>(*declaration);
+            const auto &decl = std::get<ast::ModuleDecl>(declaration);
             hir_->append_declaration(TypedDecl{
-                .kind = declaration->kind,
+                .kind = declaration_kind,
                 .symbol = {},
-                .range = declaration->range,
+                .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
                 .type = nullptr,
                 .payload =
                     ModuleDeclInfo{
                         .name = decl.name ? decl.name->spelling() : std::string{},
-                        .declaration_range = declaration->range,
+                        .declaration_range = declaration_range,
                     },
             });
             break;
         }
         case ast::NodeKind::ImportDecl: {
-            const auto &decl = static_cast<const ast::ImportDecl &>(*declaration);
+            const auto &decl = std::get<ast::ImportDecl>(declaration);
             hir_->append_declaration(TypedDecl{
-                .kind = declaration->kind,
+                .kind = declaration_kind,
                 .symbol = {},
-                .range = declaration->range,
+                .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
                 .type = nullptr,
@@ -137,20 +139,20 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     ImportDeclInfo{
                         .target_module = decl.path ? decl.path->spelling() : std::string{},
                         .alias = decl.alias,
-                        .declaration_range = declaration->range,
+                        .declaration_range = declaration_range,
                     },
             });
             break;
         }
         case ast::NodeKind::ConstDecl: {
-            const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
+            const auto &decl = std::get<ast::ConstDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Consts, decl.name);
                 symbol.has_value()) {
                 index_->const_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -160,14 +162,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::TypeAliasDecl: {
-            const auto &decl = static_cast<const ast::TypeAliasDecl &>(*declaration);
+            const auto &decl = std::get<ast::TypeAliasDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 index_->type_alias_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -177,14 +179,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::StructDecl: {
-            const auto &decl = static_cast<const ast::StructDecl &>(*declaration);
+            const auto &decl = std::get<ast::StructDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 index_->struct_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -194,14 +196,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::EnumDecl: {
-            const auto &decl = static_cast<const ast::EnumDecl &>(*declaration);
+            const auto &decl = std::get<ast::EnumDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 index_->enum_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -211,14 +213,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::CapabilityDecl: {
-            const auto &decl = static_cast<const ast::CapabilityDecl &>(*declaration);
+            const auto &decl = std::get<ast::CapabilityDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Capabilities, decl.name);
                 symbol.has_value()) {
                 index_->capability_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -228,14 +230,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::PredicateDecl: {
-            const auto &decl = static_cast<const ast::PredicateDecl &>(*declaration);
+            const auto &decl = std::get<ast::PredicateDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Predicates, decl.name);
                 symbol.has_value()) {
                 index_->predicate_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -245,14 +247,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::AgentDecl: {
-            const auto &decl = static_cast<const ast::AgentDecl &>(*declaration);
+            const auto &decl = std::get<ast::AgentDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Agents, decl.name);
                 symbol.has_value()) {
                 index_->agent_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -262,14 +264,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             break;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
+            const auto &decl = std::get<ast::WorkflowDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Workflows, decl.name);
                 symbol.has_value()) {
                 index_->workflow_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -281,14 +283,14 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
         case ast::NodeKind::FnDecl: {
             // P2 (RFC §3.2.2): index the fn declaration under its Function
             // symbol id so build_fn_types can resolve its signature.
-            const auto &decl = static_cast<const ast::FnDecl &>(*declaration);
+            const auto &decl = std::get<ast::FnDecl>(declaration);
             if (const auto symbol = find_local(SymbolNamespace::Functions, decl.name);
                 symbol.has_value()) {
                 index_->fn_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -300,7 +302,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
         case ast::NodeKind::TraitDecl: {
             // C-2 (Wave-24): traits live in the Traits namespace. Check
             // Traits first, then fall back to Types (legacy path).
-            const auto &decl = static_cast<const ast::TraitDecl &>(*declaration);
+            const auto &decl = std::get<ast::TraitDecl>(declaration);
             auto symbol = find_local(SymbolNamespace::Traits, decl.name);
             if (!symbol.has_value()) {
                 symbol = find_local(SymbolNamespace::Types, decl.name);
@@ -308,9 +310,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             if (symbol.has_value() && symbol->get().kind == SymbolKind::Trait) {
                 index_->trait_decls.emplace(symbol->get().id.value, std::cref(decl));
                 hir_->append_declaration(TypedDecl{
-                    .kind = declaration->kind,
+                    .kind = declaration_kind,
                     .symbol = symbol->get().id,
-                    .range = declaration->range,
+                    .range = declaration_range,
                     .source_id = state_->current_source_id,
                     .associated_agent_symbol = std::nullopt,
                     .type = nullptr,
@@ -324,7 +326,7 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             // index them under their source-order index. The TypedDecl record
             // uses an empty SymbolId so downstream consumers can recognise the
             // impl by kind alone.
-            const auto &decl = static_cast<const ast::ImplDecl &>(*declaration);
+            const auto &decl = std::get<ast::ImplDecl>(declaration);
             const auto impl_index = index_->impl_decls.size();
             index_->impl_decls.emplace(impl_index,
                                        DeclarationIndex::ImplDeclEntry{
@@ -332,9 +334,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                                            .source_id = state_->current_source_id,
                                        });
             hir_->append_declaration(TypedDecl{
-                .kind = declaration->kind,
+                .kind = declaration_kind,
                 .symbol = {},
-                .range = declaration->range,
+                .range = declaration_range,
                 .source_id = state_->current_source_id,
                 .associated_agent_symbol = std::nullopt,
                 .type = nullptr,
@@ -365,33 +367,145 @@ void DeclarationIndexBuilder::run() {
     index_program_declarations(require(session_->program, "typecheck program must exist"));
 }
 
-EnvironmentBuildResult EnvironmentBuilder::run() {
+DeclarationSema::DeclarationSema(TypeCheckPass &driver)
+    : driver_(&driver), program_(driver.program_), graph_(driver.graph_),
+      result_(driver.result_), environment_(driver.environment_),
+      current_source_(driver.current_source_),
+      current_module_name_(driver.current_module_name_),
+      current_type_param_names_(driver.current_type_param_names_),
+      const_decls_(driver.const_decls_), struct_decls_(driver.struct_decls_),
+      enum_decls_(driver.enum_decls_), capability_decls_(driver.capability_decls_),
+      predicate_decls_(driver.predicate_decls_), agent_decls_(driver.agent_decls_),
+      workflow_decls_(driver.workflow_decls_), fn_decls_(driver.fn_decls_),
+      trait_decls_(driver.trait_decls_), impl_decls_(driver.impl_decls_) {}
+
+TypeEnvironment &DeclarationSema::environment() noexcept {
+    return *environment_;
+}
+
+const TypeEnvironment &DeclarationSema::environment() const noexcept {
+    return *environment_;
+}
+
+void DeclarationSema::enter_source(const SourceUnit &source) {
+    driver_->enter_source(source);
+}
+
+void DeclarationSema::leave_source() {
+    driver_->leave_source();
+}
+
+MaybeCRef<Symbol> DeclarationSema::symbol_of(SymbolId id) const {
+    return driver_->symbol_of(id);
+}
+
+MaybeCRef<ast::TypeAliasDecl> DeclarationSema::alias_decl_of(SymbolId id) const {
+    return driver_->alias_decl_of(id);
+}
+
+MaybeCRef<Symbol> DeclarationSema::find_local_here(SymbolNamespace name_space,
+                                                   std::string_view name) const {
+    return driver_->find_local_here(name_space, name);
+}
+
+MaybeCRef<ResolvedReference> DeclarationSema::find_reference_here(ReferenceKind kind,
+                                                                  SourceRange range) const {
+    return driver_->find_reference_here(kind, range);
+}
+
+TypePtr DeclarationSema::resolve_type(const ast::TypeSyntax &type) {
+    return driver_->resolve_type(type);
+}
+
+TypePtr DeclarationSema::make_error_type() const {
+    return driver_->make_error_type();
+}
+
+TypePtr DeclarationSema::make_type(TypeKind kind) const {
+    return driver_->make_type(kind);
+}
+
+void DeclarationSema::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                           std::string message,
+                                           SourceRange range) {
+    driver_->typecheck_error_here(code, std::move(message), range);
+}
+
+void DeclarationSema::typecheck_error_here(
+    ErrorCode<DiagnosticCategory::TypeCheck> code,
+    std::string message,
+    SourceRange range,
+    std::vector<Diagnostic::Related> notes) {
+    driver_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+}
+
+void DeclarationSema::typecheck_error_here(
+    ErrorCode<DiagnosticCategory::TypeCheck> code,
+    std::string message,
+    SourceRange range,
+    std::vector<Diagnostic::Related> notes,
+    std::map<std::string, std::vector<std::string>> data) {
+    driver_->typecheck_error_here(
+        code, std::move(message), range, std::move(notes), std::move(data));
+}
+
+void DeclarationSema::check_schema_boundary_decl_type(const TypePtr &type,
+                                                      SchemaBoundaryKind boundary,
+                                                      SourceRange range) {
+    driver_->check_schema_boundary_decl_type(type, boundary, range);
+}
+
+std::optional<SymbolId> DeclarationSema::nominal_symbol_of(const Type &type) const {
+    return driver_->nominal_symbol_of(type);
+}
+
+std::string DeclarationSema::nominal_describe(const Type &type) const {
+    return driver_->nominal_describe(type);
+}
+
+std::string DeclarationSema::module_name_of(std::optional<SourceId> source_id) const {
+    return driver_->module_name_of(source_id);
+}
+
+std::string DeclarationSema::package_prefix_of(std::optional<SourceId> source_id) const {
+    return driver_->package_prefix_of(source_id);
+}
+
+void DeclarationSema::check_impl_coherence(const ImplTypeInfo &impl) {
+    driver_->check_impl_coherence(impl);
+}
+
+void DeclarationSema::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
+    driver_->check_trait_impl_signature_match(impl);
+}
+
+EnvironmentBuildResult DeclarationSema::run() {
     EnvironmentBuildResult build_result;
 
     struct EnvironmentScope {
-        TypeCheckPass &driver;
+        TypeEnvironment *&slot;
         TypeEnvironment *previous;
 
         ~EnvironmentScope() {
-            driver.environment_ = previous;
+            slot = previous;
         }
     };
 
-    EnvironmentScope scope{*driver_, driver_->environment_};
-    driver_->environment_ = &build_result.environment;
+    EnvironmentScope scope{environment_, environment_};
+    environment_ = &build_result.environment;
 
-    driver_->build_const_types();
-    driver_->build_struct_types();
-    driver_->build_enum_types();
-    driver_->build_capability_types();
-    driver_->build_predicate_types();
-    driver_->build_agent_types();
-    driver_->build_workflow_types();
-    driver_->build_fn_types();
-    driver_->build_flow_types();
-    driver_->build_contract_types();
-    driver_->build_trait_types();
-    driver_->build_impl_types();
+    build_const_types();
+    build_struct_types();
+    build_enum_types();
+    build_capability_types();
+    build_predicate_types();
+    build_agent_types();
+    build_workflow_types();
+    build_fn_types();
+    build_flow_types();
+    build_contract_types();
+    build_trait_types();
+    build_impl_types();
 
     build_result.declaration_updates.reserve(driver_->result_.typed_program.declarations.size());
     for (std::size_t index = 0; index < driver_->result_.typed_program.declarations.size();
@@ -539,7 +653,7 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
     return build_result;
 }
 
-void TypeCheckPass::build_const_types() {
+void DeclarationSema::build_const_types() {
     for (const auto &[id, decl] : const_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             if (!decl.get().type) {
@@ -551,7 +665,7 @@ void TypeCheckPass::build_const_types() {
     }
 }
 
-void TypeCheckPass::build_struct_types() {
+void DeclarationSema::build_struct_types() {
     for (const auto &[id, decl] : struct_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -602,7 +716,7 @@ void TypeCheckPass::build_struct_types() {
     }
 }
 
-void TypeCheckPass::build_enum_types() {
+void DeclarationSema::build_enum_types() {
     for (const auto &[id, decl] : enum_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -689,7 +803,7 @@ void TypeCheckPass::build_enum_types() {
     }
 }
 
-void TypeCheckPass::build_capability_types() {
+void DeclarationSema::build_capability_types() {
     for (const auto &[id, decl] : capability_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -743,7 +857,7 @@ void TypeCheckPass::build_capability_types() {
     }
 }
 
-void TypeCheckPass::build_predicate_types() {
+void DeclarationSema::build_predicate_types() {
     for (const auto &[id, decl] : predicate_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -783,7 +897,7 @@ void TypeCheckPass::build_predicate_types() {
     }
 }
 
-void TypeCheckPass::build_agent_types() {
+void DeclarationSema::build_agent_types() {
     for (const auto &[id, decl] : agent_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -925,7 +1039,7 @@ void TypeCheckPass::build_agent_types() {
     }
 }
 
-void TypeCheckPass::build_workflow_types() {
+void DeclarationSema::build_workflow_types() {
     for (const auto &[id, decl] : workflow_decls_) {
         with_symbol_context(SymbolId{id}, [&]() {
             const auto symbol = symbol_of(SymbolId{id});
@@ -991,7 +1105,7 @@ void TypeCheckPass::build_workflow_types() {
     }
 }
 
-bool TypeCheckPass::builtin_hook_allowed_by_current_source(std::string_view hook) const {
+bool DeclarationSema::builtin_hook_allowed_by_current_source(std::string_view hook) const {
     if (current_source_ == nullptr || !current_source_->compiler_intrinsics_allow.has_value()) {
         return true;
     }
@@ -1002,9 +1116,9 @@ bool TypeCheckPass::builtin_hook_allowed_by_current_source(std::string_view hook
     });
 }
 
-void TypeCheckPass::validate_builtin_attribute(std::string_view hook,
-                                               bool has_effect_clause,
-                                               SourceRange range) {
+void DeclarationSema::validate_builtin_attribute(std::string_view hook,
+                                                  bool has_effect_clause,
+                                                  SourceRange range) {
     if (!is_std_module(current_module_name_)) {
         typecheck_error_here(error_codes::typecheck::InvalidBuiltinAttribute,
                              messages::typecheck::InvalidBuiltinAttribute.format_with(),
@@ -1028,12 +1142,12 @@ void TypeCheckPass::validate_builtin_attribute(std::string_view hook,
     }
 }
 
-void TypeCheckPass::build_fn_types() {
+void DeclarationSema::build_fn_types() {
     // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): resolve each fn's signature into a
     // FnTypeInfo registered under its Function symbol id. The body is NOT
     // type-checked here: fn bodies can call other fns (mutual recursion) and
     // may use generic type parameters that need the full environment, so body
-    // typecheck is deferred to FnSema after the environment is fully built.
+    // typecheck is deferred to FlowWorkflowSema after the environment is fully built.
     //
     // The signature-only pass is sufficient for call-site resolution: a
     // fn call `f(args)` needs f's param/return types, which are resolved
@@ -1157,7 +1271,7 @@ namespace {
 // so it can reach the private find_reference_here (which honours the current
 // source/module context the same way build_fn_types does).
 FnEffectClauseInfo
-TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause) {
+DeclarationSema::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause) {
     FnEffectClauseInfo info{};
     if (!clause) {
         return info;
@@ -1186,7 +1300,7 @@ TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &
 // pass through; Capability becomes a CapabilitySet over the resolved
 // capability symbols (missing references are dropped — the resolver already
 // diagnosed them).
-EffectJudgement TypeCheckPass::build_effect_judgement(const ast::EffectClauseSyntax &clause) {
+EffectJudgement DeclarationSema::build_effect_judgement(const ast::EffectClauseSyntax &clause) {
     switch (clause.kind) {
     case ast::EffectClauseKind::Pure:
         return EffectJudgement::make_pure();
@@ -1217,10 +1331,9 @@ EffectJudgement TypeCheckPass::build_effect_judgement(const ast::EffectClauseSyn
 // lattice, produced by check_expr / check_block) and projected to the
 // signature-level EffectJudgement via `project()` before comparison.
 //
-// TODO(FnSema): call this from the FnSema pass after type-checking the
+// Called from FlowWorkflowSema after type-checking the
 // function body. The body's overall ExprEffect is the join of all
 // statement/expression effects in the body (see check_block / check_expr).
-// For now, this function is unused but ready for the FnSema integration.
 void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
                                                   ExprEffect body_effect,
                                                   SourceRange body_range) {
@@ -1247,7 +1360,7 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
 // P3 (RFC §3.2.2 / type-system §1.3): turn one trait-item method signature
 // (no body) into a TraitMethodInfo. Self is left opaque — the impl matcher
 // substitutes the impl target type at resolution time.
-TraitMethodInfo TypeCheckPass::resolve_trait_method_info(const ast::TraitItemSyntax &item) {
+TraitMethodInfo DeclarationSema::resolve_trait_method_info(const ast::TraitItemSyntax &item) {
     TraitMethodInfo info{
         .name = item.name,
         .params = {},
@@ -1270,7 +1383,7 @@ TraitMethodInfo TypeCheckPass::resolve_trait_method_info(const ast::TraitItemSyn
     return info;
 }
 
-void TypeCheckPass::build_trait_types() {
+void DeclarationSema::build_trait_types() {
     // P3 (RFC §3.2.2 / type-system §1.3): resolve each trait's method
     // signatures, super-traits, and associated types into a TraitTypeInfo
     // keyed by the Trait symbol id. Method-call resolution is deferred to the
@@ -1405,7 +1518,7 @@ void TypeCheckPass::build_trait_types() {
     }
 }
 
-void TypeCheckPass::build_impl_types() {
+void DeclarationSema::build_impl_types() {
     // P3 (RFC §3.2.2 / type-system §1.4): resolve each impl block:
     //   1. target_type -> a nominal Struct/Enum type (RFC §1.4 TypeRef). The
     //      orphan-rule check (RFC §2.2) compares the impl's module against the
@@ -1415,7 +1528,7 @@ void TypeCheckPass::build_impl_types() {
     //      coverage. Inherent impls (no trait_ref) skip signature matching.
     //   3. duplicate impl detection: two trait impls for the same
     //      (trait, target) pair are rejected (RFC §2.1 coherence).
-    // Impl method bodies are checked by ImplSema after the complete
+    // Impl method bodies are checked by FlowWorkflowSema after the complete
     // environment is available, mirroring the fn signature/body split.
     //
     // Impl index = source order, matching the indexing in
@@ -1494,7 +1607,7 @@ void TypeCheckPass::build_impl_types() {
             // the impl-level names so method_info.type_param_names (which is
             // snapshotted from impl_and_method_tparams after method tparams are
             // appended) carries the full four-layer prefix in canonical order;
-            // that snapshot is what ImplSema::check_impl_method_body uses as
+            // that snapshot is what FlowWorkflowSema::check_impl_method_body uses as
             // its TypeVarT-index baseline (vector B).
             const auto *prev_type_params = current_type_param_names_;
             // Reserve room for impl-level names + per-method extra params so
@@ -1760,7 +1873,7 @@ void TypeCheckPass::build_impl_types() {
     }
 }
 
-void TypeCheckPass::build_flow_types() {
+void DeclarationSema::build_flow_types() {
     if (graph_ != nullptr) {
         for (const auto &source : graph_->sources) {
             enter_source(source);
@@ -1774,13 +1887,14 @@ void TypeCheckPass::build_flow_types() {
     build_flow_types_in_program(require(program_, "typecheck program must exist"));
 }
 
-void TypeCheckPass::build_flow_types_in_program(const ast::Program &program) {
+void DeclarationSema::build_flow_types_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::FlowDecl) {
+        const auto *flow = std::get_if<ast::FlowDecl>(&declaration);
+        if (flow == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
+        const auto &decl = *flow;
         const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
@@ -1838,7 +1952,7 @@ void TypeCheckPass::build_flow_types_in_program(const ast::Program &program) {
     }
 }
 
-void TypeCheckPass::build_contract_types() {
+void DeclarationSema::build_contract_types() {
     if (graph_ != nullptr) {
         for (const auto &source : graph_->sources) {
             enter_source(source);
@@ -1852,13 +1966,14 @@ void TypeCheckPass::build_contract_types() {
     build_contract_types_in_program(require(program_, "typecheck program must exist"));
 }
 
-void TypeCheckPass::build_contract_types_in_program(const ast::Program &program) {
+void DeclarationSema::build_contract_types_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::ContractDecl) {
+        const auto *contract = std::get_if<ast::ContractDecl>(&declaration);
+        if (contract == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+        const auto &decl = *contract;
         const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
@@ -1923,11 +2038,12 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
 
 void ConstSema::check_const_initializers_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::ConstDecl) {
+        const auto *constant = std::get_if<ast::ConstDecl>(&declaration);
+        if (constant == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
+        const auto &decl = *constant;
         const auto symbol = driver_->find_local_here(SymbolNamespace::Consts, decl.name);
         if (!symbol.has_value()) {
             continue;

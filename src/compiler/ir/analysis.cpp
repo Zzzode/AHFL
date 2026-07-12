@@ -152,6 +152,11 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
 	               expr.node);
 }
 
+void collect_expression_summary(const Expr &expr, StateHandler::Summary &summary) {
+    summary.inferred_effect = join_effects(summary.inferred_effect, expr.effect);
+    collect_called_targets_from_expr(expr, summary.called_targets);
+}
+
 void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summary &other) {
     for (const auto &goto_target : other.goto_targets) {
         push_unique_value(target.goto_targets, goto_target);
@@ -162,6 +167,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
     for (const auto &called_target : other.called_targets) {
         push_unique_value(target.called_targets, called_target);
     }
+    target.inferred_effect = join_effects(target.inferred_effect, other.inferred_effect);
     target.may_return = target.may_return || other.may_return;
     target.assert_count += other.assert_count;
 }
@@ -173,18 +179,18 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
         Overloaded{
             [](const LetStatement &value) {
                 StateHandler::Summary summary;
-                collect_called_targets_from_expr(*value.initializer, summary.called_targets);
+                collect_expression_summary(*value.initializer, summary);
                 return summary;
             },
             [](const AssignStatement &value) {
                 StateHandler::Summary summary;
                 push_unique_path(summary.assigned_paths, value.target);
-                collect_called_targets_from_expr(*value.value, summary.called_targets);
+                collect_expression_summary(*value.value, summary);
                 return summary;
             },
             [](const IfStatement &value) {
                 StateHandler::Summary summary;
-                collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                collect_expression_summary(*value.condition, summary);
 
                 const auto then_summary = summarize_block(*value.then_block);
                 merge_flow_summary(summary, then_summary);
@@ -201,7 +207,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             },
             [](const IfLetStatement &value) {
                 StateHandler::Summary summary;
-                collect_called_targets_from_expr(*value.scrutinee, summary.called_targets);
+                collect_expression_summary(*value.scrutinee, summary);
 
                 const auto then_summary = summarize_block(*value.then_block);
                 merge_flow_summary(summary, then_summary);
@@ -225,7 +231,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             [](const ReturnStatement &value) {
                 StateHandler::Summary summary;
                 if (value.value) {
-                    collect_called_targets_from_expr(*value.value, summary.called_targets);
+                    collect_expression_summary(*value.value, summary);
                 }
                 summary.may_return = true;
                 summary.may_fallthrough = false;
@@ -233,9 +239,9 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             },
             [](const AssertStatement &value) {
                 StateHandler::Summary summary;
-                collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                collect_expression_summary(*value.condition, summary);
                 if (value.message) {
-                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                    collect_expression_summary(*value.message, summary);
                 }
                 summary.assert_count = 1;
                 return summary;
@@ -243,7 +249,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             [](const UnwrapStatement &value) {
                 StateHandler::Summary summary;
                 if (value.operand) {
-                    collect_called_targets_from_expr(*value.operand, summary.called_targets);
+                    collect_expression_summary(*value.operand, summary);
                 }
                 summary.assert_count = 1;
                 return summary;
@@ -251,10 +257,10 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             [](const RequiresStatement &value) {
                 StateHandler::Summary summary;
                 if (value.condition) {
-                    collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                    collect_expression_summary(*value.condition, summary);
                 }
                 if (value.message) {
-                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                    collect_expression_summary(*value.message, summary);
                 }
                 summary.assert_count = 1;
                 return summary;
@@ -262,7 +268,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             [](const UnreachableStatement &value) {
                 StateHandler::Summary summary;
                 if (value.message) {
-                    collect_called_targets_from_expr(*value.message, summary.called_targets);
+                    collect_expression_summary(*value.message, summary);
                 }
                 summary.assert_count = 1;
                 summary.may_fallthrough = false;
@@ -270,7 +276,7 @@ void merge_flow_summary(StateHandler::Summary &target, const StateHandler::Summa
             },
             [](const ExprStatement &value) {
                 StateHandler::Summary summary;
-                collect_called_targets_from_expr(*value.expr, summary.called_targets);
+                collect_expression_summary(*value.expr, summary);
                 return summary;
             },
         },

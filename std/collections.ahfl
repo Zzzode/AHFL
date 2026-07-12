@@ -202,7 +202,7 @@ fn list_fold_right_from<T, U>(
         return acc;
     }
     return f(list_raw_get<T>(source, i),
-             list_fold_right_from<T, U>(source, acc, f, i - 1));
+        list_fold_right_from<T, U>(source, acc, f, i - 1));
 }
 
 fn list_copy_range_into<T>(
@@ -216,9 +216,9 @@ fn list_copy_range_into<T>(
         return out;
     }
     let updated: List<T> = list_raw_set<T>(out, out_start,
-                                           list_raw_get<T>(source, src_start));
+        list_raw_get<T>(source, src_start));
     return list_copy_range_into<T>(source, src_start + 1, src_end,
-                                   updated, out_start + 1);
+        updated, out_start + 1);
 }
 
 fn list_concat_flatten<T>(

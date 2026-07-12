@@ -1063,9 +1063,8 @@ struct Request {
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "P5 Optional type sugar desugars to stdlib Option when enabled") {
-    const ahfl::Frontend desugaring_frontend{ahfl::FrontendOptions{.enable_desugaring = true}};
-    const auto root = make_temp_project("optional_desugar_project");
+                  "P5 Optional type sugar resolves through the std prelude") {
+    const auto root = make_temp_project("optional_prelude_project");
     const auto main_path = root / "app" / "main.ahfl";
 
     const std::string main_source = R"AHFL(
@@ -1078,7 +1077,7 @@ struct Request {
 
     write_file(main_path, main_source);
 
-    const auto result = check_project_with_frontend(desugaring_frontend, root, {main_path});
+    const auto result = check_project(root, {main_path});
     const auto request_symbol = result.typed_program.find_local_symbol(
         ahfl::SymbolNamespace::Types, "Request", "app::main");
     REQUIRE(request_symbol.has_value());
@@ -3076,6 +3075,8 @@ flow for A {
     REQUIRE(detached_fp.size() > 0);
     CHECK(ast_fp == typed_fp);
     CHECK(ast_fp == detached_fp);
+    CHECK(ast_fp.find(R"("effect": "capability_call")") != std::string::npos);
+    CHECK(ast_fp.find(R"("inferred_effect": "capability_call")") != std::string::npos);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "P2 lowered IR carries top-level fn body block") {
@@ -4213,9 +4214,10 @@ static std::size_t count_ast_statements(const ahfl::ast::BlockSyntax &block) {
 static std::size_t total_flow_statement_count(const ahfl::ast::Program &program) {
     std::size_t total = 0;
     for (const auto &decl : program.declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl)
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
+        if (flow == nullptr) {
             continue;
-        const auto *flow = static_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        }
         for (const auto &handler : flow->state_handlers) {
             if (handler->body) {
                 total += count_ast_statements(*handler->body);
@@ -4528,10 +4530,10 @@ flow for Worker {
     // typecheck plumbing has decreases to propagate.
     ahfl::ast::ContractDecl *contract_decl = nullptr;
     for (auto &declaration : parse.program->declarations) {
-        if (declaration->kind != ahfl::ast::NodeKind::ContractDecl) {
+        contract_decl = std::get_if<ahfl::ast::ContractDecl>(&declaration);
+        if (contract_decl == nullptr) {
             continue;
         }
-        contract_decl = static_cast<ahfl::ast::ContractDecl *>(declaration.get());
         break;
     }
     REQUIRE(contract_decl != nullptr);

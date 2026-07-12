@@ -651,56 +651,56 @@ void append_index_diagnostics_by_source_name(
 
 [[nodiscard]] std::string module_name_for_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration == nullptr || declaration->kind != ast::NodeKind::ModuleDecl) {
+        const auto *module = std::get_if<ast::ModuleDecl>(&declaration);
+        if (module == nullptr) {
             continue;
         }
-        const auto &module = static_cast<const ast::ModuleDecl &>(*declaration);
-        return module.name == nullptr ? std::string{} : module.name->spelling();
+        return module->name == nullptr ? std::string{} : module->name->spelling();
     }
     return {};
 }
 
 [[nodiscard]] std::optional<std::pair<SymbolKind, std::string>>
 skeleton_symbol_for_declaration(const ast::Decl &declaration) {
-    switch (declaration.kind) {
+    switch (ast::decl_kind(declaration)) {
     case ast::NodeKind::StructDecl: {
-        const auto &typed = static_cast<const ast::StructDecl &>(declaration);
+        const auto &typed = std::get<ast::StructDecl>(declaration);
         return std::pair{SymbolKind::Struct, typed.name};
     }
     case ast::NodeKind::EnumDecl: {
-        const auto &typed = static_cast<const ast::EnumDecl &>(declaration);
+        const auto &typed = std::get<ast::EnumDecl>(declaration);
         return std::pair{SymbolKind::Enum, typed.name};
     }
     case ast::NodeKind::TypeAliasDecl: {
-        const auto &typed = static_cast<const ast::TypeAliasDecl &>(declaration);
+        const auto &typed = std::get<ast::TypeAliasDecl>(declaration);
         return std::pair{SymbolKind::TypeAlias, typed.name};
     }
     case ast::NodeKind::ConstDecl: {
-        const auto &typed = static_cast<const ast::ConstDecl &>(declaration);
+        const auto &typed = std::get<ast::ConstDecl>(declaration);
         return std::pair{SymbolKind::Const, typed.name};
     }
     case ast::NodeKind::CapabilityDecl: {
-        const auto &typed = static_cast<const ast::CapabilityDecl &>(declaration);
+        const auto &typed = std::get<ast::CapabilityDecl>(declaration);
         return std::pair{SymbolKind::Capability, typed.name};
     }
     case ast::NodeKind::PredicateDecl: {
-        const auto &typed = static_cast<const ast::PredicateDecl &>(declaration);
+        const auto &typed = std::get<ast::PredicateDecl>(declaration);
         return std::pair{SymbolKind::Predicate, typed.name};
     }
     case ast::NodeKind::AgentDecl: {
-        const auto &typed = static_cast<const ast::AgentDecl &>(declaration);
+        const auto &typed = std::get<ast::AgentDecl>(declaration);
         return std::pair{SymbolKind::Agent, typed.name};
     }
     case ast::NodeKind::WorkflowDecl: {
-        const auto &typed = static_cast<const ast::WorkflowDecl &>(declaration);
+        const auto &typed = std::get<ast::WorkflowDecl>(declaration);
         return std::pair{SymbolKind::Workflow, typed.name};
     }
     case ast::NodeKind::FnDecl: {
-        const auto &typed = static_cast<const ast::FnDecl &>(declaration);
+        const auto &typed = std::get<ast::FnDecl>(declaration);
         return std::pair{SymbolKind::Function, typed.name};
     }
     case ast::NodeKind::TraitDecl: {
-        const auto &typed = static_cast<const ast::TraitDecl &>(declaration);
+        const auto &typed = std::get<ast::TraitDecl>(declaration);
         return std::pair{SymbolKind::Trait, typed.name};
     }
     default:
@@ -740,13 +740,11 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
                                   const SourceFile &source,
                                   const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration == nullptr) {
-            continue;
-        }
-        const auto skeleton = skeleton_symbol_for_declaration(*declaration);
+        const auto skeleton = skeleton_symbol_for_declaration(declaration);
         if (!skeleton.has_value() || skeleton->second.empty()) {
             continue;
         }
+        const auto declaration_range = ast::decl_range(declaration);
 
         const auto canonical_name = module_name.empty()
                                         ? skeleton->second
@@ -755,7 +753,7 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
             symbol_navigation_range(source,
                                     Symbol{
                                         .local_name = skeleton->second,
-                                        .declaration_range = declaration->range,
+                                        .declaration_range = declaration_range,
                                     });
         index.add_symbol(SymbolFact{
             .def_id = DefId{index.symbols().size()},
@@ -763,18 +761,18 @@ void append_skeleton_symbol_facts(LspWorkspaceIndex &index,
                                               source_unit,
                                               symbol_namespace_for_kind(skeleton->first),
                                               skeleton->first,
-                                              declaration->range,
+                                              declaration_range,
                                               selection_range),
             .package_id = package_id,
             .source_unit_id = source_unit,
             .kind = skeleton->first,
             .name_space = symbol_namespace_for_kind(skeleton->first),
-            .visibility = declaration->visibility,
+            .visibility = ast::decl_visibility(declaration),
             .api_reachable = false,
             .artifact_reachable = false,
             .local_name = skeleton->second,
             .canonical_name = canonical_name,
-            .declaration_range = declaration->range,
+            .declaration_range = declaration_range,
             .selection_range = selection_range,
             .location =
                 Location{
@@ -861,22 +859,22 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
                                 FactCompleteness completeness = FactCompleteness::Parsed) {
     std::size_t source_order = 0;
     for (const auto &declaration : program.declarations) {
-        if (declaration == nullptr || declaration->kind != ast::NodeKind::ImplDecl) {
+        const auto *impl = std::get_if<ast::ImplDecl>(&declaration);
+        if (impl == nullptr) {
             continue;
         }
-        const auto &impl = static_cast<const ast::ImplDecl &>(*declaration);
-        const auto target_range = skeleton_impl_target_range(impl);
-        const auto trait_range = impl.trait_ref != nullptr && has_extent(impl.trait_ref->range)
-                                     ? std::optional<SourceRange>{impl.trait_ref->range}
+        const auto target_range = skeleton_impl_target_range(*impl);
+        const auto trait_range = impl->trait_ref != nullptr && has_extent(impl->trait_ref->range)
+                                     ? std::optional<SourceRange>{impl->trait_ref->range}
                                      : std::nullopt;
         index.add_impl(ImplFact{
             .impl_id = WorkspaceImplId{index.impls().size()},
             .package_id = package_id,
             .source_unit_id = source_unit,
-            .target_type = primitive_type_key_for_syntax(impl.target_type.get()),
+            .target_type = primitive_type_key_for_syntax(impl->target_type.get()),
             .trait_def = std::nullopt,
             .trait_range = trait_range,
-            .declaration_range = impl.range,
+            .declaration_range = impl->range,
             .target_range = target_range,
             .location =
                 Location{
@@ -889,7 +887,7 @@ void append_skeleton_impl_facts(LspWorkspaceIndex &index,
                                         .range = to_lsp_range(source, *trait_range),
                                     }}
                                   : std::nullopt,
-            .methods = skeleton_method_facts_for_impl(impl),
+            .methods = skeleton_method_facts_for_impl(*impl),
             .source_order = source_order,
             .completeness = completeness,
         });

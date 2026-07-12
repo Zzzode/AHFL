@@ -1318,9 +1318,9 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
 
-    switch (declaration.kind) {
+    switch (ast::decl_kind(declaration)) {
     case ast::NodeKind::ModuleDecl: {
-        const auto &module = static_cast<const ast::ModuleDecl &>(declaration);
+        const auto &module = std::get<ast::ModuleDecl>(declaration);
         if (module.name) {
             add_qualified_name_targets(
                 index, source, *module.name, HoverTargetKind::ModuleName, module.name->spelling());
@@ -1328,7 +1328,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::ImportDecl: {
-        const auto &import = static_cast<const ast::ImportDecl &>(declaration);
+        const auto &import = std::get<ast::ImportDecl>(declaration);
         if (import.path) {
             add_qualified_name_targets(
                 index, source, *import.path, HoverTargetKind::ImportPath, import.path->spelling());
@@ -1345,7 +1345,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::UseDecl: {
-        const auto &use = static_cast<const ast::UseDecl &>(declaration);
+        const auto &use = std::get<ast::UseDecl>(declaration);
         if (use.path) {
             add_qualified_name_targets(
                 index, source, *use.path, HoverTargetKind::ImportPath, use.path->spelling());
@@ -1362,7 +1362,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::StructDecl: {
-        const auto &decl = static_cast<const ast::StructDecl &>(declaration);
+        const auto &decl = std::get<ast::StructDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Struct, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1384,7 +1384,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::EnumDecl: {
-        const auto &decl = static_cast<const ast::EnumDecl &>(declaration);
+        const auto &decl = std::get<ast::EnumDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Enum, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1414,7 +1414,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::CapabilityDecl: {
-        const auto &decl = static_cast<const ast::CapabilityDecl &>(declaration);
+        const auto &decl = std::get<ast::CapabilityDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Capability, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1436,7 +1436,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::PredicateDecl: {
-        const auto &decl = static_cast<const ast::PredicateDecl &>(declaration);
+        const auto &decl = std::get<ast::PredicateDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Predicate, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1458,7 +1458,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::AgentDecl: {
-        const auto &decl = static_cast<const ast::AgentDecl &>(declaration);
+        const auto &decl = std::get<ast::AgentDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Agent, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1518,7 +1518,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         if (snapshot.type_check_result == nullptr) {
             return;
         }
-        const auto &decl = static_cast<const ast::FlowDecl &>(declaration);
+        const auto &decl = std::get<ast::FlowDecl>(declaration);
         const auto *flow = flow_for_declaration(snapshot.type_check_result->environment, decl);
         if (flow == nullptr) {
             return;
@@ -1539,7 +1539,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     }
     case ast::NodeKind::WorkflowDecl: {
-        const auto &decl = static_cast<const ast::WorkflowDecl &>(declaration);
+        const auto &decl = std::get<ast::WorkflowDecl>(declaration);
         const auto symbol =
             symbol_for_declaration(snapshot, source, SymbolKind::Workflow, decl.name, decl.range);
         if (!symbol.has_value()) {
@@ -1601,25 +1601,25 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
             index,
             snapshot,
             source,
-            static_cast<const ast::TypeAliasDecl &>(declaration).aliased_type.get());
+            std::get<ast::TypeAliasDecl>(declaration).aliased_type.get());
         return;
     case ast::NodeKind::ConstDecl:
         add_type_syntax_targets(
-            index, snapshot, source, static_cast<const ast::ConstDecl &>(declaration).type.get());
+            index, snapshot, source, std::get<ast::ConstDecl>(declaration).type.get());
         add_expr_syntax_targets(
-            index, snapshot, source, static_cast<const ast::ConstDecl &>(declaration).value.get());
+            index, snapshot, source, std::get<ast::ConstDecl>(declaration).value.get());
         return;
     case ast::NodeKind::FnDecl:
         add_function_signature_type_targets(
-            index, snapshot, source, static_cast<const ast::FnDecl &>(declaration));
+            index, snapshot, source, std::get<ast::FnDecl>(declaration));
         return;
     case ast::NodeKind::TraitDecl:
         add_trait_decl_type_targets(
-            index, snapshot, source, static_cast<const ast::TraitDecl &>(declaration));
+            index, snapshot, source, std::get<ast::TraitDecl>(declaration));
         return;
     case ast::NodeKind::ImplDecl:
         add_impl_decl_type_targets(
-            index, snapshot, source, static_cast<const ast::ImplDecl &>(declaration));
+            index, snapshot, source, std::get<ast::ImplDecl>(declaration));
         return;
     case ast::NodeKind::ContractDecl:
     case ast::NodeKind::Program:
@@ -1634,9 +1634,7 @@ void add_ast_targets(HoverTargetIndex &index,
         return;
     }
     for (const auto &declaration : source.program->declarations) {
-        if (declaration) {
-            add_ast_targets_for_declaration(index, snapshot, source, *declaration);
-        }
+        add_ast_targets_for_declaration(index, snapshot, source, declaration);
     }
 }
 

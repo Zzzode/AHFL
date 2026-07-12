@@ -359,6 +359,8 @@ class IrProgramPrinter final {
         line(indent_level + 1, "may_fallthrough: " + render_bool(summary.may_fallthrough));
         line(indent_level + 1, "assigned_paths: [" + join(assigned_paths, ", ") + "]");
         line(indent_level + 1, "called_targets: [" + join(summary.called_targets, ", ") + "]");
+        line(indent_level + 1,
+             "inferred_effect: " + std::string(to_string(summary.inferred_effect)));
         line(indent_level + 1, "assert_count: " + std::to_string(summary.assert_count));
         line(indent_level, "}");
     }
@@ -470,7 +472,9 @@ class IrProgramPrinter final {
                         arguments.push_back(render_expr(*argument));
                     }
 
-                    return value.callee + "(" + join(arguments, ", ") + ")";
+                    const auto callee =
+                        std::string(ir::symbol_canonical_name(value.callee_ref, value.callee));
+                    return callee + "(" + join(arguments, ", ") + ")";
                 },
                 [this](const ir::LambdaExpr &value) {
                     const auto body = value.body ? render_expr(*value.body) : std::string{"none"};

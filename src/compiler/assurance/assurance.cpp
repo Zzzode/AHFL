@@ -683,6 +683,8 @@ class AssuranceJsonPrinter final : private PrettyJsonWriter {
             field("state", [&]() { write_string(summary.state); });
             field("called_targets",
                   [&]() { write_string_array(summary.called_targets, indent_level + 1); });
+            field("inferred_effect",
+                  [&]() { write_string(to_string(summary.inferred_effect)); });
             field("effect_kinds",
                   [&]() { write_string_array(summary.effect_kinds, indent_level + 1); });
             field("requires_checkpoint", [&]() { write_bool(summary.requires_checkpoint); });
@@ -781,6 +783,9 @@ AssuranceBundle build_assurance_bundle(const ir::Program &program) {
                 .state = handler.state_name,
                 .called_targets = handler_summary == nullptr ? std::vector<std::string>{}
                                                              : handler_summary->called_targets,
+                .inferred_effect = handler_summary == nullptr
+                                       ? ExprEffect::Unknown
+                                       : handler_summary->inferred_effect,
                 .effect_kinds = {},
                 .requires_checkpoint = false,
                 .requires_recovery = false,
@@ -793,6 +798,11 @@ AssuranceBundle build_assurance_bundle(const ir::Program &program) {
                     push_unique(summary.production_blockers,
                                 "unresolved_capability_call:" + target);
                     continue;
+                }
+
+                if (is_effect_pure(summary.inferred_effect)) {
+                    push_unique(summary.production_blockers,
+                                "typed_effect_missing_for_capability_call");
                 }
 
                 push_unique(summary.effect_kinds,

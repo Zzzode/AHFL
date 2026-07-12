@@ -338,7 +338,7 @@ struct FnEffectClauseInfo {
     bool has_decreases{false};
     // D-3 (Wave-24): source range of the effect-clause `decreases X` measure
     // expression. Only valid when `has_decreases == true`. The body-typecheck
-    // pass (FnSema / ImplSema) validates that the expression produces Int; the
+    // executable phase (FlowWorkflowSema) validates that the expression produces Int; the
     // corresponding TypedExpr is recovered via TypedProgram::find_expr_by_range
     // for downstream passes (IR lowering / BMC).
     SourceRange decreases_expr_range;
@@ -374,7 +374,7 @@ struct FnTypeInfo {
     std::optional<std::string> builtin_name; // P5: @builtin hook name, nullopt if not a builtin
     // P2b (RFC §3.2.3): index of the function body's TypedBlock in
     // TypedProgram::blocks. UINT32_MAX when the function has no body or when
-    // body type-checking has not been performed yet. Populated by FnSema.
+    // body type-checking has not been performed yet. Populated by FlowWorkflowSema.
     std::uint32_t body_block_index{UINT32_MAX};
 };
 
@@ -386,7 +386,7 @@ struct FnTypeInfo {
 // by SymbolId. The trait method/impl method signatures reuse ParamTypeInfo +
 // FnEffectClauseInfo so the same signature-matching helpers work on both
 // trait-declared and impl-provided methods. Impl method bodies are checked by
-// ImplSema after all signatures are available, mirroring the FnSema split for
+// FlowWorkflowSema after all signatures are available, sharing the same body phase for
 // top-level function declarations.
 
 /// One method signature declared inside a `trait` block (RFC §1.3 TraitFnItem).
@@ -466,7 +466,7 @@ struct ImplMethodInfo {
     std::optional<std::string> builtin_name;
     // P3c: index of the method body's TypedBlock in TypedProgram::blocks.
     // UINT32_MAX when the method has no body or body checking failed before a
-    // block was recorded. Populated by ImplSema after the environment is built.
+    // block was recorded. Populated by FlowWorkflowSema after the environment is built.
     std::uint32_t body_block_index{UINT32_MAX};
 };
 

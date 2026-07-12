@@ -38,6 +38,7 @@ struct FlowEffectSummary {
     std::string flow_target;
     std::string state;
     std::vector<std::string> called_targets;
+    ExprEffect inferred_effect{ExprEffect::Pure};
     std::vector<std::string> effect_kinds;
     bool requires_checkpoint{false};
     bool requires_recovery{false};

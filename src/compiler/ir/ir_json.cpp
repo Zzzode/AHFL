@@ -297,6 +297,26 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "unsafe";
 }
 
+[[nodiscard]] std::string_view expression_effect_name(ExprEffect effect) {
+    switch (effect) {
+    case ExprEffect::Pure:
+        return "pure";
+    case ExprEffect::ConstOnly:
+        return "const_only";
+    case ExprEffect::PredicateCall:
+        return "predicate_call";
+    case ExprEffect::Nondet:
+        return "nondet";
+    case ExprEffect::CapabilityCall:
+        return "capability_call";
+    case ExprEffect::ExternalEffect:
+        return "external_effect";
+    case ExprEffect::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
 class IrJsonPrinter final {
   public:
     explicit IrJsonPrinter(std::ostream &out) : out_(out) {}
@@ -528,6 +548,7 @@ class IrJsonPrinter final {
     template <typename Field>
     void print_expr_common_fields(const Field &field, const ir::Expr &expr, int indent_level) {
         field("id", [&]() { write_index(expr.id); });
+        field("effect", [&]() { write_string(expression_effect_name(expr.effect)); });
         print_source_range_field(field, expr.source_range, indent_level);
         if (has_type_ref(expr.resolved_type)) {
             field("resolved_type", [&]() { print_type_ref(expr.resolved_type, indent_level); });
@@ -850,6 +871,9 @@ class IrJsonPrinter final {
                         field("kind", [&]() { write_string("call"); });
                         print_expr_common_fields(field, expr, indent_level + 1);
                         field("callee", [&]() { write_string(value.callee); });
+                        field("callee_ref", [&]() {
+                            print_symbol_ref(value.callee_ref, indent_level + 1);
+                        });
                         field("arguments", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &argument : value.arguments) {
@@ -1218,6 +1242,8 @@ class IrJsonPrinter final {
             });
             field("called_targets",
                   [&]() { write_string_array(summary.called_targets, indent_level + 1); });
+            field("inferred_effect",
+                  [&]() { write_string(expression_effect_name(summary.inferred_effect)); });
             field("assert_count", [&]() { write_index(summary.assert_count); });
         });
     }

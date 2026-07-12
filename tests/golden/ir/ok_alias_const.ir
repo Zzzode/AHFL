@@ -1,4 +1,4 @@
-ahfl.ir.v1
+ahfl.ir.v2
 formal_observations {
   observation agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo: called_capability(agent=ir::alias_const::EchoAgent, capability=ir::alias_const::Echo)
   observation contract_ir_alias_const_EchoAgent_0_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::alias_const::EchoAgent, clause=0, atom=0)
@@ -65,6 +65,7 @@ flow ir::alias_const::EchoAgent {
       may_fallthrough: false
       assigned_paths: [ctx.value]
       called_targets: [ir::alias_const::Echo]
+      inferred_effect: capability call
       assert_count: 0
     }
     let reply: ir::alias_const::Response = ir::alias_const::Echo(input)
@@ -78,6 +79,7 @@ flow ir::alias_const::EchoAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     return ir::alias_const::Response { value: ctx.value }

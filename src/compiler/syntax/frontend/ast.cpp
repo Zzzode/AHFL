@@ -43,12 +43,7 @@ class AstInvariantValidator final {
         violations_.clear();
 
         for (const auto &declaration : program.declarations) {
-            if (!declaration) {
-                fail(program.range, "Program.declarations contains a null declaration");
-                continue;
-            }
-
-            validate_declaration(*declaration);
+            validate_declaration(declaration);
         }
 
         return std::move(violations_);
@@ -739,27 +734,24 @@ class AstInvariantValidator final {
     }
 
     void validate_declaration(const Decl &declaration) {
-        switch (declaration.kind) {
-        case NodeKind::Program:
-            fail(declaration.range, "Program node cannot appear in Program.declarations");
-            break;
+        switch (decl_kind(declaration)) {
         case NodeKind::ModuleDecl: {
-            const auto &node = static_cast<const ModuleDecl &>(declaration);
+            const auto &node = std::get<ModuleDecl>(declaration);
             validate_qualified_name(node.name.get(), node.range, "ModuleDecl.name");
             break;
         }
         case NodeKind::ImportDecl: {
-            const auto &node = static_cast<const ImportDecl &>(declaration);
+            const auto &node = std::get<ImportDecl>(declaration);
             validate_qualified_name(node.path.get(), node.range, "ImportDecl.path");
             break;
         }
         case NodeKind::UseDecl: {
-            const auto &node = static_cast<const UseDecl &>(declaration);
+            const auto &node = std::get<UseDecl>(declaration);
             validate_qualified_name(node.path.get(), node.range, "UseDecl.path");
             break;
         }
         case NodeKind::ConstDecl: {
-            const auto &node = static_cast<const ConstDecl &>(declaration);
+            const auto &node = std::get<ConstDecl>(declaration);
             require(!node.name.empty(), node.range, "ConstDecl is missing name");
             require(node.type != nullptr, node.range, "ConstDecl is missing type");
             require(node.value != nullptr, node.range, "ConstDecl is missing value");
@@ -772,7 +764,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::TypeAliasDecl: {
-            const auto &node = static_cast<const TypeAliasDecl &>(declaration);
+            const auto &node = std::get<TypeAliasDecl>(declaration);
             require(!node.name.empty(), node.range, "TypeAliasDecl is missing name");
             require(
                 node.aliased_type != nullptr, node.range, "TypeAliasDecl is missing aliased_type");
@@ -795,7 +787,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::StructDecl: {
-            const auto &node = static_cast<const StructDecl &>(declaration);
+            const auto &node = std::get<StructDecl>(declaration);
             require(!node.name.empty(), node.range, "StructDecl is missing name");
             for (const auto &param : node.type_params) {
                 require(param != nullptr, node.range, "StructDecl.type_params contains null");
@@ -829,7 +821,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::EnumDecl: {
-            const auto &node = static_cast<const EnumDecl &>(declaration);
+            const auto &node = std::get<EnumDecl>(declaration);
             require(!node.name.empty(), node.range, "EnumDecl is missing name");
             for (const auto &param : node.type_params) {
                 require(param != nullptr, node.range, "EnumDecl.type_params contains null");
@@ -910,7 +902,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::CapabilityDecl: {
-            const auto &node = static_cast<const CapabilityDecl &>(declaration);
+            const auto &node = std::get<CapabilityDecl>(declaration);
             require(!node.name.empty(), node.range, "CapabilityDecl is missing name");
             validate_params(node.params, node.range);
             require(
@@ -924,13 +916,13 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::PredicateDecl: {
-            const auto &node = static_cast<const PredicateDecl &>(declaration);
+            const auto &node = std::get<PredicateDecl>(declaration);
             require(!node.name.empty(), node.range, "PredicateDecl is missing name");
             validate_params(node.params, node.range);
             break;
         }
         case NodeKind::AgentDecl: {
-            const auto &node = static_cast<const AgentDecl &>(declaration);
+            const auto &node = std::get<AgentDecl>(declaration);
             require(!node.name.empty(), node.range, "AgentDecl is missing name");
             require(node.input_type != nullptr, node.range, "AgentDecl is missing input_type");
             require(node.output_type != nullptr, node.range, "AgentDecl is missing output_type");
@@ -971,7 +963,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::ContractDecl: {
-            const auto &node = static_cast<const ContractDecl &>(declaration);
+            const auto &node = std::get<ContractDecl>(declaration);
             validate_qualified_name(node.target.get(), node.range, "ContractDecl.target");
             for (const auto &clause : node.clauses) {
                 require(clause != nullptr, node.range, "ContractDecl.clauses contains null");
@@ -997,7 +989,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::FlowDecl: {
-            const auto &node = static_cast<const FlowDecl &>(declaration);
+            const auto &node = std::get<FlowDecl>(declaration);
             validate_qualified_name(node.target.get(), node.range, "FlowDecl.target");
             for (const auto &handler : node.state_handlers) {
                 require(handler != nullptr, node.range, "FlowDecl.state_handlers contains null");
@@ -1016,7 +1008,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::WorkflowDecl: {
-            const auto &node = static_cast<const WorkflowDecl &>(declaration);
+            const auto &node = std::get<WorkflowDecl>(declaration);
             require(!node.name.empty(), node.range, "WorkflowDecl is missing name");
             require(node.input_type != nullptr, node.range, "WorkflowDecl is missing input_type");
             require(node.output_type != nullptr, node.range, "WorkflowDecl is missing output_type");
@@ -1064,7 +1056,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::FnDecl: {
-            const auto &node = static_cast<const FnDecl &>(declaration);
+            const auto &node = std::get<FnDecl>(declaration);
             require(!node.name.empty(), node.range, "FnDecl is missing name");
             for (const auto &type_param : node.type_params) {
                 require(type_param != nullptr, node.range, "FnDecl.type_params contains null");
@@ -1112,7 +1104,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::TraitDecl: {
-            const auto &node = static_cast<const TraitDecl &>(declaration);
+            const auto &node = std::get<TraitDecl>(declaration);
             require(!node.name.empty(), node.range, "TraitDecl is missing name");
             for (const auto &type_param : node.type_params) {
                 require(type_param != nullptr, node.range, "TraitDecl.type_params contains null");
@@ -1208,7 +1200,7 @@ class AstInvariantValidator final {
             break;
         }
         case NodeKind::ImplDecl: {
-            const auto &node = static_cast<const ImplDecl &>(declaration);
+            const auto &node = std::get<ImplDecl>(declaration);
             require(node.target_type != nullptr, node.range, "ImplDecl is missing target_type");
             if (node.target_type) {
                 validate_type(*node.target_type);
@@ -1282,6 +1274,8 @@ class AstInvariantValidator final {
             }
             break;
         }
+        case NodeKind::Program:
+            break;
         }
     }
 
@@ -1586,34 +1580,58 @@ std::vector<AstInvariantViolation> validate_program_invariants(const Program &pr
     return AstInvariantValidator{}.validate(program);
 }
 
-Node::Node(NodeKind kind, ahfl::SourceRange range) : kind(kind), range(range) {}
+NodeKind decl_kind(const Decl &declaration) noexcept {
+    return std::visit(
+        Overloaded{
+            [](const ModuleDecl &) { return NodeKind::ModuleDecl; },
+            [](const ImportDecl &) { return NodeKind::ImportDecl; },
+            [](const UseDecl &) { return NodeKind::UseDecl; },
+            [](const ConstDecl &) { return NodeKind::ConstDecl; },
+            [](const TypeAliasDecl &) { return NodeKind::TypeAliasDecl; },
+            [](const StructDecl &) { return NodeKind::StructDecl; },
+            [](const EnumDecl &) { return NodeKind::EnumDecl; },
+            [](const CapabilityDecl &) { return NodeKind::CapabilityDecl; },
+            [](const PredicateDecl &) { return NodeKind::PredicateDecl; },
+            [](const AgentDecl &) { return NodeKind::AgentDecl; },
+            [](const ContractDecl &) { return NodeKind::ContractDecl; },
+            [](const FlowDecl &) { return NodeKind::FlowDecl; },
+            [](const WorkflowDecl &) { return NodeKind::WorkflowDecl; },
+            [](const FnDecl &) { return NodeKind::FnDecl; },
+            [](const TraitDecl &) { return NodeKind::TraitDecl; },
+            [](const ImplDecl &) { return NodeKind::ImplDecl; },
+        },
+        declaration);
+}
 
-Decl::Decl(NodeKind kind, ahfl::SourceRange range) : Node(kind, range) {}
+ahfl::SourceRange decl_range(const Decl &declaration) noexcept {
+    return std::visit([](const auto &payload) { return payload.range; }, declaration);
+}
+
+Visibility decl_visibility(const Decl &declaration) noexcept {
+    return std::visit([](const auto &payload) { return payload.visibility; }, declaration);
+}
+
+bool decl_has_duplicate_visibility(const Decl &declaration) noexcept {
+    return std::visit(
+        [](const auto &payload) { return payload.duplicate_visibility_modifier; }, declaration);
+}
+
+std::string decl_headline(const Decl &declaration) {
+    return std::visit([](const auto &payload) { return payload.headline(); }, declaration);
+}
 
 Program::Program(std::string source_name, ahfl::SourceRange range)
-    : Node(NodeKind::Program, range), source_name(std::move(source_name)) {}
-
-void Program::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), source_name(std::move(source_name)) {}
 
 ModuleDecl::ModuleDecl(Owned<QualifiedName> name, ahfl::SourceRange range)
-    : Decl(NodeKind::ModuleDecl, range), name(std::move(name)) {}
-
-void ModuleDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string ModuleDecl::headline() const {
     return with_name("module ", name->spelling());
 }
 
 ImportDecl::ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range)
-    : Decl(NodeKind::ImportDecl, range), path(std::move(path)), alias(std::move(alias)) {}
-
-void ImportDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), path(std::move(path)), alias(std::move(alias)) {}
 
 std::string ImportDecl::headline() const {
     if (alias.empty()) {
@@ -1624,11 +1642,7 @@ std::string ImportDecl::headline() const {
 }
 
 UseDecl::UseDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range)
-    : Decl(NodeKind::UseDecl, range), path(std::move(path)), alias(std::move(alias)) {}
-
-void UseDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), path(std::move(path)), alias(std::move(alias)) {}
 
 std::string UseDecl::headline() const {
     const std::string prefix = visibility == Visibility::Public ? "pub use " : "use ";
@@ -1640,11 +1654,7 @@ std::string UseDecl::headline() const {
 }
 
 ConstDecl::ConstDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::ConstDecl, range), name(std::move(name)) {}
-
-void ConstDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string ConstDecl::headline() const {
     if (!type) {
@@ -1655,11 +1665,7 @@ std::string ConstDecl::headline() const {
 }
 
 TypeAliasDecl::TypeAliasDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::TypeAliasDecl, range), name(std::move(name)) {}
-
-void TypeAliasDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string TypeAliasDecl::headline() const {
     if (!aliased_type) {
@@ -1677,11 +1683,7 @@ std::string TypeAliasDecl::headline() const {
 }
 
 StructDecl::StructDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::StructDecl, range), name(std::move(name)) {}
-
-void StructDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string StructDecl::headline() const {
     std::ostringstream builder;
@@ -1695,11 +1697,7 @@ std::string StructDecl::headline() const {
 }
 
 EnumDecl::EnumDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::EnumDecl, range), name(std::move(name)) {}
-
-void EnumDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string EnumDecl::headline() const {
     std::ostringstream builder;
@@ -1713,11 +1711,7 @@ std::string EnumDecl::headline() const {
 }
 
 CapabilityDecl::CapabilityDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::CapabilityDecl, range), name(std::move(name)) {}
-
-void CapabilityDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string CapabilityDecl::headline() const {
     std::ostringstream builder;
@@ -1732,22 +1726,14 @@ std::string CapabilityDecl::headline() const {
 }
 
 PredicateDecl::PredicateDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::PredicateDecl, range), name(std::move(name)) {}
-
-void PredicateDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string PredicateDecl::headline() const {
     return with_count("predicate " + name, params.size(), "param");
 }
 
 AgentDecl::AgentDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::AgentDecl, range), name(std::move(name)) {}
-
-void AgentDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string AgentDecl::headline() const {
     std::ostringstream builder;
@@ -1757,44 +1743,28 @@ std::string AgentDecl::headline() const {
 }
 
 ContractDecl::ContractDecl(Owned<QualifiedName> target, ahfl::SourceRange range)
-    : Decl(NodeKind::ContractDecl, range), target(std::move(target)) {}
-
-void ContractDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), target(std::move(target)) {}
 
 std::string ContractDecl::headline() const {
     return with_count("contract for " + target->spelling(), clauses.size(), "clause");
 }
 
 FlowDecl::FlowDecl(Owned<QualifiedName> target, ahfl::SourceRange range)
-    : Decl(NodeKind::FlowDecl, range), target(std::move(target)) {}
-
-void FlowDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), target(std::move(target)) {}
 
 std::string FlowDecl::headline() const {
     return with_count("flow for " + target->spelling(), state_handlers.size(), "handler");
 }
 
 WorkflowDecl::WorkflowDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::WorkflowDecl, range), name(std::move(name)) {}
-
-void WorkflowDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string WorkflowDecl::headline() const {
     return with_count("workflow " + name, nodes.size(), "node");
 }
 
 FnDecl::FnDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::FnDecl, range), name(std::move(name)) {}
-
-void FnDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string FnDecl::headline() const {
     std::ostringstream builder;
@@ -1813,14 +1783,8 @@ std::string FnDecl::headline() const {
     return builder.str();
 }
 
-void RecursiveVisitor::visit(FnDecl &) {}
-
 TraitDecl::TraitDecl(std::string name, ahfl::SourceRange range)
-    : Decl(NodeKind::TraitDecl, range), name(std::move(name)) {}
-
-void TraitDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+    : range(range), name(std::move(name)) {}
 
 std::string TraitDecl::headline() const {
     std::ostringstream builder;
@@ -1833,11 +1797,7 @@ std::string TraitDecl::headline() const {
     return builder.str();
 }
 
-ImplDecl::ImplDecl(ahfl::SourceRange range) : Decl(NodeKind::ImplDecl, range) {}
-
-void ImplDecl::accept(Visitor &visitor) {
-    visitor.visit(*this);
-}
+ImplDecl::ImplDecl(ahfl::SourceRange range) : range(range) {}
 
 std::string ImplDecl::headline() const {
     std::ostringstream builder;
@@ -1865,9 +1825,6 @@ std::string ImplDecl::headline() const {
     return builder.str();
 }
 
-void RecursiveVisitor::visit(TraitDecl &) {}
-void RecursiveVisitor::visit(ImplDecl &) {}
-
 std::string_view to_string(EffectClauseKind kind) noexcept {
     switch (kind) {
     case EffectClauseKind::Pure:
@@ -1879,38 +1836,6 @@ std::string_view to_string(EffectClauseKind kind) noexcept {
     }
     return "Unknown";
 }
-
-void RecursiveVisitor::visit(Program &node) {
-    for (auto &declaration : node.declarations) {
-        declaration->accept(*this);
-    }
-}
-
-void RecursiveVisitor::visit(ModuleDecl &) {}
-
-void RecursiveVisitor::visit(ImportDecl &) {}
-
-void RecursiveVisitor::visit(UseDecl &) {}
-
-void RecursiveVisitor::visit(ConstDecl &) {}
-
-void RecursiveVisitor::visit(TypeAliasDecl &) {}
-
-void RecursiveVisitor::visit(StructDecl &) {}
-
-void RecursiveVisitor::visit(EnumDecl &) {}
-
-void RecursiveVisitor::visit(CapabilityDecl &) {}
-
-void RecursiveVisitor::visit(PredicateDecl &) {}
-
-void RecursiveVisitor::visit(AgentDecl &) {}
-
-void RecursiveVisitor::visit(ContractDecl &) {}
-
-void RecursiveVisitor::visit(FlowDecl &) {}
-
-void RecursiveVisitor::visit(WorkflowDecl &) {}
 
 } // namespace ahfl::ast
 

@@ -121,6 +121,98 @@ const X: Int = match Packet::Data { label: "ok", code: 7 } { Data { code: _, lab
               "explicit struct variant field pattern preserved");
     }
 
+    // Test 12: Formatting preserves the complete source surface.
+    {
+        std::string source = R"AHFL(module fmt::lossless;
+
+import std::result;
+import std::option;
+
+/// Public generic option used by the formatter regression.
+pub enum PublicOption<T> {
+Some(T),
+None,
+}
+
+pub @builtin("identity")
+fn identity<T>(value: T) -> T effect Pure decreases 0 {
+return value;
+}
+)AHFL";
+        auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format lossless source succeeds");
+        check(result.formatted.find("import std::result;") != std::string::npos,
+              "first import preserved");
+        check(result.formatted.find("import std::option;") != std::string::npos,
+              "second import preserved");
+        check(result.formatted.find("/// Public generic option") != std::string::npos,
+              "documentation comment preserved");
+        check(result.formatted.find("pub enum PublicOption<T>") != std::string::npos,
+              "public generic enum preserved");
+        check(result.formatted.find("@builtin(\"identity\")") != std::string::npos,
+              "builtin attribute preserved");
+        check(result.formatted.find("pub @builtin(\"identity\")") != std::string::npos,
+              "public builtin prefix preserved");
+        check(result.formatted.find(
+                  "fn identity<T>(value: T) -> T effect Pure decreases 0") !=
+                  std::string::npos,
+              "public generic effectful function preserved");
+    }
+
+    // Test 13: Formatting a canonical result is byte-for-byte idempotent.
+    {
+        std::string source = R"AHFL(module fmt::idempotent;
+
+pub fn choose<T>(value: T) -> T effect Pure decreases 0 {
+if value == value {
+return value;
+}
+return value;
+}
+)AHFL";
+        const auto first = ahfl::formatter::format_source(source);
+        check(first.success, "first idempotence format succeeds");
+        const auto second = ahfl::formatter::format_source(first.formatted);
+        check(second.success, "second idempotence format succeeds");
+        check(second.formatted == first.formatted,
+              "formatter output is byte-for-byte idempotent");
+    }
+
+    // Test 14: Continuation indentation follows delimiters and clauses.
+    {
+        std::string source = R"AHFL(module fmt::continuation;
+
+fn combine<T>(
+left: T,
+right: T
+) -> T effect Pure
+decreases 1 {
+return choose(
+left,
+right);
+}
+
+fn declared<T>(value: T)
+-> T effect Pure;
+)AHFL";
+        const auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format continuation source succeeds");
+        check(result.formatted.find(
+                  "fn combine<T>(\n"
+                  "    left: T,\n"
+                  "    right: T\n"
+                  ") -> T effect Pure\n"
+                  "    decreases 1 {\n"
+                  "    return choose(\n"
+                  "        left,\n"
+                  "        right);\n"
+                  "}\n"
+                  "\n"
+                  "fn declared<T>(value: T)\n"
+                  "    -> T effect Pure;\n") != std::string::npos,
+              "continuation lines receive canonical indentation");
+    }
+
     std::printf("%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }

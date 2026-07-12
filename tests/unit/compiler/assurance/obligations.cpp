@@ -2,6 +2,9 @@
 #include <doctest.h>
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/backends/driver.hpp"
+#include "ahfl/compiler/backends/registry.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -227,6 +230,85 @@ workflow W {
     std::string error;
     CHECK(schema_validate_obligations(json, error));
     INFO(error);
+}
+
+TEST_CASE("assurance and SMV fail closed when capability identity contradicts inferred effect") {
+    constexpr std::string_view kSource = R"ahfl(
+module effect_fact_mismatch;
+
+struct Req { value: String; }
+struct Resp { value: String; }
+struct Ctx { value: String = ""; }
+
+capability Send(value: String) -> Resp {
+    effect: external_side_effect;
+    domain: test;
+    receipt: optional;
+    retry: unsafe;
+    policy: [test::audit_event];
+}
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Send];
+    transition Init -> Done;
+}
+
+flow for Worker {
+    state Init {
+        let sent: Resp = Send(input.value);
+        goto Done;
+    }
+    state Done { return Resp { value: input.value }; }
+}
+
+workflow W {
+    input: Req;
+    output: Resp;
+    node run: Worker(input);
+    return: run;
+}
+)ahfl";
+
+    auto compiled = compile_source("effect_fact_mismatch.ahfl", kSource);
+    REQUIRE_FALSE(compiled.diagnostics.has_error());
+
+    auto call = std::ranges::find_if(compiled.program.all_exprs(), [](const ir::Expr *expr) {
+        if (expr == nullptr) {
+            return false;
+        }
+        const auto *call_expr = std::get_if<ir::CallExpr>(&expr->node);
+        return call_expr != nullptr && call_expr->callee.ends_with("::Send");
+    });
+    REQUIRE(call != compiled.program.all_exprs().end());
+    REQUIRE(*call != nullptr);
+    CHECK((*call)->effect == ExprEffect::CapabilityCall);
+    (*call)->effect = ExprEffect::Pure;
+    ir::mark_derived_analyses_stale(compiled.program);
+    ir::recompute_derived_analyses(compiled.program);
+
+    const auto bundle = assurance::build_assurance_bundle(compiled.program);
+    REQUIRE_FALSE(bundle.flow_effects.empty());
+    const auto has_effect_mismatch = std::ranges::any_of(
+        bundle.flow_effects, [](const assurance::FlowEffectSummary &flow) {
+            return std::ranges::find(flow.production_blockers,
+                                     "typed_effect_missing_for_capability_call") !=
+                   flow.production_blockers.end();
+        });
+    CHECK(has_effect_mismatch);
+
+    if (global_backend_registry().find(BackendKind::Smv) != nullptr) {
+        std::ostringstream smv;
+        const auto emitted = emit_backend(BackendKind::Smv, compiled.program, smv);
+        REQUIRE(emitted.has_value());
+        CHECK(smv.str().find("LTLSPEC FALSE -- typed effect missing for capability call") !=
+              std::string::npos);
+    }
 }
 
 TEST_CASE("assurance.obligations: decreases self.length produces 1 recognized obligation") {

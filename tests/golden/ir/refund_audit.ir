@@ -1,4 +1,4 @@
-ahfl.ir.v1
+ahfl.ir.v2
 formal_observations {
   observation agent__refund_audit_RefundAudit__called__refund_audit_OrderQuery: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::OrderQuery)
   observation agent__refund_audit_RefundAudit__called__refund_audit_AuditDecision: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::AuditDecision)
@@ -124,6 +124,7 @@ flow refund::audit::RefundAudit {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Auditing
@@ -138,6 +139,7 @@ flow refund::audit::RefundAudit {
       may_fallthrough: false
       assigned_paths: [ctx.result, ctx.reason, ctx.ticket_id]
       called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, std::option::Option::Some, refund::audit::TicketCreate]
+      inferred_effect: capability call
       assert_count: 0
     }
     let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
@@ -145,7 +147,7 @@ flow refund::audit::RefundAudit {
     ctx.result = decision.result
     ctx.reason = decision.reason
     if (decision.result == refund::audit::AuditResult::Approve) {
-      ctx.ticket_id = std::option::Option::Some(refund::audit::TicketCreate(input.order_id, decision.reason))
+      ctx.ticket_id = std::option::Option(refund::audit::TicketCreate(input.order_id, decision.reason))
       goto Approved
     } else {
       ctx.ticket_id = std::option::Option::None
@@ -159,6 +161,7 @@ flow refund::audit::RefundAudit {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Terminated
@@ -170,6 +173,7 @@ flow refund::audit::RefundAudit {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Terminated
@@ -181,6 +185,7 @@ flow refund::audit::RefundAudit {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     return refund::audit::RefundDecision { result: ctx.result, reason: ctx.reason, ticket_id: ctx.ticket_id }

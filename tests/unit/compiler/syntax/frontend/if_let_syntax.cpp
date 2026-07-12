@@ -60,11 +60,10 @@ int_range_pattern(const ahfl::ast::PatternSyntax &pattern) {
 [[nodiscard]] const ahfl::ast::BlockSyntax *
 first_fn_body(const ahfl::ast::Program &program) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind != NodeKind::FnDecl) {
-            continue;
+        if (const auto *function = std::get_if<ahfl::ast::FnDecl>(&decl);
+            function != nullptr) {
+            return function->body.get();
         }
-        const auto *fn = static_cast<const ahfl::ast::FnDecl *>(decl.get());
-        return fn->body.get();
     }
     return nullptr;
 }

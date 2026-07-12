@@ -187,6 +187,8 @@ struct DeclarationIndex {
 class PassExpressionSemaDelegate;
 class TypeCheckPass;
 class TypedHirBuilder;
+class DeclarationSema;
+class FlowWorkflowSema;
 
 class DeclarationIndexBuilder {
   public:
@@ -220,16 +222,6 @@ struct EnvironmentBuildResult {
     std::vector<DeclarationPayloadUpdate> declaration_updates;
 };
 
-class EnvironmentBuilder {
-  public:
-    explicit EnvironmentBuilder(TypeCheckPass &driver) : driver_(&driver) {}
-
-    [[nodiscard]] EnvironmentBuildResult run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-};
-
 class ConstSema {
   public:
     explicit ConstSema(TypeCheckPass &driver) : driver_(&driver) {}
@@ -255,97 +247,6 @@ class ConstSema {
     void check_enum_variant_defaults();
     void check_struct_defaults();
     void check_agent_context_defaults();
-};
-
-class ContractSema {
-  public:
-    explicit ContractSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-
-    void check_contracts_in_program(const ast::Program &program);
-    void check_contracts();
-};
-
-class FlowSema {
-  public:
-    explicit FlowSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-
-    void check_flows_in_program(const ast::Program &program);
-    void check_flows();
-};
-
-class WorkflowSema {
-  public:
-    explicit WorkflowSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-
-    void check_workflows_in_program(const ast::Program &program);
-    void check_workflows();
-};
-
-// P2b (RFC §3.2.3): function-body type-check pass. Walks all top-level `fn`
-// declarations that have a body, builds a parameter-binding context, and
-// type-checks the body block. Also computes the body's overall effect and
-// enforces the effect-underdeclared check.
-class FnSema {
-  public:
-    explicit FnSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-
-    void check_fns();
-    void check_fns_in_program(const ast::Program &program);
-    void check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl);
-    // D-3 (Wave-24): validate that the effect-clause decreases measure, when
-    // present, produces a well-typed Pure Int in the supplied ValueContext.
-    void check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
-                                     const internal::ValueContext &context);
-};
-
-// P3c: impl-method body type-check pass. Signatures are resolved during
-// EnvironmentBuilder::build_impl_types so method calls and trait signature
-// matching can see every impl before bodies are walked. This pass mirrors
-// FnSema for the method bodies themselves.
-class ImplSema {
-  public:
-    explicit ImplSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-
-    void check_impls();
-    void check_impl_body(std::size_t impl_index,
-                         const ast::ImplDecl &decl,
-                         const ImplTypeInfo &impl_info);
-    void check_impl_method_body(std::size_t impl_index,
-                                const ast::FnDecl &method_decl,
-                                const ImplTypeInfo &impl_info,
-                                const ImplMethodInfo &method_info);
-    void record_impl_method_body_index(std::size_t impl_index,
-                                       std::string_view method_name,
-                                       std::uint32_t body_block_index);
-    // D-3 (Wave-24): validate that the effect-clause decreases measure, when
-    // present, produces a well-typed Pure Int in the supplied ValueContext.
-    void check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
-                                     const internal::ValueContext &context);
 };
 
 class TypedHirBuilder {
@@ -439,13 +340,9 @@ class TypeCheckPass final {
     }
 
   private:
-    friend class EnvironmentBuilder;
+    friend class DeclarationSema;
     friend class ConstSema;
-    friend class ContractSema;
-    friend class FlowSema;
-    friend class WorkflowSema;
-    friend class FnSema;
-    friend class ImplSema;
+    friend class FlowWorkflowSema;
 
     // Re-export internal aliases inside the class so existing implementation
     // files can keep referring to them by their unqualified names.
@@ -474,7 +371,7 @@ class TypeCheckPass final {
     DeclarationIndex declaration_index_;
 
     // P2: currently-in-scope generic type parameter names. Nullptr when no
-    // generic scope is active. Set by build_fn_types / FnSema so that
+    // generic scope is active. Set by DeclarationSema / FlowWorkflowSema so that
     // resolve_type produces TypeVar for names matching a type parameter.
     const std::vector<std::string> *current_type_param_names_{nullptr};
 
@@ -521,8 +418,8 @@ class TypeCheckPass final {
     TypedHirBuilder hir_builder_;
 
     // Flow-level `let self = ...` shadowing records: agent symbol id -> the
-    // describe() string of the shadowing binding. FlowSema runs before
-    // ContractSema so these records are populated by the time decreases
+    // describe() string of the shadowing binding. FlowWorkflowSema runs flow
+    // checks before contract checks so these records are populated when decreases
     // clauses are validated.
     std::unordered_map<std::size_t, std::string> flow_self_shadowing_;
 
@@ -535,41 +432,6 @@ class TypeCheckPass final {
         return *environment_;
     }
 
-    // Declaration indexing & environment building (typecheck_decls.cpp).
-    void build_const_types();
-    void build_struct_types();
-    void build_enum_types();
-    void build_capability_types();
-    void build_predicate_types();
-    void build_agent_types();
-    void build_workflow_types();
-    // P2 (RFC §3.2.2): resolve fn signatures (params, return type, effect
-    // clause, generic parameter names) and register FnTypeInfo in the
-    // environment. Body typecheck and where-clause bound evaluation happen
-    // in FnSema (separate pass).
-    void build_fn_types();
-    // P3 (RFC §3.2.2 / type-system §1.3): resolve trait signatures (methods,
-    // assoc types, super-traits, generic params) and register TraitTypeInfo in
-    // the environment keyed by Trait symbol id. Method bodies are absent by
-    // definition; trait-method-call resolution happens at the typed call site
-    // against the impl metadata built below.
-    void build_trait_types();
-    // P3 (RFC §3.2.2 / type-system §1.4): resolve each impl block — target
-    // type, trait_ref (when present), method signatures, associated types —
-    // and enforce coherence (orphan rule RFC §2.2), impl-vs-trait signature
-    // matching, super-trait coverage, and per-trait duplicate-impl detection.
-    // Impl method *bodies* are checked later by ImplSema after the full
-    // environment exists; this signature pass is what dispatch and trait
-    // matching need.
-    void build_impl_types();
-    // P3 effect-clause + trait-method signature resolvers (member functions so
-    // they can reach private resolve_type / make_error_type / find_reference_here).
-    FnEffectClauseInfo resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause);
-    // P4a (RFC §2.2 / §6.1): project an ast::EffectClauseSyntax to the
-    // signature-level EffectJudgement (Pure / Nondet / CapabilitySet over
-    // resolved capability symbols). Used by build_fn_types and
-    // resolve_effect_clause_info to populate FnEffectClauseInfo::judgement.
-    EffectJudgement build_effect_judgement(const ast::EffectClauseSyntax &clause);
     // P4a (RFC §2.6.4 / §4.5 V2): check that a function's inferred body effect
     // is covered by its declared effect (i.e. body ⊑ declared). Emits
     // EffectUnderdeclared if the body effect is stronger than declared.
@@ -577,17 +439,12 @@ class TypeCheckPass final {
     // The body effect is passed as an ExprEffect (the expression-level
     // inference lattice) and projected to EffectJudgement via `project()`.
     //
-    // TODO(FnSema): call this from the FnSema pass after type-checking the
+    // FlowWorkflowSema calls this after type-checking the
     // function body. The body's overall ExprEffect is the join of all
     // statement/expression effects in the body (see check_block / check_expr).
     void check_fn_effect_underdeclared(SymbolId fn_symbol,
                                        ExprEffect body_effect,
                                        SourceRange body_range);
-    TraitMethodInfo resolve_trait_method_info(const ast::TraitItemSyntax &item);
-    void build_flow_types();
-    void build_flow_types_in_program(const ast::Program &program);
-    void build_contract_types();
-    void build_contract_types_in_program(const ast::Program &program);
 
     // Walks a temporal expression tree, type-checking every embedded Expr
     // (EmbeddedExpr leaves) against Bool and building a parallel flat-store
@@ -812,6 +669,142 @@ class TypeCheckPass final {
         return result;
     }
 };
+
+class DeclarationSema final {
+  public:
+    explicit DeclarationSema(TypeCheckPass &driver);
+
+    [[nodiscard]] EnvironmentBuildResult run();
+
+  private:
+    TypeCheckPass *driver_{nullptr};
+    const ast::Program *&program_;
+    const SourceGraph *&graph_;
+    TypeCheckResult &result_;
+    TypeEnvironment *&environment_;
+    const SourceUnit *&current_source_;
+    std::string &current_module_name_;
+    const std::vector<std::string> *&current_type_param_names_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> &const_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> &struct_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> &enum_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::CapabilityDecl>>
+        &capability_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::PredicateDecl>>
+        &predicate_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> &agent_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>>
+        &workflow_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::FnDecl>> &fn_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::TraitDecl>> &trait_decls_;
+    std::unordered_map<std::size_t, DeclarationIndex::ImplDeclEntry> &impl_decls_;
+
+    [[nodiscard]] TypeEnvironment &environment() noexcept;
+    [[nodiscard]] const TypeEnvironment &environment() const noexcept;
+    template <typename Fn> decltype(auto) with_symbol_context(SymbolId id, Fn &&fn);
+    template <typename Fn>
+    decltype(auto) with_symbol_context_for_impl(std::optional<SourceId> source_id, Fn &&fn);
+    void enter_source(const SourceUnit &source);
+    void leave_source();
+    [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
+                                                    std::string_view name) const;
+    [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
+                                                                   SourceRange range) const;
+    [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
+    [[nodiscard]] TypePtr make_error_type() const;
+    [[nodiscard]] TypePtr make_type(TypeKind kind) const;
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range);
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range,
+                              std::vector<Diagnostic::Related> notes);
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range,
+                              std::vector<Diagnostic::Related> notes,
+                              std::map<std::string, std::vector<std::string>> data);
+    void check_schema_boundary_decl_type(const TypePtr &type,
+                                         SchemaBoundaryKind boundary,
+                                         SourceRange range);
+    [[nodiscard]] std::optional<SymbolId> nominal_symbol_of(const Type &type) const;
+    [[nodiscard]] std::string nominal_describe(const Type &type) const;
+    [[nodiscard]] std::string module_name_of(std::optional<SourceId> source_id) const;
+    [[nodiscard]] std::string package_prefix_of(std::optional<SourceId> source_id) const;
+    void check_impl_coherence(const ImplTypeInfo &impl);
+    void check_trait_impl_signature_match(const ImplTypeInfo &impl);
+
+    void build_const_types();
+    void build_struct_types();
+    void build_enum_types();
+    void build_capability_types();
+    void build_predicate_types();
+    void build_agent_types();
+    void build_workflow_types();
+    void build_fn_types();
+    void build_trait_types();
+    void build_impl_types();
+    void build_flow_types();
+    void build_flow_types_in_program(const ast::Program &program);
+    void build_contract_types();
+    void build_contract_types_in_program(const ast::Program &program);
+    [[nodiscard]] bool builtin_hook_allowed_by_current_source(std::string_view hook) const;
+    void
+    validate_builtin_attribute(std::string_view hook, bool has_effect_clause, SourceRange range);
+    [[nodiscard]] FnEffectClauseInfo
+    resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause);
+    [[nodiscard]] EffectJudgement build_effect_judgement(const ast::EffectClauseSyntax &clause);
+    [[nodiscard]] TraitMethodInfo resolve_trait_method_info(const ast::TraitItemSyntax &item);
+};
+
+class FlowWorkflowSema final {
+  public:
+    explicit FlowWorkflowSema(TypeCheckPass &driver) : driver_(&driver) {}
+
+    void run();
+
+  private:
+    TypeCheckPass *driver_{nullptr};
+
+    void check_contracts_in_program(const ast::Program &program);
+    void check_contracts();
+    void check_flows_in_program(const ast::Program &program);
+    void check_flows();
+    void check_workflows_in_program(const ast::Program &program);
+    void check_workflows();
+    void check_fns();
+    void check_fns_in_program(const ast::Program &program);
+    void check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl);
+    void check_fn_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                        const internal::ValueContext &context);
+    void check_impls();
+    void check_impl_body(std::size_t impl_index,
+                         const ast::ImplDecl &decl,
+                         const ImplTypeInfo &impl_info);
+    void check_impl_method_body(std::size_t impl_index,
+                                const ast::FnDecl &method_decl,
+                                const ImplTypeInfo &impl_info,
+                                const ImplMethodInfo &method_info);
+    void record_impl_method_body_index(std::size_t impl_index,
+                                       std::string_view method_name,
+                                       std::uint32_t body_block_index);
+    void check_impl_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
+                                          const internal::ValueContext &context);
+};
+
+template <typename Fn>
+decltype(auto) DeclarationSema::with_symbol_context(SymbolId id, Fn &&fn) {
+    return driver_->with_symbol_context(id, std::forward<Fn>(fn));
+}
+
+template <typename Fn>
+decltype(auto)
+DeclarationSema::with_symbol_context_for_impl(std::optional<SourceId> source_id, Fn &&fn) {
+    return driver_->with_symbol_context_for_impl(source_id, std::forward<Fn>(fn));
+}
 
 template <typename Fn> decltype(auto) TypeCheckPass::with_symbol_context(SymbolId id, Fn &&fn) {
     const auto previous_source = current_source_;

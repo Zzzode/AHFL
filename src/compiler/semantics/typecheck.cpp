@@ -949,16 +949,12 @@ void ConstSema::run() {
     check_struct_defaults();
 }
 
-void ContractSema::run() {
-    check_contracts();
-}
-
-void FlowSema::run() {
+void FlowWorkflowSema::run() {
     check_flows();
-}
-
-void WorkflowSema::run() {
+    check_contracts();
     check_workflows();
+    check_fns();
+    check_impls();
 }
 
 void TypedHirBuilder::append_declaration(TypedDecl decl) {
@@ -1016,7 +1012,7 @@ TypeCheckResult TypeCheckPass::run() {
     build_source_unit_index();
     copy_resolver_snapshot_to_typed_program(resolve_result_, result_.typed_program);
     DeclarationIndexBuilder(session_, state_, declaration_index_, hir_builder_).run();
-    auto environment_result = EnvironmentBuilder(*this).run();
+    auto environment_result = DeclarationSema(*this).run();
     result_.environment = std::move(environment_result.environment);
     hir_builder_.apply_declaration_payload_updates(
         std::move(environment_result.declaration_updates));
@@ -1076,13 +1072,9 @@ TypeCheckResult TypeCheckPass::run() {
         tp.impl_declaration_indexes = std::move(unique_impls);
     }
     ConstSema(*this).run();
-    // FlowSema must run before ContractSema so decreases clauses can observe
+    // Flow checking must run before contract checking so decreases clauses can observe
     // let-shadowed `self` bindings introduced inside agent flow handlers.
-    FlowSema(*this).run();
-    ContractSema(*this).run();
-    WorkflowSema(*this).run();
-    FnSema(*this).run();
-    ImplSema(*this).run();
+    FlowWorkflowSema(*this).run();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
 }
@@ -2163,13 +2155,14 @@ TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
     };
 }
 
-void ContractSema::check_contracts_in_program(const ast::Program &program) {
+void FlowWorkflowSema::check_contracts_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::ContractDecl) {
+        const auto *contract = std::get_if<ast::ContractDecl>(&declaration);
+        if (contract == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+        const auto &decl = *contract;
         const auto target =
             driver_->find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
         if (!target.has_value()) {
@@ -2187,7 +2180,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
         TypedDecl typed_decl{
             .kind = ast::NodeKind::ContractDecl,
             .symbol = target->get().target,
-            .range = declaration->range,
+            .range = ast::decl_range(declaration),
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
             .type = nullptr,
@@ -2389,7 +2382,7 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
     }
 }
 
-void ContractSema::check_contracts() {
+void FlowWorkflowSema::check_contracts() {
     if (driver_->graph_ != nullptr) {
         for (const auto &source : driver_->graph_->sources) {
             driver_->enter_source(source);
@@ -2527,13 +2520,14 @@ std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalEx
     return hir_builder_.append_temporal_expr(std::move(te));
 }
 
-void FlowSema::check_flows_in_program(const ast::Program &program) {
+void FlowWorkflowSema::check_flows_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::FlowDecl) {
+        const auto *flow = std::get_if<ast::FlowDecl>(&declaration);
+        if (flow == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
+        const auto &decl = *flow;
         const auto target =
             driver_->find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
         if (!target.has_value()) {
@@ -2551,7 +2545,7 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
         TypedDecl typed_decl{
             .kind = ast::NodeKind::FlowDecl,
             .symbol = target->get().target,
-            .range = declaration->range,
+            .range = ast::decl_range(declaration),
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
             .type = nullptr,
@@ -2574,7 +2568,7 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
             // When a flow handler introduces a `let self = ...` binding that
             // shadows the conceptual agent receiver, remember the shadowing
             // type so any associated `decreases: self.length` contract can
-            // emit DECREASES_SHADOWED_RECEIVER during ContractSema (visited
+            // emit DECREASES_SHADOWED_RECEIVER during the contract phase (visited
             // later). Duplicate records are harmless - the description is
             // identical across handlers for a same-typed let.
             //
@@ -2662,7 +2656,7 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
     }
 }
 
-void FlowSema::check_flows() {
+void FlowWorkflowSema::check_flows() {
     if (driver_->graph_ != nullptr) {
         for (const auto &source : driver_->graph_->sources) {
             driver_->enter_source(source);
@@ -2676,13 +2670,14 @@ void FlowSema::check_flows() {
     check_flows_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
-void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
+void FlowWorkflowSema::check_workflows_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::WorkflowDecl) {
+        const auto *workflow = std::get_if<ast::WorkflowDecl>(&declaration);
+        if (workflow == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
+        const auto &decl = *workflow;
         const auto workflow_symbol =
             driver_->find_local_here(SymbolNamespace::Workflows, decl.name);
         if (!workflow_symbol.has_value()) {
@@ -2776,7 +2771,7 @@ void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
     }
 }
 
-void WorkflowSema::check_workflows() {
+void FlowWorkflowSema::check_workflows() {
     if (driver_->graph_ != nullptr) {
         for (const auto &source : driver_->graph_->sources) {
             driver_->enter_source(source);
@@ -2791,13 +2786,13 @@ void WorkflowSema::check_workflows() {
 }
 
 // ----------------------------------------------------------------------------
-// FnSema: function body type-check pass
+// Function and impl body type-checking owned by FlowWorkflowSema.
 // ----------------------------------------------------------------------------
 
 namespace {
 
 /// Compute the overall ExprEffect of a typed block by joining the effects of
-/// all expressions reachable from its statements. Used by FnSema to derive the
+/// all expressions reachable from its statements.
 /// body's effect for the effect-underdeclared check.
 ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &program) {
     ExprEffect result = ExprEffect::Pure;
@@ -2827,11 +2822,7 @@ ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &progra
 
 } // namespace
 
-void FnSema::run() {
-    check_fns();
-}
-
-void FnSema::check_fns() {
+void FlowWorkflowSema::check_fns() {
     if (driver_->graph_ != nullptr) {
         for (const auto &source : driver_->graph_->sources) {
             driver_->enter_source(source);
@@ -2845,13 +2836,14 @@ void FnSema::check_fns() {
     check_fns_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
-void FnSema::check_fns_in_program(const ast::Program &program) {
+void FlowWorkflowSema::check_fns_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
-        if (declaration->kind != ast::NodeKind::FnDecl) {
+        const auto *function = std::get_if<ast::FnDecl>(&declaration);
+        if (function == nullptr) {
             continue;
         }
 
-        const auto &decl = static_cast<const ast::FnDecl &>(*declaration);
+        const auto &decl = *function;
 
         // Skip prototype declarations (no body).
         if (!decl.body) {
@@ -2868,7 +2860,7 @@ void FnSema::check_fns_in_program(const ast::Program &program) {
     }
 }
 
-void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
+void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     const auto fn_info = driver_->environment().get_fn(fn_symbol);
     if (!fn_info.has_value()) {
         return;
@@ -2897,7 +2889,7 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     // D-3 (Wave-24): validate effect-clause decreases measure expression
     // produces a well-typed Pure Int. Must happen AFTER param bindings so
     // `decreases n` can resolve the parameter name.
-    check_effect_decreases_expr(decl.effect_clause.get(), context);
+    check_fn_effect_decreases_expr(decl.effect_clause.get(), context);
 
     // Type-check the body block.
     // Note: no expected_return_origin so the return statement uses
@@ -2936,8 +2928,8 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
     driver_->check_fn_effect_underdeclared(fn_symbol, body_effect, decl.body->range);
 
     // Record the body block index on the function's type info.
-    // The environment is logically const after EnvironmentBuilder, but we
-    // extend it here with the body block index (discovered during FnSema).
+    // The environment is logically const after DeclarationSema, but the
+    // executable-body phase extends it with the body block index.
     if (body_block_idx < tp.blocks.size()) {
         auto &fn_map = const_cast<std::unordered_map<std::size_t, FnTypeInfo> &>(
             driver_->environment().functions());
@@ -2964,8 +2956,8 @@ void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
 // expression produces a well-typed Pure Int. Called from check_fn_body
 // AFTER parameter bindings are established so `decreases n` can resolve
 // the parameter name.
-void FnSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
-                                         const ValueContext &context) {
+void FlowWorkflowSema::check_fn_effect_decreases_expr(
+    const ast::EffectClauseSyntax *effect_clause, const ValueContext &context) {
     if (effect_clause == nullptr || effect_clause->decreases_expr == nullptr) {
         return;
     }
@@ -2987,11 +2979,7 @@ void FnSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_c
     }
 }
 
-void ImplSema::run() {
-    check_impls();
-}
-
-void ImplSema::check_impls() {
+void FlowWorkflowSema::check_impls() {
     for (const auto &[impl_index, entry] : driver_->impl_decls_) {
         driver_->with_symbol_context_for_impl(entry.source_id, [&]() {
             const auto &impls = driver_->environment().impls();
@@ -3004,9 +2992,9 @@ void ImplSema::check_impls() {
     }
 }
 
-void ImplSema::check_impl_body(std::size_t impl_index,
-                               const ast::ImplDecl &decl,
-                               const ImplTypeInfo &impl_info) {
+void FlowWorkflowSema::check_impl_body(std::size_t impl_index,
+                                       const ast::ImplDecl &decl,
+                                       const ImplTypeInfo &impl_info) {
     for (const auto &method : decl.methods) {
         if (method == nullptr || !method->body) {
             continue;
@@ -3019,10 +3007,10 @@ void ImplSema::check_impl_body(std::size_t impl_index,
     }
 }
 
-void ImplSema::check_impl_method_body(std::size_t impl_index,
-                                      const ast::FnDecl &method_decl,
-                                      const ImplTypeInfo &impl_info,
-                                      const ImplMethodInfo &method_info) {
+void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
+                                              const ast::FnDecl &method_decl,
+                                              const ImplTypeInfo &impl_info,
+                                              const ImplMethodInfo &method_info) {
     if (!method_decl.body) {
         return;
     }
@@ -3090,7 +3078,7 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
     // D-3 (Wave-24): validate effect-clause decreases measure expression
     // produces a well-typed Pure Int. Must happen AFTER param bindings so
     // `decreases n` can resolve the parameter name + Self/self.
-    check_effect_decreases_expr(method_decl.effect_clause.get(), context);
+    check_impl_effect_decreases_expr(method_decl.effect_clause.get(), context);
 
     if (method_info.return_type != nullptr) {
         driver_->check_block(*method_decl.body,
@@ -3130,8 +3118,8 @@ void ImplSema::check_impl_method_body(std::size_t impl_index,
 // expression on an impl method produces a well-typed Pure Int. Called from
 // check_impl_method_body AFTER parameter bindings are established so
 // `decreases n` / `decreases self.length` can resolve names.
-void ImplSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect_clause,
-                                           const ValueContext &context) {
+void FlowWorkflowSema::check_impl_effect_decreases_expr(
+    const ast::EffectClauseSyntax *effect_clause, const ValueContext &context) {
     if (effect_clause == nullptr || effect_clause->decreases_expr == nullptr) {
         return;
     }
@@ -3153,9 +3141,9 @@ void ImplSema::check_effect_decreases_expr(const ast::EffectClauseSyntax *effect
     }
 }
 
-void ImplSema::record_impl_method_body_index(std::size_t impl_index,
-                                             std::string_view method_name,
-                                             std::uint32_t body_block_index) {
+void FlowWorkflowSema::record_impl_method_body_index(std::size_t impl_index,
+                                                     std::string_view method_name,
+                                                     std::uint32_t body_block_index) {
     auto &impls =
         const_cast<std::unordered_map<std::size_t, ImplTypeInfo> &>(driver_->environment().impls());
     if (const auto impl_iter = impls.find(impl_index); impl_iter != impls.end()) {

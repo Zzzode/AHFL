@@ -46,8 +46,6 @@ namespace ahfl::ast {
 //       ├── FlowDecl        — flow definition (Agent state-handling logic)
 //       └── WorkflowDecl    — workflow definition (multi-Agent DAG orchestration)
 
-class Visitor;
-
 // ----------------------------------------------------------------------------
 // Enum type definitions
 // ----------------------------------------------------------------------------
@@ -1245,69 +1243,34 @@ struct WorkflowNodeDeclSyntax {
 };
 
 // ----------------------------------------------------------------------------
-// Core AST node class hierarchy
+// Top-level declaration payloads
 // ----------------------------------------------------------------------------
-
-/// AST node base class (common interface for all nodes)
-struct Node {
-    NodeKind kind;
-    ahfl::SourceRange range;
-
-    explicit Node(NodeKind kind, ahfl::SourceRange range = {});
-    virtual ~Node() = default;
-
-    virtual void accept(Visitor &visitor) = 0;
-};
-
-/// Declaration base class (common base for all top-level declarations)
-struct Decl : Node {
-    Visibility visibility{Visibility::PackageInternal};
-    bool duplicate_visibility_modifier{false};
-
-    Decl(NodeKind kind, ahfl::SourceRange range = {});
-    ~Decl() override = default;
-
-    /// Return a one-line summary of the declaration (for diagnostic output)
-    [[nodiscard]] virtual std::string headline() const = 0;
-};
-
-/// Compilation unit (one .ahfl file maps to one Program)
-struct Program final : Node {
-    std::string source_name;               // source file name
-    std::vector<Owned<Decl>> declarations; // all top-level declarations
-
-    explicit Program(std::string source_name, ahfl::SourceRange range = {});
-
-    void accept(Visitor &visitor) override;
-};
-
-/// AST structural invariant violation. Captures mismatches between a tagged
-/// struct's kind and its payload fields.
-struct AstInvariantViolation {
-    ahfl::SourceRange range;
-    std::string message;
-};
-
-[[nodiscard]] std::vector<AstInvariantViolation>
-validate_program_invariants(const Program &program);
+//
+// Declarations are value-semantic std::variant alternatives. Each payload
+// carries the source and visibility metadata needed by diagnostics and public
+// API analysis; no parallel runtime tag or inheritance hierarchy exists.
 
 /// Module declaration: module a::b::c;
-struct ModuleDecl final : Decl {
+struct ModuleDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     Owned<QualifiedName> name;
 
     ModuleDecl(Owned<QualifiedName> name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Import declaration: import a::b::c [as alias];
-struct ImportDecl final : Decl {
+struct ImportDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     Owned<QualifiedName> path; // import path
     std::string alias;         // optional alias
 
     ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Use declaration: use module::Symbol [as Alias]; / pub use module::Symbol [as Alias];
@@ -1315,70 +1278,83 @@ struct ImportDecl final : Decl {
 /// The parser stores the full user-written target path. Semantic analysis
 /// splits it into module prefix + top-level symbol name and decides the
 /// namespace of the alias target.
-struct UseDecl final : Decl {
+struct UseDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     Owned<QualifiedName> path;
     std::string alias;
 
     UseDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Constant declaration: const NAME: Type = value;
-struct ConstDecl final : Decl {
+struct ConstDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     Owned<TypeSyntax> type;
     Owned<ExprSyntax> value;
 
     ConstDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Type alias: type NewName = ExistingType;
-struct TypeAliasDecl final : Decl {
+struct TypeAliasDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     Owned<TypeSyntax> aliased_type;
 
     TypeAliasDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Struct declaration: struct Name<T> { field1: Type1; field2: Type2 = default; }
 ///
 /// `type_params` carries the optional generic parameter list. An empty
 /// vector means the struct is monomorphic (no type parameters).
-struct StructDecl final : Decl {
+struct StructDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
     Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     StructDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Enum declaration: enum Name<T> { Variant1; Variant2(T); Variant3; }
 ///
 /// `type_params` carries the optional generic parameter list. An empty
 /// vector means the enum is monomorphic (no type parameters).
-struct EnumDecl final : Decl {
+struct EnumDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
     Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     EnumDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Capability declaration: capability Name(param1: Type1, ...) -> ReturnType;
 /// Represents an external interface callable by an Agent (e.g. LLM API, database query, etc.)
-struct CapabilityDecl final : Decl {
+struct CapabilityDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
     Owned<TypeSyntax> return_type;
@@ -1386,8 +1362,7 @@ struct CapabilityDecl final : Decl {
     Owned<WhereClauseSyntax> where_clause; // optional generic constraints
 
     CapabilityDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Predicate declaration: predicate Name(param1: Type1, ...);
@@ -1398,14 +1373,16 @@ struct CapabilityDecl final : Decl {
 /// not allow an explicit effect clause on predicates. The field exists so the
 /// semantic check (EffectOnPredicate) has a consistent shape to inspect; if
 /// the grammar is ever extended, the diagnostic is already in place.
-struct PredicateDecl final : Decl {
+struct PredicateDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
     Owned<EffectClauseSyntax> effect_clause; // always null, see struct doc
 
     PredicateDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Agent declaration — the core entity of AHFL
@@ -1422,7 +1399,10 @@ struct PredicateDecl final : Decl {
 ///       transitions { Init -> Processing; Processing -> Done; }
 ///       quota { max_tool_calls: 10; }
 ///   }
-struct AgentDecl final : Decl {
+struct AgentDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     Owned<TypeSyntax> input_type;                     // input type
     Owned<TypeSyntax> context_type;                   // optional context type (mutable state)
@@ -1439,30 +1419,33 @@ struct AgentDecl final : Decl {
     std::vector<Owned<TransitionSyntax>> transitions; // legal state transitions
 
     AgentDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Contract declaration: contract for AgentName { requires ...; ensures ...; }
 /// Attaches formal constraints to an Agent, compiled into an SMV model for verification
-struct ContractDecl final : Decl {
+struct ContractDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     Owned<QualifiedName> target;                      // target Agent
     std::vector<Owned<ContractClauseSyntax>> clauses; // contract clause list
 
     ContractDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Flow declaration: flow for AgentName { state Init { ... } state Done { ... } }
 /// Defines the concrete execution logic for each state of an Agent
-struct FlowDecl final : Decl {
+struct FlowDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     Owned<QualifiedName> target;                           // target Agent
     std::vector<Owned<StateHandlerSyntax>> state_handlers; // handlers for each state
 
     FlowDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Workflow declaration — multi-Agent DAG orchestration
@@ -1476,7 +1459,10 @@ struct FlowDecl final : Decl {
 ///       liveness { eventually(...); }
 ///       return OutputType { field: b.result };
 ///   }
-struct WorkflowDecl final : Decl {
+struct WorkflowDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     Owned<TypeSyntax> input_type;                     // Workflow input type
     Owned<TypeSyntax> output_type;                    // Workflow output type
@@ -1486,8 +1472,7 @@ struct WorkflowDecl final : Decl {
     Owned<ExprSyntax> return_value;                   // final return value expression
 
     WorkflowDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Function declaration (RFC §3.2.2 / §3.2.3 / §2 / §6):
@@ -1507,7 +1492,10 @@ struct WorkflowDecl final : Decl {
 /// fn declaration carries an `@builtin("name")` attribute. Only stdlib modules
 /// may declare @builtin functions; the name maps to a compiler/runtime builtin
 /// implementation. Empty (nullopt) means the fn is a normal user function.
-struct FnDecl final : Decl {
+struct FnDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<ParamDeclSyntax>> params;
@@ -1518,8 +1506,7 @@ struct FnDecl final : Decl {
     std::optional<std::string> builtin_name; // P5: @builtin name, nullopt if not a builtin
 
     FnDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 // ----------------------------------------------------------------------------
@@ -1593,7 +1580,10 @@ struct TraitItemSyntax {
 /// `super_traits` carries the optional super-trait bound list (RFC §1.3
 /// `[ ":" TypeBoundList ]`). `items` carries the (optionally re-ordered) trait
 /// method signatures and associated type declarations.
-struct TraitDecl final : Decl {
+struct TraitDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<TypeSyntax>> super_traits; // optional super-trait bounds
@@ -1601,8 +1591,7 @@ struct TraitDecl final : Decl {
     std::vector<Owned<TraitItemSyntax>> items;
 
     TraitDecl(std::string name, ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 /// Impl item kind discriminator. Parallels `TraitItemKind`; together the two
@@ -1669,7 +1658,10 @@ using AssocItemDefSyntax = ImplItemSyntax::AssocTypeDef;
 /// to work without churn; P3c.S1 only adds the previously-missing
 /// `const_items` bucket plus the `ImplItemSyntax` tagged struct for consumers
 /// that prefer a single dispatcher.
-struct ImplDecl final : Decl {
+struct ImplDecl final {
+    ahfl::SourceRange range;
+    Visibility visibility{Visibility::PackageInternal};
+    bool duplicate_visibility_modifier{false};
     std::vector<Owned<TypeParamSyntax>> type_params;
     Owned<TypeSyntax> trait_ref; // optional (empty for inherent impl)
     Owned<TypeSyntax> target_type;
@@ -1684,61 +1676,63 @@ struct ImplDecl final : Decl {
     std::vector<Owned<ImplItemSyntax>> items;
 
     ImplDecl(ahfl::SourceRange range = {});
-    void accept(Visitor &visitor) override;
-    [[nodiscard]] std::string headline() const override;
+    [[nodiscard]] std::string headline() const;
 };
 
 // ----------------------------------------------------------------------------
-// Visitor pattern
+// Flat declaration store and variant helpers
 // ----------------------------------------------------------------------------
 
-/// AST visitor interface (double dispatch)
-/// Every pass that traverses the AST (Resolver, TypeChecker, Emitter) implements this interface
-class Visitor {
-  public:
-    virtual ~Visitor() = default;
+using Decl = std::variant<ModuleDecl,
+                          ImportDecl,
+                          UseDecl,
+                          ConstDecl,
+                          TypeAliasDecl,
+                          StructDecl,
+                          EnumDecl,
+                          CapabilityDecl,
+                          PredicateDecl,
+                          AgentDecl,
+                          ContractDecl,
+                          FlowDecl,
+                          WorkflowDecl,
+                          FnDecl,
+                          TraitDecl,
+                          ImplDecl>;
 
-    virtual void visit(Program &node) = 0;
-    virtual void visit(ModuleDecl &node) = 0;
-    virtual void visit(ImportDecl &node) = 0;
-    virtual void visit(UseDecl &node) = 0;
-    virtual void visit(ConstDecl &node) = 0;
-    virtual void visit(TypeAliasDecl &node) = 0;
-    virtual void visit(StructDecl &node) = 0;
-    virtual void visit(EnumDecl &node) = 0;
-    virtual void visit(CapabilityDecl &node) = 0;
-    virtual void visit(PredicateDecl &node) = 0;
-    virtual void visit(AgentDecl &node) = 0;
-    virtual void visit(ContractDecl &node) = 0;
-    virtual void visit(FlowDecl &node) = 0;
-    virtual void visit(WorkflowDecl &node) = 0;
-    virtual void visit(FnDecl &node) = 0;
-    virtual void visit(TraitDecl &node) = 0;
-    virtual void visit(ImplDecl &node) = 0;
+/// Compilation unit (one .ahfl file maps to one Program).
+struct Program final {
+    ahfl::SourceRange range;
+    std::string source_name;
+    std::vector<Decl> declarations;
+
+    explicit Program(std::string source_name, ahfl::SourceRange range = {});
 };
 
-/// Recursive visitor (provides default empty implementations; subclasses only
-/// override the nodes they care about)
-class RecursiveVisitor : public Visitor {
-  public:
-    void visit(Program &node) override;
-    void visit(ModuleDecl &node) override;
-    void visit(ImportDecl &node) override;
-    void visit(UseDecl &node) override;
-    void visit(ConstDecl &node) override;
-    void visit(TypeAliasDecl &node) override;
-    void visit(StructDecl &node) override;
-    void visit(EnumDecl &node) override;
-    void visit(CapabilityDecl &node) override;
-    void visit(PredicateDecl &node) override;
-    void visit(AgentDecl &node) override;
-    void visit(ContractDecl &node) override;
-    void visit(FlowDecl &node) override;
-    void visit(WorkflowDecl &node) override;
-    void visit(FnDecl &node) override;
-    void visit(TraitDecl &node) override;
-    void visit(ImplDecl &node) override;
+[[nodiscard]] NodeKind decl_kind(const Decl &declaration) noexcept;
+[[nodiscard]] ahfl::SourceRange decl_range(const Decl &declaration) noexcept;
+[[nodiscard]] Visibility decl_visibility(const Decl &declaration) noexcept;
+[[nodiscard]] bool decl_has_duplicate_visibility(const Decl &declaration) noexcept;
+[[nodiscard]] std::string decl_headline(const Decl &declaration);
+
+template <typename Visitor>
+decltype(auto) visit_decl(Decl &declaration, Visitor &&visitor) {
+    return std::visit(std::forward<Visitor>(visitor), declaration);
+}
+
+template <typename Visitor>
+decltype(auto) visit_decl(const Decl &declaration, Visitor &&visitor) {
+    return std::visit(std::forward<Visitor>(visitor), declaration);
+}
+
+/// AST structural invariant violation.
+struct AstInvariantViolation {
+    ahfl::SourceRange range;
+    std::string message;
 };
+
+[[nodiscard]] std::vector<AstInvariantViolation>
+validate_program_invariants(const Program &program);
 
 // ============================================================================
 // ExprSyntax visitor

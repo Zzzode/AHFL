@@ -43,33 +43,26 @@ struct ProgramImports {
     ProgramImports result;
 
     for (const auto &declaration : program.declarations) {
-        switch (declaration->kind) {
-        case ast::NodeKind::ModuleDecl: {
-            const auto &module = static_cast<const ast::ModuleDecl &>(*declaration);
-            result.modules.push_back({module.name ? module.name->spelling() : "", module.range});
-            break;
+        if (const auto *module = std::get_if<ast::ModuleDecl>(&declaration)) {
+            result.modules.push_back(
+                {module->name ? module->name->spelling() : "", module->range});
+            continue;
         }
-        case ast::NodeKind::ImportDecl: {
-            const auto &import = static_cast<const ast::ImportDecl &>(*declaration);
+        if (const auto *import = std::get_if<ast::ImportDecl>(&declaration)) {
             result.imports.push_back(ImportRequest{
-                .module_name = import.path ? import.path->spelling() : "",
-                .alias = import.alias,
-                .range = import.range,
+                .module_name = import->path ? import->path->spelling() : "",
+                .alias = import->alias,
+                .range = import->range,
             });
-            break;
+            continue;
         }
-        case ast::NodeKind::UseDecl: {
-            const auto &use_decl = static_cast<const ast::UseDecl &>(*declaration);
-            const auto module_name = use_target_module(use_decl);
+        if (const auto *use_decl = std::get_if<ast::UseDecl>(&declaration)) {
+            const auto module_name = use_target_module(*use_decl);
             result.imports.push_back(ImportRequest{
                 .module_name = module_name.value_or(std::string{}),
                 .alias = "",
-                .range = use_decl.range,
+                .range = use_decl->range,
             });
-            break;
-        }
-        default:
-            break;
         }
     }
 

@@ -1,5 +1,4 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/frontend/desugar.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -325,12 +324,25 @@ void install_error_listener(RecognizerT &recognizer, antlr4::ANTLRErrorListener 
 
 struct OrderedDecl final {
     std::size_t begin_offset{0};
-    Owned<ast::Decl> declaration;
+    ast::Decl declaration;
 };
 
-void append_decl(std::vector<OrderedDecl> &declarations, Owned<ast::Decl> declaration) {
+template <typename DeclT>
+[[nodiscard]] ast::Decl into_decl(Owned<DeclT> declaration) {
+    return ast::Decl{std::move(*declaration)};
+}
+
+template <typename DeclT>
+void append_decl(std::vector<OrderedDecl> &declarations, Owned<DeclT> declaration) {
     declarations.push_back(OrderedDecl{
         .begin_offset = declaration->range.begin_offset,
+        .declaration = into_decl(std::move(declaration)),
+    });
+}
+
+void append_decl(std::vector<OrderedDecl> &declarations, ast::Decl declaration) {
+    declarations.push_back(OrderedDecl{
+        .begin_offset = ast::decl_range(declaration).begin_offset,
         .declaration = std::move(declaration),
     });
 }
@@ -480,14 +492,16 @@ class ProgramBuilder {
     // only place where later frontend work should routinely traverse generated
     // ANTLR contexts; resolver/checker stages must operate on ahfl::ast nodes.
 
-    [[nodiscard]] Owned<ast::Decl> build_module_decl(AHFLParser::ModuleDeclContext &context) const {
+    [[nodiscard]] Owned<ast::ModuleDecl>
+    build_module_decl(AHFLParser::ModuleDeclContext &context) const {
         return make_decl<ast::ModuleDecl>(
             source_,
             context,
             build_qualified_name(require(context.qualifiedIdent(), "module name is missing")));
     }
 
-    [[nodiscard]] Owned<ast::Decl> build_import_decl(AHFLParser::ImportDeclContext &context) const {
+    [[nodiscard]] Owned<ast::ImportDecl>
+    build_import_decl(AHFLParser::ImportDeclContext &context) const {
         return make_decl<ast::ImportDecl>(
             source_,
             context,
@@ -495,7 +509,8 @@ class ProgramBuilder {
             context.identifier() != nullptr ? text_of(*context.identifier()) : std::string{});
     }
 
-    [[nodiscard]] Owned<ast::Decl> build_use_decl(AHFLParser::UseDeclContext &context) const {
+    [[nodiscard]] Owned<ast::UseDecl>
+    build_use_decl(AHFLParser::UseDeclContext &context) const {
         auto declaration = make_decl<ast::UseDecl>(
             source_,
             context,
@@ -532,7 +547,7 @@ class ProgramBuilder {
         return context.visibilityModifier() != nullptr;
     }
 
-    [[nodiscard]] Owned<ast::Decl>
+    [[nodiscard]] ast::Decl
     build_top_level_decl(AHFLParser::TopLevelDeclContext &context) const {
         const bool is_public = has_visibility_modifier(context);
 
@@ -545,7 +560,7 @@ class ProgramBuilder {
                 build_type_syntax(require(const_decl->get().type_(), "const type is missing"));
             declaration->value =
                 build_expr_syntax(require(const_decl->get().constExpr(), "const value is missing"));
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto type_alias_decl = borrow(context.typeAliasDecl())) {
@@ -559,7 +574,7 @@ class ProgramBuilder {
             }
             declaration->aliased_type = build_type_syntax(
                 require(type_alias_decl->get().type_(), "type alias target is missing"));
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto struct_decl = borrow(context.structDecl())) {
@@ -575,7 +590,7 @@ class ProgramBuilder {
                 declaration->fields.push_back(
                     build_struct_field_decl(require(field_context, "struct field is missing")));
             }
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto enum_decl = borrow(context.enumDecl())) {
@@ -590,7 +605,7 @@ class ProgramBuilder {
                 declaration->variants.push_back(
                     build_enum_variant_decl(require(variant_context, "enum variant is missing")));
             }
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto capability_decl = borrow(context.capabilityDecl())) {
@@ -604,7 +619,7 @@ class ProgramBuilder {
             if (const auto effect = borrow(capability_decl->get().capabilityEffectBlock())) {
                 declaration->effect = build_capability_effect(effect->get());
             }
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto predicate_decl = borrow(context.predicateDecl())) {
@@ -613,7 +628,7 @@ class ProgramBuilder {
                 predicate_decl->get(),
                 text_of(require(predicate_decl->get().IDENT(), "predicate name is missing")));
             declaration->params = build_param_list(borrow(predicate_decl->get().paramList()));
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto agent_decl = borrow(context.agentDecl())) {
@@ -670,7 +685,7 @@ class ProgramBuilder {
                 declaration->transitions.push_back(
                     build_transition_decl(require(transition_context, "transition is missing")));
             }
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto contract_decl = borrow(context.contractDecl())) {
@@ -683,7 +698,7 @@ class ProgramBuilder {
                 declaration->clauses.push_back(
                     build_contract_clause(require(item_context, "contract clause is missing")));
             }
-            return declaration;
+            return into_decl(std::move(declaration));
         }
 
         if (const auto flow_decl = borrow(context.flowDecl())) {
@@ -696,7 +711,7 @@ class ProgramBuilder {
                 declaration->state_handlers.push_back(
                     build_state_handler(require(handler_context, "state handler is missing")));
             }
-            return declaration;
+            return into_decl(std::move(declaration));
         }
 
         if (const auto workflow_decl = borrow(context.workflowDecl())) {
@@ -742,7 +757,7 @@ class ProgramBuilder {
                 require(workflow_decl->get().workflowReturnDecl(), "workflow return is missing")
                     .expr(),
                 "workflow return expression is missing"));
-            return with_visibility(std::move(declaration), is_public);
+            return into_decl(with_visibility(std::move(declaration), is_public));
         }
 
         if (const auto fn_decl = borrow(context.fnDecl())) {
@@ -752,7 +767,7 @@ class ProgramBuilder {
             declaration->visibility = (is_public || has_visibility_modifier(fn_decl->get()))
                                           ? ast::Visibility::Public
                                           : declaration->visibility;
-            return declaration;
+            return into_decl(std::move(declaration));
         }
 
         if (const auto trait_decl = borrow(context.traitDecl())) {
@@ -762,15 +777,15 @@ class ProgramBuilder {
             declaration->visibility = (is_public || has_visibility_modifier(trait_decl->get()))
                                           ? ast::Visibility::Public
                                           : declaration->visibility;
-            return declaration;
+            return into_decl(std::move(declaration));
         }
 
         if (const auto impl_decl = borrow(context.implDecl())) {
-            return build_impl_decl(impl_decl->get());
+            return into_decl(build_impl_decl(impl_decl->get()));
         }
 
         if (const auto use_decl = borrow(context.useDecl())) {
-            return build_use_decl(use_decl->get());
+            return into_decl(build_use_decl(use_decl->get()));
         }
 
         throw std::logic_error(
@@ -781,7 +796,8 @@ class ProgramBuilder {
     // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): function-declaration builders
     // ----------------------------------------------------------------------
 
-    [[nodiscard]] Owned<ast::Decl> build_fn_decl(AHFLParser::FnDeclContext &context) const {
+    [[nodiscard]] Owned<ast::FnDecl>
+    build_fn_decl(AHFLParser::FnDeclContext &context) const {
         auto declaration = make_decl<ast::FnDecl>(
             source_, context, identifier_text(require(context.identifier(), "fn name is missing")));
 
@@ -831,7 +847,8 @@ class ProgramBuilder {
     // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait & impl builders
     // ------------------------------------------------------------------
 
-    [[nodiscard]] Owned<ast::Decl> build_trait_decl(AHFLParser::TraitDeclContext &context) const {
+    [[nodiscard]] Owned<ast::TraitDecl>
+    build_trait_decl(AHFLParser::TraitDeclContext &context) const {
         auto declaration = make_decl<ast::TraitDecl>(
             source_, context, text_of(require(context.IDENT(), "trait name is missing")));
 
@@ -954,7 +971,8 @@ class ProgramBuilder {
         item.assoc_const = std::move(assoc_const);
     }
 
-    [[nodiscard]] Owned<ast::Decl> build_impl_decl(AHFLParser::ImplDeclContext &context) const {
+    [[nodiscard]] Owned<ast::ImplDecl>
+    build_impl_decl(AHFLParser::ImplDeclContext &context) const {
         auto declaration = make_decl<ast::ImplDecl>(source_, context);
 
         if (const auto type_params = borrow(context.typeParams())) {
@@ -3368,15 +3386,6 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         result.diagnostics.note()
             .message("parsed with the generated ANTLR4 C++ parser from grammar/AHFL.g4")
             .emit();
-    }
-
-    // M4: Desugar built-in container syntax into nominal stdlib equivalents.
-    // Runs after parsing and invariant validation, before name resolution.
-    // Controlled by FrontendOptions::enable_desugaring — off by default
-    // during the migration period while downstream passes are adapted.
-    if (result.program && !result.has_errors() && options_.enable_desugaring) {
-        DesugarPass desugar;
-        desugar.run(*result.program);
     }
 
     return result;

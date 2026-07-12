@@ -1,4 +1,4 @@
-ahfl.ir.v1
+ahfl.ir.v2
 formal_observations {
   observation workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0: embedded_bool_expr(scope=workflow_safety_clause, owner=formal::flow_workflow::ReviewWorkflow, clause=1, atom=0)
 }
@@ -46,6 +46,7 @@ flow formal::flow_workflow::ReviewAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     if input.allow_fast_track {
@@ -61,6 +62,7 @@ flow formal::flow_workflow::ReviewAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Done
@@ -72,6 +74,7 @@ flow formal::flow_workflow::ReviewAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Done
@@ -83,6 +86,7 @@ flow formal::flow_workflow::ReviewAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     return formal::flow_workflow::Response { tag: ctx.tag }

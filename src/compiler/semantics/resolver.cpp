@@ -156,62 +156,7 @@ class ResolverPass final {
     }
 
     void visit(const ast::Decl &node) {
-        switch (node.kind) {
-        case ast::NodeKind::ModuleDecl:
-            visit(static_cast<const ast::ModuleDecl &>(node));
-            return;
-        case ast::NodeKind::ImportDecl:
-            visit(static_cast<const ast::ImportDecl &>(node));
-            return;
-        case ast::NodeKind::UseDecl:
-            visit(static_cast<const ast::UseDecl &>(node));
-            return;
-        case ast::NodeKind::ConstDecl:
-            visit(static_cast<const ast::ConstDecl &>(node));
-            return;
-        case ast::NodeKind::TypeAliasDecl:
-            visit(static_cast<const ast::TypeAliasDecl &>(node));
-            return;
-        case ast::NodeKind::StructDecl:
-            visit(static_cast<const ast::StructDecl &>(node));
-            return;
-        case ast::NodeKind::EnumDecl:
-            visit(static_cast<const ast::EnumDecl &>(node));
-            return;
-        case ast::NodeKind::CapabilityDecl:
-            visit(static_cast<const ast::CapabilityDecl &>(node));
-            return;
-        case ast::NodeKind::PredicateDecl:
-            visit(static_cast<const ast::PredicateDecl &>(node));
-            return;
-        case ast::NodeKind::AgentDecl:
-            visit(static_cast<const ast::AgentDecl &>(node));
-            return;
-        case ast::NodeKind::ContractDecl:
-            visit(static_cast<const ast::ContractDecl &>(node));
-            return;
-        case ast::NodeKind::FlowDecl:
-            visit(static_cast<const ast::FlowDecl &>(node));
-            return;
-        case ast::NodeKind::WorkflowDecl:
-            visit(static_cast<const ast::WorkflowDecl &>(node));
-            return;
-        case ast::NodeKind::FnDecl:
-            visit(static_cast<const ast::FnDecl &>(node));
-            return;
-        case ast::NodeKind::TraitDecl:
-            visit(static_cast<const ast::TraitDecl &>(node));
-            return;
-        case ast::NodeKind::ImplDecl:
-            visit(static_cast<const ast::ImplDecl &>(node));
-            return;
-        case ast::NodeKind::Program:
-            emit_error(error_codes::resolve::MultipleModuleDeclarations,
-                       MessageTemplate{"unexpected program node in declarations list"},
-                       current_source_,
-                       node.range);
-            return;
-        }
+        ast::visit_decl(node, [this](const auto &payload) { visit(payload); });
     }
 
     void visit(const ast::ModuleDecl &node) {
@@ -810,9 +755,9 @@ class ResolverPass final {
             const auto trait_spelling = node.trait_ref->as<ast::NamedType>().name->spelling();
             if (current_source_ != nullptr && current_source_->program) {
                 for (const auto &decl : current_source_->program->declarations) {
-                    if (!decl || decl->kind != ast::NodeKind::TraitDecl)
+                    if (!std::holds_alternative<ast::TraitDecl>(decl))
                         continue;
-                    const auto &trait_decl = static_cast<const ast::TraitDecl &>(*decl);
+                    const auto &trait_decl = std::get<ast::TraitDecl>(decl);
                     if (trait_decl.name != trait_spelling)
                         continue;
                     for (const auto &tp : trait_decl.type_params) {
@@ -958,7 +903,7 @@ class ResolverPass final {
 
     void visit(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            visit(*declaration);
+            visit(declaration);
         }
     }
 
@@ -1090,7 +1035,7 @@ class ResolverPass final {
     }
 
     [[nodiscard]] static std::string declaration_kind_label(const ast::Decl &decl) {
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl:
             return "const";
         case ast::NodeKind::TypeAliasDecl:
@@ -1130,31 +1075,33 @@ class ResolverPass final {
     }
 
     [[nodiscard]] static std::string declaration_name(const ast::Decl &decl) {
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl:
-            return static_cast<const ast::ConstDecl &>(decl).name;
+            return std::get<ast::ConstDecl>(decl).name;
         case ast::NodeKind::TypeAliasDecl:
-            return static_cast<const ast::TypeAliasDecl &>(decl).name;
+            return std::get<ast::TypeAliasDecl>(decl).name;
         case ast::NodeKind::StructDecl:
-            return static_cast<const ast::StructDecl &>(decl).name;
+            return std::get<ast::StructDecl>(decl).name;
         case ast::NodeKind::EnumDecl:
-            return static_cast<const ast::EnumDecl &>(decl).name;
+            return std::get<ast::EnumDecl>(decl).name;
         case ast::NodeKind::CapabilityDecl:
-            return static_cast<const ast::CapabilityDecl &>(decl).name;
+            return std::get<ast::CapabilityDecl>(decl).name;
         case ast::NodeKind::PredicateDecl:
-            return static_cast<const ast::PredicateDecl &>(decl).name;
+            return std::get<ast::PredicateDecl>(decl).name;
         case ast::NodeKind::AgentDecl:
-            return static_cast<const ast::AgentDecl &>(decl).name;
+            return std::get<ast::AgentDecl>(decl).name;
         case ast::NodeKind::WorkflowDecl:
-            return static_cast<const ast::WorkflowDecl &>(decl).name;
+            return std::get<ast::WorkflowDecl>(decl).name;
         case ast::NodeKind::FnDecl:
-            return static_cast<const ast::FnDecl &>(decl).name;
+            return std::get<ast::FnDecl>(decl).name;
         case ast::NodeKind::TraitDecl:
-            return static_cast<const ast::TraitDecl &>(decl).name;
-        case ast::NodeKind::UseDecl:
-            return static_cast<const ast::UseDecl &>(decl).path
-                       ? static_cast<const ast::UseDecl &>(decl).path->spelling()
+            return std::get<ast::TraitDecl>(decl).name;
+        case ast::NodeKind::UseDecl: {
+            const auto &use = std::get<ast::UseDecl>(decl);
+            return use.path
+                       ? use.path->spelling()
                        : std::string{"<invalid-use>"};
+        }
         case ast::NodeKind::ImplDecl:
             return "<impl>";
         case ast::NodeKind::ModuleDecl:
@@ -1169,9 +1116,11 @@ class ResolverPass final {
 
     [[nodiscard]] std::string
     report_key(const ast::Decl &owner, SymbolId leaked_symbol, SourceRange range) const {
-        return std::to_string(owner.range.begin_offset) + ":" +
-               std::to_string(owner.range.end_offset) + ":" + std::to_string(leaked_symbol.value) +
-               ":" + std::to_string(range.begin_offset) + ":" + std::to_string(range.end_offset);
+        const auto owner_range = ast::decl_range(owner);
+        return std::to_string(owner_range.begin_offset) + ":" +
+               std::to_string(owner_range.end_offset) + ":" +
+               std::to_string(leaked_symbol.value) + ":" +
+               std::to_string(range.begin_offset) + ":" + std::to_string(range.end_offset);
     }
 
     void emit_private_in_public(const ast::Decl &owner,
@@ -1372,37 +1321,37 @@ class ResolverPass final {
 
     [[nodiscard]] std::optional<std::pair<SymbolNamespace, std::string_view>>
     declaration_symbol_key(const ast::Decl &decl) const {
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl:
             return std::pair{SymbolNamespace::Consts,
-                             std::string_view(static_cast<const ast::ConstDecl &>(decl).name)};
+                             std::string_view(std::get<ast::ConstDecl>(decl).name)};
         case ast::NodeKind::TypeAliasDecl:
             return std::pair{SymbolNamespace::Types,
-                             std::string_view(static_cast<const ast::TypeAliasDecl &>(decl).name)};
+                             std::string_view(std::get<ast::TypeAliasDecl>(decl).name)};
         case ast::NodeKind::StructDecl:
             return std::pair{SymbolNamespace::Types,
-                             std::string_view(static_cast<const ast::StructDecl &>(decl).name)};
+                             std::string_view(std::get<ast::StructDecl>(decl).name)};
         case ast::NodeKind::EnumDecl:
             return std::pair{SymbolNamespace::Types,
-                             std::string_view(static_cast<const ast::EnumDecl &>(decl).name)};
+                             std::string_view(std::get<ast::EnumDecl>(decl).name)};
         case ast::NodeKind::CapabilityDecl:
             return std::pair{SymbolNamespace::Capabilities,
-                             std::string_view(static_cast<const ast::CapabilityDecl &>(decl).name)};
+                             std::string_view(std::get<ast::CapabilityDecl>(decl).name)};
         case ast::NodeKind::PredicateDecl:
             return std::pair{SymbolNamespace::Predicates,
-                             std::string_view(static_cast<const ast::PredicateDecl &>(decl).name)};
+                             std::string_view(std::get<ast::PredicateDecl>(decl).name)};
         case ast::NodeKind::AgentDecl:
             return std::pair{SymbolNamespace::Agents,
-                             std::string_view(static_cast<const ast::AgentDecl &>(decl).name)};
+                             std::string_view(std::get<ast::AgentDecl>(decl).name)};
         case ast::NodeKind::WorkflowDecl:
             return std::pair{SymbolNamespace::Workflows,
-                             std::string_view(static_cast<const ast::WorkflowDecl &>(decl).name)};
+                             std::string_view(std::get<ast::WorkflowDecl>(decl).name)};
         case ast::NodeKind::FnDecl:
             return std::pair{SymbolNamespace::Functions,
-                             std::string_view(static_cast<const ast::FnDecl &>(decl).name)};
+                             std::string_view(std::get<ast::FnDecl>(decl).name)};
         case ast::NodeKind::TraitDecl:
             return std::pair{SymbolNamespace::Traits,
-                             std::string_view(static_cast<const ast::TraitDecl &>(decl).name)};
+                             std::string_view(std::get<ast::TraitDecl>(decl).name)};
         case ast::NodeKind::ModuleDecl:
         case ast::NodeKind::ImportDecl:
         case ast::NodeKind::UseDecl:
@@ -1619,22 +1568,23 @@ class ResolverPass final {
     }
 
     bool mark_artifact_signature_dependencies(const ast::Decl &decl) {
-        if (decl.visibility != ast::Visibility::Public || !declaration_is_artifact_reachable(decl)) {
+        if (ast::decl_visibility(decl) != ast::Visibility::Public ||
+            !declaration_is_artifact_reachable(decl)) {
             return false;
         }
 
         bool changed = false;
         std::unordered_set<std::string> type_params;
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl: {
-            const auto &node = static_cast<const ast::ConstDecl &>(decl);
+            const auto &node = std::get<ast::ConstDecl>(decl);
             if (node.type) {
                 changed = mark_artifact_type_dependencies(*node.type, type_params) || changed;
             }
             return changed;
         }
         case ast::NodeKind::TypeAliasDecl: {
-            const auto &node = static_cast<const ast::TypeAliasDecl &>(decl);
+            const auto &node = std::get<ast::TypeAliasDecl>(decl);
             changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
                       changed;
             if (node.aliased_type) {
@@ -1644,7 +1594,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::StructDecl: {
-            const auto &node = static_cast<const ast::StructDecl &>(decl);
+            const auto &node = std::get<ast::StructDecl>(decl);
             changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
                       changed;
             for (const auto &field : node.fields) {
@@ -1658,7 +1608,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::EnumDecl: {
-            const auto &node = static_cast<const ast::EnumDecl &>(decl);
+            const auto &node = std::get<ast::EnumDecl>(decl);
             changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
                       changed;
             for (const auto &variant : node.variants) {
@@ -1680,7 +1630,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::CapabilityDecl: {
-            const auto &node = static_cast<const ast::CapabilityDecl &>(decl);
+            const auto &node = std::get<ast::CapabilityDecl>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
                     changed =
@@ -1694,7 +1644,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::PredicateDecl: {
-            const auto &node = static_cast<const ast::PredicateDecl &>(decl);
+            const auto &node = std::get<ast::PredicateDecl>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
                     changed =
@@ -1704,7 +1654,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::AgentDecl: {
-            const auto &node = static_cast<const ast::AgentDecl &>(decl);
+            const auto &node = std::get<ast::AgentDecl>(decl);
             if (node.input_type) {
                 changed =
                     mark_artifact_type_dependencies(*node.input_type, type_params) || changed;
@@ -1720,7 +1670,7 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &node = static_cast<const ast::WorkflowDecl &>(decl);
+            const auto &node = std::get<ast::WorkflowDecl>(decl);
             if (node.input_type) {
                 changed =
                     mark_artifact_type_dependencies(*node.input_type, type_params) || changed;
@@ -1740,10 +1690,9 @@ class ResolverPass final {
             return changed;
         }
         case ast::NodeKind::FnDecl:
-            return mark_artifact_fn_signature_dependencies(
-                static_cast<const ast::FnDecl &>(decl), {});
+            return mark_artifact_fn_signature_dependencies(std::get<ast::FnDecl>(decl), {});
         case ast::NodeKind::TraitDecl: {
-            const auto &node = static_cast<const ast::TraitDecl &>(decl);
+            const auto &node = std::get<ast::TraitDecl>(decl);
             changed = mark_artifact_type_param_dependencies(node.type_params, type_params) ||
                       changed;
             type_params.insert("Self");
@@ -1817,7 +1766,7 @@ class ResolverPass final {
     bool mark_artifact_dependencies_in_program(const ast::Program &program) {
         bool changed = false;
         for (const auto &declaration : program.declarations) {
-            changed = mark_artifact_signature_dependencies(*declaration) || changed;
+            changed = mark_artifact_signature_dependencies(declaration) || changed;
         }
         return changed;
     }
@@ -1901,35 +1850,35 @@ class ResolverPass final {
     }
 
     void validate_public_declaration(const ast::Decl &decl) {
-        if (decl.duplicate_visibility_modifier) {
+        if (ast::decl_has_duplicate_visibility(decl)) {
             emit_error(error_codes::visibility::DuplicateVisibilityModifier,
                        messages::visibility::DuplicateVisibilityModifier,
                        current_source_,
-                       decl.range,
+                       ast::decl_range(decl),
                        declaration_name(decl));
         }
 
-        if (decl.kind == ast::NodeKind::ImplDecl) {
-            validate_impl_visibility(static_cast<const ast::ImplDecl &>(decl));
+        if (const auto *implementation = std::get_if<ast::ImplDecl>(&decl)) {
+            validate_impl_visibility(decl, *implementation);
             return;
         }
 
-        if (decl.visibility != ast::Visibility::Public) {
+        if (ast::decl_visibility(decl) != ast::Visibility::Public) {
             return;
         }
 
         const bool owner_api_reachable = declaration_is_api_reachable(decl);
         std::unordered_set<std::string> type_params;
-        switch (decl.kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::ConstDecl: {
-            const auto &node = static_cast<const ast::ConstDecl &>(decl);
+            const auto &node = std::get<ast::ConstDecl>(decl);
             if (node.type) {
                 check_public_type(decl, *node.type, type_params, owner_api_reachable);
             }
             return;
         }
         case ast::NodeKind::TypeAliasDecl: {
-            const auto &node = static_cast<const ast::TypeAliasDecl &>(decl);
+            const auto &node = std::get<ast::TypeAliasDecl>(decl);
             check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             if (node.aliased_type) {
                 check_public_type(decl, *node.aliased_type, type_params, owner_api_reachable);
@@ -1937,7 +1886,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::StructDecl: {
-            const auto &node = static_cast<const ast::StructDecl &>(decl);
+            const auto &node = std::get<ast::StructDecl>(decl);
             check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             for (const auto &field : node.fields) {
                 if (field->type) {
@@ -1948,7 +1897,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::EnumDecl: {
-            const auto &node = static_cast<const ast::EnumDecl &>(decl);
+            const auto &node = std::get<ast::EnumDecl>(decl);
             check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             for (const auto &variant : node.variants) {
                 for (const auto &payload : variant->payload) {
@@ -1966,7 +1915,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::CapabilityDecl: {
-            const auto &node = static_cast<const ast::CapabilityDecl &>(decl);
+            const auto &node = std::get<ast::CapabilityDecl>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
                     check_public_type(decl, *param->type, type_params, owner_api_reachable);
@@ -1978,7 +1927,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::PredicateDecl: {
-            const auto &node = static_cast<const ast::PredicateDecl &>(decl);
+            const auto &node = std::get<ast::PredicateDecl>(decl);
             for (const auto &param : node.params) {
                 if (param->type) {
                     check_public_type(decl, *param->type, type_params, owner_api_reachable);
@@ -1987,7 +1936,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::AgentDecl: {
-            const auto &node = static_cast<const ast::AgentDecl &>(decl);
+            const auto &node = std::get<ast::AgentDecl>(decl);
             if (node.input_type) {
                 check_public_type(decl, *node.input_type, type_params, owner_api_reachable);
             }
@@ -2000,7 +1949,7 @@ class ResolverPass final {
             return;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &node = static_cast<const ast::WorkflowDecl &>(decl);
+            const auto &node = std::get<ast::WorkflowDecl>(decl);
             if (node.input_type) {
                 check_public_type(decl, *node.input_type, type_params, owner_api_reachable);
             }
@@ -2020,10 +1969,10 @@ class ResolverPass final {
         }
         case ast::NodeKind::FnDecl:
             check_public_fn_signature(
-                decl, static_cast<const ast::FnDecl &>(decl), {}, owner_api_reachable);
+                decl, std::get<ast::FnDecl>(decl), {}, owner_api_reachable);
             return;
         case ast::NodeKind::TraitDecl: {
-            const auto &node = static_cast<const ast::TraitDecl &>(decl);
+            const auto &node = std::get<ast::TraitDecl>(decl);
             check_public_type_params(decl, node.type_params, type_params, owner_api_reachable);
             type_params.insert("Self");
             for (const auto &super_trait : node.super_traits) {
@@ -2078,7 +2027,7 @@ class ResolverPass final {
         }
     }
 
-    void validate_impl_visibility(const ast::ImplDecl &node) {
+    void validate_impl_visibility(const ast::Decl &owner, const ast::ImplDecl &node) {
         const bool trait_impl = node.trait_ref != nullptr;
         for (const auto &item : node.items) {
             if (trait_impl && item->visibility == ast::Visibility::Public) {
@@ -2123,32 +2072,33 @@ class ResolverPass final {
 
         std::unordered_set<std::string> type_params;
         const bool owner_api_reachable = source_is_exported(current_source_id_);
-        check_public_type_params(node, node.type_params, type_params, owner_api_reachable);
+        check_public_type_params(owner, node.type_params, type_params, owner_api_reachable);
         type_params.insert("Self");
         if (node.target_type) {
-            check_public_impl_receiver(node, *node.target_type, type_params, owner_api_reachable);
+            check_public_impl_receiver(
+                owner, *node.target_type, type_params, owner_api_reachable);
         }
-        check_public_where_clause(node, node.where_clause, type_params, owner_api_reachable);
+        check_public_where_clause(owner, node.where_clause, type_params, owner_api_reachable);
         for (const auto &method : node.methods) {
             if (method->visibility == ast::Visibility::Public) {
-                check_public_fn_signature(node, *method, type_params, owner_api_reachable);
+                check_public_fn_signature(owner, *method, type_params, owner_api_reachable);
             }
         }
         for (const auto &assoc : node.assoc_items) {
             if (assoc->visibility == ast::Visibility::Public && assoc->type) {
-                check_public_type(node, *assoc->type, type_params, owner_api_reachable);
+                check_public_type(owner, *assoc->type, type_params, owner_api_reachable);
             }
         }
         for (const auto &assoc_const : node.const_items) {
             if (assoc_const->visibility == ast::Visibility::Public && assoc_const->type) {
-                check_public_type(node, *assoc_const->type, type_params, owner_api_reachable);
+                check_public_type(owner, *assoc_const->type, type_params, owner_api_reachable);
             }
         }
     }
 
     void validate_public_surface(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            validate_public_declaration(*declaration);
+            validate_public_declaration(declaration);
         }
     }
 

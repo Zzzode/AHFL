@@ -1,4 +1,4 @@
-opt_program source_version=ahfl.ir.v1
+opt_program source_version=ahfl.ir.v2
 skipped_temporal scope=contract::ir::expr_temporal::ExprAgent::clause::1 kind=called reason="temporal atom is not a pure expression fragment" source=[1533,1547)
 skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[2401,2413)
 skipped_temporal scope=workflow::ir::expr_temporal::ExprWorkflow::safety::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[2428,2442)

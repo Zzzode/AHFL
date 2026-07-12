@@ -33,11 +33,8 @@ using ahfl::ast::TraitItemKind;
 [[nodiscard]] const ahfl::ast::TraitDecl *
 find_trait_decl(const ahfl::ast::Program &program, std::string_view name) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind != NodeKind::TraitDecl) {
-            continue;
-        }
-        const auto *trait = static_cast<const ahfl::ast::TraitDecl *>(decl.get());
-        if (trait->name == name) {
+        const auto *trait = std::get_if<ahfl::ast::TraitDecl>(&decl);
+        if (trait != nullptr && trait->name == name) {
             return trait;
         }
     }
@@ -47,8 +44,9 @@ find_trait_decl(const ahfl::ast::Program &program, std::string_view name) {
 [[nodiscard]] const ahfl::ast::ImplDecl *
 first_impl_decl(const ahfl::ast::Program &program) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind == NodeKind::ImplDecl) {
-            return static_cast<const ahfl::ast::ImplDecl *>(decl.get());
+        if (const auto *implementation = std::get_if<ahfl::ast::ImplDecl>(&decl);
+            implementation != nullptr) {
+            return implementation;
         }
     }
     return nullptr;

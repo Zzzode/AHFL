@@ -1,6 +1,7 @@
 add_library(ahfl_tooling_formatter STATIC
-    formatter.cpp
+    formatter_api.cpp
     format_config.cpp
+    lossless_source_formatter.cpp
 )
 
 target_link_libraries(ahfl_tooling_formatter

@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.ir.v1",
+  "format_version": "ahfl.ir.v2",
   "formal_observations": [
     {
       "symbol": "agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide",
@@ -110,6 +110,7 @@
       "value": {
         "kind": "string_literal",
         "id": 0,
+        "effect": "pure",
         "source_range": {
           "begin_offset": 164,
           "end_offset": 170
@@ -231,6 +232,7 @@
           "default_value": {
             "kind": "qualified_value",
             "id": 1,
+            "effect": "const_only",
             "source_range": {
               "begin_offset": 318,
               "end_offset": 336
@@ -267,6 +269,7 @@
           "default_value": {
             "kind": "call",
             "id": 5,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 376,
               "end_offset": 418
@@ -283,10 +286,18 @@
               ]
             },
             "callee": "list_from_array",
+            "callee_ref": {
+              "kind": "function",
+              "canonical_name": "std::collections::list_from_array",
+              "local_name": "list_from_array",
+              "module_name": "std::collections",
+              "id": 25
+            },
             "arguments": [
               {
                 "kind": "integer_literal",
                 "id": 2,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 410,
                   "end_offset": 411
@@ -300,6 +311,7 @@
               {
                 "kind": "integer_literal",
                 "id": 3,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 413,
                   "end_offset": 414
@@ -313,6 +325,7 @@
               {
                 "kind": "integer_literal",
                 "id": 4,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 416,
                   "end_offset": 417
@@ -351,6 +364,7 @@
           "default_value": {
             "kind": "call",
             "id": 8,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 459,
               "end_offset": 511
@@ -367,10 +381,18 @@
               ]
             },
             "callee": "set_from_array",
+            "callee_ref": {
+              "kind": "function",
+              "canonical_name": "std::collections::set_from_array",
+              "local_name": "set_from_array",
+              "module_name": "std::collections",
+              "id": 28
+            },
             "arguments": [
               {
                 "kind": "string_literal",
                 "id": 6,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 495,
                   "end_offset": 502
@@ -384,6 +406,7 @@
               {
                 "kind": "string_literal",
                 "id": 7,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 504,
                   "end_offset": 510
@@ -426,6 +449,7 @@
           "default_value": {
             "kind": "call",
             "id": 11,
+            "effect": "const_only",
             "source_range": {
               "begin_offset": 560,
               "end_offset": 633
@@ -446,10 +470,18 @@
               ]
             },
             "callee": "map_from_entries",
+            "callee_ref": {
+              "kind": "function",
+              "canonical_name": "std::collections::map_from_entries",
+              "local_name": "map_from_entries",
+              "module_name": "std::collections",
+              "id": 33
+            },
             "arguments": [
               {
                 "kind": "string_literal",
                 "id": 9,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 606,
                   "end_offset": 612
@@ -463,6 +495,7 @@
               {
                 "kind": "qualified_value",
                 "id": 10,
+                "effect": "const_only",
                 "source_range": {
                   "begin_offset": 614,
                   "end_offset": 632
@@ -494,6 +527,7 @@
           "default_value": {
             "kind": "call",
             "id": 17,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 658,
               "end_offset": 702
@@ -503,10 +537,15 @@
               "display_name": "Int"
             },
             "callee": "list_raw_get",
+            "callee_ref": {
+              "kind": "unknown",
+              "canonical_name": ""
+            },
             "arguments": [
               {
                 "kind": "call",
                 "id": 15,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 658,
                   "end_offset": 700
@@ -523,10 +562,18 @@
                   ]
                 },
                 "callee": "list_from_array",
+                "callee_ref": {
+                  "kind": "function",
+                  "canonical_name": "std::collections::list_from_array",
+                  "local_name": "list_from_array",
+                  "module_name": "std::collections",
+                  "id": 25
+                },
                 "arguments": [
                   {
                     "kind": "integer_literal",
                     "id": 12,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 692,
                       "end_offset": 693
@@ -540,6 +587,7 @@
                   {
                     "kind": "integer_literal",
                     "id": 13,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 695,
                       "end_offset": 696
@@ -553,6 +601,7 @@
                   {
                     "kind": "integer_literal",
                     "id": 14,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 698,
                       "end_offset": 699
@@ -568,6 +617,7 @@
               {
                 "kind": "integer_literal",
                 "id": 16,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 701,
                   "end_offset": 702
@@ -599,6 +649,7 @@
           "default_value": {
             "kind": "call",
             "id": 22,
+            "effect": "const_only",
             "source_range": {
               "begin_offset": 732,
               "end_offset": 812
@@ -608,10 +659,15 @@
               "display_name": "String"
             },
             "callee": "map_raw_get",
+            "callee_ref": {
+              "kind": "unknown",
+              "canonical_name": ""
+            },
             "arguments": [
               {
                 "kind": "call",
                 "id": 20,
+                "effect": "const_only",
                 "source_range": {
                   "begin_offset": 732,
                   "end_offset": 805
@@ -632,10 +688,18 @@
                   ]
                 },
                 "callee": "map_from_entries",
+                "callee_ref": {
+                  "kind": "function",
+                  "canonical_name": "std::collections::map_from_entries",
+                  "local_name": "map_from_entries",
+                  "module_name": "std::collections",
+                  "id": 33
+                },
                 "arguments": [
                   {
                     "kind": "string_literal",
                     "id": 18,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 778,
                       "end_offset": 784
@@ -649,6 +713,7 @@
                   {
                     "kind": "qualified_value",
                     "id": 19,
+                    "effect": "const_only",
                     "source_range": {
                       "begin_offset": 786,
                       "end_offset": 804
@@ -664,6 +729,7 @@
               {
                 "kind": "string_literal",
                 "id": 21,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 806,
                   "end_offset": 812
@@ -696,6 +762,7 @@
           "default_value": {
             "kind": "struct_literal",
             "id": 25,
+            "effect": "const_only",
             "source_range": {
               "begin_offset": 837,
               "end_offset": 920
@@ -712,6 +779,7 @@
                 "value": {
                   "kind": "qualified_value",
                   "id": 23,
+                  "effect": "const_only",
                   "source_range": {
                     "begin_offset": 862,
                     "end_offset": 880
@@ -728,6 +796,7 @@
                 "value": {
                   "kind": "qualified_value",
                   "id": 24,
+                  "effect": "const_only",
                   "source_range": {
                     "begin_offset": 898,
                     "end_offset": 913
@@ -768,6 +837,7 @@
           "default_value": {
             "kind": "call",
             "id": 27,
+            "effect": "const_only",
             "source_range": {
               "begin_offset": 963,
               "end_offset": 1003
@@ -784,10 +854,18 @@
               ]
             },
             "callee": "std::option::Option::Some",
+            "callee_ref": {
+              "kind": "type",
+              "canonical_name": "std::option::Option",
+              "local_name": "Option",
+              "module_name": "std::option",
+              "id": 90
+            },
             "arguments": [
               {
                 "kind": "qualified_value",
                 "id": 26,
+                "effect": "const_only",
                 "source_range": {
                   "begin_offset": 984,
                   "end_offset": 1002
@@ -1100,6 +1178,7 @@
           "expr": {
             "kind": "call",
             "id": 31,
+            "effect": "predicate_call",
             "source_range": {
               "begin_offset": 1478,
               "end_offset": 1504
@@ -1109,10 +1188,18 @@
               "display_name": "Bool"
             },
             "callee": "ir::expr_temporal::ready",
+            "callee_ref": {
+              "kind": "predicate",
+              "canonical_name": "ir::expr_temporal::ready",
+              "local_name": "ready",
+              "module_name": "ir::expr_temporal",
+              "id": 6
+            },
             "arguments": [
               {
                 "kind": "call",
                 "id": 30,
+                "effect": "pure",
                 "source_range": {
                   "begin_offset": 1484,
                   "end_offset": 1502
@@ -1122,10 +1209,15 @@
                   "display_name": "String"
                 },
                 "callee": "map_raw_get",
+                "callee_ref": {
+                  "kind": "unknown",
+                  "canonical_name": ""
+                },
                 "arguments": [
                   {
                     "kind": "path",
                     "id": 28,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 1484,
                       "end_offset": 1495
@@ -1156,6 +1248,7 @@
                   {
                     "kind": "string_literal",
                     "id": 29,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 1496,
                       "end_offset": 1502
@@ -1216,6 +1309,7 @@
                 "expr": {
                   "kind": "call",
                   "id": 35,
+                  "effect": "predicate_call",
                   "source_range": {
                     "begin_offset": 1551,
                     "end_offset": 1577
@@ -1225,10 +1319,18 @@
                     "display_name": "Bool"
                   },
                   "callee": "ir::expr_temporal::ready",
+                  "callee_ref": {
+                    "kind": "predicate",
+                    "canonical_name": "ir::expr_temporal::ready",
+                    "local_name": "ready",
+                    "module_name": "ir::expr_temporal",
+                    "id": 6
+                  },
                   "arguments": [
                     {
                       "kind": "call",
                       "id": 34,
+                      "effect": "pure",
                       "source_range": {
                         "begin_offset": 1557,
                         "end_offset": 1575
@@ -1238,10 +1340,15 @@
                         "display_name": "String"
                       },
                       "callee": "map_raw_get",
+                      "callee_ref": {
+                        "kind": "unknown",
+                        "canonical_name": ""
+                      },
                       "arguments": [
                         {
                           "kind": "path",
                           "id": 32,
+                          "effect": "pure",
                           "source_range": {
                             "begin_offset": 1557,
                             "end_offset": 1568
@@ -1272,6 +1379,7 @@
                         {
                           "kind": "string_literal",
                           "id": 33,
+                          "effect": "pure",
                           "source_range": {
                             "begin_offset": 1569,
                             "end_offset": 1575
@@ -1338,6 +1446,7 @@
               "list_raw_get",
               "ir::expr_temporal::ready"
             ],
+            "inferred_effect": "capability_call",
             "assert_count": 1
           },
           "body": {
@@ -1357,6 +1466,7 @@
                 "initializer": {
                   "kind": "call",
                   "id": 37,
+                  "effect": "capability_call",
                   "source_range": {
                     "begin_offset": 1647,
                     "end_offset": 1666
@@ -1367,10 +1477,18 @@
                     "canonical_name": "ir::expr_temporal::Response"
                   },
                   "callee": "ir::expr_temporal::Decide",
+                  "callee_ref": {
+                    "kind": "capability",
+                    "canonical_name": "ir::expr_temporal::Decide",
+                    "local_name": "Decide",
+                    "module_name": "ir::expr_temporal",
+                    "id": 5
+                  },
                   "arguments": [
                     {
                       "kind": "path",
                       "id": 36,
+                      "effect": "pure",
                       "source_range": {
                         "begin_offset": 1660,
                         "end_offset": 1665
@@ -1398,6 +1516,7 @@
                 "condition": {
                   "kind": "binary",
                   "id": 43,
+                  "effect": "const_only",
                   "source_range": {
                     "begin_offset": 1683,
                     "end_offset": 1807
@@ -1410,6 +1529,7 @@
                   "lhs": {
                     "kind": "member_access",
                     "id": 41,
+                    "effect": "const_only",
                     "source_range": {
                       "begin_offset": 1683,
                       "end_offset": 1785
@@ -1421,6 +1541,7 @@
                     "base": {
                       "kind": "struct_literal",
                       "id": 40,
+                      "effect": "const_only",
                       "source_range": {
                         "begin_offset": 1684,
                         "end_offset": 1779
@@ -1437,6 +1558,7 @@
                           "value": {
                             "kind": "qualified_value",
                             "id": 38,
+                            "effect": "const_only",
                             "source_range": {
                               "begin_offset": 1713,
                               "end_offset": 1731
@@ -1453,6 +1575,7 @@
                           "value": {
                             "kind": "qualified_value",
                             "id": 39,
+                            "effect": "const_only",
                             "source_range": {
                               "begin_offset": 1753,
                               "end_offset": 1768
@@ -1472,6 +1595,7 @@
                   "rhs": {
                     "kind": "qualified_value",
                     "id": 42,
+                    "effect": "const_only",
                     "source_range": {
                       "begin_offset": 1789,
                       "end_offset": 1807
@@ -1493,6 +1617,7 @@
                 "condition": {
                   "kind": "binary",
                   "id": 59,
+                  "effect": "predicate_call",
                   "source_range": {
                     "begin_offset": 1821,
                     "end_offset": 1868
@@ -1505,6 +1630,7 @@
                   "lhs": {
                     "kind": "binary",
                     "id": 56,
+                    "effect": "pure",
                     "source_range": {
                       "begin_offset": 1821,
                       "end_offset": 1846
@@ -1517,6 +1643,7 @@
                     "lhs": {
                       "kind": "binary",
                       "id": 54,
+                      "effect": "pure",
                       "source_range": {
                         "begin_offset": 1822,
                         "end_offset": 1841
@@ -1529,6 +1656,7 @@
                       "lhs": {
                         "kind": "call",
                         "id": 52,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 1822,
                           "end_offset": 1836
@@ -1538,10 +1666,15 @@
                           "display_name": "Int"
                         },
                         "callee": "list_raw_get",
+                        "callee_ref": {
+                          "kind": "unknown",
+                          "canonical_name": ""
+                        },
                         "arguments": [
                           {
                             "kind": "path",
                             "id": 50,
+                            "effect": "pure",
                             "source_range": {
                               "begin_offset": 1822,
                               "end_offset": 1834
@@ -1568,6 +1701,7 @@
                           {
                             "kind": "integer_literal",
                             "id": 51,
+                            "effect": "pure",
                             "source_range": {
                               "begin_offset": 1835,
                               "end_offset": 1836
@@ -1583,6 +1717,7 @@
                       "rhs": {
                         "kind": "integer_literal",
                         "id": 53,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 1840,
                           "end_offset": 1841
@@ -1597,6 +1732,7 @@
                     "rhs": {
                       "kind": "integer_literal",
                       "id": 55,
+                      "effect": "pure",
                       "source_range": {
                         "begin_offset": 1845,
                         "end_offset": 1846
@@ -1611,6 +1747,7 @@
                   "rhs": {
                     "kind": "call",
                     "id": 58,
+                    "effect": "predicate_call",
                     "source_range": {
                       "begin_offset": 1851,
                       "end_offset": 1868
@@ -1620,10 +1757,18 @@
                       "display_name": "Bool"
                     },
                     "callee": "ir::expr_temporal::ready",
+                    "callee_ref": {
+                      "kind": "predicate",
+                      "canonical_name": "ir::expr_temporal::ready",
+                      "local_name": "ready",
+                      "module_name": "ir::expr_temporal",
+                      "id": 6
+                    },
                     "arguments": [
                       {
                         "kind": "path",
                         "id": 57,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 1857,
                           "end_offset": 1867
@@ -1665,6 +1810,7 @@
                       "value": {
                         "kind": "path",
                         "id": 60,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 1894,
                           "end_offset": 1904
@@ -1714,6 +1860,7 @@
                       "value": {
                         "kind": "member_access",
                         "id": 49,
+                        "effect": "const_only",
                         "source_range": {
                           "begin_offset": 1969,
                           "end_offset": 2098
@@ -1725,6 +1872,7 @@
                         "base": {
                           "kind": "struct_literal",
                           "id": 48,
+                          "effect": "const_only",
                           "source_range": {
                             "begin_offset": 1970,
                             "end_offset": 2092
@@ -1741,6 +1889,7 @@
                               "value": {
                                 "kind": "binary",
                                 "id": 46,
+                                "effect": "const_only",
                                 "source_range": {
                                   "begin_offset": 2003,
                                   "end_offset": 2035
@@ -1753,6 +1902,7 @@
                                 "lhs": {
                                   "kind": "qualified_value",
                                   "id": 44,
+                                  "effect": "const_only",
                                   "source_range": {
                                     "begin_offset": 2003,
                                     "end_offset": 2021
@@ -1766,6 +1916,7 @@
                                 "rhs": {
                                   "kind": "string_literal",
                                   "id": 45,
+                                  "effect": "pure",
                                   "source_range": {
                                     "begin_offset": 2024,
                                     "end_offset": 2035
@@ -1783,6 +1934,7 @@
                               "value": {
                                 "kind": "qualified_value",
                                 "id": 47,
+                                "effect": "const_only",
                                 "source_range": {
                                   "begin_offset": 2061,
                                   "end_offset": 2077
@@ -1827,6 +1979,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "const_only",
             "assert_count": 0
           },
           "body": {
@@ -1844,6 +1997,7 @@
                 "value": {
                   "kind": "struct_literal",
                   "id": 63,
+                  "effect": "const_only",
                   "source_range": {
                     "begin_offset": 2172,
                     "end_offset": 2258
@@ -1860,6 +2014,7 @@
                       "value": {
                         "kind": "path",
                         "id": 61,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 2201,
                           "end_offset": 2209
@@ -1882,6 +2037,7 @@
                       "value": {
                         "kind": "qualified_value",
                         "id": 62,
+                        "effect": "const_only",
                         "source_range": {
                           "begin_offset": 2231,
                           "end_offset": 2247
@@ -1958,6 +2114,7 @@
           "input": {
             "kind": "path",
             "id": 65,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 2369,
               "end_offset": 2374
@@ -2067,6 +2224,7 @@
       "return_value": {
         "kind": "path",
         "id": 64,
+        "effect": "pure",
         "source_range": {
           "begin_offset": 2504,
           "end_offset": 2507

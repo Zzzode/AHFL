@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.ir.v1",
+  "format_version": "ahfl.ir.v2",
   "formal_observations": [],
   "declarations": [
     {
@@ -89,6 +89,7 @@
           "default_value": {
             "kind": "string_literal",
             "id": 0,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 117,
               "end_offset": 123
@@ -239,6 +240,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -271,6 +273,7 @@
             "may_fallthrough": false,
             "assigned_paths": [],
             "called_targets": [],
+            "inferred_effect": "pure",
             "assert_count": 0
           },
           "body": {
@@ -288,6 +291,7 @@
                 "value": {
                   "kind": "struct_literal",
                   "id": 2,
+                  "effect": "pure",
                   "source_range": {
                     "begin_offset": 472,
                     "end_offset": 524
@@ -304,6 +308,7 @@
                       "value": {
                         "kind": "path",
                         "id": 1,
+                        "effect": "pure",
                         "source_range": {
                           "begin_offset": 502,
                           "end_offset": 513
@@ -385,6 +390,7 @@
           "input": {
             "kind": "path",
             "id": 5,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 637,
               "end_offset": 642
@@ -428,6 +434,7 @@
           "input": {
             "kind": "struct_literal",
             "id": 7,
+            "effect": "pure",
             "source_range": {
               "begin_offset": 672,
               "end_offset": 702
@@ -444,6 +451,7 @@
                 "value": {
                   "kind": "path",
                   "id": 6,
+                  "effect": "pure",
                   "source_range": {
                     "begin_offset": 689,
                     "end_offset": 700
@@ -495,6 +503,7 @@
       "return_value": {
         "kind": "struct_literal",
         "id": 4,
+        "effect": "pure",
         "source_range": {
           "begin_offset": 732,
           "end_offset": 764
@@ -511,6 +520,7 @@
             "value": {
               "kind": "path",
               "id": 3,
+              "effect": "pure",
               "source_range": {
                 "begin_offset": 750,
                 "end_offset": 762

@@ -1,6 +1,6 @@
 {
   "format": "AHFL_OPT_IR_V1",
-  "source_program_version": "ahfl.ir.v1",
+  "source_program_version": "ahfl.ir.v2",
   "skipped_temporal": [
     {
       "scope": "contract::ir::expr_temporal::ExprAgent::clause::1",

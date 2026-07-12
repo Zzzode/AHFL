@@ -25,6 +25,7 @@ namespace ahfl {
 
 struct SourceGraph;
 class TypeCheckPass;
+class DeclarationSema;
 class TypeContext;
 
 // P3c.S4a: lightweight non-owning reference to a single resolved impl block.
@@ -252,6 +253,7 @@ class TypeEnvironment {
   private:
     friend class TypeChecker;
     friend class TypeCheckPass;
+    friend class DeclarationSema;
 
     // Maintain reverse name index alongside primary maps so all queries are O(1) on average.
     void index_struct(std::size_t id, StructTypeInfo info);

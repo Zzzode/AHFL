@@ -47,6 +47,11 @@ Owned<TypeSyntax> make_named_type(std::string_view name) {
     return ts;
 }
 
+template <typename DeclT>
+void append_decl(std::vector<Decl> &declarations, Owned<DeclT> declaration) {
+    declarations.emplace_back(std::move(*declaration));
+}
+
 // Build a where clause: "where T:Eq" — single bound, single trait.
 Owned<WhereClauseSyntax> make_single_bound_where(std::string_view subject_name,
                                                   std::string_view trait_name) {
@@ -72,18 +77,18 @@ struct ProgramFixture {
     ResolveResult resolve;
     TypeCheckResult typecheck;
 
-    explicit ProgramFixture(std::vector<Owned<Decl>> &&nominal_decls) {
+    explicit ProgramFixture(std::vector<Decl> &&nominal_decls) {
         program = make_owned<Program>("where_clause_info_test.ahfl");
 
         // Module (required so the resolver registers a module context).
         auto module_name = make_qname({"wc_test"});
         auto module_decl = make_owned<ModuleDecl>(std::move(module_name));
-        program->declarations.push_back(std::move(module_decl));
+        append_decl(program->declarations, std::move(module_decl));
 
         // A dummy struct type used as a concrete CapabilityDecl return type so
         // build_capability_types() has something to resolve.
         auto return_struct = make_owned<StructDecl>("Empty");
-        program->declarations.push_back(std::move(return_struct));
+        append_decl(program->declarations, std::move(return_struct));
 
         for (auto &d : nominal_decls) {
             program->declarations.push_back(std::move(d));
@@ -135,12 +140,12 @@ struct ProgramFixture {
 // ============================================================================
 
 TEST_CASE("CapabilityDecl (fn-like) where_clause propagates to CapabilityTypeInfo") {
-    std::vector<Owned<Decl>> decls;
+    std::vector<Decl> decls;
 
     auto cap = make_owned<CapabilityDecl>("f");
     cap->return_type = make_named_type("Empty");
     cap->where_clause = make_single_bound_where("T", "Eq");
-    decls.push_back(std::move(cap));
+    append_decl(decls, std::move(cap));
 
     ProgramFixture fixture(std::move(decls));
 
@@ -158,7 +163,7 @@ TEST_CASE("CapabilityDecl (fn-like) where_clause propagates to CapabilityTypeInf
     CHECK(info->get().where_clause.bounds[0].trait_names[0] == "Eq");
 
     // Verify the same info is reachable through TypedProgram payload
-    // (EnvironmentBuilder copies StructTypeInfo/EnumTypeInfo out of the
+    // (DeclarationSema copies StructTypeInfo/EnumTypeInfo out of the
     // environment via TypedDeclPayload — CapabilityTypeInfo goes through the
     // same code path, so checking the env result suffices).
 }
@@ -168,13 +173,13 @@ TEST_CASE("CapabilityDecl (fn-like) where_clause propagates to CapabilityTypeInf
 // ============================================================================
 
 TEST_CASE("StructDecl where_clause propagates to StructTypeInfo") {
-    std::vector<Owned<Decl>> decls;
+    std::vector<Decl> decls;
 
     // B-2: the Ord trait must be registered as a symbol so the resolver's
     // StructDecl where_clause bound walk (added for tparam scope parity) can
     // validate the trait reference without emitting UNKNOWN_SYMBOL.
     auto ord_trait = make_owned<TraitDecl>("Ord");
-    decls.push_back(std::move(ord_trait));
+    append_decl(decls, std::move(ord_trait));
 
     auto s = make_owned<StructDecl>("SortedList");
     // B-2: declare `T` as a struct type parameter so the resolver inserts it
@@ -183,7 +188,7 @@ TEST_CASE("StructDecl where_clause propagates to StructTypeInfo") {
     s_param->name = "T";
     s->type_params.push_back(std::move(s_param));
     s->where_clause = make_single_bound_where("T", "Ord");
-    decls.push_back(std::move(s));
+    append_decl(decls, std::move(s));
 
     ProgramFixture fixture(std::move(decls));
 
@@ -203,13 +208,13 @@ TEST_CASE("StructDecl where_clause propagates to StructTypeInfo") {
 // ============================================================================
 
 TEST_CASE("EnumDecl where_clause propagates to EnumTypeInfo") {
-    std::vector<Owned<Decl>> decls;
+    std::vector<Decl> decls;
 
     // The Show trait: declared so where_clause type resolution succeeds.
     // The resolver now validates EnumDecl where_clause bounds (added for
     // recursive ADT support) so trait names must be registered symbols.
     auto show_trait = make_owned<TraitDecl>("Show");
-    decls.push_back(std::move(show_trait));
+    append_decl(decls, std::move(show_trait));
 
     auto e = make_owned<EnumDecl>("Result");
     // Declare 'E' as a type parameter on the enum — the resolver inserts
@@ -219,7 +224,7 @@ TEST_CASE("EnumDecl where_clause propagates to EnumTypeInfo") {
     e_param->name = "E";
     e->type_params.push_back(std::move(e_param));
     e->where_clause = make_single_bound_where("E", "Show");
-    decls.push_back(std::move(e));
+    append_decl(decls, std::move(e));
 
     ProgramFixture fixture(std::move(decls));
 
@@ -240,17 +245,17 @@ TEST_CASE("EnumDecl where_clause propagates to EnumTypeInfo") {
 // ============================================================================
 
 TEST_CASE("Declarations without where_clause keep default WhereClauseInfo") {
-    std::vector<Owned<Decl>> decls;
+    std::vector<Decl> decls;
 
     auto s = make_owned<StructDecl>("Plain");
-    decls.push_back(std::move(s));
+    append_decl(decls, std::move(s));
 
     auto e = make_owned<EnumDecl>("Color");
-    decls.push_back(std::move(e));
+    append_decl(decls, std::move(e));
 
     auto cap = make_owned<CapabilityDecl>("noop");
     cap->return_type = make_named_type("Empty");
-    decls.push_back(std::move(cap));
+    append_decl(decls, std::move(cap));
 
     ProgramFixture fixture(std::move(decls));
 
@@ -282,14 +287,14 @@ TEST_CASE("Declarations without where_clause keep default WhereClauseInfo") {
 // ============================================================================
 
 TEST_CASE("Multi-trait multi-bound where clause plumbing") {
-    std::vector<Owned<Decl>> decls;
+    std::vector<Decl> decls;
 
     // B-2: register Eq / Hash / Clone as trait symbols so the resolver's
     // StructDecl where_clause bound walk validates them without emitting
     // UNKNOWN_SYMBOL diagnostics.
-    decls.push_back(make_owned<TraitDecl>("Eq"));
-    decls.push_back(make_owned<TraitDecl>("Hash"));
-    decls.push_back(make_owned<TraitDecl>("Clone"));
+    append_decl(decls, make_owned<TraitDecl>("Eq"));
+    append_decl(decls, make_owned<TraitDecl>("Hash"));
+    append_decl(decls, make_owned<TraitDecl>("Clone"));
 
     auto s = make_owned<StructDecl>("HashMap");
     // B-2: declare K and V as struct type parameters so they're in the
@@ -319,7 +324,7 @@ TEST_CASE("Multi-trait multi-bound where clause plumbing") {
     clause->constraints.push_back(std::move(c2));
 
     s->where_clause = std::move(clause);
-    decls.push_back(std::move(s));
+    append_decl(decls, std::move(s));
 
     ProgramFixture fixture(std::move(decls));
 

@@ -43,12 +43,12 @@ struct TypeResolverFixture {
 
     [[nodiscard]] const ahfl::ast::TypeAliasDecl &alias_decl(std::string_view name) const {
         for (const auto &declaration : program->declarations) {
-            if (declaration->kind != ahfl::ast::NodeKind::TypeAliasDecl) {
+            const auto *alias = std::get_if<ahfl::ast::TypeAliasDecl>(&declaration);
+            if (alias == nullptr) {
                 continue;
             }
-            const auto &alias = static_cast<const ahfl::ast::TypeAliasDecl &>(*declaration);
-            if (alias.name == name) {
-                return alias;
+            if (alias->name == name) {
+                return *alias;
             }
         }
         FAIL("missing alias declaration");
@@ -71,12 +71,12 @@ struct TypeResolverFixture {
         }
 
         for (const auto &declaration : program->declarations) {
-            if (declaration->kind != ahfl::ast::NodeKind::TypeAliasDecl) {
+            const auto *alias = std::get_if<ahfl::ast::TypeAliasDecl>(&declaration);
+            if (alias == nullptr) {
                 continue;
             }
-            const auto &alias = static_cast<const ahfl::ast::TypeAliasDecl &>(*declaration);
-            if (alias.name == symbol->get().local_name) {
-                return std::cref(alias);
+            if (alias->name == symbol->get().local_name) {
+                return std::cref(*alias);
             }
         }
 

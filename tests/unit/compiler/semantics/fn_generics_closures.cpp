@@ -576,9 +576,9 @@ fn negate(x: Int) -> Int effect Pure decreases 0 {
 
 // ---------------------------------------------------------------------------
 // TC13 (P2b): Fn with no body (prototype / declaration only) is skipped by
-// FnSema — no body, no type-checking needed, no errors from missing body.
+// FlowWorkflowSema — no body, no type-checking needed, no errors from missing body.
 // ---------------------------------------------------------------------------
-TEST_CASE("Fn prototype without body is skipped by FnSema") {
+TEST_CASE("Fn prototype without body is skipped by FlowWorkflowSema") {
     const std::string source = R"AHFL(
 fn proto(x: Int) -> Int effect Pure;
 )AHFL";

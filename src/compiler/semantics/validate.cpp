@@ -99,11 +99,12 @@ class ValidationPass final {
 
     void index_program_declarations(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration->kind != ast::NodeKind::AgentDecl) {
+            const auto *agent = std::get_if<ast::AgentDecl>(&declaration);
+            if (agent == nullptr) {
                 continue;
             }
 
-            const auto &decl = static_cast<const ast::AgentDecl &>(*declaration);
+            const auto &decl = *agent;
             const auto symbol = find_local_here(SymbolNamespace::Agents, decl.name);
             if (!symbol.has_value()) {
                 continue;
@@ -415,11 +416,12 @@ class ValidationPass final {
 
     void check_contracts_in_program(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration->kind != ast::NodeKind::ContractDecl) {
+            const auto *contract = std::get_if<ast::ContractDecl>(&declaration);
+            if (contract == nullptr) {
                 continue;
             }
 
-            const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+            const auto &decl = *contract;
             const auto target =
                 find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
             if (!target.has_value()) {
@@ -610,11 +612,12 @@ class ValidationPass final {
 
     void check_flows_in_program(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration->kind != ast::NodeKind::FlowDecl) {
+            const auto *flow = std::get_if<ast::FlowDecl>(&declaration);
+            if (flow == nullptr) {
                 continue;
             }
 
-            const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
+            const auto &decl = *flow;
             const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
             if (!target.has_value()) {
                 continue;
@@ -775,11 +778,12 @@ class ValidationPass final {
 
     void check_workflows_in_program(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration->kind != ast::NodeKind::WorkflowDecl) {
+            const auto *workflow = std::get_if<ast::WorkflowDecl>(&declaration);
+            if (workflow == nullptr) {
                 continue;
             }
 
-            const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
+            const auto &decl = *workflow;
             std::unordered_map<std::string, SymbolId> node_agent_ids;
             std::unordered_map<std::string, std::vector<std::string>> dependency_graph;
             std::unordered_set<std::string> node_names;
@@ -891,11 +895,12 @@ class ValidationPass final {
     // from the semantic checks so a missed traversal leaves counters at 0.
     void count_contracts_in_program(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration->kind != ast::NodeKind::ContractDecl) {
+            const auto *contract = std::get_if<ast::ContractDecl>(&declaration);
+            if (contract == nullptr) {
                 continue;
             }
 
-            const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+            const auto &decl = *contract;
             for (const auto &clause : decl.clauses) {
                 // Explicit switch arms — the default case intentionally does
                 // NOT touch the counters, so any missed branch is visible as

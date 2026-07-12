@@ -46,12 +46,14 @@ class ExprArena {
     [[nodiscard]] ExprRef make(ExprNode node,
                                SourceRangeOpt source_range = std::nullopt,
                                TypeRef resolved_type = {},
-                               std::uint32_t id = 0) {
+                               std::uint32_t id = 0,
+                               ExprEffect effect = ExprEffect::Unknown) {
         const auto idx = static_cast<Index>(index_.size());
         auto *raw = new (allocate(sizeof(Expr), alignof(Expr))) Expr{
             .node = std::move(node),
             .source_range = std::move(source_range),
             .resolved_type = std::move(resolved_type),
+            .effect = effect,
             .id = id,
         };
         index_.push_back(raw);

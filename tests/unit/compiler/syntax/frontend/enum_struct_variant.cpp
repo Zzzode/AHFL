@@ -32,11 +32,10 @@ using ahfl::ast::NodeKind;
 [[nodiscard]] const ahfl::ast::EnumDecl *find_enum_decl(const ahfl::ast::Program &program,
                                                         std::string_view name) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind != NodeKind::EnumDecl)
-            continue;
-        const auto *e = static_cast<const ahfl::ast::EnumDecl *>(decl.get());
-        if (e->name == name)
-            return e;
+        const auto *enumeration = std::get_if<ahfl::ast::EnumDecl>(&decl);
+        if (enumeration != nullptr && enumeration->name == name) {
+            return enumeration;
+        }
     }
     return nullptr;
 }

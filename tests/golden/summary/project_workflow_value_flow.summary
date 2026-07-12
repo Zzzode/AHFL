@@ -1,5 +1,5 @@
 ahfl.summary.v1
-ir_format ahfl.ir.v1
+ir_format ahfl.ir.v2
 project_aware true
 declarations 17
 declarations_with_provenance 16

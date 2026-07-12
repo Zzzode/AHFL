@@ -607,6 +607,10 @@ class ProgramVerifier {
         if (is_backend_ready_mode(mode_) && contains_sentinel(expr.callee)) {
             add_error(path, "call expression contains sentinel callee");
         }
+        if (is_backend_ready_mode(mode_) && expr.callee_ref.id.has_value() &&
+            expr.callee_ref.kind == SymbolRefKind::Unknown) {
+            add_error(path, "resolved call expression has unknown callee symbol kind");
+        }
         for (std::uint32_t index = 0; index < expr.arguments.size(); ++index) {
             verify_required_expr_ref(expr.arguments[index],
                                      path + ".arguments[" + std::to_string(index) + "]");

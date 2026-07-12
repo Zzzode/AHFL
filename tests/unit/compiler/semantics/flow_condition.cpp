@@ -941,10 +941,7 @@ TEST_CASE("ConditionFacts records complementary then/else facts") {
     const ahfl::ast::ExprSyntax *condition = nullptr;
     REQUIRE(parse_result.program != nullptr);
     for (const auto &decl : parse_result.program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
-            continue;
-        }
-        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
         if (flow == nullptr) {
             continue;
         }
@@ -990,10 +987,7 @@ TEST_CASE("ConditionFacts treats qualified None value as Optional none compariso
 
     const ahfl::ast::ExprSyntax *condition = nullptr;
     for (const auto &decl : parse_result.program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
-            continue;
-        }
-        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
         if (flow == nullptr) {
             continue;
         }
@@ -1110,10 +1104,7 @@ flow for NarrowAgent {
     // Walk the AST to locate the if-condition.
     const ahfl::ast::ExprSyntax *condition = nullptr;
     for (const auto &decl : parse_result.program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
-            continue;
-        }
-        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
         if (flow == nullptr) {
             continue;
         }
@@ -1199,10 +1190,7 @@ flow for NarrowAgent {
 
     const ahfl::ast::ExprSyntax *condition = nullptr;
     for (const auto &decl : parse_result.program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
-            continue;
-        }
-        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
         if (flow == nullptr) {
             continue;
         }
@@ -1393,10 +1381,7 @@ flow for NarrowAgent {
     // Walk the AST to locate the if-condition.
     const ahfl::ast::ExprSyntax *condition = nullptr;
     for (const auto &decl : parse_result.program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
-            continue;
-        }
-        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        const auto *flow = std::get_if<ahfl::ast::FlowDecl>(&decl);
         if (flow == nullptr) {
             continue;
         }
@@ -1446,11 +1431,8 @@ namespace {
 [[nodiscard]] const ahfl::ast::TraitDecl *find_trait_decl(const ahfl::ast::Program &program,
                                                           std::string_view name) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::TraitDecl) {
-            continue;
-        }
-        const auto *trait = static_cast<const ahfl::ast::TraitDecl *>(decl.get());
-        if (trait->name == name) {
+        const auto *trait = std::get_if<ahfl::ast::TraitDecl>(&decl);
+        if (trait != nullptr && trait->name == name) {
             return trait;
         }
     }
@@ -1460,7 +1442,7 @@ namespace {
 [[nodiscard]] std::size_t count_impl_decls(const ahfl::ast::Program &program) {
     std::size_t count = 0;
     for (const auto &decl : program.declarations) {
-        if (decl->kind == ahfl::ast::NodeKind::ImplDecl) {
+        if (std::holds_alternative<ahfl::ast::ImplDecl>(decl)) {
             ++count;
         }
     }
@@ -1469,8 +1451,9 @@ namespace {
 
 [[nodiscard]] const ahfl::ast::ImplDecl *first_impl_decl(const ahfl::ast::Program &program) {
     for (const auto &decl : program.declarations) {
-        if (decl->kind == ahfl::ast::NodeKind::ImplDecl) {
-            return static_cast<const ahfl::ast::ImplDecl *>(decl.get());
+        if (const auto *implementation = std::get_if<ahfl::ast::ImplDecl>(&decl);
+            implementation != nullptr) {
+            return implementation;
         }
     }
     return nullptr;
@@ -1589,11 +1572,8 @@ impl<T> Display for List<T> {
     // Second impl: trait impl (trait_ref present, generic params, assoc item).
     const ahfl::ast::ImplDecl *trait_impl = nullptr;
     for (const auto &decl : program->declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::ImplDecl) {
-            continue;
-        }
-        const auto *impl = static_cast<const ahfl::ast::ImplDecl *>(decl.get());
-        if (impl->trait_ref != nullptr) {
+        const auto *impl = std::get_if<ahfl::ast::ImplDecl>(&decl);
+        if (impl != nullptr && impl->trait_ref != nullptr) {
             trait_impl = impl;
             break;
         }

@@ -127,7 +127,7 @@ class AstPrinter final {
         line(0, "program " + node.source_name);
 
         for (const auto &declaration : node.declarations) {
-            visit_declaration(*declaration);
+            visit_declaration(declaration);
         }
     }
 
@@ -642,58 +642,7 @@ class AstPrinter final {
     int base_indent_{0};
 
     void visit_declaration(const ast::Decl &declaration) {
-        switch (declaration.kind) {
-        case ast::NodeKind::ModuleDecl:
-            visit(static_cast<const ast::ModuleDecl &>(declaration));
-            return;
-        case ast::NodeKind::ImportDecl:
-            visit(static_cast<const ast::ImportDecl &>(declaration));
-            return;
-        case ast::NodeKind::UseDecl:
-            visit(static_cast<const ast::UseDecl &>(declaration));
-            return;
-        case ast::NodeKind::ConstDecl:
-            visit(static_cast<const ast::ConstDecl &>(declaration));
-            return;
-        case ast::NodeKind::TypeAliasDecl:
-            visit(static_cast<const ast::TypeAliasDecl &>(declaration));
-            return;
-        case ast::NodeKind::StructDecl:
-            visit(static_cast<const ast::StructDecl &>(declaration));
-            return;
-        case ast::NodeKind::EnumDecl:
-            visit(static_cast<const ast::EnumDecl &>(declaration));
-            return;
-        case ast::NodeKind::CapabilityDecl:
-            visit(static_cast<const ast::CapabilityDecl &>(declaration));
-            return;
-        case ast::NodeKind::PredicateDecl:
-            visit(static_cast<const ast::PredicateDecl &>(declaration));
-            return;
-        case ast::NodeKind::AgentDecl:
-            visit(static_cast<const ast::AgentDecl &>(declaration));
-            return;
-        case ast::NodeKind::ContractDecl:
-            visit(static_cast<const ast::ContractDecl &>(declaration));
-            return;
-        case ast::NodeKind::FlowDecl:
-            visit(static_cast<const ast::FlowDecl &>(declaration));
-            return;
-        case ast::NodeKind::WorkflowDecl:
-            visit(static_cast<const ast::WorkflowDecl &>(declaration));
-            return;
-        case ast::NodeKind::FnDecl:
-            visit(static_cast<const ast::FnDecl &>(declaration));
-            return;
-        case ast::NodeKind::TraitDecl:
-            visit(static_cast<const ast::TraitDecl &>(declaration));
-            return;
-        case ast::NodeKind::ImplDecl:
-            visit(static_cast<const ast::ImplDecl &>(declaration));
-            return;
-        case ast::NodeKind::Program:
-            return;
-        }
+        std::visit([&](const auto &payload) { visit(payload); }, declaration);
     }
 
     void line(int indent_level, const std::string &text) {

@@ -1,4 +1,4 @@
-ahfl.ir.v1
+ahfl.ir.v2
 formal_observations {
   observation agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide: called_capability(agent=ir::expr_temporal::ExprAgent, capability=ir::expr_temporal::Decide)
   observation contract_ir_expr_temporal_ExprAgent_0_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::expr_temporal::ExprAgent, clause=0, atom=0)
@@ -29,13 +29,13 @@ struct ir::expr_temporal::Request {
 @provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
 struct ir::expr_temporal::Context {
   field note: String = ir::expr_temporal::DEFAULT_NOTE
-  field numbers: std::collections::List<Int> = list_from_array(1, 2, 3)
-  field labels: std::collections::Set<String> = set_from_array("alpha", "beta")
-  field lookup: std::collections::Map<String, String> = map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE)
-  field first_value: Int = list_raw_get(list_from_array(1, 2, 3), 0)
-  field mapped_value: String = map_raw_get(map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE), "seed")
+  field numbers: std::collections::List<Int> = std::collections::list_from_array(1, 2, 3)
+  field labels: std::collections::Set<String> = std::collections::set_from_array("alpha", "beta")
+  field lookup: std::collections::Map<String, String> = std::collections::map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE)
+  field first_value: Int = list_raw_get(std::collections::list_from_array(1, 2, 3), 0)
+  field mapped_value: String = map_raw_get(std::collections::map_from_entries("seed", ir::expr_temporal::DEFAULT_NOTE), "seed")
   field reply: ir::expr_temporal::Response = ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }
-  field maybe_note: std::option::Option<String> = std::option::Option::Some(ir::expr_temporal::DEFAULT_NOTE)
+  field maybe_note: std::option::Option<String> = std::option::Option(ir::expr_temporal::DEFAULT_NOTE)
 }
 
 @provenance(module=ir::expr_temporal, source=ir/expr_temporal.ahfl)
@@ -84,6 +84,7 @@ flow ir::expr_temporal::ExprAgent {
       may_fallthrough: false
       assigned_paths: [ctx.note]
       called_targets: [ir::expr_temporal::Decide, list_raw_get, ir::expr_temporal::ready]
+      inferred_effect: capability call
       assert_count: 1
     }
     let reply: ir::expr_temporal::Response = ir::expr_temporal::Decide(input)
@@ -103,6 +104,7 @@ flow ir::expr_temporal::ExprAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: const-only
       assert_count: 0
     }
     return ir::expr_temporal::Response { note: ctx.note, result: ir::expr_temporal::Status::Approved }

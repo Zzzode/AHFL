@@ -44,7 +44,7 @@ namespace ahfl::ir {
 //   │   └── WorkflowDecl    — workflow definition
 //   └── analyses: AnalysisBundle
 
-inline constexpr std::string_view kFormatVersion = "ahfl.ir.v1";
+inline constexpr std::string_view kFormatVersion = "ahfl.ir.v2";
 
 // ----------------------------------------------------------------------------
 // Enum type definitions

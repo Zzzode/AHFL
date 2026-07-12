@@ -1205,6 +1205,10 @@ flow for MetadataCallAgent {
     const auto *return_call = std::get_if<ahfl::ir::CallExpr>(&return_statement->value->node);
     REQUIRE(return_call != nullptr);
     CHECK(return_call->callee == "Redirected");
+    CHECK(return_call->callee_ref.kind == ahfl::ir::SymbolRefKind::Capability);
+    REQUIRE(return_call->callee_ref.id.has_value());
+    CHECK(*return_call->callee_ref.id == redirected_symbol->get().id.value);
+    CHECK(return_call->callee_ref.canonical_name == redirected_symbol->get().canonical_name);
 }
 
 TEST_CASE("Typed HIR lowering lowers method calls through impl metadata") {

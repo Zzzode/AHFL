@@ -26,15 +26,14 @@ void check(bool condition, const char *name) {
 }
 
 void test_not_a_decl() {
-    // R-09: the clause is a syntax fragment, not a declaration.  It must not
-    // be dispatchable through Node / Decl inheritance.  Any base-class
-    // relationship would leak it into DeclKind / visitor dispatch paths and
-    // allow accidentally treating it as a top-level construct.
+    // R-09: the clause is a syntax fragment, not one of the top-level
+    // declaration variant alternatives.
     using namespace ahfl::ast;
-    check((!std::is_base_of<Node, DecreasesClauseSyntax>::value),
-          "DecreasesClauseSyntax is NOT derived from Node");
-    check((!std::is_base_of<Decl, DecreasesClauseSyntax>::value),
-          "DecreasesClauseSyntax is NOT derived from Decl");
+    check(std::variant_size_v<Decl> == 16, "Decl keeps the expected closed variant shape");
+    check((!std::is_constructible_v<Decl, DecreasesClauseSyntax>),
+          "DecreasesClauseSyntax is NOT a Decl variant alternative");
+    check((!std::is_polymorphic_v<DecreasesClauseSyntax>),
+          "DecreasesClauseSyntax uses no virtual dispatch");
     check((std::is_standard_layout<DecreasesClauseSyntax>::value),
           "DecreasesClauseSyntax has standard layout (plain struct)");
 }

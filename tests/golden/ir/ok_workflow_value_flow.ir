@@ -1,4 +1,4 @@
-ahfl.ir.v1
+ahfl.ir.v2
 @provenance(module=ir::workflow_value_flow, source=ir/workflow_value_flow.ahfl)
 module ir::workflow_value_flow
 
@@ -38,6 +38,7 @@ flow ir::workflow_value_flow::EchoAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     goto Done
@@ -49,6 +50,7 @@ flow ir::workflow_value_flow::EchoAgent {
       may_fallthrough: false
       assigned_paths: []
       called_targets: []
+      inferred_effect: pure
       assert_count: 0
     }
     return ir::workflow_value_flow::Response { value: input.value }

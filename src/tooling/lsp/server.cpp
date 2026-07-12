@@ -589,9 +589,7 @@ class LocalBindingCollector {
 
     void collect_program(const ast::Program &program) {
         for (const auto &declaration : program.declarations) {
-            if (declaration) {
-                collect_declaration(*declaration);
-            }
+            collect_declaration(declaration);
         }
         assign_ids();
     }
@@ -690,14 +688,14 @@ class LocalBindingCollector {
     }
 
     void collect_declaration(const ast::Decl &declaration) {
-        switch (declaration.kind) {
+        switch (ast::decl_kind(declaration)) {
         case ast::NodeKind::ConstDecl: {
-            const auto &decl = static_cast<const ast::ConstDecl &>(declaration);
+            const auto &decl = std::get<ast::ConstDecl>(declaration);
             collect_expr(decl.value.get());
             return;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &decl = static_cast<const ast::WorkflowDecl &>(declaration);
+            const auto &decl = std::get<ast::WorkflowDecl>(declaration);
             collect_expr(decl.return_value.get());
             for (const auto &safety : decl.safety) {
                 collect_temporal_expr(safety.get());
@@ -708,7 +706,7 @@ class LocalBindingCollector {
             return;
         }
         case ast::NodeKind::ContractDecl: {
-            const auto &decl = static_cast<const ast::ContractDecl &>(declaration);
+            const auto &decl = std::get<ast::ContractDecl>(declaration);
             for (const auto &clause : decl.clauses) {
                 if (clause) {
                     collect_expr(clause->expr.get());
@@ -723,7 +721,7 @@ class LocalBindingCollector {
             return;
         }
         case ast::NodeKind::FlowDecl: {
-            const auto &decl = static_cast<const ast::FlowDecl &>(declaration);
+            const auto &decl = std::get<ast::FlowDecl>(declaration);
             for (const auto &handler : decl.state_handlers) {
                 if (handler) {
                     collect_block(handler->body.get());
@@ -732,7 +730,7 @@ class LocalBindingCollector {
             return;
         }
         case ast::NodeKind::FnDecl: {
-            const auto &decl = static_cast<const ast::FnDecl &>(declaration);
+            const auto &decl = std::get<ast::FnDecl>(declaration);
             add_param_shadows(decl.params, decl.body.get());
             collect_block(decl.body.get());
             if (decl.effect_clause) {
@@ -741,7 +739,7 @@ class LocalBindingCollector {
             return;
         }
         case ast::NodeKind::ImplDecl: {
-            const auto &decl = static_cast<const ast::ImplDecl &>(declaration);
+            const auto &decl = std::get<ast::ImplDecl>(declaration);
             for (const auto &method : decl.methods) {
                 if (method) {
                     add_param_shadows(method->params, method->body.get());

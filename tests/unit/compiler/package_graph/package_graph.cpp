@@ -1615,3 +1615,17 @@ TEST_CASE("Lockfile reader rejects schema errors with source ranges") {
     CHECK(parsed.diagnostics.front().range.end_offset >
           parsed.diagnostics.front().range.begin_offset);
 }
+
+TEST_CASE("Lockfile reader rejects unknown format versions") {
+    auto parsed = ahfl::package_graph::parse_lockfile_json(R"JSON({
+  "format_version": "ahfl.lock.v2",
+  "resolver_version": 1,
+  "root_package": "refund-audit",
+  "packages": [],
+  "edges": []
+})JSON");
+
+    REQUIRE(parsed.has_errors());
+    REQUIRE_FALSE(parsed.lockfile.has_value());
+    CHECK(has_diagnostic(parsed.diagnostics, "format_version must be 'ahfl.lock.v1'"));
+}

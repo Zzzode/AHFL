@@ -1134,16 +1134,16 @@ void collect_impl_item_tokens(const ast::ImplItemSyntax &item,
 void collect_decl_tokens(const ast::Decl &decl,
                          const SourceFile &source,
                          std::vector<TokenEntry> &tokens) {
-    switch (decl.kind) {
+    switch (ast::decl_kind(decl)) {
     case ast::NodeKind::ModuleDecl: {
-        const auto &mod = static_cast<const ast::ModuleDecl &>(decl);
+        const auto &mod = std::get<ast::ModuleDecl>(decl);
         if (mod.name != nullptr) {
             collect_qualified_name_tokens(*mod.name, source, tokens, SemanticTokenType::Namespace);
         }
         break;
     }
     case ast::NodeKind::ImportDecl: {
-        const auto &imp = static_cast<const ast::ImportDecl &>(decl);
+        const auto &imp = std::get<ast::ImportDecl>(decl);
         if (imp.path != nullptr) {
             collect_qualified_name_tokens(*imp.path, source, tokens, SemanticTokenType::Namespace);
         }
@@ -1153,7 +1153,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::UseDecl: {
-        const auto &use = static_cast<const ast::UseDecl &>(decl);
+        const auto &use = std::get<ast::UseDecl>(decl);
         if (use.path != nullptr) {
             collect_qualified_name_tokens(*use.path, source, tokens, SemanticTokenType::Namespace);
         }
@@ -1163,7 +1163,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::ConstDecl: {
-        const auto &con = static_cast<const ast::ConstDecl &>(decl);
+        const auto &con = std::get<ast::ConstDecl>(decl);
         const auto readonly_mod = static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
         add_token_for_name(
             tokens, source, con.range, con.name, SemanticTokenType::Variable, readonly_mod);
@@ -1176,7 +1176,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::TypeAliasDecl: {
-        const auto &alias = static_cast<const ast::TypeAliasDecl &>(decl);
+        const auto &alias = std::get<ast::TypeAliasDecl>(decl);
         add_token_for_name(tokens, source, alias.range, alias.name, SemanticTokenType::Type);
         if (alias.aliased_type != nullptr) {
             collect_type_syntax_tokens(*alias.aliased_type, source, tokens);
@@ -1184,7 +1184,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::StructDecl: {
-        const auto &str = static_cast<const ast::StructDecl &>(decl);
+        const auto &str = std::get<ast::StructDecl>(decl);
         add_token_for_name(tokens, source, str.range, str.name, SemanticTokenType::Struct);
         collect_type_params_tokens(str.type_params, source, tokens);
         for (const auto &field : str.fields) {
@@ -1198,7 +1198,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::EnumDecl: {
-        const auto &en = static_cast<const ast::EnumDecl &>(decl);
+        const auto &en = std::get<ast::EnumDecl>(decl);
         add_token_for_name(tokens, source, en.range, en.name, SemanticTokenType::Enum);
         collect_type_params_tokens(en.type_params, source, tokens);
         for (const auto &variant : en.variants) {
@@ -1212,7 +1212,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::CapabilityDecl: {
-        const auto &cap = static_cast<const ast::CapabilityDecl &>(decl);
+        const auto &cap = std::get<ast::CapabilityDecl>(decl);
         add_token_for_name(tokens, source, cap.range, cap.name, SemanticTokenType::Interface);
         collect_param_list_tokens(cap.params, source, tokens);
         if (cap.return_type != nullptr) {
@@ -1227,7 +1227,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::PredicateDecl: {
-        const auto &pred = static_cast<const ast::PredicateDecl &>(decl);
+        const auto &pred = std::get<ast::PredicateDecl>(decl);
         add_token_for_name(tokens, source, pred.range, pred.name, SemanticTokenType::Function);
         collect_param_list_tokens(pred.params, source, tokens);
         if (pred.effect_clause != nullptr) {
@@ -1236,7 +1236,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::AgentDecl: {
-        const auto &agent = static_cast<const ast::AgentDecl &>(decl);
+        const auto &agent = std::get<ast::AgentDecl>(decl);
         add_token_for_name(tokens, source, agent.range, agent.name, SemanticTokenType::Class);
         if (agent.input_type != nullptr) {
             collect_type_syntax_tokens(*agent.input_type, source, tokens);
@@ -1288,7 +1288,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::WorkflowDecl: {
-        const auto &wf = static_cast<const ast::WorkflowDecl &>(decl);
+        const auto &wf = std::get<ast::WorkflowDecl>(decl);
         add_token_for_name(tokens, source, wf.range, wf.name, SemanticTokenType::Class);
         if (wf.input_type != nullptr) {
             collect_type_syntax_tokens(*wf.input_type, source, tokens);
@@ -1329,7 +1329,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::ContractDecl: {
-        const auto &contract = static_cast<const ast::ContractDecl &>(decl);
+        const auto &contract = std::get<ast::ContractDecl>(decl);
         if (contract.target != nullptr) {
             collect_qualified_name_tokens(
                 *contract.target, source, tokens, SemanticTokenType::Class);
@@ -1342,7 +1342,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::FlowDecl: {
-        const auto &flow = static_cast<const ast::FlowDecl &>(decl);
+        const auto &flow = std::get<ast::FlowDecl>(decl);
         if (flow.target != nullptr) {
             collect_qualified_name_tokens(*flow.target, source, tokens, SemanticTokenType::Class);
         }
@@ -1367,12 +1367,12 @@ void collect_decl_tokens(const ast::Decl &decl,
         // Not a decl — should not reach here
         break;
     case ast::NodeKind::FnDecl: {
-        const auto &fn = static_cast<const ast::FnDecl &>(decl);
+        const auto &fn = std::get<ast::FnDecl>(decl);
         collect_fn_tokens(fn, source, tokens, SemanticTokenType::Function);
         break;
     }
     case ast::NodeKind::TraitDecl: {
-        const auto &trait = static_cast<const ast::TraitDecl &>(decl);
+        const auto &trait = std::get<ast::TraitDecl>(decl);
         add_token_for_name(tokens, source, trait.range, trait.name, SemanticTokenType::Interface);
         collect_type_params_tokens(trait.type_params, source, tokens);
         collect_type_list_tokens(trait.super_traits, source, tokens);
@@ -1387,7 +1387,7 @@ void collect_decl_tokens(const ast::Decl &decl,
         break;
     }
     case ast::NodeKind::ImplDecl: {
-        const auto &impl = static_cast<const ast::ImplDecl &>(decl);
+        const auto &impl = std::get<ast::ImplDecl>(decl);
         collect_type_params_tokens(impl.type_params, source, tokens);
         if (impl.trait_ref != nullptr) {
             collect_type_syntax_tokens(*impl.trait_ref, source, tokens);
@@ -1470,9 +1470,7 @@ SemanticTokens compute_semantic_tokens(const std::string &source, const Analysis
     std::vector<TokenEntry> tokens;
 
     for (const auto &decl : program.declarations) {
-        if (decl != nullptr) {
-            collect_decl_tokens(*decl, src_file, tokens);
-        }
+        collect_decl_tokens(decl, src_file, tokens);
     }
 
     result.data = delta_encode_tokens(tokens);

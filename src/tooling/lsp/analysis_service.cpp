@@ -417,27 +417,23 @@ void collect_primitive_type_uses(const ast::TemporalExprSyntax *expr,
 std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program &program) {
     std::vector<PrimitiveTypeUse> uses;
     for (const auto &decl : program.declarations) {
-        if (decl == nullptr) {
-            continue;
-        }
-
-        switch (decl->kind) {
+        switch (ast::decl_kind(decl)) {
         case ast::NodeKind::Program:
             break;
         case ast::NodeKind::ConstDecl: {
-            const auto &typed = static_cast<const ast::ConstDecl &>(*decl);
+            const auto &typed = std::get<ast::ConstDecl>(decl);
             collect_primitive_type_uses(typed.type.get(), uses);
             collect_primitive_type_uses(typed.value.get(), uses);
             break;
         }
         case ast::NodeKind::TypeAliasDecl: {
-            const auto &typed = static_cast<const ast::TypeAliasDecl &>(*decl);
+            const auto &typed = std::get<ast::TypeAliasDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             collect_primitive_type_uses(typed.aliased_type.get(), uses);
             break;
         }
         case ast::NodeKind::StructDecl: {
-            const auto &typed = static_cast<const ast::StructDecl &>(*decl);
+            const auto &typed = std::get<ast::StructDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             collect_primitive_type_uses(typed.where_clause.get(), uses);
             for (const auto &field : typed.fields) {
@@ -449,7 +445,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::EnumDecl: {
-            const auto &typed = static_cast<const ast::EnumDecl &>(*decl);
+            const auto &typed = std::get<ast::EnumDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             collect_primitive_type_uses(typed.where_clause.get(), uses);
             for (const auto &variant : typed.variants) {
@@ -469,27 +465,27 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::CapabilityDecl: {
-            const auto &typed = static_cast<const ast::CapabilityDecl &>(*decl);
+            const auto &typed = std::get<ast::CapabilityDecl>(decl);
             collect_primitive_type_uses(typed.params, uses);
             collect_primitive_type_uses(typed.return_type.get(), uses);
             collect_primitive_type_uses(typed.where_clause.get(), uses);
             break;
         }
         case ast::NodeKind::PredicateDecl: {
-            const auto &typed = static_cast<const ast::PredicateDecl &>(*decl);
+            const auto &typed = std::get<ast::PredicateDecl>(decl);
             collect_primitive_type_uses(typed.params, uses);
             collect_primitive_type_uses(typed.effect_clause.get(), uses);
             break;
         }
         case ast::NodeKind::AgentDecl: {
-            const auto &typed = static_cast<const ast::AgentDecl &>(*decl);
+            const auto &typed = std::get<ast::AgentDecl>(decl);
             collect_primitive_type_uses(typed.input_type.get(), uses);
             collect_primitive_type_uses(typed.context_type.get(), uses);
             collect_primitive_type_uses(typed.output_type.get(), uses);
             break;
         }
         case ast::NodeKind::ContractDecl: {
-            const auto &typed = static_cast<const ast::ContractDecl &>(*decl);
+            const auto &typed = std::get<ast::ContractDecl>(decl);
             for (const auto &clause : typed.clauses) {
                 if (clause != nullptr) {
                     collect_primitive_type_uses(clause->expr.get(), uses);
@@ -504,7 +500,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::FlowDecl: {
-            const auto &typed = static_cast<const ast::FlowDecl &>(*decl);
+            const auto &typed = std::get<ast::FlowDecl>(decl);
             for (const auto &handler : typed.state_handlers) {
                 if (handler != nullptr) {
                     collect_primitive_type_uses(handler->body.get(), uses);
@@ -513,7 +509,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::WorkflowDecl: {
-            const auto &typed = static_cast<const ast::WorkflowDecl &>(*decl);
+            const auto &typed = std::get<ast::WorkflowDecl>(decl);
             collect_primitive_type_uses(typed.input_type.get(), uses);
             collect_primitive_type_uses(typed.output_type.get(), uses);
             for (const auto &node : typed.nodes) {
@@ -531,7 +527,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::FnDecl: {
-            const auto &typed = static_cast<const ast::FnDecl &>(*decl);
+            const auto &typed = std::get<ast::FnDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             collect_primitive_type_uses(typed.params, uses);
             collect_primitive_type_uses(typed.return_type.get(), uses);
@@ -541,7 +537,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::TraitDecl: {
-            const auto &typed = static_cast<const ast::TraitDecl &>(*decl);
+            const auto &typed = std::get<ast::TraitDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             for (const auto &super_trait : typed.super_traits) {
                 collect_primitive_type_uses(super_trait.get(), uses);
@@ -571,7 +567,7 @@ std::vector<PrimitiveTypeUse> primitive_type_uses_in_program(const ast::Program 
             break;
         }
         case ast::NodeKind::ImplDecl: {
-            const auto &typed = static_cast<const ast::ImplDecl &>(*decl);
+            const auto &typed = std::get<ast::ImplDecl>(decl);
             collect_primitive_type_uses(typed.type_params, uses);
             collect_primitive_type_uses(typed.trait_ref.get(), uses);
             collect_primitive_type_uses(typed.target_type.get(), uses);
@@ -1236,16 +1232,16 @@ void append_detached_source_unit_diagnostics(LspAnalysisSnapshot &snapshot,
     }
 
     for (const auto &decl : source->program->declarations) {
-        if (decl == nullptr || decl->kind != ast::NodeKind::ImportDecl) {
+        const auto *import_decl = std::get_if<ast::ImportDecl>(&decl);
+        if (import_decl == nullptr) {
             continue;
         }
-        const auto &import_decl = static_cast<const ast::ImportDecl &>(*decl);
         std::string message = "import declarations require an AHFL package manifest";
-        if (import_decl.path != nullptr) {
-            message += ": " + import_decl.path->spelling();
+        if (import_decl->path != nullptr) {
+            message += ": " + import_decl->path->spelling();
         }
         snapshot.project_diagnostics.push_back(LspDiagnostic{
-            .range = to_lsp_range(*source->source, import_decl.range),
+            .range = to_lsp_range(*source->source, import_decl->range),
             .severity = DiagnosticSeverity::Error,
             .code = std::string{kDiagnosticDetachedImport},
             .source = "ahfl",

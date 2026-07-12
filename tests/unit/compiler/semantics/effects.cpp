@@ -2956,11 +2956,11 @@ flow for DecreasesShadowAgent {
     const auto contract_it =
         std::find_if(parse_result.program->declarations.begin(),
                      parse_result.program->declarations.end(),
-                     [](const ahfl::Owned<ahfl::ast::Decl> &d) {
-                         return d != nullptr && d->kind == ahfl::ast::NodeKind::ContractDecl;
+                     [](const ahfl::ast::Decl &declaration) {
+                         return std::holds_alternative<ahfl::ast::ContractDecl>(declaration);
                      });
     REQUIRE(contract_it != parse_result.program->declarations.end());
-    const auto &contract = static_cast<const ahfl::ast::ContractDecl &>(**contract_it);
+    const auto &contract = std::get<ahfl::ast::ContractDecl>(*contract_it);
     const auto agent_ref =
         resolve_result.find_reference(ahfl::ReferenceKind::ContractTarget, contract.target->range);
     REQUIRE(agent_ref.has_value());
