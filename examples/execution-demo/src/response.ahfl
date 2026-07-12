@@ -24,11 +24,11 @@ flow for ResponderAgent {
 
     state Compose {
         let draft = DraftIncidentSummary(types::ResponseInput {
-            ticket_id: input.ticket_id,
-            service: input.service,
-            channel: input.channel,
-            action: input.action,
-            reason: input.reason,
+                ticket_id: input.ticket_id,
+                service: input.service,
+                channel: input.channel,
+                action: input.action,
+                reason: input.reason,
         });
         ctx.summary = draft.summary;
 

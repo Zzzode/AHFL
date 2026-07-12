@@ -12,11 +12,11 @@ pub workflow IncidentWorkflow {
     node intake: intake::IntakeAgent(input);
     node decide: decision::DecisionAgent(intake) after [intake];
     node respond: response::ResponderAgent(types::ResponseInput {
-        ticket_id: intake.ticket_id,
-        service: intake.normalized_service,
-        channel: decide.channel,
-        action: decide.action,
-        reason: decide.reason,
+            ticket_id: intake.ticket_id,
+            service: intake.normalized_service,
+            channel: decide.channel,
+            action: decide.action,
+            reason: decide.reason,
     }) after [intake, decide];
 
     safety: always (not running(decide) or completed(intake));
