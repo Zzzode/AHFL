@@ -156,20 +156,16 @@ flowchart TD
 2. 不在这一层承载 CLI 参数解析或 runtime deployment 细节
 3. 不把 handoff package 反向塞回 `ir` 或 `backends` 的私有实现
 
-### `src/pipeline/persistence/durable_store_import`
+### `src/pipeline/execution`
 
-放 durable-store import 的领域模型、validator、builder 与 artifact printer：
+只放 compiler-to-runtime 的静态 execution pipeline：
 
-- request / review / decision / receipt
-- provider driver / runtime / SDK / host execution 相关 artifact
-- `artifacts.hpp` / `artifacts.cpp` 下的 JSON / review printer
+- execution plan 的 deterministic dry-run runner
+- capability mock parsing
+- `DryRunTrace`
 
-要求：
-
-1. 领域模型与校验留在 `durable_store_import` Module 内
-2. artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，由 `ahfl_pipeline_durable_store_import_artifacts` 承载
-3. 不把 request / review / decision / receipt / provider SDK adapter printer 放回 `backends`
-4. 不在 artifact printer 中执行网络、secret、host env、filesystem write 等副作用
+真实运行状态不放在 `src/pipeline/`。它由 `src/runtime/engine/` 和
+`include/ahfl/runtime/` 下的 event/report/projection/recovery 模型拥有。
 
 ### `include/ahfl/compiler/backends` + `src/compiler/backends`
 
@@ -183,7 +179,7 @@ flowchart TD
 
 1. 只消费 validate 后语义模型与稳定 IR
 2. 抽象边界必须有文档，不允许藏在 emitter 实现里
-3. 不承载 durable-store import artifact printer；这些属于 `durable_store_import` 的 `artifacts.hpp` / `artifacts.cpp` seam
+3. 不承载 runtime event、report、projection 或 recovery serialization
 
 ### `src/tooling/cli`
 

@@ -1,6 +1,6 @@
 # AHFL AST Model Architecture
 
-本文说明 AHFL Core hand-written AST 的对象模型、节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/compiler/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
+本文说明 AHFL Core hand-written AST 的 flat declaration store、variant 节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/compiler/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
 
 关联文档：
 
@@ -15,7 +15,7 @@
 
 1. 当前 AST 为什么按 declaration / type / expr / statement / temporal 五层组织。
 2. `ast.hpp` 中哪些字段是稳定语法事实，哪些只是调试辅助。
-3. 所有权、可选子节点和 visitor 为什么这样设计。
+3. 顶层 value store、递归子节点所有权和 variant visitor 为什么这样设计。
 4. 新增语法能力时，AST 节点应该如何落位。
 
 ## 总体定位
@@ -45,7 +45,9 @@ AHFL 的 AST 是 parse tree lowering 之后的稳定语法边界。
 
 因此 `include/ahfl/compiler/frontend/ast.hpp` 的意义是：
 
-- 作为编译器内部的“稳定语法 ABI”
+- 作为编译器内部的稳定语法边界
+- 让顶层声明使用闭合 `std::variant` 集合，新增 kind 时由编译器强制所有 visitor 更新
+- 让 `Program` 通过连续 `std::vector<Decl>` 保存声明，避免基类指针、虚分发和 `dynamic_cast`
 
 ## 五层对象模型
 
@@ -61,13 +63,41 @@ AHFL 的 AST 是 parse tree lowering 之后的稳定语法边界。
 
 ## 顶层 declaration 层
 
-顶层 declaration 以：
+顶层 declaration 以 `Program` 和 `Decl` 为入口：
 
-- `NodeKind`
-- `Decl`
-- `Program`
+```cpp
+using Decl = std::variant<ModuleDecl,
+                          ImportDecl,
+                          UseDecl,
+                          ConstDecl,
+                          TypeAliasDecl,
+                          StructDecl,
+                          EnumDecl,
+                          CapabilityDecl,
+                          PredicateDecl,
+                          AgentDecl,
+                          ContractDecl,
+                          FlowDecl,
+                          WorkflowDecl,
+                          FnDecl,
+                          TraitDecl,
+                          ImplDecl>;
 
-为入口。
+struct Program {
+    SourceRange range;
+    std::string source_name;
+    std::vector<Decl> declarations;
+};
+```
+
+每个 declaration payload 是普通 value struct，自带：
+
+- `SourceRange range`
+- `Visibility visibility`
+- `duplicate_visibility_modifier`
+- 该声明独有的语法字段
+
+`NodeKind` 不是与 variant 并存的第二个 tag。消费者需要兼容旧的 kind 分类语言时，通过 `decl_kind(const Decl&)` 从 active alternative 确定性派生，禁止存储可能与 variant 漂移的平行 tag。
 
 当前 `NodeKind` 已覆盖：
 
@@ -86,9 +116,11 @@ AHFL 的 AST 是 parse tree lowering 之后的稳定语法边界。
 
 这层的设计重点是：
 
-1. 每种顶层能力都有稳定 node kind。
-2. resolver 只需理解这些 hand-written declaration，而不关心 parser rule 名。
-3. declaration headline 信息在 AST 上就已可读。
+1. 每种顶层能力对应唯一 variant alternative。
+2. `Program::declarations` 是 cache-friendly 的连续 flat store。
+3. resolver 只理解 hand-written declaration，不关心 parser rule 名。
+4. `decl_range`、`decl_visibility`、`decl_headline` 等 helper 从 active payload 派生公共元数据。
+5. 声明地址只允许作为 `Program` 生命周期内的临时借用；跨阶段 canonical identity 使用 `SymbolId`、source identity 或 Typed HIR/IR index，不能依赖 vector 元素地址。
 
 ## 类型语法层
 
@@ -200,17 +232,16 @@ flow handler 中的可执行语法被组织为：
 
 ## 所有权模型
 
-当前 AST 统一使用：
+顶层 declaration 不使用 `Owned<Decl>`；`Program` 直接拥有 `Decl` values。
 
-- `Owned<T>`
-
-来表达树状拥有关系，本质上是 `std::unique_ptr<T>`。
+声明 payload 内的递归或可选语法子节点仍统一使用 `Owned<T>`，本质上是 `std::unique_ptr<T>`。
 
 其设计意图是：
 
-1. AST 节点生命周期明确。
-2. 前端可安全构造递归语法树。
-3. 后续阶段只借用 AST，不重新拥有它。
+1. 顶层声明连续存储，不发生 polymorphic allocation。
+2. 递归子节点生命周期明确。
+3. frontend 构造 concrete payload 后，在 append boundary move 进 `Decl` variant。
+4. 后续阶段只借用 AST，不重新拥有它。
 
 可选子节点通过空 `Owned<T>` 表达，例如：
 
@@ -235,26 +266,32 @@ AST 里当前还有一组共享枚举：
 - `TemporalUnaryOp`
 - `TemporalBinaryOp`
 
-这些枚举的作用是：
+`NodeKind` 仅作为 declaration kind 的兼容分类结果，由 `decl_kind()` 派生。其他共享枚举的作用是：
 
 1. 冻结语法形状分类。
 2. 让 typecheck / validate / printer / IR lowering 共享同一组分类语言。
 
 如果新增语法能力需要后续多个阶段都识别，通常应先扩展这些枚举之一。
 
-## Visitor 边界
+## Variant Visitor 边界
 
-顶层 declaration 当前通过 `Visitor` 提供统一遍历接口。
+顶层 declaration 通过 `std::visit` 或 `visit_decl()` 分发：
 
-这样做的原因是：
+```cpp
+visit_decl(declaration, Overloaded{
+    [&](const StructDecl &value) { /* ... */ },
+    [&](const EnumDecl &value) { /* ... */ },
+    [&](const auto &) { /* irrelevant declarations */ },
+});
+```
 
-1. resolver / printer / 其他 pass 可以按 declaration kind 分发。
-2. 不需要在每个消费者里手写一层 `switch` + `static_cast`。
+该边界具有以下约束：
 
-当前 visitor 边界主要覆盖 declaration 层，而不是把所有 expr/type/statement 都做成 visitor-heavy 模型。这是刻意的：
-
-1. declaration 层适合 pass-oriented 分发。
-2. expr/type/statement 目前更多通过显式递归函数消费。
+1. AST data model 没有 inheritance、virtual method、`accept()` 或 `dynamic_cast`。
+2. 需要 exhaustive handling 的消费者使用 `Overloaded`，新增 alternative 会产生编译错误。
+3. 只关心一个 payload 的消费者使用 `std::get_if<T>()`。
+4. 需要保留已有 kind-oriented算法时，可使用 `decl_kind()` + `std::get<T>()`，但不能重新引入平行 tag。
+5. expression、type、pattern 和 temporal 节点继续使用各自的 `std::variant` visitor；statement 的剩余 tagged-struct 迁移由独立架构工作跟踪，不能成为恢复 declaration inheritance 的理由。
 
 ## AST 中“应该有”和“不应该有”的信息
 
@@ -280,11 +317,12 @@ AST 中不应该有：
 
 通常需要：
 
-1. 扩展 `NodeKind`
-2. 新增 declaration struct
-3. 接入 `Visitor`
-4. 更新 `ProgramBuilder`
-5. 更新 AST printer
+1. 新增普通 declaration payload struct。
+2. 将 payload 加入 `Decl` variant，并同步 `NodeKind`/`decl_kind()` 兼容映射。
+3. 更新 `ProgramBuilder`，在完成 concrete payload 构造后 move 进 flat store。
+4. 修复编译器报告的 exhaustive visitor 缺口。
+5. 更新 AST invariant validator、AST printer、resolver、sema、LSP 和相关测试。
+6. 更新 `scripts/check-architecture.py` 的 exact variant shape；该门禁必须与 C++ 定义原子变化。
 
 ### 新增表达式
 
@@ -308,9 +346,11 @@ AST 中不应该有：
 
 1. `include/ahfl/compiler/frontend/ast.hpp`
 2. `src/compiler/syntax/frontend/frontend.cpp` 中的 `ProgramBuilder`
-3. `src/compiler/syntax/frontend/frontend.cpp` 中的 `AstPrinter`
-4. `src/compiler/semantics/resolver.cpp`
-5. `src/compiler/semantics/typecheck.cpp`
+3. `src/compiler/syntax/frontend/ast.cpp` 中的 invariant validator 和 declaration helpers
+4. `src/compiler/syntax/frontend/ast_printer.cpp`
+5. `scripts/check-architecture.py`
+6. `src/compiler/semantics/resolver.cpp`
+7. `src/compiler/semantics/typecheck_decls.cpp`
 
 阅读重点：
 
@@ -324,5 +364,6 @@ AST 中不应该有：
 
 1. AST 继续作为稳定 hand-written 语法边界，不引入 generated parser 类型。
 2. AST 只表达语法事实，不承载 resolve/typecheck/backend 状态。
-3. 新节点应优先服务后续多个阶段的共享需求，而不是某个局部实现的临时方便。
-4. 若一个字段只用于 dump/debug，应明确把它视为辅助字段，而不是公共语义契约。
+3. 顶层 declaration 只能进入 `vector<Decl>` flat store，不得恢复 `Owned<Decl>`、基类、虚 visitor 或 RTTI 分发。
+4. 新节点应优先服务后续多个阶段的共享需求，而不是某个局部实现的临时方便。
+5. 若一个字段只用于 dump/debug，应明确把它视为辅助字段，而不是公共语义契约。

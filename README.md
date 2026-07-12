@@ -17,33 +17,46 @@
   </p>
 </p>
 
-AHFL (Agent Handoff Flow Language) is a strongly typed DSL for modeling agent state machines, behavioral contracts, workflow DAGs, runtime handoff artifacts, and formal verification boundaries before agent execution.
-
-The repository contains the language grammar, a C++23 compiler (`ahflc`), runtime-adjacent artifact builders, a local execution path, an LSP server, and a VS Code extension package workflow.
+AHFL (Agent Handoff Flow Language) is a strongly typed DSL and C++23 compiler for modeling and executing auditable agent workflows.
 
 ## Project Status
 
-AHFL is active compiler and tooling development. Breaking changes are allowed when they improve the language or compiler architecture; see the [migration policy](docs/reference/migration-policy.zh.md).
+AHFL is in beta-gated development. Breaking changes remain possible; see the
+[migration policy](docs/reference/migration-policy.zh.md). Product capability is
+defined by criterion-specific release evidence, not by source files, handlers,
+goldens, or aggregate test counts.
 
-Current baseline:
+### Verified Beta Capabilities
 
-- C++23 compiler pipeline: parse, resolve, typecheck, validate, lower to IR, emit artifacts.
-- Project-aware compilation with module/source graph support.
-- Runtime-adjacent artifact chain for native package handoff, execution plans, sessions, journals, replay, audit, scheduler, checkpoint, persistence, export, and store import.
-- Formal verification output for NuSMV/nuXmv-oriented workflows.
-- LSP server plus VS Code extension packaging with bundled release LSP binaries.
-- 900+ CTest-registered regression, unit, integration, and benchmark tests.
+- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles.v1 --> Manifest run profiles launch the reference workflow without repeated CLI configuration.
+- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity.v1 --> Runtime workflow, node, agent, capability, invocation, value, and event associations use strong numeric IDs.
+- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections.v1 --> One flat event store drives human, JSON, JSONL, replay, and audit projections.
+- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> Accepted success and failure lifecycle paths have unique terminal events.
+- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> The AHFL formatter is lossless and idempotent over std/ and formatter fixtures, and its CI gate is blocking.
+- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> Core containers resolve as nominal stdlib generics with no legacy runtime Option representation or migration flag.
+- <!-- beta-capability:BETA-07 schema=ahfl.beta-evidence.reference-workflow-recovery.v1 --> The reference workflow passes local HTTP provider fault injection, SIGKILL restart, operator-approved resume, partial-write recovery, and side-effect deduplication.
+- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix installs contain ahflc, ahfl-lsp, and the sysroot; platform VSIX packages contain the release LSP and sysroot and pass isolated installation.
+- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> The beta product surface is frozen; new actions, backends, and artifacts require an accepted RFC.
+
+The evidence contract lives in [`config/beta-gate.json`](config/beta-gate.json).
+Capabilities not listed above may exist as compiler modules, experimental
+backends, or development tooling, but this README does not claim beta readiness
+for them. In particular, native Protobuf transport, multi-region operation,
+official registry service, browser playground, and Marketplace publication
+remain outside the verified beta surface.
 
 ## What AHFL Is For
 
-| Use case | What AHFL provides |
-| --- | --- |
-| Agent workflow modeling | Explicit agents, states, transitions, capabilities, and workflows. |
-| Static safety checks | Strongly typed schemas, expressions, contracts, and workflow dependencies. |
-| Runtime handoff | Machine-readable native/runtime artifacts instead of ad hoc scripts. |
-| Review and audit | Structured summaries, replay views, audit reports, and release evidence artifacts. |
-| Formal verification | SMV backend for safety/liveness model-checking workflows. |
-| IDE integration | Language server diagnostics, hover, completion, definition, references, and rename support. |
+AHFL is intended as a typed control and assurance layer for workflows where
+execution order, capability boundaries, failure handling, replay, and audit
+must remain explicit. The beta reference scenario is
+[`examples/execution-demo`](examples/execution-demo): a multi-agent incident
+workflow with deterministic nodes, an HTTP-backed LLM capability, budgets,
+durable checkpoint/receipt storage, crash recovery, and operator approval.
+
+Formal emitters, additional infrastructure backends, and deeper IDE features
+remain available for development and evaluation, but are governed separately
+from the verified beta runtime path.
 
 ## Language Preview
 
@@ -109,17 +122,18 @@ cmake --build --preset build-dev
 # Type-check a source file.
 ./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
-# Emit a human-readable compiler summary.
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
-
-# Emit machine-readable Semantic IR.
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
+# Run the beta reference workflow from its manifest profile.
+cd examples/execution-demo
+../../build/dev/src/tooling/cli/ahflc run --output-format json
 
 # Inspect all commands and artifacts.
-./build/dev/src/tooling/cli/ahflc --help
+../../build/dev/src/tooling/cli/ahflc --help
 ```
 
-Runtime execution uses `ahflc run` and requires workflow input plus configured capabilities or provider fixtures. Start with the [execution guide](docs/reference/user-guide-execution.zh.md) before running provider-backed workflows.
+The committed LLM configuration uses an environment secret handle. See the
+[reference workflow guide](examples/execution-demo/README.md) and
+[execution guide](docs/reference/user-guide-execution.zh.md) before running a
+provider-backed workflow.
 
 ## Architecture
 
@@ -168,8 +182,7 @@ examples/             Example AHFL programs
 | CLI reference | [docs/reference/cli-commands.zh.md](docs/reference/cli-commands.zh.md) |
 | IR format | [docs/reference/ir-format.zh.md](docs/reference/ir-format.zh.md) |
 | Project and workspace usage | [docs/reference/project-usage.zh.md](docs/reference/project-usage.zh.md) |
-| Native/runtime artifacts | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
-| Durable store import pipeline | [docs/reference/durable-store-import-reference.zh.md](docs/reference/durable-store-import-reference.zh.md) |
+| Runtime events and recovery | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
 | VS Code LSP extension | [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md) |
 | Contributor guide | [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md) |
 

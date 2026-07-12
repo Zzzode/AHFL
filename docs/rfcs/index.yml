@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-09"
+updated: "2026-07-11"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -67,3 +67,9 @@ rfcs:
     file: "0011-pattern-usefulness-matrix.zh.md"
     area: ["language", "compiler", "tooling"]
     stability: "stable-language"
+  - rfc: "0012"
+    title: "Structured Workflow Execution Events and CLI Presentation"
+    status: "accepted"
+    file: "0012-structured-workflow-execution-ux.zh.md"
+    area: ["runtime", "tooling"]
+    stability: "developer-facing"

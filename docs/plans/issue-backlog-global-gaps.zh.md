@@ -30,7 +30,7 @@
 | HTTP / gRPC JSON transcoding / schema validator | `src/runtime/engine/http_transport.cpp`、`grpc_transport.cpp`、`response_schema_validator.cpp` | transport 基础存在；bearer/OAuth2/mTLS 认证解析、缺 secret manager/secret fail-closed、TLS client cert/key path 传递、gRPC JSON transcoding response metadata/trailer capture、metadata/trailer `grpc-status` fail-closed、timeout、retry、schema mismatch 与 malformed JSON 已有 capability 级回归；workflow 层 capability 失败传播已有回归；真实 binding 配置的 CLI 端到端协议矩阵已覆盖成功、auth negative、gRPC metadata/trailer 非 OK、timeout/retry、schema mismatch 与 malformed JSON 投影；native gRPC / Protobuf transport 仍未定案 |
 | Parallel scheduler | `src/runtime/engine/parallel_scheduler.cpp`、`tests/unit/runtime/engine/parallel_scheduler.cpp` | 线程池、failure propagation、retry 基础存在 |
 | Distributed scheduler baseline | `src/runtime/engine/distributed.cpp`、`tests/unit/runtime/engine/distributed.cpp` | checkpoint、remote endpoint、failover 基础存在；仍有确定性和 restore 语义债务 |
-| LLM provider 扩展模块 | `src/runtime/providers/llm/streaming.cpp`、`tool_calling.cpp`、`provider_registry.cpp`、`token_budget.cpp`、`response_cache.cpp` | 库级能力存在；secret handle、token budget、HTTP fallback、workflow input schema validation、streaming response parsing、mock-backed tool calling、deterministic runtime tool catalog、runtime tool catalog failure/timeout、可选 response cache、response cache 持久化 snapshot、provider 内部 secret-free cache audit、fallback health、provider degradation summary、streaming chunk 事件、token usage/cost 事件、capability 粒度 token/cost override、workflow/node 累计 token/cost contract、warning/fail policy、bearer/api-key-header/OAuth2 token-secret/mTLS cert-key-path 认证、`refresh_secrets_before_use` secret lifecycle audit、HTTP/gRPC capability auth fail-closed、`ahflc run` 文本摘要与 `--llm-observability` 机器 JSON 已接入基础路径；后续重点转向更完整 rotation policy、跨 provider audit 和 native gRPC / Protobuf 取舍 |
+| LLM provider 扩展模块 | `src/runtime/providers/llm/streaming.cpp`、`tool_calling.cpp`、`provider_registry.cpp`、`token_budget.cpp`、`response_cache.cpp` | secret handle、HTTP fallback、streaming、tool catalog、persistent cache 与 token/cost budget 已进入真实 run path；公开机器证据统一为 `ahfl.run-event` JSONL，包含 invocation-scoped usage、cache outcome、provider degradation、policy notices 与 ranged diagnostics。provider/secret 内部 audit vectors 只用于单测，不再生成平行公开 artifact；后续重点是跨 provider audit 与长期运行证据 |
 | Secret provider baseline | `src/runtime/providers/secret/` | env/vault/cloud/key rotation/auth provider 模块存在，并已接入 LLM run 与 HTTP/gRPC capability 基础路径；`SecretManager::refresh` lifecycle audit、`ahflc run` 的 refresh-before-use 投影、key rotation retry policy 和 secret-free rotation history 已落地，更完整跨 provider audit 仍待产品化 |
 | LSP server 与核心 handler | `src/tooling/lsp/server.cpp`、`tests/unit/tooling/lsp/server_handlers.cpp` | JSON-RPC、diagnostics publish、`textDocument/diagnostic` / `workspace/diagnostic` pull report、completion、definition、hover、references、rename/prepareRename、documentSymbol、workspace/symbol、signatureHelp 已存在 |
 | VS Code extension packaging baseline | `tools/vscode/package.json`、`tools/vscode/src/extension.ts`、`tools/vscode/syntaxes/ahfl.tmLanguage.json`、`tools/vscode/snippets/ahfl.json`、`tools/vscode/test/suite/index.js`、`tools/vscode/test/installSmoke.js`、`tools/vscode/test/problemsTranscript.js`、`tools/vscode/test/packageInventory.js`、`scripts/package-vscode-vsix-release.sh`、`.github/workflows/vscode-extension.yml` | VS Code client、语言声明、TextMate grammar、snippet、基础 CodeLens、platform VSIX 打包脚本、CI artifact workflow、Marketplace package inventory gate、platform VSIX install smoke、hover/completion/rename/watched-files extension test、Problems diagnostics transcript 和 diagnostics publish/recovery extension test 已存在；剩余是 workspace folder extension 序列、更深 IDE 体验验证与真实 Marketplace 发布演练 |
@@ -54,12 +54,12 @@
 
 - [ ] 明确 native gRPC / Protobuf transport 是否进入近期目标；若进入，必须独立于 JSON transcoding seam。
 
-已完成产品化（详见下方验收证据与 `ahflc.run.*` / `ahfl.secret.*` / `ahfl.runtime.*` smoke 矩阵）：secret handle 链（env/vault/cloud provider + OAuth2 token-secret + mTLS cert/key + `refresh_secrets_before_use` + secret-free key rotation lifecycle）、token budget（全局 / capability / workflow / node 粒度 + cost 上限 + fail/warn policy）、provider fallback `provider_degradation_summary`、streaming chunk 与 usage/cost 事件、response cache 持久化 snapshot（跨进程命中）、runtime tool catalog（`--tool-catalog`）、workflow input schema validation、HTTP/gRPC JSON transcoding 全认证（bearer / api-key-header / OAuth2 / mTLS）+ timeout / retry / schema mismatch / malformed JSON 失败矩阵、`--capability-bindings` runtime binding、`--llm-observability` secret-free machine JSON 投影。
+已完成产品化（详见下方验收证据与 `ahflc.run.*` / `ahfl.secret.*` / `ahfl.runtime.*` smoke 矩阵）：secret handle 链（env/vault/cloud provider + OAuth2 token-secret + mTLS cert/key + `refresh_secrets_before_use` + secret-free key rotation lifecycle）、token/cost budget（全局 / capability / workflow / node 粒度 + fail/warn policy）、provider fallback、streaming、response cache 持久化 snapshot（跨进程命中）、runtime tool catalog、workflow input schema validation、HTTP/gRPC JSON transcoding认证与失败矩阵、`--capability-bindings` runtime binding，以及 canonical JSONL/OTel projection。
 
 验收证据：
 
 - `ahflc run` 使用 secret handle、预算和 fallback 配置成功运行，并覆盖 secret 缺失、空值、预算非法、fallback secret 缺失和 provider 失败。
-- `ahflc.run.llm_observability.smoke` 使用本地 OpenAI-compatible stub 覆盖 provider degraded、fallback selected、`provider_degradation_summary` fallback recovery、streaming completed、response cache miss/write/hit、cache disabled、response cache 持久化 snapshot 跨进程命中、token usage/cost、token budget、workflow/node 累计 token budget、usage 超限 fail policy、usage/cost 超限 warn policy 和 secret-free JSON artifact。
+- `ahflc.run.llm_provider_runtime.smoke` 使用本地 OpenAI-compatible stub 覆盖 fallback+stream、进程内/跨进程 cache、canonical usage event、warn policy、fail policy `BudgetRejected` terminal lifecycle、ranged diagnostics 和 secret-free JSONL。
 - `ahflc.run.llm_failure_matrix.smoke` 使用本地 OpenAI-compatible stub 覆盖 HTTP 401 认证失败、fallback exhausted、`provider_degradation_summary` exhausted outcome、streaming interrupted、runtime tool catalog 成功路径、catalog schema negative、catalog-specific invalid args/unknown tool、tool failure、tool timeout、mock-backed tool call invalid args 与 unknown tool 的 CLI 失败诊断和 secret-free JSON artifact。
 - `ahflc.run.llm_secret_manager.smoke` 使用本地 Vault / Secret Manager HTTP stub 覆盖 secret 解析成功、404、认证失败、超时、`refresh_secrets_before_use` secret refresh lifecycle events、OAuth2 token-secret bearer header、mTLS cert/key curl 配置、LLM 调用前 fail closed 和 secret-free JSON artifact。
 - `ahfl.secret.vault_rotation_all` 覆盖 key rotation policy、失败时 fail closed、retry attempt 计数、callback firing，以及 rotation history 不保存旧/新 secret value。
@@ -80,9 +80,9 @@
 - [x] 完成 SymbolId-first nominal identity 的剩余审计：dump-types 按 `SymbolId` 从 `TypeEnvironment` 取声明；IR declaration/reference 通过 `SymbolRef.id` 保留数值 identity；`TypeRef` 保持 canonical type boundary，不把 display string 当内部身份。
 - [x] 检查 `SchemaBoundaryKind` 是否覆盖 agent input/output/context default、workflow input/output/node input，并补缺失 negative golden；声明级 schema boundary 非 struct 诊断已使用稳定 `typecheck.INVALID_AGENT_TYPE` code 与 message template。
 - [ ] 将 `ConstSema` 收尾：继续剥离 source/diagnostic context 注入等 `TypeCheckPass` 状态依赖，并补齐剩余语义测试矩阵。（已落地：完整 const evaluation boundary、Typed HIR 可序列化 const value tree、`AHFL_CONST_VALUE_ARTIFACT_V1` schema gate、直接 const dependency graph artifact、前序/forward/跨 source const value inline、bool/Int/Float/Decimal/String/Duration folding、member/index folding、Set/Map const value 规范化、稳定 const dependency cycle 诊断；handler 已拆入 `const_sema.*` / `expression_sema.*` / `typecheck_expr.cpp`，旧 `TypeCheckPass` 转发 wrapper 已清理——详见验收证据。）
-- [ ] 将 `ExprEffect` 贯穿 assurance/formal：当前 expression checker、Typed HIR、ConstSema、contract、assert、if condition 与 temporal embedded expression 已记录/消费 effect，剩余是不让 assurance/formal 后续模块重扫 AST 推导 effect。
+- [x] 将 `ExprEffect` 贯穿 assurance/formal：Typed HIR effect 已进入 `ahfl.ir.v2` expression 与 flow `inferred_effect`；assurance/SMV 消费该 fact，并对 capability identity/effect 矛盾 fail closed。
 - [ ] 继续把 typecheck / validate 诊断迁移到稳定 code、message template、related notes：当前 type mismatch、exact schema、const expr、non-pure expression、bool semantic boundary、callable arity、capability gating、predicate argument purity、member/field access、struct literal field/target、qualified enum value、schema declaration、declaration duplicate field/variant、agent context default、index access（list index 与非集合目标）、empty literal、`none` context、expression operation、flow assignment target、unknown path root、unknown type / qualified value / callable missing-reference fallback、invalid type reference fallback、invalid callable reference fallback、missing callable metadata fallback、missing const/type metadata fallback、let shadowing warning、validation agent/flow invalid-state、duplicate capability、workflow graph 和 temporal formula 已覆盖；type mismatch related notes 已覆盖 struct field、parameter、return、assignment、schema boundary、optional payload 和 list/set/map 推断元素/key/value，剩余重点是语义测试矩阵一致性。
-- [ ] 拆深 `TypeCheckPass`：`TypeResolver` 已拆出，后续继续拆 `ExpressionChecker`、`DeclarationSema`、`FlowWorkflowSema`，每一步单独提交。
+- [x] 拆深 `TypeCheckPass`：`TypeResolver`、`ExpressionSema`、`DeclarationSema`、`FlowWorkflowSema`、`ConstSema` 已形成明确 owner；driver 仅保留共享 session/state 与 orchestration。
 - [ ] 将语义矩阵测试与 golden 负例升级为完成标准。
 
 验收证据：
@@ -224,12 +224,16 @@
 
 ## 五、推荐执行顺序
 
-1. P0：Runtime / LLM Provider 生产化收口。
+1. P0：受控试点从 bounded CI 提升到小时级 nightly、RSS/allocator 趋势与真实部署环境复跑。
 2. P0：TypeCheck / Sema 最终闭环。
 3. P1：LSP IDE 产品化。
 4. P1/P2：CLI/tooling 入口补齐。
 5. P2：Formal backend 真实性增强。
 6. P2：Pass 与 target backend 产品化。
 7. P2/P3：质量工程门禁。
+
+MCP/framework adapters、Marketplace 正式发布、官方 registry service、Web Playground、
+counterexample IDE 深映射和 Native gRPC / Protobuf 在上述 P0 production-confidence gate
+关闭前继续冻结。
 
 每个主题应拆成独立 Conventional Commit；涉及 breaking schema、typing 或 runtime config 的提交必须在 footer 中写明 `BREAKING CHANGE:`、影响范围和迁移方式。

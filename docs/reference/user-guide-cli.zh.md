@@ -51,7 +51,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `dump ast` | 输出 AST outline | `ahflc dump ast <input>` |
 | `dump types` | 输出类型环境 | `ahflc dump types <input>` |
 | `dump package-graph` | 输出 PackageGraph | `ahflc dump package-graph --manifest <ahfl.toml>` |
-| `emit <artifact>` | 输出编译、执行、审计或持久化 artifact | `ahflc emit summary <input>` |
+| `emit <artifact>` | 输出编译、handoff、dry-run 或 formal artifact | `ahflc emit summary <input>` |
 | `validate` | 运行 assurance production gate | `ahflc validate <input>` |
 | `verify` | 调用 SMV 兼容 checker 做 formal verification | `ahflc verify --formal-backend nuxmv --model-checker <path> <input>` |
 | `run` | 使用 LLM Provider 执行 workflow | `ahflc run --workflow <name> --input '<json>' <input>` |
@@ -134,19 +134,22 @@ std = { source = "sysroot" }
 | `--package <name>` | 从 workspace 中选择 package |
 | `--target <name>` | 选择 manifest 中的 target |
 | `--sysroot <path>` | 指向包含 `std/ahfl.toml` 的 AHFL sysroot；也可直接传 `std/ahfl.toml` |
-| `--capability-mocks <path>` | 为 dry run / runtime artifact 提供 mock capability 输入；在 `run` 中作为 LLM tool source |
+| `--capability-mocks <path>` | 为 dry run 提供 mock capability 输入；在 `run` 中作为 LLM tool source |
 | `--tool-catalog <path>` | 仅 `run`：提供 deterministic runtime tool catalog，并作为 LLM function tools source |
+| `--capability-bindings <path>` | 仅 `run`：提供 HTTP / gRPC JSON transcoding capability binding |
 | `--input-fixture <fixture>` | 选择 runtime fixture request |
 | `--run-id <id>` | 固定 run identity，便于稳定输出 |
 | `--workflow <canonical>` | 选择目标 workflow |
 | `--input '<json>'` | `run` 的真实 runtime 输入 JSON |
+| `--input-file <path>` | `run` 的真实 runtime 输入 JSON 文件 |
 | `--llm-config <path>` | `run` 的 LLM Provider 配置，默认 `~/.ahfl/llm_config.json` |
-| `--llm-observability <path>` | 将 `run` 的 LLM cache / fallback / streaming secret-free 事件写入机器可读 JSON |
+| `--profile <name>` | 选择 manifest 中的 `[run.profiles.<name>]` |
+| `--output-format <format>` | `human`、`json`、`jsonl` 或 `quiet` |
+| `--verbosity <level>` | `normal`、`verbose` 或 `trace` |
 | `--formal-backend <name>` | `verify` 使用的 backend；当前 `nuxmv` / `nusmv` 可外部验证，`spin` / `tlaplus` 会报告 unsupported |
 | `--model-checker <path>` | `verify` 使用的 NuSMV / nuXmv 可执行文件 |
 | `--checker-timeout-seconds <seconds>` | `verify` 的外部 checker 进程 timeout；卡死会报告 `checker_timed_out: true` |
 | `--formal-model-out <path>` | `verify` 保留生成的 SMV 模型 |
-| `--show-hidden` | 显示或启用内部诊断 artifact |
 | `--check` | 仅 `fmt` 使用；检查格式化状态但不写回文件 |
 | `-O` | 启用优化 passes |
 | `--time-passes` | 与 `-O` 配合输出 Semantic IR pass pipeline 耗时 |
@@ -254,23 +257,15 @@ printf ':help\n:quit\n' | ./build/dev/src/tooling/repl/ahfl-repl
 |----------|------|
 | `ir` | 文本 IR |
 | `ir-json` | JSON IR |
+| `opt-ir` | Optimization IR 诊断输出 |
+| `opt-ir-json` | Optimization IR JSON |
 | `native-json` | Native backend JSON |
 | `execution-plan` | Workflow 执行计划 |
-| `runtime-session` | Runtime session snapshot |
 | `dry-run-trace` | Mock dry-run 执行跟踪 |
-| `execution-journal` | 执行日志 |
-| `replay-view` | 回放视图 |
-| `scheduler-snapshot` | 调度器状态 |
-| `scheduler-review` | 调度器审查输出 |
-| `checkpoint-record` | 检查点记录 |
-| `checkpoint-review` | 检查点审查 |
-| `persistence-descriptor` | 持久化层描述 |
-| `persistence-review` | 持久化审查 |
-| `export-manifest` | 持久化导出清单 |
-| `export-review` | 导出审查 |
-| `store-import-descriptor` | Store import 描述 |
-| `store-import-review` | Store import 审查 |
 | `package-review` | Package reader 与 execution planner 审查 |
+| `public-api` | Package public API JSON |
+| `public-api-docs` | Package public API Markdown |
+| `public-api-diff` | 两个 public API snapshot 的结构化 diff |
 | `summary` | 人类可读摘要 |
 | `smv` | NuSMV 模型 |
 | `assurance-json` | Assurance bundle |
@@ -297,38 +292,20 @@ PackageGraph native handoff 示例：
   --sysroot .
 ```
 
-## Store pipeline artifact
+## Runtime output
 
-Store pipeline 使用 `store/...` artifact id：
+`ahflc run` 的四种 output format 消费同一 canonical execution facts：
 
-| Artifact | 用途 |
-|----------|------|
-| `store/request` | Durable store import request |
-| `store/review` | Import request review |
-| `store/decision` | Adapter decision |
-| `store/receipt` | Adapter receipt |
-| `store/receipt-persistence-request` | Receipt persistence request |
-| `store/decision-review` | Decision review |
-| `store/receipt-review` | Receipt review |
-| `store/receipt-persistence-review` | Receipt persistence review |
-| `store/receipt-persistence-response` | Receipt persistence response |
-| `store/receipt-persistence-response-review` | Receipt persistence response review |
-| `store/adapter-execution` | Adapter execution projection |
-| `store/recovery-preview` | Recovery preview |
+| Format | 用途 |
+|--------|------|
+| `human` | 默认业务摘要 |
+| `json` | 版本化 `ExecutionReport` |
+| `jsonl` | 按 event ID 输出 `ExecutionEventStore` |
+| `quiet` | 只依赖终态和退出码 |
 
-这些 artifact 已接入 PackageGraph package workflow。使用 `--manifest <ahfl.toml> --target <name>`，或 `--workspace <ahfl.workspace.toml> --package <name> --target <name>` 选择 handoff target；需要模拟运行时还必须提供 `--capability-mocks`、`--input-fixture` 和 `--run-id`。
-
-## Provider diagnostic artifact
-
-Provider artifact 不走 `ahflc emit provider/...` 用户命令面。需要诊断 Provider pipeline 时，使用内部入口 `ahflc emit-provider-artifact provider/<artifact>`；该入口已使用同一套 PackageGraph handoff target 输入。
-
-查看内部 artifact：
-
-```bash
-./build/dev/src/tooling/cli/ahflc --show-hidden --help
-```
-
-普通用户应优先消费 public provider artifact，例如 production readiness、compatibility、conformance、schema compatibility、runtime policy 和 integration dry run 报告；internal artifact 主要用于 golden、诊断和回归定位。
+replay、audit、scheduler、checkpoint 和 recovery 是 `include/ahfl/runtime/` 下的
+library projection，不是额外 `emit` 命令。`--verbosity` 只影响展示细节，不改变事件或
+terminal invariant。
 
 ## 诊断顺序
 
@@ -352,4 +329,4 @@ Provider artifact 不走 `ahflc emit provider/...` 用户命令面。需要诊�
 | `2` | 命令行参数非法 |
 | `3` | 内部错误 |
 
-CI 中应把 `check`、关键 `emit`、`validate`、`verify` 和必要 provider evidence 命令分开运行，避免一个大命令掩盖具体失败层。
+CI 中应把 `check`、关键 `emit`、`run`、`validate` 和 `verify` 分开运行，避免一个大命令掩盖具体失败层。

@@ -453,13 +453,13 @@ class GrpcClientFacade {
 
 **AC-2（回归）**：原生 gRPC 合入后，`ctest -L runtime` 全量通过。当前基线 ≥ 980/980（wave-17 终态），**最终 ctest 通过数不得低于基线**，即 `(980 + grpc_new_tests) / (980 + grpc_new_tests)` = 100%；若新增测试 N，则 `pass/(980+N) = 100%`。
 
-**AC-3（可观测性覆盖）**：`--llm-observability` 输出的 machine JSON 中，native 成功用例必须记录 `transport_attempted = "native_grpc"` 且 `transport_used = "native_grpc"`；fail-closed 用例必须记录 `transport_attempted`、`grpc_status_code`、`grpc_status_details`、`deadline_ms` 和 diagnostic code；只有显式 fallback 用例才允许 `transport_used = "grpc_json_transcoding"` 或 `"http_json"`，且必须记录 `fallback_reason` 与 `fallback_transport`。
+**AC-3（可观测性覆盖）**：canonical `ahfl.run-event` JSONL 与 OTLP-compatible projection 中，native 成功用例必须记录 `transport_attempted = "native_grpc"` 且 `transport_used = "native_grpc"`；fail-closed 用例必须记录 `transport_attempted`、`grpc_status_code`、`grpc_status_details`、`deadline_ms` 和 diagnostic code；只有显式 fallback 用例才允许 `transport_used = "grpc_json_transcoding"` 或 `"http_json"`，且必须记录 `fallback_reason` 与 `fallback_transport`。不得为 native gRPC 恢复独立 provider observability artifact。
 
 **AC-4（代码质量）**：新增 TU（`src/runtime/providers/llm/grpc_*` + `proto/` 生成代码外的手写代码）行覆盖率 ≥ **85%**，mutation score ≥ **70%**（复用 h-18/h-19 的 mutation runner 框架，参考 `docs/plans/phaseb-gap-analysis.zh.md:212`）。
 
 **AC-5（安全 / 鲁棒性）**：基于 `libFuzzer` 的 `grpc_facade_proto_fuzzer`（随机合法 / 非法 proto 字节流喂给 facade 的 mock channel）在 CI nightly 任务上 **连续 14 天零 crash**，累计 corpus 大小 ≥ 1 MiB，累计执行次数 ≥ 2^28。
 
-**AC-6（向后兼容）**：使用 0.22.x（引入 gRPC JSON transcoding 的基线版本）所有 capability 用例与 30 条官方示例，在 feature-flag ON 时 **逐行对比 CLI stdout / stderr / exit code 与基线完全一致**。允许的唯一差异是 `--llm-observability` 中新增字段（按 JSON 键子集 diff 判定）。
+**AC-6（向后兼容）**：使用 0.22.x（引入 gRPC JSON transcoding 的基线版本）所有 capability 用例与 30 条官方示例，在 feature-flag ON 时对 human 输出、stderr 和 exit code做语义回归，并对版本化 JSON/JSONL 使用 schema-aware subset diff。允许的新增 transport 字段必须复用 canonical execution serializer。
 
 ### 7.3 Decision Gate（决策门）
 

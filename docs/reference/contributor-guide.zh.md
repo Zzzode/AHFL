@@ -1,79 +1,111 @@
 # AHFL Contributor Guide
 
-本文是 `docs/reference` 中 contributor guide 的合并入口，覆盖历史各版本贡献指南。当前维护最新口径；旧版本的贡献路径、验证标签与扩展顺序已合并为摘要，不再保留独立入口。
+本文是 AHFL 贡献者的当前入口。工程原则以根 `AGENTS.md` 为准：优先行业标准，大重构优于兼容壳，canonical identity 使用数值 ID，数据模型使用 flat stores、hash-consed types 和 `std::variant`，用户诊断必须携带 `SourceRange`。
 
 关联文档：
 
-- [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)
-- [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)
+- [编译器架构](../design/compiler-architecture.zh.md)
+- [语义架构](../design/semantics-architecture.zh.md)
+- [Native runtime 架构](../design/native-runtime-architecture.zh.md)
+- [测试策略](../design/testing-strategy.zh.md)
+- [项目状态](../plans/project-status.zh.md)
 
-## 合并范围
-
-| 合并后保留的信息 |
-|------------------|
-| project model、diagnostics、IR、backend extension 的基础贡献入口。 |
-| package authoring、native package、review / reference consumer helper。 |
-| execution plan、dry-run runner、trace 输出。 |
-| runtime session、execution journal。 |
-| replay view、audit report。 |
-| partial / failed session 与 failure-aware journal / replay / audit。 |
-| scheduler snapshot。 |
-| checkpoint record。 |
-| persistence descriptor。 |
-| export manifest / export review。 |
-| store import descriptor / review。 |
-
-## 当前口径摘要
-
-1. 新贡献者应先跑通当前 store-import-facing 路径，再回溯上游 consumer。
-2. 改稳定 artifact 字段时，必须同步模型、validator、emitter、golden、compatibility 文档、consumer matrix、贡献指南和 CI 标签。
-3. 扩展顺序应沿 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> store-import-review` 前进。
-4. Review / projection artifact 不能私造状态机；machine-facing artifact 是下游稳定依赖的第一事实来源。
-5. 仓库当前不维护 immature 语义的向前兼容；breaking change 要通过文档、测试和 commit footer 显式标出。
-
-## 先跑通的基础路径
-
-建议先在本地确认 PackageGraph、native handoff 和 store-import 相关测试都可运行：
+## 首次设置
 
 ```bash
+scripts/install-githooks.sh
 cmake --preset dev
-cmake --build --preset build-dev --target ahflc ahfl_store_import_tests
-./build/dev/src/tooling/cli/ahflc check \
-  --manifest tests/integration/package_graph_manifest/ahfl.toml \
-  --target workflow \
-  --sysroot .
-./build/dev/src/tooling/cli/ahflc dump package-graph \
-  --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml \
-  --package refund-audit \
-  --sysroot .
-./build/dev/src/tooling/cli/ahflc emit native-json \
-  --manifest tests/integration/package_graph_manifest/ahfl.toml \
-  --target workflow \
-  --sysroot .
-ctest --preset test-dev --output-on-failure -L 'store-import-(descriptor-model|descriptor-bootstrap|review-model)'
-ctest --preset test-dev --output-on-failure -L 'store-import-(emission|golden)'
-ctest --preset test-dev --output-on-failure -L 'store-import-.*'
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure
 ```
 
-Store-import CLI artifact 尚未完成 PackageGraph manifest 输入接入时，不要在贡献指南里新增旧 JSON descriptor 示例；用 CTest label 覆盖现有内部路径，等对应 artifact 接入 manifest 后再补公开命令。
+提交信息必须使用英文 conventional commit。所有计划文档进入 `docs/plans/`。
 
-## Corelib / std 开发
+## 架构规则
 
-修改 `std/` 时，必须把当前 checkout 显式配置为 active sysroot，而不是依赖
-LSP 或 CLI 从当前目录猜测标准库位置：
+### Identity
+
+1. Symbol、type substitution、runtime entity 和 flat-store reference 使用 index / ID。
+2. 字符串只用于源码名称、diagnostic 和展示。
+3. 禁止把 canonical association 放入 string-keyed map 后再做 name join。
+
+### Data model
+
+1. AST、HIR、IR、event payload 和 value payload 使用 `std::variant`。
+2. data-carrying model 禁止 inheritance、virtual dispatch 和 `dynamic_cast`。
+3. tree-heavy model 优先 `vector<T>` + index reference。
+4. type equality 使用 `TypeContext` interned pointer equality。
+
+### Diagnostics
+
+1. 每个用户可见 error / warning 必须有 `SourceRange`。
+2. message 必须说明用户如何修复。
+3. parser、typechecker 和 runtime failure 不能降成无上下文的 “internal error”。
+
+## 按领域找入口
+
+| 领域 | 主要入口 | 最小验证 |
+|------|----------|----------|
+| Grammar / AST | `grammar/AHFL.g4`、`include/ahfl/compiler/frontend/ast.hpp`、`src/compiler/syntax/frontend/` | syntax + formatter tests |
+| Resolver / Sema | `src/compiler/semantics/` | type resolver、effects、flow、CLI diagnostics |
+| Typed HIR / IR | `src/compiler/ir/` | typed HIR、IR verify、backend registry |
+| Formal | `src/compiler/backends/smv/`、`src/verification/formal/` | SMV golden + real checker gates |
+| Runtime | `include/ahfl/runtime/`、`src/runtime/engine/` | workflow/event/report/projection/recovery |
+| Providers | `src/runtime/providers/` | provider unit + local transport integration |
+| CLI | `src/tooling/cli/` | command routing + package/single-file smoke |
+| LSP | `src/tooling/lsp/`、`tools/vscode/` | handler + extension host tests |
+| Formatter | `src/tooling/formatter/` | idempotence over examples/tests/std |
+
+## Runtime 贡献路径
+
+运行期动态事实的唯一 owner 是 `ExecutionEventStore`：
+
+```text
+WorkflowRuntime
+  -> ExecutionEventSink
+  -> ExecutionEventStore
+  -> ExecutionReport / replay / audit / scheduler / checkpoint
+  -> WorkflowRecoverySnapshot
+```
+
+增加 runtime 行为时：
+
+1. 先写 failing lifecycle/projection test。
+2. 确定需要的 strong ID 和 event payload。
+3. 定义 start/terminal pairing、retry/fallback/cancel/interruption path。
+4. 在 `WorkflowRuntime` 产生 event。
+5. 同步 report 和所有受影响 projection。
+6. 若影响恢复，更新 `ahfl.workflow-recovery.v1` 的迁移或拒绝策略。
+7. 最后更新 renderer；renderer 不得补造运行事实。
+
+禁止：
+
+1. 新增平行 session/journal/snapshot 事实源。
+2. 从 human output 或 provider log 反推 scheduler/checkpoint。
+3. 用 node/workflow/provider name 作为 runtime canonical identity。
+4. 把 raw secret 或 provider credential 写入 event/recovery snapshot。
+
+## Sema 贡献路径
+
+当前拆分目标是 `DeclarationSema`、`ExpressionSema`、`FlowWorkflowSema` 和 `ConstSema`。新增语义不要继续堆进 monolithic `TypeCheckPass`：
+
+1. 先确定 owner layer。
+2. 通过 services/context 注入最小依赖。
+3. 稳定 semantic fact 写入 Typed HIR。
+4. assurance/formal 消费 Typed HIR facts，不重扫 AST。
+5. 用正例、负例和 CLI diagnostic 覆盖 `SourceRange`。
+
+## Corelib / std
+
+修改 `std/` 时必须显式选择当前 checkout 作为 sysroot：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc check \
-  --manifest std/ahfl.toml \
-  --sysroot .
-./build/dev/src/tooling/cli/ahflc check std/json.ahfl \
-  --sysroot .
-./build/dev/src/tooling/cli/ahflc dump package-graph \
-  --manifest std/ahfl.toml \
-  --sysroot .
+./build/dev/src/tooling/cli/ahflc check --manifest std/ahfl.toml --sysroot .
+./build/dev/src/tooling/cli/ahflc check std/json.ahfl --sysroot .
+./build/dev/src/tooling/cli/ahflc fmt --check std/ --sysroot .
 ```
 
-VS Code 开发 AHFL 仓库时，workspace settings 必须包含：
+VS Code workspace settings：
 
 ```json
 {
@@ -81,166 +113,46 @@ VS Code 开发 AHFL 仓库时，workspace settings 必须包含：
 }
 ```
 
-该配置让 `std/*.ahfl` 作为 source-sysroot package 参与分析。不要通过
-`AHFL_SYSROOT`、旧 `initializationOptions.sysroot`、旧
-`initializationOptions.ahfl.sysroot` 或手写 search-root 方式修复 corelib
-diagnostics。若打开 `std/*.ahfl` 时出现 `E::toolchain_sysroot_mismatch`，
-说明 active sysroot 不是当前 checkout；若出现 `E::toolchain_profile_ambiguous`，
-说明同一 PackageGraph 跨了不同 workspace folder 的 sysroot profile。
+container 使用 nominal `Option` / `List` / `Set` / `Map`。禁止恢复 legacy type payload 或 detached-source fallback。
 
-## 按改动类型找入口
+## 文档规则
 
-### 1. 改 store import descriptor 模型 / validation / bootstrap
+1. 先按 `spec`、`design`、`plans`、`reference` 分类。
+2. 当前文件名不带版本后缀，以 `docs/README.md` 为准。
+3. 修改文档路径时更新所有 inbound links 和索引。
+4. capability status 必须区分“已实现”“已落库但未产品化”“未做/证据不足”。
+5. gate、golden 和 evidence report 不能代替 prompt-to-artifact 行为审计。
 
-通常要改的文件：
+## 验证顺序
 
-- `include/ahfl/store_import/descriptor.hpp`
-- `src/pipeline/persistence/store_import/descriptor.cpp`
-- `src/compiler/backends/store_import_descriptor.cpp`
-- `tests/store_import/descriptor.cpp`
-- `tests/store_import/*.store-import-descriptor.json`
-
-### 2. 改 store import review summary / review validation
-
-通常要改的文件：
-
-- `include/ahfl/store_import/review.hpp`
-- `src/pipeline/persistence/store_import/review.cpp`
-- `src/compiler/backends/store_import_review.cpp`
-- `tests/store_import/descriptor.cpp`
-- `tests/store_import/*.store-import-review`
-
-### 3. 改 store import CLI / backend 输出
-
-通常要改的文件：
-
-- `include/ahfl/compiler/backends/store_import_descriptor.hpp`
-- `include/ahfl/compiler/backends/store_import_review.hpp`
-- `src/compiler/backends/store_import_descriptor.cpp`
-- `src/compiler/backends/store_import_review.cpp`
-- `src/tooling/cli/ahflc.cpp`
-- `tests/cmake/SingleFileCliTests.cmake`
-- `tests/cmake/ProjectTests.cmake`
-- `tests/cmake/LabelTests.cmake`
-- `.github/workflows/ci.yml`
-
-### 4. 改 store import compatibility / consumer guidance
-
-通常要改的文件：
-
-- `docs/reference/native-runtime-artifacts.zh.md`
-- `docs/reference/contributor-guide.zh.md`
-- `docs/plans/project-status.zh.md`
-- `docs/plans/issue-backlog-global-gaps.zh.md`
-- `README.md`
-- `docs/README.md`
-
-## 推荐扩展顺序
-
-当前推荐的 store-import-facing 扩展顺序是：
-
-1. 若扩 planning / dependency 语义
-   - 先改 `ExecutionPlan`
-2. 若扩 workflow / node 当前状态语义
-   - 先改 `RuntimeSession`
-3. 若扩 event / failure sequencing 语义
-   - 再改 `ExecutionJournal`
-4. 若扩 consistency / progression 语义
-   - 再改 `ReplayView`
-5. 若扩 ready-set / blocked-frontier / checkpoint-friendly local state
-   - 再改 `SchedulerSnapshot`
-6. 若扩 machine-facing persistable basis / blocker
-   - 再改 `CheckpointRecord`
-7. 若扩 machine-facing planned durable identity / export blocker
-   - 再改 `CheckpointPersistenceDescriptor`
-8. 若扩 machine-facing export package identity / artifact bundle / manifest blocker
-   - 再改 `PersistenceExportManifest`
-9. 若扩 machine-facing store import candidate identity / staging artifact set / descriptor blocker
-   - 再改 `StoreImportDescriptor`
-10. 若扩 reviewer-facing staging preview / boundary / next-step recommendation
-   - 最后改 `StoreImportReviewSummary`
-
-这表示：
-
-1. `PersistenceExportManifest` 是 store-import-facing machine state 的直接上游事实来源
-2. `StoreImportDescriptor` 是 store import machine-facing state 的第一事实来源
-3. `StoreImportReviewSummary` 是 descriptor 的 readable projection，不是独立 durable store 状态机
-4. durable store / recovery protocol 若以后需要，应先扩 store import compatibility，而不是先改 review / CLI 文本
-
-## Future Durable Store Boundary Guidance
-
-当前 future durable store adapter / recovery explorer guidance 是：
-
-1. 允许 future explorer 依赖 `CheckpointRecord` 的 persistable prefix、resume blocker 与 checkpoint boundary kind
-2. 允许 future explorer 依赖 `CheckpointPersistenceDescriptor` 的 planned durable identity、exportable prefix、persistence blocker 与 basis kind
-3. 允许 future explorer 依赖 `PersistenceExportManifest` 的 export package identity、artifact bundle、manifest readiness、store-import blocker 与 boundary kind
-4. 允许 future explorer 依赖 `StoreImportDescriptor` 的 store import candidate identity、staging artifact set、descriptor boundary、import readiness、descriptor status 与 staging blocker
-5. 允许 reviewer tooling 依赖 `StoreImportReviewSummary` 的 staging preview / store boundary / next-step recommendation
-6. 不允许在当前版本中引入 durable checkpoint id、resume token、store mutation ABI、store URI、object path、import receipt、operator payload
-7. 不允许把 host telemetry、store metadata、provider payload 塞入 descriptor / review
-8. 不允许绕过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` 直接从 AST、trace、脚本推导 durable store state
-
-推荐依赖顺序：
-
-1. `ExecutionPlan`
-2. `RuntimeSession`
-3. `ExecutionJournal`
-4. `ReplayView`
-5. `SchedulerSnapshot`
-6. `CheckpointRecord`
-7. `CheckpointPersistenceDescriptor`
-8. `PersistenceExportManifest`
-9. `StoreImportDescriptor`
-10. `StoreImportReviewSummary`
-
-## 最小验证清单
-
-只要触及 store-import-facing 主链路，最低建议跑：
+从最具体到最广：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L store-import-descriptor-model
-ctest --preset test-dev --output-on-failure -L store-import-descriptor-bootstrap
-ctest --preset test-dev --output-on-failure -L store-import-review-model
-ctest --preset test-dev --output-on-failure -L store-import-golden
+ctest --preset test-dev --output-on-failure -R '<focused-regex>'
+python3 scripts/check-architecture.py
+python3 scripts/check-product-scope-freeze.py
+cmake --build --preset build-dev -j1
+ctest --preset test-dev --output-on-failure -L '^ahfl-controlled-pilot$'
+ctest --preset test-dev --output-on-failure -L '^ahfl-beta-gate$'
+ctest --preset test-dev --output-on-failure
 ```
 
-若改动触及 store import CLI / output，建议再补：
+`ahfl-controlled-pilot` 和 `ahfl-beta-gate` 都校验 evidence 的
+`source_revision` 等于当前 checkout；修改源码后必须重新生成，不能复用旧工作区产物。
+
+runtime kernel 变更至少覆盖：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L store-import-emission
+ctest --preset test-dev --output-on-failure \
+  -R 'ahfl\.runtime\.(workflow_runtime|execution_event|execution_report|execution_projection|workflow_recovery)_all|ahfl\.reference_workflow\.recovery_smoke'
 ```
 
-若想一次跑完整当前面：
+## 完成标准
 
-```bash
-ctest --preset test-dev --output-on-failure -L ahfl
-```
+完成不等于“有源码”“golden 更新”或“beta gate 绿色”。最终声明前必须确认：
 
-## 当前反模式
-
-当前明确不建议：
-
-1. 跳过 `StoreImportDescriptor`，直接在 `emit-store-import-review` / 外部脚本里私造 staging preview state machine
-2. 把 `DryRunTrace` 当 store import prototype / durable store explorer 的正式第一输入
-3. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor`，直接从 AST、source、trace 重建 store import candidate identity / staging artifact set / blocker
-4. 在 descriptor / review 中塞入 durable checkpoint id、resume token、store URI、object path、host telemetry、provider payload
-5. 在未更新 compatibility / matrix / contributor docs / golden / labels / CI 的情况下静默扩张 store-import-facing 稳定边界
-
-## 文档与测试联动约束
-
-当前要求文档、测试和实现保持同步：
-
-1. 改 `StoreImportDescriptor` 稳定字段时，要同步更新 store import compatibility 文档与 `tests/store_import/*.store-import-descriptor.json`
-2. 改 `StoreImportReviewSummary` 稳定字段时，要同步更新 store import compatibility 文档与 `tests/store_import/*.store-import-review`
-3. 改 store-import-facing layering / consumer 依赖顺序时，要同步更新 consumer matrix
-4. 改 contributor-facing 扩展路径时，要同步更新 `docs/README.md`、`README.md`、roadmap 与 backlog
-5. 改 store import 标签切片时，要同步更新 `tests/cmake/LabelTests.cmake` 与 `.github/workflows/ci.yml`
-
-## 当前状态
-
-截至当前实现：
-
-1. store import descriptor 的 model / validation / bootstrap / emission 已全部落地
-2. store import review 的 model / validation / emission 已全部落地
-3. store import compatibility、golden、CI 标签切片与 contributor guidance 已形成最小闭环
-4. 当前推荐扩展顺序已正式冻结为 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> store-import-review`
+1. 用户请求的每个行为都能从真实入口到达。
+2. 删除的旧面不再存在于 source、CMake、tests、docs 和 install targets。
+3. build 与相关测试是 fresh run。
+4. README、status 和 backlog 不夸大 capability。
+5. 没有把 draft/No-Go 的 Native gRPC、Web Playground 或 ecosystem adapter 偷偷产品化。

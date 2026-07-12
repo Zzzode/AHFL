@@ -142,12 +142,10 @@ flowchart TD
 - `include/ahfl/compiler/backends/<name>.hpp`
 - `src/compiler/backends/<name>.cpp`
 
-这里的“backend”只指消费 `ir::Program` 的 compiler-facing emitter。若输出消费的是 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等领域 artifact，它不是 backend；它应放在：
-
-- `include/ahfl/durable_store_import/artifacts.hpp`
-- `src/pipeline/persistence/durable_store_import/artifacts.cpp`
-
-并由 `ahfl_durable_store_import_artifacts` 构建目标承载。不要为每一种 durable-store import artifact 新增一对 header/source；新增 printer 应扩展这个 artifact emitter Module 的门面和实现。
+这里的“backend”只指消费 `ir::Program` 的 compiler-facing emitter。execution plan /
+dry-run 属于 package pipeline；真实 runtime output 属于
+`ExecutionEventStore` / `ExecutionReport` renderer。不要为了运行期展示新增 compiler backend
+或平行 artifact chain。
 
 其核心职责应是：
 
@@ -193,7 +191,10 @@ CLI 仍然不应理解：
 
 如果新增 backend 需要 CLI 写一大段专属编排，通常说明 backend/driver 边界还没抽清。
 
-若新增的是 runtime-adjacent artifact command，不要接入 `BackendKind`。它应沿 `dispatch_package_command(...)` 所代表的 package pipeline 扩展，并显式声明自己消费哪一层 artifact。Durable-store import artifact printer 不能放在 `src/compiler/backends`，也不能新增 `ahfl_backend_durable_store_import_*` target。
+若新增的是 execution plan 或 deterministic dry-run 输出，不要接入 `BackendKind`；
+它应沿 `dispatch_package_command(...)` 的 package pipeline 扩展。真实 runtime
+replay、audit、scheduler、checkpoint 或 recovery 需求必须扩 canonical execution event
+或 projection API，不能新增平行 artifact command。
 
 ## 新 backend 的最小测试面
 
@@ -322,8 +323,8 @@ flowchart TD
 4. 新增 mock 输入字段时，必须同步更新 mock parser、compatibility 文档与 `tests/dry_run/`
 5. 新增 trace 稳定字段时，必须同步更新 trace compatibility 文档与 `tests/trace/`
 6. 不要把 secret、endpoint、tenant、region 或 deployment 配置塞进 plan / trace 公共层
-7. 不要把 runtime artifact command 加入 `BackendKind`，除非它已经退化成纯 `ir::Program` emitter
-8. Durable-store import artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，链接 `ahfl_durable_store_import_artifacts`
+7. 不要把 runtime event/report/projection 加入 `BackendKind`
+8. 新的 runtime 展示只消费 `ExecutionReport` 或 `ExecutionEventStore`
 
 ## 当前参考实现
 

@@ -1,115 +1,144 @@
 # AHFL Native Runtime Artifacts
 
-本文是 AHFL native / runtime-adjacent artifact 的当前参考入口，合并原先按 artifact 拆开的 package、consumer matrix、execution、runtime、failure、scheduler、checkpoint、persistence、export 与 store-import compatibility 文档。
+本文是 AHFL 编译期 handoff 与运行期 event/projection 格式的参考入口。架构与不变量见 [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)，命令用法见 [user-guide-execution.zh.md](./user-guide-execution.zh.md)。
 
-关联文档：
-
-- [native-runtime-architecture.zh.md](../design/native-runtime-architecture.zh.md)
-- [native-handoff-usage.zh.md](./native-handoff-usage.zh.md)
-- [project-usage.zh.md](./project-usage.zh.md)
-- [durable-store-import-reference.zh.md](./durable-store-import-reference.zh.md)
-- [migration-policy.zh.md](./migration-policy.zh.md)
-
-## 当前口径
-
-AHFL 仍处于快速演进阶段，不维护 immature artifact 的前向兼容承诺。本文中的 format version 用于当前 artifact consumer、golden、schema drift evidence 和 release gate 校验；它不是“永远兼容旧 consumer”的承诺。
-
-变更原则：
-
-1. Machine-facing artifact 必须有单一 format version 入口。
-2. 下游 artifact 必须记录直接上游 source format version。
-3. Review / audit / CLI text 是 projection，不能成为 machine-facing source of truth。
-4. 语义改变、字段含义改变、source chain 改变或事实来源改变，都必须同步 format version、golden 和本文。
-5. 只改展示文案、不改变 machine-facing schema 或语义时，不新建 compatibility 文档。
-
-## Artifact Chain
+## 分层
 
 ```mermaid
 flowchart LR
-    Authoring[ahfl.toml handoff target] --> Package[Native Package]
+    Manifest[Package manifest] --> Package[Native handoff package]
     Package --> Plan[ExecutionPlan]
     Plan --> DryRun[DryRunTrace]
-    Plan --> Session[RuntimeSession]
-    Session --> Journal[ExecutionJournal]
-    Journal --> Replay[ReplayView]
-    Replay --> Audit[AuditReport]
-    Replay --> Scheduler[SchedulerSnapshot]
-    Scheduler --> Checkpoint[CheckpointRecord]
-    Checkpoint --> Persistence[CheckpointPersistenceDescriptor]
-    Persistence --> Export[PersistenceExportManifest]
-    Export --> StoreImport[StoreImportDescriptor]
+    Plan --> Runtime[WorkflowRuntime]
+    Runtime --> Events[ExecutionEventStore]
+    Events --> Report[ExecutionReport]
+    Events --> Projections[Replay Audit Scheduler Checkpoint]
+    Projections --> Recovery[WorkflowRecoverySnapshot]
 ```
 
-`DryRunTrace` 与 `AuditReport` 是旁路 projection。它们可以被人或 CI 消费，但不应作为后续 machine-facing artifact 的第一输入。
+`ExecutionPlan` 和 `DryRunTrace` 是 compiler/pipeline artifact。真实运行的动态事实只存在于 `ExecutionEventStore`；report、renderer 与所有运行期 projection 都是派生结果。
 
-## 格式标识总表
+## 代码入口
 
-| Artifact | 格式标识 | 代码事实来源 |
+| Contract | 代码入口 |
+| --- | --- |
+| Native handoff package | `include/ahfl/compiler/handoff/package.hpp` |
+| Execution plan | `include/ahfl/compiler/handoff/package.hpp` |
+| Dry-run trace | `src/pipeline/execution/dry_run/runner.hpp` |
+| Strong runtime IDs and events | `include/ahfl/runtime/execution_event.hpp` |
+| Execution report | `include/ahfl/runtime/execution_report.hpp` |
+| Human / JSON / JSONL renderer | `include/ahfl/runtime/execution_renderer.hpp` |
+| Replay / audit / scheduler / checkpoint | `include/ahfl/runtime/execution_projection.hpp` |
+| OTLP-compatible trace projection | `include/ahfl/runtime/execution_otel.hpp` |
+| Recovery store | `src/runtime/engine/workflow_recovery.hpp` |
+
+## Strong IDs
+
+以下类型是互不隐式转换的 numeric index wrapper：
+
+`RunId`、`WorkflowId`、`WorkflowNodeId`、`AgentId`、`CapabilityId`、`ProviderId`、`AgentStateId`、`InvocationId`、`RuntimeValueId`、`DiagnosticId`、`ExecutionEventId`、`CheckpointId`。
+
+字符串只用于 source-level name、diagnostic 和 renderer。事件关联、预算归属、retry/fallback 关联和恢复判断禁止使用名称字符串。
+
+## Event Payload
+
+`ExecutionEventPayload` 是 `std::variant`，当前 family 如下：
+
+| Family | Payload |
+| --- | --- |
+| Run | `RunStarted`, `RunResumed`, `RunCancellationRequested`, `RunInterrupted`, `RunCompleted` |
+| Workflow | `WorkflowStarted`, `WorkflowCompleted`, `WorkflowFailed` |
+| Node | `NodeScheduled`, `NodeStarted`, `NodeRestored`, `NodeCompleted`, `NodeFailed`, `NodeSkipped` |
+| Agent | `AgentStateEntered` |
+| Capability | `CapabilityStarted`, `CapabilityUsageRecorded`, `CapabilityCompleted`, `CapabilityFailed`, `CapabilityRetryScheduled` |
+| Provider | `ProviderDegraded` |
+| Recovery | `CheckpointSaved` |
+
+每个 event 记录 `ExecutionEventId` 和 monotonic offset。event ID 是单次运行的观察顺序；DAG 因果关系来自 dependency IDs。
+
+`CapabilityUsageRecorded` 位于对应 invocation 的 start 与 terminal 之间，每个 invocation
+最多一条。它保存 prompt/completion/total token、estimated cost 和 stable policy notices；
+不保存 prompt、response 或 secret。失败 event 在 JSON/JSONL 中按 `DiagnosticId` 从 flat
+diagnostic store materialize code、message、range、position 与 related notes。
+
+## Validation
+
+`validate_execution_events` 至少拒绝：
+
+1. event ID 与 flat store index 不一致。
+2. monotonic offset 倒退。
+3. 同一 identity 重复 start。
+4. started identity 缺少 terminal event。
+5. 同一 identity 重复 terminal。
+6. 没有 start 的 terminal event。
+7. usage 出现在 invocation start 前或 terminal 后。
+8. 同一 invocation 重复 usage。
+
+失败返回结构化 issue，不允许通过 renderer 隐藏。
+
+## Projection Matrix
+
+| Consumer | Stable input | Output |
 | --- | --- | --- |
-| Package manifest handoff target | AHFL Package Manifest / PackageGraph | `ahfl::manifest::PackageManifest` |
-| Native handoff package | AHFL Native Handoff Package 格式 | `ahfl::handoff::kFormatVersion` |
-| ExecutionPlan | AHFL Execution Plan 格式 | `ahfl::handoff::kExecutionPlanFormatVersion` |
-| DryRunTrace | AHFL Dry-Run Trace 格式 | `ahfl::dry_run::kTraceFormatVersion` |
-| RuntimeSession | AHFL Runtime Session 格式 | `ahfl::runtime_session::kRuntimeSessionFormatVersion` |
-| ExecutionJournal | AHFL Execution Journal 格式 | `ahfl::execution_journal::kExecutionJournalFormatVersion` |
-| ReplayView | AHFL Replay View 格式 | `ahfl::replay_view::kReplayViewFormatVersion` |
-| AuditReport | AHFL Audit Report 格式 | `ahfl::audit_report::kAuditReportFormatVersion` |
-| SchedulerSnapshot | AHFL Scheduler Snapshot 格式 | scheduler snapshot model |
-| SchedulerDecisionSummary | AHFL Scheduler Review 格式 | scheduler review model |
-| CheckpointRecord | AHFL Checkpoint Record 格式 | checkpoint model |
-| CheckpointReviewSummary | AHFL Checkpoint Review 格式 | checkpoint review model |
-| CheckpointPersistenceDescriptor | AHFL Persistence Descriptor 格式 | persistence descriptor model |
-| PersistenceReviewSummary | AHFL Persistence Review 格式 | persistence review model |
-| PersistenceExportManifest | AHFL Persistence Export Manifest 格式 | export manifest model |
-| PersistenceExportReviewSummary | AHFL Persistence Export Review 格式 | export review model |
-| StoreImportDescriptor | AHFL Store Import Descriptor 格式 | store import descriptor model |
-| StoreImportReviewSummary | AHFL Store Import Review 格式 | store import review model |
+| Report builder | event span | workflow/node terminal status、execution order、output/diagnostic IDs |
+| Replay builder | `WorkflowResult` | node progression、blocking dependencies、restored checkpoint |
+| Audit builder | `WorkflowResult` | event counts、degradation/checkpoint counts、terminal invariant |
+| Scheduler builder | `WorkflowResult` | dependency satisfaction、completed prefix、next candidate |
+| Checkpoint builder | `WorkflowResult` | completed node value IDs、resume candidate |
+| Recovery materializer | checkpoint projection + value store | deep-cloned recoverable node values |
+| Human/JSON renderer | report + metadata/value stores | final presentation |
+| JSONL renderer | event store | ordered machine event stream |
+| OTel adapter | event store + run wall-clock anchor | deterministic OTLP-compatible span model / JSON |
 
-## Current Consumer Matrix
+projection 不能互相成为第一输入；所有 builder 独立读取 canonical events。
 
-| Consumer | Stable input | Output / projection | Notes |
-| --- | --- | --- | --- |
-| Package reader | Native handoff package | package summary | 校验 package format 与 identity consistency。 |
-| Execution planner bootstrap | Native handoff package | planner bootstrap summary | 不执行 runtime，不调度 worker。 |
-| Execution plan emitter | Planner input | `ExecutionPlan` | 冻结 workflow node、dependency、input expression 与 source package。 |
-| Dry-run runner | `ExecutionPlan` + mock binding | `DryRunTrace` | deterministic local projection，不调用真实 capability。 |
-| Runtime session bootstrap | `ExecutionPlan` + execution result | `RuntimeSession` | 当前承诺 partial / failed session。 |
-| Journal builder | `RuntimeSession` | `ExecutionJournal` | 记录 ordered event family。 |
-| Replay builder | plan + session + journal | `ReplayView` | consistency projection，不重新定义 session。 |
-| Audit builder | plan + session + journal + replay | `AuditReport` | reviewer-facing aggregate。 |
-| Scheduler prototype | replay / session facts | `SchedulerSnapshot` / review | 只冻结 ready / blocked / cursor facts。 |
-| Checkpoint prototype | scheduler chain | `CheckpointRecord` / review | 不承诺 durable recovery protocol。 |
-| Persistence prototype | checkpoint chain | `CheckpointPersistenceDescriptor` / review | 不承诺真实 object store schema。 |
-| Export prototype | persistence chain | `PersistenceExportManifest` / review | 冻结 bundle 和 source chain。 |
-| Store import prototype | export chain | `StoreImportDescriptor` / review | durable provider pipeline 的直接上游。 |
+## Recovery Schema
 
-## Breaking Change 触发条件
+当前持久化 schema：
 
-以下变化必须视为 format-version / golden / reference 同步事件：
+```text
+ahfl.workflow-recovery.v1
+```
 
-1. 删除或重命名 machine-facing 字段。
-2. 改变字段语义、枚举语义、状态集合或 event kind。
-3. 改变 source artifact chain 或 source format version 字段。
-4. 改变哪个 artifact 是第一事实来源。
-5. 把 review-only / CLI-only 字段升级成 machine-facing input。
-6. 把 secret、endpoint、object path、database key、resume token 等真实 deployment material 混入当前 artifact。
+snapshot 保存 workflow ID、checkpoint ID 和已完成节点的 agent/value。保存使用 atomic replace。load 对 missing、read failure、schema/value corruption 和非法 identity fail closed。
 
-以下变化通常不需要单独文档：
+恢复后的 event stream包含：
 
-1. 新增可忽略的 reviewer-facing 文案。
-2. CLI help 文案调整。
-3. 测试 fixture 名称调整。
-4. 不改变 machine-facing schema 的内部重构。
+1. `RunResumed`
+2. 每个已完成节点的 `NodeRestored`
+3. 后续未完成节点的正常 scheduled/start/terminal events
+4. 唯一 `RunCompleted`
 
-## 变更检查清单
+## CLI Contract
 
-修改 native/runtime artifact 时：
+公开 runtime 产品面：
 
-1. 更新模型 header / implementation。
-2. 更新 format-version 常量或明确说明无需变更。
-3. 更新 JSON / text golden。
-4. 更新相关 CLI reference。
-5. 更新本文的 format version 表或 consumer matrix。
-6. 运行相关 CTest label 和全量 `git diff --check`。
+```text
+ahflc emit execution-plan ...
+ahflc emit dry-run-trace ...
+ahflc run [--profile <name>] [--output-format human|json|jsonl|quiet] ...
+```
 
-新增 durable-store/provider artifact 时，不在本文继续扩展逐阶段 compatibility；应更新 [durable-store-import-reference.zh.md](./durable-store-import-reference.zh.md)。
+replay、audit、scheduler 和 checkpoint 是 event-native library projections；它们不作为平行公开 artifact catalog。
+
+`build_execution_otel_trace(...)` 同样是纯 projection。它生成 run -> workflow -> node ->
+capability parent/child spans，并把 retry、fallback、checkpoint、resume 与 interruption 作为
+span events；它不修改 runtime state，也不成为新的事实源。
+
+## Breaking Change Checklist
+
+修改 runtime event 或 recovery schema 时：
+
+1. 更新 payload/ID 定义及 terminal invariant。
+2. 更新 report、所有 projection 和 renderer。
+3. 更新 recovery schema 或给出明确拒绝策略。
+4. 更新 event/report/projection/recovery tests。
+5. 更新 reference workflow crash/restart evidence。
+6. 运行 architecture、scope-freeze、controlled-pilot 和 beta gates：
+
+```bash
+python3 scripts/check-architecture.py
+python3 scripts/check-product-scope-freeze.py
+ctest --preset test-dev --output-on-failure -L '^ahfl-controlled-pilot$'
+ctest --preset test-dev --output-on-failure -L '^ahfl-beta-gate$'
+```

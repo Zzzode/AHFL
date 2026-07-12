@@ -106,7 +106,7 @@ IR program 当前包含三个稳定顶层字段：
 
 ```json
 {
-  "format_version": "ahfl.ir",
+  "format_version": "ahfl.ir.v2",
   "formal_observations": [],
   "declarations": []
 }
@@ -217,7 +217,7 @@ JSON IR 中，旧字符串字段仍然保留：
 2. 需要保持旧版本兼容时，仍可读取原有字符串字段。
 3. 对未知 `*_ref` 子字段保持 forward-compatible 忽略能力。
 
-## ExprRef / Source Range / ID
+## ExprRef / Source Range / Type / Effect / ID
 
 当前 Semantic IR 的普通 expression 由 `Program::expr_arena` 统一拥有，节点之间通过 `ExprRef` 引用，而不是嵌套 owning pointer tree。JSON IR 仍导出结构化 expression tree，消费方不需要直接理解 arena 内存布局，但应按下面规则处理稳定身份和诊断位置：
 
@@ -225,6 +225,11 @@ JSON IR 中，旧字符串字段仍然保留：
 2. `ExprRef` 是实现层 handle，不是当前 JSON IR 的跨版本 ABI；外部机器消费仍应读取 JSON 节点结构。
 3. expression、statement、declaration provenance、type ref 等位置携带的 `source_range` 使用 `[begin_offset, end_offset)` 半开区间。
 4. 表达式类型应读取结构化 `type_ref` / `resolved_type` 相关字段，不要从展示字符串反推类型。
+5. 每个 expression 都携带 Sema 推导的 `effect`：`pure`、`const_only`、`predicate_call`、`nondet`、`capability_call`、`external_effect` 或 `unknown`。
+
+`effect` 来自 Typed HIR 的 `ExprEffect`，不是 IR/backend 重扫 AST 的结果。assurance 和
+formal consumer 必须消费该字段及其 derived summary；如果 capability identity 与
+`inferred_effect` 矛盾，consumer 必须 fail closed。
 
 statement 与 temporal expression 当前不是 arena/ref ABI。它们在 JSON IR 中继续作为 owning tree 输出：statement 由 block 顺序拥有，temporal expression 由 contract clause 或 workflow safety/liveness formula 递归拥有。`Statement::id` 可用于同一次 IR 输出内的诊断和测试关联；temporal expression 没有跨 owner 稳定 handle。外部 consumer 需要遍历 statement / temporal 时，应遍历 JSON tree 本身，而不是期待 `StatementRef` / `TemporalRef`。
 
@@ -254,6 +259,7 @@ Typed HIR serialization、Semantic IR lowering、JSON IR、文本 IR、runtime a
 - `summary.may_fallthrough`
 - `summary.assigned_paths`
 - `summary.called_targets`
+- `summary.inferred_effect`
 - `summary.assert_count`
 
 它的作用不是替代 statement tree，而是显式暴露 backend/tooling 需要的受限控制与副作用摘要。
@@ -267,6 +273,7 @@ Typed HIR serialization、Semantic IR lowering、JSON IR、文本 IR、runtime a
     "may_fallthrough": false,
     "assigned_paths": [],
     "called_targets": ["demo::Echo"],
+    "inferred_effect": "capability_call",
     "assert_count": 0
   }
 }
@@ -347,9 +354,7 @@ Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bo
 
 ## 版本与变更规则
 
-Semantic IR 当前稳定格式标识为：
-
-- AHFL IR 格式
+Semantic IR 当前格式标识为 `ahfl.ir.v2`。
 
 该格式标识同时出现在文本 IR 首行和 JSON IR 顶层字段。`include/ahfl/compiler/ir/ir.hpp` 中的 `ahfl::ir::kFormatVersion` 是实现侧事实来源。
 
@@ -367,6 +372,10 @@ Semantic IR 当前稳定格式标识为：
 3. 改变 `TypeRef` / `SymbolRef` 的 identity 语义。
 4. 改变 `formal_observations` 的收集边界。
 5. 让普通 backend 隐式消费 Opt IR，或让 `--optimize` 绕过 Semantic IR contract。
+
+`ahfl.ir.v2` 相比 v1 新增必填 expression `effect` 和 flow summary
+`inferred_effect`，用于把 Sema effect facts 正式贯穿到 assurance/formal。v1 consumer
+应明确拒绝或升级，不得把缺失 effect 静默当作 pure。
 
 Consumer 建议：
 

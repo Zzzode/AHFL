@@ -1,8 +1,8 @@
 # AHFL Execution Demo
 
-This example is an incident-triage workflow that executes one real LLM-backed
-capability. It uses GLM through an OpenAI-compatible chat-completions endpoint
-and reads the API token from `llm_config.glm.json`.
+This example is the AHFL beta reference workflow. It is an incident-triage
+workflow that executes one real LLM-backed capability through an
+OpenAI-compatible GLM endpoint.
 
 The workflow spans multiple AHFL modules:
 
@@ -13,12 +13,18 @@ The workflow spans multiple AHFL modules:
   through the configured LLM provider and then composes the final response.
 - `main.ahfl` wires the three agents into `IncidentWorkflow`.
 
-The example config is a local GLM config with an inline `api_key`. Treat it as a
-machine-local secret file and do not publish it.
+The committed `llm_config.example.json` contains only an explicit secret handle:
 
-If you need to refresh it from your Claude GLM config, copy
-`env.ANTHROPIC_AUTH_TOKEN` from `~/.claude/glm.json` into
-`examples/execution-demo/llm_config.glm.json`.
+```json
+"api_key_secret": "env:AHFL_GLM_API_KEY"
+```
+
+Export the key in the process environment. Never write the key into a JSON
+configuration file:
+
+```bash
+export AHFL_GLM_API_KEY='...'
+```
 
 Run the high-severity path:
 
@@ -26,7 +32,7 @@ Run the high-severity path:
 cd examples/execution-demo
 ../../build/dev/src/tooling/cli/ahflc run \
   --input "$(tr -d '\n' < inputs/high-severity.json)" \
-  --llm-config llm_config.glm.json
+  --llm-config llm_config.example.json
 ```
 
 Run the low-risk path:
@@ -35,7 +41,7 @@ Run the low-risk path:
 cd examples/execution-demo
 ../../build/dev/src/tooling/cli/ahflc run \
   --input "$(tr -d '\n' < inputs/low-risk.json)" \
-  --llm-config llm_config.glm.json
+  --llm-config llm_config.example.json
 ```
 
 Useful inspection commands:

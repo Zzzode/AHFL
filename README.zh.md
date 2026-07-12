@@ -17,33 +17,41 @@
   </p>
 </p>
 
-AHFL（Agent Handoff Flow Language）是一门强类型 DSL，用于在 Agent 执行前建模状态机、行为契约、工作流 DAG、运行时交接工件和形式化验证边界。
-
-本仓库包含语言语法、C++23 编译器 `ahflc`、runtime-adjacent artifact 构建链路、本地执行路径、LSP 服务端，以及 VS Code 扩展打包流程。
+AHFL（Agent Handoff Flow Language）是一门用于建模和执行可审计 Agent 工作流的强类型 DSL 与 C++23 编译器。
 
 ## 项目状态
 
-AHFL 当前处于活跃的编译器与工具链开发阶段。为了改进语言和编译器架构，当前不承诺 immature artifact 的前向兼容；迁移策略见 [migration policy](docs/reference/migration-policy.zh.md)。
+AHFL 当前由 beta gate 治理，仍可能发生 breaking change；迁移策略见
+[migration policy](docs/reference/migration-policy.zh.md)。产品能力以逐项
+release evidence 为准，不以存在源码、handler、golden 或聚合测试数量为准。
 
-当前基线：
+### 已验证 Beta 能力
 
-- C++23 编译器流水线：parse、resolve、typecheck、validate、lower to IR、emit artifacts。
-- Project-aware 编译，支持 module / source graph。
-- Native package handoff、execution plan、runtime session、journal、replay、audit、scheduler、checkpoint、persistence、export、store import 等 runtime-adjacent artifact 链路。
-- 面向 NuSMV / nuXmv 的形式化验证输出。
-- LSP 服务端与 VS Code 扩展打包流程，platform VSIX 内置 release LSP 二进制。
-- 900+ 个 CTest 注册的回归、单元、集成和 benchmark 测试。
+- <!-- beta-capability:BETA-01 schema=ahfl.beta-evidence.run-profiles.v1 --> Manifest run profile 可直接启动 reference workflow，无需重复提供 CLI 配置。
+- <!-- beta-capability:BETA-02 schema=ahfl.beta-evidence.runtime-identity.v1 --> Runtime 的 workflow、node、agent、capability、invocation、value 与 event 关联使用强类型数值 ID。
+- <!-- beta-capability:BETA-03 schema=ahfl.beta-evidence.event-projections.v1 --> 单一 flat event store 驱动 human、JSON、JSONL、replay 与 audit 投影。
+- <!-- beta-capability:BETA-04 schema=ahfl.beta-evidence.lifecycle-matrix.v1 --> 已接受的成功与失败生命周期路径都具有唯一 terminal event。
+- <!-- beta-capability:BETA-05 schema=ahfl.beta-evidence.formatter-idempotence.v1 --> AHFL formatter 对 std/ 与 formatter fixtures 无损且幂等，并由阻断式 CI gate 检查。
+- <!-- beta-capability:BETA-06 schema=ahfl.beta-evidence.stdlib-container-migration.v1 --> 核心容器解析为 nominal stdlib 泛型，不再保留 legacy runtime Option 表示或迁移开关。
+- <!-- beta-capability:BETA-07 schema=ahfl.beta-evidence.reference-workflow-recovery.v1 --> Reference workflow 已通过本地 HTTP provider 故障注入、SIGKILL 重启、operator approval 恢复、partial-write recovery 与副作用去重。
+- <!-- beta-capability:BETA-08 schema=ahfl.beta-evidence.install-smoke.v1 --> Clean-prefix 安装包含 ahflc、ahfl-lsp 与 sysroot；platform VSIX 包含 release LSP 与 sysroot，并通过隔离安装。
+- <!-- beta-capability:BETA-10 schema=ahfl.beta-evidence.product-scope-freeze.v1 --> Beta 产品面保持冻结；新增 action、backend 或 artifact 必须先有 accepted RFC。
+
+证据合同位于 [`config/beta-gate.json`](config/beta-gate.json)。未列入上表的能力
+可以作为编译器模块、实验 backend 或开发工具存在，但本 README 不声明其已达到
+beta readiness。Native Protobuf transport、多 region 运行、官方 registry service、
+浏览器 playground 与 Marketplace 发布均不在当前已验证 beta 产品面内。
 
 ## AHFL 解决什么问题
 
-| 场景 | AHFL 提供的能力 |
-| --- | --- |
-| Agent 工作流建模 | 显式 agent、state、transition、capability 和 workflow。 |
-| 静态安全检查 | 强类型 schema、表达式、契约与 workflow dependency 检查。 |
-| Runtime 交接 | 用机器可读 native/runtime artifact 替代临时脚本和隐式约定。 |
-| 审查与审计 | 结构化 summary、replay view、audit report 和 release evidence artifact。 |
-| 形式化验证 | SMV 后端支持 safety / liveness 模型检查。 |
-| IDE 集成 | LSP diagnostics、hover、completion、definition、references、rename。 |
+AHFL 面向需要显式管理执行顺序、capability 边界、失败处理、replay 与 audit 的
+工作流，定位为 typed control and assurance layer。Beta reference scenario 是
+[`examples/execution-demo`](examples/execution-demo)：它包含多 Agent 节点、本地
+HTTP-backed LLM capability、预算、durable checkpoint/receipt store、crash recovery
+与 operator approval。
+
+Formal emitter、其他基础设施 backend 和更深 IDE 功能仍可用于开发与评估，但它们
+与已验证 beta runtime path 分开治理。
 
 ## 语言预览
 
@@ -109,17 +117,17 @@ cmake --build --preset build-dev
 # 类型检查源码文件。
 ./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
 
-# 输出人类可读的编译摘要。
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
-
-# 输出机器可读的 Semantic IR。
-./build/dev/src/tooling/cli/ahflc emit ir-json examples/refund/audit.ahfl
+# 通过 manifest profile 运行 beta reference workflow。
+cd examples/execution-demo
+../../build/dev/src/tooling/cli/ahflc run --output-format json
 
 # 查看所有命令和 artifact。
-./build/dev/src/tooling/cli/ahflc --help
+../../build/dev/src/tooling/cli/ahflc --help
 ```
 
-Runtime 执行使用 `ahflc run`，需要 workflow input 以及 capability / provider 配置或测试 fixture。运行 provider-backed workflow 前建议先阅读 [执行指南](docs/reference/user-guide-execution.zh.md)。
+提交的 LLM 配置只使用环境变量 secret handle。运行 provider-backed workflow 前请先阅读
+[reference workflow 指南](examples/execution-demo/README.md)和
+[执行指南](docs/reference/user-guide-execution.zh.md)。
 
 ## 架构
 
@@ -168,8 +176,7 @@ examples/             AHFL 示例程序
 | CLI 参考 | [docs/reference/cli-commands.zh.md](docs/reference/cli-commands.zh.md) |
 | IR 格式 | [docs/reference/ir-format.zh.md](docs/reference/ir-format.zh.md) |
 | Project / workspace 使用 | [docs/reference/project-usage.zh.md](docs/reference/project-usage.zh.md) |
-| Native / runtime artifacts | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
-| Durable store import pipeline | [docs/reference/durable-store-import-reference.zh.md](docs/reference/durable-store-import-reference.zh.md) |
+| Runtime events 与 recovery | [docs/reference/native-runtime-artifacts.zh.md](docs/reference/native-runtime-artifacts.zh.md) |
 | VS Code LSP 扩展 | [docs/reference/lsp-vscode-extension.zh.md](docs/reference/lsp-vscode-extension.zh.md) |
 | 贡献指南 | [docs/reference/contributor-guide.zh.md](docs/reference/contributor-guide.zh.md) |
 

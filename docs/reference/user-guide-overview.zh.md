@@ -18,8 +18,8 @@ AHFL 是 Agent 控制平面 DSL。它的核心目标是让 Agent 工作流在真
 1. **结构可见**：Agent 的状态、转移、可调用 capability、workflow DAG 依赖都写在源码里。
 2. **类型可查**：输入、输出、上下文、capability 参数和返回值都经过静态检查。
 3. **行为可约束**：`requires`、`ensures`、`invariant`、`forbid` 描述执行前后的控制要求。
-4. **执行可演练**：编译器能输出 package、execution plan、dry-run trace、journal、replay、audit 等 machine artifact。
-5. **上线可审计**：assurance、formal、durable-store、provider readiness artifact 构成发布前证据链。
+4. **执行可演练**：编译器能输出 package、execution plan 和 deterministic dry-run trace。
+5. **上线可审计**：真实运行以 structured execution events 为唯一事实源，并生成 report、replay、audit、scheduler、checkpoint 和 recovery 投影。
 6. **真实执行可控**：`ahflc run` 通过 OpenAI-compatible LLM Provider 配置执行 workflow，并在配置缺失或输入非法时 fail closed。
 
 AHFL 不把外部工具实现、数据库写入、支付网关或 LLM 服务本身纳入 DSL 源码；这些能力通过 capability 边界、运行时配置和 Provider 证据链接入。
@@ -35,8 +35,9 @@ flowchart TB
     Package --> Runtime[真实 runtime run]
     Model --> Formal[SMV / formal verification]
     Model --> Assurance[Assurance validation]
-    DryRun --> Evidence[Journal / Replay / Audit / Store / Provider evidence]
-    Runtime --> Evidence
+    DryRun --> Evidence[Deterministic trace]
+    Runtime --> Events[Execution event store]
+    Events --> Evidence[Report / Replay / Audit / Recovery]
     Formal --> Gate[发布门禁]
     Assurance --> Gate
     Evidence --> Gate
@@ -49,9 +50,9 @@ flowchart TB
 3. 运行 `ahflc dump` 或 `ahflc emit summary`：确认编译器看到的结构符合预期。
 4. 对稳定项目添加 `ahfl.toml`，多 package 工程添加 `ahfl.workspace.toml`。
 5. 运行 `ahflc dump package-graph` 和 `ahflc emit native-json --manifest ... --target ...`：确认 package、target 与 handoff surface。
-6. 用 mock capability 运行 `ahflc emit dry-run-trace`、journal、replay、audit。
-7. 用 `ahflc validate`、`ahflc verify` 和 provider evidence 命令进入发布门禁。
-8. 准备 LLM Provider 配置后，用 `ahflc run` 执行真实 workflow。
+6. 用 mock capability 运行 `ahflc emit dry-run-trace`。
+7. 准备 LLM Provider 配置后，用 `ahflc run` 执行真实 workflow，并选择 human、JSON 或 JSONL 输出。
+8. 用 `ahflc validate`、`ahflc verify`、event audit 和 recovery evidence 进入发布门禁。
 
 ## 功能总览
 
@@ -72,7 +73,7 @@ flowchart TB
 | Runtime run | 使用 OpenAI-compatible LLM Provider 执行 workflow | `ahflc run --workflow ... --input ...` | [执行与包指南](./user-guide-execution.zh.md) |
 | Assurance gate | 检查 capability effect、幂等、回执、审批和补偿事实 | `ahflc validate` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
 | Formal verification | 通过 NuSMV / nuXmv 验证有限控制模型 | `ahflc verify` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
-| Durable store / Provider evidence | 生成持久化、导出、store import、provider readiness 证据 | `ahflc emit store/...`、`ahflc emit-provider-artifact ...` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
+| Event audit / Recovery | 从唯一 event store 生成 audit、checkpoint 与 crash/resume 证据 | `ahflc run --output-format jsonl`、recovery smoke | [保障与生产证据指南](./user-guide-assurance.zh.md) |
 
 ## 快速开始
 
@@ -113,12 +114,12 @@ cmake --build --preset build-dev
 |------|------|
 | [user-guide-authoring.zh.md](./user-guide-authoring.zh.md) | 如何写 `.ahfl` 源码，包括类型、capability、agent、contract、flow 和 workflow |
 | [user-guide-cli.zh.md](./user-guide-cli.zh.md) | 当前 CLI 命令、输入模式、常用 artifact 和诊断方法 |
-| [user-guide-execution.zh.md](./user-guide-execution.zh.md) | Package manifest、handoff target、dry run、runtime artifact、真实 LLM 执行 |
-| [user-guide-assurance.zh.md](./user-guide-assurance.zh.md) | Assurance、formal verification、durable-store、Provider 生产证据链 |
+| [user-guide-execution.zh.md](./user-guide-execution.zh.md) | Package manifest、handoff target、dry run、structured events、真实 LLM 执行 |
+| [user-guide-assurance.zh.md](./user-guide-assurance.zh.md) | Assurance、formal verification、event audit 与 recovery evidence |
 
 ## 与其他文档的关系
 
 - 语言事实以 [core-language.zh.md](../spec/core-language.zh.md) 为准。
 - Assurance 规则以 [assurance.zh.md](../spec/assurance.zh.md) 为准。
 - CLI 历史版本细节可查 [cli-commands.zh.md](./cli-commands.zh.md)，但本文系列以当前 `ahflc --help` 的命令形态为准。
-- Durable store 和 provider 贡献者细节可查 [durable-store-import-reference.zh.md](./durable-store-import-reference.zh.md)。
+- Runtime event、projection 与 recovery contract 可查 [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)。

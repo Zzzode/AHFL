@@ -432,14 +432,14 @@ driver 只暴露一组 backend-facing 入口：
 当前仓库存在五类相邻但不同的输出层：
 
 1. Core backend：消费 `ir::Program`，通过 `BackendKind` / `BackendRegistry` / `emit_backend(...)` 分发。
-2. Runtime artifact pipeline：消费 package metadata、execution plan、dry-run trace、runtime session、checkpoint、persistence、durable-store 等 machine artifact，由 `dispatch_package_command(...)` 显式分发。
-3. Durable store import artifact emitter：消费 `ahfl::durable_store_import` 领域模型，位于 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/pipeline/persistence/durable_store_import/artifacts.cpp`，由 `ahfl_durable_store_import_artifacts` 构建目标承载。
-4. Compiler diagnostic artifact：当前代表是 `emit opt-ir` / `emit opt-ir-json`，消费 `ir::Program` 后降到 `ir::opt::OptProgram` 并输出诊断 dump 或 `AHFL_OPT_IR_V1` JSON artifact。
+2. Package pipeline：消费 package metadata，生成 execution plan 或 deterministic dry-run trace。
+3. Runtime event/report pipeline：`WorkflowRuntime` 产生 events，renderer 和 projection 消费 events/report。
+4. Compiler diagnostic artifact：当前代表是 `emit opt-ir` / `emit opt-ir-json`，消费 `ir::Program` 后降到 `ir::opt::OptProgram`。
 5. Target generator：消费目标平台专用 config，例如 WASM、K8s CRD、OpenAPI、Terraform。
 
-这五类不能被混称为同一种 backend。若一个输出需要沿 runtime artifact chain 逐层构造状态，它应落在 package pipeline；若它只把稳定 IR 渲染成目标格式，它才应接入 core backend registry。Opt IR 当前虽然消费 `ir::Program`，但它的目标是诊断和优化验证，不是 backend registry 的输出合同。
-
-`src/compiler/backends` 不承载 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等 artifact printer。这些 printer 不是 compiler backend：它们不消费 `ir::Program`，而是序列化 durable-store import 的领域 artifact。把它们收敛到 `src/pipeline/persistence/durable_store_import/artifacts.cpp` 可以让 backend Module 保持 IR-facing，让 durable-store import Module 自己拥有 artifact 输出 Locality，同时避免每个 artifact 一对浅 header/source。
+这五类不能被混称为同一种 backend。动态 runtime state 不能进入 backend registry，也不能在
+package pipeline 中建立第二事实源；它只能从 canonical execution events 派生。Opt IR
+虽然消费 `ir::Program`，但目标是诊断和优化验证，不是 backend registry 的输出合同。
 
 ## 当前 core backend 与诊断 artifact 的边界
 
@@ -538,7 +538,9 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 
 1. 先判断它是 core backend、runtime artifact pipeline，还是 target generator。
 2. 若是 core backend，扩展 `BackendKind` 并通过 `BackendRegistrar` 注册到 `BackendRegistry`。
-3. 若是 runtime artifact pipeline，沿已有 artifact chain 增加 helper / printer / dispatcher；durable-store import printer 必须放在 `artifacts.hpp` / `artifacts.cpp` 这个 seam 下，不要放回 `src/compiler/backends`。
+3. 若是 execution plan / dry-run，扩 package pipeline；若是 runtime replay、audit、
+   scheduler、checkpoint 或展示，扩 canonical event/projection/renderer，不要放回
+   `src/compiler/backends`。
 4. 若它需要的语义已有多个 backend 会共享，先把该语义推进 IR。
 
 ## 推荐阅读顺序
@@ -572,6 +574,6 @@ SMV 具体语义边界由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结�
 3. observation 命名由 IR 统一定义，不由 backend 各自发明。
 4. backend 只消费稳定语义结果，不回头接触 parser、AST 或文件系统。
 5. 若某项语义不能稳定进入 IR，就说明它还没有准备好成为 backend 约束。
-6. CLI 必须显式区分 core backend command 与 package pipeline command，不能靠“dispatcher 试试看”来决定语义路径。
-7. Durable-store import artifact printer 必须链接到 `ahfl_durable_store_import_artifacts`，不能作为 `ahfl_backend_*` target 进入 backend aggregate。
+6. CLI 必须显式区分 core backend、package pipeline 与 runtime execution，不能靠“dispatcher 试试看”来决定语义路径。
+7. Runtime event/report/projection 不得作为 `ahfl_backend_*` target 进入 backend aggregate。
 8. Opt IR 当前保持 artifact-only；已有 verifier、`AHFL_OPT_IR_V1` JSON artifact 和 workflow / contract / temporal lowering 覆盖。进入普通 backend 输出路径之前，必须明确回降 Semantic IR 或 backend 直连策略。

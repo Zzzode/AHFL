@@ -48,21 +48,10 @@ CLI 不应负责：
 
 ## 命令解析模型
 
-当前 `CommandLineOptions` 只承载少量显式状态：
-
-- `dump_ast`
-- `dump_types`
-- `manifest_path`
-- `workspace_manifest_path`
-- `package_name`
-- `target_name`
-- `selected_command`
-- `selected_provider_artifact`
-- `positional`
-
-这说明当前 CLI 采用的是：
-
-- 一个轻量 action flag 模型，而不是层层子命令对象体系
+`CommandLineOptions` 承载选中的 `CommandKind`、PackageGraph selector、runtime profile /
+input / output、package registry、formal verification、profiling 与 positional state。
+命令身份集中在 `command_registry.cpp`，option identity 集中在 `OptionSpec` 表；CLI
+不维护第二张 provider artifact catalog。
 
 ### parse_command_line 的职责
 
@@ -197,17 +186,20 @@ flowchart TD
 CLI 当前把输出命令显式分成两类：
 
 1. Core backend command：经由 `core_backend_for_command(...)` 映射到 `BackendKind`，再调用 `emit_backend(BackendKind, ...)`。
-2. Package pipeline command：经由 `handles_package_command(...)` 判定后调用 `dispatch_package_command(...)`，沿 execution plan / runtime session / journal / replay / checkpoint / persistence / durable-store artifact chain 生成输出。
+2. Package pipeline command：经由 `handles_package_command(...)` 判定后调用 `dispatch_package_command(...)`，当前生成 `execution-plan` 或 deterministic `dry-run-trace`。
 
 在单文件和 project-aware 模式下，validate 成功之前不会进入这两类输出路径。
 
-Durable-store import 的 request / review / decision / receipt / provider SDK adapter 等输出属于 package pipeline artifact，不属于 compiler backend。CLI 可以继续通过 package pipeline 暴露这些 machine artifact，但对应 printer 应集中在 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/pipeline/persistence/durable_store_import/artifacts.cpp`，并通过 `ahfl_durable_store_import_artifacts` 链接，而不是依赖 `src/compiler/backends`、`ahfl_backend_*` target，或为每个 artifact 增加一对浅 header/source。
+真实 workflow execution 不属于 package artifact builder。`RunWorkflow` 进入
+`WorkflowRuntime`，产生 canonical execution events，再由 report/renderer 输出 human、
+JSON 或 JSONL。replay、audit、scheduler、checkpoint 和 recovery 是 event-native
+library projection。
 
 这条边界非常重要，因为它保证：
 
 1. CLI 不关心具体是文本 IR、JSON IR 还是 SMV。
 2. lowering 到 IR 的逻辑集中在 IR/backend 层，而不是散落到各 emitter。
-3. runtime-adjacent command 不会伪装成 core backend，而是显式经过 package pipeline。
+3. execution plan / dry-run 不会伪装成 core backend，而是显式经过 package pipeline。
 4. `emit_backend(...)` 的未注册状态必须被调用方处理，不能静默当作成功。
 
 ## summary 输出的设计

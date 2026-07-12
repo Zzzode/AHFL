@@ -1,120 +1,165 @@
 # AHFL Native Runtime Architecture
 
-本文是 AHFL native / runtime-adjacent artifact 的当前设计入口，合并原先按阶段拆开的 native bootstrap 设计文档。历史阶段说明不再作为维护入口；当前实现和后续设计只更新本文、[durable-store-import-architecture.zh.md](./durable-store-import-architecture.zh.md) 以及对应 reference 文档。
+本文定义 AHFL runtime kernel 的当前架构。编译期 handoff artifact 与运行期事实严格分层：`ExecutionPlan` 是编译器到 runtime 的静态输入，`WorkflowResult.events` 是一次真实运行的唯一动态事实源。replay、audit、scheduler、checkpoint、human/JSON/JSONL 输出和 recovery snapshot 都是 canonical event log 的投影，不再形成彼此串联的第二条 artifact 链。
 
 关联文档：
 
-- [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md)
-- [native-handoff-usage.zh.md](../reference/native-handoff-usage.zh.md)
-- [project-usage.zh.md](../reference/project-usage.zh.md)
-- [durable-store-import-architecture.zh.md](./durable-store-import-architecture.zh.md)
-- [project-status.zh.md](../plans/project-status.zh.md)
+- [结构化执行事件 RFC](../rfcs/0012-structured-workflow-execution-ux.zh.md)
+- [Native handoff 使用](../reference/native-handoff-usage.zh.md)
+- [执行与包指南](../reference/user-guide-execution.zh.md)
+- [项目状态](../plans/project-status.zh.md)
 
-## 设计目标
+## 用户故事
 
-Native runtime architecture 的目标不是在 compiler 仓库里实现完整生产 runtime，而是冻结 compiler 可以稳定交给 runtime、review tooling、dry-run、scheduler、checkpoint 和 store-import pipeline 的 machine-facing artifact chain。
+一个高风险 Agent workflow 在第三个节点调用外部 capability 时被 `SIGKILL`。操作者重启同一个工程，检查已持久化 checkpoint，批准恢复，然后继续执行。恢复过程必须满足：
 
-当前设计坚持四条边界：
+1. 已完成节点不会再次执行副作用。
+2. scheduler、audit、replay 和恢复候选来自同一组 execution events。
+3. 部分写入通过原子替换协议被拒绝或恢复，不产生半份 snapshot。
+4. human、JSON 和 JSONL 输出不能对同一次运行给出不同终态。
+5. runtime 关联依赖数值 ID；source name 只在诊断与展示边界出现。
 
-1. `ahfl.toml` 中的 handoff target 是 package authoring 输入，`emit native-json` / handoff package 是 compiler 输出；二者不能混成一个 descriptor。
-2. artifact chain 是事实来源；review summary、CLI 文本和 audit report 只能是 projection。
-3. 每个下游 artifact 只能依赖它声明的直接上游 source artifact，不能重新解析 source 或私自反推上游状态。
-4. 真实 connector、secret、distributed worker、durable queue、object store 和 recovery daemon 不属于当前 compiler-native artifact contract。
-
-## 总体链路
+## 总体架构
 
 ```mermaid
 flowchart LR
-    HandoffTarget[PackageGraph handoff target] --> Package[Native handoff package]
-    Package --> Planner[Execution planner bootstrap]
-    Planner --> Plan[ExecutionPlan]
-    Plan --> DryRun[DryRunTrace]
-    Plan --> Session[RuntimeSession]
-    Session --> Journal[ExecutionJournal]
-    Journal --> Replay[ReplayView]
-    Replay --> Audit[AuditReport]
-    Replay --> Scheduler[SchedulerSnapshot]
-    Scheduler --> Checkpoint[CheckpointRecord]
-    Checkpoint --> Persistence[CheckpointPersistenceDescriptor]
-    Persistence --> Export[PersistenceExportManifest]
-    Export --> StoreImport[StoreImportDescriptor]
-    StoreImport --> Durable[Durable store import pipeline]
+    Manifest[ahfl.toml run profile] --> Handoff[Native handoff package]
+    Handoff --> Plan[ExecutionPlan]
+    Plan --> Runtime[WorkflowRuntime]
+    Runtime --> Sink[ExecutionEventSink]
+    Provider[Capability and LLM providers] --> Runtime
+    Sink --> Store[ExecutionEventStore]
+    Store --> Result[WorkflowResult]
+    Result --> Report[ExecutionReport]
+    Result --> Replay[Replay projection]
+    Result --> Audit[Audit projection]
+    Result --> Scheduler[Scheduler projection]
+    Result --> Checkpoint[Checkpoint projection]
+    Checkpoint --> Recovery[WorkflowRecoverySnapshot]
+    Report --> Human[Human renderer]
+    Report --> JSON[JSON renderer]
+    Store --> JSONL[JSONL renderer]
 ```
 
-`DryRunTrace` 是 local deterministic execution projection，不进入 durable chain。`AuditReport` 是 reviewer-facing projection，也不能成为后续 machine-facing artifact 的第一事实来源。
+`DryRunTrace` 是 `ExecutionPlan` + deterministic capability mocks 的离线演练结果，不冒充真实 runtime event log，也不进入 crash/recovery 主链。
 
-## Artifact 职责
+## 核心不变量
 
-| Artifact | 事实来源职责 | 非职责 |
+### 唯一动态事实源
+
+1. 运行期状态变化只能通过 `ExecutionEventSink` 追加到 `ExecutionEventStore`。
+2. `WorkflowResult` 持有 event store、runtime value store、diagnostic store 和静态 ID metadata。
+3. replay、audit、scheduler、checkpoint 与 report builder 只能读取 `WorkflowResult.events`；禁止读取 CLI 文本、旧 snapshot、源码名称映射或再次执行 workflow。
+4. projection 不得互相依赖。例如 checkpoint 不消费 scheduler projection 的私有状态；二者都从 canonical events 独立构造。
+
+### 数值身份
+
+canonical identity 使用独立强类型 index：
+
+- `RunId`
+- `WorkflowId`
+- `WorkflowNodeId`
+- `AgentId`
+- `CapabilityId`
+- `ProviderId`
+- `AgentStateId`
+- `InvocationId`
+- `RuntimeValueId`
+- `DiagnosticId`
+- `ExecutionEventId`
+- `CheckpointId`
+
+这些 ID 引用 flat stores。workflow name、node name、target string 和 provider display name 只用于 source correlation、diagnostic 与 renderer。
+
+### Terminal invariant
+
+每个 started identity 必须恰有一个 terminal event：
+
+- `RunStarted` / `RunResumed` -> `RunCompleted`
+- `WorkflowStarted` -> `WorkflowCompleted` 或 `WorkflowFailed`
+- `NodeStarted` -> `NodeCompleted`、`NodeFailed` 或 `NodeSkipped`
+- `CapabilityStarted` -> `CapabilityCompleted` 或 `CapabilityFailed`
+
+预算拒绝、timeout、retry exhaustion、fallback、cancellation、process interruption 和恢复都必须写入 event log，不能仅打印诊断后提前返回。
+
+### 时间与顺序
+
+1. `ExecutionEventId` 是单次运行内的追加顺序。
+2. `monotonic_offset` 只允许单调不减。
+3. DAG 因果关系来自 dependency IDs，不从 vector 位置或 wall-clock timestamp 推断。
+4. wall-clock metadata 可用于展示，但不能参与 identity 或恢复决策。
+
+## Event Families
+
+| Family | Events | 语义 |
 | --- | --- | --- |
-| Package manifest handoff target | 描述 package identity、entry/export target、capability binding alias | deployment secret、runtime endpoint、connector SDK config |
-| Native handoff package | 冻结 compiler 输出给 native/runtime 的 package、graph、capability surface 与 policy/contract 摘要 | 完整 AST、resolver/typechecker 内部对象、真实 runtime 状态 |
-| Execution planner bootstrap | 读取 handoff package 并投影最小 planner 输入 | 生产 scheduler、retry、timeout、parallel execution |
-| ExecutionPlan | 冻结 workflow node、dependency、input expression 与 source package 关系 | agent state machine interpreter、真实 connector invocation |
-| DryRunTrace | 冻结 local dry-run 的 mock binding、deterministic trace 与 skipped boundary | 生产 runtime log、provider payload、secret |
-| RuntimeSession | 冻结 workflow/node 当前状态、partial / failed session summary | durable checkpoint、recovery token、worker lease |
-| ExecutionJournal | 冻结 session 事件序列、ordering 与 failure event family | host telemetry、wall-clock performance log |
-| ReplayView | 冻结 session / journal 的 consistency projection | 重新定义 session 状态或 journal 事件 |
-| AuditReport | 冻结 reviewer-facing aggregate conclusion | machine-facing recovery input |
-| SchedulerSnapshot | 冻结 ready set、blocked reason、executed prefix 与 scheduler cursor | production scheduling policy 或 distributed queue |
-| CheckpointRecord | 冻结 checkpoint-facing state 与 resume basis | crash recovery protocol、durable object identity |
-| CheckpointPersistenceDescriptor | 冻结 persistence-facing identity、boundary 与 blocker | object store schema、transaction protocol |
-| PersistenceExportManifest | 冻结 export bundle、source artifact chain 与 store import preview | durable adapter invocation |
-| StoreImportDescriptor | 冻结 store-import-facing machine state | provider SDK invocation、secret material |
+| Run | `RunStarted`, `RunResumed`, `RunCancellationRequested`, `RunInterrupted`, `RunCompleted` | 单次运行生命周期 |
+| Workflow | `WorkflowStarted`, `WorkflowCompleted`, `WorkflowFailed` | workflow 终态 |
+| Node | `NodeScheduled`, `NodeStarted`, `NodeRestored`, `NodeCompleted`, `NodeFailed`, `NodeSkipped` | DAG 节点执行与恢复 |
+| Agent | `AgentStateEntered` | Agent 状态机推进 |
+| Capability | `CapabilityStarted`, `CapabilityCompleted`, `CapabilityFailed`, `CapabilityRetryScheduled` | 外部调用、重试与预算 |
+| Usage | `CapabilityUsageRecorded` | invocation-scoped token/cost 与 policy notice |
+| Provider | `ProviderDegraded` | fallback 与 provider 降级 |
+| Recovery | `CheckpointSaved` | 可恢复边界 |
 
-Durable store import 之后的 provider pipeline 已经有独立设计入口：[durable-store-import-architecture.zh.md](./durable-store-import-architecture.zh.md)。
+payload 使用 `std::variant`，不使用 data inheritance 或虚派发。
 
-## Handoff Target Authoring 边界
+provider 内部 cache/stream/secret lifecycle vectors 只用于 provider 单测和实现诊断。
+公开运行事实必须 materialize 为 canonical event：usage/cost 用
+`CapabilityUsageRecorded`，cache outcome 用 `CapabilityCompleted.cache_hit`，fallback 用
+`ProviderDegraded`，budget fail 用 `CapabilityFailed(BudgetRejected)`。禁止再生成平行的
+provider audit JSON。
 
-`ahfl.toml` 中的 `handoff` target 当前只承诺 package authoring 语义：
+## Projection Contracts
 
-1. package identity 来自 `[package]`，target identity 来自 `[targets.<name>]`。
-2. entry/export target 指向 package 暴露给 native/runtime 的入口。
-3. capability binding alias 是 package metadata，不是 deployment secret。
-4. descriptor 结构错误、metadata reference 错误和 metadata consistency 错误必须分层诊断。
+| Projection | 输入 | 输出职责 |
+| --- | --- | --- |
+| `ExecutionReport` | event span | workflow/node status、execution order、output value ID、diagnostic ID |
+| `ExecutionReplayProjection` | `WorkflowResult` | 每个 node 的 scheduled/started/terminal/restored 状态 |
+| `ExecutionAuditProjection` | `WorkflowResult` | event counts、terminal invariant、failure/degradation/checkpoint 摘要 |
+| `ExecutionSchedulerProjection` | `WorkflowResult` | completed prefix、dependency satisfaction、blocking dependencies、next candidate |
+| `ExecutionCheckpointProjection` | `WorkflowResult` | completed node value IDs、resume candidate、resume readiness |
+| `WorkflowRecoverySnapshot` | checkpoint projection + value store | 可序列化的 completed node values，供重启恢复 |
+| `ExecutionOtelTrace` | canonical event span + run wall-clock anchor | OTLP-compatible run/workflow/node/capability spans |
 
-Package authoring 不承诺：
+projection builder 返回结构化 `std::expected` 错误。无效 event stream、unknown node、missing checkpoint 等问题不能降级成空结果。
 
-1. endpoint、region、tenant、secret、connector SDK 或 deployment target。
-2. runtime launcher、scheduler 或 worker host。
-3. production traffic enablement。
+## Recovery Contract
 
-## Handoff Package 边界
+当前 recovery schema 是 `ahfl.workflow-recovery.v1`。
 
-Native handoff package 应保留：
+1. checkpoint projection 只保存 completed nodes 与对应 `RuntimeValueId`。
+2. materialization 从 `WorkflowResult` 的 value store 深拷贝 runtime values，禁止保存悬空引用。
+3. `WorkflowRecoveryStore` 通过 atomic replace 保存 snapshot。
+4. load 必须验证 schema、ID、节点唯一性和值结构；损坏或部分写入 fail closed。
+5. resume 发出 `RunResumed` 与 `NodeRestored`，已恢复节点不能再次触发 capability side effect。
+6. operator approval 属于 reference workflow 的外部恢复门禁，不被伪造成编译器静态证明。
 
-1. package / project identity。
-2. workflow execution graph 与 exported entry。
-3. external capability surface。
-4. policy / contract surface。
-5. restricted control / data summary，足够让 reference consumer 建立 planner bootstrap。
+## Compiler / Runtime Boundary
 
-Native handoff package 不应保留：
+| Layer | Contract | 不负责 |
+| --- | --- | --- |
+| Package manifest | package、target、run profile、capability binding handle | secret material、运行历史 |
+| Native handoff package | workflow graph、capability surface、policy summary | runtime values、checkpoint |
+| `ExecutionPlan` | 静态 node/dependency/lifecycle/input summary | 执行结果、retry、provider 状态 |
+| `WorkflowRuntime` | 解释 plan、执行 Agent/capability、产生 events | 终端文案 |
+| Renderer | 消费 report/events | 执行 workflow、修复 event stream |
 
-1. parser trivia、AST 私有节点、resolver/typechecker 内部指针。
-2. deployment secret、endpoint、tenant、region。
-3. runtime execution history。
-4. review-only text 或 CLI formatting。
+## 非目标
 
-## Runtime Projection 边界
+当前 runtime kernel 不承诺：
 
-Runtime-adjacent artifact 必须按层次消费：
-
-1. `ExecutionPlan` 只依赖 handoff package / planner bootstrap。
-2. `RuntimeSession` 只依赖 execution plan 和当前 execution result。
-3. `ExecutionJournal` 只依赖 runtime session 与事件生成规则。
-4. `ReplayView` 只校验 plan / session / journal 的一致性。
-5. `AuditReport` 只给 reviewer/CI 使用，不能反向成为 machine input。
-6. `SchedulerSnapshot` 只能消费 replay / session / journal 提供的 machine facts。
-7. Checkpoint / persistence / export / store-import 只能继续沿 machine-facing chain 追加，不得从 audit text、CLI output 或 source file 重建状态。
+1. Native gRPC / Protobuf transport；继续服从 RFC 0004 decision gate。
+2. 多 region distributed scheduler 或 remote worker lease。
+3. 官方 object store / database schema 或 registry service。
+4. OpenTelemetry SDK / collector transport；当前只提供从 canonical events 派生的 OTLP-compatible JSON adapter。
+5. Web Playground、Marketplace adapter 或第三方框架 wrapper。
+6. 小时级 soak 与平台可比 RSS/allocator 趋势；当前仅有 bounded CI pilot。
 
 ## 变更规则
 
-1. 新增 artifact 时，先在本文定义事实来源、直接上游和非目标，再在 [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md) 登记格式标识与消费规则。
-2. 修改 artifact 语义时，必须同步代码中的 format-version 常量、golden output、reference 表和相关 CTest label。
-3. 如果只是 reviewer 文案或 CLI display 变化，不应创建新的 architecture 文档。
-4. 如果进入真实 provider / durable-store 写入领域，应扩展 durable-store-import 设计，而不是继续扩大 native runtime artifact。
-
-## 当前状态
-
-原 `native-*-bootstrap` 系列文档已合并到本文。后续维护时不要再为每个小阶段创建新的 bootstrap 文档；同一 artifact chain 的架构变化应直接更新本文，具体命令和格式参考更新 [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md)。
+1. 新 event kind 必须先定义 identity、start/terminal 配对、failure path 和 source range/diagnostic 行为。
+2. projection 需要新事实时，优先扩 event payload；禁止新增平行 snapshot source。
+3. schema 变化必须同步 recovery compatibility policy、测试和 evidence generator。
+4. renderer 变化不能改变 event 或 report 语义。
+5. 修改 runtime kernel 后至少运行 event、report、projection、recovery、workflow runtime 和 reference recovery smoke。

@@ -197,24 +197,34 @@ flowchart TD
 - `ExpressionTypeInfo`
 - `TypeCheckResult`
 
-### 执行顺序
+### Ownership 与执行顺序
+
+Typecheck 由五个明确 owner 协作：
+
+| Owner | 职责 |
+| --- | --- |
+| `TypeCheckPass` | session/state orchestration、共享 source/diagnostic/type-relation services |
+| `DeclarationSema` | declaration indexing 之后的 `TypeEnvironment`、signature、trait/impl coherence |
+| `ExpressionSema` | expression dispatch、type/effect/call/dispatch facts |
+| `ConstSema` | const dependency、folding、default value 与 const diagnostics |
+| `FlowWorkflowSema` | contract、flow、workflow、fn body、impl body 与 statement checks |
 
 `TypeCheckPass::run()` 当前固定为：
 
 ```mermaid
 flowchart TD
-    IndexDeclarations["index_declarations"] --> BuildTypeEnvironment["build_type_environment"]
-    BuildTypeEnvironment --> CheckConstInitializers["check_const_initializers"]
-    CheckConstInitializers --> CheckStructDefaults["check_struct_defaults"]
-    CheckStructDefaults --> CheckContracts["check_contracts"]
-    CheckContracts --> CheckFlows["check_flows"]
-    CheckFlows --> CheckWorkflows["check_workflows"]
+    IndexDeclarations["DeclarationIndexBuilder"] --> Declarations["DeclarationSema"]
+    Declarations --> Const["ConstSema"]
+    Const --> Executables["FlowWorkflowSema"]
+    Executables --> Result["TypeCheckResult + TypedProgram"]
 ```
 
 这个顺序表达了一个明确设计：
 
 1. 先把 declaration-level 类型签名冻住。
-2. 再检查引用这些签名的表达式和结构。
+2. 再检查 const/default。
+3. 最后按 flow -> contract -> workflow -> fn -> impl 的顺序检查 executable bodies。
+4. `ExpressionSema` 被上述 owner 作为唯一 expression checker 使用。
 
 不要反过来在检查表达式时临时拼装 declaration type info，这会让错误顺序和缓存行为不可预测。
 
@@ -236,22 +246,26 @@ flowchart TD
 
 局部表达式环境由 `ValueContext` 和各类 `check_*` 过程在 `.cpp` 内部维护，而不是进入公共头。
 
-### ExpressionTypeInfo 的定位
+### Typed expression facts 的定位
 
-`ExpressionTypeInfo` 按 `SourceRange + SourceId` 记录：
+`TypedExpr` 与兼容查询索引按 `SourceRange + SourceId` 记录：
 
 - 表达式的静态类型
+- `ExprEffect`
 - 表达式是否 pure
+- resolved symbol / call target / dispatch target
 
 这一步是很关键的公共边界，因为：
 
 1. `validate` 会复用它来检查 temporal embedded expr 的 `Bool` / purity 约束。
-2. IR lowering 与后续工具可以把“表达式的静态类型结果”视作稳定事实。
+2. IR lowering 把 type 与 `ExprEffect` 写入每个 IR expression。
+3. assurance/formal 消费 IR effect 与 flow `inferred_effect`，禁止重扫 AST。
 3. project-aware 模式下，同一个 range 在不同 source 中不能混淆，所以必须带 `source_id`。
 
 ### purity 的放置位置
 
-当前 purity 是表达式类型检查的副产物，而不是 validate 阶段临时重算。
+当前 purity / effect 是表达式类型检查的正式静态事实，而不是 validate、assurance 或
+formal 阶段临时重算。
 
 这样做的原因是：
 

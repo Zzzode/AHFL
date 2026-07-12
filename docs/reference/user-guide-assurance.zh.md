@@ -1,8 +1,8 @@
 # AHFL 保障与生产证据指南
 
-本文说明如何使用 AHFL 的 assurance profile、formal verification、durable-store 和 provider evidence，把 Agent 工作流从“能编译”推进到“可审计、可恢复、可进入生产评审”。
+本文说明如何使用 AHFL 的 assurance profile、formal verification、structured execution events 和 recovery evidence，把 Agent 工作流从“能编译”推进到“可审计、可恢复、可进入生产评审”。
 
-规范性规则以 [assurance.zh.md](../spec/assurance.zh.md) 为准。Durable store / Provider 贡献者细节见 [durable-store-import-reference.zh.md](./durable-store-import-reference.zh.md)。
+规范性规则以 [assurance.zh.md](../spec/assurance.zh.md) 为准。运行期事件、projection 与 recovery contract 见 [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)。
 
 ## 保障边界
 
@@ -13,7 +13,7 @@ AHFL 的保障体系证明和检查的是控制平面事实：
 3. Financial effect 是否声明了审批策略和补偿路径。
 4. Flow 是否会调用带风险的 capability。
 5. Workflow DAG 生命周期、终态、依赖和 temporal clause 是否能进入有限控制模型。
-6. Provider readiness artifact 是否形成 secret-free、deterministic、可审计的证据链。
+6. Runtime event log 是否满足 terminal invariant，并能生成一致的 report、audit、checkpoint 和 recovery evidence。
 
 AHFL 不声称完整证明外部系统状态、Provider 内部实现、无限数据域、真实支付网关或 LLM 输出语义。
 
@@ -131,58 +131,54 @@ Formal backend 适合证明：
 
 不应把 formal verification 当成对外部服务、无限数据域或 Provider 真实实现的完整证明。
 
-## Durable store 证据链
+## Execution Audit 与 Recovery Evidence
 
-当 workflow 需要持久化、恢复、导出或交给外部 durable store adapter 时，使用 store pipeline artifact。
+真实运行通过 `ExecutionEventStore` 建立唯一动态事实源：
 
 ```mermaid
 flowchart TB
-    Audit[audit-report] --> Checkpoint[checkpoint-record]
-    Checkpoint --> Persistence[persistence-descriptor]
-    Persistence --> Export[export-manifest]
-    Export --> StoreDescriptor[store-import-descriptor]
-    StoreDescriptor --> StoreRequest[store/request]
-    StoreRequest --> Decision[store/decision]
-    Decision --> Receipt[store/receipt]
-    Receipt --> ReceiptPersistence[store/receipt-persistence-response]
+    Runtime[WorkflowRuntime] --> Events[ExecutionEventStore]
+    Events --> Report[ExecutionReport]
+    Events --> Audit[ExecutionAuditProjection]
+    Events --> Scheduler[ExecutionSchedulerProjection]
+    Events --> Checkpoint[ExecutionCheckpointProjection]
+    Checkpoint --> Recovery[WorkflowRecoverySnapshot]
 ```
 
-Store pipeline artifact 接入 PackageGraph manifest 输入前，本指南不发布旧 JSON descriptor 命令示例。需要验证 store 链路时，使用 `ctest --preset test-dev --output-on-failure -L 'store-import-.*'` 覆盖当前内部路径；公开 CLI 示例应等 artifact 接受 `ahfl.toml` handoff target 后再补。
+证据必须满足：
 
-Store pipeline 输出应满足：
+1. 每个 run、workflow、node、capability start 都有唯一 terminal event。
+2. audit 只统计 canonical events，不解析 human output。
+3. checkpoint 只引用 completed node 的 numeric IDs 和 value IDs。
+4. recovery snapshot 通过 atomic replace 保存，partial write fail closed。
+5. resume 产生 `RunResumed` / `NodeRestored`，已恢复节点不重复副作用。
+6. 持久化内容不包含 API key、token 或 secret manager response。
 
-1. 不包含真实 secret、token、endpoint secret 或外部系统凭据。
-2. Identity 由上游 artifact 和 `run-id` 推导。
-3. 每个阶段都有明确状态和下一步。
-4. Adapter decision、receipt 和 persistence response 可以被独立审查。
+Reference workflow 的恢复证据由
+`tests/scripts/reference_workflow_recovery_smoke.py` 产生，覆盖本地 HTTP provider、
+`SIGKILL`、人工批准、部分临时文件与副作用去重。
 
-## Provider readiness evidence
+## 受控试点门禁
 
-Provider evidence 面向生产评审，不是普通业务用户的默认入口。Provider diagnostic artifact 当前仍是内部诊断面；需要诊断时使用 `emit-provider-artifact provider/<artifact>` 搭配 PackageGraph handoff target 输入，不应把旧 JSON descriptor 写成公开使用路径。
+当前没有独立的 provider readiness artifact catalog。受控生产试点应组合以下真实证据：
 
-推荐优先查看的 public provider artifact：
+| Evidence | 通过标准 |
+|----------|----------|
+| JSONL event stream | event ID 与 monotonic offset 有序，terminal invariant 成立 |
+| Audit projection | retry、fallback、failure、skip、checkpoint 计数与事件一致 |
+| Recovery smoke | crash/restart 后已完成副作用不重复 |
+| Network matrix | disconnect、429、timeout、malformed/partial response 均 fail closed |
+| Budget evidence | token/cost/latency rejection 进入 capability/node/workflow terminal path |
+| Soak | CI 至少 30 秒且不少于 12 次完整 reference workflow；nightly 可提高同一门槛 |
+| Observability adapter | `ExecutionEventStore` 导出 OTLP-compatible run/workflow/node/capability spans，不建立第二事实源 |
 
-| Artifact | 用途 |
-|----------|------|
-| `provider/write-attempt` | 写入尝试预览 |
-| `provider/driver-binding` | Provider driver binding |
-| `provider/sdk-mock-adapter-execution` | SDK mock adapter 执行 |
-| `provider/write-recovery-plan` | 写入恢复计划 |
-| `provider/failure-taxonomy-report` | 故障分类报告 |
-| `provider/compatibility-report` | 兼容性报告 |
-| `provider/registry` | Provider registry |
-| `provider/selection-plan` | Provider 选择计划 |
-| `provider/production-readiness-evidence` | 生产就绪证据 |
-| `provider/production-readiness-report` | 生产就绪报告 |
-| `provider/conformance-report` | 一致性报告 |
-| `provider/schema-compatibility-report` | Schema 兼容性报告 |
-| `provider/config-bundle-validation-report` | 配置包验证报告 |
-| `provider/release-evidence-archive-manifest` | 发布证据归档清单 |
-| `provider/approval-receipt` | 审批回执 |
-| `provider/runtime-policy-report` | 运行时策略报告 |
-| `provider/production-integration-dry-run-report` | 生产集成干跑报告 |
-
-使用 `--show-hidden --help` 可以查看 internal artifact。Internal artifact 主要用于定位 provider pipeline 中间节点，不应成为产品默认交付面。
+正式 controlled-pilot 入口是 CTest label `ahfl-controlled-pilot` 和
+`config/controlled-pilot-gate.json`。label 当前包含 contract/smoke、provider budget
+runtime、recovery、schema rejection、OTel 和 production matrix 共 8 项；matrix 在同一个
+reference workflow 上覆盖 bounded soak、disconnect、HTTP 429、timeout、partial
+response 和 process crash。最终 ready checker 还要求 evidence revision 与当前 checkout
+一致。该 gate 证明的是 bounded CI pilot，不代表小时级 soak、RSS/allocator 趋势或真实
+部署环境生产信心。
 
 ## 发布前检查清单
 
@@ -192,15 +188,14 @@ Provider evidence 面向生产评审，不是普通业务用户的默认入口�
 | Package review | `ahflc emit package-review` | entry、exports、binding 正确 |
 | Execution plan | `ahflc emit execution-plan` | DAG、node、依赖符合预期 |
 | Dry run | `ahflc emit dry-run-trace` | status 和执行顺序符合预期 |
-| Audit | `ahflc emit audit-report` | 审计摘要无异常 blocker |
+| Runtime | `ahflc run --output-format jsonl` | event stream 有唯一 run/workflow/node/capability 终态 |
 | Assurance | `ahflc validate` | 输出 `ok: assurance validation ready` |
 | Formal | `ahflc verify` | checker 证明所有相关 specification |
-| Durable store | `ahflc emit store/request` 及下游 | request、decision、receipt、persistence 状态闭环 |
-| Provider readiness | `ahflc emit-provider-artifact provider/production-readiness-report` | release gate 进入 review-ready 状态 |
+| Recovery | reference workflow recovery smoke | restart、approval、partial-write、dedupe 全部通过 |
 
 ## 读输出时的原则
 
-1. `emit` artifact 是 evidence，不等同于 gate；gate 应使用 `validate`、`verify` 或组织定义的 provider readiness 门禁。
+1. `emit` artifact 和 beta evidence 都不自动等同于生产完成；必须验证真实行为路径。
 2. 文本 review 适合人读，JSON artifact 适合 CI、归档和下游系统消费。
-3. 对 production 相关 artifact，优先检查 secret-free、deterministic identity、source chain 和 blocker 字段。
-4. 对 failed / partial run，不要只看最终状态，要顺着 journal、replay、checkpoint、store decision 和 provider failure taxonomy 找到失败边界。
+3. 对运行证据，优先检查 numeric identity、terminal invariant、secret-free persistence 和 recovery dedupe。
+4. 对 failed / interrupted run，从 JSONL events 和 audit/replay projection 定位失败边界，不解析 human 日志。

@@ -72,7 +72,6 @@ Avoid:
 - [corelib-stdlib-api.zh.md](./design/corelib-stdlib-api.zh.md)
 - [corelib-type-system.zh.md](./design/corelib-type-system.zh.md)
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
-- [durable-store-import-architecture.zh.md](./design/durable-store-import-architecture.zh.md)
 - [formal-backend.zh.md](./design/formal-backend.zh.md)
 - [formal-subset.zh.md](./design/formal-subset.zh.md)
 - [frontend-lowering-architecture.zh.md](./design/frontend-lowering-architecture.zh.md)
@@ -99,6 +98,7 @@ Avoid:
 - [native-grpc-decision-evidence.json](./plans/native-grpc-decision-evidence.json)
 - [native-grpc-decision-gate.zh.md](./plans/native-grpc-decision-gate.zh.md)
 - [p3-std-impl-blockers.zh.md](./plans/p3-std-impl-blockers.zh.md)
+- [phase-0-4-closure-audit.zh.md](./plans/phase-0-4-closure-audit.zh.md)
 - [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
 - [rfc-follow-up-priorities.zh.md](./plans/rfc-follow-up-priorities.zh.md)
@@ -117,7 +117,6 @@ Avoid:
 - [cli-commands.zh.md](./reference/cli-commands.zh.md)
 - [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
 - [developer-docs.zh.md](./reference/developer-docs.zh.md)
-- [durable-store-import-reference.zh.md](./reference/durable-store-import-reference.zh.md)
 - [error-codes.zh.md](./reference/error-codes.zh.md)
 - [fuzz-corpus-location.zh.md](./reference/fuzz-corpus-location.zh.md)
 - [ir-format.zh.md](./reference/ir-format.zh.md)
@@ -151,6 +150,7 @@ Avoid:
 - [0009-symbol-visibility.zh.md](./rfcs/0009-symbol-visibility.zh.md)
 - [0010-registry-publishing-semver.zh.md](./rfcs/0010-registry-publishing-semver.zh.md)
 - [0011-pattern-usefulness-matrix.zh.md](./rfcs/0011-pattern-usefulness-matrix.zh.md)
+- [0012-structured-workflow-execution-ux.zh.md](./rfcs/0012-structured-workflow-execution-ux.zh.md)
 
 ## Governance
 
