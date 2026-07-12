@@ -368,6 +368,7 @@ int main(int argc, char **argv) {
             std::cerr << "invalid soak control\n";
             return 2;
         }
+        provider_config.max_retries = 2;
         provider_config.response_cache_enabled = false;
         provider_config.response_cache_path.clear();
         std::vector<std::uint64_t> peak_rss;
@@ -375,6 +376,7 @@ int main(int argc, char **argv) {
         std::vector<std::uint64_t> allocator_reserved;
         LatencySummary latencies;
         std::optional<std::size_t> stable_event_count;
+        std::size_t provider_retry_count = 0;
         const auto started = std::chrono::steady_clock::now();
         auto next_metrics_sample = started;
         std::size_t iterations = 0;
@@ -401,12 +403,24 @@ int main(int argc, char **argv) {
                 iteration_result.diagnostics.render(std::cerr);
                 return 1;
             }
+            const auto iteration_retry_count = static_cast<std::size_t>(
+                std::count_if(
+                    iteration_result.events.events().begin(),
+                    iteration_result.events.events().end(),
+                    [](const ahfl::runtime::ExecutionEvent &event) {
+                        return std::holds_alternative<
+                            ahfl::runtime::CapabilityRetryScheduled>(
+                            event.payload);
+                    }));
+            provider_retry_count += iteration_retry_count;
             const auto count = iteration_result.events.size();
-            if (!stable_event_count.has_value()) {
-                stable_event_count = count;
-            } else if (*stable_event_count != count) {
-                std::cerr << "soak event count drift\n";
-                return 1;
+            if (iteration_retry_count == 0) {
+                if (!stable_event_count.has_value()) {
+                    stable_event_count = count;
+                } else if (*stable_event_count != count) {
+                    std::cerr << "soak event count drift\n";
+                    return 1;
+                }
             }
             const auto now = std::chrono::steady_clock::now();
             latencies.record(
@@ -439,6 +453,10 @@ int main(int argc, char **argv) {
             "stable_event_count",
             JsonValue::make_int(static_cast<std::int64_t>(
                 stable_event_count.value_or(0))));
+        report->set(
+            "provider_retry_count",
+            JsonValue::make_int(
+                static_cast<std::int64_t>(provider_retry_count)));
         report->set("latency_seconds", latency_summary(latencies));
         report->set("peak_rss", metric_summary(peak_rss));
         report->set("allocator_in_use", metric_summary(allocator_in_use));

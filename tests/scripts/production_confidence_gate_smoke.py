@@ -58,6 +58,7 @@ def write_contract(root: Path) -> None:
                 },
                 "minimum_duration_seconds": 3600,
                 "minimum_iterations": 100,
+                "minimum_provider_retries": 1,
                 "maximum_last_quartile_growth_ratio": 0.20,
             }
         )
@@ -91,7 +92,8 @@ def evidence(revision: str) -> dict[str, object]:
         "iterations": 100,
         "minimum_iterations": 100,
         "stable_event_count": 25,
-        "provider_request_count": 100,
+        "provider_request_count": 101,
+        "provider_retry_count": 1,
         "throughput_runs_per_second": 100 / 3600.5,
         "latency_seconds": {"minimum": 0.1, "maximum": 0.3, "mean": 0.2},
         "peak_rss": metric(),
@@ -132,7 +134,8 @@ def main() -> int:
         mutations = (
             ("short duration", lambda value: value.update(duration_seconds=3599)),
             ("few iterations", lambda value: value.update(iterations=99)),
-            ("wrong request count", lambda value: value.update(provider_request_count=99)),
+            ("wrong request count", lambda value: value.update(provider_request_count=100)),
+            ("no provider retry", lambda value: value.update(provider_retry_count=0)),
             ("event count zero", lambda value: value.update(stable_event_count=0)),
             (
                 "wrong process model",

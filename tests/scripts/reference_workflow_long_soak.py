@@ -25,6 +25,7 @@ def require(condition: bool, message: str) -> None:
 
 class SoakHandler(BaseHTTPRequestHandler):
     request_count = 0
+    transient_disconnects_remaining = 0
     lock = threading.Lock()
 
     def do_POST(self) -> None:
@@ -32,6 +33,13 @@ class SoakHandler(BaseHTTPRequestHandler):
         self.rfile.read(length)
         with self.lock:
             type(self).request_count += 1
+            disconnect = type(self).transient_disconnects_remaining > 0
+            if disconnect:
+                type(self).transient_disconnects_remaining -= 1
+        if disconnect:
+            self.connection.shutdown(2)
+            self.connection.close()
+            return
         payload = json.dumps(
             {
                 "choices": [
@@ -136,6 +144,7 @@ def main() -> int:
         encoding="utf-8",
     )
     SoakHandler.request_count = 0
+    SoakHandler.transient_disconnects_remaining = 1
     try:
         result = run_worker(
             worker,
@@ -166,8 +175,13 @@ def main() -> int:
     iteration = int(worker_report["iterations"])
     require(elapsed >= args.minimum_seconds, "long soak duration threshold not met")
     require(iteration >= args.minimum_iterations, "long soak iteration threshold not met")
+    provider_retry_count = int(worker_report["provider_retry_count"])
     require(
-        SoakHandler.request_count == iteration,
+        provider_retry_count >= 1,
+        "long soak did not recover from the injected transient provider disconnect",
+    )
+    require(
+        SoakHandler.request_count == iteration + provider_retry_count,
         "long soak provider request count drifted",
     )
     require(worker_report["stable_event_count"] > 0, "long soak event count is invalid")
@@ -202,6 +216,7 @@ def main() -> int:
                 "minimum_iterations": args.minimum_iterations,
                 "stable_event_count": worker_report["stable_event_count"],
                 "provider_request_count": SoakHandler.request_count,
+                "provider_retry_count": provider_retry_count,
                 "throughput_runs_per_second": iteration / elapsed,
                 "latency_seconds": worker_report["latency_seconds"],
                 "peak_rss": worker_report["peak_rss"],

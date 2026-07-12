@@ -59,6 +59,8 @@ def validate_contract(value: Any) -> list[str]:
         failures.append("minimum_duration_seconds must be at least 3600")
     if not positive_integer(value.get("minimum_iterations")):
         failures.append("minimum_iterations must be a positive integer")
+    if not positive_integer(value.get("minimum_provider_retries")):
+        failures.append("minimum_provider_retries must be a positive integer")
     ratio = value.get("maximum_last_quartile_growth_ratio")
     if not finite_number(ratio) or float(ratio) < 0:
         failures.append("maximum_last_quartile_growth_ratio must be non-negative")
@@ -157,8 +159,23 @@ def validate_evidence(
         )
     if not positive_integer(evidence.get("stable_event_count")):
         failures.append("stable_event_count must be positive")
-    if evidence.get("provider_request_count") != iterations:
-        failures.append("provider_request_count must equal iterations")
+    provider_retry_count = evidence.get("provider_retry_count")
+    if (
+        not positive_integer(provider_retry_count)
+        or provider_retry_count < contract["minimum_provider_retries"]
+    ):
+        failures.append(
+            "provider_retry_count must be at least "
+            f"{contract['minimum_provider_retries']}"
+        )
+    if (
+        positive_integer(iterations)
+        and positive_integer(provider_retry_count)
+        and evidence.get("provider_request_count") != iterations + provider_retry_count
+    ):
+        failures.append(
+            "provider_request_count must equal iterations plus provider_retry_count"
+        )
     if not finite_number(evidence.get("throughput_runs_per_second")) or float(
         evidence.get("throughput_runs_per_second", 0)
     ) <= 0:
@@ -190,6 +207,7 @@ def make_report(
         "evidence": contract["evidence"],
         "minimum_duration_seconds": contract["minimum_duration_seconds"],
         "minimum_iterations": contract["minimum_iterations"],
+        "minimum_provider_retries": contract["minimum_provider_retries"],
         "maximum_last_quartile_growth_ratio": contract[
             "maximum_last_quartile_growth_ratio"
         ],

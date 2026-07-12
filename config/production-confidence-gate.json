@@ -6,5 +6,6 @@
   },
   "minimum_duration_seconds": 3600,
   "minimum_iterations": 100,
+  "minimum_provider_retries": 1,
   "maximum_last_quartile_growth_ratio": 0.2
 }

@@ -140,6 +140,11 @@ ctest --preset test-dev --output-on-failure
 `ahfl-controlled-pilot` 和 `ahfl-beta-gate` 都校验 evidence 的
 `source_revision` 等于当前 checkout；修改源码后必须重新生成，不能复用旧工作区产物。
 
+`production-confidence` evidence 还必须证明 long-lived worker 在受控 provider
+断连后通过 runtime retry 恢复。`provider_retry_count` 至少达到 gate contract 下限，
+且 `provider_request_count` 必须严格等于 workflow iterations 加 canonical retry 数；
+不能通过直接修改 evidence revision 或计数绕过真实重跑。
+
 runtime kernel 变更至少覆盖：
 
 ```bash
