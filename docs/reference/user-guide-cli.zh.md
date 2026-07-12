@@ -1,245 +1,249 @@
 # AHFL CLI 工作流
 
-本文说明当前 `ahflc` 命令面、输入模式、常用 artifact 和诊断方式。完整命令参考见 [cli-commands.zh.md](./cli-commands.zh.md)，但本文以当前构建产物的 `ahflc --help` 为准。
+本文是当前 `ahflc` 的任务导向手册。命令面以构建产物 `ahflc --help` 为准；完整参数表
+与历史兼容说明见 [CLI 命令参考](./cli-commands.zh.md)。它不替代
+[Package Usage](./project-usage.zh.md) 的 manifest/workspace 规则，也不替代
+[执行与包指南](./user-guide-execution.zh.md) 的 provider 与 runtime contract。
 
-## 构建
+## 安装与约定
+
+本仓库开发构建使用：
 
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev
+
+AHFLC=./build/dev/src/tooling/cli/ahflc
 ```
 
-本文示例默认使用：
+以下命令假定当前目录是 repository root。已安装工具链可把 `AHFLC` 替换为 PATH 中的
+`ahflc`，并将 `--sysroot` 指向工具链根或其 `std/ahfl.toml`。
 
 ```bash
-./build/dev/src/tooling/cli/ahflc
-./build/dev/src/tooling/repl/ahfl-repl
-./build/dev/src/tooling/dap/ahfl-dap
-./build/dev/src/tooling/incremental/ahfl-incremental
+"$AHFLC" --help
+"$AHFLC" check --help
 ```
 
-## 命令形态
+不要把 `--help` 列出的每个 command 都理解为已验证 beta capability。当前 beta surface
+由 `config/beta-gate.json` 管理；package publishing、registry、VSIX、infra emission、
+REPL、DAP、incremental 与某些 backend 可能可调用，但需按各自文档和测试判断适用边界。
 
-当前 CLI 的主命令形态是：
+## 先选输入模式
 
+工具链首先需要知道你操作的是一个 detached 文件、一个 package 还是 workspace：
+| 模式 | 何时使用 | 入口 |
+|---|---|---|
+| detached 单文件 | 最小语法试验；只使用 primitive 或本文件声明 | `ahflc check path/to/file.ahfl` |
+| source 自动发现 | 文件位于某个 `ahfl.toml` 之下 | `ahflc check src/main.ahfl` |
+| 单 package | 明确选择 manifest 和 target | `--manifest ahfl.toml --target workflow` |
+| 多 package workspace | 明确选择 workspace member | `--workspace ahfl.workspace.toml --package name --target workflow` |
+
+detached 文件不能隐式 `import std` 或其他 package。需要 `std`、跨模块 import、target、
+run 或 native handoff 时，使用 PackageGraph：
+```bash
+"$AHFLC" check \
+  --manifest examples/execution-demo/ahfl.toml \
+  --target workflow \
+  --sysroot .
+```
+
+PackageGraph、workspace 与 sysroot 的详情见 [Package Usage](./project-usage.zh.md)；
+`--search-root` 和 `dump project` 已不是公开 CLI 产品面。
+
+## 命令地图
+
+| 任务 | 首选命令 | 产物 / 下一步 |
+|---|---|---|
+| 检查源码与工程 | `check` | 修复 parse/resolve/typecheck/validate diagnostics |
+| 统一源格式 | `fmt` / `fmt --check` | 本地改写或 CI blocking check |
+| 查看解析与类型 | `dump ast`、`dump types` | 诊断源代码理解是否偏离预期 |
+| 查看工程图 | `dump package-graph`、`dump lockfile` | 检查 package、dependency、sysroot、lockfile |
+| 审查 workflow 结构 | `emit summary`、`emit execution-plan` | 核对 Agent、DAG、input/return reads |
+| 演练而不调用外部系统 | `emit dry-run-trace` | 使用 capability mocks 检查执行顺序 |
+| 发射交接/验证 artifact | `emit native-json`、`emit smv`、`emit assurance-json` | 进入下游系统、formal 或 assurance 审查 |
+| 运行真实 workflow | `run` | 使用 human/JSON/JSONL 输出 |
+| 检查效果治理 | `validate` | assurance blockers 或 ready |
+| 验证有限控制模型 | `verify` | nuXmv/NuSMV 结果与 counterexample |
+| 管理 package 生命周期 | `init`、`package`、`registry`、`emit public-api*` | 开发者/生态入口，先阅读命令 reference |
+
+命令的主要形态：
 ```text
-ahflc check [options] <input.ahfl>
-ahflc check --manifest <ahfl.toml> [--target <name>]
-ahflc check --workspace <ahfl.workspace.toml> --package <name> [--target <name>]
-ahflc run --workflow <name> --input '<json>' [--llm-config <path>] [--tool-catalog <path>] <input.ahfl>
-ahflc fmt [--check] <input.ahfl>
-ahflc fmt [--check] --manifest <ahfl.toml>
-ahflc fmt [--check] --workspace <ahfl.workspace.toml> --package <name>
-ahflc emit <artifact> [options] <input.ahfl>
-ahflc emit native-json --manifest <ahfl.toml> --target <name>
-ahflc dump <target> [options] <input.ahfl>
-ahflc dump package-graph --manifest <ahfl.toml>
-ahflc dump lockfile --manifest <ahfl.toml>
-ahflc verify [options] <input.ahfl>
-ahflc validate [options] <input.ahfl>
-ahfl-repl [--help]
-ahfl-dap [--help]
-ahfl-incremental [--help] <changed.ahfl>...
+ahflc check [options] [<input.ahfl>]
+ahflc run [options]
+ahflc fmt [--check] <input.ahfl|dir>...
+ahflc dump ast|types|package-graph|lockfile [options]
+ahflc emit <artifact> [options] [<input.ahfl>]
+ahflc validate [options] [<input.ahfl>]
+ahflc verify [options] [<input.ahfl>]
 ```
 
-核心动作：
+`run` 对 package 项目可直接使用 `ahflc run`；当 manifest 有 `[run]` 时，会发现
+target、input、LLM config、output format 与 verbosity。没有 `[run]` 时，至少提供
+`--input` 或 `--input-file`，并按需要显式指定 workflow/config。
 
-| 动作 | 用途 | 示例 |
-|------|------|------|
-| `check` | 解析、命名解析、类型检查、结构验证 | `ahflc check examples/refund/audit.ahfl` |
-| `fmt` | 按 `.ahfl-format` 或默认规则格式化单个源文件；`--check` 只检查不写回 | `ahflc fmt --check examples/refund/audit.ahfl` |
-| `dump ast` | 输出 AST outline | `ahflc dump ast <input>` |
-| `dump types` | 输出类型环境 | `ahflc dump types <input>` |
-| `dump package-graph` | 输出 PackageGraph | `ahflc dump package-graph --manifest <ahfl.toml>` |
-| `emit <artifact>` | 输出编译、handoff、dry-run 或 formal artifact | `ahflc emit summary <input>` |
-| `validate` | 运行 assurance production gate | `ahflc validate <input>` |
-| `verify` | 调用 SMV 兼容 checker 做 formal verification | `ahflc verify --formal-backend nuxmv --model-checker <path> <input>` |
-| `run` | 使用 LLM Provider 执行 workflow | `ahflc run --workflow <name> --input '<json>' <input>` |
-| `ahfl-repl` | 启动开发者 REPL，支持表达式求值、`:type`、`:verify` | `ahfl-repl` |
-| `ahfl-dap` | 启动 Debug Adapter Protocol server | `ahfl-dap` |
-| `ahfl-incremental` | 对 changed source paths 运行 incremental compiler 原型入口 | `ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl` |
+## 每日开发闭环
 
-## 输入模式
+对 `examples/execution-demo` 或自己的 package，推荐固定采用以下顺序：
+```bash
+"$AHFLC" check --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
 
-同一套编译链支持 raw source 与 PackageGraph 两类输入。新的工程化入口应优先使用 PackageGraph。
+"$AHFLC" fmt --check --manifest examples/execution-demo/ahfl.toml --sysroot .
 
-| 模式 | 适用场景 | 示例 |
-|------|----------|------|
-| 源文件自动发现 | 从源码向上发现最近的 `ahfl.toml` 并使用 package target | `ahflc check examples/refund/audit.ahfl` |
-| 裸单文件 | 不依赖 `std` / PackageGraph metadata 的快速试验、最小复现 | `ahflc check tests/golden/formatter/formatted_struct_2spaces.ahfl` |
-| `--manifest` | 单 package 工程入口 | `ahflc check --manifest tests/integration/package_graph_manifest/ahfl.toml --target workflow --sysroot .` |
-| `--workspace --package` | 多 package workspace 入口 | `ahflc check --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --target workflow --sysroot .` |
+"$AHFLC" dump package-graph --manifest examples/execution-demo/ahfl.toml --sysroot .
 
-裸单文件模式只适合不依赖 `std` / PackageGraph metadata 的快速试验。若源码
-`import std::*`，应把源码放在 `ahfl.toml` 覆盖的 package 内，让 CLI 从源码
-自动发现 package，或显式使用 `--manifest` / `--workspace --package` 并传入
-`--sysroot`。开发 corelib 时可显式传入当前 checkout：
+"$AHFLC" emit summary --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
+
+"$AHFLC" emit execution-plan --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
+```
+
+结果解释：
+| 命令 | 重点检查 |
+|---|---|
+| `check` | source range diagnostic、import、类型、Agent/flow/workflow 结构 |
+| `fmt --check` | 格式化是否可重复；CI 不需要改写工作树 |
+| `dump package-graph` | package identity、sysroot、source units、target export |
+| `emit summary` | 声明数量、flow summary、workflow input/return reads |
+| `emit execution-plan` | entry workflow、dependency edges、node lifecycle 和 input reads |
+
+## Format、Dump 与 Emit
+
+### Formatter
+
+`fmt` 可接收文件、目录、manifest 或 workspace。默认原地格式化；`--check` 只检查并在有
+差异时返回非零：
+```bash
+"$AHFLC" fmt src/main.ahfl
+"$AHFLC" fmt --check src/
+"$AHFLC" fmt --manifest examples/execution-demo/ahfl.toml --sysroot .
+"$AHFLC" fmt --workspace workspace/ahfl.workspace.toml --package support --sysroot .
+```
+
+配置从输入路径向上查找 `.ahfl-format`。目前支持 `indent_width`、`use_tabs`、
+`max_line_length`、`trailing_newline`、`align_fields` 与 `sort_imports` 等键。formatter
+对当前覆盖语法保证无损/幂等；新增或罕见语法应先用 `fmt --check` 验证再批量写回。
+
+### Dump
 
 ```bash
-ahflc check std/json.ahfl --sysroot .
+"$AHFLC" dump ast examples/execution-demo/src/main.ahfl
+"$AHFLC" dump types examples/execution-demo/src/main.ahfl
+"$AHFLC" dump package-graph --manifest examples/execution-demo/ahfl.toml --sysroot .
+"$AHFLC" dump lockfile --manifest examples/execution-demo/ahfl.toml --sysroot .
 ```
 
-Package manifest 示例：
+`dump ast` 排查解析形状，`dump types` 排查符号/类型环境，`dump package-graph` 排查
+工程构造。不要把 dump 文本作为机器接口；机器消费者应使用相应 JSON artifact 或
+`run --output-format jsonl`。
 
-```toml
-manifest_version = 1
+### Emit artifact
 
-[package]
-name = "refund-audit"
-version = "0.1.0"
-edition = "2026"
-kind = "application"
-
-[module]
-prefix = "refund_audit"
-root = "src"
-
-[exports]
-modules = ["main"]
-
-[targets.workflow]
-kind = "handoff"
-entry = "refund_audit::main::RefundAuditWorkflow"
-exports = [{ kind = "workflow", name = "refund_audit::main::RefundAuditWorkflow" }]
-
-[dependencies]
-std = { source = "sysroot" }
-```
-
-Workspace manifest 示例：
-
-```toml
-manifest_version = 1
-
-[workspace]
-name = "commerce-workflows"
-members = [
-  "packages/refund-audit",
-  "packages/audit-core",
-]
-
-[resolver]
-version = 1
-
-[dependencies]
-std = { source = "sysroot" }
-```
-
-## 常用选项
-
-| 选项 | 用途 |
-|------|------|
-| `--manifest <path>` | 使用 package manifest（`ahfl.toml`） |
-| `--workspace <path>` | 使用 workspace manifest（`ahfl.workspace.toml`） |
-| `--package <name>` | 从 workspace 中选择 package |
-| `--target <name>` | 选择 manifest 中的 target |
-| `--sysroot <path>` | 指向包含 `std/ahfl.toml` 的 AHFL sysroot；也可直接传 `std/ahfl.toml` |
-| `--capability-mocks <path>` | 为 dry run 提供 mock capability 输入；在 `run` 中作为 LLM tool source |
-| `--tool-catalog <path>` | 仅 `run`：提供 deterministic runtime tool catalog，并作为 LLM function tools source |
-| `--capability-bindings <path>` | 仅 `run`：提供 HTTP / gRPC JSON transcoding capability binding |
-| `--input-fixture <fixture>` | 选择 runtime fixture request |
-| `--run-id <id>` | 固定 run identity，便于稳定输出 |
-| `--workflow <canonical>` | 选择目标 workflow |
-| `--input '<json>'` | `run` 的真实 runtime 输入 JSON |
-| `--input-file <path>` | `run` 的真实 runtime 输入 JSON 文件 |
-| `--llm-config <path>` | `run` 的 LLM Provider 配置，默认 `~/.ahfl/llm_config.json` |
-| `--profile <name>` | 选择 manifest 中的 `[run.profiles.<name>]` |
-| `--output-format <format>` | `human`、`json`、`jsonl` 或 `quiet` |
-| `--verbosity <level>` | `normal`、`verbose` 或 `trace` |
-| `--formal-backend <name>` | `verify` 使用的 backend；当前 `nuxmv` / `nusmv` 可外部验证，`spin` / `tlaplus` 会报告 unsupported |
-| `--model-checker <path>` | `verify` 使用的 NuSMV / nuXmv 可执行文件 |
-| `--checker-timeout-seconds <seconds>` | `verify` 的外部 checker 进程 timeout；卡死会报告 `checker_timed_out: true` |
-| `--formal-model-out <path>` | `verify` 保留生成的 SMV 模型 |
-| `--check` | 仅 `fmt` 使用；检查格式化状态但不写回文件 |
-| `-O` | 启用优化 passes |
-| `--time-passes` | 与 `-O` 配合输出 Semantic IR pass pipeline 耗时 |
-| `--trace-export <path>` | 将 CLI command span 写入 JSONL 文件 |
-| `--metrics-export <path>` | 将 CLI duration / exit_code metrics 写入 JSONL 文件 |
-| `--structured-log <path>` | 将 CLI command completion 结构化日志写入 JSONL 文件 |
-| `--memory-report <path>` | 将 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件 |
-| `-h` / `--help` | 查看帮助 |
-
-`--search-root` 和 `dump project` 已从公开 CLI 删除。跨文件工程、标准库解析和 source graph 诊断应通过 `ahfl.toml` / `ahfl.workspace.toml` 进入 PackageGraph；图结构检查使用 `ahflc dump package-graph`。
-
-## Formatter
-
-`ahflc fmt` 支持文件、目录、package manifest 和 workspace manifest。默认行为会原地改写输入文件；`--check` 只比较格式化结果，不写回，发现差异时返回非零退出码。
+当前 command catalog 中的 artifact 分为三类：
+| 类别 | Artifact | 推荐用途 |
+|---|---|---|
+| 编译与诊断 | `ir`、`ir-json`、`opt-ir`、`opt-ir-json`、`summary` | 编译器诊断、IR 研究、优化检查 |
+| workflow 交接 | `native-json`、`execution-plan`、`dry-run-trace`、`package-review` | PackageGraph/handoff/DAG 审查 |
+| assurance/formal | `smv`、`assurance-json` | 交给 `verify` / `validate` 或归档 |
+| package API | `public-api`、`public-api-docs`、`public-api-diff` | 包兼容性与 SemVer 审查 |
+| 开发者 backend | `k8s-crd`、`openapi`、`terraform`、`wasm` | 当前 frozen catalog 的开发者输出；外部验收不属于 beta claim |
 
 ```bash
-./build/dev/src/tooling/cli/ahflc fmt examples/refund/audit.ahfl
-./build/dev/src/tooling/cli/ahflc fmt examples/
-./build/dev/src/tooling/cli/ahflc fmt --manifest tests/integration/package_graph_manifest/ahfl.toml --sysroot .
-./build/dev/src/tooling/cli/ahflc fmt --workspace tests/integration/package_graph_workspace/ahfl.workspace.toml --package refund-audit --sysroot .
-./build/dev/src/tooling/cli/ahflc fmt --check examples/refund/audit.ahfl
+"$AHFLC" emit ir-json examples/execution-demo/src/main.ahfl
+"$AHFLC" emit native-json --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
+"$AHFLC" emit package-review --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
+"$AHFLC" emit smv examples/refund/audit.ahfl
 ```
 
-目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`--manifest` / `--workspace --package` 会格式化 PackageGraph 覆盖的 package source。批量 `--check` 会继续检查所有可读取文件，并输出 partial failure 汇总，例如 `format failed for 2 of 3 input(s)`。
+`dry-run-trace` 需要 package target、`--capability-mocks` 与 `--input-fixture`。详见
+[执行与包指南](./user-guide-execution.zh.md)，不要用真实 LLM run 替代 deterministic
+dry run。
 
-formatter 会从输入文件所在目录向上查找 `.ahfl-format`。当前配置格式是简单 `key = value`：
+## Run 的命令层
 
+真实运行前，先在 manifest 配置 `[run]`：
+```toml
+[run]
+target = "workflow"
+input = "inputs/high-severity.json"
+llm_config = "llm_config.example.json"
+output_format = "human"
+verbosity = "normal"
+
+[run.profiles.low-risk]
+input = "inputs/low-risk.json"
+output_format = "jsonl"
+verbosity = "trace"
+```
+
+命令行优先级是：**显式 CLI 参数 > 选中的 profile 字段 > `[run]` 默认字段**。例如：
+```bash
+cd examples/execution-demo
+export AHFL_GLM_API_KEY='set-this-in-your-shell-or-secret-store'
+
+# 使用 [run] 默认值。
+../../build/dev/src/tooling/cli/ahflc run
+
+# 用 low-risk profile 覆盖 input/output/verbosity。
+../../build/dev/src/tooling/cli/ahflc run --profile low-risk
+
+# 显式 CLI 输出格式再次覆盖 profile。
+../../build/dev/src/tooling/cli/ahflc run --profile low-risk --output-format json
+```
+
+完整 provider、secret、预算、tool/binding、JSON schema 与 event 输出说明见
+[执行与包指南](./user-guide-execution.zh.md)。运行自动化时推荐：
+```bash
+"$AHFLC" run --manifest examples/execution-demo/ahfl.toml \
+  --profile low-risk \
+  --output-format jsonl \
+  --verbosity trace \
+  --sysroot . > run.events.jsonl
+```
+
+## Validate 与 Verify
+
+```bash
+"$AHFLC" validate examples/refund/audit.ahfl
+
+"$AHFLC" verify --formal-backend nuxmv \
+  --model-checker /path/to/nuXmv \
+  --checker-timeout-seconds 60 \
+  --formal-model-out build/refund.smv \
+  examples/refund/audit.ahfl
+```
+
+`validate` 检查 effect profile、idempotency、receipt、approval、compensation 等
+assurance obligation。`verify` 调用 NuSMV/nuXmv 验证生成的**有限控制模型**；`spin` 与
+`tlaplus` 当前会报告 verification unsupported。它们不证明 provider 内部实现或外部业务
+状态。详细边界见 [保障与生产证据指南](./user-guide-assurance.zh.md)。
+
+## Package 与 Registry 命令
+
+当前 CLI 还注册了：
 ```text
-indent_width = 4
-use_tabs = false
-max_line_length = 100
-trailing_newline = true
-align_fields = true
-sort_imports = true
+ahflc init --single-file <input.ahfl>
+ahflc package archive --manifest <ahfl.toml> --out <dir>
+ahflc package publish [--dry-run] --manifest <ahfl.toml> --registry <id> --out <dir>
+ahflc package yank <package>@<version> --registry <id> --reason <text>
+ahflc registry resolve --manifest <ahfl.toml> --lockfile <ahfl.lock>
 ```
 
-formatter 语法覆盖仍需要继续扩展；PackageGraph 模式覆盖选中 package 的 module root source。
+它们用于 package 初始化、archive、public API/SemVer 与 registry 协议开发。当前没有
+“官方 registry service 已生产可用”的 claim；使用 publish/yank/resolve 前请阅读
+[CLI 命令参考](./cli-commands.zh.md)、[Package Usage](./project-usage.zh.md) 并在隔离
+registry 环境验证。
 
-## REPL
+## Observability 与性能诊断
 
-`ahfl-repl` 是独立可执行入口，不挂在 `ahflc` 子命令下。交互式终端会显示 `ahfl> ` prompt；非交互式 stdin 可直接管道输入命令。
-
+CLI-level telemetry 不等于 workflow runtime evidence：
 ```bash
-./build/dev/src/tooling/repl/ahfl-repl
-printf ':help\n:quit\n' | ./build/dev/src/tooling/repl/ahfl-repl
-```
-
-常用命令：
-
-| 命令 | 用途 |
-|------|------|
-| `:type <expr>` | 查看表达式类型 |
-| `:verify <code>` | 对 agent 声明执行形式化验证路径 |
-| `:simulate <code>` | 对输入中的 agent 声明运行结构化状态机 step simulation，输出从 `initial` 到可达 `final` 的状态迁移 |
-| `:help` | 查看 REPL 帮助 |
-| `:quit` | 退出 |
-
-## DAP
-
-`ahfl-dap` 是独立 Debug Adapter Protocol server 入口，通过 stdin/stdout 接收 `Content-Length` frame。
-
-```bash
-./build/dev/src/tooling/dap/ahfl-dap --help
-```
-
-当前入口已经能响应现有库级 DAP handler，但 runtime state、capability breakpoint 和真实 step execution 仍是后续产品化工作。
-
-## Incremental
-
-`ahfl-incremental` 接收一组变更源文件，运行 incremental compiler 库并输出模块状态和 cache 统计。
-
-```bash
-./build/dev/src/tooling/incremental/ahfl-incremental \
-  tests/golden/ir/ok_workflow_value_flow.ahfl
-```
-
-当前入口使用进程内 cache，尚未读取 PackageGraph manifest；跨文件 import graph、持久缓存和 daemon invalidation contract 仍是后续工作。
-
-## Profiling
-
-`--time-passes` 用于检查 `-O` 启用的 Semantic IR pass pipeline 耗时。`--smv-size-report` 用于检查 `emit smv` 产物的 byte、line、LTLSPEC 数量。`--trace-export`、`--metrics-export` 和 `--structured-log` 用于把 CLI command span、duration、exit_code 和 completion log 写入 JSONL 文件。`--memory-report` 用于把 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件。stdout 仍保留原命令 artifact。
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit summary -O --time-passes \
-  examples/refund/audit.ahfl
-
-./build/dev/src/tooling/cli/ahflc emit smv --smv-size-report \
-  examples/refund/audit.ahfl
-
-./build/dev/src/tooling/cli/ahflc emit summary \
+"$AHFLC" emit summary -O --time-passes examples/refund/audit.ahfl
+"$AHFLC" emit smv --smv-size-report examples/refund/audit.ahfl
+"$AHFLC" emit summary \
   --trace-export trace.jsonl \
   --metrics-export metrics.jsonl \
   --structured-log ahflc.jsonl \
@@ -247,86 +251,36 @@ printf ':help\n:quit\n' | ./build/dev/src/tooling/repl/ahfl-repl
   examples/refund/audit.ahfl
 ```
 
-当前 memory report 是结构性 proxy，不是平台 RSS / allocator 观测；trace/metrics/logging 目前是 CLI command 级，pass-level event schema 仍是后续工作。
+- `--time-passes` 必须与 `-O` 一起使用。
+- `--smv-size-report` 只适用于 `emit smv`。
+- trace/metrics/structured-log 是**CLI command** 级 JSONL。
+- `--memory-report` 是 source/TypedProgram/IR 的结构性 proxy，不是平台 RSS/allocator。
+- runtime token、cost、cache、fallback、retry、diagnostic 和 terminal lifecycle 应读取
+  `run --output-format json` / `jsonl` 的 canonical facts。
+## 开发者工具边界
 
-## Core artifact
+| 入口 | 当前用途 | 仍未产品化的边界 |
+|---|---|---|
+| `ahfl-repl` | `:type`、`:verify`、`:simulate` 的本地探索 | 不替代 package-aware runtime 调试 |
+| `ahfl-dap` | DAP handler 与 framing 入口 | 没有 capability breakpoint 或真实 runtime stepping 承诺 |
+| `ahfl-incremental` | 变更 source 的进程内 incremental 原型 | 非 persistent daemon、非完整 PackageGraph invalidation |
 
-`ahflc emit <artifact>` 支持的常用 core artifact：
+## 诊断顺序与退出码
 
-| Artifact | 用途 |
-|----------|------|
-| `ir` | 文本 IR |
-| `ir-json` | JSON IR |
-| `opt-ir` | Optimization IR 诊断输出 |
-| `opt-ir-json` | Optimization IR JSON |
-| `native-json` | Native backend JSON |
-| `execution-plan` | Workflow 执行计划 |
-| `dry-run-trace` | Mock dry-run 执行跟踪 |
-| `package-review` | Package reader 与 execution planner 审查 |
-| `public-api` | Package public API JSON |
-| `public-api-docs` | Package public API Markdown |
-| `public-api-diff` | 两个 public API snapshot 的结构化 diff |
-| `summary` | 人类可读摘要 |
-| `smv` | NuSMV 模型 |
-| `assurance-json` | Assurance bundle |
-
-最小示例：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit summary \
-  examples/refund/audit.ahfl
-
-./build/dev/src/tooling/cli/ahflc emit ir-json \
-  examples/refund/audit.ahfl
-
-./build/dev/src/tooling/cli/ahflc emit smv \
-  examples/refund/audit.ahfl
-```
-
-PackageGraph native handoff 示例：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit native-json \
-  --manifest tests/integration/package_graph_manifest/ahfl.toml \
-  --target workflow \
-  --sysroot .
-```
-
-## Runtime output
-
-`ahflc run` 的四种 output format 消费同一 canonical execution facts：
-
-| Format | 用途 |
-|--------|------|
-| `human` | 默认业务摘要 |
-| `json` | 版本化 `ExecutionReport` |
-| `jsonl` | 按 event ID 输出 `ExecutionEventStore` |
-| `quiet` | 只依赖终态和退出码 |
-
-replay、audit、scheduler、checkpoint 和 recovery 是 `include/ahfl/runtime/` 下的
-library projection，不是额外 `emit` 命令。`--verbosity` 只影响展示细节，不改变事件或
-terminal invariant。
-
-## 诊断顺序
-
-推荐从低层到高层排查：
-
-1. `ahflc check`：先确认源码能过 parse / resolve / typecheck / validate。
-2. `ahflc dump ast`：源码结构是否按预期解析。
-3. `ahflc dump types`：类型和路径是否解析到预期声明。
-4. `ahflc dump package-graph`：manifest / workspace / sysroot 是否构成预期 PackageGraph。
-5. `ahflc emit summary`：IR 降级后的声明数量、flow summary、workflow summary 是否合理。
-6. `ahflc emit native-json --manifest ... --target ...`：package identity、entry target 和 exports 是否正确。
-7. `ahflc emit dry-run-trace`：DAG 执行顺序和 mock capability 是否正确。
-8. `ahflc validate` / `ahflc verify`：进入 assurance 和 formal 门禁。
-
-## 退出码
-
+遇到问题时从低层到高层排查：
+1. `check`：先修 parse / resolve / typecheck / validate diagnostics。
+2. `dump ast` 与 `dump types`：确认源码被如何解释。
+3. `dump package-graph`：确认 manifest、workspace、dependency 与 sysroot。
+4. `emit summary` 与 `emit execution-plan`：确认编译后控制面与 DAG。
+5. `emit dry-run-trace`：确认 mock 演练路径。
+6. `run --output-format jsonl`：定位真实 runtime / provider / schema 边界。
+7. `validate`、`verify`：分别检查 assurance 和 formal 控制性质。
 | 退出码 | 含义 |
-|--------|------|
+|---|---|
 | `0` | 成功 |
-| `1` | 编译、验证、runtime 或 checker 失败 |
-| `2` | 命令行参数非法 |
+| `1` | 编译、验证、runtime 或外部 checker 失败 |
+| `2` | 命令行参数或输入组合非法 |
 | `3` | 内部错误 |
 
-CI 中应把 `check`、关键 `emit`、`run`、`validate` 和 `verify` 分开运行，避免一个大命令掩盖具体失败层。
+CI 中把 `check`、关键 `emit`、dry run、`run`、`validate` 和 `verify` 分成独立步骤；
+不要用一个大脚本吞掉 source range、checker status 或 JSONL terminal event。

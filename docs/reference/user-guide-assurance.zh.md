@@ -1,25 +1,34 @@
 # AHFL 保障与生产证据指南
 
-本文说明如何使用 AHFL 的 assurance profile、formal verification、structured execution events 和 recovery evidence，把 Agent 工作流从“能编译”推进到“可审计、可恢复、可进入生产评审”。
+本指南将 AHFL 的 assurance、formal verification、runtime event/recovery 与 release
+evidence 组合成一条可操作的评审流程。目标不是把每个 Agent workflow 宣传为“已生产
+就绪”，而是让评审者能回答：哪些控制事实被静态检查？哪些运行事实已真实观测？哪些
+证据来自当前 revision？哪些长期任务只能在 CI 中运行？
 
-规范性规则以 [assurance.zh.md](../spec/assurance.zh.md) 为准。运行期事件、projection 与 recovery contract 见 [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)。
+规范性规则以 [Assurance Spec](../spec/assurance.zh.md) 为准；runtime event、ID、
+projection 与 recovery schema 以 [运行期 artifact 参考](./native-runtime-artifacts.zh.md)
+为准。运行命令和 provider 配置见 [执行与包指南](./user-guide-execution.zh.md)。
 
-## 保障边界
+## Assurance Boundary
 
-AHFL 的保障体系证明和检查的是控制平面事实：
+AHFL 检查或证明的是**控制平面事实**：
 
-1. Capability 是否声明了 effect profile。
-2. Durable / financial effect 是否声明了幂等键和回执要求。
-3. Financial effect 是否声明了审批策略和补偿路径。
-4. Flow 是否会调用带风险的 capability。
-5. Workflow DAG 生命周期、终态、依赖和 temporal clause 是否能进入有限控制模型。
-6. Runtime event log 是否满足 terminal invariant，并能生成一致的 report、audit、checkpoint 和 recovery evidence。
+1. capability 是否显式声明 effect profile。
+2. durable / financial effect 是否声明 idempotency、receipt、approval、compensation。
+3. flow 是否会调用风险 capability，workflow 是否具有可检查的 DAG/lifecycle。
+4. temporal clause 是否能降为有限控制模型。
+5. canonical event store 是否满足 terminal invariant、usage ordering 与 recovery 安全条件。
 
-AHFL 不声称完整证明外部系统状态、Provider 内部实现、无限数据域、真实支付网关或 LLM 输出语义。
+它不证明外部数据库真实状态、支付网关最终结果、LLM 语义正确性、provider 内部实现、无限
+数据域或生产部署拓扑。不要把 `validate`、`verify` 或一份 JSON artifact 的成功，描述为
+外部系统已被完整证明。
 
-## Assurance effect profile
+## Effect Profiles
 
-高风险 capability 应声明 effect block：
+### 何时需要 effect block
+
+任何有 durable 或 financial 影响的 capability 都应写 effect block。纯 read 也可以
+声明，便于审计完整性：
 
 ```ahfl
 capability ChargeCard(request: Payment) -> Receipt {
@@ -34,38 +43,31 @@ capability ChargeCard(request: Payment) -> Receipt {
 }
 ```
 
-字段含义：
+| 字段 | 表示的可检查事实 | 高风险建议 |
+|---|---|---|
+| `effect` | `read`、`external_side_effect`、`durable_write`、`financial_write`、`unknown` | 不使用 `unknown` |
+| `domain` | 业务域标签 | 让审计/策略名称稳定可读 |
+| `idempotency` | 请求中的幂等键路径 | durable / financial 必填 |
+| `receipt` | `none`、`optional`、`required` | durable / financial 使用 `required` |
+| `retry` | `unsafe`、`safe_if_idempotent`、`safe` | 不要无幂等键地声称 `safe_if_idempotent` |
+| `timeout` | 控制面 deadline | 明确外部调用上限 |
+| `compensation` | 补偿 capability 名称 | financial 必填 |
+| `policy` | 审批、审计等策略标签 | financial 包含 `approval_required` |
 
-| 字段 | 用途 |
-|------|------|
-| `effect` | 外部影响类别：`read`、`external_side_effect`、`durable_write`、`financial_write`、`unknown` |
-| `domain` | 业务域标签 |
-| `idempotency` | 幂等键路径 |
-| `receipt` | 回执要求：`none`、`optional`、`required` |
-| `retry` | 重试安全性：`unsafe`、`safe_if_idempotent`、`safe` |
-| `timeout` | capability 超时事实 |
-| `compensation` | 补偿 capability |
-| `policy` | 审批、审计等策略标签 |
+effect block 缺省时，AHFL 源码仍可能通过普通 `check`，但 `validate` 不能将其视为
+assurance-ready。effect profile 是声明的控制事实，不是已发生的外部 receipt；实际调用
+和失败仍要从 runtime JSONL/recovery evidence 读取。
 
-未声明 effect block 的 capability 仍可编译，但不能通过 production assurance gate。
-
-## Assurance validation
-
-生成 assurance bundle：
+## Validate Assurance
 
 ```bash
-./build/dev/src/tooling/cli/ahflc emit assurance-json \
-  tests/golden/assurance/ok_effects.ahfl
+AHFLC=./build/dev/src/tooling/cli/ahflc
+
+"$AHFLC" emit assurance-json tests/golden/assurance/ok_effects.ahfl
+"$AHFLC" validate tests/golden/assurance/ok_effects.ahfl
 ```
 
-运行 production gate：
-
-```bash
-./build/dev/src/tooling/cli/ahflc validate \
-  tests/golden/assurance/ok_effects.ahfl
-```
-
-成功输出：
+成功时输出：
 
 ```text
 ok: assurance validation ready
@@ -73,129 +75,165 @@ ok: assurance validation ready
 
 常见 blocker：
 
-| Blocker | 含义 |
-|---------|------|
-| `missing_effect_spec` | capability 没有 effect block |
-| `unknown_effect_kind` | effect 是 `unknown` |
-| `missing_idempotency_key` | durable / financial write 缺少幂等键 |
-| `missing_required_receipt` | durable / financial write 没有 required receipt |
-| `missing_financial_approval_policy` | financial write 缺少 approval policy |
-| `missing_financial_compensation` | financial write 缺少 compensation |
-| `retry_safe_if_idempotent_without_key` | `safe_if_idempotent` 没有 idempotency key |
+| Blocker | 原因 | 修复方向 |
+|---|---|---|
+| `missing_effect_spec` | capability 没有 effect block | 为外部 effect 声明 profile |
+| `unknown_effect_kind` | effect 是 `unknown` | 选择真实 effect 类别 |
+| `missing_idempotency_key` | durable / financial write 缺幂等键 | 将 request 的稳定 key 映射到 `idempotency` |
+| `missing_required_receipt` | durable / financial write 未要求 receipt | 使用 `receipt: required` |
+| `missing_financial_approval_policy` | financial write 缺审批策略 | 添加 `approval_required` policy |
+| `missing_financial_compensation` | financial write 缺补偿路径 | 声明补偿 capability |
+| `retry_safe_if_idempotent_without_key` | 重试语义没有可证明依据 | 添加 idempotency 或改为 `unsafe` |
 
-## Formal verification
+先解决 `check` diagnostic，再处理 assurance blocker。不要通过降低 effect 等级或删除
+capability 调用来“让 gate 变绿”，除非那确实是正确的业务设计。
 
-生成 SMV 模型：
+## Verify Formal Control
 
-```bash
-./build/dev/src/tooling/cli/ahflc emit smv \
-  examples/refund/audit.ahfl
-```
-
-调用 NuSMV / nuXmv：
+formal verification 对 workflow 的**有限控制模型**做外部验证：
 
 ```bash
-./build/dev/src/tooling/cli/ahflc verify \
+"$AHFLC" emit smv examples/refund/audit.ahfl
+
+"$AHFLC" verify \
   --formal-backend nuxmv \
   --model-checker /path/to/nuXmv \
   --checker-timeout-seconds 60 \
-  --formal-model-out /tmp/refund_audit.smv \
+  --formal-model-out build/refund-audit.smv \
   examples/refund/audit.ahfl
 ```
 
-`--formal-backend` 当前支持 `nuxmv`、`nusmv`、`spin`、`tlaplus` 四个 capability matrix 条目；只有 `nuxmv` / `nusmv` 进入 AHFL SMV 外部验证路径。`spin` / `tlaplus` 当前只承诺模型 emission，`verify` 会以 `checker_status: verification_unsupported` 失败。`--checker-timeout-seconds` 控制外部 checker 进程上限；超时会以 `checker_status: checker_error` 和 `checker_timed_out: true` 失败，便于 CI 区分卡死与普通反例。
+| backend | 当前 `verify` 行为 |
+|---|---|
+| `nuxmv`、`nusmv` | 调用外部 SMV checker |
+| `spin`、`tlaplus` | 可在 capability matrix 中出现，但 `verify` 返回 `verification_unsupported` |
 
-NuSMV / nuXmv checker 查找顺序：
+checker 查找顺序：`--model-checker` → `AHFL_SMV_CHECKER` → backend-specific 环境变量
+（如 `AHFL_NUXMV_PATH`）→ `PATH` 中的 `NuSMV` / `nuXmv`。
 
-1. `--model-checker <path>`。
-2. `AHFL_SMV_CHECKER` 环境变量。
-3. backend-specific 环境变量，例如 `AHFL_NUXMV_PATH` 或 `AHFL_NUSMV_PATH`。
-4. `PATH` 中的 `NuSMV`、`nuXmv`、`nuxmv` 或 `nusmv`。
+可检查的控制性质：
 
-CI 可以用稳定 `checker_status` 区分失败类型：`missing_binary` 表示没有 checker 二进制；`verification_unsupported` 表示 backend 不支持 AHFL property 外部验证；`checker_error` 表示 checker 进程或输出解析失败。
+| 性质 | 例子 |
+|---|---|
+| Agent 状态机 | initial/final state、可达转移 |
+| Workflow lifecycle | idle/running/completed/failed/recovering 等有限 phase |
+| DAG 依赖 | `respond` running 前 `decide` 已 completed |
+| temporal contract | `always`、`eventually`、`called`、`running`、`completed` |
+| capability/effect event | flow handler 内 call event 与部分 recovery obligation |
 
-`verify` report 还会输出状态空间估计字段：`state_space_estimate`、`state_space_agents`、`state_space_transitions`、`state_space_likely_tractable`。这些字段来自 IR agent 的 states/transitions/capabilities，用于在调用 checker 前提示状态空间规模；它不是 NuSMV/nuXmv 返回的 reachable-state 精确统计。
+检查器报告中的 `checker_status` 用于自动化分类：`missing_binary`、
+`verification_unsupported`、`checker_error`。timeout 是失败，不是“未知通过”。
+`state_space_estimate` 等字段仅为启动前规模提示，不能当作 checker 返回的精确
+reachable-state 数。
 
-NuSMV/nuXmv 输出解析覆盖四类稳定 fixture：全部 true、false/counterexample、parse/type error 和 timeout。timeout 会作为确定 checker failure 处理，不会被当成“没有 specification result”的普通未知输出。
+## Runtime Evidence
 
-Formal backend 适合证明：
-
-| 可证明 / 可检查 | 说明 |
-|-----------------|------|
-| Agent 状态空间 | 状态、初始状态、终态、转移 |
-| Workflow lifecycle | idle、running、completed、failed、recovering 等有限生命周期 |
-| DAG 依赖 | node running / completed 前依赖必须 completed |
-| Contract temporal clause | `always`、`eventually`、`called`、`running`、`completed` 等控制谓词 |
-| Capability call event | flow handler 中的 capability 调用被绑定成 call event |
-| Effect obligation | 部分 effect / recovery obligation 进入有限模型 |
-
-不应把 formal verification 当成对外部服务、无限数据域或 Provider 真实实现的完整证明。
-
-## Execution Audit 与 Recovery Evidence
-
-真实运行通过 `ExecutionEventStore` 建立唯一动态事实源：
+真实运行以 `ExecutionEventStore` 作为唯一动态事实：
 
 ```mermaid
 flowchart TB
     Runtime[WorkflowRuntime] --> Events[ExecutionEventStore]
     Events --> Report[ExecutionReport]
-    Events --> Audit[ExecutionAuditProjection]
-    Events --> Scheduler[ExecutionSchedulerProjection]
-    Events --> Checkpoint[ExecutionCheckpointProjection]
+    Events --> Audit[Audit projection]
+    Events --> Scheduler[Scheduler projection]
+    Events --> Checkpoint[Checkpoint projection]
     Checkpoint --> Recovery[WorkflowRecoverySnapshot]
+    Events --> OTel[OTLP-compatible trace projection]
 ```
 
-证据必须满足：
+评审 JSON/JSONL 时检查：
 
-1. 每个 run、workflow、node、capability start 都有唯一 terminal event。
-2. audit 只统计 canonical events，不解析 human output。
-3. checkpoint 只引用 completed node 的 numeric IDs 和 value IDs。
-4. recovery snapshot 通过 atomic replace 保存，partial write fail closed。
-5. resume 产生 `RunResumed` / `NodeRestored`，已恢复节点不重复副作用。
-6. 持久化内容不包含 API key、token 或 secret manager response。
+1. 每个 run、workflow、node、capability start 有唯一 terminal event。
+2. `CapabilityUsageRecorded` 位于对应 invocation start/terminal 之间，并按 invocation
+   最多出现一次。
+3. audit/replay/scheduler/checkpoint 只从 canonical events 计算，不解析 human 输出。
+4. checkpoint 只引用 completed node 的 numeric IDs 与 value IDs。
+5. recovery snapshot 使用 atomic replace；corruption、partial write、未知 ID fail closed。
+6. resume 产生 `RunResumed` / `NodeRestored`，不重复已完成 side effect。
+7. 持久化或公开 event 不包含 API key、token 或 secret provider response。
 
-Reference workflow 的恢复证据由
-`tests/scripts/reference_workflow_recovery_smoke.py` 产生，覆盖本地 HTTP provider、
-`SIGKILL`、人工批准、部分临时文件与副作用去重。
+reference recovery evidence 覆盖本地 HTTP provider、`SIGKILL`、operator approval、
+partial write 与 side-effect dedupe。它证明 reference workflow 的 recovery contract，
+不自动替代你的业务系统 disaster-recovery 演练。
 
-## 受控试点门禁
+## Evidence Tiers
 
-当前没有独立的 provider readiness artifact catalog。受控生产试点应组合以下真实证据：
+### 1. Verified Beta
 
-| Evidence | 通过标准 |
-|----------|----------|
-| JSONL event stream | event ID 与 monotonic offset 有序，terminal invariant 成立 |
-| Audit projection | retry、fallback、failure、skip、checkpoint 计数与事件一致 |
-| Recovery smoke | crash/restart 后已完成副作用不重复 |
-| Network matrix | disconnect、429、timeout、malformed/partial response 均 fail closed |
-| Budget evidence | token/cost/latency rejection 进入 capability/node/workflow terminal path |
-| Soak | CI 至少 30 秒且不少于 12 次完整 reference workflow；nightly 可提高同一门槛 |
-| Observability adapter | `ExecutionEventStore` 导出 OTLP-compatible run/workflow/node/capability spans，不建立第二事实源 |
+`config/beta-gate.json` 定义十项 beta evidence contract。它覆盖 manifest run profile、
+numeric runtime identity、canonical projections、terminal lifecycle、formatter、stdlib
+container migration、reference crash recovery、干净安装、README claim 与 scope freeze。
 
-正式 controlled-pilot 入口是 CTest label `ahfl-controlled-pilot` 和
-`config/controlled-pilot-gate.json`。label 当前包含 contract/smoke、provider budget
-runtime、recovery、schema rejection、OTel 和 production matrix 共 8 项；matrix 在同一个
-reference workflow 上覆盖 bounded soak、disconnect、HTTP 429、timeout、partial
-response 和 process crash。最终 ready checker 还要求 evidence revision 与当前 checkout
-一致。该 gate 证明的是 bounded CI pilot，不代表小时级 soak、RSS/allocator 趋势或真实
-部署环境生产信心。
+```bash
+python3 scripts/generate-beta-evidence-bundle.py \
+  --repo-root . \
+  --build-dir build/dev
 
-## 发布前检查清单
+python3 scripts/check-beta-gate.py --require-ready
+```
 
-| 检查 | 命令 | 通过标准 |
-|------|------|----------|
-| 语法和类型 | `ahflc check` | 返回 0 |
-| Package review | `ahflc emit package-review` | entry、exports、binding 正确 |
-| Execution plan | `ahflc emit execution-plan` | DAG、node、依赖符合预期 |
-| Dry run | `ahflc emit dry-run-trace` | status 和执行顺序符合预期 |
-| Runtime | `ahflc run --output-format jsonl` | event stream 有唯一 run/workflow/node/capability 终态 |
-| Assurance | `ahflc validate` | 输出 `ok: assurance validation ready` |
-| Formal | `ahflc verify` | checker 证明所有相关 specification |
-| Recovery | reference workflow recovery smoke | restart、approval、partial-write、dedupe 全部通过 |
+每个 evidence 都绑定 `source_revision`。修改源码或文档后，旧 evidence 可能变为 stale；
+不能复制旧 JSON、手改 revision 或只运行某一个绿色测试来重新宣称 ready。
 
-## 读输出时的原则
+### 2. Controlled Pilot
 
-1. `emit` artifact 和 beta evidence 都不自动等同于生产完成；必须验证真实行为路径。
-2. 文本 review 适合人读，JSON artifact 适合 CI、归档和下游系统消费。
-3. 对运行证据，优先检查 numeric identity、terminal invariant、secret-free persistence 和 recovery dedupe。
-4. 对 failed / interrupted run，从 JSONL events 和 audit/replay projection 定位失败边界，不解析 human 日志。
+controlled-pilot 是有边界的运行证据，不是 production-ready 标签。合同位于
+`config/controlled-pilot-gate.json`，要求：
+
+| 项目 | 当前合同 |
+|---|---|
+| Bounded soak | 至少 30 秒、至少 12 次 reference workflow |
+| 网络故障 | disconnect、HTTP 429、timeout、partial response 均 fail closed |
+| Recovery | process crash、schema rejection、checkpoint/resume |
+| Provider governance | budget path 与 canonical usage |
+| Observability | canonical events 导出 OTLP-compatible spans |
+
+```bash
+ctest --preset test-dev --output-on-failure \
+  -L '^ahfl-controlled-pilot$'
+
+python3 scripts/check-controlled-pilot-gate.py --require-ready
+```
+
+如果当前 checkout 没有对应 revision evidence，checker 返回 missing/stale/failed 是正确的
+保护行为，不应用旧报告替代。
+
+### 3. Production Confidence Is CI-Only
+
+production-confidence 合同位于 `config/production-confidence-gate.json`。它要求单一长
+生命周期 worker 至少运行 3600 秒、至少 100 次迭代、发生并恢复 provider retry，并验证
+RSS/allocator 的末四分位增长阈值。
+
+```bash
+# 本地只检查已经下载的 evidence；不会启动一小时任务。
+python3 scripts/check-production-confidence-gate.py --require-ready
+```
+
+**不要在本地运行 hour-scale soak。** `--contract-kind hour-scale` 只能由
+`.github/workflows/production-confidence.yml` 的 `Production Confidence` GitHub
+Actions job 启动，允许的事件是 nightly `schedule` 或 `workflow_dispatch`。harness 会在
+创建目录和启动 worker 前检查 GitHub Actions 标记、repository、workflow、event、job、
+run ID、runner 和 `GITHUB_SHA`；本地调用会立即失败。
+
+production-confidence v2 evidence 必须带匹配的 GitHub Actions provenance。它表达当前
+revision 的**长稳信心**，仍不等于真实 provider、目标平台、真实数据和部署拓扑上的完整
+production-ready 声明。
+
+## Release Review Checklist
+
+| 阶段 | 命令 / 证据 | 评审问题 |
+|---|---|---|
+| Source | `ahflc check`、`fmt --check` | 类型、导入、Agent/flow/workflow 是否正确？ |
+| Package | `dump package-graph`、`emit package-review`、`emit execution-plan` | target、export、DAG、input reads 是否正确？ |
+| Simulation | `emit dry-run-trace` | mock 下执行顺序与失败路径是否正确？ |
+| Runtime | `run --output-format jsonl` | terminal、usage、retry/fallback、diagnostic 是否可审计？ |
+| Assurance | `validate` | effect、idempotency、receipt、approval、compensation 是否完整？ |
+| Formal | `verify` | 当前有限控制模型的 specification 是否通过？ |
+| Recovery | reference / product recovery test | crash、approval、partial write、dedupe 是否闭合？ |
+| Beta | `check-beta-gate.py --require-ready` | 十项 evidence 是否同一当前 revision？ |
+| Pilot | `check-controlled-pilot-gate.py --require-ready` | bounded faults、recovery、OTel、budget 是否通过？ |
+| Long soak | CI `Production Confidence` evidence | CI-only provenance、duration、retry、RSS/allocator 是否通过？ |
+
+文本 summary 用于人读，JSON/JSONL 用于 CI、归档与下游处理。失败或中断时从 JSONL 和
+audit/replay projection 追踪，不解析 human 日志；资料不足时应报告能力边界，而不是将
+artifact、golden 或测试总数误读为完成证明。

@@ -134,6 +134,23 @@ Avoid:
 - [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md)
 - [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md)
 
+### User Guide Route
+
+The Chinese user-guide series is one progressive path, rather than five
+independent command references:
+
+1. [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md) — product boundary,
+   readiness vocabulary, and the shortest path through the toolchain.
+2. [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md) — model data,
+   capabilities, agents, contracts, flows, and workflows.
+3. [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md) — choose the correct CLI
+   action, input mode, artifact, and diagnostic workflow.
+4. [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md) — configure a
+   package run, validate JSON boundaries, use providers safely, and consume canonical events.
+5. [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md) — validate
+   effects, verify finite control models, and distinguish local checks from CI-only release
+   evidence.
+
 ### RFC Registry
 
 - [README.md](./rfcs/README.md)

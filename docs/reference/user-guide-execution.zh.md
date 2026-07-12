@@ -1,6 +1,15 @@
 # AHFL 执行与包指南
 
-本文说明 AHFL 如何从 package authoring 进入 execution plan、deterministic dry run 和真实 workflow execution。运行期 replay、audit、scheduler、checkpoint 与 recovery 都由 `WorkflowRuntime` 的 canonical event log 投影，不再通过公开 proxy artifact 命令串联。
+本文说明如何把一个通过静态检查的 AHFL package 变成可演练、可运行、可审计的 workflow。
+它覆盖 PackageGraph target、deterministic dry run、manifest run profile、provider/secret
+配置、canonical runtime event、recovery 和发布证据边界。
+
+本指南不把“运行成功一次”描述成生产就绪。真实运行的动态事实只来自
+`WorkflowRuntime` 的 canonical event store；replay、audit、scheduler、checkpoint、
+recovery 与 OTel projection 都从该事实派生，不通过公开 proxy artifact 命令串联。
+Package/workspace/sysroot 规则见 [Package Usage](./project-usage.zh.md)，命令选择见
+[CLI 工作流](./user-guide-cli.zh.md)，effect/formal/release evidence 见
+[保障与生产证据指南](./user-guide-assurance.zh.md)。
 
 ## 执行链路
 
@@ -24,7 +33,21 @@ flowchart TB
     Events --> JSONL[JSONL]
 ```
 
-静态 artifact 与动态事实分层：`ExecutionPlan` 描述待执行 DAG；`DryRunTrace` 是 mock 演练；真实运行只以 execution events 为事实源。任何 projection 都不能回头扫描源码、解析 CLI 文本或依赖另一个 projection。
+静态 artifact 与动态事实分层：`ExecutionPlan` 描述待执行 DAG；`DryRunTrace` 是 mock
+演练；真实运行只以 execution events 为事实源。任何 projection 都不能回头扫描源码、
+解析 CLI 文本或依赖另一个 projection。
+
+## 推荐执行路径
+
+对于新的 package，先走这条路径，再接入真实 provider：
+
+1. `check`：确认 package、类型、Agent/flow/workflow 通过静态检查。
+2. `dump package-graph`、`emit package-review`、`emit execution-plan`：确认 target、
+   exports、DAG、node input reads 与 return read。
+3. `emit dry-run-trace`：用 mock capability 演练而不调用外部系统。
+4. 在 `ahfl.toml` 中定义 `[run]` 和可选 profile；为 provider 配置 secret handle。
+5. `run --output-format jsonl`：验证真实 lifecycle、usage、retry/fallback 与 diagnostics。
+6. 对高风险 effect，继续运行 `validate`、`verify` 和 release evidence gate。
 
 ## Package manifest 与 handoff target
 
@@ -56,6 +79,27 @@ exports = ["refund_audit::main::RefundAuditWorkflow"]
 [dependencies]
 std = { source = "sysroot" }
 ```
+
+`[run]` 是运行配置，不是 handoff target 的替代品。它指定默认 target、输入、
+LLM config、展示格式和 verbosity，使配置完整的 package 可以直接运行 `ahflc run`：
+
+```toml
+[run]
+target = "workflow"
+input = "inputs/high-severity.json"
+llm_config = "llm_config.example.json"
+output_format = "human"
+verbosity = "normal"
+
+[run.profiles.low-risk]
+input = "inputs/low-risk.json"
+output_format = "jsonl"
+verbosity = "trace"
+```
+
+`--profile low-risk` 只覆盖它明确声明的字段；未声明字段回退到 `[run]`。优先级为：
+**显式 CLI 参数 > profile 字段 > `[run]` 默认字段**。所有相对路径相对于
+`ahfl.toml` 所在 package root 解析。
 
 检查 package：
 
@@ -145,9 +189,9 @@ Dry-run trace 应重点看：
 | 模式 | 输入 | 用途 |
 |------|------|------|
 | `human` | `ExecutionReport` | 默认业务摘要和节点状态 |
-| `json` | `ExecutionReport` | 一次运行的版本化机器报告 |
-| `jsonl` | `ExecutionEventStore` | 按 event ID 输出完整事件流 |
-| `quiet` | terminal status | 只依赖退出码和必要错误 |
+| `json` | `ExecutionReport` | `ahfl.run-report`，一次运行的机器报告 |
+| `jsonl` | `ExecutionEventStore` | 每行 `ahfl.run-event`，按 event ID 输出完整事件流 |
+| `quiet` | terminal status | 成功时只输出 final value JSON；失败使用退出码/stderr |
 
 内部 projection 包括：
 
@@ -159,6 +203,41 @@ Dry-run trace 应重点看：
 | checkpoint | 计算 completed node value IDs 与 resume candidate |
 
 这些 projection 都从 `WorkflowResult.events` 构造，不是公开的独立 `emit` 产品面。
+自动化应消费 JSON/JSONL；不得解析 human 文本、旧 observability flag 或平行
+provider artifact。
+
+### 为人和程序选择正确输出
+
+| 场景 | 格式 | 消费方式 |
+|---|---|---|
+| 交互式排查 | `human` | 读取 workflow、step、result 和简化 usage 摘要 |
+| 一次运行的 CI 汇总 | `json` | 读取 `ahfl.run-report` 中的 run、node、usage、replay、audit |
+| 审计、失败定位、下游事件处理 | `jsonl --verbosity trace` | 逐行消费 `ahfl.run-event` |
+| Unix pipeline 只需要最终值 | `quiet` | 成功时只读取 final value JSON；失败依赖 exit code/stderr |
+
+JSONL 每行包含 `schema: "ahfl.run-event"`、`event_id`、`type`、
+`monotonic_offset_ns` 和 `payload`。常见 type：
+
+```text
+run_started
+workflow_started
+node_scheduled
+node_started
+capability_started
+capability_usage_recorded
+capability_completed | capability_failed
+capability_retry_scheduled
+provider_degraded
+checkpoint_saved
+node_completed | node_failed | node_skipped | node_restored
+workflow_completed | workflow_failed
+run_completed
+```
+
+机器消费者至少验证：event ID/offset 有序；每个 started run/workflow/node/capability
+有唯一 terminal；同一 capability invocation 的 usage 位于 start 与 terminal 之间且最多
+一条。失败事件会 materialize `DiagnosticId` 对应的 code、message、range、position 和
+related notes。
 
 ## 真实 LLM 执行
 
@@ -181,7 +260,7 @@ Dry-run trace 应重点看：
 {
   "endpoint": "https://api.example.com/v1",
   "model": "example-model",
-  "api_key_secret": "AHFL_LLM_API_KEY",
+  "api_key_secret": "env:AHFL_LLM_API_KEY",
   "auth_scheme": "bearer",
   "auth_header": "Authorization",
   "temperature": 0.1,
@@ -255,7 +334,20 @@ Dry-run trace 应重点看：
 }
 ```
 
-`endpoint`、`model` 必填。认证信息推荐使用 `api_key_secret`；裸 handle（例如 `AHFL_LLM_API_KEY`）保持兼容并按 env provider 解析，也可以显式写成 `env:AHFL_LLM_API_KEY`、`vault:llm/api-key` 或 `cloud:llm/api-key`。`secret_providers` 定义 provider 链：`env` provider 可作为 unqualified handle 默认解析器，`vault` provider 使用 `token` 或 `token_env` 认证并按 KV v2 路径读取；`cloud` provider 使用 `Authorization: Bearer <token>` 访问 HTTP-backed Secret Manager endpoint，在设置 `project` 时读取 `/v1/projects/{project}/secrets/{key}/versions/{version}:access`，未设置时读取 `/v1/secrets/{key}`。Secret 缺失、Vault token 缺失、cloud token 缺失、404、认证失败、超时或 provider prefix 未配置都会拒绝执行，并且不会继续调用 LLM endpoint。`refresh_secrets_before_use: true` 会在解析 `api_key_secret`、`oauth2_token_secret` 和 mTLS secret handle 前请求对应 provider refresh；内部 secret lifecycle audit 不保存 secret value，也不形成独立公开 artifact。`api_key` 仍作为兼容字段可用，但不推荐把明文 key 写入配置文件。字符串中的 `${ENV_VAR}` 会按环境变量展开。`auth_scheme` 当前支持 `bearer` 和 `api_key_header`：`bearer` 默认生成 `Authorization: Bearer <key>`，`api_key_header` 使用 `auth_header` 作为 header name 并直接写入 key。fallback provider 可单独设置 `auth_scheme` / `auth_header`；未设置时继承主 provider 配置。
+`endpoint`、`model` 必填。认证信息推荐使用 `api_key_secret`；裸 handle（例如
+`AHFL_LLM_API_KEY`）仅作为兼容路径，并由默认 secret provider 解析。显式 handle 可以
+写成 `env:AHFL_LLM_API_KEY`、`vault:llm/api-key` 或 `cloud:llm/api-key`。
+`secret_providers` 定义 `env`、`vault`、`cloud` 链；secret 缺失、provider prefix
+未配置、认证失败、404、超时或空值都会在调用 LLM endpoint 前 fail closed。
+`refresh_secrets_before_use: true` 会在解析 `api_key_secret`、`oauth2_token_secret`
+和 mTLS secret handle 前请求 provider refresh。`api_key` 仍可兼容使用，但不应把明文
+写入配置或仓库。字符串中的 `${ENV_VAR}` 会展开，仍不替代 secret handle。
+
+`auth_scheme` 支持 `bearer`、`api_key_header`、`oauth2_bearer`、
+`oauth2_client_credentials` 与 `mtls`。前四种最终写入 HTTP header；OAuth2 名称表示
+从 `oauth2_token_secret` 解析可用 access token，当前 runtime 不替你执行 OAuth grant。
+`mtls` 需要 client certificate 与 key 的 path 或 secret handle。fallback provider 可
+覆盖 auth/credential；未声明的字段从主 provider 继承。
 
 预算字段会在 `run` 启动时校验：`max_tokens` 是单次响应 token 上限，`max_prompt_tokens` 是单次 prompt 上限，`max_total_tokens` 必须覆盖单次 prompt 与响应预算。`capability_token_budgets` 可按 capability 名覆盖这三个 token 上限、`max_total_cost_usd` 和 `policy`；未覆盖字段继承全局配置。Provider 发起请求前会按有效预算裁剪 user prompt；如果 system prompt 单独耗尽预算，则 capability 调用失败并产生 `runtime.LLM_PROMPT_BUDGET_REJECTED` 诊断。`max_workflow_total_tokens` / `max_workflow_total_cost_usd` 定义单次 `ahflc run` 中同一 workflow 的累计 token/cost 上限；`max_node_total_tokens` / `max_node_total_cost_usd` 定义同一 workflow node 的累计上限；值为 `0` 表示关闭对应累计预算。Runtime 会把 workflow 名、node 名、agent 名、state 名和 node execution index 传入 LLM provider，使累计扣减按 workflow 和 node 分账。
 
@@ -325,10 +417,11 @@ Provider 内部会计算 prompt、usage、cost 和累计预算。OpenAI-compatib
 | `capability_token_budgets` 中 capability 为空、重复、预算非法或 policy 非法 | 执行失败 |
 | `api_key_secret` 指向的 secret handle 缺失、provider prefix 未配置或解析为空 | 执行失败 |
 | Vault secret provider 未提供 `token` 或 `token_env` | 执行失败 |
-| fallback provider 的 `api_key_secret` 缺失或为空 | 执行失败 |
-| 未提供 `api_key_secret` 或 `api_key` | 执行失败 |
-| `auth_scheme` 不是 `bearer` 或 `api_key_header` | 执行失败 |
-| `api_key_header` 认证未提供 `auth_header` | 执行失败 |
+| fallback provider 的 credential 无法解析 | 执行失败 |
+| 非 mTLS provider 未提供 `api_key_secret`、`oauth2_token_secret` 或兼容 `api_key` | 执行失败 |
+| `auth_scheme` 不属于支持集合 | 执行失败 |
+| 非 mTLS authentication 未能解析有效 auth header | 执行失败 |
+| mTLS 缺少 client certificate 或 private key | 执行失败 |
 | streaming response 缺少 `data: [DONE]` | 执行失败 |
 | `response_cache_enabled` 为 true 但 cache 容量或 TTL 非正数 | 执行失败 |
 | 设置了 `response_cache_path` 但 `response_cache_enabled` 不是 true | 执行失败 |
@@ -341,16 +434,6 @@ Provider 内部会计算 prompt、usage、cost 和累计预算。OpenAI-compatib
 | `--input` 不是合法 JSON | 执行失败 |
 | `--input` 与 workflow input schema 不匹配 | 执行失败 |
 | workflow 运行失败或产生 runtime error | 非零退出 |
-
-## 推荐落地顺序
-
-1. 单文件 `check` 和 `emit summary`。
-2. 拆成 package，并用 `dump package-graph` 确认 package、target、dependency 和 sysroot。
-3. 添加 handoff target，用 `emit native-json --manifest ... --target ...` 确认入口和导出。
-4. 生成 `execution-plan` 并用 `dry-run-trace` 验证静态 DAG 和 mock capability。
-5. 通过 `[run]` profile 配置输入与 secret handle，再执行 `ahflc run`。
-6. 使用 JSON/JSONL output 验证 event/report contract，并用 recovery smoke 验证 crash/resume。
-7. 进入 [保障与生产证据指南](./user-guide-assurance.zh.md) 的 assurance 与 formal 门禁。
 
 ## Crash / Resume
 
@@ -365,3 +448,24 @@ Provider 内部会计算 prompt、usage、cost 和累计预算。OpenAI-compatib
 5. 只执行未完成节点，避免重复 capability side effect。
 
 端到端证据由 `tests/scripts/reference_workflow_recovery_smoke.py` 覆盖本地 HTTP provider、`SIGKILL`、人工批准、partial temp file 和副作用去重。
+
+## 从运行到交付证据
+
+开发者的 `run`、dry run 或 recovery smoke 证明的是具体路径；它们不自动带来 beta 或
+production-ready 结论。发布前必须区分三层证据：
+
+| 层级 | 主证据 | 运行位置 | 结论边界 |
+|---|---|---|---|
+| Beta | `beta-gate` 的 10 项 revision-bound evidence | 本地或 CI 可重建 | 当前 verified beta surface |
+| Controlled pilot | 30 秒 / 至少 12 次 reference workflow、fault matrix、recovery、OTel、budget | 受控测试环境 | 受控试点，不代表生产 |
+| Production confidence | 3600 秒 single-long-lived-worker、RSS/allocator、provider retry | **仅**专用 GitHub Actions workflow | 当前 revision 的长稳信心，不等于真实部署生产就绪 |
+
+production-confidence `hour-scale` harness 是 CI-only。开发机调用
+`--contract-kind hour-scale` 会在创建目录或启动 worker 前立即失败；本地仅运行短
+smoke，并可使用 checker 读取已经下载的 evidence。正式 v2 evidence 必须带匹配
+repository、workflow、event、job、run ID、runner 和 commit SHA 的 GitHub Actions
+provenance。
+
+完整 gate 命令、stale evidence 和发布清单见
+[保障与生产证据指南](./user-guide-assurance.zh.md)。native gRPC / Protobuf transport
+仍不是当前 runtime 产品能力；`grpc_json_transcoding` binding 只是 HTTP/JSON 边界。

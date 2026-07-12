@@ -1,125 +1,165 @@
 # AHFL 用户指南总览
 
-本文是 AHFL 用户向文档系列入口，面向想用 AHFL 描述、检查、审计和执行 Agent 工作流的读者。本文不替代语言规范；语法和静态语义以 [core-language.zh.md](../spec/core-language.zh.md) 为准。
+AHFL（Agent Handoff Flow Language）是面向**可审计 Agent 工作流**的强类型 DSL 与
+C++23 编译器。它不是聊天框架或通用模型 SDK；它为已有或将要接入的模型、工具和外部
+系统提供可检查的控制面：谁能调用什么 capability、哪些状态可达、节点如何依赖、失败
+如何终态化，以及哪些证据足以支持一次受控发布评审。
 
-## 适用读者
+本文是中文用户手册的入口。语言语法和静态语义以
+[AHFL 语言规范](../spec/core-language.zh.md) 为准；本系列说明如何实际使用当前
+checkout 的工具链与 reference workflow。
 
-| 读者 | 关心的问题 | 推荐路径 |
-|------|------------|----------|
-| Workflow 作者 | 如何把业务流程写成 `.ahfl` 文件 | 本文 -> [建模指南](./user-guide-authoring.zh.md) -> [CLI 工作流](./user-guide-cli.zh.md) |
-| 平台工程师 | 如何把 AHFL 接入构建、审计、运行与 Provider 准入 | 本文 -> [执行与包指南](./user-guide-execution.zh.md) -> [保障与生产证据指南](./user-guide-assurance.zh.md) |
-| 风控 / 审计 / 发布负责人 | 如何在执行前看见 Agent 行为、外部调用和准入证据 | 本文 -> [保障与生产证据指南](./user-guide-assurance.zh.md) |
-| 编译器使用者 | 命令怎么跑、输入怎么组织、输出看什么 | 本文 -> [CLI 工作流](./user-guide-cli.zh.md) |
+## 先读这一页
 
-## 产品定位
+| 你的目标 | 从哪里开始 | 接下来阅读 |
+|---|---|---|
+| 写一个新的 Agent workflow | [建模指南](./user-guide-authoring.zh.md) | [CLI 工作流](./user-guide-cli.zh.md) |
+| 将现有 `.ahfl` 文件升级为工程 | [CLI 工作流](./user-guide-cli.zh.md) | [Package Usage](./project-usage.zh.md) |
+| 运行带 LLM capability 的工作流 | [执行与包指南](./user-guide-execution.zh.md) | [运行期 artifact 参考](./native-runtime-artifacts.zh.md) |
+| 为高风险调用增加 gate | [保障与生产证据指南](./user-guide-assurance.zh.md) | [Assurance Spec](../spec/assurance.zh.md) |
+| 排查编译、配置或运行失败 | [CLI 工作流](./user-guide-cli.zh.md) 的诊断顺序 | [错误码参考](./error-codes.zh.md) |
 
-AHFL 是 Agent 控制平面 DSL。它的核心目标是让 Agent 工作流在真实执行前具备以下性质：
+## 产品边界
 
-1. **结构可见**：Agent 的状态、转移、可调用 capability、workflow DAG 依赖都写在源码里。
-2. **类型可查**：输入、输出、上下文、capability 参数和返回值都经过静态检查。
-3. **行为可约束**：`requires`、`ensures`、`invariant`、`forbid` 描述执行前后的控制要求。
-4. **执行可演练**：编译器能输出 package、execution plan 和 deterministic dry-run trace。
-5. **上线可审计**：真实运行以 structured execution events 为唯一事实源，并生成 report、replay、audit、scheduler、checkpoint 和 recovery 投影。
-6. **真实执行可控**：`ahflc run` 通过 OpenAI-compatible LLM Provider 配置执行 workflow，并在配置缺失或输入非法时 fail closed。
+AHFL 当前最适合做 Agent 系统的**类型化控制与 assurance 层**：
 
-AHFL 不把外部工具实现、数据库写入、支付网关或 LLM 服务本身纳入 DSL 源码；这些能力通过 capability 边界、运行时配置和 Provider 证据链接入。
+1. **结构可见**：Agent 状态、状态转移、capability 白名单、workflow DAG 依赖都在源码中。
+2. **边界可查**：workflow/agent 输入输出与 runtime JSON 在边界精确匹配，错误附带
+   可定位的 `SourceRange`。
+3. **行为可约束**：`requires`、`ensures`、`invariant`、`forbid` 与 workflow
+   safety/liveness 条款表达可检查的控制要求。
+4. **执行可演练**：PackageGraph、execution plan 与 deterministic dry-run trace
+   让真实调用前的路径可检查。
+5. **运行可审计**：`ahflc run` 以 typed canonical event store 为唯一动态事实源，
+   从同一事实派生 human、JSON、JSONL、report、replay、audit、scheduler、checkpoint、
+   recovery 与 OTLP-compatible trace。
+6. **外部调用可治理**：LLM、HTTP/gRPC JSON transcoding binding、工具和 secret 都在
+   capability/runtime 配置边界处理；配置或 schema 不满足时 fail closed。
 
-## 端到端心智模型
+AHFL 不将外部数据库、支付网关、LLM 服务的内部实现或真实世界业务状态“编译进” DSL。
+Assurance 与 formal verification 证明的是有限控制模型和已声明的效果事实，不等于证明
+外部系统、模型输出或无限数据域。
+
+## Readiness Vocabulary
+
+不要把“仓库里有模块、CLI 命令或绿色单测”理解成某项产品能力已经 ready。当前项目使用
+evidence-first 的分层口径：
+
+| 层级 | 代表什么 | 用户应如何使用 |
+|---|---|---|
+| 已验证 Beta | `config/beta-gate.json` 的十项合同有当前 revision evidence | 可作为当前 beta surface 使用与评估 |
+| Controlled pilot | 30 秒以上 reference workflow、网络故障矩阵、recovery、OTel 和预算路径 | 适合受控集成，不等于生产就绪 |
+| Production confidence | CI-only 一小时 single-long-lived-worker soak、RSS/allocator 趋势与 provider retry 证据 | 仅从专用 CI evidence 判断；本地不能运行 hour-scale |
+| 开发者 / 实验入口 | 编译器模块、额外 backend、工具或 CLI 命令存在 | 先查具体文档和测试，不自动获得 beta/production claim |
+
+当前 verified beta 事实见根目录 `README.md` / `README.zh.md` 与
+`config/beta-gate.json`。例如 manifest run profile、numeric runtime identity、
+canonical event projections、lifecycle terminal invariant、formatter、reference
+recovery、干净安装与 scope freeze 都有单独证据合同。
+
+以下内容**不属于当前已验证 beta 产品面**：native gRPC / Protobuf transport、
+multi-region 运行、官方 registry service、浏览器 playground、Marketplace 正式发布。
+已有 `gRPC JSON transcoding` capability binding 时，它仍是 HTTP/JSON 边界能力，
+不能据此宣称 native gRPC 已可用。
+
+## End-to-End Path
 
 ```mermaid
 flowchart TB
-    Source[AHFL 源码] --> Check[静态检查]
-    Check --> Model[IR 与控制模型]
-    Model --> Package[Package 与执行计划]
-    Package --> DryRun[Mock dry run]
-    Package --> Runtime[真实 runtime run]
-    Model --> Formal[SMV / formal verification]
-    Model --> Assurance[Assurance validation]
-    DryRun --> Evidence[Deterministic trace]
-    Runtime --> Events[Execution event store]
-    Events --> Evidence[Report / Replay / Audit / Recovery]
-    Formal --> Gate[发布门禁]
-    Assurance --> Gate
-    Evidence --> Gate
+    Source[AHFL source] --> Check[check]
+    Check --> Graph[PackageGraph]
+    Graph --> Inspect[dump and summary]
+    Graph --> Plan[execution plan]
+    Plan --> DryRun[mock dry run]
+    Plan --> Run[ahflc run]
+    Check --> Assurance[validate assurance]
+    Check --> Formal[emit smv and verify]
+    Run --> Events[canonical event store]
+    Events --> Render[human JSON JSONL]
+    Events --> Projections[report replay audit checkpoint recovery OTel]
+    DryRun --> Review[developer and release review]
+    Assurance --> Review
+    Formal --> Review
+    Projections --> Review
 ```
 
-最小工作流通常是：
+推荐按以下顺序推进一个真实项目：
 
-1. 写 `.ahfl`：定义数据结构、capability、agent、contract、flow、workflow。
-2. 运行 `ahflc check`：确认源码可以解析、命名解析、类型检查和验证。
-3. 运行 `ahflc dump` 或 `ahflc emit summary`：确认编译器看到的结构符合预期。
-4. 对稳定项目添加 `ahfl.toml`，多 package 工程添加 `ahfl.workspace.toml`。
-5. 运行 `ahflc dump package-graph` 和 `ahflc emit native-json --manifest ... --target ...`：确认 package、target 与 handoff surface。
-6. 用 mock capability 运行 `ahflc emit dry-run-trace`。
-7. 准备 LLM Provider 配置后，用 `ahflc run` 执行真实 workflow，并选择 human、JSON 或 JSONL 输出。
-8. 用 `ahflc validate`、`ahflc verify`、event audit 和 recovery evidence 进入发布门禁。
+1. 先定义 `struct`、`enum`、`capability`、`agent`、`flow` 和 `workflow`。
+2. 运行 `ahflc check`，先消除 parse、resolve、typecheck 与 validation diagnostics。
+3. 用 `dump ast`、`dump types`、`emit summary` 查看编译器理解的结构。
+4. 加入 `ahfl.toml`；多 package 工程再加入 `ahfl.workspace.toml`，并从
+   `PackageGraph` 进入工具链。
+5. 审查 `dump package-graph`、`emit execution-plan` 与 `emit package-review`。
+6. 用 `emit dry-run-trace` 和 capability mocks 验证静态 DAG 与演练路径。
+7. 使用 manifest `[run]` profile、secret handle 和 schema-correct input 运行
+   `ahflc run`；自动化消费者读取 JSON/JSONL，不解析 human 输出。
+8. 对有外部效果的 workflow 运行 `validate`；对有限控制性质运行 `verify`。
+9. 需要发布评审时，组合当前 revision 的 beta / pilot / CI-only production-confidence
+   evidence，而不是引用旧报告或测试总数。
 
-## 功能总览
+## Reference Workflow
 
-| 功能 | 解决的问题 | 入口命令 / 文件 | 详细指南 |
-|------|------------|-----------------|----------|
-| 强类型数据建模 | 明确 workflow 输入、输出、上下文和 capability 数据形状 | `struct`、`enum`、`type`、`const` | [建模指南](./user-guide-authoring.zh.md) |
-| Capability 边界 | 把外部效果声明成受控调用点 | `capability X(...) -> Y;` | [建模指南](./user-guide-authoring.zh.md) |
-| 纯谓词 | 在 contract 中表达无副作用检查 | `predicate X(...) -> Bool;` | [建模指南](./user-guide-authoring.zh.md) |
-| Agent 状态机 | 描述单个 Agent 的生命周期、状态转移和可用 capability | `agent`、`flow for` | [建模指南](./user-guide-authoring.zh.md) |
-| 行为契约 | 在执行前声明前置、后置、不变量和禁止行为 | `contract for` | [建模指南](./user-guide-authoring.zh.md) |
-| Workflow DAG | 编排多个 Agent 节点和依赖关系 | `workflow`、`node`、`after`、`return` | [建模指南](./user-guide-authoring.zh.md) |
-| 单文件编译 | 快速检查一个 `.ahfl` 文件 | `ahflc check <file.ahfl>` | [CLI 工作流](./user-guide-cli.zh.md) |
-| 多文件项目 | 稳定组织 package、target、依赖、module root 和 workspace | `ahfl.toml`、`ahfl.workspace.toml` | [CLI 工作流](./user-guide-cli.zh.md) |
-| 结构诊断 | 查看 AST、类型环境和 source graph | `ahflc dump ast|types|project` | [CLI 工作流](./user-guide-cli.zh.md) |
-| Artifact 发射 | 输出 IR、native JSON、execution plan、summary 等 | `ahflc emit <artifact>` | [CLI 工作流](./user-guide-cli.zh.md) |
-| Package authoring | 声明包身份、入口、导出目标和 capability binding | `ahfl.toml` handoff target | [执行与包指南](./user-guide-execution.zh.md) |
-| Mock dry run | 在无真实 Provider 时演练 workflow 执行顺序和 capability 结果 | `ahflc emit dry-run-trace` | [执行与包指南](./user-guide-execution.zh.md) |
-| Runtime run | 使用 OpenAI-compatible LLM Provider 执行 workflow | `ahflc run --workflow ... --input ...` | [执行与包指南](./user-guide-execution.zh.md) |
-| Assurance gate | 检查 capability effect、幂等、回执、审批和补偿事实 | `ahflc validate` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
-| Formal verification | 通过 NuSMV / nuXmv 验证有限控制模型 | `ahflc verify` | [保障与生产证据指南](./user-guide-assurance.zh.md) |
-| Event audit / Recovery | 从唯一 event store 生成 audit、checkpoint 与 crash/resume 证据 | `ahflc run --output-format jsonl`、recovery smoke | [保障与生产证据指南](./user-guide-assurance.zh.md) |
+仓库的唯一 beta reference workflow 位于
+[`examples/execution-demo`](../../examples/execution-demo)：
 
-## 快速开始
+```text
+IncidentRequest
+  -> IntakeAgent
+  -> DecisionAgent
+  -> ResponderAgent
+       -> DraftIncidentSummary capability
+  -> IncidentResponse
+```
 
-先构建当前 checkout：
+它同时展示：
+
+- package manifest、`[run]` 与 `low-risk` profile；
+- 具名 input/output schema 与 enum JSON 表示；
+- 多 Agent DAG 和 `after` 依赖；
+- 一个 OpenAI-compatible LLM capability；
+- token/cost policy、fallback/cache/diagnostic 的 canonical event 投影；
+- crash/resume、side-effect dedupe、bounded pilot 与 CI-only production-confidence
+  evidence 的共同基础。
+
+先构建后可完成不调用真实 provider 的检查与审查：
 
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev
+
+AHFLC=./build/dev/src/tooling/cli/ahflc
+
+"$AHFLC" check --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
+"$AHFLC" dump package-graph --manifest examples/execution-demo/ahfl.toml \
+  --sysroot .
+"$AHFLC" emit execution-plan --manifest examples/execution-demo/ahfl.toml \
+  --target workflow --sysroot .
 ```
 
-检查示例源码：
+真实 run 需要按照[执行与包指南](./user-guide-execution.zh.md)配置
+`AHFL_GLM_API_KEY` 或替换 `llm_config.example.json` 中的 endpoint/model/secret handle；
+不要把密钥写入 manifest、源码或提交到仓库。
 
-```bash
-./build/dev/src/tooling/cli/ahflc check examples/refund/audit.ahfl
-```
+## Guide Map
 
-查看编译器摘要：
+| 文档 | 解决的问题 | 不负责什么 |
+|---|---|---|
+| [建模指南](./user-guide-authoring.zh.md) | 将业务约束拆成类型、capability、Agent、flow、DAG | 完整语法逐条定义 |
+| [CLI 工作流](./user-guide-cli.zh.md) | 选择输入模式、命令、artifact 与诊断顺序 | 解释 provider 配置的全部字段 |
+| [执行与包指南](./user-guide-execution.zh.md) | package run、runtime JSON、provider、events、recovery | 宣称任意 provider 或部署已生产就绪 |
+| [保障与生产证据指南](./user-guide-assurance.zh.md) | effect profile、formal、release evidence 和 CI-only soak | 证明外部系统或模型语义 |
+| [Package Usage](./project-usage.zh.md) | manifest/workspace/sysroot 的完整工程语义 | workflow 运行配置细节 |
+| [运行期 artifact 参考](./native-runtime-artifacts.zh.md) | JSON/JSONL、ID、event/projection/recovery contract | 日常命令教程 |
 
-```bash
-./build/dev/src/tooling/cli/ahflc emit summary examples/refund/audit.ahfl
-```
+## Normative Sources
 
-生成形式化模型：
-
-```bash
-./build/dev/src/tooling/cli/ahflc emit smv examples/refund/audit.ahfl
-```
-
-查看命令帮助：
-
-```bash
-./build/dev/src/tooling/cli/ahflc --help
-```
-
-## 系列文档
-
-| 文档 | 内容 |
-|------|------|
-| [user-guide-authoring.zh.md](./user-guide-authoring.zh.md) | 如何写 `.ahfl` 源码，包括类型、capability、agent、contract、flow 和 workflow |
-| [user-guide-cli.zh.md](./user-guide-cli.zh.md) | 当前 CLI 命令、输入模式、常用 artifact 和诊断方法 |
-| [user-guide-execution.zh.md](./user-guide-execution.zh.md) | Package manifest、handoff target、dry run、structured events、真实 LLM 执行 |
-| [user-guide-assurance.zh.md](./user-guide-assurance.zh.md) | Assurance、formal verification、event audit 与 recovery evidence |
-
-## 与其他文档的关系
-
-- 语言事实以 [core-language.zh.md](../spec/core-language.zh.md) 为准。
-- Assurance 规则以 [assurance.zh.md](../spec/assurance.zh.md) 为准。
-- CLI 历史版本细节可查 [cli-commands.zh.md](./cli-commands.zh.md)，但本文系列以当前 `ahflc --help` 的命令形态为准。
-- Runtime event、projection 与 recovery contract 可查 [native-runtime-artifacts.zh.md](./native-runtime-artifacts.zh.md)。
+- 语言语法、类型和运行时边界：[`core-language.zh.md`](../spec/core-language.zh.md)。
+- effect profile、assurance 和 formal gate：[`assurance.zh.md`](../spec/assurance.zh.md)。
+- 运行期 ID、event、projection 与 recovery schema：
+  [`native-runtime-artifacts.zh.md`](./native-runtime-artifacts.zh.md)。
+- 当前命令面：实际构建产物的 `ahflc --help`；补充参数见
+  [`cli-commands.zh.md`](./cli-commands.zh.md)。
+- 当前能力状态与后续优先级：[`project-status.zh.md`](../plans/project-status.zh.md) 与
+  [`issue-backlog-global-gaps.zh.md`](../plans/issue-backlog-global-gaps.zh.md)。

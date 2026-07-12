@@ -228,7 +228,12 @@ stdlib；需要 `std` 时必须走 manifest/workspace + sysroot，或显式传
 | `dump lockfile` | 是 | 是 | 否 | 是 |
 | `emit native-json` | 是 | 是 | 是 | 是 |
 | package artifact commands | 是 | 是 | 是 | 是 |
-| provider diagnostic artifacts | 是 | 是 | 是 | 是 |
+| workflow execution artifacts | 是 | 是 | 是 | 是 |
+
+运行期 replay、audit、scheduler、checkpoint 和 provider usage 不再具有独立的
+provider diagnostic artifact 命令。真实 `run` 的公开机器接口是 canonical
+`ahfl.run-report` JSON 与 `ahfl.run-event` JSONL；相关 projection 从同一 event store
+派生。参见 [执行与包指南](./user-guide-execution.zh.md)。
 
 ## 常见失败
 
