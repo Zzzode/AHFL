@@ -5,7 +5,8 @@ compile_commands.json
 !.vscode/
 !.vscode/settings.json
 .agents/
-.claude/
+.claude/*
+!.claude/skills/
 grammar/.antlr/
 src/compiler/syntax/parser/generated/*.interp
 src/compiler/syntax/parser/generated/*.tokens
