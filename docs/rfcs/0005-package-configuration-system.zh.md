@@ -553,7 +553,7 @@ BREAKING CHANGE: 本 RFC 接受后，AHFL 的公开工程配置入口从 JSON de
 
 本 RFC 还显式 supersede 现有 corelib P6 “prelude 默认导入/默认注入”叙事。`std/ahfl.toml` v1 固定 `prelude.injection = "explicit"`，因此接受本 RFC 后：
 
-1. [corelib-rfc.zh.md](../design/corelib-rfc.zh.md) 中关于 P6 默认 prelude 注入的状态记录必须改为历史实现记录，而不是新包体系的语言默认。
+1. [RFC 0013](./0013-corelib-type-system-evolution.zh.md) 中关于 P6 默认 prelude 注入的状态记录必须改为历史实现记录，而不是新包体系的语言默认。
 2. CLI / LSP / test helper 中为用户便利设置的 `inject_prelude = true` 必须迁移到显式 import、test fixture helper 或后续单独 RFC；不能在 PackageGraph 入口继续作为默认语言语义。
 3. 需要无 import 使用 prelude 的测试必须改写为显式 `import std::prelude as prelude;`，不能通过保留旧入口测试来维持隐式语义。
 

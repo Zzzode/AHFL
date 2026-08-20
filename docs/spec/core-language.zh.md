@@ -31,7 +31,7 @@ AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳�
 
 ### 1.1 语言演进路径
 
-历史上本规范将"通用高阶函数与用户自定义泛型"列为 out-of-scope。该条目已被撤销：函数抽象（`fn`）、用户泛型（单态化实现）、一等闭包、`trait` / typeclass、ADT（`enum` 带 payload）以及统一 effect 系统不再由本规范排除，而是由 [corelib RFC](../design/corelib-rfc.zh.md) 定义的可验证演进路径统一承载。该 RFC 把上述能力的语法形态、类型规则、stdlib 库化（容器从关键字迁移为库类型）、以及进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的可验证子集（`effect Pure` + `decreases` 终止度量 + bounded refinement）一并规定，并给出 P0–P7 分阶段迁移计划。函数抽象 / 泛型 / 闭包 / `trait` / corelib 边界的最终定义以该 RFC 及其四份 detail 附件为准；本规范不再各自重复。
+历史上本规范将"通用高阶函数与用户自定义泛型"列为 out-of-scope。该条目已被撤销：函数抽象（`fn`）、用户泛型（单态化实现）、一等闭包、`trait` / typeclass、ADT（`enum` 带 payload）以及统一 effect 系统不再由本规范排除，而是由 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) 定义的可验证演进路径统一承载。该 RFC 把上述能力的语法形态、类型规则、stdlib 库化（容器从关键字迁移为库类型）、以及进入 `contract` / `invariant` / `safety` / `liveness` / `flow guard` 的可验证子集（`effect Pure` + `decreases` 终止度量 + bounded refinement）一并规定，并给出 P0–P7 分阶段迁移计划。函数抽象 / 泛型 / 闭包 / `trait` / corelib 边界的最终定义以该 RFC 及其四份 detail 附件为准；本规范不再各自重复。
 
 ### 1.2 语言演进原则
 

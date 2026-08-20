@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-07-11"
+updated: "2026-08-20"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -73,3 +73,9 @@ rfcs:
     file: "0012-structured-workflow-execution-ux.zh.md"
     area: ["runtime", "tooling"]
     stability: "developer-facing"
+  - rfc: "0013"
+    title: "Corelib and Type System Evolution"
+    status: "implementing"
+    file: "0013-corelib-type-system-evolution.zh.md"
+    area: ["language", "compiler", "stdlib", "runtime"]
+    stability: "experimental"

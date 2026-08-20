@@ -1,6 +1,6 @@
 # AHFL Effect 系统与可验证子集详细设计
 
-本文是 [corelib-rfc.zh.md](./corelib-rfc.zh.md) §3.2.4（effect 系统）、§3.4（可验证子集）、§5（SMV 编码）的**可实施细化**。术语、对标与诊断码命名与主 RFC 严格一致；遇到冲突以主 RFC 与 [core-language.zh.md](../spec/core-language.zh.md) §4.6.8 为准。
+本文是 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) §3.2.4（effect 系统）、§3.4（可验证子集）、§5（SMV 编码）的**可实施细化**。术语、对标与诊断码命名与主 RFC 严格一致；遇到冲突以主 RFC 与 [core-language.zh.md](../spec/core-language.zh.md) §4.6.8 为准。
 
 定位：本文**只冻结 effect 系统的静态语义与可验证子集的编译器检查规则**，以及它们与 SMV backend 的衔接。`emit-smv` 本身的语义边界仍由 [formal-backend.zh.md](./formal-backend.zh.md) 冻结，本文不重新定义 SMV lowering 的承诺范围，只定义"什么样的 AHFL 函数**有资格**被 lower"。
 

@@ -1,6 +1,6 @@
 # AHFL 类型系统四大支柱：完整实施设计
 
-本文是 [`corelib-rfc.zh.md`](./corelib-rfc.zh.md) §3.2「类型系统四大支柱」的**可实施细节附件**。它把母文档给出的目标形态补到「grammar / AST / typecheck / 单态化」层面，可直接据以编码；同时**决议**母文档 §7 的开放问题 **1、2、7**。
+本文是 [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) §3.2「类型系统四大支柱」的**可实施细节附件**。它把母文档给出的目标形态补到「grammar / AST / typecheck / 单态化」层面，可直接据以编码；同时**决议**母文档 §7 的开放问题 **1、2、7**。
 
 阅读前置：母 RFC（哲学与边界）、[`core-language.zh.md`](../spec/core-language.zh.md)（现有类型系统/语义）、[`formal-backend.zh.md`](./formal-backend.zh.md)（SMV 编码）、[`semantics-architecture.zh.md`](./semantics-architecture.zh.md)（现有 typechecker 管线）。
 

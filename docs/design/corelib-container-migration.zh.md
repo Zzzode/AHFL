@@ -1,6 +1,6 @@
 # AHFL 容器 Stdlib 化迁移 RFC
 
-本文是主 RFC `docs/design/corelib-rfc.zh.md` **§6 / P5（容器 stdlib 化，最痛重构）** 的前置迁移 RFC，并**决议主 RFC §7 开放问题 6**（"P5 容器库化对现有 SMV 编码的迁移策略"）。
+本文是主 RFC `docs/rfcs/0013-corelib-type-system-evolution.zh.md` **§6 / P5（容器 stdlib 化，最痛重构）** 的前置迁移 RFC，并**决议主 RFC §7 开放问题 6**（"P5 容器库化对现有 SMV 编码的迁移策略"）。
 
 定位：仅讨论，不落代码。所有现状断言均带文件:行证据，均基于当前 `refactor/ast-variant` 分支实际盘点。
 

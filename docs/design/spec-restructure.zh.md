@@ -240,7 +240,7 @@ docs/spec/
 
 - `docs/plans/*`：项目计划文档
 - `docs/README.md`：docs 总索引（仅在第 2 轮做路径更新）
-- `docs/design/corelib-rfc.zh.md`：另一 RFC 占位
+- `docs/rfcs/0013-corelib-type-system-evolution.zh.md`：RFC 0013（corelib 与类型系统演进）
 - 任何 `src/` 代码、`grammar/`：本方案是文档重构，不动实现
 
 ## 7. 结论

@@ -1,8 +1,8 @@
 # AHFL Corelib stdlib 完整接口规范
 
-本文是 [corelib RFC](./corelib-rfc.zh.md) §3.3 stdlib 各模块的**详细接口规范**附件，把 RFC 表格中的模块清单展开为可直接据以实现的完整签名。同时决议主 RFC §7 的开放问题 4（`std::result` 与现有错误模型）与开放问题 5（prelude stability policy）。
+本文是 [corelib RFC](../rfcs/0013-corelib-type-system-evolution.zh.md) §3.3 stdlib 各模块的**详细接口规范**附件，把 RFC 表格中的模块清单展开为可直接据以实现的完整签名。同时决议主 RFC §7 的开放问题 4（`std::result` 与现有错误模型）与开放问题 5（prelude stability policy）。
 
-- 母文档：[corelib-rfc.zh.md](./corelib-rfc.zh.md)（设计哲学、类型系统四大支柱、可验证子集、迁移路径 P0–P7）
+- 母文档：[RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md)（设计哲学、类型系统四大支柱、可验证子集、迁移路径 P0–P7）
 - 语言规范：[core-language.zh.md](../spec/core-language.zh.md)（§4.6.8 ExprEffect 6 级、§3.4 capability、§4.6.5 capability 调用规则）
 - 形式化后端：[formal-backend.zh.md](./formal-backend.zh.md)（SMV 编码、observation 抽象）
 - 模块解析：[module-resolution-rules.zh.md](./module-resolution-rules.zh.md)
@@ -1253,7 +1253,7 @@ graph TD
 
 ## 14. 推荐阅读顺序
 
-1. [corelib-rfc.zh.md](./corelib-rfc.zh.md) §3.2 类型系统四大支柱、§3.3 stdlib 表格、§3.4 可验证子集
+1. [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md) §3.2 类型系统四大支柱、§3.3 stdlib 表格、§3.4 可验证子集
 2. [core-language.zh.md](../spec/core-language.zh.md) §4.6.8 ExprEffect 6 级、§3.4 capability、§4.6.5 capability 调用
 3. [formal-backend.zh.md](./formal-backend.zh.md) "Call / Effect / Recovery Event 边界"（fail-closed 模型的 SMV 落地）
 4. [module-resolution-rules.zh.md](./module-resolution-rules.zh.md) §"lookup 顺序"、§"不带 alias 的 import"（prelude 注入与名字遮蔽）

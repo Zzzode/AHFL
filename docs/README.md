@@ -68,7 +68,7 @@ Avoid:
 - [core-scope.en.md](./design/core-scope.en.md)
 - [corelib-container-migration.zh.md](./design/corelib-container-migration.zh.md)
 - [corelib-effect-system.zh.md](./design/corelib-effect-system.zh.md)
-- [corelib-rfc.zh.md](./design/corelib-rfc.zh.md)
+- [0013-corelib-type-system-evolution.zh.md](./rfcs/0013-corelib-type-system-evolution.zh.md)
 - [corelib-stdlib-api.zh.md](./design/corelib-stdlib-api.zh.md)
 - [corelib-type-system.zh.md](./design/corelib-type-system.zh.md)
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)

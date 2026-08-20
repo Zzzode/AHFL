@@ -1,6 +1,6 @@
 # Corelib completion implementation plan
 
-本文记录 `corelib-rfc.zh.md` 剩余 P2-P6 工作的实施顺序。目标不是重新定义范围，而是把当前已落库的 P2/P3/P5/P7 基础设施收敛到 RFC 验收状态。
+本文记录 RFC 0013（`docs/rfcs/0013-corelib-type-system-evolution.zh.md`）剩余 P2-P6 工作的实施顺序。目标不是重新定义范围，而是把当前已落库的 P2/P3/P5/P7 基础设施收敛到 RFC 验收状态。
 
 ## 目标边界
 
