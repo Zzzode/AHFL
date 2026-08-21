@@ -54,12 +54,16 @@ flowchart TD
     Root --> Docs["docs/"]
     Docs --> Spec["spec/"]
     Docs --> Design["design/"]
-    Docs --> Plan["plan/"]
+    Docs --> Plans["plans/"]
     Docs --> Reference["reference/"]
+    Docs --> Rfcs["rfcs/"]
     Docs --> DocsReadme["README.md"]
 
     Root --> Grammar["grammar/"]
     Root --> Examples["examples/"]
+    Root --> Std["std/"]
+    Root --> Tools["tools/"]
+    Root --> Scripts["scripts/"]
     Root --> ThirdParty["third_party/"]
     ThirdParty --> Antlr["antlr4/"]
 ```
@@ -81,6 +85,10 @@ flowchart TD
 ### `docs/reference`
 
 放长期参考资料，例如 how-to、glossary 和命令参考。
+
+### `docs/rfcs`
+
+放编号制 RFC 决策记录（`NNNN-kebab-slug.zh.md` + `index.yml` + `README.md` + `0000-template.zh.md`）。RFC 是语言/编译器重大变更的跟踪单元，机器检查由 `scripts/check-rfc.py` 执行。
 
 ### `docs/README.md`
 

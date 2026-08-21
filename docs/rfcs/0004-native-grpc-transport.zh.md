@@ -142,7 +142,7 @@ AHFL 的 runtime / LLM provider 子系统（`src/runtime/providers/llm/` 与 `sr
 2. **Capability bridge**：`HttpTransport` 与 `GrpcTransport` 共用 wire adapter 层，其中 `GrpcTransport` 当前实为 **gRPC JSON transcoding**（将 HTTP/JSON 映射到 gRPC-shaped service path，而非原生 Protobuf 编解码 + `grpcpp` client）。`GrpcJsonTranscodingRequest` 携带 JSON body，`wire_transport_adapter.cpp` 将其转成 HTTP POST，并设置 HTTP/2 / h2c 与 trailer capture。
 
 **Why now**：
-- Wave-16 项目状态已将 "native gRPC / Protobuf transport 仍需取舍" 明确列为 BLOCKED 决策项，并要求 P1 周期内给出结论（`docs/plans/phaseb-gap-analysis.zh.md:168`）。
+- Wave-16 项目状态已将 "native gRPC / Protobuf transport 仍需取舍" 明确列为 BLOCKED 决策项；决策门槛现由 `docs/plans/native-grpc-decision-gate.zh.md` 承载（机器检查由 `scripts/check-native-grpc-gate.py` 执行）。
 - SSE 风格 token streaming（长响应、chunk 级回调、head-of-line blocking）与 multi-turn tool calling（来回小消息、低延迟往返）两种场景对连接复用、HTTP/2 multiplexing、JSON 反序列化 CPU 和 streaming lifecycle 语义敏感，已有 profiling 占位（`docs/plans/issue-backlog-global-gaps.zh.md:30`）。
 - 现有 `GrpcTransport` 已打通 HTTP → gRPC JSON transcoding seam，为原生 Protobuf 提供了错误分类、auth、timeout、retry 与 metadata/trailer 传播的参考骨架；但它不能直接算 native gRPC，也不能替代 native gRPC 的 benchmark、schema、build matrix 或 lifecycle 证据。
 
@@ -455,7 +455,7 @@ class GrpcClientFacade {
 
 **AC-3（可观测性覆盖）**：canonical `ahfl.run-event` JSONL 与 OTLP-compatible projection 中，native 成功用例必须记录 `transport_attempted = "native_grpc"` 且 `transport_used = "native_grpc"`；fail-closed 用例必须记录 `transport_attempted`、`grpc_status_code`、`grpc_status_details`、`deadline_ms` 和 diagnostic code；只有显式 fallback 用例才允许 `transport_used = "grpc_json_transcoding"` 或 `"http_json"`，且必须记录 `fallback_reason` 与 `fallback_transport`。不得为 native gRPC 恢复独立 provider observability artifact。
 
-**AC-4（代码质量）**：新增 TU（`src/runtime/providers/llm/grpc_*` + `proto/` 生成代码外的手写代码）行覆盖率 ≥ **85%**，mutation score ≥ **70%**（复用 h-18/h-19 的 mutation runner 框架，参考 `docs/plans/phaseb-gap-analysis.zh.md:212`）。
+**AC-4（代码质量）**：新增 TU（`src/runtime/providers/llm/grpc_*` + `proto/` 生成代码外的手写代码）行覆盖率 ≥ **85%**，mutation score ≥ **70%**（复用 h-18/h-19 的 mutation runner 框架）。
 
 **AC-5（安全 / 鲁棒性）**：基于 `libFuzzer` 的 `grpc_facade_proto_fuzzer`（随机合法 / 非法 proto 字节流喂给 facade 的 mock channel）在 CI nightly 任务上 **连续 14 天零 crash**，累计 corpus 大小 ≥ 1 MiB，累计执行次数 ≥ 2^28。
 
@@ -489,14 +489,14 @@ class GrpcClientFacade {
 
 ### 9.1 Internal / Repository（仓库内，file:line 可点击）
 
-1. [`docs/plans/phaseb-gap-analysis.zh.md:168`](../plans/phaseb-gap-analysis.zh.md#L168-L168) — gRPC go/no-go 决策占位与验收门槛原文。
+1. [docs/plans/native-grpc-decision-gate.zh.md](../plans/native-grpc-decision-gate.zh.md) — gRPC go/no-go 决策门槛与验收契约（机器检查由 `scripts/check-native-grpc-gate.py` 执行）。
 2. [`docs/plans/issue-backlog-global-gaps.zh.md:30`](../plans/issue-backlog-global-gaps.zh.md#L30-L30) — 全局缺口清单：transport 基线（HTTP / gRPC JSON transcoding）与 "native gRPC / Protobuf 仍未定案" 的原始陈述。
 3. [`docs/plans/project-status.zh.md:138`](../plans/project-status.zh.md#L138-L138) — Runtime transport 产品化矩阵行：明确列出 "native gRPC / Protobuf transport 仍需取舍"。
 4. [`src/runtime/engine/grpc_transport.cpp:1`](../../src/runtime/engine/grpc_transport.cpp#L1-L1) — 现有 `GrpcTransport`（实为 JSON transcoding，而非原生 Protobuf）实现入口，为原生 gRPC 扩展的 seam。
 5. [`src/runtime/engine/http_transport.cpp:7`](../../src/runtime/engine/http_transport.cpp#L7-L19) — `HttpTransport::build_curl_command` 与 `HttpTransport::execute` 基线实现，为 §3.4 fallback 提供参考签名。
 6. [`src/runtime/providers/llm/http_client.hpp:31`](../../src/runtime/providers/llm/http_client.hpp#L31-L55) — `HttpClient` 的 `ChatCompletionsTransport` 注入签名与 `chat_completions` 方法，§3.3.2 facade 必须 1:1 语义对齐。
 7. [`src/runtime/providers/llm/streaming.hpp:12`](../../src/runtime/providers/llm/streaming.hpp#L12-L31) — `StreamChunkCallback` 与 `SSEParser` 现有 streaming seam，§3.3.2 中在 gRPC server-stream 模式下复用回调签名。
-8. [`docs/plans/phaseb-gap-analysis.zh.md:212`](../plans/phaseb-gap-analysis.zh.md#L212-L212) — h-18/h-19 mutation runner 框架，为 §7 AC-4 的 mutation score ≥ 70% 提供现有工具链引用。
+8. 现有 mutation runner 框架（h-18/h-19 引入），为 §7 AC-4 的 mutation score ≥ 70% 提供工具链基础。
 
 ### 9.2 External（外部参考）
 

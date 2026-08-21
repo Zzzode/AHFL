@@ -252,12 +252,14 @@ Serverless 托管、多租户平台、多 region 控制面——目前**只有�
 
 ## 8. 文档地图
 
+按任务找文档（穷举索引以 [docs/README.md](../README.md) 为准）：
+
 | 你想了解 | 去读 |
 | --- | --- |
 | 语言语义 | [docs/spec/core-language.zh.md](../spec/core-language.zh.md)、[assurance.zh.md](../spec/assurance.zh.md) |
-| 语言/编译器决策记录 | [docs/rfcs/](../rfcs/README.md)（13 个 RFC，机器可检） |
-| 编译器架构 | [compiler-architecture.zh.md](compiler-architecture.zh.md)、[compiler-phase-boundaries.zh.md](compiler-phase-boundaries.zh.md)、[frontend-lowering-architecture.zh.md](frontend-lowering-architecture.zh.md) |
-| IR 与后端 | [ir-backend-architecture.zh.md](ir-backend-architecture.zh.md)、[backend-extension-guide.zh.md](backend-extension-guide.zh.md)、[formal-backend.zh.md](formal-backend.zh.md) |
+| 语言/编译器决策记录 | [docs/rfcs/](../rfcs/README.md)（14 个 RFC，机器可检） |
+| 编译器架构 | [compiler-architecture.zh.md](compiler-architecture.zh.md)、[compiler-phase-boundaries.zh.md](compiler-phase-boundaries.zh.md)、[compiler-evolution.zh.md](compiler-evolution.zh.md)、[frontend-lowering-architecture.zh.md](frontend-lowering-architecture.zh.md) |
+| IR 与后端 | [ir-backend-architecture.zh.md](ir-backend-architecture.zh.md)、[backend-extension-guide.zh.md](backend-extension-guide.zh.md)、[formal-backend.zh.md](formal-backend.zh.md)、[assurance-architecture.zh.md](assurance-architecture.zh.md) |
 | 运行时 | [native-runtime-architecture.zh.md](native-runtime-architecture.zh.md) |
 | 语义与类型检查 | [semantics-architecture.zh.md](semantics-architecture.zh.md)、[ast-model-architecture.zh.md](ast-model-architecture.zh.md) |
 | CLI 与工具链 | [cli-pipeline-architecture.zh.md](cli-pipeline-architecture.zh.md)、[lsp-hover-architecture.zh.md](lsp-hover-architecture.zh.md)、[diagnostics-architecture.zh.md](diagnostics-architecture.zh.md) |

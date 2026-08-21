@@ -12,26 +12,39 @@
 
 ## 当前 backend 列表
 
-当前仓库中的 backend/导出命令包括：
+当前 CLI 的 `emit-*` 命令按族分组（注册表见 `src/compiler/backends/driver.cpp`，CLI 接线见 `src/tooling/cli/command_registry.cpp`）：
 
-- `emit-ir`
-- `emit-ir-json`
-- `emit-native-json`
-- `emit-summary`
-- `emit-smv`
+**Core（IR 与分析产物）**
 
-其中：
+- `emit-ir` — 人读型结构化 IR
+- `emit-ir-json` — 机器消费型结构化 IR
+- `emit-opt-ir` / `emit-opt-ir-json` — 诊断式 Opt IR 及其 JSON 形式
+- `emit-native-json` — 面向 runtime consumer 的 handoff package JSON
+- `emit-summary` — 参考 backend，capability-oriented summary，也是新增 backend 的最小扩展路径
 
-1. `emit-ir`
-   - 人读型结构化 IR
-2. `emit-ir-json`
-   - 机器消费型结构化 IR
-3. `emit-native-json`
-   - 面向 future Native/runtime-adjacent consumer 的 handoff package JSON
-4. `emit-summary`
-   - 参考 backend，实现最小的 backend 扩展路径，并输出 capability-oriented summary
-5. `emit-smv`
-   - 受限 formal backend
+**Runtime handoff（编排交接）**
+
+- `emit-execution-plan` — workflow DAG 执行计划（`ahfl.execution-plan.v1`，无代码）
+- `emit-dry-run-trace` — execution plan 的确定性 dry-run 轨迹
+- `emit-package-review` — 包级评审视图
+
+**Public API（RFC 0009 可见性）**
+
+- `emit-public-api` / `emit-public-api-docs` / `emit-public-api-diff` — public API snapshot / docs / diff
+
+**Formal（形式化）**
+
+- `emit-smv` — NuSMV 模型（受限 formal backend）
+- `emit-assurance-json` — 保证案例 JSON
+
+**Infra（部署视图，逻辑上属于平台层）**
+
+- `emit-k8s-crd` — Agent 的 CRD YAML
+- `emit-openapi` — API surface spec
+- `emit-terraform` — IaC 配置
+- `emit-wasm` — WAT（仅编码 agent 状态机骨架）
+
+下文的能力矩阵只覆盖**消费完整 IR 语义**的 5 个 core/formal backend（`emit-ir`、`emit-ir-json`、`emit-native-json`、`emit-summary`、`emit-smv`）。handoff 族消费 workflow 结构与 lifecycle 摘要；public-api 族消费符号可见性；infra 族是 IR 的只读消费者，只提取 agent/flow 结构生成部署描述，不保留完整语义。
 
 ## 能力矩阵
 
@@ -155,3 +168,4 @@
 2. `emit-native-json` 已把 handoff package 正式接入统一 backend 扩展路径
 3. backend capability matrix 已文档化
 4. `emit-smv` 仍然是唯一正式 formal exporter，但 backend 扩展路径不再只靠它单点验证
+5. handoff / public-api / infra 族 backend 已接入统一注册表；infra 族的外部验收仍待补（见 [architecture-overview.zh.md](../design/architecture-overview.zh.md) §4.4）

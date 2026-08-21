@@ -71,7 +71,7 @@ flowchart TD
 | 核心基础层 | 已实现 | 单文件 Parse、Resolver、TypeChecker、Validator、IR、SMV emission |
 | Project-aware 扩展 | 已实现 | SourceGraph、跨文件 import/resolve、DeclarationProvenance、project-aware IR |
 
-关联设计：`docs/design/core-scope.en.md`、`docs/design/compiler-phase-boundaries.zh.md`、`docs/design/formal-backend.zh.md`、`docs/design/module-loading.zh.md`。
+关联设计：`docs/design/compiler-phase-boundaries.zh.md`、`docs/design/formal-backend.zh.md`、`docs/design/module-loading.zh.md`。
 
 ### 3.2 Event-native Runtime Kernel
 

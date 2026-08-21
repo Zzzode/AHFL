@@ -215,7 +215,7 @@ docs/spec/
 **第 5 轮：core-native-boundary 与 native 分册**
 
 1. 新建 `docs/spec/core-native-boundary.zh.md`，写入 §3 的边界划定原则与守则
-2. 把当前散落在 `docs/design/native-runtime-architecture.zh.md`、`docs/design/core-scope.en.md` 中的 native 语法规范部分，提炼为 `docs/spec/native/native-language.zh.md`
+2. 把当前散落在 `docs/design/native-runtime-architecture.zh.md` 中的 native 语法规范部分，提炼为 `docs/spec/native/native-language.zh.md`（早期 core-scope 旧稿的边界划定内容已删除，需要时从 git 历史取回）
 3. 注意：design 文档不动，只把其中"规范性"内容提升到 spec/
 
 **第 6 轮：formal/ 分册提升**
