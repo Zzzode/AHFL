@@ -83,7 +83,6 @@ Avoid:
 - [native-runtime-architecture.zh.md](./design/native-runtime-architecture.zh.md)
 - [release-evidence-archive.zh.md](./design/release-evidence-archive.zh.md)
 - [repository-layout.zh.md](./design/repository-layout.zh.md)
-- [rfc-system.zh.md](./design/rfc-system.zh.md)
 - [semantics-architecture.zh.md](./design/semantics-architecture.zh.md)
 - [source-graph.zh.md](./design/source-graph.zh.md)
 - [spec-restructure.zh.md](./design/spec-restructure.zh.md)
