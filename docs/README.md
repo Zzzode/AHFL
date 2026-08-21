@@ -58,6 +58,7 @@ Avoid:
 
 ### Design
 
+- [architecture-overview.zh.md](./design/architecture-overview.zh.md)
 - [assurance-architecture.zh.md](./design/assurance-architecture.zh.md)
 - [ast-model-architecture.zh.md](./design/ast-model-architecture.zh.md)
 - [backend-extension-guide.zh.md](./design/backend-extension-guide.zh.md)
