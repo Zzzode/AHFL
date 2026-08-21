@@ -5,7 +5,6 @@
 关联文档：
 
 - [project-status.zh.md](../plans/project-status.zh.md)
-- [rfc-follow-up-priorities.zh.md](../plans/rfc-follow-up-priorities.zh.md)
 - [lsp-vscode-extension.zh.md](../reference/lsp-vscode-extension.zh.md)
 
 ## 目标

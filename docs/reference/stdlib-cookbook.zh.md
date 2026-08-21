@@ -31,7 +31,7 @@ the current working directory. It only exposes the language primitive prelude
 a manifest-backed package or the corelib source sysroot. See
 [single-file-mode.zh.md](./single-file-mode.zh.md).
 
-Coverage maps to the corelib-support-workplan module matrix: Option / Result /
+Coverage spans the corelib module matrix: Option / Result /
 String / List / Set / Map / cmp.
 
 ---
@@ -214,9 +214,10 @@ fn sum_parsed(csv: String) -> Int effect Pure decreases 0 {
 > parameter across a method chain (e.g. `r.map(\x->..).unwrap_or(0)`). Give the
 > generic method an explicit type argument (`map<Int>`, `and_then<U>`,
 > `flat_map<Int, Int>`) or bind the intermediate result to a `let` with a type
-> annotation. See corelib-support-workplan §3.5 finding #6.
+> annotation. This is a known P3 limitation tracked in
+> [RFC 0013](../rfcs/0013-corelib-type-system-evolution.zh.md).
 
-## Try operator (`?`) — RFC §3.2 / D3
+## Try operator (`?`) — RFC 0014 / D3
 
 Postfix `?` is a short-circuit combinator for `Option<T>` and `Result<T,E>`.
 It works like Rust's `?`:

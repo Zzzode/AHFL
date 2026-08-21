@@ -66,16 +66,13 @@ Avoid:
 - [compiler-architecture.zh.md](./design/compiler-architecture.zh.md)
 - [compiler-evolution.zh.md](./design/compiler-evolution.zh.md)
 - [compiler-phase-boundaries.zh.md](./design/compiler-phase-boundaries.zh.md)
-- [core-scope.en.md](./design/core-scope.en.md)
 - [corelib-container-migration.zh.md](./design/corelib-container-migration.zh.md)
 - [corelib-effect-system.zh.md](./design/corelib-effect-system.zh.md)
 - [corelib-stdlib-api.zh.md](./design/corelib-stdlib-api.zh.md)
 - [corelib-type-system.zh.md](./design/corelib-type-system.zh.md)
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
 - [formal-backend.zh.md](./design/formal-backend.zh.md)
-- [formal-subset.zh.md](./design/formal-subset.zh.md)
 - [frontend-lowering-architecture.zh.md](./design/frontend-lowering-architecture.zh.md)
-- [incremental-cache.zh.md](./design/incremental-cache.zh.md)
 - [ir-backend-architecture.zh.md](./design/ir-backend-architecture.zh.md)
 - [lsp-hover-architecture.zh.md](./design/lsp-hover-architecture.zh.md)
 - [module-loading.zh.md](./design/module-loading.zh.md)
@@ -90,14 +87,9 @@ Avoid:
 
 ### Plan
 
-- [corelib-completion-plan.zh.md](./plans/corelib-completion-plan.zh.md)
-- [corelib-support-workplan.zh.md](./plans/corelib-support-workplan.zh.md)
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
 - [native-grpc-decision-evidence.json](./plans/native-grpc-decision-evidence.json)
 - [native-grpc-decision-gate.zh.md](./plans/native-grpc-decision-gate.zh.md)
-- [p3-std-impl-blockers.zh.md](./plans/p3-std-impl-blockers.zh.md)
-- [phase-0-4-closure-audit.zh.md](./plans/phase-0-4-closure-audit.zh.md)
-- [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
 
 ### Reference
@@ -105,7 +97,6 @@ Avoid:
 - [backend-capability-matrix.zh.md](./reference/backend-capability-matrix.zh.md)
 - [cli-commands.zh.md](./reference/cli-commands.zh.md)
 - [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
-- [developer-docs.zh.md](./reference/developer-docs.zh.md)
 - [error-codes.zh.md](./reference/error-codes.zh.md)
 - [fuzz-corpus-location.zh.md](./reference/fuzz-corpus-location.zh.md)
 - [ir-format.zh.md](./reference/ir-format.zh.md)
