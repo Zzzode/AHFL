@@ -69,7 +69,6 @@ Avoid:
 - [core-scope.en.md](./design/core-scope.en.md)
 - [corelib-container-migration.zh.md](./design/corelib-container-migration.zh.md)
 - [corelib-effect-system.zh.md](./design/corelib-effect-system.zh.md)
-- [0013-corelib-type-system-evolution.zh.md](./rfcs/0013-corelib-type-system-evolution.zh.md)
 - [corelib-stdlib-api.zh.md](./design/corelib-stdlib-api.zh.md)
 - [corelib-type-system.zh.md](./design/corelib-type-system.zh.md)
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
@@ -89,7 +88,6 @@ Avoid:
 - [source-graph.zh.md](./design/source-graph.zh.md)
 - [spec-restructure.zh.md](./design/spec-restructure.zh.md)
 - [testing-strategy.zh.md](./design/testing-strategy.zh.md)
-- [try-operator-impl-plan.zh.md](./design/try-operator-impl-plan.zh.md)
 
 ### Plan
 
@@ -102,15 +100,6 @@ Avoid:
 - [phase-0-4-closure-audit.zh.md](./plans/phase-0-4-closure-audit.zh.md)
 - [phaseb-gap-analysis.zh.md](./plans/phaseb-gap-analysis.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
-- [rfc-follow-up-priorities.zh.md](./plans/rfc-follow-up-priorities.zh.md)
-- [trait-self-blocker.en.md](./plans/trait-self-blocker.en.md)
-- [wave-15-integration-report.zh.md](./plans/wave-15-integration-report.zh.md)
-- [wave-16-integration-report.zh.md](./plans/wave-16-integration-report.zh.md)
-- [wave-17-integration-report.zh.md](./plans/wave-17-integration-report.zh.md)
-- [wave-18-integration-report.zh.md](./plans/wave-18-integration-report.zh.md)
-- [wave-19-integration-report.zh.md](./plans/wave-19-integration-report.zh.md)
-- [wave-20-integration-report.zh.md](./plans/wave-20-integration-report.zh.md)
-- [wave-21-integration-report.zh.md](./plans/wave-21-integration-report.zh.md)
 
 ### Reference
 
@@ -169,6 +158,8 @@ independent command references:
 - [0010-registry-publishing-semver.zh.md](./rfcs/0010-registry-publishing-semver.zh.md)
 - [0011-pattern-usefulness-matrix.zh.md](./rfcs/0011-pattern-usefulness-matrix.zh.md)
 - [0012-structured-workflow-execution-ux.zh.md](./rfcs/0012-structured-workflow-execution-ux.zh.md)
+- [0013-corelib-type-system-evolution.zh.md](./rfcs/0013-corelib-type-system-evolution.zh.md)
+- [0014-try-operator.zh.md](./rfcs/0014-try-operator.zh.md)
 
 ## Governance
 

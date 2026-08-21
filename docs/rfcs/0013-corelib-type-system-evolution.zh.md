@@ -5,7 +5,7 @@ status: "implementing"
 area: ["language", "compiler", "stdlib", "runtime"]
 stability: "experimental"
 created: "2026-06-21"
-updated: "2026-08-20"
+updated: "2026-08-21"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -327,6 +327,8 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 | P7 runtime 补全 | ✅ 完成 | 100% | — |
 
 执行顺序原则：同组内可并行，组间有阻塞关系。当前关键路径是 P3 的 impl-body parser gap（阻塞 container-family trait 批量 impl），其后是 P2/P3 共享的跨链推断与 where-clause 传播，最后是 P4 的 bounded refinement SMV 接线（与 const 泛型合并 ROI 最高）。
+
+> **P3c 阻塞（2026-08-21 并入，原 `docs/plans/trait-self-blocker.en.md`）**：container-family trait 批量 impl（`impl Eq for Option<T>` 等）被 `Self` 关键字缺失阻塞。根因：`typecheck.cpp` 的 `signatures_match()` 对 trait 方法参数类型做指针相等比较，而 `std/traits.ahfl` 的 trait 声明用具体占位类型（`Bool`、`Int`、`collections::List<Int>`）作为 receiver，导致 `impl Eq for Option<T>` 报 `TRAIT_METHOD_SIGNATURE_MISMATCH`（trait expects `(Bool, Bool)`，impl provides `(Option<T>, Option<T>)`）。需要：(1) trait 方法签名支持 `Self` 接收者；(2) `signatures_match` 做 Self 替换而非指针相等；(3) 或支持 trait-level 类型参数在 impl 解析时替换。在 Self 落地前，inherent impl 路径（`impl<T> Option<T>` 上的方法）可用，覆盖大部分 stdlib API 需求；B-5~B-9 trait impl 批次（Option/Result × 7、List/Set/Map × container-family、JsonValue × 6、primitives × 4）整体挂起。
 
 ## Test Plan
 

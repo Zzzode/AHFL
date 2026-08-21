@@ -12,7 +12,7 @@ owners:
   language: "AHFL language owners"
   compiler: "AHFL compiler owners"
 required_reviewers: ["language", "compiler"]
-tracking_issue: "../plans/phaseb-gap-analysis.zh.md#3d-enum-variant-named-fields"
+tracking_issue: "none"
 discussion: "0001-enum-variant-payload.zh.md"
 implementation_prs:
   - "0d678ab7"

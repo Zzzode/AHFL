@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-08-20"
+updated: "2026-08-21"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -78,4 +78,10 @@ rfcs:
     status: "implementing"
     file: "0013-corelib-type-system-evolution.zh.md"
     area: ["language", "compiler", "stdlib", "runtime"]
+    stability: "experimental"
+  - rfc: "0014"
+    title: "Try Operator (expr?)"
+    status: "draft"
+    file: "0014-try-operator.zh.md"
+    area: ["language", "compiler"]
     stability: "experimental"
