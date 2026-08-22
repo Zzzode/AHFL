@@ -1,11 +1,11 @@
 ---
 rfc: "0014"
 title: "Try Operator (expr?)"
-status: "draft"
+status: "review"
 area: ["language", "compiler"]
 stability: "experimental"
 created: "2026-08-21"
-updated: "2026-08-21"
+updated: "2026-08-22"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -105,13 +105,13 @@ flowchart TD
 
 ## Implementation Plan
 
-grammar 脚手架已落地（`AHFL.g4` 的 `postfixExpr` `'?'` arm + 重新生成的 parser）。剩余切片：
+grammar 脚手架已落地（`AHFL.g4` 的 `postfixExpr` `'?'` arm + 重新生成的 parser）。Open Questions 已全部决议（2026-08-22）。剩余切片：
 
 1. **AST**：`ExprSyntaxKind::Try`、`TryExpr` 结构体、variant 与 visitor 站点。
-2. **Frontend**：`build_postfix_expr` 后缀循环中识别 `?`，构造 `TryExpr`（注意单 token 后缀的 child 步进）。
+2. **Frontend**：`build_postfix_expr` 后缀循环中识别 `?`（单 terminal，`child_index += 1`），构造 `TryExpr`。
 3. **AST printer + desugar**：新增 `TryExpr` case。
-4. **Sema**：类型规则（§类型规则）与禁止上下文检查（§禁止上下文）。
-5. **typed HIR + IR lowering**：按选定的实现路径（desugar 或专用节点）复用 return + match lowering。
+4. **Sema**：类型规则（§类型规则）与禁止上下文检查（§禁止上下文）。闭包无显式返回类型时 `?` 报 SourceRange 诊断。
+5. **typed HIR + IR lowering**：dedicated `TryExpr` typed-HIR 节点；HIR->IR statement-level lowering——`let x = e?;` 展开为 temp 绑定 + 失败检查（if + return）+ unwrap。**Slice 1 限制 `?` 仅出现在 let-binding 位置**；任意表达式位置（`f(e?)`）需要 statement-buffer lowering，是独立 follow-up。
 6. **测试**：见 Test Plan。
 
 每阶段独立可验证，按阶段单独提交 Conventional Commit，并在本 RFC 的 `implementation_prs` 中登记。
@@ -139,11 +139,12 @@ grammar 脚手架已落地（`AHFL.g4` 的 `postfixExpr` `'?'` arm + 重新生�
 
 ## Open Questions
 
-1. **实现路径**：typechecker 能否在表达式上下文 lower 提前返回？若能，desugar 到 match 是最省路径；若不能，引入专用 TryExpr typed-HIR 节点（接受 IR schema 变更成本）。
-2. **Frontend child 步进**：ANTLR 生成的后缀循环中，单 token `?` 的 child_index 步进需对照实际 parse tree 验证（`[expr]` 步进 3，`?` 应为 1）。
-3. **闭包中的 `?`**：闭包无显式返回类型时，`?` 是报错还是按闭包体推断？倾向报错（与 Rust 一致：闭包返回类型须可判定）。
+1. ~~实现路径~~（已决议，2026-08-22）：**dedicated `TryExpr` typed-HIR 节点 + HIR->IR statement-level lowering**。IR 的 match arm 是表达式（`ExprRef body`），不是 block，无法承载 `return` 语句；evaluator 的 `eval_expr` 返回 `EvalResult`（值 + 诊断），不支持控制流 outcome。因此 `?` 不走 desugar-to-match，也不改 evaluator 表达式模型。HIR->IR lowerer 对 `let x = e?;` 做语句级展开：(1) `let tmp = e;` 求值 operand；(2) `if (is_none/is_err(tmp)) { return None/Err(...); }` 失败分支提前返回；(3) `let x = unwrap(tmp);` 成功路径解包。复用现有 IR 构造（LetStatement / IfStatement / ReturnStatement / UnwrapExpr / MatchExpr），不引入新 IR 节点。**Slice 1 限制 `?` 仅出现在 let-binding 位置**（`let x = e?;`）；任意表达式位置（`f(e?)`）需要 statement-buffer lowering（A-Normalization 式提升），是独立 follow-up。
+2. ~~Frontend child 步进~~（已决议，2026-08-22）：`?` 是单 terminal 节点，`child_index += 1`（对比 `[index]` 步进 3：`[` + expr + `]`）。`build_postfix_expr` 新增 `token_text == "?"` 分支，构造 `TryExpr` 后 `child_index += 1; continue;`。
+3. ~~闭包中的 `?`~~（已决议，2026-08-22）：闭包无显式返回类型时，`?` 报 SourceRange 诊断（与 Rust 一致：闭包返回类型须可判定）。`?` 的类型规则要求外层 fn 返回类型可判定，闭包无显式返回类型时无法满足此约束。
 
 ## Decision History
 
 - 2026-06（D3，workplan decision register）：采纳 Rust 风格后缀 `expr?`，禁止用于 predicate / contract / flow-handler / workflow-return 上下文。
 - 2026-08-21：从 `docs/design/try-operator-impl-plan.zh.md` 转写为 RFC（按"RFC 即跟踪单元"惯例）；grammar 脚手架已落地，状态 `draft`。
+- 2026-08-22：Open Questions 全部决议，状态 `draft` → `review`。(1) 实现路径：dedicated `TryExpr` typed-HIR 节点 + HIR->IR statement-level lowering（let-binding 位置展开为 temp + if-return + unwrap），不走 desugar-to-match（IR match arm 是表达式，无法承载 return），不改 evaluator 表达式模型；Slice 1 限制 `?` 仅出现在 let-binding 位置，任意表达式位置是独立 follow-up。(2) Frontend child 步进：`?` 是单 terminal，`child_index += 1`。(3) 闭包中的 `?`：闭包无显式返回类型时报 SourceRange 诊断（Rust 一致）。
