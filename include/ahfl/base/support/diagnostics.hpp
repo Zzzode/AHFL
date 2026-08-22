@@ -243,6 +243,12 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
     "CAPABILITY_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADOWED_BINDING"};
+// P3-gaps-A (RFC 0013 Gap 3): a closure parameter has no type annotation and
+// no expected Fn type to infer from. Previously the fallback silently produced
+// an error type that crashed at the IR lowering boundary; now it halts with a
+// SourceRange'd diagnostic at the parameter.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CannotInferClosureParam{
+    "CANNOT_INFER_CLOSURE_PARAM"};
 // Wave-20 QW-4: optional agent grammar clauses. When `context` or
 // `capabilities` clauses are omitted from an agent declaration (allowed since
 // grammar was relaxed; see AHFL.g4 agentDecl) these two warning-level codes
@@ -622,6 +628,10 @@ inline constexpr MessageTemplate SchemaBoundaryTypeRequiresStruct{
     "{} type must resolve to a struct type"};
 inline constexpr MessageTemplate ShadowedBinding{
     "let binding '{}' shadows an existing binding of type '{}'"};
+inline constexpr MessageTemplate CannotInferClosureParam{
+    "cannot infer type of closure parameter '{}' without an annotation or an expected Fn type; "
+    "annotate it explicitly (e.g. '\\({}: Int) -> ...') or provide an expected Fn type "
+    "(e.g. 'let f: Fn(Int) -> Int = \\({}) -> ...')"};
 inline constexpr MessageTemplate DecreasesShadowedReceiver{
     "decreases clause receiver 'self' is shadowed by a local binding of type '{}'; "
     "the termination measure is degraded to an abstract observation"};

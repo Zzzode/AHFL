@@ -8,7 +8,7 @@
 // IR JSON / print) can observe it. Lambdas without a `[...]` prefix keep
 // their legacy implicit-capture behaviour — no golden churn.
 //
-// Harness mirrors b2_impl_body_parser_fixes.cpp: parse_project → resolve →
+// Harness mirrors b2_impl_body_parser_gaps.cpp: parse_project → resolve →
 // typecheck. T6 additionally round-trips through the formatter.
 //
 // Coverage: 7 TEST_CASE / 30+ assertions.

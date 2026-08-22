@@ -2059,7 +2059,10 @@ class ProgramBuilder {
     build_lambda_param(AHFLParser::LambdaParamContext &context) const {
         auto param = make_owned<ast::LambdaParamSyntax>();
         param->range = context_range(context, source_);
-        param->name = text_of(require(context.IDENT(), "lambda parameter name is missing"));
+        // P3-gaps-A (RFC 0013 Gap 3): lambdaParam uses the keyword-permissive
+        // `identifier` rule, so keyword-like names ('self', 'map', 'set', ...)
+        // are legal closure parameter names.
+        param->name = identifier_text(require(context.identifier(), "lambda parameter name is missing"));
         if (const auto type_annotation = borrow(context.type_())) {
             param->type = build_type_syntax(type_annotation->get());
         }

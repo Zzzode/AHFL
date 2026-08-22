@@ -1958,10 +1958,25 @@ class ExpressionChecker final {
                        expected_fn->params[index] != nullptr) {
                 param_type = expected_fn->params[index]->clone();
             } else {
+                // P3-gaps-A (RFC 0013 Gap 3): no annotation and no expected Fn
+                // type to infer from. Emit a SourceRange'd diagnostic at the
+                // parameter and fall back to the error type; the IR-boundary
+                // throw in typed_hir_lower stays as a safety net for any path
+                // that bypasses the typecheck pass.
+                services_.typecheck_error_here(
+                    error_codes::typecheck::CannotInferClosureParam,
+                    messages::typecheck::CannotInferClosureParam.format_with(
+                        param->name, param->name, param->name),
+                    param->range);
                 param_type = values_.make_error_type();
             }
             param_types.push_back(param_type);
-            body_context.bindings.emplace(param->name, param_type);
+            // P3-gaps-A (RFC 0013 Gap 3): lambda params bind in the child
+            // scope and SHADOW outer bindings of the same name. In particular
+            // a param named `self` shadows an impl-method receiver `self`
+            // inside the closure body (insert_or_assign, not emplace — the
+            // copied outer bindings already contain the receiver).
+            body_context.bindings.insert_or_assign(param->name, param_type);
         }
 
         if (lambda.body) {

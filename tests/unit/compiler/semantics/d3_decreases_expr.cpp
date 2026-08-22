@@ -9,7 +9,7 @@
 //     fn length<T>(xs: List<T>) -> Int effect Pure decreases xs.count { ... }
 //     impl<T> List<T> { fn length(...) effect Pure decreases self.count { ... } }
 //
-// Harness mirrors b2_impl_body_parser_fixes.cpp: parse_project → resolve →
+// Harness mirrors b2_impl_body_parser_gaps.cpp: parse_project → resolve →
 // typecheck.  FlowWorkflowSema validates the decreases
 // expression against the body's ValueContext (which carries parameter
 // bindings + Self/self for impl methods).

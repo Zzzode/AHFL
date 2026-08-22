@@ -344,7 +344,11 @@ lambdaParamList:
 	lambdaParam                             // single unparenthesised param
 	| '(' (lambdaParam (',' lambdaParam)*)? ','? ')';
 
-lambdaParam: IDENT (':' type_)?;
+// P3-gaps-A (RFC 0013 Gap 3): lambda parameter names use the keyword-permissive
+// `identifier` rule so keyword-like names ('self', 'map', 'set', ...) are legal
+// closure parameter names. Value/type namespace separation keeps a param named
+// e.g. `T` distinct from a tparam `T` in type position.
+lambdaParam: identifier (':' type_)?;
 
 // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait declarations and impl
 // blocks. The grammar models the syntactic surface only; trait resolution,

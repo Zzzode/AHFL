@@ -560,7 +560,7 @@ void ahflParserInitialize() {
 	0,0,1125,1117,1,0,0,0,1125,1126,1,0,0,0,1126,1128,1,0,0,0,1127,1129,5,
 	28,0,0,1128,1127,1,0,0,0,1128,1129,1,0,0,0,1129,1130,1,0,0,0,1130,1132,
 	5,32,0,0,1131,1115,1,0,0,0,1131,1116,1,0,0,0,1132,161,1,0,0,0,1133,1136,
-	5,147,0,0,1134,1135,5,34,0,0,1135,1137,3,28,14,0,1136,1134,1,0,0,0,1136,
+	3,12,6,0,1134,1135,5,34,0,0,1135,1137,3,28,14,0,1136,1134,1,0,0,0,1136,
 	1137,1,0,0,0,1137,163,1,0,0,0,1138,1140,5,148,0,0,1139,1138,1,0,0,0,1139,
 	1140,1,0,0,0,1140,1142,1,0,0,0,1141,1143,3,8,4,0,1142,1141,1,0,0,0,1142,
 	1143,1,0,0,0,1143,1144,1,0,0,0,1144,1145,5,101,0,0,1145,1147,5,147,0,
@@ -7067,7 +7067,8 @@ AHFLParser::LambdaExprContext* AHFLParser::lambdaExpr() {
     _errHandler->sync(this);
 
     _la = _input->LA(1);
-    if (_la == AHFLParser::T__30 || _la == AHFLParser::IDENT) {
+    if ((((_la & ~ 0x3fULL) == 0) &&
+      ((1ULL << _la) & 2281701248) != 0) || _la == AHFLParser::IDENT) {
       setState(1095);
       lambdaParamList();
     }
@@ -7264,6 +7265,26 @@ AHFLParser::LambdaParamListContext* AHFLParser::lambdaParamList() {
     setState(1131);
     _errHandler->sync(this);
     switch (_input->LA(1)) {
+      case AHFLParser::T__6:
+      case AHFLParser::T__7:
+      case AHFLParser::T__8:
+      case AHFLParser::T__9:
+      case AHFLParser::T__10:
+      case AHFLParser::T__11:
+      case AHFLParser::T__12:
+      case AHFLParser::T__13:
+      case AHFLParser::T__14:
+      case AHFLParser::T__15:
+      case AHFLParser::T__16:
+      case AHFLParser::T__17:
+      case AHFLParser::T__18:
+      case AHFLParser::T__19:
+      case AHFLParser::T__20:
+      case AHFLParser::T__21:
+      case AHFLParser::T__22:
+      case AHFLParser::T__23:
+      case AHFLParser::T__24:
+      case AHFLParser::T__25:
       case AHFLParser::IDENT: {
         enterOuterAlt(_localctx, 1);
         setState(1115);
@@ -7279,7 +7300,8 @@ AHFLParser::LambdaParamListContext* AHFLParser::lambdaParamList() {
         _errHandler->sync(this);
 
         _la = _input->LA(1);
-        if (_la == AHFLParser::IDENT) {
+        if ((((_la & ~ 0x3fULL) == 0) &&
+          ((1ULL << _la) & 134217600) != 0) || _la == AHFLParser::IDENT) {
           setState(1117);
           lambdaParam();
           setState(1122);
@@ -7330,8 +7352,8 @@ AHFLParser::LambdaParamContext::LambdaParamContext(ParserRuleContext *parent, si
   : ParserRuleContext(parent, invokingState) {
 }
 
-tree::TerminalNode* AHFLParser::LambdaParamContext::IDENT() {
-  return getToken(AHFLParser::IDENT, 0);
+AHFLParser::IdentifierContext* AHFLParser::LambdaParamContext::identifier() {
+  return getRuleContext<AHFLParser::IdentifierContext>(0);
 }
 
 AHFLParser::Type_Context* AHFLParser::LambdaParamContext::type_() {
@@ -7366,7 +7388,7 @@ AHFLParser::LambdaParamContext* AHFLParser::lambdaParam() {
   try {
     enterOuterAlt(_localctx, 1);
     setState(1133);
-    match(AHFLParser::IDENT);
+    identifier();
     setState(1136);
     _errHandler->sync(this);
 

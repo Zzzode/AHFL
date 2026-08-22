@@ -209,7 +209,7 @@ agent ClosureAgent {
 
 flow for ClosureAgent {
     state Done {
-        let f = \x -> x;
+        let f = \(x: Int) -> x;
         return Response { value: input.value };
     }
 }
@@ -250,8 +250,11 @@ agent ClosureShapesAgent {
 
 flow for ClosureShapesAgent {
     state Done {
-        let single = \x -> x;
-        let pair = \(a, b) -> a;
+        // P3-gaps-A: un-annotated closure params without an expected Fn type
+        // now halt with CANNOT_INFER_CLOSURE_PARAM, so every lambda here
+        // carries an explicit parameter annotation (or is a zero-arg thunk).
+        let single = \(x: Int) -> x;
+        let pair = \(a: Int, b: Bool) -> a;
         let typed = \(a: Int, b: Int) -> a;
         let thunk = \ -> 1;
         return Response { value: input.value };

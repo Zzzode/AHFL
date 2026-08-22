@@ -559,6 +559,22 @@ target_include_directories(ahfl_semantics_c4_capture_list_tests
 ahfl_apply_project_warnings(ahfl_semantics_c4_capture_list_tests)
 add_test(NAME c4_capture_list COMMAND ahfl_semantics_c4_capture_list_tests)
 
+add_executable(ahfl_semantics_b2_impl_body_parser_gaps_tests
+    unit/compiler/semantics/b2_impl_body_parser_gaps.cpp
+)
+target_link_libraries(ahfl_semantics_b2_impl_body_parser_gaps_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+target_include_directories(ahfl_semantics_b2_impl_body_parser_gaps_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+        ${PROJECT_SOURCE_DIR}/src
+)
+ahfl_apply_project_warnings(ahfl_semantics_b2_impl_body_parser_gaps_tests)
+add_test(NAME b2_impl_body_parser_gaps COMMAND ahfl_semantics_b2_impl_body_parser_gaps_tests)
+
 add_executable(ahfl_semantics_d3_decreases_expr_tests
     unit/compiler/semantics/d3_decreases_expr.cpp
 )
