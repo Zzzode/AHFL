@@ -1358,8 +1358,10 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
 }
 
 // P3 (RFC §3.2.2 / type-system §1.3): turn one trait-item method signature
-// (no body) into a TraitMethodInfo. Self is left opaque — the impl matcher
-// substitutes the impl target type at resolution time.
+// (no body) into a TraitMethodInfo. `Self` resolves to TypeVarT(0) and
+// trait-level type params to TypeVarT(1..N) under the self-augmented scope
+// activated by build_trait_types; the impl matcher substitutes the impl
+// target type + trait type arguments at match time.
 TraitMethodInfo DeclarationSema::resolve_trait_method_info(const ast::TraitItemSyntax &item) {
     TraitMethodInfo info{
         .name = item.name,
@@ -1482,6 +1484,14 @@ void DeclarationSema::build_trait_types() {
                 info.super_traits.push_back(*super_id);
             }
 
+            // P3c (RFC 0013): activate the self-augmented type-parameter
+            // scope ([Self] + trait tparams) while resolving trait item
+            // signatures, so `Self` -> TypeVarT(0) and trait-level type
+            // params (e.g. T in `trait Iterable<T>`) -> TypeVarT(1..N).
+            // Restored before `info` is moved into the environment below.
+            const auto *prev_trait_type_params = current_type_param_names_;
+            current_type_param_names_ = &info.self_augmented_type_param_names;
+
             for (const auto &item : decl.get().items) {
                 if (item->kind == ast::TraitItemKind::Fn) {
                     info.methods.push_back(resolve_trait_method_info(*item));
@@ -1512,6 +1522,8 @@ void DeclarationSema::build_trait_types() {
                     continue;
                 }
             }
+
+            current_type_param_names_ = prev_trait_type_params;
 
             environment().traits_.emplace(id, std::move(info));
         });
@@ -1597,18 +1609,10 @@ void DeclarationSema::build_impl_types() {
             // RHS. Previously this scope was missing, which made impl bodies
             // type-annotated with `T` fail with unknown-type errors.
             //
-            // B-2 (gap 3): the full scope for an impl block is four layers:
-            //     [Self] → [trait tparams] → [impl tparams] → [method tparams]
-            // We inject `Self` unconditionally (both inherent and trait impls
-            // reference Self in method signatures / body closures). For trait
-            // impls we additionally walk the matched TraitDecl to pull in its
-            // declared type-param names so `\x: TraitT -> x` closures inside
-            // method bodies resolve correctly. The names are prepended *before*
-            // the impl-level names so method_info.type_param_names (which is
-            // snapshotted from impl_and_method_tparams after method tparams are
-            // appended) carries the full four-layer prefix in canonical order;
-            // that snapshot is what FlowWorkflowSema::check_impl_method_body uses as
-            // its TypeVarT-index baseline (vector B).
+            // The scope activated here is strictly the impl-declared tparams
+            // (e.g. [T] for `impl<T> List<T>`); see the B-2 note below for how
+            // Self and trait-level type params are handled without shifting
+            // TypeVarT indices.
             const auto *prev_type_params = current_type_param_names_;
             // Reserve room for impl-level names + per-method extra params so
             // that appending method type params in the loop below never
@@ -1617,13 +1621,14 @@ void DeclarationSema::build_impl_types() {
             //
             // B-2 note: Self and trait-level type params are NOT injected
             // here. The impl-level scope is strictly the impl-declared tparams
-            // (e.g. [T] for `impl<T> List<T>`). Self is resolved by the type
-            // resolver through the reference recorded by the resolver pass
-            // (the resolver's generic_type_params_ suppresses the UNKNOWN_SYMBOL
-            // diagnostic for "Self" inside impl blocks). Trait-level tparams
-            // are appended at the END of the body scope in check_impl_method_body
-            // via dedup_push_range, so they don't shift the TypeVarT indices
-            // of impl/method tparams embedded in method signatures.
+            // (e.g. [T] for `impl<T> List<T>`). Self resolves through the
+            // driver-level self-type override (set to info.target_type below)
+            // rather than as a scope name, so the TypeVarT indices of
+            // impl/method tparams embedded in method signatures are not
+            // shifted. Trait-level tparams are not scope names either: the
+            // trait_ref's type arguments are resolved into
+            // info.trait_type_args and substituted into trait method types at
+            // signature-match time (see check_trait_impl_signature_match).
             std::vector<std::string> impl_and_method_tparams;
             impl_and_method_tparams.reserve(info.type_param_names.size() + 16);
             impl_and_method_tparams.insert(impl_and_method_tparams.end(),
@@ -1642,6 +1647,15 @@ void DeclarationSema::build_impl_types() {
             if (info.target_type) {
                 info.target_symbol = nominal_symbol_of(*info.target_type);
             }
+
+            // P3c (RFC 0013): activate the self-type override for the whole
+            // impl resolution region (trait ref + its type args + method
+            // signatures + assoc/const items) so `Self` resolves to the impl
+            // target type. Set BEFORE trait_ref resolution so a trait type
+            // argument referencing Self (`impl<T> Iterable<Self> for List<T>`)
+            // resolves too. Restored after the assoc/const item loops below.
+            const auto prev_self_type = driver_->current_self_type_;
+            driver_->current_self_type_ = info.target_type;
 
             // Resolve trait_ref -> Trait symbol. C-2 (Wave-24): traits live in
             // their own namespace; resolver writes TraitBound references.
@@ -1695,6 +1709,41 @@ void DeclarationSema::build_impl_types() {
                         } else {
                             info.trait_symbol = trait_symbol->get().id;
                             info.trait_name = trait_symbol->get().canonical_name;
+                        }
+                    }
+
+                    // P3c (RFC 0013): resolve the trait_ref's type arguments
+                    // (e.g. T in `impl<T> Iterable<T> for List<T>`) under the
+                    // impl-level type-param scope + self-type override. The
+                    // parser always produces ast::NamedType with .type_args
+                    // for generics; ast::AppType is a dead variant.
+                    const auto &named = decl.trait_ref->as<ast::NamedType>();
+                    info.trait_type_args.reserve(named.type_args.size());
+                    for (const auto &arg : named.type_args) {
+                        info.trait_type_args.push_back(resolve_type(*arg));
+                    }
+
+                    // P3c (RFC 0013): arity-check the trait type arguments
+                    // against the trait's declared type parameters — but only
+                    // when the impl explicitly wrote some. A non-generic impl
+                    // of a generic trait (`impl Container for Counter` with
+                    // `trait Container<T>`) is the accepted P3a-b surface
+                    // (see trait_impl TC4); diagnosing the missing-args shape
+                    // (`impl<T> Iterable for List<T>`) is P3c-NEG3, deferred
+                    // to the Step 9 test slice.
+                    if (!info.trait_type_args.empty() && info.trait_symbol.has_value()) {
+                        const auto trait_info = environment().get_trait(*info.trait_symbol);
+                        if (trait_info.has_value() &&
+                            trait_info->get().type_param_names.size() !=
+                                info.trait_type_args.size()) {
+                            typecheck_error_here(
+                                error_codes::typecheck::WrongArity,
+                                messages::typecheck::WrongArity.format_with(
+                                    "trait",
+                                    trait_info->get().canonical_name,
+                                    std::to_string(trait_info->get().type_param_names.size()),
+                                    std::to_string(info.trait_type_args.size())),
+                                decl.trait_ref->range);
                         }
                     }
                 }
@@ -1832,6 +1881,12 @@ void DeclarationSema::build_impl_types() {
             for (const auto &ac : decl.const_items) {
                 (void)ac; // no-op placeholder: full typing comes in P3b
             }
+
+            // P3c (RFC 0013): restore the outer self-type override. Placed
+            // after the assoc/const item loops (not after the method loop) so
+            // `Self` in an impl assoc type RHS (`type A = Self;`) resolves to
+            // the impl target type too.
+            driver_->current_self_type_ = prev_self_type;
 
             // Coherence (orphan rule) — RFC §2.2. Only enforced when both the
             // trait and target resolve cleanly; resolution failures already

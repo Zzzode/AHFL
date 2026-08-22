@@ -15,6 +15,7 @@
 #include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/expression_sema.hpp"
 #include "ahfl/compiler/semantics/flow_facts.hpp"
+#include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/type_expectation.hpp"
@@ -375,6 +376,15 @@ class TypeCheckPass final {
     // resolve_type produces TypeVar for names matching a type parameter.
     const std::vector<std::string> *current_type_param_names_{nullptr};
 
+    // P3c (RFC 0013): the type that `Self` resolves to while an impl block's
+    // signatures and method bodies are being typechecked — the impl's target
+    // type (Rust: Self in an impl = the impl target). Nullptr outside impl
+    // regions. Wired into every TypeResolver by make_type_resolver. Self is
+    // resolved through this override rather than inserted as a scope name so
+    // the TypeVarT indices of impl/method type params stay aligned with the
+    // signature layer.
+    TypePtr current_self_type_{nullptr};
+
     // After the most recent check_statement call completes, holds the index
     // of the TypedStatement that was just appended to
     // result_.typed_program.statements. check_block reads this to link
@@ -547,10 +557,14 @@ class TypeCheckPass final {
     [[nodiscard]] MaybeCRef<ImplMethodInfo> find_impl_method(const ImplTypeInfo &impl,
                                                              std::string_view name) const;
     // Structural signature equality (params count + types, return type, effect
-    // kind). Generic type-param names and where-clause constraints are not
-    // compared in P3b — they are part of the trait-method-call resolution.
+    // kind). P3c (RFC 0013): the trait method's param/return types are first
+    // substituted through `trait_subst` (Self(0) -> impl target type,
+    // trait tparams(1..N) -> impl trait_type_args) via substitute_type, then
+    // compared by hash-consed pointer equality. Generic type-param names and
+    // where-clause constraints are not compared.
     [[nodiscard]] bool signatures_match(const TraitMethodInfo &trait_method,
-                                        const ImplMethodInfo &impl_method) const;
+                                        const ImplMethodInfo &impl_method,
+                                        const TypeSubstitutionMap &trait_subst) const;
     // Render a param type list for diagnostics: "Int, String".
     [[nodiscard]] std::string render_param_types(const std::vector<ParamTypeInfo> &params) const;
     // True iff some impl in the environment implements `trait_id` for nominal

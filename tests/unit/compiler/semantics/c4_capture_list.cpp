@@ -146,7 +146,7 @@ TEST_CASE("C-4 empty capture list parses like implicit capture") {
         }
         )AHFL");
     CHECK_EQ(diag_count_containing(a.resolve.diagnostics, "UNKNOWN_SYMBOL"), 0u);
-    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UnknownType"), 0u);
+    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UNKNOWN_TYPE"), 0u);
     CHECK_EQ(diagnostic_count_with_code(a.tc.diagnostics, "typecheck::WrongArity"), 0u);
 
     const auto *lam = find_first_entry_lambda(a);
@@ -173,7 +173,7 @@ TEST_CASE("C-4 single capture resolves and records captured_names") {
         }
         )AHFL");
     CHECK_EQ(diag_count_containing(a.resolve.diagnostics, "UNKNOWN_SYMBOL"), 0u);
-    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UnknownType"), 0u);
+    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UNKNOWN_TYPE"), 0u);
 
     const auto *lam = find_first_entry_lambda(a);
     REQUIRE(lam != nullptr);
@@ -259,7 +259,7 @@ TEST_CASE("C-5 capture list inside impl<T> method body sees T") {
             }
         }
         )AHFL");
-    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UnknownType"), 0u);
+    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UNKNOWN_TYPE"), 0u);
     CHECK_EQ(diag_count_containing(a.resolve.diagnostics, "UNKNOWN_SYMBOL"), 0u);
 
     const auto *lam = find_first_entry_lambda(a);
@@ -292,7 +292,7 @@ TEST_CASE("C-6 formatter round-trip preserves capture list") {
     // Re-parse the formatted source and confirm the capture list survives.
     const auto a = compile_project_loose("t6_formatter_roundtrip", formatted.formatted);
     CHECK_EQ(diag_count_containing(a.resolve.diagnostics, "UNKNOWN_SYMBOL"), 0u);
-    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UnknownType"), 0u);
+    CHECK_EQ(diag_count_containing(a.tc.diagnostics, "UNKNOWN_TYPE"), 0u);
 
     const auto *lam = find_first_entry_lambda(a);
     REQUIRE(lam != nullptr);

@@ -484,6 +484,11 @@ struct ImplTypeInfo {
     TypePtr target_type;
     std::optional<SymbolId> target_symbol;
     std::vector<std::string> type_param_names;
+    // P3c (RFC 0013): resolved type arguments of the trait_ref
+    // (e.g. [T] for `impl<T> Iterable<T> for List<T>`). Empty for inherent
+    // impls and for trait refs without type arguments. The trait/impl
+    // signature matcher substitutes trait-level type params with these.
+    std::vector<TypePtr> trait_type_args;
     std::vector<ImplMethodInfo> methods;
     std::vector<ImplAssocItemInfo> assoc_items;
     SourceRange declaration_range;

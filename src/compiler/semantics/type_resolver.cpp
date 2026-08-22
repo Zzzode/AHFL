@@ -178,6 +178,12 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
 }
 
 TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name) {
+    // P3c (RFC 0013): `Self` inside an impl block resolves to the impl's
+    // target type via the driver-level override (Rust: Self in an impl =
+    // the impl target). Takes precedence over the type-param scope.
+    if (self_type_override_ != nullptr && name.spelling() == "Self") {
+        return self_type_override_;
+    }
     // P2: if this name matches a currently-in-scope type parameter, return a
     // TypeVar instead of looking it up as a type symbol.
     // The TypeVar's `index` is the zero-based position in the type-param list —

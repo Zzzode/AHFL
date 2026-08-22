@@ -63,6 +63,14 @@ class TypeResolver final {
         type_param_names_ = names;
     }
 
+    // P3c (RFC 0013): set the self-type override. When non-null, a named
+    // type `Self` resolves to this type instead of a type parameter or a
+    // symbol lookup. Used inside impl blocks, where Self is the impl's
+    // target type.
+    void set_self_type_override(TypePtr self_type) {
+        self_type_override_ = self_type;
+    }
+
   private:
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name,
                                              std::vector<TypePtr> args,
@@ -83,6 +91,8 @@ class TypeResolver final {
     // P2: currently in-scope type parameter names (nullptr = none).
     // When set, NamedType matching any of these resolves to a TypeVar.
     const std::vector<std::string> *type_param_names_{nullptr};
+    // P3c (RFC 0013): when non-null, `Self` resolves to this type.
+    TypePtr self_type_override_{nullptr};
 };
 
 } // namespace ahfl

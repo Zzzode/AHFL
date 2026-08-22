@@ -1226,6 +1226,9 @@ TypeResolver TypeCheckPass::make_type_resolver() {
         },
         std::move(type_param_info)};
     resolver.set_type_param_names(current_type_param_names_);
+    // P3c (RFC 0013): propagate the impl self-type override so `Self` in
+    // impl signatures / bodies resolves to the impl target type.
+    resolver.set_self_type_override(current_self_type_);
     return resolver;
 }
 
@@ -1420,6 +1423,25 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
     }
     const auto &trait = trait_info->get();
 
+    // P3c (RFC 0013): build the trait->impl substitution ONCE per impl —
+    // the Rust Substs pattern (vector indexed by TypeVarT::index). Slot 0 is
+    // the implicit Self, mapped to the impl's target type; slots 1..N map the
+    // trait's type parameters to the impl's trait_ref type arguments.
+    // signatures_match substitutes trait method types through this map before
+    // comparing, so trait Self (TypeVarT(0)) and impl Self (the concrete
+    // target type) unify to the same hash-consed pointer.
+    TypeSubstitutionMap trait_subst;
+    trait_subst.resize(trait.self_augmented_type_param_names.size(), nullptr);
+    if (!trait_subst.empty()) {
+        trait_subst[0] = impl.target_type;
+    }
+    for (std::size_t i = 0; i < impl.trait_type_args.size(); ++i) {
+        const std::size_t slot = i + 1;
+        if (slot < trait_subst.size()) {
+            trait_subst[slot] = impl.trait_type_args[i];
+        }
+    }
+
     // Trait method -> impl method.
     for (const auto &trait_method : trait.methods) {
         const auto impl_method = find_impl_method(impl, trait_method.name);
@@ -1430,11 +1452,24 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
                                  impl.declaration_range);
             continue;
         }
-        if (!signatures_match(trait_method, impl_method->get())) {
+        if (!signatures_match(trait_method, impl_method->get(), trait_subst)) {
+            // Render the SUBSTITUTED trait param types so the diagnostic shows
+            // the types as the impl must satisfy them (e.g.
+            // "trait expects (Option<T>, Option<T>), impl provides (Option<T>, Int)").
+            std::vector<ParamTypeInfo> substituted_params;
+            substituted_params.reserve(trait_method.params.size());
+            for (const auto &param : trait_method.params) {
+                substituted_params.push_back(ParamTypeInfo{
+                    .name = param.name,
+                    .type = param.type ? substitute_type(param.type, trait_subst, *types_)
+                                       : nullptr,
+                    .declaration_range = param.declaration_range,
+                });
+            }
             typecheck_error_here(error_codes::typecheck::TraitMethodSignatureMismatch,
                                  messages::typecheck::TraitMethodSignatureMismatch.format_with(
                                      trait_method.name,
-                                     render_param_types(trait_method.params),
+                                     render_param_types(substituted_params),
                                      render_param_types(impl_method->get().params)),
                                  impl_method->get().declaration_range);
         }
@@ -1500,21 +1535,31 @@ MaybeCRef<ImplMethodInfo> TypeCheckPass::find_impl_method(const ImplTypeInfo &im
 }
 
 bool TypeCheckPass::signatures_match(const TraitMethodInfo &trait_method,
-                                     const ImplMethodInfo &impl_method) const {
-    // P3b structural match: same arity + same per-position param type + same
-    // return type + same effect kind. Type-param names and where-clause
-    // constraints are not compared here (Self substitution + generic
-    // unification are P3c). The Type* comparisons are pointer-equal because
-    // the type resolver hash-conses (RFC §3.2 + types.hpp TypePtr interning).
+                                     const ImplMethodInfo &impl_method,
+                                     const TypeSubstitutionMap &trait_subst) const {
+    // P3c (RFC 0013): substitute the trait method's param/return types
+    // through `trait_subst` (Self -> impl target type, trait tparams -> impl
+    // trait_type_args) before comparing. The substituted results are interned
+    // by substitute_type, so pointer equality against the impl method's
+    // (already resolved) types is valid hash-consed structural equality.
+    // Effect kind comparison is unchanged.
     if (trait_method.params.size() != impl_method.params.size()) {
         return false;
     }
     for (std::size_t i = 0; i < trait_method.params.size(); ++i) {
-        if (trait_method.params[i].type != impl_method.params[i].type) {
+        const auto trait_param_type =
+            trait_method.params[i].type
+                ? substitute_type(trait_method.params[i].type, trait_subst, *types_)
+                : nullptr;
+        if (trait_param_type != impl_method.params[i].type) {
             return false;
         }
     }
-    if (trait_method.return_type != impl_method.return_type) {
+    const auto trait_return_type =
+        trait_method.return_type
+            ? substitute_type(trait_method.return_type, trait_subst, *types_)
+            : nullptr;
+    if (trait_return_type != impl_method.return_type) {
         return false;
     }
     return trait_method.effect.kind == impl_method.effect.kind;
@@ -3016,12 +3061,21 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     }
 
     // Body-level type param scope. The scope for signature construction
-    // (build_impl_types' method_info.type_param_names) carries the FULL
-    // impl-level + method-level concatenation so that TypeVarT indices in
+    // (build_impl_types' method_info.type_param_names) carries the impl-level
+    // + method-level concatenation so that TypeVarT indices in
     // method.params / method.return_type align with method_info.type_param_names
     // positions (used by the call-site substitution map in
-    // check_impl_method_call). But for *body* typechecking, the driver's
-    // -------------------------------------------------------------------------
+    // check_impl_method_call). For *body* typechecking the same baseline is
+    // used: the body may reference impl-level and method-level type params by
+    // name, and their TypeVarT indices must match the signature's.
+    //
+    // P3c (RFC 0013): `Self` is NOT a scope name. It resolves through the
+    // driver-level self-type override (set below to impl_info.target_type),
+    // exactly as the impl method signature was resolved in build_impl_types.
+    // Trait-level type params are likewise absent from the body scope: they
+    // are substituted into the signature at trait/impl match time, and the
+    // impl-level names they map to are already in the baseline.
+    //
     // B-2 critical invariant: the *order* of names in type_param_names MUST
     // match the order used by build_impl_types() in typecheck_decls.cpp when
     // method_info.params / return_type were materialized. Those types contain
@@ -3030,11 +3084,10 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     // spurious "T vs T" mismatches (describe identical but index differs).
     //
     // We therefore take method_info.type_param_names as the BASELINE (it was
-    // built as [Self] -> [trait tparams] -> [impl tparams] -> [method tparams]
-    // in build_impl_types), and only *append* any additional names the
-    // environment side knows about that the signature layer might not (e.g.
-    // derived bounds, super-trait carry-over) — never reordering the prefix.
-    // -------------------------------------------------------------------------
+    // built as [impl tparams] -> [method tparams] in build_impl_types), and
+    // only *append* any additional names the environment side knows about
+    // that the signature layer might not (e.g. derived bounds, super-trait
+    // carry-over) — never reordering the prefix.
     std::vector<std::string> type_param_names = method_info.type_param_names;
     type_param_names.reserve(type_param_names.size() + impl_info.type_param_names.size() + 4);
     auto dedup_push = [&](std::string_view name) {
@@ -3049,23 +3102,18 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
             dedup_push(n);
     };
 
-    // Trait-level scope — append-only. Self + trait tparams should already be
-    // present in the baseline for trait impls; dedup makes this idempotent.
-    if (impl_info.trait_symbol.has_value()) {
-        const auto trait_opt = driver_->environment().get_trait(*impl_info.trait_symbol);
-        if (trait_opt.has_value()) {
-            const auto &trait = trait_opt->get();
-            dedup_push_range(trait.self_augmented_type_param_names);
-        }
-    }
     // Impl-level generics — should already be in the baseline; dedup keeps
-    // inherent-impl "Self" at index 0 (inserted by build_impl_types).
+    // this idempotent.
     dedup_push_range(impl_info.type_param_names);
 
     const auto *prev_type_params = driver_->current_type_param_names_;
     if (!type_param_names.empty()) {
         driver_->current_type_param_names_ = &type_param_names;
     }
+    // P3c (RFC 0013): resolve `Self` inside the method body to the impl's
+    // target type, mirroring signature resolution in build_impl_types.
+    const auto prev_self_type = driver_->current_self_type_;
+    driver_->current_self_type_ = impl_info.target_type;
 
     ValueContext context;
     context.call_context = CallContext::Flow;
@@ -3091,6 +3139,7 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     }
 
     driver_->current_type_param_names_ = prev_type_params;
+    driver_->current_self_type_ = prev_self_type;
 
     const auto body_block_idx = driver_->find_block_index_by_range(*method_decl.body);
     const auto &typed_program = driver_->result_.typed_program;
