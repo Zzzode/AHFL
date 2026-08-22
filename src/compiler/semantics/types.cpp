@@ -52,6 +52,10 @@ std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexc
     if (key.type_var_index.has_value()) {
         seed = hash_mix(seed, std::hash<std::uint32_t>{}(*key.type_var_index));
     }
+    seed = hash_mix(seed, std::hash<bool>{}(key.type_var_scope_id.has_value()));
+    if (key.type_var_scope_id.has_value()) {
+        seed = hash_mix(seed, std::hash<std::uint32_t>{}(*key.type_var_scope_id));
+    }
     seed = hash_mix(seed, std::hash<std::size_t>{}(key.type_args.size()));
     for (const auto *arg : key.type_args) {
         seed = hash_mix(seed, std::hash<const void *>{}(arg));
@@ -141,6 +145,7 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
     case TypeKind::TypeVar:
         return types::TypeVarT{
             .index = key.type_var_index.value_or(0),
+            .scope_id = key.type_var_scope_id.value_or(kUnknownTypeVarScopeId),
             .name = key.name,
         };
     }
@@ -367,7 +372,9 @@ TypeContext::fn(std::vector<TypePtr> param_types, TypePtr return_type, EffectJud
     });
 }
 
-TypePtr TypeContext::type_var(std::uint32_t index, std::string name) {
+TypePtr TypeContext::type_var(std::uint32_t index,
+                              std::uint32_t scope_id,
+                              std::string name) {
     return intern(TypeKey{
         .kind = TypeKind::TypeVar,
         .name = std::move(name),
@@ -376,6 +383,7 @@ TypePtr TypeContext::type_var(std::uint32_t index, std::string name) {
         .decimal_scale = std::nullopt,
         .nominal_symbol = std::nullopt,
         .type_var_index = index,
+        .type_var_scope_id = scope_id,
     });
 }
 

@@ -611,19 +611,24 @@ TEST_CASE("substitute_type replaces TypeVar with concrete type") {
     ahfl::TypeSubstitutionMap subst;
     subst.push_back(int_type);
 
-    // TypeVar at index 0 ("T") should become Int.
-    const auto t_var = types.type_var(0, "T");
-    const auto replaced = ahfl::substitute_type(t_var, subst, types);
+    // TypeVar at index 0 ("T") should become Int. The test-built TypeVar
+    // lives at the unknown scope, so the subst is keyed to it (RFC 0013
+    // P2-S1 R0).
+    const auto t_var = types.type_var(0, ahfl::kUnknownTypeVarScopeId, "T");
+    const auto replaced =
+        ahfl::substitute_type(t_var, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(replaced == int_type);
     CHECK(replaced->describe() == "Int");
 
     // TypeVar at index 1 ("U") not in map stays as TypeVar.
-    const auto u_var = types.type_var(1, "U");
-    const auto kept = ahfl::substitute_type(u_var, subst, types);
+    const auto u_var = types.type_var(1, ahfl::kUnknownTypeVarScopeId, "U");
+    const auto kept =
+        ahfl::substitute_type(u_var, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(kept->describe() == "U");
 
     // Nullptr passes through.
-    CHECK(ahfl::substitute_type(nullptr, subst, types) == nullptr);
+    CHECK(ahfl::substitute_type(nullptr, subst, ahfl::kUnknownTypeVarScopeId, types) ==
+          nullptr);
 }
 
 TEST_CASE("substitute_type recurses into fn types") {
@@ -634,40 +639,48 @@ TEST_CASE("substitute_type recurses into fn types") {
     subst.push_back(int_type);
 
     // Fn(T) -> T becomes Fn(Int) -> Int
-    std::vector<ahfl::TypePtr> params = {types.type_var(0, "T")};
+    std::vector<ahfl::TypePtr> params = {
+        types.type_var(0, ahfl::kUnknownTypeVarScopeId, "T")};
     const auto fn_t =
-        types.fn(std::move(params), types.type_var(0, "T"), ahfl::EffectJudgement::make_pure());
-    const auto fn_int = ahfl::substitute_type(fn_t, subst, types);
+        types.fn(std::move(params),
+                 types.type_var(0, ahfl::kUnknownTypeVarScopeId, "T"),
+                 ahfl::EffectJudgement::make_pure());
+    const auto fn_int =
+        ahfl::substitute_type(fn_t, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(fn_int->describe().find("Int") != std::string::npos);
 }
 
 TEST_CASE("substitute_type recurses into nominal std container type arguments") {
     auto &types = ahfl::TypeContext::global();
     const auto int_type = types.make(ahfl::TypeKind::Int);
-    const auto t_var = types.type_var(0, "T");
+    const auto t_var = types.type_var(0, ahfl::kUnknownTypeVarScopeId, "T");
 
     ahfl::TypeSubstitutionMap subst;
     subst.push_back(int_type);
 
     const auto option_t = types.enum_type(
         "std::option::Option", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
-    const auto option_int = ahfl::substitute_type(option_t, subst, types);
+    const auto option_int =
+        ahfl::substitute_type(option_t, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(option_int->describe() == "std::option::Option<Int>");
 
     const auto list_t = types.struct_type(
         "std::collections::List", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
-    const auto list_int = ahfl::substitute_type(list_t, subst, types);
+    const auto list_int =
+        ahfl::substitute_type(list_t, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(list_int->describe() == "std::collections::List<Int>");
 
     const auto set_t = types.struct_type(
         "std::collections::Set", std::optional<ahfl::SymbolId>{}, std::vector{t_var});
-    const auto set_int = ahfl::substitute_type(set_t, subst, types);
+    const auto set_int =
+        ahfl::substitute_type(set_t, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(set_int->describe() == "std::collections::Set<Int>");
 
     const auto map_tt = types.struct_type("std::collections::Map",
                                           std::optional<ahfl::SymbolId>{},
                                           std::vector{t_var, t_var});
-    const auto map_int = ahfl::substitute_type(map_tt, subst, types);
+    const auto map_int =
+        ahfl::substitute_type(map_tt, subst, ahfl::kUnknownTypeVarScopeId, types);
     CHECK(map_int->describe() == "std::collections::Map<Int, Int>");
 }
 
@@ -747,12 +760,18 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
         result.typed_program.blocks[orig_body_idx].statement_indexes.size();
     REQUIRE(orig_stmt_count > 0);
 
-    // Instantiate with T -> Int (T is index 0, the first type param).
+    // Instantiate with T -> Int (T is index 0, the first type param). The
+    // subst is keyed to the fn's own TypeVar scope (RFC 0013 P2-S1 R0).
     auto &types = ahfl::TypeContext::global();
     ahfl::TypeSubstitutionMap subst;
     subst.push_back(types.make(ahfl::TypeKind::Int));
 
-    const auto inst = ahfl::instantiate_fn_body(result.typed_program, orig_body_idx, subst, types);
+    const auto inst = ahfl::instantiate_fn_body(
+        result.typed_program,
+        orig_body_idx,
+        subst,
+        fn_info->get().type_param_scope_id,
+        types);
 
     CHECK(inst.body_block_index != UINT32_MAX);
     CHECK(inst.body_block_index != orig_body_idx);
@@ -844,9 +863,17 @@ fn id<T>(x: T) -> T effect Pure decreases 0 {
     const auto before_blocks = result.typed_program.blocks.size();
 
     const auto inst1 = ahfl::instantiate_fn_body(
-        result.typed_program, fn_info->get().body_block_index, subst, types);
+        result.typed_program,
+        fn_info->get().body_block_index,
+        subst,
+        fn_info->get().type_param_scope_id,
+        types);
     const auto inst2 = ahfl::instantiate_fn_body(
-        result.typed_program, fn_info->get().body_block_index, subst, types);
+        result.typed_program,
+        fn_info->get().body_block_index,
+        subst,
+        fn_info->get().type_param_scope_id,
+        types);
 
     // Two independent clones at different indexes.
     CHECK(inst1.body_block_index != inst2.body_block_index);

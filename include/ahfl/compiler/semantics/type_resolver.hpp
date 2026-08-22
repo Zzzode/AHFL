@@ -63,6 +63,17 @@ class TypeResolver final {
         type_param_names_ = names;
     }
 
+    // RFC 0013 P2-S1 (R0): set the scope id stamped onto every TypeVar
+    // created through the type-param-scope branch of resolve_named_type.
+    // The id identifies the generic declaration whose type-param scope is
+    // active (allocated by TypeCheckPass); kUnknownTypeVarScopeId (default)
+    // leaves TypeVars unstamped. Always paired with set_type_param_names by
+    // the driver — the names decide WHETHER a name becomes a TypeVar, the
+    // scope id decides WHICH declaration it belongs to.
+    void set_type_param_scope_id(std::uint32_t scope_id) {
+        type_param_scope_id_ = scope_id;
+    }
+
     // P3c (RFC 0013): set the self-type override. When non-null, a named
     // type `Self` resolves to this type instead of a type parameter or a
     // symbol lookup. Used inside impl blocks, where Self is the impl's
@@ -91,6 +102,10 @@ class TypeResolver final {
     // P2: currently in-scope type parameter names (nullptr = none).
     // When set, NamedType matching any of these resolves to a TypeVar.
     const std::vector<std::string> *type_param_names_{nullptr};
+    // RFC 0013 P2-S1 (R0): scope id stamped onto TypeVars created while the
+    // above type-param scope is active. kUnknownTypeVarScopeId when no
+    // stamped scope is active (struct/enum/alias declaration types).
+    std::uint32_t type_param_scope_id_{kUnknownTypeVarScopeId};
     // P3c (RFC 0013): when non-null, `Self` resolves to this type.
     TypePtr self_type_override_{nullptr};
 };

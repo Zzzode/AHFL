@@ -367,6 +367,12 @@ struct FnTypeInfo {
     // substitute type_args into a known parameter-name list without
     // re-parsing the AST.
     std::vector<std::string> type_param_names;
+    // RFC 0013 P2-S1 (R0): scope id stamped onto every TypeVar in this fn's
+    // signature and body. Allocated by TypeCheckPass when the fn's types are
+    // built; call sites read it as the callee scope for substitution matching,
+    // the ambiguity concreteness test, and the monomorphization cache key.
+    // kUnknownTypeVarScopeId for monomorphic fns.
+    std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
     WhereClauseInfo where_clause;
     FnEffectClauseInfo effect;
     bool has_body{false};
@@ -397,6 +403,10 @@ struct TraitMethodInfo {
     TypePtr return_type;
     SourceRange return_type_range;
     std::vector<std::string> type_param_names;
+    // RFC 0013 P2-S1 (R0): scope id of the trait's self-augmented type-param
+    // scope, stamped onto every TypeVar in this method's signature. Allocated
+    // per trait by TypeCheckPass (shared by the trait's methods).
+    std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
     FnEffectClauseInfo effect;
     SourceRange declaration_range;
 };
@@ -457,6 +467,11 @@ struct ImplMethodInfo {
     TypePtr return_type;
     SourceRange return_type_range;
     std::vector<std::string> type_param_names;
+    // RFC 0013 P2-S1 (R0): scope id of the combined impl+method type-param
+    // scope, stamped onto every TypeVar in this method's signature. Allocated
+    // per impl by TypeCheckPass (shared by the impl's methods and its target
+    // type); call sites read it as the callee scope.
+    std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;

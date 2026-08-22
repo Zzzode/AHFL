@@ -74,7 +74,20 @@ find_fn_type_info(const TypedProgram &program, SymbolId fn_symbol) {
             rendered += ", ";
         }
         first = false;
-        rendered += (type_arg != nullptr) ? type_arg->describe() : std::string{"?"};
+        if (type_arg == nullptr) {
+            rendered += '?';
+            continue;
+        }
+        // RFC 0013 P2-S1 (R0): a TypeVar renders as `name#scope_id` so
+        // same-named variables from different generic scopes produce distinct
+        // cache keys (and therefore distinct monomorphization instances).
+        if (const auto *tv = type_arg->get_if<types::TypeVarT>()) {
+            rendered += tv->name;
+            rendered += '#';
+            rendered += std::to_string(tv->scope_id);
+            continue;
+        }
+        rendered += type_arg->describe();
     }
     return rendered;
 }
@@ -219,7 +232,10 @@ run_monomorphization(TypedProgram &program, TypeContext &types, Monomorphization
             subst.push_back((*type_args)[i]);
         }
 
-        const auto inst = instantiate_fn_body(program, info.body_block_index, subst, types);
+        // RFC 0013 P2-S1 (R0): the substitution is keyed to the fn's own
+        // TypeVar scope; foreign-scope TypeVars pass through untouched.
+        const auto inst = instantiate_fn_body(
+            program, info.body_block_index, subst, info.type_param_scope_id, types);
         instance.body_block_index = inst.body_block_index;
     }
 
@@ -238,8 +254,14 @@ namespace {
 // Substitution uses index-based lookup (industry-standard: Rust Substs,
 // Swift GenericTypeParamKey): O(1) vector access by TypeVarT::index, no
 // string hashing, no name-confusion bugs.
+//
+// RFC 0013 P2-S1 (R0): a TypeVar is replaced only when BOTH its index and its
+// scope_id match the substitution target scope. Same-indexed TypeVars from
+// other scopes pass through untouched, and unbound TypeVars are re-created
+// with their original scope_id preserved.
 [[nodiscard]] TypePtr substitute(TypePtr type,
                                  const TypeSubstitutionMap &subst,
+                                 std::uint32_t subst_scope_id,
                                  TypeContext &types) {
     if (type == nullptr) {
         return nullptr;
@@ -247,20 +269,22 @@ namespace {
 
     return type->visit(types::Overloads{
         [&](const types::TypeVarT &tv) -> TypePtr {
-            if (tv.index < subst.size() && subst[tv.index] != nullptr) {
+            if (tv.scope_id == subst_scope_id && tv.index < subst.size() &&
+                subst[tv.index] != nullptr) {
                 return subst[tv.index];
             }
-            // Not in substitution map — keep the TypeVar as-is.
-            return types.type_var(tv.index, tv.name);
+            // Not in substitution map (or foreign scope) — keep the TypeVar
+            // as-is, preserving its original scope identity.
+            return types.type_var(tv.index, tv.scope_id, tv.name);
         },
         [&](const types::FnT &fn) -> TypePtr {
             std::vector<TypePtr> new_params;
             new_params.reserve(fn.params.size());
             for (const auto &p : fn.params) {
-                new_params.push_back(substitute(p, subst, types));
+                new_params.push_back(substitute(p, subst, subst_scope_id, types));
             }
             return types.fn(std::move(new_params),
-                            substitute(fn.return_type, subst, types),
+                            substitute(fn.return_type, subst, subst_scope_id, types),
                             fn.effect);
         },
         [&](const types::StructT &s) -> TypePtr {
@@ -270,7 +294,7 @@ namespace {
             std::vector<TypePtr> new_args;
             new_args.reserve(s.type_args.size());
             for (const auto *a : s.type_args) {
-                new_args.push_back(substitute(a, subst, types));
+                new_args.push_back(substitute(a, subst, subst_scope_id, types));
             }
             return types.struct_type(s.canonical_name, s.symbol, std::move(new_args));
         },
@@ -281,7 +305,7 @@ namespace {
             std::vector<TypePtr> new_args;
             new_args.reserve(e.type_args.size());
             for (const auto *a : e.type_args) {
-                new_args.push_back(substitute(a, subst, types));
+                new_args.push_back(substitute(a, subst, subst_scope_id, types));
             }
             return types.enum_type(e.canonical_name, e.symbol, std::move(new_args));
         },
@@ -292,7 +316,7 @@ namespace {
             std::vector<TypePtr> new_args;
             new_args.reserve(v.type_args.size());
             for (const auto *a : v.type_args) {
-                new_args.push_back(substitute(a, subst, types));
+                new_args.push_back(substitute(a, subst, subst_scope_id, types));
             }
             return types.enum_variant_type(
                 v.canonical_name, v.variant_name, v.symbol, std::move(new_args));
@@ -306,8 +330,11 @@ namespace {
 
 } // namespace
 
-TypePtr substitute_type(TypePtr type, const TypeSubstitutionMap &subst, TypeContext &types) {
-    return substitute(type, subst, types);
+TypePtr substitute_type(TypePtr type,
+                        const TypeSubstitutionMap &subst,
+                        std::uint32_t subst_scope_id,
+                        TypeContext &types) {
+    return substitute(type, subst, subst_scope_id, types);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +349,8 @@ namespace {
 struct CloneContext {
     TypedProgram &program;
     const TypeSubstitutionMap &subst;
+    // RFC 0013 P2-S1 (R0): TypeVar scope that `subst` is keyed to.
+    std::uint32_t subst_scope_id;
     TypeContext &types;
 
     // old index -> new index
@@ -354,7 +383,7 @@ std::uint32_t clone_expr(CloneContext &ctx, std::uint32_t old_idx) {
     TypedExpr new_expr = old_expr; // shallow copy
 
     // Substitute the expression's type.
-    new_expr.type = substitute_type(old_expr.type, ctx.subst, ctx.types);
+    new_expr.type = substitute_type(old_expr.type, ctx.subst, ctx.subst_scope_id, ctx.types);
 
     // Clone children recursively.
     for (auto &child : new_expr.children) {
@@ -387,7 +416,7 @@ std::uint32_t clone_stmt(CloneContext &ctx, std::uint32_t old_idx) {
     TypedStatement new_stmt = old_stmt; // shallow copy
 
     // Substitute let type annotation.
-    new_stmt.let_type = substitute_type(old_stmt.let_type, ctx.subst, ctx.types);
+    new_stmt.let_type = substitute_type(old_stmt.let_type, ctx.subst, ctx.subst_scope_id, ctx.types);
 
     // Clone child expressions.
     for (auto &idx : new_stmt.children_expr_index) {
@@ -442,6 +471,7 @@ BodyInstantiationResult
 instantiate_fn_body(TypedProgram &program,
                     std::uint32_t body_block_index,
                     const TypeSubstitutionMap &subst,
+                    std::uint32_t subst_scope_id,
                     TypeContext &types) {
     BodyInstantiationResult result;
     if (body_block_index >= program.blocks.size()) {
@@ -455,6 +485,7 @@ instantiate_fn_body(TypedProgram &program,
     CloneContext ctx{
         .program = program,
         .subst = subst,
+        .subst_scope_id = subst_scope_id,
         .types = types,
     };
     result.body_block_index = clone_block(ctx, body_block_index);

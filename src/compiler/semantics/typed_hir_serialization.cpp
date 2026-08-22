@@ -248,6 +248,8 @@ template <typename E> [[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::o
             auto object = Json::make_object();
             object->set("kind", Json::make_string("TypeVar"));
             object->set("index", Json::make_int(static_cast<std::int64_t>(value.index)));
+            // RFC 0013 P2-S1 (R0): round-trip the scope identity.
+            object->set("scope_id", Json::make_int(static_cast<std::int64_t>(value.scope_id)));
             object->set("name", Json::make_string(value.name));
             return object;
         },
@@ -1261,7 +1263,11 @@ class Reader {
                             type_field(*value, "return"),
                             effect_judgement_field(*value, "effect"));
         if (kind == "TypeVar")
-            return types.type_var(u32_field(*value, "index"), string_field(*value, "name"));
+            // scope_id defaults to the unknown scope for artifacts written
+            // before RFC 0013 P2-S1 (R0).
+            return types.type_var(u32_field(*value, "index"),
+                                  u32_field(*value, "scope_id"),
+                                  string_field(*value, "name"));
 
         ok_ = false;
         return nullptr;

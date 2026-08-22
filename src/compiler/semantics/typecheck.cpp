@@ -786,15 +786,17 @@ if_let_effects_from_typed_pattern(const TypedProgram &program,
     }
 
     EnumTypeInfo substituted = declared;
+    // RFC 0013 P2-S1 (R0): enum TypeVars are declaration-time closed and live
+    // at the unknown scope, so the subst is keyed to it.
     for (auto &variant : substituted.variants) {
         for (auto &slot : variant.payload) {
             if (slot != nullptr) {
-                slot = substitute_type(slot, subst, types);
+                slot = substitute_type(slot, subst, kUnknownTypeVarScopeId, types);
             }
         }
         for (auto &field : variant.fields) {
             if (field.type != nullptr) {
-                field.type = substitute_type(field.type, subst, types);
+                field.type = substitute_type(field.type, subst, kUnknownTypeVarScopeId, types);
             }
         }
         variant.rebuild_field_index();
@@ -1219,10 +1221,16 @@ TypeResolver TypeCheckPass::make_type_resolver() {
             }
 
             const auto *previous_type_params = current_type_param_names_;
+            const auto previous_scope_id = current_type_param_scope_id_;
             current_type_param_names_ =
                 type_param_names.empty() ? previous_type_params : &type_param_names;
+            // RFC 0013 P2-S1 (R0): alias type params stay at the unknown scope
+            // — alias bodies are declaration-time closed and the alias
+            // substitution subst carries the unknown scope id.
+            current_type_param_scope_id_ = kUnknownTypeVarScopeId;
             TypePtr result = with_symbol_context(id, [&]() { return resolve_type(aliased_type); });
             current_type_param_names_ = previous_type_params;
+            current_type_param_scope_id_ = previous_scope_id;
             return result;
         },
         std::move(type_param_info)};
@@ -1230,6 +1238,9 @@ TypeResolver TypeCheckPass::make_type_resolver() {
     // P3c (RFC 0013): propagate the impl self-type override so `Self` in
     // impl signatures / bodies resolves to the impl target type.
     resolver.set_self_type_override(current_self_type_);
+    // RFC 0013 P2-S1 (R0): propagate the active type-param scope id so
+    // TypeVars created by this resolver carry their declaring scope.
+    resolver.set_type_param_scope_id(current_type_param_scope_id_);
     return resolver;
 }
 
@@ -1457,12 +1468,17 @@ void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
             // Render the SUBSTITUTED trait param types so the diagnostic shows
             // the types as the impl must satisfy them (e.g.
             // "trait expects (Option<T>, Option<T>), impl provides (Option<T>, Int)").
+            // RFC 0013 P2-S1 (R0): the subst replaces the trait's own
+            // self-augmented TypeVars, so its scope id is the trait method's.
             std::vector<ParamTypeInfo> substituted_params;
             substituted_params.reserve(trait_method.params.size());
             for (const auto &param : trait_method.params) {
                 substituted_params.push_back(ParamTypeInfo{
                     .name = param.name,
-                    .type = param.type ? substitute_type(param.type, trait_subst, *types_)
+                    .type = param.type ? substitute_type(param.type,
+                                                         trait_subst,
+                                                         trait_method.type_param_scope_id,
+                                                         *types_)
                                        : nullptr,
                     .declaration_range = param.declaration_range,
                 });
@@ -1544,13 +1560,20 @@ bool TypeCheckPass::signatures_match(const TraitMethodInfo &trait_method,
     // by substitute_type, so pointer equality against the impl method's
     // (already resolved) types is valid hash-consed structural equality.
     // Effect kind comparison is unchanged.
+    //
+    // RFC 0013 P2-S1 (R0): the subst replaces the trait's self-augmented
+    // TypeVars, so it carries the trait method's scope id. After substitution
+    // both sides carry the impl's scope TypeVars (impl.target_type /
+    // trait_type_args), so pointer equality stays valid.
+    const auto trait_scope_id = trait_method.type_param_scope_id;
     if (trait_method.params.size() != impl_method.params.size()) {
         return false;
     }
     for (std::size_t i = 0; i < trait_method.params.size(); ++i) {
         const auto trait_param_type =
             trait_method.params[i].type
-                ? substitute_type(trait_method.params[i].type, trait_subst, *types_)
+                ? substitute_type(
+                      trait_method.params[i].type, trait_subst, trait_scope_id, *types_)
                 : nullptr;
         if (trait_param_type != impl_method.params[i].type) {
             return false;
@@ -1558,7 +1581,7 @@ bool TypeCheckPass::signatures_match(const TraitMethodInfo &trait_method,
     }
     const auto trait_return_type =
         trait_method.return_type
-            ? substitute_type(trait_method.return_type, trait_subst, *types_)
+            ? substitute_type(trait_method.return_type, trait_subst, trait_scope_id, *types_)
             : nullptr;
     if (trait_return_type != impl_method.return_type) {
         return false;
@@ -2916,9 +2939,15 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
     // Activate the type parameter scope so type annotations inside the body
     // (e.g. `let x: T = ...`) resolve T as a TypeVar instead of producing
     // "unknown type" errors.
+    // RFC 0013 P2-S1 (R0): re-activate the fn's scope id so TypeVars created
+    // in the body (let annotations, nested signatures) carry the same scope
+    // identity as the signature — required for substitution matching and the
+    // ambiguity concreteness test at nested call sites.
     const auto *prev_type_params = driver_->current_type_param_names_;
+    const auto prev_scope_id = driver_->current_type_param_scope_id_;
     if (!info.type_param_names.empty()) {
         driver_->current_type_param_names_ = &info.type_param_names;
+        driver_->current_type_param_scope_id_ = info.type_param_scope_id;
     }
 
     // Build the function-body context: parameter bindings + Flow call context
@@ -2963,6 +2992,7 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
 
     // Restore previous type param scope.
     driver_->current_type_param_names_ = prev_type_params;
+    driver_->current_type_param_scope_id_ = prev_scope_id;
 
     // Derive the body's overall effect and check against the declared effect.
     const auto body_block_idx = driver_->find_block_index_by_range(*decl.body);
@@ -3108,8 +3138,12 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     dedup_push_range(impl_info.type_param_names);
 
     const auto *prev_type_params = driver_->current_type_param_names_;
+    const auto prev_scope_id = driver_->current_type_param_scope_id_;
     if (!type_param_names.empty()) {
         driver_->current_type_param_names_ = &type_param_names;
+        // RFC 0013 P2-S1 (R0): re-activate the impl's scope id (stored on the
+        // method info) so body TypeVars match the signature's scope identity.
+        driver_->current_type_param_scope_id_ = method_info.type_param_scope_id;
     }
     // P3c (RFC 0013): resolve `Self` inside the method body to the impl's
     // target type, mirroring signature resolution in build_impl_types.
@@ -3140,6 +3174,7 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     }
 
     driver_->current_type_param_names_ = prev_type_params;
+    driver_->current_type_param_scope_id_ = prev_scope_id;
     driver_->current_self_type_ = prev_self_type;
 
     const auto body_block_idx = driver_->find_block_index_by_range(*method_decl.body);

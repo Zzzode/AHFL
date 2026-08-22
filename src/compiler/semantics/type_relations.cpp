@@ -479,9 +479,14 @@ bool equivalent_impl(const Type &lhs,
             // their enclosing generic declaration. Index is the canonical
             // identity (industry standard: position-based substitution keys);
             // the name is diagnostic-only. We additionally require name match
-            // as a defensive sanity check — the global TypeContext interns
-            // TypeVars by (index, name) so the pointers are already identical
-            // for equivalent vars.
+            // as a defensive sanity check.
+            //
+            // RFC 0013 P2-S1 (R0): scope_id is intentionally NOT part of this
+            // equivalence test — relation solving is positional. The global
+            // TypeContext interns TypeVars by (index, scope_id, name), so
+            // same-scope vars are already pointer-identical; cross-scope vars
+            // with the same index are treated as equivalent here, which is the
+            // conservative pre-R0 behaviour relation solving relies on.
             const auto *r = rhs.get_if<types::TypeVarT>();
             bool eq = r != nullptr && l.index == r->index && l.name == r->name;
             return equivalent_leaf(lhs, rhs, ctx, path, eq);

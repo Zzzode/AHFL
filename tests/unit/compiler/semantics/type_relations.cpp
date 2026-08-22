@@ -168,8 +168,8 @@ TEST_CASE("nominal types prefer symbol identity over display names") {
 
 TEST_CASE("enum variant is assignable to generic parent enum instantiation") {
     auto &tc = ahfl::TypeContext::global();
-    const auto u = tc.type_var(1, "U");
-    const auto e = tc.type_var(2, "E");
+    const auto u = tc.type_var(1, ahfl::kUnknownTypeVarScopeId, "U");
+    const auto e = tc.type_var(2, ahfl::kUnknownTypeVarScopeId, "E");
     const ahfl::SymbolId result_symbol{42};
 
     const auto result = tc.enum_type("std::result::Result", result_symbol, {u, e});

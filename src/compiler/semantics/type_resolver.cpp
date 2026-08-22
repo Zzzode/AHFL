@@ -158,7 +158,9 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
         case SymbolKind::TypeAlias: {
             TypeSubstitutionMap subst{args.begin(), args.end()};
             TypePtr aliased = resolve_type_alias(base_id, name.range);
-            return substitute_type(aliased, subst, types_);
+            // RFC 0013 P2-S1 (R0): alias TypeVars live at the unknown scope
+            // (declaration-time closed), so the subst is keyed to it.
+            return substitute_type(aliased, subst, kUnknownTypeVarScopeId, types_);
         }
         case SymbolKind::Const:
         case SymbolKind::Capability:
@@ -192,7 +194,12 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name) {
     if (type_param_names_ != nullptr) {
         for (std::size_t i = 0; i < type_param_names_->size(); ++i) {
             if (name.spelling() == (*type_param_names_)[i]) {
-                return types_.type_var(static_cast<std::uint32_t>(i), (*type_param_names_)[i]);
+                // RFC 0013 P2-S1 (R0): stamp the TypeVar with the active
+                // scope id so substitution and the monomorphization cache
+                // key can distinguish same-named params of different decls.
+                return types_.type_var(static_cast<std::uint32_t>(i),
+                                       type_param_scope_id_,
+                                       (*type_param_names_)[i]);
             }
         }
     }
@@ -345,9 +352,11 @@ TypePtr TypeResolver::resolve_app_type(const ast::AppType &app, SourceRange app_
     case SymbolKind::TypeAlias: {
         // For type aliases, resolve the alias body with type parameters
         // substituted by the provided arguments.
+        // RFC 0013 P2-S1 (R0): alias TypeVars live at the unknown scope
+        // (declaration-time closed), so the subst is keyed to it.
         TypeSubstitutionMap subst{arg_types.begin(), arg_types.end()};
         TypePtr aliased = resolve_type_alias(base_id, app.name->range);
-        return substitute_type(aliased, subst, types_);
+        return substitute_type(aliased, subst, kUnknownTypeVarScopeId, types_);
     }
     case SymbolKind::Const:
     case SymbolKind::Capability:

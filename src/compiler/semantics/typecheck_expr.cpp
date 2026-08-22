@@ -851,15 +851,17 @@ enum class LiteralPatternKind {
     }
 
     EnumTypeInfo substituted = enum_info;
+    // RFC 0013 P2-S1 (R0): enum TypeVars are declaration-time closed and live
+    // at the unknown scope, so the subst is keyed to it.
     for (auto &variant : substituted.variants) {
         for (auto &slot : variant.payload) {
             if (slot != nullptr) {
-                slot = substitute_type(slot, subst, types);
+                slot = substitute_type(slot, subst, kUnknownTypeVarScopeId, types);
             }
         }
         for (auto &field : variant.fields) {
             if (field.type != nullptr) {
-                field.type = substitute_type(field.type, subst, types);
+                field.type = substitute_type(field.type, subst, kUnknownTypeVarScopeId, types);
             }
         }
         variant.rebuild_field_index();
@@ -3232,7 +3234,10 @@ class ExpressionChecker final {
                 continue;
             }
             const auto expected = is_generic
-                                      ? substitute_type(field->get().type, subst, services_.types())
+                                      ? substitute_type(field->get().type,
+                                                        subst,
+                                                        kUnknownTypeVarScopeId,
+                                                        services_.types())
                                       : field->get().type;
             const auto expectation = TypeExpectation{
                 .expected = expected,
@@ -3265,8 +3270,10 @@ class ExpressionChecker final {
                 continue;
             }
             const auto effective_type =
-                is_generic ? substitute_type(checked.field->type, subst, services_.types())
-                           : checked.field->type;
+                is_generic
+                    ? substitute_type(
+                          checked.field->type, subst, kUnknownTypeVarScopeId, services_.types())
+                    : checked.field->type;
             const auto expectation = TypeExpectation{
                 .expected = effective_type,
                 .origin_kind = TypeExpectationOriginKind::StructField,
@@ -3603,8 +3610,10 @@ class ExpressionChecker final {
                 unify_param_with_arg(*self_param.type, *receiver.type, subst);
             }
             const auto expected_self =
-                is_generic ? substitute_type(self_param.type, subst, services_.types())
-                           : self_param.type;
+                is_generic
+                    ? substitute_type(
+                          self_param.type, subst, method.type_param_scope_id, services_.types())
+                    : self_param.type;
             if (expected_self != nullptr) {
                 const auto expectation = TypeExpectation{
                     .expected = expected_self,
@@ -3625,7 +3634,10 @@ class ExpressionChecker final {
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = method.params[index + receiver_param_count];
             const auto expected_param =
-                is_generic ? substitute_type(param.type, subst, services_.types()) : param.type;
+                is_generic
+                    ? substitute_type(
+                          param.type, subst, method.type_param_scope_id, services_.types())
+                    : param.type;
             const auto expectation = TypeExpectation{
                 .expected = expected_param,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
@@ -3664,8 +3676,8 @@ class ExpressionChecker final {
                 .argument_index = index + 1,
             };
             if (is_generic) {
-                const auto instantiated_param =
-                    substitute_type(param.type, subst, services_.types());
+                const auto instantiated_param = substitute_type(
+                    param.type, subst, method.type_param_scope_id, services_.types());
                 (void)services_.check_assignable(*arg_types[index],
                                                  *instantiated_param,
                                                  call.arguments[index]->range,
@@ -3682,8 +3694,10 @@ class ExpressionChecker final {
 
         TypePtr result_type = nullptr;
         if (method.return_type != nullptr) {
-            result_type = is_generic ? substitute_type(method.return_type, subst, services_.types())
-                                     : method.return_type;
+            result_type = is_generic
+                              ? substitute_type(
+                                    method.return_type, subst, method.type_param_scope_id, services_.types())
+                              : method.return_type;
         }
         // C-5 (Wave-24): attach the dispatch target to the return value so
         // remember_expression_type can copy it to the TypedExpr. Downstream
@@ -3885,7 +3899,10 @@ class ExpressionChecker final {
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = fn->get().params[index];
             const auto expected_param =
-                is_generic ? substitute_type(param.type, subst, services_.types()) : param.type;
+                is_generic
+                    ? substitute_type(
+                          param.type, subst, fn->get().type_param_scope_id, services_.types())
+                    : param.type;
             const auto expectation = TypeExpectation{
                 .expected = expected_param,
                 .origin_kind = TypeExpectationOriginKind::FunctionParameter,
@@ -3988,8 +4005,8 @@ class ExpressionChecker final {
                 .argument_index = index + 1,
             };
             if (is_generic) {
-                const auto instantiated_param =
-                    substitute_type(param.type, subst, services_.types());
+                const auto instantiated_param = substitute_type(
+                    param.type, subst, fn->get().type_param_scope_id, services_.types());
                 (void)services_.check_assignable(*arg_types[index],
                                                  *instantiated_param,
                                                  call.arguments[index]->range,
@@ -4008,7 +4025,10 @@ class ExpressionChecker final {
         TypePtr result_type = nullptr;
         if (fn->get().return_type != nullptr) {
             result_type = is_generic
-                              ? substitute_type(fn->get().return_type, subst, services_.types())
+                              ? substitute_type(fn->get().return_type,
+                                                subst,
+                                                fn->get().type_param_scope_id,
+                                                services_.types())
                               : fn->get().return_type;
         }
         return values_.typed_effect(
@@ -4155,7 +4175,10 @@ class ExpressionChecker final {
                 .argument_index = index + 1,
             };
             const auto effective_payload =
-                is_generic ? substitute_type(payload_type, subst, services_.types()) : payload_type;
+                is_generic
+                    ? substitute_type(
+                          payload_type, subst, kUnknownTypeVarScopeId, services_.types())
+                    : payload_type;
             (void)services_.check_assignable(*arg_types[index],
                                              *effective_payload,
                                              call.arguments[index]->range,

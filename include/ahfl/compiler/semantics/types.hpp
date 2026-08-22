@@ -65,6 +65,17 @@ using TypePtr = const Type *;
 // kind/name/first/second mirror fields, which the factories keep in sync with
 // the variant.
 
+// RFC 0013 P2-S1 (R0): `scope_id` identifies the generic declaration whose
+// type-param scope a TypeVar belongs to. `index` alone is per-declaration,
+// so two different declarations' `T` at index 0 are indistinguishable by
+// index. Real ids are allocated per declaration by a monotonic counter on
+// TypeCheckPass; `kUnknownTypeVarScopeId` (0) means the variable was built
+// outside a stamped scope (struct/enum/alias declaration types, which are
+// closed at declaration time). Substitution matches TypeVars by index AND
+// scope_id, and the monomorphization cache key renders TypeVars as
+// `name#scope_id` so same-named vars from different scopes never collide.
+inline constexpr std::uint32_t kUnknownTypeVarScopeId{0};
+
 namespace types {
 
 struct AnyT {};
@@ -127,8 +138,10 @@ struct FnT {
 // practice: Rust Substs, Swift GenericTypeParamKey, Clang TemplateParmIndex),
 // not string hashing. The `name` is preserved only for diagnostics and
 // human-readable rendering.
+
 struct TypeVarT {
     std::uint32_t index{0};
+    std::uint32_t scope_id{kUnknownTypeVarScopeId};
     std::string name;
 };
 

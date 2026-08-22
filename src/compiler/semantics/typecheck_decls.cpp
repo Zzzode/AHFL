@@ -373,6 +373,7 @@ DeclarationSema::DeclarationSema(TypeCheckPass &driver)
       current_source_(driver.current_source_),
       current_module_name_(driver.current_module_name_),
       current_type_param_names_(driver.current_type_param_names_),
+      current_type_param_scope_id_(driver.current_type_param_scope_id_),
       const_decls_(driver.const_decls_), struct_decls_(driver.struct_decls_),
       enum_decls_(driver.enum_decls_), capability_decls_(driver.capability_decls_),
       predicate_decls_(driver.predicate_decls_), agent_decls_(driver.agent_decls_),
@@ -552,13 +553,18 @@ EnvironmentBuildResult DeclarationSema::run() {
                     type_param_names.push_back(tp->name);
                 }
                 const auto *prev_alias_type_params = driver_->current_type_param_names_;
+                const auto prev_alias_scope_id = driver_->current_type_param_scope_id_;
                 driver_->current_type_param_names_ = &type_param_names;
+                // RFC 0013 P2-S1 (R0): alias type params stay at the unknown
+                // scope (declaration-time closed; alias subst carries unknown).
+                driver_->current_type_param_scope_id_ = kUnknownTypeVarScopeId;
 
                 TypePtr aliased_type = alias.aliased_type
                                            ? driver_->resolve_type(*alias.aliased_type)
                                            : driver_->make_error_type();
 
                 driver_->current_type_param_names_ = prev_alias_type_params;
+                driver_->current_type_param_scope_id_ = prev_alias_scope_id;
 
                 update.payload = TypeAliasDeclInfo{
                     .symbol = decl.symbol,
@@ -688,7 +694,13 @@ void DeclarationSema::build_struct_types() {
                 info.type_param_names.push_back(tp->name);
             }
             const auto *prev_type_params = current_type_param_names_;
+            const auto prev_scope_id = current_type_param_scope_id_;
             current_type_param_names_ = &info.type_param_names;
+            // RFC 0013 P2-S1 (R0): struct type params stay at the unknown
+            // scope — struct field types are declaration-time closed and are
+            // never substituted through a call-site subst, so they need no
+            // stamped scope identity.
+            current_type_param_scope_id_ = kUnknownTypeVarScopeId;
 
             std::unordered_set<std::string> seen_fields;
             for (const auto &field : decl.get().fields) {
@@ -710,6 +722,7 @@ void DeclarationSema::build_struct_types() {
             }
 
             current_type_param_names_ = prev_type_params;
+            current_type_param_scope_id_ = prev_scope_id;
 
             environment().index_struct(id, std::move(info));
         });
@@ -739,7 +752,12 @@ void DeclarationSema::build_enum_types() {
                 info.type_param_names.push_back(tp->name);
             }
             const auto *prev_enum_type_params = current_type_param_names_;
+            const auto prev_enum_scope_id = current_type_param_scope_id_;
             current_type_param_names_ = &info.type_param_names;
+            // RFC 0013 P2-S1 (R0): enum type params stay at the unknown scope
+            // — variant payload types are declaration-time closed; the enum
+            // variant constructor subst carries the unknown scope id.
+            current_type_param_scope_id_ = kUnknownTypeVarScopeId;
 
             std::unordered_set<std::string> seen_variants;
             for (const auto &variant : decl.get().variants) {
@@ -799,6 +817,7 @@ void DeclarationSema::build_enum_types() {
             }
 
             current_type_param_names_ = prev_enum_type_params;
+            current_type_param_scope_id_ = prev_enum_scope_id;
 
             environment().index_enum(id, std::move(info));
         });
@@ -1192,7 +1211,15 @@ void DeclarationSema::build_fn_types() {
             // P2: activate the type parameter scope so resolve_type produces
             // TypeVar for names matching a type parameter (instead of treating
             // them as unknown types).
+            // RFC 0013 P2-S1 (R0): allocate the fn's type-param scope id and
+            // stamp it onto every TypeVar in the signature; stored on the
+            // FnTypeInfo so call sites and body checking can re-activate it.
             const auto *prev_type_params = current_type_param_names_;
+            const auto prev_scope_id = current_type_param_scope_id_;
+            if (!info.type_param_names.empty()) {
+                info.type_param_scope_id = driver_->allocate_type_param_scope_id();
+                current_type_param_scope_id_ = info.type_param_scope_id;
+            }
             current_type_param_names_ = &info.type_param_names;
 
             for (const auto &param : decl.get().params) {
@@ -1208,6 +1235,7 @@ void DeclarationSema::build_fn_types() {
 
             // Restore previous type param scope.
             current_type_param_names_ = prev_type_params;
+            current_type_param_scope_id_ = prev_scope_id;
 
             // Resolve the effect clause: Pure/Nondet pass through as the
             // canonical kind; Capability resolves each named capability to its
@@ -1492,12 +1520,21 @@ void DeclarationSema::build_trait_types() {
             // signatures, so `Self` -> TypeVarT(0) and trait-level type
             // params (e.g. T in `trait Iterable<T>`) -> TypeVarT(1..N).
             // Restored before `info` is moved into the environment below.
+            //
+            // RFC 0013 P2-S1 (R0): one scope id per trait, shared by all of
+            // its methods (the self-augmented scope is trait-wide). Stored on
+            // each TraitMethodInfo so call sites read the callee scope.
             const auto *prev_trait_type_params = current_type_param_names_;
+            const auto prev_trait_scope_id = current_type_param_scope_id_;
+            const auto trait_scope_id = driver_->allocate_type_param_scope_id();
             current_type_param_names_ = &info.self_augmented_type_param_names;
+            current_type_param_scope_id_ = trait_scope_id;
 
             for (const auto &item : decl.get().items) {
                 if (item->kind == ast::TraitItemKind::Fn) {
-                    info.methods.push_back(resolve_trait_method_info(*item));
+                    auto method_info = resolve_trait_method_info(*item);
+                    method_info.type_param_scope_id = trait_scope_id;
+                    info.methods.push_back(std::move(method_info));
                     continue;
                 }
                 if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
@@ -1527,6 +1564,7 @@ void DeclarationSema::build_trait_types() {
             }
 
             current_type_param_names_ = prev_trait_type_params;
+            current_type_param_scope_id_ = prev_trait_scope_id;
 
             environment().traits_.emplace(id, std::move(info));
         });
@@ -1644,6 +1682,15 @@ void DeclarationSema::build_impl_types() {
                                            info.type_param_names.begin(),
                                            info.type_param_names.end());
             current_type_param_names_ = &impl_and_method_tparams;
+            // RFC 0013 P2-S1 (R0): one scope id per impl, shared by the impl
+            // target type, trait_type_args, and every method signature (the
+            // combined impl+method scope is impl-wide). Stored on each
+            // ImplMethodInfo so call sites read the callee scope.
+            const auto prev_impl_scope_id = current_type_param_scope_id_;
+            const auto impl_scope_id = !info.type_param_names.empty()
+                                           ? driver_->allocate_type_param_scope_id()
+                                           : kUnknownTypeVarScopeId;
+            current_type_param_scope_id_ = impl_scope_id;
 
             // Resolve target type. RFC §1.4 TypeRef must resolve to a nominal
             // struct/enum (P3 does not impl compound types — RFC leaves it open
@@ -1808,6 +1855,7 @@ void DeclarationSema::build_impl_types() {
                     .return_type_range =
                         method->return_type ? method->return_type->range : SourceRange{},
                     .type_param_names = std::move(method_type_param_names),
+                    .type_param_scope_id = impl_scope_id,
                     .effect = resolve_effect_clause_info(method->effect_clause),
                     .has_body = static_cast<bool>(method->body),
                     .declaration_range = method->range,
@@ -1935,6 +1983,7 @@ void DeclarationSema::build_impl_types() {
 
             // Restore outer type-parameter scope (see impl-level scope note).
             current_type_param_names_ = prev_type_params;
+            current_type_param_scope_id_ = prev_impl_scope_id;
         });
     }
 }

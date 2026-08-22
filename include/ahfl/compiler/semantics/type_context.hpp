@@ -67,8 +67,13 @@ class TypeContext {
     // declarations as a placeholder; substituted with a concrete type during
     // monomorphization. `index` is the zero-based position in the enclosing
     // declaration's type-parameter list — used as the substitution key
-    // (index-based O(1) lookup, not string hashing).
-    [[nodiscard]] TypePtr type_var(std::uint32_t index, std::string name);
+    // (index-based O(1) lookup, not string hashing). `scope_id` is the
+    // RFC 0013 P2-S1 (R0) identity of the declaration whose type-param scope
+    // this variable belongs to (kUnknownTypeVarScopeId for unstamped scopes);
+    // it participates in interning so same-named, same-indexed variables from
+    // different declarations are distinct types.
+    [[nodiscard]] TypePtr
+    type_var(std::uint32_t index, std::uint32_t scope_id, std::string name);
 
     [[nodiscard]] static TypeContext &global();
 
@@ -88,6 +93,10 @@ class TypeContext {
         // substitution is O(1) position-based lookup, not string-hash based.
         // The `name` field carries the user-visible label for diagnostics only.
         std::optional<std::uint32_t> type_var_index;
+        // RFC 0013 P2-S1 (R0): TypeVar's declaring-scope identity. Nullopt for
+        // all non-TypeVar kinds. Same (index, name) from two different generic
+        // declarations intern to distinct Type instances.
+        std::optional<std::uint32_t> type_var_scope_id;
         // P2 (RFC §5): concrete type arguments of a generic nominal type
         // instantiation (struct/enum). Empty vector for monomorphic types.
         //

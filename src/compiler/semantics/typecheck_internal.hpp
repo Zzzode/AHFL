@@ -376,6 +376,24 @@ class TypeCheckPass final {
     // resolve_type produces TypeVar for names matching a type parameter.
     const std::vector<std::string> *current_type_param_names_{nullptr};
 
+    // RFC 0013 P2-S1 (R0): identity of the generic declaration whose
+    // type-param scope is currently active. Allocated from
+    // next_type_param_scope_id_ when a generic fn/trait/impl declaration's
+    // types are built, stored on the decl info (FnTypeInfo / ImplMethodInfo /
+    // TraitMethodInfo), and re-activated when the decl's body is checked.
+    // kUnknownTypeVarScopeId when no stamped scope is active (struct/enum/
+    // alias declaration types stay unstamped — they are closed at declaration
+    // time and never mix scopes). The TypeResolver stamps this onto every
+    // TypeVar it creates; substitute_type matches by index AND scope_id.
+    std::uint32_t current_type_param_scope_id_{kUnknownTypeVarScopeId};
+    std::uint32_t next_type_param_scope_id_{1};
+
+    // RFC 0013 P2-S1 (R0): allocate a fresh type-param scope id. Called once
+    // per generic fn/trait/impl declaration when its types are built.
+    std::uint32_t allocate_type_param_scope_id() {
+        return next_type_param_scope_id_++;
+    }
+
     // P3c (RFC 0013): the type that `Self` resolves to while an impl block's
     // signatures and method bodies are being typechecked — the impl's target
     // type (Rust: Self in an impl = the impl target). Nullptr outside impl
@@ -699,6 +717,9 @@ class DeclarationSema final {
     const SourceUnit *&current_source_;
     std::string &current_module_name_;
     const std::vector<std::string> *&current_type_param_names_;
+    // RFC 0013 P2-S1 (R0): alias to TypeCheckPass::current_type_param_scope_id_
+    // so DeclarationSema can push/restore the active scope alongside the names.
+    std::uint32_t &current_type_param_scope_id_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> &const_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> &struct_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> &enum_decls_;

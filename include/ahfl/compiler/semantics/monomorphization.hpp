@@ -197,15 +197,24 @@ run_monomorphization(const std::vector<FnCallSite> &call_sites,
 // (typically 0-4 in P2 programs) and position-based access is cache-friendly.
 using TypeSubstitutionMap = std::vector<TypePtr>;
 
-// Apply a substitution to a type, replacing each TypeVar whose name is in the
-// map with the corresponding concrete type. Types not in the map are left as
-// TypeVar (the caller is responsible for ensuring all variables are bound).
+// Apply a substitution to a type, replacing each TypeVar whose (index,
+// scope_id) pair matches `subst`/`subst_scope_id` with the corresponding
+// concrete type. TypeVars from other scopes (and unbound variables from the
+// target scope) are left as-is, preserving their original scope_id.
+//
+// RFC 0013 P2-S1 (R0): substitution matches on BOTH index and scope_id so
+// same-indexed TypeVars from different generic scopes never alias. The caller
+// passes the scope_id of the declaration whose type params `subst` is keyed
+// to (FnTypeInfo::type_param_scope_id, or kUnknownTypeVarScopeId for
+// declaration-time-closed enum/struct/alias substs).
+//
 // Recurses into composite types (Optional, List, Set, Map, Fn).
 //
 // The result is always an interned type (returned via TypeContext), so pointer
 // equality can be used for fast comparison.
 [[nodiscard]] TypePtr substitute_type(TypePtr type,
                                       const TypeSubstitutionMap &subst,
+                                      std::uint32_t subst_scope_id,
                                       TypeContext &types);
 
 // ---------------------------------------------------------------------------
@@ -230,6 +239,10 @@ struct BodyInstantiationResult {
 // appended to the program's flat stores. Returns the index of the new root
 // block plus counts of new nodes.
 //
+// `subst_scope_id` is the TypeVar scope that `subst` is keyed to (see
+// substitute_type); pass FnTypeInfo::type_param_scope_id for a generic fn
+// body.
+//
 // Preconditions:
 //   - body_block_index must be valid (< program.blocks.size())
 //   - subst must cover all TypeVars in the body (unbound vars are kept as-is)
@@ -240,6 +253,7 @@ struct BodyInstantiationResult {
 instantiate_fn_body(TypedProgram &program,
                     std::uint32_t body_block_index,
                     const TypeSubstitutionMap &subst,
+                    std::uint32_t subst_scope_id,
                     TypeContext &types);
 
 } // namespace ahfl
