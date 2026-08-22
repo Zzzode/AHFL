@@ -472,6 +472,15 @@ class LoweringContext {
         return make_local(dest);
     }
 
+    // B2 (RFC 0013 P3-gaps-B): `{}` is a zero-sized constant. The SSA
+    // Constant variant's monostate alternative is the canonical "unit/none"
+    // value, so a unit literal lowers directly to that constant with no
+    // temporary.
+    [[nodiscard]] Operand
+    lower_expr_node(const ir::UnitLiteralExpr & /*e*/, const ir::Expr & /*expr*/) {
+        return make_constant(std::monostate{});
+    }
+
     // ---- Helpers ----
 
     static Operand make_constant(Constant c) {

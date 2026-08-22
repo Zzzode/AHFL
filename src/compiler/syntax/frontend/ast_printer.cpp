@@ -874,6 +874,8 @@ class AstPrinter final {
                     line(indent_level, "unwrap_expr");
                     print_expr_field("operand", e.operand.get(), indent_level + 1);
                 },
+                // RFC 0013 P3-gaps-B: the unit literal `{}`.
+                [&](const ast::UnitLiteralExpr &) { line(indent_level, "unit"); },
             },
             expr.node);
     }

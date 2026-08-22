@@ -180,6 +180,7 @@ enum class ExprSyntaxKind {
     Match,           // match scrutinee { arm* } (P1 ADT, RFC §1.6)
     Lambda,          // \ params -> expr  (P2 closures, RFC §6)
     UnwrapExpr,      // unwrap(operand_expr) - expr-level Option extract (P4-02)
+    UnitLiteral,     // {} - the sole value of Unit (RFC 0013 P3-gaps-B)
 };
 
 /// Unary operators
@@ -524,6 +525,10 @@ struct UnwrapExprSyntax {
     Owned<ExprSyntax> operand;
 };
 
+/// Unit literal: `{}` (RFC 0013 P3-gaps-B). The sole value of the `Unit`
+/// type. Carries no data; its presence is its meaning.
+struct UnitLiteralExpr {};
+
 // ----------------------------------------------------------------------------
 // P1 (ADT) pattern syntax (RFC §1.6)
 // ----------------------------------------------------------------------------
@@ -803,7 +808,8 @@ using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     GroupExpr,
                                     MatchExpr,
                                     LambdaExpr,
-                                    UnwrapExprSyntax>;
+                                    UnwrapExprSyntax,
+                                    UnitLiteralExpr>;
 
 /// Expression syntax node
 ///
@@ -850,7 +856,8 @@ struct ExprSyntax {
 /// let binding statement: let name: Type = initializer;
 struct LetStmtSyntax {
     ahfl::SourceRange range;
-    std::string name;              // variable name
+    std::string name;              // variable name ("_" for wildcard bindings)
+    bool is_wildcard{false};       // `let _ = e;` — binds nothing (RFC 0013 P3-gaps-B)
     Owned<TypeSyntax> type;        // type annotation (optional)
     Owned<ExprSyntax> initializer; // initializer expression
 };
@@ -1802,6 +1809,11 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [&](const UnwrapExprSyntax &) {
                 return std::forward<Visitor>(visitor).visit_unknown(expr);
             },
+            // RFC 0013 P3-gaps-B: `{}` — unit literal dispatches through the
+            // generic `visit_unknown` fallback (same rationale as LambdaExpr).
+            [&](const UnitLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_unknown(expr);
+            },
         },
         expr.node);
 }
@@ -1830,6 +1842,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const MatchExpr &) { return ExprSyntaxKind::Match; },
             [](const LambdaExpr &) { return ExprSyntaxKind::Lambda; },
             [](const UnwrapExprSyntax &) { return ExprSyntaxKind::UnwrapExpr; },
+            [](const UnitLiteralExpr &) { return ExprSyntaxKind::UnitLiteral; },
         },
         expr.node);
 }

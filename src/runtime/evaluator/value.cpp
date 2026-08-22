@@ -142,6 +142,9 @@ int compare_values(const Value &lhs, const Value &rhs) {
                     }
                 }
                 return 0;
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                // RFC 0013 P3-gaps-B: unit has exactly one value; trivially equal.
+                return 0;
             } else {
                 // Non-orderable composite kinds: compare by canonical spelling
                 // to keep a total order (used only for canonicalization).
@@ -277,6 +280,9 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 const auto *r = std::get_if<TimestampValue>(&rhs.node);
                 return inner.unix_ms == r->unix_ms;
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                // RFC 0013 P3-gaps-B: unit has exactly one value.
+                return true;
             }
             return false;
         },
@@ -324,6 +330,8 @@ ValueKind value_kind(const Value &v) {
                 return ValueKind::Uuid;
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return ValueKind::Timestamp;
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                return ValueKind::Unit;
             }
         },
         v.node);
@@ -470,6 +478,9 @@ void print_value(const Value &v, std::ostream &out) {
                 out << "uuid(" << inner.hex << ")";
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 out << "timestamp(" << inner.unix_ms << ")";
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                // RFC 0013 P3-gaps-B: the unit value renders as its literal spelling.
+                out << "{}";
             }
         },
         v.node);
@@ -699,6 +710,9 @@ Value clone_value(const Value &v) {
                 return Value{UuidValue{inner.hex}};
             } else if constexpr (std::is_same_v<T, TimestampValue>) {
                 return Value{TimestampValue{inner.unix_ms}};
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                // RFC 0013 P3-gaps-B: zero-sized; clone is a fresh unit value.
+                return make_unit();
             }
         },
         v.node);

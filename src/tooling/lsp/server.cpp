@@ -930,6 +930,8 @@ class LocalBindingCollector {
                     collect_expr(lambda.body.get());
                 },
                 [&](const ast::UnwrapExprSyntax &unwrap) { collect_expr(unwrap.operand.get()); },
+                // RFC 0013 P3-gaps-B: `{}` — leaf, no sub-expressions to collect.
+                [](const ast::UnitLiteralExpr &) {},
             },
             expr->node);
     }

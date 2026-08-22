@@ -340,6 +340,11 @@ lambdaCaptureListOpt: lambdaCaptureList?;
 
 lambdaCaptureList: identifier (',' identifier)* ','?;
 
+// RFC 0013 P3-gaps-B: the unit literal `{}`. Unambiguous in expression
+// position because `block` is statement-only (`block: '{' statement* '}'`),
+// so a bare `{` can never start a block where an expr is expected.
+unitExpr: '{' '}';
+
 lambdaParamList:
 	lambdaParam                             // single unparenthesised param
 	| '(' (lambdaParam (',' lambdaParam)*)? ','? ')';
@@ -423,7 +428,11 @@ statement:
 	| unreachableStmt
 	| exprStmt;
 
-letStmt: 'let' IDENT (':' type_)? '=' expr ';';
+// RFC 0013 P3-gaps-B: `let _ = e;` binds nothing — the initializer is
+// evaluated for effects only. `_` is a wildcard binding, not an identifier.
+letStmt: 'let' letBinding (':' type_)? '=' expr ';';
+
+letBinding: IDENT | '_';
 
 assignStmt: lValue '=' expr ';';
 
@@ -504,6 +513,7 @@ primaryExpr:
 	| pathExpr
 	| matchExpr
 	| lambdaExpr
+	| unitExpr
 	| '(' expr ')';
 
 // P4-02: `unwrap(e)` is an expression that produces T from an Option<T>

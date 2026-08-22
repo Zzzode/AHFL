@@ -45,6 +45,8 @@ namespace {
         return "Timestamp";
     case evaluator::ValueKind::Callable:
         return "Callable";
+    case evaluator::ValueKind::Unit:
+        return "Unit";
     }
     return "Unknown";
 }
@@ -161,7 +163,7 @@ namespace {
     }
 
     if (expected.kind == Kind::Unit) {
-        if (is_none(value)) {
+        if (is_none(value) || std::holds_alternative<evaluator::UnitValue>(value.node)) {
             return SchemaValidationResult::ok();
         }
         return SchemaValidationResult::fail(at_path(path, "expected Unit but got a value"));

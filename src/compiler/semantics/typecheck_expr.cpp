@@ -1821,6 +1821,7 @@ class ExpressionChecker final {
                 [&](const ast::LambdaExpr &) { return visit_lambda(expr); },
                 // P4-02: unwrap(e) as right-hand-side expression.
                 [&](const ast::UnwrapExprSyntax &) { return visit_unwrap(expr); },
+                [&](const ast::UnitLiteralExpr &) { return visit_unit_literal(expr); },
             },
             expr.node);
     }
@@ -1840,6 +1841,11 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue visit_bool_literal(const ast::ExprSyntax &) const {
         return values_.typed(values_.make_type(TypeKind::Bool));
+    }
+
+    // RFC 0013 P3-gaps-B: `{}` is the sole value of Unit.
+    [[nodiscard]] TypedValue visit_unit_literal(const ast::ExprSyntax &) const {
+        return values_.typed(values_.make_type(TypeKind::Unit));
     }
 
     [[nodiscard]] TypedValue visit_integer_literal(const ast::ExprSyntax &expr) const {

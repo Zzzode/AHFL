@@ -555,6 +555,7 @@ class TypedIrLowerer final {
                 [&](const ast::UnwrapExprSyntax &value) -> const ast::ExprSyntax * {
                     return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
                 },
+                [](const ast::UnitLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
             },
             expr.node);
     }
@@ -1966,6 +1967,11 @@ class TypedIrLowerer final {
             (void)e;
             return nullptr;
         }
+
+        // RFC 0013 P3-gaps-B: `{}` lowers to the zero-sized IR unit literal.
+        ir::ExprRef visit_unit_literal(const TypedExpr &) const {
+            return self.make_expr(ir::UnitLiteralExpr{}, range);
+        }
     };
 
     // Forward-declared so the visitor above can recurse into children.
@@ -2250,6 +2256,16 @@ class TypedIrLowerer final {
 
         ir::StatementPtr visit_let_stmt(const TypedStatement &stmt) const {
             const TypedExpr *initializer = child_expr(0);
+            // B5 (RFC 0013 P3-gaps-B): a wildcard `let _ = e;` binds nothing.
+            // Lower it to an ir::ExprStatement so the initializer is evaluated
+            // for effects only; is_wildcard never threads onto ir::LetStatement.
+            if (stmt.is_wildcard) {
+                return self.make_statement(
+                    ir::ExprStatement{
+                        .expr = initializer ? self.lower_typed_expr(*initializer) : nullptr,
+                    },
+                    range);
+            }
             return self.make_statement(
                 ir::LetStatement{
                     .name = stmt.target_name,
@@ -2469,6 +2485,8 @@ class TypedIrLowerer final {
                                collect_called_targets_from_expr(*value.operand, called_targets);
                            }
                        },
+                       // RFC 0013 P3-gaps-B: `{}` — leaf, no called targets.
+                       [](const ir::UnitLiteralExpr &) {},
                    },
                    expr.node);
     }
@@ -2576,6 +2594,8 @@ class TypedIrLowerer final {
                                collect_workflow_value_reads(*value.operand, node_names, reads);
                            }
                        },
+                       // RFC 0013 P3-gaps-B: `{}` — leaf, no workflow reads.
+                       [](const ir::UnitLiteralExpr &) {},
                    },
                    expr.node);
     }

@@ -100,6 +100,7 @@ void append_typed_child(std::vector<TypedExprChild> &children,
             [&](const ast::DecimalLiteralExpr &) {},
             [&](const ast::StringLiteralExpr &) {},
             [&](const ast::DurationLiteralExpr &) {},
+            [&](const ast::UnitLiteralExpr &) {},
             [&](const ast::PathExpr &) {},
             [&](const ast::QualifiedValueExpr &) {},
             [&](const ast::CallExpr &e) {
@@ -3308,6 +3309,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
     switch (statement.kind) {
     case ast::StatementSyntaxKind::Let: {
+        const bool is_wildcard = statement.let_stmt->is_wildcard;
         TypePtr annotated_type;
         MaybeCRef<Type> expected = std::nullopt;
         if (statement.let_stmt->type) {
@@ -3336,38 +3338,43 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                    "let initializer");
         }
 
-        // Emit a SHADOWED_BINDING warning when the new binding masks an
-        // existing one in the surrounding scope. Mirrors Rust/Swift behaviour
-        // where shadowing is permitted but flagged so the user notices the
-        // accidental masking of `input`/`ctx`/`output`/an enclosing `let`.
-        if (const auto previous = find_binding(context.bindings, statement.let_stmt->name);
-            previous.has_value()) {
-            if (current_source_ != nullptr) {
-                result_.diagnostics.warning()
-                    .code(error_codes::typecheck::ShadowedBinding)
-                    .message(messages::typecheck::ShadowedBinding,
-                             statement.let_stmt->name,
-                             previous->get().describe())
-                    .range(statement.let_stmt->range)
-                    .source(current_source_->source)
-                    .emit();
-            } else {
-                result_.diagnostics.warning()
-                    .code(error_codes::typecheck::ShadowedBinding)
-                    .message(messages::typecheck::ShadowedBinding,
-                             statement.let_stmt->name,
-                             previous->get().describe())
-                    .range(statement.let_stmt->range)
-                    .emit();
+        // A wildcard `let _ = e;` binds nothing: there is no name to shadow
+        // and no binding to insert. The initializer is still typechecked
+        // above (for effects and annotation conformance).
+        if (!is_wildcard) {
+            // Emit a SHADOWED_BINDING warning when the new binding masks an
+            // existing one in the surrounding scope. Mirrors Rust/Swift behaviour
+            // where shadowing is permitted but flagged so the user notices the
+            // accidental masking of `input`/`ctx`/`output`/an enclosing `let`.
+            if (const auto previous = find_binding(context.bindings, statement.let_stmt->name);
+                previous.has_value()) {
+                if (current_source_ != nullptr) {
+                    result_.diagnostics.warning()
+                        .code(error_codes::typecheck::ShadowedBinding)
+                        .message(messages::typecheck::ShadowedBinding,
+                                 statement.let_stmt->name,
+                                 previous->get().describe())
+                        .range(statement.let_stmt->range)
+                        .source(current_source_->source)
+                        .emit();
+                } else {
+                    result_.diagnostics.warning()
+                        .code(error_codes::typecheck::ShadowedBinding)
+                        .message(messages::typecheck::ShadowedBinding,
+                                 statement.let_stmt->name,
+                                 previous->get().describe())
+                        .range(statement.let_stmt->range)
+                        .emit();
+                }
             }
-        }
 
-        if (expected.has_value()) {
-            context.bindings[statement.let_stmt->name] =
-                annotated_type ? annotated_type->clone() : make_error_type();
-        } else {
-            context.bindings[statement.let_stmt->name] =
-                initializer.type ? initializer.type->clone() : make_error_type();
+            if (expected.has_value()) {
+                context.bindings[statement.let_stmt->name] =
+                    annotated_type ? annotated_type->clone() : make_error_type();
+            } else {
+                context.bindings[statement.let_stmt->name] =
+                    initializer.type ? initializer.type->clone() : make_error_type();
+            }
         }
 
         // Determine the let type-ref strategy and structured semantic type.
@@ -3392,6 +3399,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.let_stmt->initializer)},
             .target_name = statement.let_stmt->name,
+            .is_wildcard = is_wildcard,
             .goto_target_state = {},
             .then_block_index = UINT32_MAX,
             .else_block_index = UINT32_MAX,

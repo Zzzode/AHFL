@@ -127,6 +127,7 @@ enum class ConstValueKind : std::uint8_t {
     Binary,
     MemberAccess,
     IndexAccess,
+    Unit, // the `{}` unit literal (RFC 0013 P3-gaps-B)
 };
 
 struct ConstValue {
@@ -474,6 +475,10 @@ struct TypedStatement {
     //   Let: local name
     //   Assign: target path spelling
     std::string target_name;
+    // Let: true for `let _ = e;` wildcard bindings (RFC 0013 P3-gaps-B).
+    // A wildcard binds nothing; the initializer is evaluated for effects only.
+    // Lowers to ir::ExprStatement at the HIR->IR boundary.
+    bool is_wildcard{false};
     // Goto: target state spelling
     std::string goto_target_state;
     // If: indexes into TypedProgram::blocks (UINT32_MAX = absent)
@@ -821,6 +826,8 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_lambda(expr);
     case ast::ExprSyntaxKind::UnwrapExpr:
         return std::forward<Visitor>(visitor).visit_unwrap_expr(expr);
+    case ast::ExprSyntaxKind::UnitLiteral:
+        return std::forward<Visitor>(visitor).visit_unit_literal(expr);
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);

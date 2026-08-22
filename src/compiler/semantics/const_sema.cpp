@@ -391,6 +391,8 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 }
                 return is_const_expr_syntax(*e.operand, reason);
             },
+            // B6 (RFC 0013 P3-gaps-B): `{}` is a compile-time constant.
+            [](const ast::UnitLiteralExpr &) { return true; },
         },
         expr.node);
 }
@@ -1304,6 +1306,10 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                     return std::nullopt;
                 }
                 return std::nullopt;
+            },
+            // B6 (RFC 0013 P3-gaps-B): `{}` const-folds to the unit constant.
+            [](const ast::UnitLiteralExpr &) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::Unit);
             },
         },
         expr.node);

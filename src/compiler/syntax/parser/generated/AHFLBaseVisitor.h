@@ -343,6 +343,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitUnitExpr(AHFLParser::UnitExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -404,6 +408,10 @@ public:
   }
 
   virtual std::any visitLetStmt(AHFLParser::LetStmtContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLetBinding(AHFLParser::LetBindingContext *ctx) override {
     return visitChildren(ctx);
   }
 

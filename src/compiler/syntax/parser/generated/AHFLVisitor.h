@@ -183,6 +183,8 @@ public:
 
     virtual std::any visitLambdaCaptureList(AHFLParser::LambdaCaptureListContext *context) = 0;
 
+    virtual std::any visitUnitExpr(AHFLParser::UnitExprContext *context) = 0;
+
     virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *context) = 0;
 
     virtual std::any visitLambdaParam(AHFLParser::LambdaParamContext *context) = 0;
@@ -214,6 +216,8 @@ public:
     virtual std::any visitStatement(AHFLParser::StatementContext *context) = 0;
 
     virtual std::any visitLetStmt(AHFLParser::LetStmtContext *context) = 0;
+
+    virtual std::any visitLetBinding(AHFLParser::LetBindingContext *context) = 0;
 
     virtual std::any visitAssignStmt(AHFLParser::AssignStmtContext *context) = 0;
 

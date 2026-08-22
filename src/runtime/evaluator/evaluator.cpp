@@ -1890,6 +1890,9 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_match_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::UnwrapExpr>) {
                 return eval_unwrap_expr(node, ctx, call_eval);
+            } else if constexpr (std::is_same_v<T, ir::UnitLiteralExpr>) {
+                // RFC 0013 P3-gaps-B: `{}` evaluates to the sole unit value.
+                return EvalResult{make_unit(), {}};
             }
         },
         expr.node);

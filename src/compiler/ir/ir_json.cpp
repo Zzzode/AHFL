@@ -1009,6 +1009,13 @@ class IrJsonPrinter final {
                         });
                     });
                 },
+                // RFC 0013 P3-gaps-B: the unit literal `{}` — kind + common fields only.
+                [&](const ir::UnitLiteralExpr &) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("unit_literal"); });
+                        print_expr_common_fields(field, expr, indent_level + 1);
+                    });
+                },
             },
             expr.node);
     }

@@ -322,6 +322,8 @@ class AstInvariantValidator final {
                         validate_expr(*e.operand);
                     }
                 },
+                // RFC 0013 P3-gaps-B: `{}` — empty struct, nothing to validate.
+                [](const UnitLiteralExpr &) {},
             },
             expr.node);
     }

@@ -210,6 +210,12 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 out << ':';
                 out << inner.unix_ms;
                 out << '}';
+            } else if constexpr (std::is_same_v<T, UnitValue>) {
+                // B3 (RFC 0013 P3-gaps-B): unit serializes as JSON null,
+                // matching the SSA monostate constant and NoneValue. The
+                // round-trip asymmetry (null deserializes to NoneValue) is
+                // pinned by the value_json unit test.
+                out << "null";
             }
         },
         v.node);

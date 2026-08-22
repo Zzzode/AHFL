@@ -1498,6 +1498,9 @@ class ProgramBuilder {
         case ast::ExprSyntaxKind::UnwrapExpr:
             expr->node = ast::UnwrapExprSyntax{};
             break;
+        case ast::ExprSyntaxKind::UnitLiteral:
+            expr->node = ast::UnitLiteralExpr{};
+            break;
         default:
             throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
         }
@@ -1856,6 +1859,11 @@ class ProgramBuilder {
             return build_lambda_expr(lambda->get());
         }
 
+        if (const auto unit = borrow(context.unitExpr())) {
+            return make_expr_syntax(ast::ExprSyntaxKind::UnitLiteral,
+                                    context_range(unit->get(), source_));
+        }
+
         if (const auto inner_expr = borrow(context.expr())) {
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Group, context_range(context, source_));
@@ -2211,7 +2219,7 @@ class ProgramBuilder {
         auto shorthand = make_owned<ast::PatternSyntax>();
         shorthand->range = terminal_range(name_token, source_);
         shorthand->text = field->name;
-        shorthand->node = ast::BindingPattern{.name = field->name};
+        shorthand->node = ast::BindingPattern{.name = field->name, .nested = nullptr};
         field->pattern = std::move(shorthand);
         return field;
     }
@@ -2402,7 +2410,16 @@ class ProgramBuilder {
     build_let_stmt(AHFLParser::LetStmtContext &context) const {
         auto statement = make_owned<ast::LetStmtSyntax>();
         statement->range = context_range(context, source_);
-        statement->name = text_of(require(context.IDENT(), "let binding name is missing"));
+
+        // `let IDENT = ...` vs `let _ = ...` (wildcard — binds nothing).
+        auto &binding = require(context.letBinding(), "let binding is missing");
+        if (const auto ident = borrow(binding.IDENT())) {
+            statement->name = text_of(ident->get());
+            statement->is_wildcard = false;
+        } else {
+            statement->name = "_";
+            statement->is_wildcard = true;
+        }
 
         if (const auto type = borrow(context.type_())) {
             statement->type = build_type_syntax(type->get());
@@ -2727,7 +2744,7 @@ class ProgramBuilder {
             throw std::logic_error("type did not match any supported AHFL type syntax kind");
         }
 
-        ast::NamedType named{.name = build_qualified_name(qualified_name->get())};
+        ast::NamedType named{.name = build_qualified_name(qualified_name->get()), .type_args = {}};
         const auto &child_types = context.type_();
         named.type_args.reserve(child_types.size());
         for (auto *child : child_types) {

@@ -283,7 +283,11 @@ struct UnwrapExpr {
     ExprRef fallback_none_message{nullptr}; // user-provided failure message (rare)
 };
 
-/// Expression node (17 variant alternatives - P5 Big Bang: container literals
+/// RFC 0013 P3-gaps-B: the unit literal `{}`. The sole value of the `Unit`
+/// type. Zero-sized; carries no data.
+struct UnitLiteralExpr {};
+
+/// Expression node (18 variant alternatives - P5 Big Bang: container literals
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
 /// QualifiedValueExpr + CallExpr)
 ///
@@ -322,7 +326,8 @@ using ExprNode = std::variant<BoolLiteralExpr,
                               MemberAccessExpr,
                               IndexAccessExpr,
                               MatchExpr,
-                              UnwrapExpr>;
+                              UnwrapExpr,
+                              UnitLiteralExpr>;
 
 /// Expression wrapper struct
 struct Expr {

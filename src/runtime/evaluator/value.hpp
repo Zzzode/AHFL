@@ -102,6 +102,10 @@ struct TimestampValue {
     int64_t unix_ms{0};
 };
 
+// Unit value: the sole runtime value of the `Unit` type (RFC 0013 P3-gaps-B).
+// Zero-sized; its presence is its meaning.
+struct UnitValue {};
+
 // ============================================================================
 // Value type (variant)
 // ============================================================================
@@ -120,7 +124,8 @@ using ValueNode = std::variant<NoneValue,
                                MapValue,
                                UuidValue,
                                TimestampValue,
-                               CallableValue>;
+                               CallableValue,
+                               UnitValue>;
 
 struct Value {
     ValueNode node;
@@ -147,6 +152,7 @@ enum class ValueKind {
     Uuid,
     Timestamp,
     Callable,
+    Unit,
 };
 
 // ============================================================================
@@ -238,6 +244,11 @@ void print_value(const Value &v, std::ostream &out);
 
 [[nodiscard]] inline Value make_none() {
     return Value{NoneValue{}};
+}
+
+// RFC 0013 P3-gaps-B: the sole runtime value of Unit.
+[[nodiscard]] inline Value make_unit() {
+    return Value{UnitValue{}};
 }
 
 [[nodiscard]] inline Value make_bool(bool b) {

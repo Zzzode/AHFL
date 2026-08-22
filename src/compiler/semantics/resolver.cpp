@@ -3382,7 +3382,12 @@ class ResolverPass final {
             switch (statement->kind) {
             case ast::StatementSyntaxKind::Let:
                 resolve_declaration_expr(*statement->let_stmt->initializer);
-                add_value_binding(statement->let_stmt->name);
+                // B4(a) (RFC 0013 P3-gaps-B): a wildcard `let _ = e;` binds
+                // nothing — resolve the initializer for its references, but do
+                // not introduce a value binding for `_`.
+                if (!statement->let_stmt->is_wildcard) {
+                    add_value_binding(statement->let_stmt->name);
+                }
                 break;
             case ast::StatementSyntaxKind::Assign:
                 resolve_declaration_expr(*statement->assign_stmt->value);

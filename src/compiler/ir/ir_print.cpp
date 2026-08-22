@@ -209,6 +209,8 @@ namespace {
 	                          [](const ir::MatchExpr &) { return true; },
                           // P4-02: unwrap(...) is a compound expression.
                           [](const ir::UnwrapExpr &) { return true; },
+                          // RFC 0013 P3-gaps-B: `{}` is an atomic literal.
+                          [](const ir::UnitLiteralExpr &) { return false; },
 	                      },
 	                      expr.node);
 }
@@ -537,6 +539,8 @@ class IrProgramPrinter final {
                                           : std::string{"<none>"}) +
                            ")";
                 },
+                // RFC 0013 P3-gaps-B: the unit literal renders as its source spelling.
+                [](const ir::UnitLiteralExpr &) { return std::string{"{}"}; },
             },
             expr.node);
     }

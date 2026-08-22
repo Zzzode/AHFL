@@ -277,6 +277,8 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
 	                           visit_expr(*value.fallback_none_message);
 	                       }
 	                   },
+	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no children to walk.
+	                   [](const UnitLiteralExpr &) {},
 	               },
 	               expr.node);
 
@@ -730,6 +732,8 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
 	                                  }
 	                                  return changed;
 	                              },
+	                              // RFC 0013 P3-gaps-B: `{}` — leaf, nothing to rewrite.
+	                              [](UnitLiteralExpr &) { return false; },
 	                          },
 	                          expr.node) ||
                modified;

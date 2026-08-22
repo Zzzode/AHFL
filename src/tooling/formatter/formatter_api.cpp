@@ -344,6 +344,8 @@ void append_expression(std::ostringstream &out, const ast::ExprSyntax &expr) {
                 }
                 out << ")";
             },
+            // RFC 0013 P3-gaps-B: the unit literal formats as its source spelling.
+            [&](const ast::UnitLiteralExpr &) { out << "{}"; },
         },
         expr.node);
 }

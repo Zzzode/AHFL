@@ -758,6 +758,8 @@ void DeclarationSema::build_enum_types() {
                             : (variant->payload_kind == ast::EnumVariantPayloadKind::Struct
                                    ? EnumVariantPayloadKind::Struct
                                    : EnumVariantPayloadKind::Unit),
+                    .payload = {},
+                    .fields = {},
                     .declaration_range = variant->range,
                 };
                 variant_info.payload.reserve(variant->payload.size());
@@ -1404,6 +1406,7 @@ void DeclarationSema::build_trait_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .local_name = decl.get().name,
                 .type_param_names = {},
+                .self_augmented_type_param_names = {},
                 .super_traits = {},
                 .methods = {},
                 .assoc_types = {},
@@ -1568,6 +1571,8 @@ void DeclarationSema::build_impl_types() {
                     trait_name,
                     existing.target_type ? nominal_describe(*existing.target_type) : target_name),
                 .range = existing.declaration_range,
+                .source_id = std::nullopt,
+                .source_name = std::nullopt,
             });
             typecheck_error_here(
                 error_codes::typecheck::CoherenceConflict,
@@ -1585,8 +1590,12 @@ void DeclarationSema::build_impl_types() {
             ImplTypeInfo info{
                 .index = impl_index,
                 .is_inherent = !decl.trait_ref,
+                .trait_symbol = std::nullopt,
+                .trait_name = {},
                 .target_type = nullptr,
+                .target_symbol = std::nullopt,
                 .type_param_names = {},
+                .trait_type_args = {},
                 .methods = {},
                 .assoc_items = {},
                 .declaration_range = decl.range,

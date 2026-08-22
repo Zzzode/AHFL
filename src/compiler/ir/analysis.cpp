@@ -148,6 +148,8 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
 	                           collect_called_targets_from_expr(*value.operand, called_targets);
 	                       }
 	                   },
+	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no called targets.
+	                   [](const UnitLiteralExpr &) {},
 	               },
 	               expr.node);
 }
@@ -391,6 +393,8 @@ void collect_workflow_value_reads(const Expr &expr,
 	                               *value.operand, workflow_node_names, reads);
 	                       }
 	                   },
+	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no workflow reads.
+	                   [](const UnitLiteralExpr &) {},
 	               },
 	               expr.node);
 }

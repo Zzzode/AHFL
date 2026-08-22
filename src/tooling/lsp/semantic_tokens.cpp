@@ -781,6 +781,8 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                     collect_expr_tokens(*e.operand, source, tokens);
                 }
             },
+            // RFC 0013 P3-gaps-B: `{}` — punctuation only, no semantic tokens.
+            [](const ast::UnitLiteralExpr &) {},
         },
         expr.node);
 }

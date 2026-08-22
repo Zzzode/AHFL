@@ -565,6 +565,12 @@ add_executable(ahfl_semantics_b2_impl_body_parser_gaps_tests
 target_link_libraries(ahfl_semantics_b2_impl_body_parser_gaps_tests
     PRIVATE
         ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_compiler_ir_opt
+        ahfl_compiler_backends
+        ahfl_runtime_evaluator
+        ahfl_runtime_engine
+        ahfl_tooling_formatter
         doctest
 )
 target_include_directories(ahfl_semantics_b2_impl_body_parser_gaps_tests
