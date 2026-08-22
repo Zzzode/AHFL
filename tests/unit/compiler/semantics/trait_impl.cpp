@@ -2047,3 +2047,265 @@ fn red() -> colors::Color effect Pure decreases 0 {
     const auto result = typecheck_modules(units, true);
     CHECK_FALSE(result.has_errors());
 }
+
+// ===========================================================================
+// P3c-B (RFC 0013): Self keyword in trait/impl signatures. P3c-A landed the
+// compiler machinery (self-augmented trait scope, impl self-type override,
+// signatures_match substitution, synthetic-candidate dispatch). The tests
+// below exercise it end-to-end: generic/non-generic impls with Self, trait
+// level type params, method-call dispatch, Self in return position, and the
+// negative diagnostics (signature mismatch after substitution, Self outside
+// trait/impl, trait type-arg arity).
+// ===========================================================================
+
+// P3c-TC1: generic trait impl with Self. `impl<T> Eq for Option<T>` matches
+// `trait Eq { fn eq(self: Self, other: Self) -> Bool; }` because
+// signatures_match substitutes Self(0) -> Option<T> before comparing.
+TEST_CASE("P3c-TC1 generic impl with Self signature matches trait") {
+    const std::string source = module_preamble() + R"AHFL(
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+trait Eq {
+    fn eq(self: Self, other: Self) -> Bool effect Pure;
+}
+
+impl<T> Eq for Option<T> {
+    fn eq(self: Self, other: Self) -> Bool effect Pure decreases 0 {
+        return true;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc1.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-TC2: non-generic impl with Self. Self resolves to the impl target type
+// (Counter) via the driver-level self-type override.
+TEST_CASE("P3c-TC2 non-generic impl with Self signature matches trait") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+trait Eq {
+    fn eq(self: Self, other: Self) -> Bool effect Pure;
+}
+
+impl Eq for Counter {
+    fn eq(self: Self, other: Self) -> Bool effect Pure decreases 0 {
+        return self.value == other.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc2.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-TC3: trait-level type parameter end-to-end. `impl<T> Functor<T> for
+// List<T>` substitutes Self(0) -> List<T> and trait T(1) -> impl trait_type
+// arg T; the Fn(T) -> T parameter and Self return type unify by pointer
+// equality after substitution.
+TEST_CASE("P3c-TC3 trait-level type param matches impl trait type arg") {
+    const std::string source = module_preamble() + R"AHFL(
+struct List<T> {
+    head: T;
+}
+
+trait Functor<T> {
+    fn map(self: Self, f: Fn(T) -> T) -> Self effect Pure;
+}
+
+impl<T> Functor<T> for List<T> {
+    fn map(self: Self, f: Fn(T) -> T) -> Self effect Pure decreases 0 {
+        return self;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc3.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-TC4: trait method call dispatch through a generic impl. `x.eq(y)` on
+// Option<Int> resolves via pass-1 nominal match (generic impl target
+// Option<T> vs concrete receiver Option<Int>); the Step 5(b) nominal-symbol
+// fallback suppresses the pass-2 synthetic candidate so stage 2 sees exactly
+// one trait candidate and stage 3's bound check is satisfied by the generic
+// impl. Without Step 5 this program reports AMBIGUOUS_TRAIT_IMPL.
+TEST_CASE("P3c-TC4 generic trait impl dispatches method call on concrete receiver") {
+    const std::string source = module_preamble() + R"AHFL(
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+trait Eq {
+    fn eq(self: Self, other: Self) -> Bool effect Pure;
+}
+
+impl<T> Eq for Option<T> {
+    fn eq(self: Self, other: Self) -> Bool effect Pure decreases 0 {
+        return true;
+    }
+}
+
+fn check() -> Bool effect Pure decreases 0 {
+    let x: Option<Int> = Option::Some(1);
+    let y: Option<Int> = Option::Some(2);
+    return x.eq(y);
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc4.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-TC5: Self in return position. `fn from_str(s: String) -> Option<Self>`
+// resolves Self to the impl target type (Int) inside the container-wrapped
+// return type.
+TEST_CASE("P3c-TC5 Self in trait method return position resolves to target") {
+    const std::string source = module_preamble() + R"AHFL(
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+trait FromStr {
+    fn from_str(s: String) -> Option<Self> effect Pure;
+}
+
+impl FromStr for Int {
+    fn from_str(s: String) -> Option<Int> effect Pure decreases 0 {
+        return Option::None;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc5.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-TC6 (review test-gap 2): Self in an impl associated-type RHS. The
+// self-type override stays active across the assoc-item resolution region,
+// so `type Assoc = Self;` resolves Self to the impl target type.
+TEST_CASE("P3c-TC6 Self in impl assoc type RHS resolves to target") {
+    const std::string source = module_preamble() + R"AHFL(
+trait Foo {
+    type Assoc;
+}
+
+struct Bar {
+    value: Int;
+}
+
+impl Foo for Bar {
+    type Assoc = Self;
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_tc6.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+}
+
+// P3c-NEG1: signature mismatch after substitution. The trait expects
+// (Self, Self) which substitutes to (Counter, Counter) for this impl; the
+// impl provides (Counter, Int). The golden message must render the
+// SUBSTITUTED trait param types (Step 4's temporary ParamTypeInfo
+// rendering), not the raw TypeVarT names.
+TEST_CASE("P3c-NEG1 signature mismatch after Self substitution reports substituted types") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+trait Eq {
+    fn eq(self: Self, other: Self) -> Bool effect Pure;
+}
+
+impl Eq for Counter {
+    fn eq(self: Self, other: Int) -> Bool effect Pure decreases 0 {
+        return true;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_neg1.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic(
+        result,
+        "typecheck.TRAIT_METHOD_SIGNATURE_MISMATCH",
+        "trait expects (trait_impl::Counter, trait_impl::Counter), impl provides "
+        "(trait_impl::Counter, Int)"));
+}
+
+// P3c-NEG2: Self outside a trait/impl context. A free fn has no self-type
+// override and no self-augmented scope, so `Self` is an unknown type name.
+// The resolver's unknown-type guard fires before typecheck runs, emitting
+// resolve.UNKNOWN_SYMBOL (the design predicted typecheck.UNKNOWN_TYPE; the
+// resolver catches it one phase earlier — the rejection intent is identical).
+TEST_CASE("P3c-NEG2 Self in free fn signature reports UNKNOWN_SYMBOL") {
+    const std::string source = module_preamble() + R"AHFL(
+fn f(x: Self) -> Int effect Pure decreases 0 {
+    return 0;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text(std::string("p3c_neg2.ahfl"), source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    CHECK(resolve_result.has_errors());
+    bool found = false;
+    for (const auto &entry : resolve_result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "resolve.UNKNOWN_SYMBOL" &&
+            entry.message.find("unknown type 'Self'") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    CHECK(found);
+}
+
+// P3c-NEG3: trait type-argument arity. The impl header writes the wrong
+// COUNT of trait type arguments (`Iterable<T, T>` for a 1-param trait).
+//
+// Note: the missing-args shape from the design (`impl<T> Iterable for
+// List<T>`, zero args) does NOT fire WRONG_ARITY — P3c-A gated the arity
+// check on non-empty trait_type_args so the accepted P3a-b surface
+// (`impl Container for Counter` with `trait Container<T>`) stays valid. The
+// wrong-count shape is the arity error; the message is the trait-specific
+// TraitTypeArgArity template (review test-gap 4), not the callable-oriented
+// WrongArity template.
+TEST_CASE("P3c-NEG3 wrong-count trait type args report WRONG_ARITY") {
+    const std::string source = module_preamble() + R"AHFL(
+struct List<T> {
+    head: T;
+}
+
+trait Iterable<T> {
+    fn is_empty(self: Self) -> Bool effect Pure;
+}
+
+impl<T> Iterable<T, T> for List<T> {
+    fn is_empty(self: Self) -> Bool effect Pure decreases 0 {
+        return true;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("p3c_neg3.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic_code(result, "typecheck.WRONG_ARITY"));
+    CHECK(has_exact_diagnostic(
+        result,
+        "typecheck.WRONG_ARITY",
+        "trait 'trait_impl::Iterable' expects 1 type argument(s), got 2"));
+}

@@ -674,6 +674,11 @@ inline constexpr MessageTemplate TraitMethodNotInTrait{
     "impl provides method '{}' which is not declared by trait '{}'"};
 inline constexpr MessageTemplate TraitMethodSignatureMismatch{
     "method '{}' signature mismatch: trait expects ({}), impl provides ({})"};
+// P3c-B (RFC 0013): trait type-argument arity. The generic WrongArity
+// template is callable-oriented ("expects N argument(s)"); trait type args
+// need their own wording so the diagnostic reads as a type-arg count.
+inline constexpr MessageTemplate TraitTypeArgArity{
+    "trait '{}' expects {} type argument(s), got {}"};
 inline constexpr MessageTemplate TraitAssocTypeNotFound{
     "trait '{}' declares associated type '{}' but impl does not provide it"};
 inline constexpr MessageTemplate MissingSuperTrait{

@@ -1728,9 +1728,12 @@ void DeclarationSema::build_impl_types() {
                     // when the impl explicitly wrote some. A non-generic impl
                     // of a generic trait (`impl Container for Counter` with
                     // `trait Container<T>`) is the accepted P3a-b surface
-                    // (see trait_impl TC4); diagnosing the missing-args shape
-                    // (`impl<T> Iterable for List<T>`) is P3c-NEG3, deferred
-                    // to the Step 9 test slice.
+                    // (see trait_impl TC4); the missing-args shape
+                    // (`impl<T> Iterable for List<T>`) is likewise accepted
+                    // (trait_type_args stays empty and signatures_match
+                    // keeps the unbound trait tparams as-is). The wrong-COUNT
+                    // shape (`impl<T> Iterable<T, U> for List<T>`) is the
+                    // arity error pinned by P3c-NEG3.
                     if (!info.trait_type_args.empty() && info.trait_symbol.has_value()) {
                         const auto trait_info = environment().get_trait(*info.trait_symbol);
                         if (trait_info.has_value() &&
@@ -1738,8 +1741,7 @@ void DeclarationSema::build_impl_types() {
                                 info.trait_type_args.size()) {
                             typecheck_error_here(
                                 error_codes::typecheck::WrongArity,
-                                messages::typecheck::WrongArity.format_with(
-                                    "trait",
+                                messages::typecheck::TraitTypeArgArity.format_with(
                                     trait_info->get().canonical_name,
                                     std::to_string(trait_info->get().type_param_names.size()),
                                     std::to_string(info.trait_type_args.size())),

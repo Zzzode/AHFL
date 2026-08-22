@@ -5,7 +5,7 @@ status: "implementing"
 area: ["language", "compiler", "stdlib", "runtime"]
 stability: "experimental"
 created: "2026-06-21"
-updated: "2026-08-21"
+updated: "2026-08-22"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -133,6 +133,8 @@ impl<K, V> Foldable<(K, V)> for Map<K, V> { /* ... */ }
 ```
 
 `trait` 让 `fold/map/filter` 写一遍服务所有容器。`Eq/Ord/Hash/Foldable/Functor/Iterable` 构成 corelib 的接口骨架。
+
+**Self 关键字（2026-08-22 落地，P3c）**：`Self` 是上下文标识符而非文法关键字——大写 `Self` 已按 IDENT 词法化，在 type 位置经现有 `type_` 规则解析为 NamedType，无需重新生成 parser。在 trait 方法签名中，`Self` 是隐式的最前置类型参数（`TraitTypeInfo::self_augmented_type_param_names` 的 index 0，即 `["Self"] + trait tparams`），trait-level 类型参数（如 `Iterable<T>` 的 `T`）占据 index 1..N；在 impl 方法签名中，`Self` 经 driver 级 self-type override 直接解析为 impl 的 target type（对泛型 impl 已携带 impl-level TypeVarT）。`signatures_match` 在结构比较前构建 `TypeSubstitutionMap`（Rust Substs 模式，按 `TypeVarT::index` 索引的 vector）：slot 0 映射 Self → impl.target_type，slot 1..N 映射 trait tparams → impl.trait_type_args，经 `substitute_type` 替换后对 interned 结果做指针相等比较（hash-consed 结构相等）。已知限制：(1) 容器包裹的 Self（`self: Option<Self>`）在 synthetic-candidate 派发路径中不被匹配——self 参数是 StructT/EnumT 而非裸 TypeVarT，normalize_type_key 跳过不触发，synthetic candidate 对该形状保持死状态；(2) trait 方法级类型参数（`fn fold<U>(...)`）的作用域尚未在 `resolve_trait_method_info` 激活，方法级 tparam 解析为 UNKNOWN_TYPE（既有缺口，非 P3c 回归）。
 
 **coherence（Q1 决议）**：严格版 orphan rule——`impl Trait for Type` 必须位于定义 Type 或定义 Trait 的模块，其余报 `E::orphan_impl`。AHFL 是单根模块树（`std` 唯一权威来源），冲突候选 ≤ 2，编译期确定。
 
@@ -320,7 +322,7 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 | P0 哲学 + 边界冻结 | ✅ 完成 | 100% | — |
 | P1 ADT（enum 带 payload） | ✅ 完成 | 100% | 索引式模式匹配留作 follow-up |
 | P2 fn + 用户泛型 + 一等闭包 | 🟡 进行中 | 85% | 跨链泛型推断（argument-type → callee-type-param 反推 sub-engine）；method-level `<A>/<U>` tparam 传播；闭包捕获列表；const 泛型参数 |
-| P3 trait / typeclass | 🟡 进行中 | 92% | impl-body parser 3 语法 gap（wildcard `let _`、`{}` unit 消歧、closure tparam 作用域）；Option/Result/List/Set/Map × container-family traits 批量 impl；JsonValue/Decimal/UUID/Timestamp trait impl；IR 一等 TraitDecl/ImplDecl 节点；MethodCallExpr variant；where-clause 端到端传播 |
+| P3 trait / typeclass | 🟡 进行中 | 95% | impl-body parser 3 语法 gap（wildcard `let _`、`{}` unit 消歧、closure tparam 作用域）；IR 一等 TraitDecl/ImplDecl 节点；MethodCallExpr variant；where-clause 端到端传播 |
 | P4 effect 系统 + 可验证子集 | 🟡 进行中 | 75% | bounded refinement `List<T> where length <= N` grammar + SMV fixed-size array 接线；`decreases` 单调性证明与 SMV/BMC 消费；effect 多态 |
 | P5 容器 stdlib 化 | 🟡 进行中 | 92% | 5/5 nominal wrapper 终态（Option/Result/List 为 nominal enum，Set/Map 为 nominal struct）；剩余 8% 是 P3 trait impl 层（Foldable/Iterable/Functor × 容器） |
 | P6 stdlib 实现 + prelude | 🟡 进行中 | 88% | 13 模块 + prelude 已落地；剩余 prelude semver 策略与 `#![no_prelude]` 语法 |
@@ -328,7 +330,7 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 
 执行顺序原则：同组内可并行，组间有阻塞关系。当前关键路径是 P3 的 impl-body parser gap（阻塞 container-family trait 批量 impl），其后是 P2/P3 共享的跨链推断与 where-clause 传播，最后是 P4 的 bounded refinement SMV 接线（与 const 泛型合并 ROI 最高）。
 
-> **P3c 阻塞（2026-08-21 并入，原 `docs/plans/trait-self-blocker.en.md`）**：container-family trait 批量 impl（`impl Eq for Option<T>` 等）被 `Self` 关键字缺失阻塞。根因：`typecheck.cpp` 的 `signatures_match()` 对 trait 方法参数类型做指针相等比较，而 `std/traits.ahfl` 的 trait 声明用具体占位类型（`Bool`、`Int`、`collections::List<Int>`）作为 receiver，导致 `impl Eq for Option<T>` 报 `TRAIT_METHOD_SIGNATURE_MISMATCH`（trait expects `(Bool, Bool)`，impl provides `(Option<T>, Option<T>)`）。需要：(1) trait 方法签名支持 `Self` 接收者；(2) `signatures_match` 做 Self 替换而非指针相等；(3) 或支持 trait-level 类型参数在 impl 解析时替换。在 Self 落地前，inherent impl 路径（`impl<T> Option<T>` 上的方法）可用，覆盖大部分 stdlib API 需求；B-5~B-9 trait impl 批次（Option/Result × 7、List/Set/Map × container-family、JsonValue × 6、primitives × 4）整体挂起。
+> **P3c 阻塞已解除（2026-08-22 决议，原 `docs/plans/trait-self-blocker.en.md`）**：container-family trait 批量 impl（`impl<T> Eq for Option<T>` 等）原被 `Self` 关键字缺失阻塞。根因是 `signatures_match()` 对 trait 方法参数类型做指针相等比较，而 `std/traits.ahfl` 的 trait 声明用具体占位类型作为 receiver，导致泛型 impl 报 `TRAIT_METHOD_SIGNATURE_MISMATCH`。**已落地**：(1) trait 方法签名支持 `Self` 接收者（self-augmented 作用域，`Self` = TypeVarT index 0）；(2) `signatures_match` 做 Self + trait-tparam 替换后再做指针相等比较；(3) trait-level 类型参数（`Iterable<T>`）在 impl 解析时经 `trait_type_args` 替换。`std/traits.ahfl` 全部 11 个 trait 已迁移到 `Self` + trait-level tparam。B-5~B-9 trait impl 批次（Option/Result × 7、List/Set/Map × container-family、JsonValue × 6、primitives × 4）解除阻塞。synthetic-candidate 派发路径同步修复：TypeVarT self 参数跳过 normalize_type_key 比较，concrete_impl_exists 抑制循环增加 nominal-symbol 回退，使泛型 impl 对具体 receiver 不再产生 AMBIGUOUS_TRAIT_IMPL。已知限制见 Design trait 节（容器包裹 Self、trait 方法级 tparam）。
 
 ## Test Plan
 
@@ -382,3 +384,4 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 - 2026-06-30: 四份 detail 附件定稿，原 7 个开放问题全部决议；P0/P1/P7 完成，P5 容器 nominal wrapper 与 P6 prelude 落地。
 - 2026-07-06: 迁移前最后一次更新（P3 trait 链路层 12 项 Bug 全闭环）。
 - 2026-08-20: 迁入 RFC registry 为 RFC 0013，状态 `implementing`；原文件删除，inbound 链接改指本文件。
+- 2026-08-22: P3c `Self` 关键字落地（trait/impl 签名解析 + `signatures_match` Self/trait-tparam 替换 + `std/traits.ahfl` 11 trait 迁移 + synthetic-candidate 派发修复）；P3c 阻塞解除，P3 完成率 92% → 95%。已知限制：容器包裹 `Self` 的 synthetic candidate 不匹配、trait 方法级 tparam 作用域未激活。

@@ -1561,7 +1561,21 @@ class ExpressionCheckerServices final {
             if (self_param.type == nullptr) {
                 continue;
             }
-            if (TypeEnvironment::normalize_type_key(*self_param.type) != receiver_key) {
+            // P3c-B Step 5(a): when the trait method's self param is `Self`
+            // (a TypeVarT in the trait signature), the trait method is
+            // potentially applicable to ANY receiver — skip the
+            // normalize_type_key comparison, which would produce the
+            // non-matching key 'type_var:Self' for every concrete receiver
+            // and leave the synthetic-candidate path dead. The stage-3 bound
+            // check (check_bound) gates actual impl existence, so an
+            // unimpl'd receiver still gets TRAIT_BOUND_NOT_SATISFIED rather
+            // than silently resolving. Container-wrapped Self (e.g.
+            // `self: Option<Self>`) is a known limitation: the self param is
+            // a StructT/EnumT, not a bare TypeVarT, so this skip does not
+            // fire and the synthetic candidate stays dead for that shape.
+            const bool self_is_type_var = self_param.type->holds<types::TypeVarT>();
+            if (!self_is_type_var &&
+                TypeEnvironment::normalize_type_key(*self_param.type) != receiver_key) {
                 continue;
             }
             // Skip: a concrete impl of this trait for the receiver type
@@ -1582,7 +1596,20 @@ class ExpressionCheckerServices final {
                 if (impl.target_type == nullptr) {
                     continue;
                 }
-                if (TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key) {
+                // P3c-B Step 5(b): mirror pass (1)'s matching — accept a
+                // nominal-symbol match in addition to normalize_type_key
+                // equality so generic impls (`impl<T> Eq for Option<T>`)
+                // suppress the synthetic candidate for concrete receivers
+                // (`Option<Int>`). Without this, a generic trait impl
+                // produces both a pass-1 concrete candidate AND a pass-2
+                // synthetic candidate, causing AMBIGUOUS_TRAIT_IMPL at
+                // stage 2.
+                const bool key_match =
+                    TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
+                const bool nominal_match =
+                    !key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
+                    *receiver_nominal == *impl.target_symbol;
+                if (key_match || nominal_match) {
                     concrete_impl_exists = true;
                     break;
                 }
