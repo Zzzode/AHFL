@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <functional>
 #include <optional>
 #include <sstream>
@@ -508,8 +507,16 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                             .range = source_unit.module_range,
                         });
                     }
-                    for (const auto &import_request : source_unit.imports) {
-                        if (import_request.module_name == source_unit.module_name) {
+                    // Snapshot importer identity and the import list before
+                    // resolving imports. Resolving an import recursively calls
+                    // load_source, which push_backs into result.graph.sources
+                    // and may reallocate that vector, invalidating references
+                    // into it (including `source_unit` above). Addressable
+                    // members are re-fetched through the stable SourceId index.
+                    const auto importer_module = source_unit.module_name;
+                    const auto imports_to_load = source_unit.imports;
+                    for (const auto &import_request : imports_to_load) {
+                        if (import_request.module_name == importer_module) {
                             result.graph.import_edges.push_back(ImportEdge{
                                 .importer = source_id,
                                 .imported = source_id,
@@ -517,12 +524,13 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                             });
                             continue;
                         }
-                        if (!enforce_import_visibility(source_unit.module_name,
-                                                       import_request,
-                                                       module_roots,
-                                                       input.enforce_package_dependencies,
-                                                       result.diagnostics,
-                                                       source_unit.source)) {
+                        if (!enforce_import_visibility(
+                                importer_module,
+                                import_request,
+                                module_roots,
+                                input.enforce_package_dependencies,
+                                result.diagnostics,
+                                result.graph.sources[source_id.value].source)) {
                             continue;
                         }
                         const auto imported_path =
@@ -530,16 +538,17 @@ ProjectParseResult parse_project(const Frontend &frontend, const ProjectInput &i
                                                 search_roots,
                                                 module_roots,
                                                 result.diagnostics,
-                                                std::cref(source_unit.source),
+                                                std::cref(result.graph.sources[source_id.value].source),
                                                 import_request.range);
                         if (!imported_path.has_value()) {
                             continue;
                         }
 
-                        const auto imported_id = load_source(*imported_path,
-                                                             import_request.module_name,
-                                                             std::cref(source_unit.source),
-                                                             import_request.range);
+                        const auto imported_id =
+                            load_source(*imported_path,
+                                        import_request.module_name,
+                                        std::cref(result.graph.sources[source_id.value].source),
+                                        import_request.range);
                         if (!imported_id.has_value()) {
                             continue;
                         }
