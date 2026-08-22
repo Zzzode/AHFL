@@ -322,7 +322,7 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 | P0 哲学 + 边界冻结 | ✅ 完成 | 100% | — |
 | P1 ADT（enum 带 payload） | ✅ 完成 | 100% | 索引式模式匹配留作 follow-up |
 | P2 fn + 用户泛型 + 一等闭包 | 🟡 进行中 | 85% | 跨链泛型推断（argument-type → callee-type-param 反推 sub-engine）；method-level `<A>/<U>` tparam 传播；闭包捕获列表；const 泛型参数 |
-| P3 trait / typeclass | 🟡 进行中 | 95% | impl-body parser 2 语法 gap（wildcard `let _`、`{}` unit 消歧）；IR 一等 TraitDecl/ImplDecl 节点；MethodCallExpr variant；where-clause 端到端传播。closure self/keyword 参数 + CANNOT_INFER_CLOSURE_PARAM 已落地（P3-gaps-A，2026-08-22） |
+| P3 trait / typeclass | 🟡 进行中 | 97% | IR 一等 TraitDecl/ImplDecl 节点；MethodCallExpr variant；where-clause 端到端传播。impl-body parser 3 语法 gap 全部落地：closure self/keyword 参数 + CANNOT_INFER_CLOSURE_PARAM（P3-gaps-A）、wildcard `let _` + `{}` unit literal（P3-gaps-B，2026-08-22） |
 | P4 effect 系统 + 可验证子集 | 🟡 进行中 | 75% | bounded refinement `List<T> where length <= N` grammar + SMV fixed-size array 接线；`decreases` 单调性证明与 SMV/BMC 消费；effect 多态 |
 | P5 容器 stdlib 化 | 🟡 进行中 | 92% | 5/5 nominal wrapper 终态（Option/Result/List 为 nominal enum，Set/Map 为 nominal struct）；剩余 8% 是 P3 trait impl 层（Foldable/Iterable/Functor × 容器） |
 | P6 stdlib 实现 + prelude | 🟡 进行中 | 88% | 13 模块 + prelude 已落地；剩余 prelude semver 策略与 `#![no_prelude]` 语法 |
@@ -371,7 +371,7 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 
 剩余开放项（均有归属阶段，不阻塞当前实施）：
 
-1. impl-body parser 2 语法 gap 的具体消歧规则（wildcard `let _`、`{}` 在 unit-literal 与 block/empty-struct 间消歧）——P3 blocker，方案待实现时定稿。closure param name 与 impl-level tparam 作用域已随 P3-gaps-A 落地（2026-08-22）；keyword 命名参数（`map`/`set` 等）目前仅声明面可用，函数体裸引用受 pathRoot 限制（仅放行 IDENT/'input'/'output'/'self'），放宽 pathRoot 是独立 follow-up。
+1. ~~impl-body parser 2 语法 gap~~（已解决，2026-08-22）：wildcard `let _` 降级为 `ir::ExprStatement`（只求值副作用，不引入绑定）；`{}` 为 unit literal（block 仅语句位，表达式位无歧义）。closure param name 与 impl-level tparam 作用域已随 P3-gaps-A 落地。keyword 命名参数（`map`/`set` 等）目前仅声明面可用，函数体裸引用受 pathRoot 限制（仅放行 IDENT/'input'/'output'/'self'），放宽 pathRoot 是独立 follow-up。
 2. 跨链泛型推断 sub-engine 的算法形态（`check_call_expr` 入口反推）——P2/P3 共享。
 3. 闭包捕获列表与 `DecreasesClause` / `ExprEffect` 的交互语义——P2 后续。
 4. const 泛型参数的 grammar 与 TypeEnvironment literal-int family 设计——P2/P4 合并实现。
@@ -386,3 +386,4 @@ RFC 即跟踪单元。当前进度（验收以 ctest 终态与 stdlib_units 实�
 - 2026-08-20: 迁入 RFC registry 为 RFC 0013，状态 `implementing`；原文件删除，inbound 链接改指本文件。
 - 2026-08-22: P3c `Self` 关键字落地（trait/impl 签名解析 + `signatures_match` Self/trait-tparam 替换 + `std/traits.ahfl` 11 trait 迁移 + synthetic-candidate 派发修复）；P3c 阻塞解除，P3 完成率 92% → 95%。已知限制：容器包裹 `Self` 的 synthetic candidate 不匹配、trait 方法级 tparam 作用域未激活。
 - 2026-08-22: P3-gaps-A 落地（RFC 0013 Gap 3）：`lambdaParam` 改用 keyword-permissive `identifier` 规则，`self`/`map`/`set` 等可作闭包参数名；无标注且无期望 Fn 类型的闭包参数由静默 error-type（IR 边界崩溃）改为 `CANNOT_INFER_CLOSURE_PARAM` SourceRange 诊断；impl/method 体内 tparam 作用域到达闭包体，值/类型命名空间分离使参数名 `T` 与 tparam `T` 共存；lambda 参数 `self` 遮蔽 impl 方法 receiver。已知限制：`self` 之外的 keyword 参数在函数体内不能裸引用（pathRoot 未放宽）。
+- 2026-08-22: P3-gaps-B 落地（RFC 0013 Gap 1+2）：wildcard `let _ = e;` 不引入绑定（resolver 跳过 `add_value_binding`，typechecker 跳过 `SHADOWED_BINDING` + 绑定插入，HIR->IR 降级为 `ir::ExprStatement` 只求值副作用）；`{}` unit literal 端到端（`ast::UnitLiteralExpr` + `ir::UnitLiteralExpr` + 全 visitor 穷举 + `ConstValueKind::Unit` + `ValueKind::Unit`/`UnitValue` + monostate SSA 常量）。grammar 新增 `letBinding` 规则（`IDENT | '_'`）与 `unitExpr`（`'{' '}'`），parser 重新生成。P3 完成率 95% → 97%。
