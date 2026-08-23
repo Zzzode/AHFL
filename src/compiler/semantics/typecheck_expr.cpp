@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
+#include "ahfl/compiler/semantics/type_inference.hpp"
 #include "compiler/semantics/match_exhaustiveness.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
@@ -1052,102 +1053,34 @@ struct MethodCandidate {
     return std::string{qualified.substr(sep + 2)};
 }
 
-// P2d (RFC §3.5): unification for generic fn call-site type-argument inference.
-//
-// Walks a declared parameter type (which may contain TypeVars bound to the
-// callee's own type parameters) alongside the concrete argument type, recording
-// TypeVar -> Type bindings into `subst` (indexed by TypeVarT::index, matching
-// FnTypeInfo::type_param_names order). The traversal is structural: it recurses
-// through nominal type applications (Enum/Struct) and the container/Fn type
-// constructors so TypeVars nested in `Option<T>`, `Map<K,V>`, or `Fn(T)->U`
-// are bound from the corresponding argument sub-types.
-//
-// Unification's job is inference, not diagnosis. A structural mismatch
-// (different constructor, different nominal symbol, or mismatched arity) simply
-// stops binding for that sub-tree — the subsequent check_assignable against the
-// instantiated param type reports any real mismatch with a proper diagnostic.
-// First occurrence of a TypeVar wins; a later inconsistent use is likewise left
-// to check_assignable.
-void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMap &subst) {
-    if (param.holds<types::ErrorT>() || arg.holds<types::ErrorT>()) {
-        return;
+// P2d (RFC §3.5): unification for generic fn call-site type-argument
+// inference lives in the shared type_inference module
+// (ahfl/compiler/semantics/type_inference.hpp) so that check_fn_call,
+// check_impl_method_call, and both enum variant constructors share one
+// binding engine.
+
+// RFC 0013 P2-S1 (Step 3): build the declared enum type with TypeVar
+// type_args so prefill_subst_from_expected can walk it structurally against
+// the expected enum type. The bare owner_type from resolve_type_symbol has
+// no type_args (it is the generic definition itself); the TypeVars are
+// stamped with kUnknownTypeVarScopeId because enum declaration types are
+// closed at declaration time (R0).
+[[nodiscard]] TypePtr make_declared_enum_type(const Type &owner_type,
+                                               const EnumTypeInfo &enum_info,
+                                               SymbolId enum_symbol,
+                                               TypeContext &types) {
+    const auto *owner_enum = owner_type.get_if<types::EnumT>();
+    if (owner_enum == nullptr) {
+        return nullptr;
     }
-    // TypeVar on the param side: bind it.
-    if (const auto *tv = param.get_if<types::TypeVarT>(); tv != nullptr) {
-        if (tv->index < subst.size() && subst[tv->index] == nullptr) {
-            subst[tv->index] = &arg;
-        }
-        return;
+    std::vector<TypePtr> type_args;
+    type_args.reserve(enum_info.type_param_names.size());
+    for (std::size_t i = 0; i < enum_info.type_param_names.size(); ++i) {
+        type_args.push_back(types.type_var(static_cast<std::uint32_t>(i),
+                                           kUnknownTypeVarScopeId,
+                                           enum_info.type_param_names[i]));
     }
-    const auto param_container = stdlib_bridge::std_container_type_view(param);
-    const auto arg_container = stdlib_bridge::std_container_type_view(arg);
-    if (param_container.has_value() && arg_container.has_value() &&
-        param_container->kind == arg_container->kind) {
-        switch (param_container->kind) {
-        case stdlib_bridge::StdContainerKind::Option:
-        case stdlib_bridge::StdContainerKind::List:
-        case stdlib_bridge::StdContainerKind::Set:
-            unify_param_with_arg(*param_container->first, *arg_container->first, subst);
-            return;
-        case stdlib_bridge::StdContainerKind::Map:
-            unify_param_with_arg(*param_container->first, *arg_container->first, subst);
-            unify_param_with_arg(*param_container->second, *arg_container->second, subst);
-            return;
-        }
-    }
-    // EnumT: same symbol, recurse type_args.
-    if (const auto *pe = param.get_if<types::EnumT>(); pe != nullptr) {
-        const auto *ae = arg.get_if<types::EnumT>();
-        if (ae == nullptr || pe->type_args.size() != ae->type_args.size()) {
-            return;
-        }
-        const bool same = (pe->symbol.has_value() && ae->symbol.has_value())
-                              ? (*pe->symbol == *ae->symbol)
-                              : (pe->canonical_name == ae->canonical_name);
-        if (!same) {
-            return;
-        }
-        for (std::size_t i = 0; i < pe->type_args.size(); ++i) {
-            if (pe->type_args[i] != nullptr && ae->type_args[i] != nullptr) {
-                unify_param_with_arg(*pe->type_args[i], *ae->type_args[i], subst);
-            }
-        }
-        return;
-    }
-    // StructT: same symbol, recurse type_args.
-    if (const auto *ps = param.get_if<types::StructT>(); ps != nullptr) {
-        const auto *as = arg.get_if<types::StructT>();
-        if (as == nullptr || ps->type_args.size() != as->type_args.size()) {
-            return;
-        }
-        const bool same = (ps->symbol.has_value() && as->symbol.has_value())
-                              ? (*ps->symbol == *as->symbol)
-                              : (ps->canonical_name == as->canonical_name);
-        if (!same) {
-            return;
-        }
-        for (std::size_t i = 0; i < ps->type_args.size(); ++i) {
-            if (ps->type_args[i] != nullptr && as->type_args[i] != nullptr) {
-                unify_param_with_arg(*ps->type_args[i], *as->type_args[i], subst);
-            }
-        }
-        return;
-    }
-    if (const auto *pf = param.get_if<types::FnT>(); pf != nullptr) {
-        const auto *af = arg.get_if<types::FnT>();
-        if (af != nullptr && pf->params.size() == af->params.size()) {
-            for (std::size_t i = 0; i < pf->params.size(); ++i) {
-                if (pf->params[i] != nullptr && af->params[i] != nullptr) {
-                    unify_param_with_arg(*pf->params[i], *af->params[i], subst);
-                }
-            }
-            if (pf->return_type != nullptr && af->return_type != nullptr) {
-                unify_param_with_arg(*pf->return_type, *af->return_type, subst);
-            }
-        }
-        return;
-    }
-    // Leaf types (Bool/Int/String/...): no TypeVars to bind.
+    return types.enum_type(owner_enum->canonical_name, enum_symbol, std::move(type_args));
 }
 
 [[nodiscard]] bool std_prelude_reexports_primitive_impl_module(std::string_view module_name) {
@@ -2000,11 +1933,42 @@ class ExpressionChecker final {
             } else {
                 body_result = services_.check_expr(*lambda.body, body_context, std::nullopt);
             }
-            const auto return_type =
-                (expected_fn != nullptr && expected_fn->return_type != nullptr)
-                    ? expected_fn->return_type->clone()
-                    : (body_result.type != nullptr ? body_result.type->clone()
-                                                   : values_.make_error_type());
+            // RFC 0013 P2-S1 (Step 7 / R5): lambda body-type flow-back.
+            //
+            // When the expected return type is concrete (contains no TypeVar
+            // of ANY scope), keep it and verify the inferred body type is
+            // assignable to it — `\x -> x` with expected Fn(Int) -> String
+            // must error, not silently adopt String while returning Int.
+            // The check fires regardless of whether the body type is
+            // concrete or a TypeVar: a TypeVar body (e.g. `\x -> x` where x
+            // gets T from the expected param) is not assignable to a
+            // concrete expected return either.
+            //
+            // When the expected return contains a TypeVar, flow back to the
+            // inferred body type so the caller's unification can bind it:
+            // `xs.map(\x -> x + 1)` reports Fn(T) -> Int instead of
+            // Fn(T) -> U, and unify_param_with_arg binds U.
+            TypePtr return_type = nullptr;
+            if (expected_fn != nullptr && expected_fn->return_type != nullptr &&
+                !contains_type_var(*expected_fn->return_type)) {
+                return_type = expected_fn->return_type->clone();
+                if (body_result.type != nullptr && !is_error_type(*body_result.type)) {
+                    const auto return_expectation = TypeExpectation{
+                        .expected = expected_fn->return_type,
+                        .origin_kind = TypeExpectationOriginKind::ReturnType,
+                        .origin_range = expr.range,
+                        .description = "lambda return",
+                    };
+                    (void)services_.check_assignable(*body_result.type,
+                                                     *expected_fn->return_type,
+                                                     lambda.body->range,
+                                                     "lambda return",
+                                                     return_expectation);
+                }
+            } else {
+                return_type = body_result.type != nullptr ? body_result.type->clone()
+                                                          : values_.make_error_type();
+            }
             auto fn_type = services_.types().fn(
                 std::move(param_types), return_type, EffectJudgement::make_pure());
             return values_.typed_effect(fn_type, body_result.effect);
@@ -3180,18 +3144,15 @@ class ExpressionChecker final {
         TypeSubstitutionMap subst;
         if (is_generic) {
             subst.assign(enum_info->get().type_param_names.size(), nullptr);
-            if (expected_type_.has_value()) {
-                const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
-                const auto *owner_enum = owner_type->get_if<types::EnumT>();
-                if (expected_enum != nullptr && owner_enum != nullptr &&
-                    expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
-                    *expected_enum->symbol == *owner_enum->symbol &&
-                    expected_enum->type_args.size() == subst.size()) {
-                    for (std::size_t index = 0; index < subst.size(); ++index) {
-                        subst[index] = expected_enum->type_args[index];
-                    }
-                }
-            }
+            // R4: unify-first ordering (same as the tuple-variant path).
+            // Field values are checked and unified below; prefill from the
+            // expected type runs AFTER field unification so concrete field
+            // inference binds first and the non-clobbering rule (R1) handles
+            // conflicts. The old prefill-first ordering produced false
+            // ambiguity errors: `and_then(\x -> MyOpt::Some { value: x + 1 })`
+            // with expected Fn(T) -> MyOpt<U> prefilled T:=U, the field x+1
+            // inferred Int but could not rebind, U stayed unbound → spurious
+            // TYPE_PARAMETER_AMBIGUOUS.
         }
 
         struct CheckedField {
@@ -3254,6 +3215,40 @@ class ExpressionChecker final {
                 .syntax = field_init.get(), .field = &field->get(), .actual = value.type});
         }
 
+        // R4: prefill from the expected type AFTER field unification. This
+        // binds only still-unbound params from the surrounding expected enum
+        // type; concrete field inferences are never clobbered by a TypeVar
+        // expected arg (the non-clobbering rule in prefill_subst_from_expected).
+        if (is_generic && expected_type_.has_value()) {
+            if (const auto declared_enum =
+                    make_declared_enum_type(*owner_type, enum_info->get(), enum_symbol, services_.types());
+                declared_enum != nullptr) {
+                prefill_subst_from_expected(*declared_enum,
+                                            expected_type_->get(),
+                                            subst,
+                                            /*explicit_mask=*/{},
+                                            /*receiver_pinned_mask=*/{});
+            }
+            // Fill remaining nullptr subst entries from the expected type's
+            // type args (same rationale as the tuple variant constructor:
+            // variants may not cover all type params, e.g. `Ok(T)` in
+            // `Result<T, E>`).
+            if (const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+                expected_enum != nullptr) {
+                if (const auto *owner_enum = owner_type->get_if<types::EnumT>();
+                    owner_enum != nullptr && expected_enum->symbol.has_value() &&
+                    owner_enum->symbol.has_value() &&
+                    *expected_enum->symbol == *owner_enum->symbol) {
+                    for (std::size_t i = 0; i < subst.size() && i < expected_enum->type_args.size();
+                         ++i) {
+                        if (subst[i] == nullptr) {
+                            subst[i] = expected_enum->type_args[i];
+                        }
+                    }
+                }
+            }
+        }
+
         for (const auto &field : variant->get().fields) {
             if (!seen_fields.contains(field.name) && !field.has_default) {
                 services_.typecheck_error_here(
@@ -3296,7 +3291,11 @@ class ExpressionChecker final {
             const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
             if (expected_enum != nullptr && owner_enum != nullptr &&
                 expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
-                *expected_enum->symbol == *owner_enum->symbol) {
+                *expected_enum->symbol == *owner_enum->symbol &&
+                // RFC 0013 P2-S1: same rationale as the tuple-variant path —
+                // a TypeVar-bearing expected type must not clobber the
+                // field-inferred result type.
+                !contains_type_var(expected_type_->get())) {
                 return values_.typed_effect(expected_type_->get().clone(), effect);
             }
         }
@@ -3578,8 +3577,12 @@ class ExpressionChecker final {
             (candidate.impl != nullptr && prefix_ok) ? impl_tparam_count : 0u;
 
         TypeSubstitutionMap subst;
+        // R1: indices bound by explicit type args at the call site. These are
+        // never overwritten by prefill or arg inference.
+        std::vector<bool> explicit_mask;
         if (is_generic) {
             subst.assign(method.type_param_names.size(), nullptr);
+            explicit_mask.assign(subst.size(), false);
             if (call.type_args.size() > method_only_tparam_count) {
                 services_.typecheck_error_here(error_codes::typecheck::WrongArity,
                                                messages::typecheck::WrongArity.format_with(
@@ -3593,6 +3596,7 @@ class ExpressionChecker final {
             for (std::size_t index = 0; index < explicit_limit; ++index) {
                 subst[explicit_tparam_offset + index] =
                     services_.resolve_type_syntax(*call.type_args[index]);
+                explicit_mask[explicit_tparam_offset + index] = true;
             }
         } else if (!call.type_args.empty()) {
             services_.typecheck_error_here(
@@ -3604,15 +3608,46 @@ class ExpressionChecker final {
                 expr.range);
         }
 
+        // R1: receiver-pinned indices. Snapshot the subst before receiver
+        // unification so we can mark every index it writes — these are never
+        // overwritten by prefill (B2): `let s: String = opt.unwrap_or("x")`
+        // with opt: Option<Int> must keep T=Int from the receiver.
+        std::vector<bool> receiver_pinned_mask;
+        if (is_generic) {
+            receiver_pinned_mask.assign(subst.size(), false);
+        }
+
         if (!method.params.empty() && receiver.type != nullptr) {
             const auto &self_param = method.params.front();
             if (is_generic && self_param.type != nullptr) {
                 unify_param_with_arg(*self_param.type, *receiver.type, subst);
+                // Mark every index the receiver unification wrote.
+                for (std::size_t i = 0; i < subst.size(); ++i) {
+                    if (subst[i] != nullptr && !explicit_mask[i]) {
+                        receiver_pinned_mask[i] = true;
+                    }
+                }
+            }
+            // RFC 0013 P2-S1 (Step 5): return-context reverse inference.
+            // Prefill IMMEDIATELY after receiver unification and BEFORE the
+            // receiver assignability check (B2) so the receiver-pinned impl
+            // params are sacred but a concretely-different expected return
+            // type can still pin method-level params (e.g. fn get(self)->T
+            // where the expected type is String). The conflict surfaces as a
+            // receiver assignability mismatch at the use site (Rust
+            // behavior).
+            if (is_generic && expected_type_.has_value() && method.return_type != nullptr) {
+                prefill_subst_from_expected(*method.return_type,
+                                            expected_type_->get(),
+                                            subst,
+                                            explicit_mask,
+                                            receiver_pinned_mask);
             }
             const auto expected_self =
                 is_generic
-                    ? substitute_type(
-                          self_param.type, subst, method.type_param_scope_id, services_.types())
+                    ? substitute_method_type(
+                          self_param.type, subst, method.type_param_scope_id,
+                          method.method_scope_id, services_.types())
                     : self_param.type;
             if (expected_self != nullptr) {
                 const auto expectation = TypeExpectation{
@@ -3630,13 +3665,21 @@ class ExpressionChecker final {
         }
 
         const auto limit = std::min(call.arguments.size(), expected_arg_count);
+        // R3 (incremental left-fold): check arg i against the param type
+        // substituted with the CURRENT subst, then unify arg i immediately,
+        // then proceed to arg i+1. The receiver unification above already
+        // pinned impl-level params; the left-fold lets method-level params
+        // propagate from earlier arguments to later ones (e.g.
+        // `xs.map(\x -> x + 1)` — the receiver pins T=Int, the lambda is
+        // checked against Fn(Int) -> U).
         std::vector<TypePtr> arg_types(limit, nullptr);
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = method.params[index + receiver_param_count];
             const auto expected_param =
                 is_generic
-                    ? substitute_type(
-                          param.type, subst, method.type_param_scope_id, services_.types())
+                    ? substitute_method_type(
+                          param.type, subst, method.type_param_scope_id,
+                          method.method_scope_id, services_.types())
                     : param.type;
             const auto expectation = TypeExpectation{
                 .expected = expected_param,
@@ -3650,14 +3693,8 @@ class ExpressionChecker final {
                 services_.check_expr(*call.arguments[index], context_, expectation);
             effect = join_effects(effect, argument.effect);
             arg_types[index] = argument.type;
-        }
-
-        if (is_generic) {
-            for (std::size_t index = 0; index < limit; ++index) {
-                const auto &param = method.params[index + receiver_param_count];
-                if (param.type != nullptr && arg_types[index] != nullptr) {
-                    unify_param_with_arg(*param.type, *arg_types[index], subst);
-                }
+            if (is_generic && param.type != nullptr && argument.type != nullptr) {
+                unify_param_with_arg(*param.type, *argument.type, subst);
             }
         }
 
@@ -3676,9 +3713,16 @@ class ExpressionChecker final {
                 .argument_index = index + 1,
             };
             if (is_generic) {
-                const auto instantiated_param = substitute_type(
-                    param.type, subst, method.type_param_scope_id, services_.types());
-                (void)services_.check_assignable(*arg_types[index],
+                const auto instantiated_param = substitute_method_type(
+                    param.type, subst, method.type_param_scope_id,
+                    method.method_scope_id, services_.types());
+                // R3: same re-substitution rationale as check_fn_call — the
+                // arg type may carry stale TypeVars from an earlier left-fold
+                // step that later args refined to concrete types.
+                const auto instantiated_arg = substitute_method_type(
+                    arg_types[index], subst, method.type_param_scope_id,
+                    method.method_scope_id, services_.types());
+                (void)services_.check_assignable(*instantiated_arg,
                                                  *instantiated_param,
                                                  call.arguments[index]->range,
                                                  "method argument",
@@ -3692,11 +3736,40 @@ class ExpressionChecker final {
             }
         }
 
+        // RFC 0013 P2-S1 (Step 8 / R2): ambiguity diagnostic for method type
+        // parameters that could not be pinned to a concrete type. Impl-level
+        // type params (indices < impl_tparam_count) are always inferred from
+        // the receiver — even when the receiver is itself generic, the
+        // enclosing scope binds them. They are never ambiguous at the method
+        // call site, so skip them. Only method-level type params (e.g. U in
+        // `fn map<U>`) can be genuinely ambiguous.
+        if (is_generic) {
+            for (const auto idx :
+                 unbound_param_indices(subst, method.type_param_scope_id, method.method_scope_id)) {
+                if (idx < impl_tparam_count) {
+                    continue;
+                }
+                // Explicit type arguments are never ambiguous (same rationale
+                // as check_fn_call): the programmer deliberately wrote them.
+                if (idx < explicit_mask.size() && explicit_mask[idx]) {
+                    continue;
+                }
+                if (idx < method.type_param_names.size()) {
+                    services_.typecheck_error_here(
+                        error_codes::typecheck::TypeParameterAmbiguous,
+                        messages::typecheck::TypeParameterAmbiguous.format_with(
+                            method.type_param_names[idx], method.name, method.name),
+                        expr.range);
+                }
+            }
+        }
+
         TypePtr result_type = nullptr;
         if (method.return_type != nullptr) {
             result_type = is_generic
-                              ? substitute_type(
-                                    method.return_type, subst, method.type_param_scope_id, services_.types())
+                              ? substitute_method_type(
+                                    method.return_type, subst, method.type_param_scope_id,
+                                    method.method_scope_id, services_.types())
                               : method.return_type;
         }
         // C-5 (Wave-24): attach the dispatch target to the return value so
@@ -3862,8 +3935,12 @@ class ExpressionChecker final {
         const auto limit = std::min(call.arguments.size(), fn->get().params.size());
         const bool is_generic = !fn->get().type_param_names.empty();
         TypeSubstitutionMap subst;
+        // R1: indices bound by explicit type args at the call site. These are
+        // never overwritten by prefill or arg inference.
+        std::vector<bool> explicit_mask;
         if (is_generic) {
             subst.assign(fn->get().type_param_names.size(), nullptr);
+            explicit_mask.assign(subst.size(), false);
             if (call.type_args.size() > fn->get().type_param_names.size()) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::WrongArity,
@@ -3878,6 +3955,7 @@ class ExpressionChecker final {
                 std::min(call.type_args.size(), fn->get().type_param_names.size());
             for (std::size_t index = 0; index < explicit_limit; ++index) {
                 subst[index] = services_.resolve_type_syntax(*call.type_args[index]);
+                explicit_mask[index] = true;
             }
         } else if (!call.type_args.empty()) {
             services_.typecheck_error_here(
@@ -3889,12 +3967,36 @@ class ExpressionChecker final {
                 expr.range);
         }
 
+        // RFC 0013 P2-S1 (Step 4): return-context reverse inference. When the
+        // call has an expected type and the callee is generic, prefill the
+        // subst from the expected return type so type params appearing only
+        // in the return type (`let x: Option<Int> = make()`) are pinned
+        // before argument checking. Prefill-before-arg-checking gives
+        // arguments the fully-expected param type, so bidirectional arg
+        // inference (e.g. an Option::None argument adopting Option<String>)
+        // works. The explicit mask protects explicit type args from being
+        // clobbered (R1): `let s: String = make<Int>()` keeps T=Int.
+        if (is_generic && expected_type_.has_value() && fn->get().return_type != nullptr) {
+            prefill_subst_from_expected(*fn->get().return_type,
+                                        expected_type_->get(),
+                                        subst,
+                                        explicit_mask,
+                                        /*receiver_pinned_mask=*/{});
+        }
+
         // Type-check every argument carrying the declared param as the expected
         // type so bidirectional inference still applies (e.g. an `Option::None`
-        // argument adopts the param's `Option<T>`). Argument types are
-        // collected first; assignability is checked after generic type-argument
-        // inference so the check runs against the instantiated param type
-        // (`Option<Int>`) rather than the raw `Option<T>` signature.
+        // argument adopts the param's `Option<T>`).
+        //
+        // R3 (incremental left-fold): check arg i against the param type
+        // substituted with the CURRENT subst, then unify arg i immediately,
+        // then proceed to arg i+1. This is the industry-standard
+        // bidirectional ordering (Rust checks arguments left-to-right against
+        // progressively-refined parameter types) and is what makes the
+        // cookbook's call form work: `option::map(xs, \x -> x + 1)` — arg 0
+        // (xs: Option<Int>) binds T=Int, so the lambda at arg 1 is checked
+        // against Fn(Int) -> U; `x` gets Int, `x + 1` typechecks, flow-back
+        // (R5) gives U=Int.
         std::vector<TypePtr> arg_types(limit, nullptr);
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = fn->get().params[index];
@@ -3915,25 +4017,45 @@ class ExpressionChecker final {
                 services_.check_expr(*call.arguments[index], context_, expectation);
             effect = join_effects(effect, argument.effect);
             arg_types[index] = argument.type;
+            if (is_generic && param.type != nullptr && argument.type != nullptr) {
+                unify_param_with_arg(*param.type, *argument.type, subst);
+            }
         }
 
-        // P2d (RFC §3.5): for a generic fn, infer the type arguments by
-        // unifying each declared param type with the corresponding argument
-        // type, then substitute them into the param types (for the
-        // assignability check) and the return type (for the call's result).
+        // RFC 0013 P2-S1 (Step 8 / R2): ambiguity diagnostic. After all
+        // inference sources (explicit args, expected-type prefill, argument
+        // unification) have run, type parameters that could not be pinned to
+        // a concrete type are an error. Ambiguous sites are NOT recorded —
+        // they have no concrete type args and recording them would pollute
+        // the monomorphization cache.
+        bool ambiguous = false;
         if (is_generic) {
-            for (std::size_t index = 0; index < limit; ++index) {
-                const auto &param = fn->get().params[index];
-                if (param.type != nullptr && arg_types[index] != nullptr) {
-                    unify_param_with_arg(*param.type, *arg_types[index], subst);
+            for (const auto idx :
+                 unbound_param_indices(subst, fn->get().type_param_scope_id)) {
+                // Explicit type arguments are never ambiguous: the programmer
+                // deliberately wrote them, even when they resolve to a
+                // caller-scope TypeVar (e.g. recursive `foo<T>(...)` where T
+                // is the caller's own type parameter).
+                if (idx < explicit_mask.size() && explicit_mask[idx]) {
+                    continue;
                 }
+                ambiguous = true;
+                services_.typecheck_error_here(
+                    error_codes::typecheck::TypeParameterAmbiguous,
+                    messages::typecheck::TypeParameterAmbiguous.format_with(
+                        fn->get().type_param_names[idx],
+                        call.callee->spelling(),
+                        call.callee->spelling()),
+                    expr.range);
             }
         }
 
         // Record the call site exactly once with concrete type_args from
         // explicit syntax plus inference (empty for non-generic fns) so
         // monomorphization can instantiate the body.
-        services_.record_fn_call_site(target, expr.range, subst);
+        if (!ambiguous) {
+            services_.record_fn_call_site(target, expr.range, subst);
+        }
 
         // P2d.S2 (RFC §3.5 / §2): where-bound checking at the call site. For
         // every `where Subject: Trait1 + Trait2 + ...` entry in the callee's
@@ -3963,6 +4085,14 @@ class ExpressionChecker final {
                             static_cast<std::size_t>(it - param_names.begin());
                         if (index < subst.size()) {
                             subject_type = subst[index];
+                            // RFC 0013 P2-S1 (Step 9 / R6): a TypeVar
+                            // subject has no impl to find; skip check_bound
+                            // for this bound entirely. Body-side propagation
+                            // is Slice 3.
+                            if (subject_type != nullptr &&
+                                subject_type->holds<types::TypeVarT>()) {
+                                continue;
+                            }
                         }
                     }
                 }
@@ -4007,7 +4137,14 @@ class ExpressionChecker final {
             if (is_generic) {
                 const auto instantiated_param = substitute_type(
                     param.type, subst, fn->get().type_param_scope_id, services_.types());
-                (void)services_.check_assignable(*arg_types[index],
+                // R3: the arg was checked against the param substituted with
+                // the subst at that point in the left-fold. Later args may
+                // have refined the subst (e.g. `None` adopted `Option<T>`,
+                // then a later arg bound T=Int), so re-substitute the arg
+                // type with the final subst before the assignability check.
+                const auto instantiated_arg = substitute_type(
+                    arg_types[index], subst, fn->get().type_param_scope_id, services_.types());
+                (void)services_.check_assignable(*instantiated_arg,
                                                  *instantiated_param,
                                                  call.arguments[index]->range,
                                                  "function argument",
@@ -4125,40 +4262,50 @@ class ExpressionChecker final {
                     unify_param_with_arg(*payload_type, *arg_types[index], subst);
                 }
             }
+            // Drive generic enum variant instantiation from the surrounding
+            // expected type. Two cases:
+            //   (a) subst[i] is still nullptr  → argument inference never
+            //       pinned this parameter, adopt from context.
+            //   (b) expected_type_args[i] is concrete (not a TypeVar) → even
+            //       if arguments inferred a different concrete type (e.g.
+            //       `let v: Option<String> = Some(1)` where the payload pins
+            //       T := Int), the declared target type wins so
+            //       assignability diagnostics surface.
+            // When the expected type's argument is itself a TypeVar (generic
+            // enclosing scope) we never clobber a pre-pinned inference: that
+            // would produce spurious "T vs T" errors for unrelated generic
+            // variants used during stdlib expansion.
             if (expected_type_.has_value()) {
-                const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
-                const auto *owner_enum = owner_type->get_if<types::EnumT>();
-                if (expected_enum != nullptr && owner_enum != nullptr &&
-                    expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
-                    *expected_enum->symbol == *owner_enum->symbol &&
-                    expected_enum->type_args.size() == subst.size()) {
-                    // Drive generic enum variant instantiation from the
-                    // surrounding expected type when it carries concrete type
-                    // arguments. Two cases:
-                    //   (a) subst[i] is still nullptr  → argument inference
-                    //       never pinned this parameter, adopt from context
-                    //       (original behaviour).
-                    //   (b) expected_type_args[i] is concrete (not a TypeVar)
-                    //       → even if arguments inferred a different concrete
-                    //       type (e.g. `let v: Option<String> = Some(1)` where
-                    //       the payload pins T := Int), the declared target
-                    //       type wins so assignability diagnostics surface.
-                    // When the expected type's argument is itself a TypeVar
-                    // (generic enclosing scope) we never clobber a pre-pinned
-                    // inference: that would produce spurious "T vs T" errors
-                    // for unrelated generic variants used during stdlib
-                    // expansion.
-                    for (std::size_t index = 0; index < subst.size(); ++index) {
-                        const auto *expected_arg = expected_enum->type_args[index];
-                        if (expected_arg == nullptr) {
-                            continue;
-                        }
-                        if (subst[index] == nullptr || !expected_arg->holds<types::TypeVarT>()) {
-                            subst[index] = expected_arg;
+                if (const auto declared_enum = make_declared_enum_type(
+                        *owner_type, enum_info->get(), enum_symbol, services_.types());
+                    declared_enum != nullptr) {
+                    prefill_subst_from_expected(*declared_enum,
+                                                expected_type_->get(),
+                                                subst,
+                                                /*explicit_mask=*/{},
+                                                /*receiver_pinned_mask=*/{});
+                }
+                // Fill remaining nullptr subst entries from the expected
+                // type's type args. Variants may not cover all type params
+                // (e.g. `Ok(T)` in `Result<T, E>` — E is absent from the
+                // payload); adopting the expected type's arg for those
+                // positions keeps the result type faithful instead of
+                // falling back to Any.
+                if (const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+                    expected_enum != nullptr) {
+                    if (const auto *owner_enum = owner_type->get_if<types::EnumT>();
+                        owner_enum != nullptr && expected_enum->symbol.has_value() &&
+                        owner_enum->symbol.has_value() &&
+                        *expected_enum->symbol == *owner_enum->symbol) {
+                    for (std::size_t i = 0; i < subst.size() && i < expected_enum->type_args.size();
+                         ++i) {
+                        if (subst[i] == nullptr) {
+                            subst[i] = expected_enum->type_args[i];
                         }
                     }
                 }
             }
+        }
         }
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &payload_type = variant->get().payload[index];
@@ -4195,7 +4342,15 @@ class ExpressionChecker final {
             const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
             if (expected_enum != nullptr && owner_enum != nullptr &&
                 expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
-                *expected_enum->symbol == *owner_enum->symbol) {
+                *expected_enum->symbol == *owner_enum->symbol &&
+                // RFC 0013 P2-S1: when the expected type contains TypeVars,
+                // return the inferred result type (which has concrete type
+                // args from payload inference) so the caller's unification
+                // can bind them. Returning the TypeVar-bearing expected type
+                // would discard the payload inference and leave the caller's
+                // type params unbound (e.g. `Some(1)` against `Option<T>`
+                // must yield `Option<Int>`, not `Option<T>`).
+                !contains_type_var(expected_type_->get())) {
                 return values_.typed_effect(expected_type_->get().clone(), effect);
             }
         }

@@ -19,6 +19,7 @@ add_library(ahfl_compiler_semantics STATIC
     typecheck.cpp
     typecheck_decls.cpp
     typecheck_expr.cpp
+    type_inference.cpp
     type_environment.cpp
     validate.cpp
 )

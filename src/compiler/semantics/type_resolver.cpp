@@ -197,8 +197,15 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name) {
                 // RFC 0013 P2-S1 (R0): stamp the TypeVar with the active
                 // scope id so substitution and the monomorphization cache
                 // key can distinguish same-named params of different decls.
+                // R0.1: method-level type params (index >= offset) use the
+                // per-method scope id so same-named params across methods in
+                // the same impl are distinguishable.
+                const auto scope_id =
+                    (method_scope_id_ != kUnknownTypeVarScopeId && i >= method_tparam_offset_)
+                        ? method_scope_id_
+                        : type_param_scope_id_;
                 return types_.type_var(static_cast<std::uint32_t>(i),
-                                       type_param_scope_id_,
+                                       scope_id,
                                        (*type_param_names_)[i]);
             }
         }

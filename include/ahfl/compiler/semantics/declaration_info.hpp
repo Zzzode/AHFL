@@ -472,6 +472,14 @@ struct ImplMethodInfo {
     // per impl by TypeCheckPass (shared by the impl's methods and its target
     // type); call sites read it as the callee scope.
     std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
+    // RFC 0013 P2-S1 (R0.1): per-method scope id for method-level type
+    // params. Allocated per method by TypeCheckPass. Method-level TypeVars
+    // (index >= impl type-param count) carry this scope id instead of the
+    // impl-wide type_param_scope_id, so same-named method-level params
+    // across methods in the same impl are distinguishable at call sites.
+    // kUnknownTypeVarScopeId for monomorphic methods or methods without
+    // method-level type params.
+    std::uint32_t method_scope_id{kUnknownTypeVarScopeId};
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;

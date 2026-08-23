@@ -74,6 +74,18 @@ class TypeResolver final {
         type_param_scope_id_ = scope_id;
     }
 
+    // RFC 0013 P2-S1 (R0.1): set the per-method scope id for method-level
+    // type params. When set, TypeVars at index >= method_tparam_offset use
+    // method_scope_id instead of type_param_scope_id (which carries the
+    // impl's scope). This distinguishes same-named method-level type params
+    // across methods in the same impl (e.g. `flat_map<U>` calling
+    // `fold<List<U>>` — without the split, both U's share the impl's scope
+    // and re-substitution at the call site double-wraps the type).
+    void set_method_scope_id(std::uint32_t scope_id, std::size_t tparam_offset) {
+        method_scope_id_ = scope_id;
+        method_tparam_offset_ = tparam_offset;
+    }
+
     // P3c (RFC 0013): set the self-type override. When non-null, a named
     // type `Self` resolves to this type instead of a type parameter or a
     // symbol lookup. Used inside impl blocks, where Self is the impl's
@@ -106,6 +118,12 @@ class TypeResolver final {
     // above type-param scope is active. kUnknownTypeVarScopeId when no
     // stamped scope is active (struct/enum/alias declaration types).
     std::uint32_t type_param_scope_id_{kUnknownTypeVarScopeId};
+    // RFC 0013 P2-S1 (R0.1): per-method scope for method-level type params.
+    // kUnknownTypeVarScopeId when not in an impl method context.
+    std::uint32_t method_scope_id_{kUnknownTypeVarScopeId};
+    // Number of impl-level type params (prefix of type_param_names_ that
+    // uses type_param_scope_id_). Indices >= this offset use method_scope_id_.
+    std::size_t method_tparam_offset_{0};
     // P3c (RFC 0013): when non-null, `Self` resolves to this type.
     TypePtr self_type_override_{nullptr};
 };

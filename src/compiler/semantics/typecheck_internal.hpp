@@ -388,6 +388,15 @@ class TypeCheckPass final {
     std::uint32_t current_type_param_scope_id_{kUnknownTypeVarScopeId};
     std::uint32_t next_type_param_scope_id_{1};
 
+    // RFC 0013 P2-S1 (R0.1): per-method scope for method-level type params.
+    // When set (non-kUnknownTypeVarScopeId), the TypeResolver stamps
+    // method-level TypeVars (index >= current_method_tparam_offset_) with
+    // this scope id instead of current_type_param_scope_id_ (which carries
+    // the impl-wide scope). Set by DeclarationSema when building impl method
+    // signatures and by FlowWorkflowSema when checking impl method bodies.
+    std::uint32_t current_method_scope_id_{kUnknownTypeVarScopeId};
+    std::size_t current_method_tparam_offset_{0};
+
     // RFC 0013 P2-S1 (R0): allocate a fresh type-param scope id. Called once
     // per generic fn/trait/impl declaration when its types are built.
     std::uint32_t allocate_type_param_scope_id() {
@@ -720,6 +729,9 @@ class DeclarationSema final {
     // RFC 0013 P2-S1 (R0): alias to TypeCheckPass::current_type_param_scope_id_
     // so DeclarationSema can push/restore the active scope alongside the names.
     std::uint32_t &current_type_param_scope_id_;
+    // RFC 0013 P2-S1 (R0.1): aliases to TypeCheckPass method-scope fields.
+    std::uint32_t &current_method_scope_id_;
+    std::size_t &current_method_tparam_offset_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> &const_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> &struct_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> &enum_decls_;

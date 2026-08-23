@@ -249,6 +249,12 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADO
 // SourceRange'd diagnostic at the parameter.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CannotInferClosureParam{
     "CANNOT_INFER_CLOSURE_PARAM"};
+// RFC 0013 P2-S1 (Step 8): a generic call's type parameter could not be
+// pinned to a concrete type after explicit args, expected-type prefill, and
+// argument unification. Emitted at the call range with a note at the
+// callable's declaration range.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TypeParameterAmbiguous{
+    "TYPE_PARAMETER_AMBIGUOUS"};
 // Wave-20 QW-4: optional agent grammar clauses. When `context` or
 // `capabilities` clauses are omitted from an agent declaration (allowed since
 // grammar was relaxed; see AHFL.g4 agentDecl) these two warning-level codes
@@ -632,6 +638,12 @@ inline constexpr MessageTemplate CannotInferClosureParam{
     "cannot infer type of closure parameter '{}' without an annotation or an expected Fn type; "
     "annotate it explicitly (e.g. '\\({}: Int) -> ...') or provide an expected Fn type "
     "(e.g. 'let f: Fn(Int) -> Int = \\({}) -> ...')"};
+// RFC 0013 P2-S1 (Step 8): ambiguity diagnostic for unconstrained generic
+// type parameters. {} is the callable name, {} is the parameter name.
+inline constexpr MessageTemplate TypeParameterAmbiguous{
+    "type parameter '{}' of '{}' is ambiguous: no explicit type argument, expected type, or "
+    "argument type constrains it; annotate the call explicitly (e.g. '{}<Int>(...)') or bind "
+    "the result to a 'let' with a type annotation"};
 inline constexpr MessageTemplate DecreasesShadowedReceiver{
     "decreases clause receiver 'self' is shadowed by a local binding of type '{}'; "
     "the termination measure is degraded to an abstract observation"};

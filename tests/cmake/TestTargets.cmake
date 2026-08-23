@@ -581,6 +581,28 @@ target_include_directories(ahfl_semantics_b2_impl_body_parser_gaps_tests
 ahfl_apply_project_warnings(ahfl_semantics_b2_impl_body_parser_gaps_tests)
 add_test(NAME b2_impl_body_parser_gaps COMMAND ahfl_semantics_b2_impl_body_parser_gaps_tests)
 
+add_executable(ahfl_semantics_p2_s1_inference_tests
+    unit/compiler/semantics/p2_s1_inference.cpp
+)
+target_link_libraries(ahfl_semantics_p2_s1_inference_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_compiler_ir_opt
+        ahfl_compiler_backends
+        ahfl_runtime_evaluator
+        ahfl_runtime_engine
+        ahfl_tooling_formatter
+        doctest
+)
+target_include_directories(ahfl_semantics_p2_s1_inference_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+        ${PROJECT_SOURCE_DIR}/src
+)
+ahfl_apply_project_warnings(ahfl_semantics_p2_s1_inference_tests)
+add_test(NAME p2_s1_inference COMMAND ahfl_semantics_p2_s1_inference_tests)
+
 add_executable(ahfl_semantics_d3_decreases_expr_tests
     unit/compiler/semantics/d3_decreases_expr.cpp
 )
@@ -1123,6 +1145,7 @@ foreach(_tgt
     ahfl_semantics_validate_plumbing_tests
     ahfl_semantics_adt_match_tests
     ahfl_semantics_fn_generics_closures_tests
+    ahfl_semantics_p2_s1_inference_tests
     ahfl_semantics_trait_impl_tests
     ahfl_semantics_concurrency_tests
     ahfl_semantics_where_clause_info_tests

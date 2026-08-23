@@ -374,6 +374,8 @@ DeclarationSema::DeclarationSema(TypeCheckPass &driver)
       current_module_name_(driver.current_module_name_),
       current_type_param_names_(driver.current_type_param_names_),
       current_type_param_scope_id_(driver.current_type_param_scope_id_),
+      current_method_scope_id_(driver.current_method_scope_id_),
+      current_method_tparam_offset_(driver.current_method_tparam_offset_),
       const_decls_(driver.const_decls_), struct_decls_(driver.struct_decls_),
       enum_decls_(driver.enum_decls_), capability_decls_(driver.capability_decls_),
       predicate_decls_(driver.predicate_decls_), agent_decls_(driver.agent_decls_),
@@ -1827,6 +1829,20 @@ void DeclarationSema::build_impl_types() {
                 for (const auto &tp : method->type_params) {
                     impl_and_method_tparams.push_back(tp->name);
                 }
+                // RFC 0013 P2-S1 (R0.1): allocate a per-method scope id for
+                // method-level type params. Without this, all methods in the
+                // same impl share the impl's scope id, making same-named
+                // method-level params (e.g. `flat_map<U>` calling `fold<U>`)
+                // indistinguishable at call sites and causing double-wrapping
+                // during re-substitution.
+                const auto prev_method_scope_id = current_method_scope_id_;
+                const auto prev_method_tparam_offset = current_method_tparam_offset_;
+                const auto method_scope_id =
+                    method_tparam_base < impl_and_method_tparams.size()
+                        ? driver_->allocate_type_param_scope_id()
+                        : kUnknownTypeVarScopeId;
+                current_method_scope_id_ = method_scope_id;
+                current_method_tparam_offset_ = method_tparam_base;
                 // --- Scope: impl-level + method-level type param names combined.
                 // The TypeResolver builds TypeVarT using index = position in the
                 // combined vector. When check_impl_method_call later builds
@@ -1856,6 +1872,7 @@ void DeclarationSema::build_impl_types() {
                         method->return_type ? method->return_type->range : SourceRange{},
                     .type_param_names = std::move(method_type_param_names),
                     .type_param_scope_id = impl_scope_id,
+                    .method_scope_id = method_scope_id,
                     .effect = resolve_effect_clause_info(method->effect_clause),
                     .has_body = static_cast<bool>(method->body),
                     .declaration_range = method->range,
@@ -1922,6 +1939,9 @@ void DeclarationSema::build_impl_types() {
                 info.methods.push_back(std::move(method_info));
                 // Pop method-level type params (see scope note at loop top).
                 impl_and_method_tparams.resize(method_tparam_base);
+                // R0.1: restore the previous method-scope context.
+                current_method_scope_id_ = prev_method_scope_id;
+                current_method_tparam_offset_ = prev_method_tparam_offset;
             }
 
             for (const auto &assoc : decl.assoc_items) {

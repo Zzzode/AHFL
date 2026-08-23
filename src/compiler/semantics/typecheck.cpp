@@ -1241,6 +1241,9 @@ TypeResolver TypeCheckPass::make_type_resolver() {
     // RFC 0013 P2-S1 (R0): propagate the active type-param scope id so
     // TypeVars created by this resolver carry their declaring scope.
     resolver.set_type_param_scope_id(current_type_param_scope_id_);
+    // RFC 0013 P2-S1 (R0.1): propagate the per-method scope for method-level
+    // type params (impl methods only).
+    resolver.set_method_scope_id(current_method_scope_id_, current_method_tparam_offset_);
     return resolver;
 }
 
@@ -3139,11 +3142,18 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
 
     const auto *prev_type_params = driver_->current_type_param_names_;
     const auto prev_scope_id = driver_->current_type_param_scope_id_;
+    const auto prev_method_scope_id = driver_->current_method_scope_id_;
+    const auto prev_method_tparam_offset = driver_->current_method_tparam_offset_;
     if (!type_param_names.empty()) {
         driver_->current_type_param_names_ = &type_param_names;
         // RFC 0013 P2-S1 (R0): re-activate the impl's scope id (stored on the
         // method info) so body TypeVars match the signature's scope identity.
         driver_->current_type_param_scope_id_ = method_info.type_param_scope_id;
+        // RFC 0013 P2-S1 (R0.1): re-activate the per-method scope id so
+        // body TypeVars for method-level params carry the method's scope,
+        // matching the signature's split scope identity.
+        driver_->current_method_scope_id_ = method_info.method_scope_id;
+        driver_->current_method_tparam_offset_ = impl_info.type_param_names.size();
     }
     // P3c (RFC 0013): resolve `Self` inside the method body to the impl's
     // target type, mirroring signature resolution in build_impl_types.
@@ -3175,6 +3185,8 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
 
     driver_->current_type_param_names_ = prev_type_params;
     driver_->current_type_param_scope_id_ = prev_scope_id;
+    driver_->current_method_scope_id_ = prev_method_scope_id;
+    driver_->current_method_tparam_offset_ = prev_method_tparam_offset;
     driver_->current_self_type_ = prev_self_type;
 
     const auto body_block_idx = driver_->find_block_index_by_range(*method_decl.body);
