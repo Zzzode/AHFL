@@ -1108,6 +1108,12 @@ class ExpressionCheckerServices final {
         return values_;
     }
 
+    // RFC 0014: expose the relation context so visit_try_expr can check
+    // error-type assignability (E: F) for the Result compatibility rule.
+    [[nodiscard]] TypeRelationContext &relations() const noexcept {
+        return relations_;
+    }
+
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
                               SourceRange range) const {
@@ -1756,6 +1762,9 @@ class ExpressionChecker final {
                 [&](const ast::LambdaExpr &) { return visit_lambda(expr); },
                 // P4-02: unwrap(e) as right-hand-side expression.
                 [&](const ast::UnwrapExprSyntax &) { return visit_unwrap(expr); },
+                // RFC 0014: try operator `e?` — failure propagation for
+                // Option<T> / Result<T, E>.
+                [&](const ast::TryExpr &) { return visit_try_expr(expr); },
                 [&](const ast::UnitLiteralExpr &) { return visit_unit_literal(expr); },
             },
             expr.node);
@@ -1888,6 +1897,19 @@ class ExpressionChecker final {
             .call_context = CallContext::PureOnly,
             .current_agent = context_.current_agent,
         };
+        // RFC 0014: wire the closure's return type into the body context so
+        // `?` can verify the enclosing return type is compatible. When the
+        // return type is not concretely determinable (no expected Fn type,
+        // or it contains a TypeVar), mark the closure as inferred-return so
+        // `?` is rejected with a SourceRange diagnostic (Rust-consistent).
+        const bool closure_return_known =
+            expected_fn != nullptr && expected_fn->return_type != nullptr &&
+            !contains_type_var(*expected_fn->return_type);
+        if (closure_return_known) {
+            body_context.enclosing_return_type = expected_fn->return_type;
+        } else {
+            body_context.enclosing_closure_inferred_return = true;
+        }
         std::vector<TypePtr> param_types;
         param_types.reserve(lambda.params.size());
         for (std::size_t index = 0; index < lambda.params.size(); ++index) {
@@ -2242,6 +2264,244 @@ class ExpressionChecker final {
         }
 
         return values_.typed_effect(std::move(result_type), operand.effect);
+    }
+
+    // RFC 0014: try operator `e?` — failure propagation for Option<T> /
+    // Result<T, E>.
+    //
+    // Type rules (RFC §类型规则):
+    //   1. operand must be Option<T> or Result<T, E>, else
+    //      TRY_REQUIRES_OPTION_OR_RESULT.
+    //   2. enclosing fn return type must be a compatible Option<_> or
+    //      Result<_, F>; the Result case requires E assignable to F.
+    //   3. the expression type is T.
+    //   4. the enclosing fn must have a determinable return signature;
+    //      closures without a concretely known return type are rejected.
+    //
+    // Slice 1: `?` is only accepted as the direct initializer of a let
+    // binding (context_.try_allowed). Arbitrary expression positions need
+    // statement-buffer lowering (A-Normalization) and are a follow-up.
+    [[nodiscard]] TypedValue visit_try_expr(const ast::ExprSyntax &expr) const {
+        const auto &try_node = expr.as<ast::TryExpr>();
+        if (try_node.operand == nullptr) {
+            return values_.error_typed();
+        }
+
+        // Slice 1: `?` is only allowed in direct let-binding position. The
+        // let-statement checker sets try_allowed; the nested-expression
+        // funnel resets it so only the direct initializer sees it true.
+        if (!context_.try_allowed) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::TryNotInLetBinding,
+                "the '?' operator is only allowed as the direct initializer "
+                "of a let binding in this slice (e.g. `let x = e?;`); "
+                "arbitrary expression positions are not yet supported",
+                expr.range);
+        }
+
+        // Closures without a concretely determinable return type: `?` cannot
+        // verify the enclosing return type (Rust-consistent).
+        if (context_.enclosing_closure_inferred_return) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::TryInClosureWithoutReturnType,
+                "the '?' operator cannot be used in a closure without a "
+                "determinable return type; annotate the closure's return "
+                "type or use it in a context that provides one",
+                expr.range);
+        }
+
+        // `?` is only allowed inside fn or closure bodies with a
+        // determinable return signature (RFC rule 4). Flow handlers,
+        // workflow nodes, contract formulas, and predicates leave
+        // enclosing_return_type as nullopt. Fns without `-> T` get an
+        // error-typed return — also not determinable.
+        if (!context_.enclosing_return_type.has_value() ||
+            *context_.enclosing_return_type == nullptr ||
+            is_error_type(**context_.enclosing_return_type)) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::TryOutsideFunction,
+                "the '?' operator is only allowed inside a function or "
+                "closure body with a declared return type; it cannot be "
+                "used in flow handlers, workflow nodes, contract "
+                "formulas, predicates, or functions without a return "
+                "type annotation",
+                expr.range);
+        }
+
+        // Typecheck the operand (always, to get its type and avoid cascading
+        // diagnostics). The check_nested funnel resets try_allowed so a
+        // nested `?` inside the operand is correctly rejected.
+        const auto operand = services_.check_expr(*try_node.operand, context_, std::nullopt);
+
+        // Tolerate error-typed operands (a previous diagnostic was already
+        // emitted for the underlying failure).
+        if (operand.type == nullptr || is_error_type(*operand.type)) {
+            return values_.error_typed_effect(operand.effect);
+        }
+
+        // Classify the operand as Option<T> or Result<T, E>. The operand may
+        // be either the enum type itself (EnumT, e.g. a variable of type
+        // Option<Int>) or a specific variant (EnumVariantT, e.g. the result
+        // of constructing Option::Some(42) or Result::Ok(42)).
+        TypePtr success_type = nullptr;
+        TypePtr error_type = nullptr;
+        bool is_option = false;
+        bool is_result = false;
+
+        if (const auto view = stdlib_bridge::std_container_type_view(*operand.type);
+            view.has_value() && view->kind == stdlib_bridge::StdContainerKind::Option) {
+            is_option = true;
+            success_type = view->first;
+        } else if (const auto *enm = operand.type->get_if<types::EnumT>();
+                   enm != nullptr &&
+                   std::string_view{enm->canonical_name} == stdlib_bridge::kResultType) {
+            is_result = true;
+            if (enm->type_args.size() >= 2) {
+                success_type = enm->type_args[0];
+                error_type = enm->type_args[1];
+            }
+        } else if (const auto *var = operand.type->get_if<types::EnumVariantT>();
+                   var != nullptr &&
+                   std::string_view{var->canonical_name} == stdlib_bridge::kResultType) {
+            is_result = true;
+            if (var->type_args.size() >= 2) {
+                success_type = var->type_args[0];
+                error_type = var->type_args[1];
+            }
+        }
+
+        if (!is_option && !is_result) {
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = std::string("actual type: ") + operand.type->describe(),
+                .range = try_node.operand->range,
+            });
+            services_.typecheck_error_here(
+                error_codes::typecheck::TryRequiresOptionOrResult,
+                "the '?' operator requires an operand of type Option<T> or "
+                "Result<T, E>",
+                expr.range,
+                std::move(notes));
+            return values_.error_typed_effect(operand.effect);
+        }
+
+        if (success_type == nullptr) {
+            // Unit variant (e.g. Option::None) or bare unspecialised nominal:
+            // the payload carried no type argument. Infer the success type
+            // from the enclosing return type so the let binding has a
+            // concrete type (Rust-consistent: `None?` in a fn returning
+            // Option<Int> yields Int).
+            if (context_.enclosing_return_type.has_value()) {
+                const TypePtr enclosing = *context_.enclosing_return_type;
+                if (enclosing != nullptr && !is_error_type(*enclosing) &&
+                    !contains_type_var(*enclosing)) {
+                    if (is_option) {
+                        if (const auto view =
+                                stdlib_bridge::std_container_type_view(*enclosing);
+                            view.has_value() &&
+                            view->kind == stdlib_bridge::StdContainerKind::Option) {
+                            success_type = view->first;
+                        }
+                    } else {
+                        if (const auto *enm = enclosing->get_if<types::EnumT>();
+                            enm != nullptr &&
+                            std::string_view{enm->canonical_name} ==
+                                stdlib_bridge::kResultType &&
+                            enm->type_args.size() >= 1) {
+                            success_type = enm->type_args[0];
+                        }
+                    }
+                }
+            }
+            if (success_type == nullptr) {
+                // Still can't infer — tolerate so diagnostics don't cascade.
+                success_type = values_.make_error_type();
+            }
+        }
+
+        // Check the enclosing return type is compatible (RFC rule 2). Skip
+        // when the enclosing return type is absent or error-typed. The
+        // Option/Result shape check runs unconditionally — even for generic
+        // fns returning Option<T> or Result<T, E>, the shape is verifiable.
+        // Only the E:F assignability sub-check skips TypeVar-bearing types
+        // (the concrete type is resolved at monomorphization).
+        if (context_.enclosing_return_type.has_value()) {
+            const TypePtr enclosing = *context_.enclosing_return_type;
+            if (enclosing != nullptr && !is_error_type(*enclosing)) {
+                if (is_option) {
+                    // Enclosing return type must be Option<U>.
+                    const auto enclosing_view =
+                        stdlib_bridge::std_container_type_view(*enclosing);
+                    if (!enclosing_view.has_value() ||
+                        enclosing_view->kind !=
+                            stdlib_bridge::StdContainerKind::Option) {
+                        std::vector<Diagnostic::Related> notes;
+                        notes.push_back(Diagnostic::Related{
+                            .message = std::string("enclosing return type: ") +
+                                       enclosing->describe(),
+                            .range = expr.range,
+                        });
+                        services_.typecheck_error_here(
+                            error_codes::typecheck::TryIncompatibleReturnType,
+                            "the '?' operator on an Option<T> requires the "
+                            "enclosing function to return Option<_>",
+                            expr.range,
+                            std::move(notes));
+                    }
+                } else {
+                    // Enclosing return type must be Result<U, F> with E
+                    // assignable to F.
+                    const auto *enm = enclosing->get_if<types::EnumT>();
+                    if (enm == nullptr ||
+                        std::string_view{enm->canonical_name} !=
+                            stdlib_bridge::kResultType ||
+                        enm->type_args.size() < 2 || enm->type_args[1] == nullptr) {
+                        std::vector<Diagnostic::Related> notes;
+                        notes.push_back(Diagnostic::Related{
+                            .message = std::string("enclosing return type: ") +
+                                       enclosing->describe(),
+                            .range = expr.range,
+                        });
+                        services_.typecheck_error_here(
+                            error_codes::typecheck::TryIncompatibleReturnType,
+                            "the '?' operator on a Result<T, E> requires the "
+                            "enclosing function to return Result<_, F>",
+                            expr.range,
+                            std::move(notes));
+                    } else if (error_type != nullptr && !is_error_type(*error_type) &&
+                               !contains_type_var(*error_type) &&
+                               !contains_type_var(*enm->type_args[1])) {
+                        // E must be assignable to F. Skip when either side
+                        // contains a TypeVar (generic fn — the concrete type
+                        // is resolved at monomorphization).
+                        if (!ahfl::is_assignable_to(*error_type, *enm->type_args[1],
+                                                    services_.relations())) {
+                            std::vector<Diagnostic::Related> notes;
+                            notes.push_back(Diagnostic::Related{
+                                .message = std::string("operand error type: ") +
+                                           error_type->describe(),
+                                .range = try_node.operand->range,
+                            });
+                            notes.push_back(Diagnostic::Related{
+                                .message = std::string(
+                                               "enclosing return error type: ") +
+                                           enm->type_args[1]->describe(),
+                                .range = expr.range,
+                            });
+                            services_.typecheck_error_here(
+                                error_codes::typecheck::TryIncompatibleReturnType,
+                                "the '?' operator on a Result<T, E> requires "
+                                "the enclosing function's error type to be "
+                                "compatible with the operand's error type",
+                                expr.range,
+                                std::move(notes));
+                        }
+                    }
+                }
+            }
+        }
+
+        return values_.typed_effect(success_type->clone(), operand.effect);
     }
 
   private:
@@ -4917,13 +5177,22 @@ class PassExpressionSemaDelegate final : public ExpressionSemaDelegate {
     ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
                                  const ExpressionContext &nested_context,
                                  MaybeCRef<Type> nested_expected) override {
-        return pass_->check_expr(nested_expr, nested_context, nested_expected);
+        // RFC 0014 Slice 1: `?` is only accepted as the direct initializer of
+        // a let binding. The let-statement checker sets try_allowed on the
+        // context it passes to check_expr; every nested expression funnels
+        // through here, so reset it to prevent `f(e?)` from inheriting the
+        // let-position permission.
+        auto ctx = nested_context;
+        ctx.try_allowed = false;
+        return pass_->check_expr(nested_expr, ctx, nested_expected);
     }
 
     ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
                                  const ExpressionContext &nested_context,
                                  const TypeExpectation &nested_expectation) override {
-        return pass_->check_expr(nested_expr, nested_context, nested_expectation);
+        auto ctx = nested_context;
+        ctx.try_allowed = false;
+        return pass_->check_expr(nested_expr, ctx, nested_expectation);
     }
 
     TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {

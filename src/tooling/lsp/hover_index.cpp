@@ -1014,6 +1014,10 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
                    [&](const ast::UnwrapExprSyntax &e) {
                        add_expr_syntax_targets(index, snapshot, source, e.operand.get());
                    },
+                   // RFC 0014: operand? — the operand's targets participate.
+                   [&](const ast::TryExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.operand.get());
+                   },
                    [](const auto &) {
                        // Leaf expressions with no sub-expressions — nothing to add
                    },

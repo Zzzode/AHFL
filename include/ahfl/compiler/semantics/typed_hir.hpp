@@ -826,6 +826,8 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_lambda(expr);
     case ast::ExprSyntaxKind::UnwrapExpr:
         return std::forward<Visitor>(visitor).visit_unwrap_expr(expr);
+    case ast::ExprSyntaxKind::Try:
+        return std::forward<Visitor>(visitor).visit_try_expr(expr);
     case ast::ExprSyntaxKind::UnitLiteral:
         return std::forward<Visitor>(visitor).visit_unit_literal(expr);
     }

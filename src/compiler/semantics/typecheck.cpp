@@ -242,6 +242,13 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                         children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
                 }
             },
+            // RFC 0014: e? — operand is the only typed child.
+            [&](const ast::TryExpr &e) {
+                if (e.operand) {
+                    append_typed_child(
+                        children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
+                }
+            },
         },
         expr.node);
     return children;
@@ -2958,6 +2965,13 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
     ValueContext context;
     context.call_context = CallContext::Flow;
     context.verification_context = VerificationContext::None;
+    // RFC 0014: record the fn's return type so `?` can verify the enclosing
+    // return type is a compatible Option<_> / Result<_, F>. Only set when the
+    // return type is declared; fns without a return signature leave it nullopt
+    // and `?` is rejected there.
+    if (info.return_type != nullptr) {
+        context.enclosing_return_type = info.return_type;
+    }
 
     for (const auto &param : info.params) {
         context.bindings.emplace(
@@ -3163,6 +3177,11 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
     ValueContext context;
     context.call_context = CallContext::Flow;
     context.verification_context = VerificationContext::None;
+    // RFC 0014: record the method's return type so `?` can verify the
+    // enclosing return type is a compatible Option<_> / Result<_, F>.
+    if (method_info.return_type != nullptr) {
+        context.enclosing_return_type = method_info.return_type;
+    }
     for (const auto &param : method_info.params) {
         context.bindings.emplace(
             param.name, param.type != nullptr ? param.type->clone() : driver_->make_error_type());
@@ -3364,7 +3383,16 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             expected = std::cref(*annotated_type);
         }
 
-        const auto initializer = check_expr(*statement.let_stmt->initializer, context, expected);
+        // RFC 0014 Slice 1: `?` is only accepted as the direct initializer of
+        // a let binding. Pass a context copy with try_allowed set; the nested
+        // expression funnel (check_nested) resets it so only the direct
+        // initializer sees it true. Wildcard lets (`let _ = e?;`) are
+        // excluded: the IR lowerer's try-let expansion requires a named
+        // binding to assign the unwrapped value to.
+        ValueContext let_context = context;
+        let_context.try_allowed = !statement.let_stmt->is_wildcard;
+        const auto initializer =
+            check_expr(*statement.let_stmt->initializer, let_context, expected);
         if (expected.has_value() && statement.let_stmt->type) {
             const auto expectation = TypeExpectation{
                 .expected = expected->get().clone(),

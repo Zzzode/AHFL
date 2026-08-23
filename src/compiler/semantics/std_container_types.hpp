@@ -11,6 +11,10 @@ inline constexpr std::string_view kOptionType = "std::option::Option";
 inline constexpr std::string_view kListType = "std::collections::List";
 inline constexpr std::string_view kSetType = "std::collections::Set";
 inline constexpr std::string_view kMapType = "std::collections::Map";
+// RFC 0014: Result is a nominal enum (not a "container" in the
+// std_container_type_view sense — it has two type args and its own variant
+// semantics), but the try operator needs the canonical name in the same way.
+inline constexpr std::string_view kResultType = "std::result::Result";
 
 enum class StdContainerKind {
     Option,

@@ -389,6 +389,9 @@ void collect_primitive_type_uses(const ast::ExprSyntax *expr, std::vector<Primit
                 collect_primitive_type_uses(node.body.get(), uses);
             } else if constexpr (std::is_same_v<Node, ast::UnwrapExprSyntax>) {
                 collect_primitive_type_uses(node.operand.get(), uses);
+            } else if constexpr (std::is_same_v<Node, ast::TryExpr>) {
+                // RFC 0014: operand? — recurse into the operand.
+                collect_primitive_type_uses(node.operand.get(), uses);
             }
         },
         expr->node);

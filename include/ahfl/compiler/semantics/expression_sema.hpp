@@ -72,6 +72,17 @@ struct ExpressionContext {
     // (EffectNotPure / NotInVerifiedSubset / NondetInInvariant) for function
     // calls that violate the subset rules.
     VerificationContext verification_context{VerificationContext::None};
+    // RFC 0014: return type of the innermost enclosing fn or closure body.
+    // nullopt outside fn/closure bodies (flow handler, workflow node, contract
+    // formula, ...) — the `?` operator is rejected there.
+    std::optional<TypePtr> enclosing_return_type;
+    // RFC 0014: innermost enclosing callable is a closure whose return type
+    // is not concretely determinable — `?` is rejected there (Rust-consistent).
+    bool enclosing_closure_inferred_return{false};
+    // RFC 0014 Slice 1: `?` is only accepted as the direct initializer of a
+    // let binding. Set by the let-statement checker and reset by the nested
+    // expression funnel so only the direct initializer sees it true.
+    bool try_allowed{false};
 };
 
 class ExpressionSemaDelegate {

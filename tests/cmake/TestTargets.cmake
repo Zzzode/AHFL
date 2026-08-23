@@ -527,6 +527,22 @@ target_include_directories(ahfl_semantics_stmt_diagnostics_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_stmt_diagnostics_tests)
 
+add_executable(ahfl_semantics_try_operator_tests
+    unit/compiler/semantics/try_operator.cpp
+)
+target_link_libraries(ahfl_semantics_try_operator_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        ahfl_compiler_ir
+        ahfl_runtime_evaluator
+        doctest
+)
+target_include_directories(ahfl_semantics_try_operator_tests
+    PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/..
+)
+ahfl_apply_project_warnings(ahfl_semantics_try_operator_tests)
+
 add_executable(ahfl_semantics_const_sema_negatives_tests
     unit/compiler/semantics/const_sema_negatives.cpp
 )
@@ -1140,6 +1156,7 @@ foreach(_tgt
     ahfl_semantics_diagnostic_matrix_tests
     ahfl_semantics_type_mismatch_origin_tests
     ahfl_semantics_stmt_diagnostics_tests
+    ahfl_semantics_try_operator_tests
     ahfl_semantics_const_sema_negatives_tests
     ahfl_semantics_flow_condition_tests
     ahfl_semantics_validate_plumbing_tests

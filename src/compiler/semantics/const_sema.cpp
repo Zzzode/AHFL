@@ -391,6 +391,13 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 }
                 return is_const_expr_syntax(*e.operand, reason);
             },
+            // RFC 0014: operand? — the try operator is a control-flow
+            // construct (early return on failure), not a compile-time
+            // constant, even when the operand is foldable.
+            [&reason](const ast::TryExpr &) {
+                reason = "try operator (?) is not a compile-time constant";
+                return false;
+            },
             // B6 (RFC 0013 P3-gaps-B): `{}` is a compile-time constant.
             [](const ast::UnitLiteralExpr &) { return true; },
         },
@@ -1307,6 +1314,10 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
                 }
                 return std::nullopt;
             },
+            // RFC 0014: operand? — the try operator is a control-flow
+            // construct (early return on failure), not foldable at compile
+            // time. Mirrors the MatchExpr / LambdaExpr nullopt stance.
+            [](const ast::TryExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             // B6 (RFC 0013 P3-gaps-B): `{}` const-folds to the unit constant.
             [](const ast::UnitLiteralExpr &) -> std::optional<ConstValue> {
                 return make_const_value(ConstValueKind::Unit);

@@ -3322,6 +3322,14 @@ class ResolverPass final {
                         resolve_declaration_expr(*e.operand);
                     }
                 },
+                // RFC 0014: operand? — the operand is the only child
+                // expression; its references must be registered before
+                // typecheck (same rationale as unwrap(e)).
+                [&](const ast::TryExpr &e) {
+                    if (e.operand) {
+                        resolve_declaration_expr(*e.operand);
+                    }
+                },
                 [&](const ast::QualifiedValueExpr &e) {
                     if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
                         resolved.has_value()) {

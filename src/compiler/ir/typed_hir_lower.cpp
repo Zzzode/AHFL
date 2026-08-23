@@ -312,6 +312,9 @@ class TypedIrLowerer final {
     mutable std::uint32_t next_expr_id_{0};
     mutable std::uint32_t next_statement_id_{0};
     mutable std::uint32_t next_decl_id_{0};
+    // RFC 0014: fresh-name counter for the temp binding introduced by the
+    // `let x = e?;` statement-level expansion.
+    mutable std::uint32_t try_temp_counter_{0};
 
     [[nodiscard]] std::vector<const TypedDecl *> ordered_typed_declarations() const {
         std::vector<const TypedDecl *> declarations;
@@ -553,6 +556,9 @@ class TypedIrLowerer final {
                     return value.body ? find_match_expr_in_expr(*value.body, typed) : nullptr;
                 },
                 [&](const ast::UnwrapExprSyntax &value) -> const ast::ExprSyntax * {
+                    return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
+                },
+                [&](const ast::TryExpr &value) -> const ast::ExprSyntax * {
                     return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
                 },
                 [](const ast::UnitLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
@@ -1963,6 +1969,17 @@ class TypedIrLowerer final {
                 },
                 range);
         }
+        // RFC 0014: `e?` is lowered at the statement level (let-expansion in
+        // lower_typed_block). A TryExpr should never reach the expression-
+        // level lowerer — the typechecker only allows `?` in direct let-
+        // binding position, and lower_typed_block expands that before
+        // calling lower_typed_expr. This is a safety net.
+        ir::ExprRef visit_try_expr(const TypedExpr &e) const {
+            (void)e;
+            throw std::logic_error(
+                "TryExpr reached expression-level lowering; the let-binding "
+                "expansion should have handled it in lower_typed_block");
+        }
         ir::ExprRef visit_unknown(const TypedExpr &e) const {
             (void)e;
             return nullptr;
@@ -2417,6 +2434,14 @@ class TypedIrLowerer final {
     // Forward declarations.
     [[nodiscard]] ir::Block lower_typed_block(const TypedBlock &block) const;
     [[nodiscard]] ir::StatementPtr lower_typed_statement(const TypedStatement &stmt) const;
+
+    // RFC 0014: statement-level expansion of `let x = e?;`.
+    // Appends the temp binding + failure check + unwrap statements to
+    // `ir_block`. Called from lower_typed_block when a let statement's
+    // direct initializer is a TryExpr.
+    void lower_try_let_expansion(ir::Block &ir_block,
+                                 const TypedStatement &stmt,
+                                 const TypedExpr &try_expr) const;
 
     // Current statement pointer, set for the lifetime of each
     // lower_typed_statement dispatch so the visitor can read
@@ -3627,7 +3652,23 @@ inline ir::Block TypedIrLowerer::lower_typed_block(const TypedBlock &block) cons
             continue;
         if (stmt_idx >= typed_program_->statements.size())
             continue;
-        ir_block.statements.push_back(lower_typed_statement(typed_program_->statements[stmt_idx]));
+        const auto &stmt = typed_program_->statements[stmt_idx];
+        // RFC 0014: `let x = e?;` expands at the statement level into a
+        // temp binding + failure check (if-let-return) + unwrap. Detect the
+        // try-let pattern here and route to the dedicated expansion; all
+        // other statements flow through the normal per-kind lowering.
+        if (stmt.kind == TypedStmtKind::Let && !stmt.is_wildcard &&
+            !stmt.children_expr_index.empty() &&
+            stmt.children_expr_index[0] != UINT32_MAX &&
+            stmt.children_expr_index[0] < typed_program_->expressions.size()) {
+            const auto &initializer =
+                typed_program_->expressions[stmt.children_expr_index[0]];
+            if (initializer.kind == ast::ExprSyntaxKind::Try) {
+                lower_try_let_expansion(ir_block, stmt, initializer);
+                continue;
+            }
+        }
+        ir_block.statements.push_back(lower_typed_statement(stmt));
     }
     return ir_block;
 }
@@ -3646,6 +3687,168 @@ inline ir::StatementPtr TypedIrLowerer::lower_typed_statement(const TypedStateme
         }
     } restore{&current_statement_, prev};
     return typed_visit(stmt, TypedStmtPerKindLowerer{*this, stmt.range});
+}
+
+// RFC 0014: statement-level expansion of `let x = e?;`.
+//
+//   let x = e?;
+//
+// lowers to:
+//
+//   let <tmp> = e;                         // evaluate the operand
+//   if let <Pat> = <tmp> { return <Fail>; } // failure branch (None / Err)
+//   let x = unwrap(<tmp>);                  // success path
+//
+// where Option uses Pat=None / Fail=None and Result uses Pat=Err(err) /
+// Fail=Err(err). The expansion reuses existing IR constructs
+// (LetStatement / IfLetStatement / ReturnStatement / UnwrapExpr / CallExpr)
+// — no new IR nodes are introduced.
+void TypedIrLowerer::lower_try_let_expansion(ir::Block &ir_block,
+                                              const TypedStatement &stmt,
+                                              const TypedExpr &try_expr) const {
+    // The operand of `e?` (the expression before `?`).
+    const TypedExpr *operand_typed =
+        child_by_role(try_expr, TypedExprChildRole::Operand);
+    if (operand_typed == nullptr) {
+        // Malformed TryExpr — emit a plain let with a null initializer so
+        // downstream verification reports the gap rather than crashing.
+        ir_block.statements.push_back(make_statement(
+            ir::LetStatement{
+                .name = stmt.target_name,
+                .type_ref = ir::TypeRef{},
+                .initializer = nullptr,
+            },
+            stmt.range));
+        return;
+    }
+
+    // Lower the operand to IR once; the temp binding and the unwrap both
+    // reference it through the temp variable.
+    ir::ExprRef lowered_operand = lower_typed_expr(*operand_typed);
+
+    // Fresh temp name for the operand binding.
+    const std::string temp_name =
+        "__try_tmp_" + std::to_string(try_temp_counter_++);
+
+    // Classify the operand as Result<T, E> (vs Option<T>) so the failure
+    // branch constructs the right early-return value. The typechecker has
+    // already validated that the operand is Option or Result; the else
+    // branch below defaults to the Option (None) expansion. The operand
+    // type may be EnumT (a variable of the enum type) or EnumVariantT
+    // (the result of a variant constructor call like Result::Err(e)).
+    const Type *operand_type = operand_typed->type;
+    bool is_result = false;
+    if (operand_type != nullptr) {
+        if (const auto *enm = operand_type->get_if<types::EnumT>();
+            enm != nullptr &&
+            std::string_view{enm->canonical_name} == stdlib_bridge::kResultType) {
+            is_result = true;
+        } else if (const auto *var = operand_type->get_if<types::EnumVariantT>();
+                   var != nullptr &&
+                   std::string_view{var->canonical_name} == stdlib_bridge::kResultType) {
+            is_result = true;
+        }
+    }
+
+    // (1) let <tmp> = <operand>;
+    ir_block.statements.push_back(make_statement(
+        ir::LetStatement{
+            .name = temp_name,
+            .type_ref = operand_type != nullptr ? type_ref_from_type(*operand_type)
+                                                : ir::TypeRef{},
+            .initializer = lowered_operand,
+        },
+        stmt.range));
+
+    // (2) if let <Pat> = <tmp> { return <FailVal>; }
+    ir::ExprRef scrutinee = make_expr(
+        ir::PathExpr{.path = ir::Path{.root_name = temp_name}}, stmt.range);
+
+    if (is_result) {
+        // if let Err(err) = tmp { return Err(err); }
+        auto err_pattern = make_owned<ir::MatchPattern>();
+        err_pattern->node = ir::BindingPattern{.name = "err"};
+
+        ir::VariantPattern variant;
+        variant.path = "Err";
+        variant.kind = ir::VariantPatternKind::Tuple;
+        variant.subpatterns.push_back(std::move(err_pattern));
+
+        ir::MatchPattern pattern;
+        pattern.node = std::move(variant);
+
+        auto then_block = make_owned<ir::Block>();
+        then_block->statements.push_back(make_statement(
+            ir::ReturnStatement{
+                .value = make_expr(
+                    ir::CallExpr{
+                        .callee = "std::result::Result::Err",
+                        .arguments = {make_expr(
+                            ir::PathExpr{.path = ir::Path{.root_name = "err"}},
+                            stmt.range)},
+                    },
+                    stmt.range),
+            },
+            stmt.range));
+
+        ir_block.statements.push_back(make_statement(
+            ir::IfLetStatement{
+                .pattern = std::move(pattern),
+                .scrutinee = scrutinee,
+                .then_block = std::move(then_block),
+                .else_block = nullptr,
+            },
+            stmt.range));
+    } else {
+        // if let None = tmp { return None; }
+        // (Default for Option and for the defensive fallback when the
+        // operand type could not be classified — the typechecker should
+        // have rejected non-Option/Result operands already.)
+        ir::VariantPattern variant;
+        variant.path = "None";
+        variant.kind = ir::VariantPatternKind::Unit;
+
+        ir::MatchPattern pattern;
+        pattern.node = std::move(variant);
+
+        auto then_block = make_owned<ir::Block>();
+        then_block->statements.push_back(make_statement(
+            ir::ReturnStatement{
+                .value = make_expr(
+                    ir::CallExpr{
+                        .callee = "std::option::Option::None",
+                        .arguments = {},
+                    },
+                    stmt.range),
+            },
+            stmt.range));
+
+        ir_block.statements.push_back(make_statement(
+            ir::IfLetStatement{
+                .pattern = std::move(pattern),
+                .scrutinee = scrutinee,
+                .then_block = std::move(then_block),
+                .else_block = nullptr,
+            },
+            stmt.range));
+    }
+
+    // (3) let x = unwrap(<tmp>);
+    ir_block.statements.push_back(make_statement(
+        ir::LetStatement{
+            .name = stmt.target_name,
+            .type_ref = try_expr.type != nullptr ? type_ref_from_type(*try_expr.type)
+                                                 : ir::TypeRef{},
+            .initializer = make_expr(
+                ir::UnwrapExpr{
+                    .operand = make_expr(
+                        ir::PathExpr{.path = ir::Path{.root_name = temp_name}},
+                        stmt.range),
+                    .fallback_none_message = nullptr,
+                },
+                stmt.range),
+        },
+        stmt.range));
 }
 
 // Out-of-line for the mutual recursion.

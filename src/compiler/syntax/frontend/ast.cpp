@@ -322,6 +322,14 @@ class AstInvariantValidator final {
                         validate_expr(*e.operand);
                     }
                 },
+                // RFC 0014: operand? — the operand is the only child and must
+                // be present; its type (Option/Result) is enforced by sema.
+                [&](const TryExpr &e) {
+                    require(e.operand != nullptr, expr.range, "TryExpr is missing operand");
+                    if (e.operand) {
+                        validate_expr(*e.operand);
+                    }
+                },
                 // RFC 0013 P3-gaps-B: `{}` — empty struct, nothing to validate.
                 [](const UnitLiteralExpr &) {},
             },

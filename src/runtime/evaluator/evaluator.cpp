@@ -1837,14 +1837,29 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
             }
             return make_error("UnwrapExpr: Option::Some variant has invalid payload");
         }
-        return make_error(std::string("UnwrapExpr: expected Optional<T>, got enum '") +
+        // RFC 0014: Result::Ok — extract the success payload. The try
+        // expansion (`let x = e?;`) lowers its success path to
+        // `unwrap(tmp)` after the if-let has already returned early for
+        // Err, so this only sees Ok values in the try path.
+        if (ev->enum_name == "std::result::Result" && ev->variant == "Ok") {
+            if (ev->payload.size() == 1 && ev->payload.front() != nullptr) {
+                EvalResult out;
+                out.value = Value{std::move(*ev->payload.front()).node};
+                return out;
+            }
+            return make_error("UnwrapExpr: Result::Ok variant has invalid payload");
+        }
+        if (ev->enum_name == "std::result::Result" && ev->variant == "Err") {
+            return make_error("unwrap failed: value is Result::Err");
+        }
+        return make_error(std::string("UnwrapExpr: expected Optional<T> or Result<T, E>, got enum '") +
                           ev->enum_name + "' variant '" + ev->variant + "'");
     }
-    // Any other value shape: unwrap() is defined only for Optional<T>.  Fail
-    // loudly instead of silently returning the value — the typechecker should
-    // have prevented this case, but the evaluator gate still fires for
-    // dynamically-typed / generated code paths.
-    return make_error("UnwrapExpr: operand is not an Optional<T> value");
+    // Any other value shape: unwrap() is defined only for Optional<T> and
+    // Result<T, E>. Fail loudly instead of silently returning the value —
+    // the typechecker should have prevented this case, but the evaluator
+    // gate still fires for dynamically-typed / generated code paths.
+    return make_error("UnwrapExpr: operand is not an Optional<T> or Result<T, E> value");
 }
 
 // ============================================================================

@@ -180,6 +180,7 @@ enum class ExprSyntaxKind {
     Match,           // match scrutinee { arm* } (P1 ADT, RFC §1.6)
     Lambda,          // \ params -> expr  (P2 closures, RFC §6)
     UnwrapExpr,      // unwrap(operand_expr) - expr-level Option extract (P4-02)
+    Try,             // operand? - failure propagation for Option/Result (RFC 0014)
     UnitLiteral,     // {} - the sole value of Unit (RFC 0013 P3-gaps-B)
 };
 
@@ -525,6 +526,18 @@ struct UnwrapExprSyntax {
     Owned<ExprSyntax> operand;
 };
 
+/// Try expression: `operand?` (RFC 0014).
+///
+/// Failure-propagation operator for Option/Result. On the success path the
+/// expression yields the unwrapped payload (type T); on the failure path
+/// (None / Err) the enclosing fn returns early with the corresponding failure
+/// value. Slice 1 restricts `?` to let-binding position (`let x = e?;`);
+/// arbitrary expression positions need statement-buffer lowering and are a
+/// follow-up. The wrapper ExprSyntax::range covers the full `operand?` span.
+struct TryExpr {
+    Owned<ExprSyntax> operand;
+};
+
 /// Unit literal: `{}` (RFC 0013 P3-gaps-B). The sole value of the `Unit`
 /// type. Carries no data; its presence is its meaning.
 struct UnitLiteralExpr {};
@@ -809,6 +822,7 @@ using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     MatchExpr,
                                     LambdaExpr,
                                     UnwrapExprSyntax,
+                                    TryExpr,
                                     UnitLiteralExpr>;
 
 /// Expression syntax node
@@ -1809,6 +1823,9 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [&](const UnwrapExprSyntax &) {
                 return std::forward<Visitor>(visitor).visit_unknown(expr);
             },
+            // RFC 0014: operand? — try expression dispatches through the
+            // generic `visit_unknown` fallback (same rationale as LambdaExpr).
+            [&](const TryExpr &) { return std::forward<Visitor>(visitor).visit_unknown(expr); },
             // RFC 0013 P3-gaps-B: `{}` — unit literal dispatches through the
             // generic `visit_unknown` fallback (same rationale as LambdaExpr).
             [&](const UnitLiteralExpr &) {
@@ -1842,6 +1859,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const MatchExpr &) { return ExprSyntaxKind::Match; },
             [](const LambdaExpr &) { return ExprSyntaxKind::Lambda; },
             [](const UnwrapExprSyntax &) { return ExprSyntaxKind::UnwrapExpr; },
+            [](const TryExpr &) { return ExprSyntaxKind::Try; },
             [](const UnitLiteralExpr &) { return ExprSyntaxKind::UnitLiteral; },
         },
         expr.node);

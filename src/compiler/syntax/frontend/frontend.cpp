@@ -1498,6 +1498,9 @@ class ProgramBuilder {
         case ast::ExprSyntaxKind::UnwrapExpr:
             expr->node = ast::UnwrapExprSyntax{};
             break;
+        case ast::ExprSyntaxKind::Try:
+            expr->node = ast::TryExpr{};
+            break;
         case ast::ExprSyntaxKind::UnitLiteral:
             expr->node = ast::UnitLiteralExpr{};
             break;
@@ -1813,6 +1816,25 @@ class ProgramBuilder {
                 result = std::move(index_access);
                 ++expr_index;
                 child_index += 3;
+                continue;
+            }
+
+            // RFC 0014: try operator `operand?`. '?' is a single terminal
+            // suffix, so the child index advances by 1 (contrast with
+            // `[index]` which steps 3: '[' + expr + ']'). The operand is the
+            // accumulated postfix result; the range spans the operand through
+            // the '?' token.
+            if (token_text == "?") {
+                auto try_range = result->range;
+                if (auto *terminal = dynamic_cast<antlr4::tree::TerminalNode *>(
+                        &require(context.children[child_index], "postfix child is missing"))) {
+                    try_range = span_range(result->range, terminal_range(*terminal, source_));
+                }
+                auto try_expr = make_expr_syntax(ast::ExprSyntaxKind::Try, try_range);
+                auto &try_node = std::get<ast::TryExpr>(try_expr->node);
+                try_node.operand = std::move(result);
+                result = std::move(try_expr);
+                child_index += 1;
                 continue;
             }
 

@@ -378,6 +378,26 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InNonPure{"IN_NON_PURE
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{"SHADOWED_RECEIVER"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesShadowedReceiver{
     "DECREASES_SHADOWED_RECEIVER"};
+// RFC 0014: try operator (`expr?`) diagnostics.
+//   try_requires_option_or_result  — operand of `?` is not Option<T> or Result<T, E>
+//   try_incompatible_return_type   — enclosing fn return type cannot carry the
+//                                    try's failure value (Option<_> / Result<_, F>)
+//   try_outside_function           — `?` used outside a fn or closure body
+//                                    (flow handler, workflow node, contract formula, ...)
+//   try_in_closure_without_return_type — `?` in a closure whose return type is
+//                                    not concretely determinable (Rust-consistent)
+//   try_not_in_let_binding         — Slice 1: `?` is only accepted as the direct
+//                                    initializer of a let binding
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryRequiresOptionOrResult{
+    "TRY_REQUIRES_OPTION_OR_RESULT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryIncompatibleReturnType{
+    "TRY_INCOMPATIBLE_RETURN_TYPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryOutsideFunction{
+    "TRY_OUTSIDE_FUNCTION"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryInClosureWithoutReturnType{
+    "TRY_IN_CLOSURE_WITHOUT_RETURN_TYPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryNotInLetBinding{
+    "TRY_NOT_IN_LET_BINDING"};
 } // namespace typecheck
 
 namespace resolve {

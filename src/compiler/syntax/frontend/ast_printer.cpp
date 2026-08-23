@@ -874,6 +874,12 @@ class AstPrinter final {
                     line(indent_level, "unwrap_expr");
                     print_expr_field("operand", e.operand.get(), indent_level + 1);
                 },
+                // RFC 0014: operand? — try expression. Prints the operand and
+                // the `?` suffix so the outline mirrors the source spelling.
+                [&](const ast::TryExpr &e) {
+                    line(indent_level, "try");
+                    print_expr_field("operand", e.operand.get(), indent_level + 1);
+                },
                 // RFC 0013 P3-gaps-B: the unit literal `{}`.
                 [&](const ast::UnitLiteralExpr &) { line(indent_level, "unit"); },
             },

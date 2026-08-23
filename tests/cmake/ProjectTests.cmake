@@ -1171,6 +1171,10 @@ add_test(NAME ahfl.semantics.stmt_diagnostics_all
     COMMAND $<TARGET_FILE:ahfl_semantics_stmt_diagnostics_tests>
 )
 
+add_test(NAME ahfl.semantics.try_operator_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_try_operator_tests>
+)
+
 add_test(NAME ahfl.semantics.const_sema_negatives_all
     COMMAND $<TARGET_FILE:ahfl_semantics_const_sema_negatives_tests>
 )
