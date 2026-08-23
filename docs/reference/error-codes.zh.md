@@ -6,7 +6,7 @@
 | Status | 草稿 · 可审查 |
 | SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::*` + `messages::*` 命名空间） |
 | Created | 2026-06-28 |
-| Updated | 2026-07-09 |
+| Updated | 2026-08-24 |
 | Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
 
 ## 分组分布
@@ -15,10 +15,10 @@
 pie title Stable Error-Code 分组分布
     "Type System" : 27
     "Callable & Arity" : 9
-    "Effects & Contracts + Trait/Impl" : 28
+    "Effects & Contracts + Trait/Impl" : 16
     "Struct/Enum Literals" : 14
     "Backend SMV/BMC" : 1
-    "Linting & Migration" : 2
+    "Linting & Migration" : 1
     "TBD" : 0
 ```
 
@@ -440,7 +440,7 @@ fn f() -> Int effect Pure decreases 0 { return 1 + true; }
 - 显式把两操作数转成同类型；数值运算统一用 `Int` / `Decimal`。
 - 逻辑操作只允许 `Bool`；比较操作需要两侧同类型。
 
-**Related codes**：`TYPE_MISMATCH`、`EFFECT_NOT_PURE`、`IN_NON_PURE`。
+**Related codes**：`TYPE_MISMATCH`、`EFFECT_NOT_PURE`。
 
 ---
 
@@ -467,7 +467,7 @@ const k: Int = C();
 - 去掉 capability 调用；或将所在谓词 effect 放宽为对应 capability。
 - 不变式场景下改用 agent 派生字段或纯谓词。
 
-**Related codes**：`IN_NON_PURE`、`EFFECT_NOT_PURE`、`CONST_EXPR_REQUIRED`。
+**Related codes**：`EFFECT_NOT_PURE`、`CONST_EXPR_REQUIRED`。
 
 ---
 
@@ -492,7 +492,7 @@ const k: Int = f(5);
 - 改为 `const` 级字面量 / 常量表达式。
 - 确需运行时值时把该位置放宽为普通变量或 agent 字段。
 
-**Related codes**：`NON_PURE_EXPRESSION`、`CONST_DEPENDENCY_CYCLE`、`DECREASES_EXPECTS_PURE`。
+**Related codes**：`NON_PURE_EXPRESSION`、`CONST_DEPENDENCY_CYCLE`。
 
 ---
 
@@ -517,7 +517,7 @@ const b: Int = a * 2;
 - 至少选择其中一个常量作为"根"，赋值为字面量。
 - 对相互递归的数学定义改用谓词 + 不动点/归纳方案。
 
-**Related codes**：`CONST_EXPR_REQUIRED`、`DECREASES_DUPLICATE`。
+**Related codes**：`CONST_EXPR_REQUIRED`。
 
 ---
 
@@ -883,7 +883,7 @@ fn f(x: Int) -> Int effect Pure decreases 0 {
 - 重命名内层绑定；如确实需要覆盖，使用不同后缀 `x'`。
 - 循环内部建议使用 `acc_next` 类变量，避免 shadow 造成语义混乱。
 
-**Related codes**：`SHADOWED_RECEIVER`、`MATCH_DUPLICATE_BINDING`。
+**Related codes**：`MATCH_DUPLICATE_BINDING`。
 
 ---
 
@@ -1024,7 +1024,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 
 ---
 
-## 3. Effects & Contracts + Trait/Impl（29）
+## 3. Effects & Contracts + Trait/Impl（17）
 
 Pure/Nondet/Capability 效应判定、decreases 终止度量、不变式纯度检查、trait/impl 解析与一致性等。
 
@@ -1065,7 +1065,7 @@ flow for A {
 - 把调用移到 transition 动作中；不变式内部只使用纯谓词。
 - 对需要"观测外部值"的语义，在 agent ctx 字段中记录快照再由不变式读取。
 
-**Related codes**：`NON_PURE_EXPRESSION`、`IN_NON_PURE`、`NOT_IN_VERIFIED_SUBSET`。
+**Related codes**：`NON_PURE_EXPRESSION`、`NOT_IN_VERIFIED_SUBSET`。
 
 ---
 
@@ -1088,8 +1088,6 @@ fn f(n: Int) -> Bool effect Pure { return f(n - 1); }
 **常见修复**：
 - 增加 `decreases <numeric>` 子句，选取严格递减且下界有保障的测度。
 - 如非递归但仍被 checker 标为可疑，显式写出 `decreases 0` 关闭该检查。
-
-**Related codes**：`DECREASES_EXPECTS_NUMERIC`、`DECREASES_EXPECTS_PURE`、`DECREASES_ILLEGAL_OWNER`。
 
 ---
 
@@ -1208,7 +1206,7 @@ contract Trivial {
 - 去掉 spec 谓词上的 effect 子句。
 - 如需在谓词中建模外部调用，使用规范辅助变量 + capability 动作。
 
-**Related codes**：`EFFECT_UNDERDECLARED`、`NON_PURE_EXPRESSION`、`IN_NON_PURE`。
+**Related codes**：`EFFECT_UNDERDECLARED`、`NON_PURE_EXPRESSION`。
 
 ---
 
@@ -1247,7 +1245,7 @@ flow for A {
 - 把非确定值放到 transition 赋值到 agent 字段，再由不变式读取字段。
 - 重写为对"所有可能结果"都成立的量化性质，而非直接采样。
 
-**Related codes**：`EFFECT_NOT_PURE`、`IN_NON_PURE`、`NON_PURE_EXPRESSION`。
+**Related codes**：`EFFECT_NOT_PURE`、`NON_PURE_EXPRESSION`。
 
 ---
 
@@ -1274,155 +1272,6 @@ struct R { v: Int; }
 - 显式提高 budget（`--mono-budget N`）或报告给编译器团队优化 key 归并。
 
 **Related codes**：`AMBIGUOUS_TRAIT_IMPL`、`TRAIT_BOUND_NOT_SATISFIED`。
-
----
-
-### DECREASES_EXPECTS_NUMERIC
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.DECREASES_EXPECTS_NUMERIC` |
-| SoT | `diagnostics.hpp:300` + template line `583` |
-| MessageTemplate | `DECREASES measure must have numeric type (Int, Decimal, or Duration), got {}` |
-
-**触发条件**：`decreases <expr>` 中的表达式不是数值类型。
-
-**最小复现**：
-```ahfl
-module repro;
-// DECREASES_EXPECTS_NUMERIC：decreases 子句表达式必须是数值类型。
-// 目前的实现对非数值测度接受为抽象观测，以下为典型写法说明。
-fn len(s: String) -> Int effect Pure decreases 0 { return 0; }
-```
-
-**常见修复**：
-- 改为数值测度（常见 `s.length`、栈深度、节点深度等）。
-- 若使用 `Duration`，需要保持纯表达式 + 有下界。
-
-**Related codes**：`DECREASES_EXPECTS_PURE`、`NO_DECREASES`、`CONST_EXPR_REQUIRED`。
-
----
-
-### DECREASES_EXPECTS_PURE
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.DECREASES_EXPECTS_PURE` |
-| SoT | `diagnostics.hpp:302` + template line `585` |
-| MessageTemplate | `DECREASES measure must be a pure expression, but contains {}` |
-
-**触发条件**：`decreases` 表达式内部含有 capability 调用或非确定语句。
-
-**最小复现**：
-```ahfl
-module repro;
-capability C() -> Int;
-// decreases 表达式内含 capability 调用：非纯测度触发本码或伴随 EFFECT_UNDERDECLARED。
-fn f(n: Int) -> Bool effect Pure decreases C() { return true; }
-```
-
-**常见修复**：
-- 使用纯参数派生的数值作为终止度量，例如 `n`、`len(xs)`。
-- 需要外部计时数据，先写入 ctx 字段再以只读参数传入。
-
-**Related codes**：`DECREASES_EXPECTS_NUMERIC`、`NON_PURE_EXPRESSION`、`EFFECT_NOT_PURE`。
-
----
-
-### DECREASES_ILLEGAL_OWNER
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.DECREASES_ILLEGAL_OWNER` |
-| SoT | `diagnostics.hpp:304` + template line `587` |
-| MessageTemplate | `DECREASES clause is only allowed on predicates and recursive functions, not on {} '{}'` |
-
-**触发条件**：在常量、struct 字段、agent 字段等非谓词载体上写了 `decreases`。
-
-**最小复现**：
-```ahfl
-module repro;
-// DECREASES_ILLEGAL_OWNER：在非谓词载体（const、struct 字段、agent 字段）
-// 出现 decreases 时触发。
-// 注意：当前语法在 const / struct 字段上不接受 decreases，会被解析器直接拒绝，
-// 以下展示期望的语义等价示意（语义层会在其它载体上才会被接受）：
-// const n: Int = 5 decreases 0;  <- 这一行若语法允许时会触发本码。
-const n: Int = 5;
-```
-
-**常见修复**：
-- 删除非谓词声明上的 `decreases`。
-- 对谓词以外需要"单调性/终止约束"的对象，改用 spec 子句。
-
-**Related codes**：`DECREASES_DUPLICATE`、`NO_DECREASES`。
-
----
-
-### DECREASES_DUPLICATE
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.DECREASES_DUPLICATE` |
-| SoT | `diagnostics.hpp:306` + template line `589` |
-| MessageTemplate | `multiple DECREASES clauses in contract of '{}' (only one termination measure is supported)` |
-
-**触发条件**：同一谓词 contract 中出现两条或以上 `decreases` 子句。
-
-**最小复现**：
-```ahfl
-module repro;
-// 同一谓词 contract 中出现两条 decreases 子句时触发。
-// 目前语法使用位置受限，以下为示意；多条 decreases 在复杂 contract 结构中会命中。
-fn f(n: Int) -> Bool effect Pure decreases n { return true; }
-```
-
-**常见修复**：
-- 合并为单一 lex 序测度：`decreases (a, b, c)` 元组形式。
-- 若需要组合条件，先证明辅助引理再回到单调的主测度。
-
-**Related codes**：`DECREASES_ILLEGAL_OWNER`、`NO_DECREASES`、`DECREASES_SHADOWED_RECEIVER`。
-
----
-
-### IN_NON_PURE
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.IN_NON_PURE` |
-| SoT | `diagnostics.hpp:308` + template line `591` |
-| MessageTemplate | `invariant body must be a pure expression, but contains {}` |
-
-**触发条件**：agent invariant / safety / liveness 公式主体本身含有非纯表达式（capability、非确定值、可变状态等）。
-
-**最小复现**：
-```ahfl
-module repro;
-capability C() -> Int;
-struct R { v: Int; }
-struct Ctx { s: Int = 0; }
-struct Resp { o: Int; }
-
-agent A {
-    input: R; context: Ctx; output: Resp;
-    states: [Done]; initial: Done; final: [Done];
-    capabilities: [Log, C];
-}
-capability Log() -> Unit;
-contract for A {
-    invariant: C() > 0;
-}
-flow for A {
-    state Done {
-        return Resp { o: input.v };
-    }
-}
-```
-
-**常见修复**：
-- 将能力调用搬到 transition handler，结果写入 ctx/字段，再在不变式中读取字段。
-- 若 Log 是记录语义，可把调用转成纯谓词包装（丢弃结果时不要放在纯表达式中）。
-
-**Related codes**：`EFFECT_NOT_PURE`、`NON_PURE_EXPRESSION`、`NONDET_IN_INVARIANT`。
 
 ---
 
@@ -1454,40 +1303,7 @@ impl T for S {
 - 把 impl 移到定义 trait 或定义类型的 module 中。
 - 若必须在第三方 module 组合，使用 newtype wrapper（struct 封装后再 impl）。
 
-**Related codes**：`COHERENCE_CONFLICT`、`DUPLICATE_TRAIT_IMPL`、`TRAIT_BOUND_NOT_SATISFIED`。
-
----
-
-### DUPLICATE_TRAIT_IMPL
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.DUPLICATE_TRAIT_IMPL` |
-| SoT | `diagnostics.hpp:242` + template line `512` |
-| MessageTemplate | `impl '{}' for '{}' duplicates an earlier impl of the same trait and type` |
-
-**触发条件**：同一 (trait, type) 在作用域中被重复定义 impl（来自同一 module 或违反孤儿规则的组合）。
-
-**最小复现**：
-```ahfl
-module repro;
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { v: Int; }
-impl T for S {
-    fn f(self: S) -> Int { return 1; }
-}
-impl T for S {
-    fn f(self: S) -> Int { return 2; }
-}
-```
-
-**常见修复**：
-- 删除其中一份 impl；若两者语义差异明显，拆为不同 trait。
-- 条件 impl 需用 trait bound 精细区分，避免归一化后冲突。
-
-**Related codes**：`ORPHAN_IMPL`、`COHERENCE_CONFLICT`、`AMBIGUOUS_TRAIT_IMPL`。
+**Related codes**：`COHERENCE_CONFLICT`、`TRAIT_BOUND_NOT_SATISFIED`。
 
 ---
 
@@ -1520,7 +1336,7 @@ impl T for A {
 - 在写入 impl 之前以 `type` 别名展开为标准形式核对。
 - 若本意为"在特定条件下启用"，加上 trait bound 或 newtype 包装。
 
-**Related codes**：`ORPHAN_IMPL`、`DUPLICATE_TRAIT_IMPL`、`AMBIGUOUS_TRAIT_IMPL`。
+**Related codes**：`ORPHAN_IMPL`、`AMBIGUOUS_TRAIT_IMPL`。
 
 ---
 
@@ -1546,37 +1362,7 @@ impl NoSuchTrait for S { }
 - 检查 trait 拼写与 import；如 trait 定义在其它 module 使用 `M.Trait`。
 - 若想声明"固有 impl"，直接写 `impl S { ... }` 而不带 trait 名（若语言支持固有 impl）。
 
-**Related codes**：`IMPL_TARGET_UNKNOWN`、`TRAIT_METHOD_NOT_FOUND`、`UNKNOWN_TYPE`。
-
----
-
-### IMPL_TARGET_UNKNOWN
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.IMPL_TARGET_UNKNOWN` |
-| SoT | `diagnostics.hpp:245` + template line `523` |
-| MessageTemplate | `impl targets unknown type '{}'` |
-
-**触发条件**：`impl Trait for Type` 中的类型名未定义或未导入。
-
-**最小复现**：
-```ahfl
-module repro;
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { }
-impl T for NoSuch {
-    fn f(self: NoSuch) -> Int { return 0; }
-}
-```
-
-**常见修复**：
-- 定义或 import 目标类型；必要时新建 newtype。
-- `impl for` 的类型必须是本地/导入的 nominal 类型，不接受结构字面量。
-
-**Related codes**：`IMPL_TRAIT_UNKNOWN`、`UNKNOWN_TYPE`、`INVALID_TYPE_REFERENCE`。
+**Related codes**：`TRAIT_METHOD_NOT_FOUND`、`UNKNOWN_TYPE`。
 
 ---
 
@@ -1607,7 +1393,7 @@ impl T for S {
 - 在 impl 内补齐缺失的方法；或为 trait 方法提供默认实现（若语言支持）。
 - 如方法名存在拼写差异，建议在 trait 中使用一致命名后再对齐 impl。
 
-**Related codes**：`METHOD_NOT_FOUND`、`TRAIT_ASSOC_TYPE_NOT_FOUND`、`TRAIT_METHOD_SIGNATURE_MISMATCH`。
+**Related codes**：`TRAIT_ASSOC_TYPE_NOT_FOUND`、`TRAIT_METHOD_SIGNATURE_MISMATCH`。
 
 ---
 
@@ -1637,7 +1423,7 @@ impl T for S {
 - 严格按 trait 签名改写 impl 方法；需要额外参数时先做成辅助方法再由 trait 方法调用。
 - 若设计本身需要更宽签名，升级 trait 定义并同步所有 impl。
 
-**Related codes**：`TYPE_MISMATCH`、`TRAIT_METHOD_NOT_FOUND`、`METHOD_SIGNATURE_MISMATCH`。
+**Related codes**：`TYPE_MISMATCH`、`TRAIT_METHOD_NOT_FOUND`。
 
 ---
 
@@ -1669,7 +1455,7 @@ impl T for S {
 - 在 impl 中写 `type X = Int;` 等具体绑定。
 - 如希望由编译器推断，可考虑改 trait 方法以类型参数代替 assoc type。
 
-**Related codes**：`ASSOC_TYPE_NOT_FOUND`、`TRAIT_METHOD_NOT_FOUND`、`NO_TRAIT_IMPL`。
+**Related codes**：`TRAIT_METHOD_NOT_FOUND`。
 
 ---
 
@@ -1702,35 +1488,7 @@ impl Derived for S {
 - 先给出 `impl Base for S { ... }`，再写 Derived impl。
 - 拆分层级过多时考虑扁平化 trait。
 
-**Related codes**：`NO_TRAIT_IMPL`、`TRAIT_BOUND_NOT_SATISFIED`、`ORPHAN_IMPL`。
-
----
-
-### NO_TRAIT_IMPL
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.NO_TRAIT_IMPL` |
-| SoT | `diagnostics.hpp:253` + template line `536` |
-| MessageTemplate | `type '{}' does not implement trait '{}'` |
-
-**触发条件**：在要求某 trait bound 的上下文里，实际类型没有实现该 trait。
-
-**最小复现**：
-```ahfl
-module repro;
-trait Eq {
-    fn eq(self: C, other: C) -> Bool;
-}
-struct C { n: Int; }
-fn same(a: C, b: C) -> Bool effect Pure decreases 0 { return a.eq(b); }
-```
-
-**常见修复**：
-- 为类型显式提供 `impl Eq for S { ... }`。
-- 若算法本来不依赖 Eq，去掉该 bound 或换用显式参数化比较函数。
-
-**Related codes**：`TRAIT_BOUND_NOT_SATISFIED`、`METHOD_NOT_FOUND`、`AMBIGUOUS_TRAIT_IMPL`。
+**Related codes**：`TRAIT_BOUND_NOT_SATISFIED`、`ORPHAN_IMPL`。
 
 ---
 
@@ -1762,7 +1520,7 @@ fn use(s: S) -> Int effect Pure decreases 0 { return s.f(); }
 - 移除冲突的 blanket impl；或给 impl 增加 disjoint bound。
 - 对调用点使用显式类型标注：`(x as T).f()` 形式（若语言支持）。
 
-**Related codes**：`COHERENCE_CONFLICT`、`NO_TRAIT_IMPL`、`TRAIT_BOUND_NOT_SATISFIED`。
+**Related codes**：`COHERENCE_CONFLICT`、`TRAIT_BOUND_NOT_SATISFIED`。
 
 ---
 
@@ -1791,128 +1549,7 @@ fn f() -> String effect Pure decreases 0 { return print(S{}); }
 - 为该类型实现缺失的 trait。
 - 或在 `print` 上放宽 bound；如不需要 Show，直接删掉 bound 约束。
 
-**Related codes**：`NO_TRAIT_IMPL`、`MISSING_SUPER_TRAIT`、`AMBIGUOUS_TRAIT_IMPL`。
-
----
-
-### METHOD_NOT_FOUND
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.METHOD_NOT_FOUND` |
-| SoT | `diagnostics.hpp:260` + template line `553` |
-| MessageTemplate | `method '{}' not found on type '{}'` |
-
-**触发条件**：method-call 语法 `x.m(...)` 在 receiver 类型上找不到 `m`（固有 impl 和 trait impl 都未提供）。
-
-**最小复现**：
-```ahfl
-module repro;
-struct S { x: Int; }
-fn f(s: S) -> Int effect Pure decreases 0 { return s.inc(); }
-```
-
-**常见修复**：
-- 在固有 impl 或对应 trait impl 中新增 `inc` 方法。
-- 若实际是自由函数，改为 `f(s)` 调用形式。
-
-**Related codes**：`TRAIT_METHOD_NOT_FOUND`、`UNKNOWN_FIELD`、`ASSOC_TYPE_NOT_FOUND`。
-
----
-
-### METHOD_SIGNATURE_MISMATCH
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.METHOD_SIGNATURE_MISMATCH` |
-| SoT | `diagnostics.hpp:261` + template line `555` |
-| MessageTemplate | `method '{}' signature mismatch on impl '{}' of trait '{}': expected '{}', got '{}'` |
-
-**触发条件**：impl 中方法签名比 trait 声明有更细微的不匹配（`Self` 绑定、associated type、effect 组合等），已在 `TRAIT_METHOD_SIGNATURE_MISMATCH` 基础上带上 impl/trait 上下文。
-
-**最小复现**：
-```ahfl
-module repro;
-trait T {
-    fn f(self: S) -> S;
-}
-struct S { x: Int; }
-impl T for S {
-    fn f(self: S) -> Int { return 0; }
-}
-```
-
-**常见修复**：
-- 把 `Self`、返回值、参数全部按 trait 声明逐字对齐。
-- 若需要针对具体 impl 特化签名，请重新设计 trait 或使用 associated type 参数化。
-
-**Related codes**：`TRAIT_METHOD_SIGNATURE_MISMATCH`、`TYPE_MISMATCH`、`ASSOC_TYPE_NOT_FOUND`。
-
----
-
-### ASSOC_TYPE_NOT_FOUND
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.ASSOC_TYPE_NOT_FOUND` |
-| SoT | `diagnostics.hpp:263` + template line `557` |
-| MessageTemplate | `associated type '{}' not found on trait '{}'` |
-
-**触发条件**：类型位置引用了 `<A as Trait>::X` 形式的 assoc type，但 trait 上未声明 `X`。
-
-**最小复现**：
-```ahfl
-module repro;
-// ASSOC_TYPE_NOT_FOUND：<A as Trait>::X 引用了 trait 上未声明的 associated type；
-// 当前语法表面板缺 `<A as Trait>::T` 形式，以下为占位。
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { }
-impl T for S {
-    fn f(self: S) -> Int { return 0; }
-}
-```
-
-**常见修复**：
-- 到 trait 定义里核查 associated type 名；必要时新增该 assoc type。
-- 需要多参时考虑在 trait 里升级为独立 associated type 而非字段化表达。
-
-**Related codes**：`TRAIT_ASSOC_TYPE_NOT_FOUND`、`UNKNOWN_TYPE`、`METHOD_NOT_FOUND`。
-
----
-
-### INHERENT_TRAIT_CONFLICT
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.INHERENT_TRAIT_CONFLICT` |
-| SoT | `diagnostics.hpp:264` + template line `559` |
-| MessageTemplate | `member '{}' on '{}' conflicts between inherent impl and trait impl of '{}'` |
-
-**触发条件**：同一类型在固有 impl 中定义了方法 `m`，在某 trait impl 里也出现了同名 `m`，调用解析无法区分。
-
-**最小复现**：
-```ahfl
-module repro;
-trait T {
-    fn f(self: S) -> Int;
-}
-struct S { }
-impl S {
-    fn f(self: S) -> Int { return 1; }
-}
-impl T for S {
-    fn f(self: S) -> Int { return 2; }
-}
-fn use(s: S) -> Int effect Pure decreases 0 { return s.f(); }
-```
-
-**常见修复**：
-- 对其中一个方法重命名，避免名称冲突。
-- 调用点使用 UFCS 语法明确来源：`T::f(&s)` / `S::f(&s)`。
-
-**Related codes**：`AMBIGUOUS_TRAIT_IMPL`、`COHERENCE_CONFLICT`、`METHOD_NOT_FOUND`。
+**Related codes**：`MISSING_SUPER_TRAIT`、`AMBIGUOUS_TRAIT_IMPL`。
 
 ---
 
@@ -2448,35 +2085,9 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 
 ---
 
-## 6. Linting & Migration（2）
+## 6. Linting & Migration（1）
 
 不影响正确性的语义告警，主要服务于代码整洁度、升级迁移与终止精度提示。
-
-### SHADOWED_RECEIVER
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.SHADOWED_RECEIVER` |
-| SoT | `diagnostics.hpp:309` + template line `593` |
-| MessageTemplate | `let binding '{}' shadows receiver '{}' used for termination; termination check may be imprecise` |
-
-**触发条件**：在方法/impl 中局部 let 名遮蔽了 `self`/`ctx` 等终止度量依赖的接收者，使终止推断降为抽象观测。
-
-**最小复现**：
-```ahfl
-module repro;
-// MONOMORPHIZATION_BUDGET_EXCEEDED：泛型实例化数量超 budget 时触发；
-// 需要高度泛型化代码 + 小 budget 才能复现，此处为占位。
-struct R { v: Int; }
-```
-
-**常见修复**：
-- 改名局部 let，避免 `self`/`ctx` 等关键名字冲突。
-- 或直接在 decreases 中使用 `self.n` 等不依赖遮蔽变量的表达式。
-
-**Related codes**：`SHADOWED_BINDING`、`DECREASES_SHADOWED_RECEIVER`、`DECREASES_EXPECTS_PURE`。
-
----
 
 ### DECREASES_SHADOWED_RECEIVER
 
@@ -2503,7 +2114,7 @@ fn f(self: Wrap) -> Bool effect Pure decreases self.n {
 - 遮蔽场景下使用独立变量名，例如 `next`。
 - 将 decreases 改为字段访问形式，不依赖裸 `self` 名（若语言允许）。
 
-**Related codes**：`SHADOWED_RECEIVER`、`DECREASES_EXPECTS_PURE`、`SHADOWED_BINDING`。
+**Related codes**：`SHADOWED_BINDING`。
 
 ---
 
