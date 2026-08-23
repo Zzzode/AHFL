@@ -1,19 +1,19 @@
 ---
 rfc: "0016"
 title: "Incremental Cache Contract"
-status: "draft"
+status: "review"
 area: ["compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-23"
 updated: "2026-08-23"
 authors: ["LLM-orchestrated"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
   compiler: "compiler owner"
   tooling: "tooling owner"
 required_reviewers: ["compiler", "tooling"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 ---
 
@@ -250,11 +250,12 @@ Cache schema 版本化（`AHFL_TYPED_HIR_CACHE_V1`）确保未来格式变化时
 
 ## Open Questions
 
-1. **Resolver snapshot version 的计算**：`resolver_snapshot_version` 应该 hash 什么？倾向 hash `ResolveResult` 的 symbol table + import 表。但这可能过于敏感——import 顺序变化会改变 hash 但不影响语义。需要定义一个规范化的 resolver state 表示。
-2. **Cache 目录位置**：`~/.ahfl/cache/` 还是 `$XDG_CACHE_HOME/ahfl/`？倾向遵循 XDG base directory spec，`~/.ahfl/cache/` 作为 fallback。
-3. **Daemon 的生命周期**：daemon 是由 LSP 启动还是独立运行？倾向独立运行——LSP 和 CLI 都可以连接到同一个 daemon。但这引入了进程管理的复杂度。Slice 1 可以先做独立 daemon，LSP 集成是 follow-up。
-4. **多进程 cache 访问**：如果 LSP 和 CLI 同时运行，可能同时读写 cache 目录。需要文件锁还是接受 last-writer-wins？倾向文件锁（`flock`）——实现简单且足够。
+1. ~~Resolver snapshot version 的计算~~（已决议，2026-08-23）：hash `ResolveResult` 的规范化表示——symbol table 的 (symbol_id, kind, name, source_range) 元组列表 + import 表的 (importer, imported) 元组列表，按确定性顺序序列化后 FNV-1a。import 顺序变化不影响 hash（排序后 hash）。
+2. ~~Cache 目录位置~~（已决议，2026-08-23）：遵循 XDG base directory spec——`$XDG_CACHE_HOME/ahfl/`，fallback 到 `~/.cache/ahfl/`。
+3. ~~Daemon 的生命周期~~（已决议，2026-08-23）：Slice 1 做独立 daemon（`ahfl-incremental --daemon`），LSP 集成是 follow-up。LSP 和 CLI 都可以连接到同一个 daemon。
+4. ~~多进程 cache 访问~~（已决议，2026-08-23）：文件锁（`flock`）——cache 目录下的 `.lock` 文件，写者获取排他锁，读者获取共享锁。实现简单且足够。
 
 ## Decision History
 
 - 2026-08-23: Draft opened.
+- 2026-08-23: Open Questions all resolved; status draft → review.

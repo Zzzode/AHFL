@@ -1,19 +1,19 @@
 ---
 rfc: "0015"
 title: "DAP Runtime Integration"
-status: "draft"
+status: "review"
 area: ["runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-23"
 updated: "2026-08-23"
 authors: ["LLM-orchestrated"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
   runtime: "runtime owner"
   tooling: "tooling owner"
 required_reviewers: ["runtime", "tooling"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 ---
 
@@ -284,11 +284,12 @@ Frame 2: parent_workflow_node (source.ahfl:line)
 
 ## Open Questions
 
-1. **Capability 断点的粒度**：是按 capability 名（如 `http.get`）还是按 capability 调用点（源码位置）断？倾向按名——同名 capability 可能在多处调用，用户通常想在所有调用处断。
-2. **StepIn 到 capability 内部**：capability 是外部调用（HTTP / LLM），无法 step into。StepIn 到 capability 时是否应该在 capability 返回后暂停？倾向是——StepIn 到 capability = 在其返回处暂停。
-3. **多 agent 并发暂停**：多个 agent 同时命中断点时，是全部暂停还是只暂停命中的 agent？DAP 的 `allThreadsStopped` 字段控制此行为。倾向 `allThreadsStopped: true`——AHFL runtime 是单线程事件循环，一个 agent 暂停意味着整个 runtime 暂停。
-4. **Workflow 变量的作用域**：workflow-level 变量（input / output / node results）应该在哪个 scope 暴露？倾向新增 `Workflow` scope（variablesReference = 400 + workflow_id）。
+1. ~~Capability 断点的粒度~~（已决议，2026-08-23）：按 capability 名断（如 `http.get`），不按调用点。同名 capability 可能在多处调用，用户通常想在所有调用处断。
+2. ~~StepIn 到 capability 内部~~（已决议，2026-08-23）：capability 是外部调用（HTTP / LLM），无法 step into。StepIn 到 capability 时在其返回处暂停。
+3. ~~多 agent 并发暂停~~（已决议，2026-08-23）：`allThreadsStopped: true`。AHFL runtime 是单线程事件循环，一个 agent 暂停意味着整个 runtime 暂停。
+4. ~~Workflow 变量的作用域~~（已决议，2026-08-23）：新增 `Workflow` scope（variablesReference = 400 + workflow_id），暴露 workflow-level 变量（input / output / node results）。
 
 ## Decision History
 
 - 2026-08-23: Draft opened.
+- 2026-08-23: Open Questions all resolved; status draft → review.
