@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["compiler", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["1c6f5aed"]
 ---
 
 # RFC 0016: Incremental Cache Contract
@@ -260,3 +260,4 @@ Cache schema 版本化（`AHFL_TYPED_HIR_CACHE_V1`）确保未来格式变化时
 - 2026-08-23: Draft opened.
 - 2026-08-23: Open Questions all resolved; status draft → review.
 - 2026-08-23: Status review → implementing; Slice 1 (CacheCore + import graph discovery) started.
+- 2026-08-23: Slice 1 landed (1c6f5aed): CacheKey, PersistentCache, import graph discovery, CLI wiring, 10/10 incremental tests.

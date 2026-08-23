@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["85608c4e"]
 ---
 
 # RFC 0015: DAP Runtime Integration
@@ -294,3 +294,4 @@ Frame 2: parent_workflow_node (source.ahfl:line)
 - 2026-08-23: Draft opened.
 - 2026-08-23: Open Questions all resolved; status draft → review.
 - 2026-08-23: Status review → implementing; Slice 1 (DebugSession + event emission + state breakpoint) started.
+- 2026-08-23: Slice 1 landed (85608c4e): DebugSession, send_event, state breakpoint wiring, 32/32 DAP tests.
