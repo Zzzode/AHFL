@@ -952,13 +952,6 @@ void DiagnosticReporter::typecheck_warning(ErrorCode<DiagnosticCategory::TypeChe
     diagnostics_->add_diagnostic(std::move(diagnostic));
 }
 
-void ConstSema::run() {
-    check_agent_context_defaults();
-    check_const_initializers();
-    check_enum_variant_defaults();
-    check_struct_defaults();
-}
-
 void FlowWorkflowSema::run() {
     check_flows();
     check_contracts();
@@ -1010,6 +1003,95 @@ void TypedHirBuilder::apply_declaration_payload_updates(
         }
     }
 }
+
+// PassConstSemaDelegate adapts TypeCheckPass to the narrow ConstSemaDelegate
+// accessor interface (see const_sema.hpp). It is the const-sema counterpart of
+// PassExpressionSemaDelegate: every method forwards to the corresponding
+// TypeCheckPass member so ConstSema never names TypeCheckPass directly. The
+// with_symbol_context adapter erases the pass's template helper behind a
+// std::function<void()> so it can satisfy the virtual interface.
+class PassConstSemaDelegate final : public ConstSemaDelegate {
+  public:
+    explicit PassConstSemaDelegate(TypeCheckPass &pass) : pass_(&pass) {}
+
+    const SourceGraph *graph() const override {
+        return pass_->graph_;
+    }
+    const ast::Program *program() const override {
+        return pass_->program_;
+    }
+    void enter_source(const SourceUnit &source) override {
+        pass_->enter_source(source);
+    }
+    void leave_source() override {
+        pass_->leave_source();
+    }
+    void with_symbol_context(SymbolId id, const std::function<void()> &body) override {
+        pass_->with_symbol_context(id, [&body]() { body(); });
+    }
+    const SourceFile *current_source_file() const override {
+        return pass_->current_source_ != nullptr ? &pass_->current_source_->source : nullptr;
+    }
+    std::optional<SourceId> current_source_id() const override {
+        return pass_->current_source_id_;
+    }
+
+    MaybeCRef<Symbol> symbol_of(SymbolId id) const override {
+        return pass_->symbol_of(id);
+    }
+    MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
+                                      std::string_view name) const override {
+        return pass_->find_local_here(name_space, name);
+    }
+    MaybeCRef<ast::ConstDecl> const_decl(SymbolId id) const override {
+        return internal::find_decl_ref(pass_->const_decls_, id);
+    }
+    const StructDeclRefMap &struct_decls() const override {
+        return pass_->struct_decls_;
+    }
+    const EnumDeclRefMap &enum_decls() const override {
+        return pass_->enum_decls_;
+    }
+
+    const TypeEnvironment &environment() const override {
+        return pass_->environment();
+    }
+    TypeRelationContext &relations() override {
+        return pass_->relations_;
+    }
+    const SymbolTable &symbol_table() const override {
+        return pass_->resolve_result_.symbol_table;
+    }
+    const ResolveResult &resolve_result() const override {
+        return pass_->resolve_result_;
+    }
+    TypedProgram &typed_program() override {
+        return pass_->result_.typed_program;
+    }
+
+    DiagnosticBag &diagnostics() override {
+        return pass_->result_.diagnostics;
+    }
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range) override {
+        pass_->typecheck_error_here(code, std::move(message), range);
+    }
+
+    ConstCheckedExpression check_expression(const ast::ExprSyntax &expr,
+                                            MaybeCRef<Type> expected_type) override {
+        const internal::ValueContext context;
+        auto value = pass_->check_expr(expr, context, expected_type);
+        return ConstCheckedExpression{
+            .type = std::move(value.type),
+            .effect = value.effect,
+            .is_pure = value.is_pure,
+        };
+    }
+
+  private:
+    TypeCheckPass *pass_{nullptr};
+};
 
 TypeCheckResult TypeCheckPass::run() {
     relations_.enable_trace(options_.trace_type_relations);
@@ -1081,7 +1163,11 @@ TypeCheckResult TypeCheckPass::run() {
         }
         tp.impl_declaration_indexes = std::move(unique_impls);
     }
-    ConstSema(*this).run();
+    {
+        PassConstSemaDelegate const_sema_delegate{*this};
+        ConstSema const_sema{const_sema_delegate};
+        const_sema.run();
+    }
     // Flow checking must run before contract checking so decreases clauses can observe
     // let-shadowed `self` bindings introduced inside agent flow handlers.
     FlowWorkflowSema(*this).run();
@@ -1869,81 +1955,6 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     }
 }
 
-void ConstSema::remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value) {
-    if (auto *typed_expr =
-            driver_->result_.typed_program.find_expr(expr.node_id, driver_->current_source_id_);
-        typed_expr != nullptr) {
-        typed_expr->const_value = value;
-        return;
-    }
-
-    if (expr.node_id == 0) {
-        if (auto *typed_expr = driver_->result_.typed_program.find_expr_by_range(
-                expr.range, driver_->current_source_id_);
-            typed_expr != nullptr) {
-            typed_expr->const_value = value;
-        }
-    }
-}
-
-bool ConstSema::ensure_const_value(SymbolId id, SourceRange use_range) {
-    ConstValueResolutionState resolution_state{
-        const_values_,
-        active_const_values_,
-        failed_const_values_,
-    };
-    const auto symbol = driver_->symbol_of(id);
-    auto begin_result =
-        resolution_state.begin(id, symbol.has_value() ? &symbol->get() : nullptr, use_range);
-    if (begin_result.status == ConstValueResolutionStatus::Known) {
-        return true;
-    }
-    if (begin_result.status == ConstValueResolutionStatus::Failed) {
-        return false;
-    }
-
-    if (begin_result.status == ConstValueResolutionStatus::Cycle) {
-        ConstDiagnosticEmitter{
-            driver_->result_.diagnostics,
-            driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
-        }
-            .emit_all(std::move(begin_result.diagnostics));
-        return false;
-    }
-
-    const auto decl = internal::find_decl_ref(driver_->const_decls_, id);
-    if (!decl.has_value() || decl->get().value == nullptr || decl->get().type == nullptr) {
-        return resolution_state.fail(id);
-    }
-
-    const auto declared_type = driver_->environment().get_const_type(id);
-    if (!declared_type.has_value()) {
-        return resolution_state.fail(id);
-    }
-
-    return driver_->with_symbol_context(id, [&]() {
-        const ValueContext context;
-        const auto validation = describe_const_initializer_validation(
-            declared_type->get(), decl->get().type->range, decl->get().name);
-        auto value = check_const_expr(
-            *decl->get().value, context, declared_type, validation.context_label, id);
-        ConstTypeRelationValidator const_relations{
-            driver_->relations_,
-            ConstDiagnosticEmitter{
-                driver_->result_.diagnostics,
-                driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
-            },
-            &driver_->resolve_result_.symbol_table,
-        };
-        const bool assignable = const_relations.check_assignable(*value.checked_expr.type,
-                                                                 declared_type->get(),
-                                                                 decl->get().value->range,
-                                                                 validation.context_label,
-                                                                 validation.expectation);
-        return resolution_state.finish_after_assignability(id, value.outcome, assignable);
-    });
-}
-
 bool TypeCheckPass::check_assignable(const Type &source,
                                      const Type &target,
                                      SourceRange range,
@@ -2171,41 +2182,6 @@ void TypeCheckPass::check_schema_boundary_decl_type(const TypePtr &type,
         error_codes::typecheck::InvalidAgentType,
         messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with(to_string(boundary)),
         range);
-}
-
-ConstEvalResult ConstSema::check_const_expr(const ast::ExprSyntax &expr,
-                                            const ValueContext &context,
-                                            MaybeCRef<Type> expected_type,
-                                            std::string_view context_label,
-                                            std::optional<SymbolId> source_const) {
-    const ConstExpressionDriver const_expr{
-        ConstEvalPipeline{
-            driver_->resolve_result_,
-            driver_->current_source_id_,
-            driver_->result_.typed_program.const_dependencies,
-            const_values_,
-            [this](SymbolId target, SourceRange use_range) {
-                return ensure_const_value(target, use_range);
-            },
-            [this](const ast::ExprSyntax &recorded_expr, const ConstValue &const_value) {
-                remember_const_value(recorded_expr, const_value);
-            },
-        },
-        ConstDiagnosticEmitter{
-            driver_->result_.diagnostics,
-            driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
-        },
-        [this, &context](const ast::ExprSyntax &checked_expr,
-                         MaybeCRef<Type> expected_checked_type) {
-            auto value = driver_->check_expr(checked_expr, context, expected_checked_type);
-            return ConstCheckedExpression{
-                .type = std::move(value.type),
-                .effect = value.effect,
-                .is_pure = value.is_pure,
-            };
-        },
-    };
-    return const_expr.evaluate(expr, expected_type, context_label, source_const);
 }
 
 TypedValue TypeCheckPass::typed(TypePtr type, bool is_pure) const {

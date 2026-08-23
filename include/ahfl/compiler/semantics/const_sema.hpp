@@ -8,6 +8,7 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -17,6 +18,10 @@
 #include <vector>
 
 namespace ahfl {
+
+class TypeEnvironment;
+struct SourceUnit;
+struct SourceGraph;
 
 struct ConstExprSyntaxResult {
     bool is_const{false};
@@ -315,6 +320,109 @@ class ConstExpressionDriver final {
     ConstEvalPipeline const_eval_;
     ConstDiagnosticEmitter diagnostics_;
     CheckExpressionFn check_expression_;
+};
+
+// ============================================================================
+// ConstSema dependency seam
+// ============================================================================
+//
+// ConstSema used to hold a raw `TypeCheckPass *driver_` and reach into ~30 of
+// its members directly. This mirrors LLVM/Clang Sema owners that were coupled
+// to the whole Sema object. Following the ExpressionSema / ExpressionSemaDelegate
+// pattern already used in this subsystem, ConstSema now depends only on an
+// explicit accessor interface (ConstSemaDelegate). TypeCheckPass provides a
+// PassConstSemaDelegate implementation (see typecheck.cpp) that forwards each
+// call to the appropriate pass member. ConstSema no longer names TypeCheckPass.
+//
+// The interface is deliberately narrow: it exposes exactly the source-context,
+// symbol/decl-table, environment, relation, and diagnostic surfaces that the
+// const-initializer / struct-default / enum-variant-default / agent-context
+// checks require, plus a single check_expression hook that drives the shared
+// expression typechecker. The const-value evaluation core (ConstEvaluator,
+// ConstEvalPipeline, ...) is already fully decoupled and takes explicit
+// ResolveResult / DiagnosticBag / SourceId dependencies.
+
+using ConstDeclRefMap =
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>>;
+using StructDeclRefMap =
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>>;
+using EnumDeclRefMap =
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>>;
+
+class ConstSemaDelegate {
+  public:
+    virtual ~ConstSemaDelegate() = default;
+
+    // --- Source-context management -----------------------------------------
+    // The driver keeps a moving "current source" cursor (source unit + id +
+    // module name). ConstSema pushes/pops it while walking a multi-source graph
+    // and reads it back when constructing diagnostics.
+    [[nodiscard]] virtual const SourceGraph *graph() const = 0;
+    [[nodiscard]] virtual const ast::Program *program() const = 0;
+    virtual void enter_source(const SourceUnit &source) = 0;
+    virtual void leave_source() = 0;
+    // Runs `body` with the given symbol's defining source/module as the current
+    // context, restoring the previous context afterwards (mirrors
+    // TypeCheckPass::with_symbol_context). Non-template so it can be virtual;
+    // callers that need a result capture it through the closure.
+    virtual void with_symbol_context(SymbolId id, const std::function<void()> &body) = 0;
+    [[nodiscard]] virtual const SourceFile *current_source_file() const = 0;
+    [[nodiscard]] virtual std::optional<SourceId> current_source_id() const = 0;
+
+    // --- Symbol / declaration-table access ---------------------------------
+    [[nodiscard]] virtual MaybeCRef<Symbol> symbol_of(SymbolId id) const = 0;
+    [[nodiscard]] virtual MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
+                                                            std::string_view name) const = 0;
+    [[nodiscard]] virtual MaybeCRef<ast::ConstDecl> const_decl(SymbolId id) const = 0;
+    [[nodiscard]] virtual const StructDeclRefMap &struct_decls() const = 0;
+    [[nodiscard]] virtual const EnumDeclRefMap &enum_decls() const = 0;
+
+    // --- Type / relation / symbol-table surfaces ---------------------------
+    [[nodiscard]] virtual const TypeEnvironment &environment() const = 0;
+    [[nodiscard]] virtual TypeRelationContext &relations() = 0;
+    [[nodiscard]] virtual const SymbolTable &symbol_table() const = 0;
+    [[nodiscard]] virtual const ResolveResult &resolve_result() const = 0;
+    [[nodiscard]] virtual TypedProgram &typed_program() = 0;
+
+    // --- Diagnostics -------------------------------------------------------
+    [[nodiscard]] virtual DiagnosticBag &diagnostics() = 0;
+    virtual void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                      std::string message,
+                                      SourceRange range) = 0;
+
+    // --- Expression typechecking hook --------------------------------------
+    // Drives the shared expression typechecker for a const-position expression
+    // with an implicit default value context and the supplied expected type.
+    [[nodiscard]] virtual ConstCheckedExpression
+    check_expression(const ast::ExprSyntax &expr, MaybeCRef<Type> expected_type) = 0;
+};
+
+class ConstSema final {
+  public:
+    explicit ConstSema(ConstSemaDelegate &delegate) : delegate_(&delegate) {}
+
+    void run();
+
+  private:
+    ConstSemaDelegate *delegate_{nullptr};
+    std::unordered_map<std::size_t, ConstValue> const_values_;
+    std::unordered_set<std::size_t> active_const_values_;
+    std::unordered_set<std::size_t> failed_const_values_;
+
+    [[nodiscard]] ConstDiagnosticEmitter make_diagnostic_emitter() const;
+
+    void remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value);
+    [[nodiscard]] bool ensure_const_value(SymbolId id, SourceRange use_range);
+    [[nodiscard]] ConstExpressionResult
+    check_const_expr(const ast::ExprSyntax &expr,
+                     MaybeCRef<Type> expected_type,
+                     std::string_view context_label,
+                     std::optional<SymbolId> source_const = std::nullopt);
+    void check_const_initializers_in_program(const ast::Program &program);
+    void check_const_initializers();
+    void check_enum_variant_defaults();
+    void check_struct_defaults();
+    void check_agent_context_defaults();
 };
 
 } // namespace ahfl

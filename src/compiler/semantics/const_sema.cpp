@@ -2,6 +2,9 @@
 
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/base/support/ownership.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -1634,6 +1637,278 @@ ConstExpressionResult ConstExpressionDriver::evaluate(const ast::ExprSyntax &exp
         .outcome = std::move(const_result.outcome),
         .checked_expr = std::move(checked_expr),
     };
+}
+
+// ============================================================================
+// ConstSema — orchestration over the decoupled const-eval core
+// ============================================================================
+//
+// ConstSema depends solely on ConstSemaDelegate (see const_sema.hpp). All
+// former driver_-> accesses now route through the delegate's accessor surface.
+// The const-value evaluation core (ConstEvalPipeline, ConstEvaluator,
+// ConstValueResolutionState, ...) is already delegate-free and takes explicit
+// ResolveResult / DiagnosticBag / SourceId dependencies.
+
+ConstDiagnosticEmitter ConstSema::make_diagnostic_emitter() const {
+    return ConstDiagnosticEmitter{delegate_->diagnostics(), delegate_->current_source_file()};
+}
+
+void ConstSema::run() {
+    check_agent_context_defaults();
+    check_const_initializers();
+    check_enum_variant_defaults();
+    check_struct_defaults();
+}
+
+void ConstSema::remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value) {
+    auto &typed_program = delegate_->typed_program();
+    const auto source_id = delegate_->current_source_id();
+    if (auto *typed_expr = typed_program.find_expr(expr.node_id, source_id); typed_expr != nullptr) {
+        typed_expr->const_value = value;
+        return;
+    }
+
+    if (expr.node_id == 0) {
+        if (auto *typed_expr = typed_program.find_expr_by_range(expr.range, source_id);
+            typed_expr != nullptr) {
+            typed_expr->const_value = value;
+        }
+    }
+}
+
+bool ConstSema::ensure_const_value(SymbolId id, SourceRange use_range) {
+    ConstValueResolutionState resolution_state{
+        const_values_,
+        active_const_values_,
+        failed_const_values_,
+    };
+    const auto symbol = delegate_->symbol_of(id);
+    auto begin_result =
+        resolution_state.begin(id, symbol.has_value() ? &symbol->get() : nullptr, use_range);
+    if (begin_result.status == ConstValueResolutionStatus::Known) {
+        return true;
+    }
+    if (begin_result.status == ConstValueResolutionStatus::Failed) {
+        return false;
+    }
+
+    if (begin_result.status == ConstValueResolutionStatus::Cycle) {
+        make_diagnostic_emitter().emit_all(std::move(begin_result.diagnostics));
+        return false;
+    }
+
+    const auto decl = delegate_->const_decl(id);
+    if (!decl.has_value() || decl->get().value == nullptr || decl->get().type == nullptr) {
+        return resolution_state.fail(id);
+    }
+
+    const auto declared_type = delegate_->environment().get_const_type(id);
+    if (!declared_type.has_value()) {
+        return resolution_state.fail(id);
+    }
+
+    bool result = false;
+    delegate_->with_symbol_context(id, [&]() {
+        const auto validation = describe_const_initializer_validation(
+            declared_type->get(), decl->get().type->range, decl->get().name);
+        auto value =
+            check_const_expr(*decl->get().value, declared_type, validation.context_label, id);
+        ConstTypeRelationValidator const_relations{
+            delegate_->relations(),
+            make_diagnostic_emitter(),
+            &delegate_->symbol_table(),
+        };
+        const bool assignable = const_relations.check_assignable(*value.checked_expr.type,
+                                                                 declared_type->get(),
+                                                                 decl->get().value->range,
+                                                                 validation.context_label,
+                                                                 validation.expectation);
+        result = resolution_state.finish_after_assignability(id, value.outcome, assignable);
+    });
+    return result;
+}
+
+ConstExpressionResult ConstSema::check_const_expr(const ast::ExprSyntax &expr,
+                                                  MaybeCRef<Type> expected_type,
+                                                  std::string_view context_label,
+                                                  std::optional<SymbolId> source_const) {
+    const ConstExpressionDriver const_expr{
+        ConstEvalPipeline{
+            delegate_->resolve_result(),
+            delegate_->current_source_id(),
+            delegate_->typed_program().const_dependencies,
+            const_values_,
+            [this](SymbolId target, SourceRange use_range) {
+                return ensure_const_value(target, use_range);
+            },
+            [this](const ast::ExprSyntax &recorded_expr, const ConstValue &const_value) {
+                remember_const_value(recorded_expr, const_value);
+            },
+        },
+        make_diagnostic_emitter(),
+        [this](const ast::ExprSyntax &checked_expr, MaybeCRef<Type> expected_checked_type) {
+            return delegate_->check_expression(checked_expr, expected_checked_type);
+        },
+    };
+    return const_expr.evaluate(expr, expected_type, context_label, source_const);
+}
+
+void ConstSema::check_const_initializers_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        const auto *constant = std::get_if<ast::ConstDecl>(&declaration);
+        if (constant == nullptr) {
+            continue;
+        }
+
+        const auto &decl = *constant;
+        const auto symbol = delegate_->find_local_here(SymbolNamespace::Consts, decl.name);
+        if (!symbol.has_value()) {
+            continue;
+        }
+
+        (void)ensure_const_value(symbol->get().id,
+                                 decl.value != nullptr ? decl.value->range : decl.range);
+    }
+}
+
+void ConstSema::check_const_initializers() {
+    if (const auto *graph = delegate_->graph(); graph != nullptr) {
+        for (const auto &source : graph->sources) {
+            delegate_->enter_source(source);
+            check_const_initializers_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            delegate_->leave_source();
+        }
+        return;
+    }
+
+    check_const_initializers_in_program(
+        require(delegate_->program(), "typecheck program must exist"));
+}
+
+void ConstSema::check_struct_defaults() {
+    for (const auto &[id, decl] : delegate_->struct_decls()) {
+        delegate_->with_symbol_context(SymbolId{id}, [&, id = id, &decl = decl]() {
+            const auto struct_info = delegate_->environment().get_struct(SymbolId{id});
+            if (!struct_info.has_value()) {
+                return;
+            }
+
+            const bool is_context_struct =
+                delegate_->environment().is_agent_context_struct(SymbolId{id});
+            for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
+                const auto &field_decl = decl.get().fields[index];
+                if (!field_decl->default_value) {
+                    continue;
+                }
+
+                const auto &field_info = struct_info->get().fields[index];
+                const auto default_policy = classify_const_struct_default_validation(
+                    *field_info.type, field_info.declaration_range, is_context_struct);
+                auto value = check_const_expr(*field_decl->default_value,
+                                              std::cref(*field_info.type),
+                                              default_policy.context_label);
+                ConstTypeRelationValidator const_relations{
+                    delegate_->relations(),
+                    make_diagnostic_emitter(),
+                    &delegate_->symbol_table(),
+                };
+                (void)const_relations.check_struct_default(*value.checked_expr.type,
+                                                           *field_info.type,
+                                                           field_decl->default_value->range,
+                                                           default_policy);
+            }
+        });
+    }
+}
+
+void ConstSema::check_enum_variant_defaults() {
+    for (const auto &[id, decl] : delegate_->enum_decls()) {
+        delegate_->with_symbol_context(SymbolId{id}, [&, &decl = decl]() {
+            const auto enum_info = delegate_->environment().get_enum(SymbolId{id});
+            if (!enum_info.has_value()) {
+                return;
+            }
+
+            for (std::size_t variant_index = 0; variant_index < decl.get().variants.size();
+                 ++variant_index) {
+                const auto &variant_decl = decl.get().variants[variant_index];
+                if (variant_decl == nullptr || variant_index >= enum_info->get().variants.size()) {
+                    continue;
+                }
+                const auto &variant_info = enum_info->get().variants[variant_index];
+                for (std::size_t field_index = 0; field_index < variant_decl->named_fields.size();
+                     ++field_index) {
+                    const auto &field_decl = variant_decl->named_fields[field_index];
+                    if (field_decl == nullptr || field_decl->default_value == nullptr ||
+                        field_index >= variant_info.fields.size()) {
+                        continue;
+                    }
+
+                    const auto &field_info = variant_info.fields[field_index];
+                    if (field_info.type == nullptr) {
+                        continue;
+                    }
+
+                    auto value = check_const_expr(*field_decl->default_value,
+                                                  std::cref(*field_info.type),
+                                                  "enum variant field default");
+                    if (value.checked_expr.type == nullptr) {
+                        continue;
+                    }
+
+                    ConstTypeRelationValidator const_relations{
+                        delegate_->relations(),
+                        make_diagnostic_emitter(),
+                        &delegate_->symbol_table(),
+                    };
+                    const auto expectation = TypeExpectation{
+                        .expected = field_info.type->clone(),
+                        .origin_kind = TypeExpectationOriginKind::Annotation,
+                        .origin_range = field_info.declaration_range,
+                        .description = "enum variant field default '" + variant_info.name + "." +
+                                       field_info.name + "'",
+                    };
+                    (void)const_relations.check_assignable(*value.checked_expr.type,
+                                                           *field_info.type,
+                                                           field_decl->default_value->range,
+                                                           "enum variant field default",
+                                                           expectation);
+                }
+            }
+        });
+    }
+}
+
+void ConstSema::check_agent_context_defaults() {
+    std::unordered_set<std::size_t> checked_contexts;
+    for (const auto &[id, agent] : delegate_->environment().agents()) {
+        (void)id;
+        if (!agent.context_type) {
+            continue;
+        }
+        const auto *ctx = agent.context_type->get_if<types::StructT>();
+        if (ctx == nullptr || !ctx->symbol.has_value() ||
+            !checked_contexts.insert(ctx->symbol->value).second) {
+            continue;
+        }
+
+        const auto context_struct = delegate_->environment().get_struct(*ctx->symbol);
+        if (!context_struct.has_value()) {
+            continue;
+        }
+
+        delegate_->with_symbol_context(context_struct->get().symbol, [&]() {
+            for (const auto &field : context_struct->get().fields) {
+                if (!field.has_default) {
+                    delegate_->typecheck_error_here(
+                        error_codes::typecheck::MissingField,
+                        messages::typecheck::MissingAgentContextDefault.format_with(field.name),
+                        field.declaration_range);
+                }
+            }
+        });
+    }
 }
 
 } // namespace ahfl

@@ -82,6 +82,7 @@ AST_HEADER = INCLUDE / "ahfl" / "compiler" / "frontend" / "ast.hpp"
 IR_EXPR_HEADER = INCLUDE / "ahfl" / "compiler" / "ir" / "expr.hpp"
 TYPECHECK_INTERNAL_HEADER = SRC / "compiler" / "semantics" / "typecheck_internal.hpp"
 TYPECHECK_DECLS_SOURCE = SRC / "compiler" / "semantics" / "typecheck_decls.cpp"
+CONST_SEMA_HEADER = INCLUDE / "ahfl" / "compiler" / "semantics" / "const_sema.hpp"
 FORMATTER_SOURCE = SRC / "tooling" / "formatter" / "formatter_api.cpp"
 LEGACY_FORMATTER_SOURCE = SRC / "tooling" / "formatter" / "formatter.cpp"
 LEGACY_RUNTIME_FACT_SOURCES = (
@@ -352,18 +353,36 @@ def check_ir_expression_effect_shape(failures: list[str]) -> None:
 
 def check_sema_ownership_shape(failures: list[str]) -> None:
     """Require the four Phase-2 Sema owners instead of a monolithic driver."""
-    for path in (TYPECHECK_INTERNAL_HEADER, TYPECHECK_DECLS_SOURCE):
+    for path in (TYPECHECK_INTERNAL_HEADER, TYPECHECK_DECLS_SOURCE, CONST_SEMA_HEADER):
         if not path.is_file():
             failures.append(f"missing expected Sema source: {path.relative_to(ROOT)}")
             return
 
     header = TYPECHECK_INTERNAL_HEADER.read_text()
     declarations = TYPECHECK_DECLS_SOURCE.read_text()
-    for owner in ("DeclarationSema", "FlowWorkflowSema", "ConstSema"):
+    # DeclarationSema and FlowWorkflowSema own declaration/flow checking from the
+    # internal header. ConstSema was extracted into its own public header
+    # (const_sema.hpp) behind a ConstSemaDelegate seam — a stricter decoupling
+    # than the internal-header owners — so it is required there instead.
+    for owner in ("DeclarationSema", "FlowWorkflowSema"):
         if re.search(rf"\bclass\s+{owner}\b", header) is None:
             failures.append(
                 f"{TYPECHECK_INTERNAL_HEADER.relative_to(ROOT)}: missing Phase-2 owner `{owner}`"
             )
+
+    const_sema_header = CONST_SEMA_HEADER.read_text()
+    if re.search(r"\bclass\s+ConstSema\b", const_sema_header) is None:
+        failures.append(
+            f"{CONST_SEMA_HEADER.relative_to(ROOT)}: missing Phase-2 owner `ConstSema`"
+        )
+    # The extraction is only real if ConstSema depends on the delegate seam
+    # rather than TypeCheckPass directly — guard against a regression that
+    # re-couples it to the driver.
+    if re.search(r"\bConstSemaDelegate\b", const_sema_header) is None:
+        failures.append(
+            f"{CONST_SEMA_HEADER.relative_to(ROOT)}: ConstSema must depend on the "
+            "`ConstSemaDelegate` seam, not TypeCheckPass directly"
+        )
 
     for retired in ("EnvironmentBuilder", "ContractSema", "FlowSema", "WorkflowSema", "FnSema", "ImplSema"):
         match = re.search(rf"\bclass\s+{retired}\b", header)

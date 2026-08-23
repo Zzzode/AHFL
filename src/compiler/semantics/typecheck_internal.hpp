@@ -186,6 +186,7 @@ struct DeclarationIndex {
 };
 
 class PassExpressionSemaDelegate;
+class PassConstSemaDelegate;
 class TypeCheckPass;
 class TypedHirBuilder;
 class DeclarationSema;
@@ -221,33 +222,6 @@ struct DeclarationPayloadUpdate {
 struct EnvironmentBuildResult {
     TypeEnvironment environment;
     std::vector<DeclarationPayloadUpdate> declaration_updates;
-};
-
-class ConstSema {
-  public:
-    explicit ConstSema(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void run();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
-    std::unordered_map<std::size_t, ConstValue> const_values_;
-    std::unordered_set<std::size_t> active_const_values_;
-    std::unordered_set<std::size_t> failed_const_values_;
-
-    void remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value);
-    [[nodiscard]] bool ensure_const_value(SymbolId id, SourceRange use_range);
-    [[nodiscard]] internal::ConstEvalResult
-    check_const_expr(const ast::ExprSyntax &expr,
-                     const internal::ValueContext &context,
-                     MaybeCRef<Type> expected_type,
-                     std::string_view context_label,
-                     std::optional<SymbolId> source_const = std::nullopt);
-    void check_const_initializers_in_program(const ast::Program &program);
-    void check_const_initializers();
-    void check_enum_variant_defaults();
-    void check_struct_defaults();
-    void check_agent_context_defaults();
 };
 
 class TypedHirBuilder {
@@ -342,7 +316,7 @@ class TypeCheckPass final {
 
   private:
     friend class DeclarationSema;
-    friend class ConstSema;
+    friend class PassConstSemaDelegate;
     friend class FlowWorkflowSema;
 
     // Re-export internal aliases inside the class so existing implementation
