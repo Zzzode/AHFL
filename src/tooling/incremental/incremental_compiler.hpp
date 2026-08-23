@@ -64,6 +64,11 @@ class IncrementalCompiler {
     [[nodiscard]] IncrementalStats stats() const;
     void reset_stats();
 
+    // Drops every in-memory and persistent cache entry. Used by the daemon
+    // when the project manifest changes (RFC 0016): the old graph structure
+    // is stale, so every cached artifact is stale too.
+    void invalidate_all();
+
   private:
     [[nodiscard]] CacheKey build_cache_key(const std::string &module_path,
                                            std::uint64_t content_hash) const;

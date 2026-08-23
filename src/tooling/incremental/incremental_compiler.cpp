@@ -402,4 +402,11 @@ void IncrementalCompiler::reset_stats() {
     stats_ = {};
 }
 
+void IncrementalCompiler::invalidate_all() {
+    cache_.clear();
+    if (config_.persistent_cache != nullptr) {
+        config_.persistent_cache->clear();
+    }
+}
+
 } // namespace ahfl::incremental

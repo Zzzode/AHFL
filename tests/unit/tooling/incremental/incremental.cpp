@@ -1,4 +1,6 @@
+#include <compiler/project_discovery/discovery.hpp>
 #include <tooling/incremental/cache_core.hpp>
+#include <tooling/incremental/daemon.hpp>
 #include <tooling/incremental/dependency_graph.hpp>
 #include <tooling/incremental/import_graph_discovery.hpp>
 #include <tooling/incremental/incremental_compiler.hpp>
@@ -9,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -33,6 +36,66 @@ status_of(const std::vector<ahfl::incremental::CompileResult> &results,
         }
     }
     return ahfl::incremental::CompileStatus::Failed;
+}
+
+// Counts non-overlapping occurrences of `needle` in `text`. Used to assert
+// on the daemon's JSON Lines output without pulling in a JSON parser.
+static std::size_t count_occurrences(const std::string &text, const std::string &needle) {
+    std::size_t count = 0;
+    std::size_t pos = 0;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+// Creates a two-module project (b imports a) under a fresh temp directory and
+// returns the normalized absolute module paths. Shared by the daemon tests.
+struct DaemonFixture {
+    std::filesystem::path project_dir;
+    std::string a_path;
+    std::string b_path;
+};
+
+static DaemonFixture make_daemon_fixture() {
+    namespace fs = std::filesystem;
+    const auto project_dir =
+        fs::temp_directory_path() /
+        ("ahfl_daemon_test_" +
+         std::to_string(static_cast<long long>(
+             std::chrono::steady_clock::now().time_since_epoch().count())));
+    fs::create_directories(project_dir);
+
+    std::ofstream(project_dir / "a.ahfl")
+        << "module fp::a;\n"
+        << "pub struct Config {\n    width: Int;\n}\n";
+    std::ofstream(project_dir / "b.ahfl")
+        << "module fp::b;\n"
+        << "import fp::a as a;\n"
+        << "pub struct Wrapper {\n    count: Int;\n}\n";
+
+    DaemonFixture fixture;
+    fixture.project_dir = project_dir;
+    fixture.a_path =
+        ahfl::project_discovery::normalize_project_path(project_dir / "a.ahfl").string();
+    fixture.b_path =
+        ahfl::project_discovery::normalize_project_path(project_dir / "b.ahfl").string();
+    return fixture;
+}
+
+static ahfl::incremental::DependencyGraph
+make_daemon_graph(const DaemonFixture &fixture) {
+    ahfl::incremental::DependencyGraph graph;
+    ahfl::incremental::ModuleNode node_a;
+    node_a.module_path = fixture.a_path;
+    node_a.imports = {};
+    ahfl::incremental::ModuleNode node_b;
+    node_b.module_path = fixture.b_path;
+    node_b.imports = {fixture.a_path};
+    graph.add_module(node_a);
+    graph.add_module(node_b);
+    return graph;
 }
 
 int main() {
@@ -656,6 +719,107 @@ int main() {
         fs::remove_all(project_dir);
         check(first_ok && second_ok,
               "incremental_compiler: missing old fingerprint rebuilds downstream");
+    }
+
+    // Test 14: daemon: didChange invalidates and emits stats.
+    // A didChange notification for A must compile A plus its transitive
+    // dependent B and emit exactly one stats object on stdout.
+    {
+        auto fixture = make_daemon_fixture();
+        auto graph = make_daemon_graph(fixture);
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        std::ostringstream input_text;
+        input_text << "{\"type\":\"didChange\",\"uri\":\"file://" << fixture.a_path
+                   << "\"}\n";
+        std::istringstream input(input_text.str());
+        std::ostringstream output;
+        ahfl::incremental::run_daemon(compiler, graph, input, output);
+
+        const auto out = output.str();
+        const auto stats = compiler.stats();
+        const bool valid =
+            (count_occurrences(out, "\"type\":\"stats\"") == 1) &&
+            (count_occurrences(out, "\"type\":\"error\"") == 0) &&
+            (stats.modules_recompiled == 2) &&
+            (stats.cache_misses == 2) &&
+            (cache.entry_count() == 2);
+
+        std::filesystem::remove_all(fixture.project_dir);
+        check(valid, "daemon: didChange invalidates and emits stats");
+    }
+
+    // Test 15: daemon: didClose is a no-op.
+    // didClose must not invalidate anything and must not emit output; a
+    // subsequent didChange with unchanged content must hit the cache.
+    {
+        auto fixture = make_daemon_fixture();
+        auto graph = make_daemon_graph(fixture);
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        std::ostringstream input_text;
+        input_text << "{\"type\":\"didChange\",\"uri\":\"file://" << fixture.a_path
+                   << "\"}\n"
+                   << "{\"type\":\"didClose\",\"uri\":\"file://" << fixture.a_path
+                   << "\"}\n"
+                   << "{\"type\":\"didChange\",\"uri\":\"file://" << fixture.a_path
+                   << "\"}\n";
+        std::istringstream input(input_text.str());
+        std::ostringstream output;
+        ahfl::incremental::run_daemon(compiler, graph, input, output);
+
+        const auto out = output.str();
+        const auto stats = compiler.stats();
+        const bool valid =
+            // One stats line per didChange, none for didClose.
+            (count_occurrences(out, "\"type\":\"stats\"") == 2) &&
+            (count_occurrences(out, "\"type\":\"error\"") == 0) &&
+            // Nothing was invalidated: both modules still cached.
+            (cache.entry_count() == 2) &&
+            // First pass compiled both; second pass hit both.
+            (stats.modules_recompiled == 2) &&
+            (stats.cache_hits == 2) &&
+            (stats.cache_misses == 2);
+
+        std::filesystem::remove_all(fixture.project_dir);
+        check(valid, "daemon: didClose is a no-op");
+    }
+
+    // Test 16: daemon: malformed JSON and unknown types report errors and
+    // the loop keeps processing subsequent notifications.
+    {
+        auto fixture = make_daemon_fixture();
+        auto graph = make_daemon_graph(fixture);
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        std::ostringstream input_text;
+        input_text << "not json {\n"
+                   << "{\"type\":\"wat\",\"uri\":\"file:///x\"}\n"
+                   << "{\"type\":\"didChange\"}\n"
+                   << "{\"type\":\"didChange\",\"uri\":\"file://" << fixture.a_path
+                   << "\"}\n";
+        std::istringstream input(input_text.str());
+        std::ostringstream output;
+        ahfl::incremental::run_daemon(compiler, graph, input, output);
+
+        const auto out = output.str();
+        const auto stats = compiler.stats();
+        const bool valid =
+            // Three error lines: malformed, unknown type, missing uri.
+            (count_occurrences(out, "\"type\":\"error\"") == 3) &&
+            (out.find("malformed JSON") != std::string::npos) &&
+            (out.find("unknown type: wat") != std::string::npos) &&
+            (out.find("missing 'uri' field") != std::string::npos) &&
+            // The final valid notification still compiled both modules.
+            (count_occurrences(out, "\"type\":\"stats\"") == 1) &&
+            (stats.modules_recompiled == 2) &&
+            (cache.entry_count() == 2);
+
+        std::filesystem::remove_all(fixture.project_dir);
+        check(valid, "daemon: malformed input reports errors and recovers");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

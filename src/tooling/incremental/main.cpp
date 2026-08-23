@@ -1,4 +1,5 @@
 #include "tooling/incremental/cache_core.hpp"
+#include "tooling/incremental/daemon.hpp"
 #include "tooling/incremental/dependency_graph.hpp"
 #include "tooling/incremental/import_graph_discovery.hpp"
 #include "tooling/incremental/incremental_compiler.hpp"
@@ -21,11 +22,15 @@ namespace fs = std::filesystem;
 
 void print_usage(std::ostream &out) {
     out << "Usage: ahfl-incremental [--help] [--project <root>] [--cache-dir <dir>]"
-           " <changed.ahfl>...\n\n"
+           " <changed.ahfl>...\n"
+           "       ahfl-incremental --daemon --project <root> [--cache-dir <dir>]\n\n"
         << "Runs the AHFL incremental compiler over the supplied changed source files.\n"
         << "When the changed files belong to a project (ahfl.toml), the import graph is\n"
         << "discovered automatically and a persistent cache is maintained under the\n"
-        << "project's cache directory.\n";
+        << "project's cache directory.\n\n"
+        << "With --daemon, starts a long-running process that reads JSON Lines change\n"
+        << "notifications from stdin (didChange/didSave/didClose with file:// URIs) and\n"
+        << "emits a stats object after each invalidation, exiting cleanly on EOF.\n";
 }
 
 std::string_view status_name(ahfl::incremental::CompileStatus status) {
@@ -56,6 +61,7 @@ struct CliOptions {
     std::vector<std::string> changed_paths;
     std::optional<fs::path> project_root;
     std::optional<fs::path> cache_dir;
+    bool daemon = false;
 };
 
 [[nodiscard]] std::optional<CliOptions> parse_args(int argc, char **argv) {
@@ -87,6 +93,10 @@ struct CliOptions {
             options.cache_dir = fs::path(argv[++index]);
             continue;
         }
+        if (argument == "--daemon") {
+            options.daemon = true;
+            continue;
+        }
         if (!argument.empty() && argument.front() == '-') {
             std::cerr << "unknown option: " << argument << '\n';
             print_usage(std::cerr);
@@ -94,7 +104,18 @@ struct CliOptions {
         }
         options.changed_paths.push_back(argument);
     }
-    if (options.changed_paths.empty()) {
+    if (options.daemon) {
+        if (!options.changed_paths.empty()) {
+            std::cerr << "error: --daemon cannot be combined with source files\n";
+            print_usage(std::cerr);
+            return std::nullopt;
+        }
+        if (!options.project_root.has_value()) {
+            std::cerr << "error: --daemon requires --project <root>\n";
+            print_usage(std::cerr);
+            return std::nullopt;
+        }
+    } else if (options.changed_paths.empty()) {
         print_usage(std::cerr);
         return std::nullopt;
     }
@@ -138,6 +159,42 @@ int main(int argc, char **argv) {
     const auto options = parse_args(argc, argv);
     if (!options.has_value()) {
         return 2;
+    }
+
+    // Daemon mode: discover the project once, then service JSON Lines change
+    // notifications from stdin until EOF (RFC 0016 "Daemon Invalidation
+    // Contract"). The discovered graph and persistent cache live for the
+    // whole daemon lifetime.
+    if (options->daemon) {
+        const auto location = resolve_project_location(*options);
+        if (!location.has_value()) {
+            std::cerr << "error: daemon mode requires a project with ahfl.toml\n";
+            return 2;
+        }
+        auto discovery = ahfl::incremental::discover_import_graph(location->root,
+                                                                  location->manifest);
+        for (const auto &diagnostic : discovery.diagnostics) {
+            std::cerr << "warning: " << diagnostic << '\n';
+        }
+        if (!discovery.discovered) {
+            std::cerr << "error: failed to discover import graph for project at '"
+                      << location->root.generic_string() << "'\n";
+            return 2;
+        }
+
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompilerConfig config;
+        config.project_root = location->root;
+        const auto cache_root = options->cache_dir.value_or(default_cache_root());
+        const auto project_cache_dir =
+            cache_root / ahfl::incremental::project_root_hash(location->root);
+        ahfl::incremental::PersistentCache persistent_cache(project_cache_dir);
+        config.persistent_cache = &persistent_cache;
+
+        ahfl::incremental::IncrementalCompiler compiler(discovery.graph, cache,
+                                                        std::move(config));
+        ahfl::incremental::run_daemon(compiler, discovery.graph, std::cin, std::cout);
+        return 0;
     }
 
     ahfl::incremental::DependencyGraph graph;

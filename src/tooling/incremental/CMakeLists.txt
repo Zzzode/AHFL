@@ -1,5 +1,6 @@
 add_library(ahfl_tooling_incremental STATIC
     cache_core.cpp
+    daemon.cpp
     dependency_graph.cpp
     import_graph_discovery.cpp
     ir_cache.cpp
