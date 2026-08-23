@@ -1,6 +1,7 @@
 #include "tooling/dap/dap_server.hpp"
 
 #include "base/json/json_value.hpp"
+#include "tooling/dap/debug_session.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -57,6 +58,8 @@ std::vector<int> get_json_int_array(const ahfl::json::JsonValue &object, std::st
 
 DapServer::DapServer() = default;
 
+DapServer::~DapServer() = default;
+
 DapMessage DapServer::handle_request(const DapMessage &request) {
     DapMessage response;
     response.type = DapMessageType::Response;
@@ -69,20 +72,18 @@ DapMessage DapServer::handle_request(const DapMessage &request) {
                         R"(,"supportsFunctionBreakpoints":false)"
                         R"(,"supportsConditionalBreakpoints":false)"
                         R"(,"supportsEvaluateForHovers":true})";
-        if (initialize_handler_) {
-            auto extra = initialize_handler_();
-            if (!extra.empty())
-                response.body = extra;
-        }
     } else if (request.command == "launch") {
-        if (launch_handler_) {
-            response.body = launch_handler_(request.body);
-        } else {
-            response.body = "{}";
+        if (session_) {
+            session_->disconnect();
+            session_.reset();
         }
+        session_ = std::make_unique<DebugSession>(*this, breakpoint_manager_, state_inspector_);
+        response.body = session_->launch(request.body);
     } else if (request.command == "disconnect") {
-        if (disconnect_handler_)
-            disconnect_handler_();
+        if (session_) {
+            session_->disconnect();
+            session_.reset();
+        }
         initialized_ = false;
         response.body = "{}";
     } else if (request.command == "configurationDone") {
@@ -114,46 +115,44 @@ DapCapabilities DapServer::capabilities() const {
     return capabilities_;
 }
 
-void DapServer::set_initialize_handler(std::function<std::string()> handler) {
-    initialize_handler_ = std::move(handler);
+void DapServer::send_event(std::string_view event_type,
+                           std::unique_ptr<ahfl::json::JsonValue> body) {
+    DapMessage event;
+    event.type = DapMessageType::Event;
+    event.seq = next_seq();
+    event.command = std::string(event_type);
+    event.body = body ? ahfl::json::serialize_json(*body) : std::string{"{}"};
+
+    if (event_output_) {
+        event_output_(encode_message(event));
+    }
 }
 
-void DapServer::set_launch_handler(std::function<std::string(const std::string &)> handler) {
-    launch_handler_ = std::move(handler);
-}
-
-void DapServer::set_disconnect_handler(std::function<void()> handler) {
-    disconnect_handler_ = std::move(handler);
-}
-
-void DapServer::set_continue_handler(std::function<void()> handler) {
-    continue_handler_ = std::move(handler);
-}
-
-void DapServer::set_next_handler(std::function<void()> handler) {
-    next_handler_ = std::move(handler);
-}
-
-void DapServer::set_evaluate_handler(std::function<std::string(const std::string &)> handler) {
-    evaluate_handler_ = std::move(handler);
+void DapServer::set_event_output(std::function<void(std::string_view)> sink) {
+    event_output_ = std::move(sink);
 }
 
 std::string DapServer::encode_message(const DapMessage &msg) const {
     std::string type_str;
+    const char *field_name;
     switch (msg.type) {
     case DapMessageType::Request:
         type_str = "request";
+        field_name = "command";
         break;
     case DapMessageType::Response:
         type_str = "response";
+        field_name = "command";
         break;
     case DapMessageType::Event:
         type_str = "event";
+        field_name = "event";
         break;
     }
 
     std::string json = R"({"seq":)" + std::to_string(msg.seq) + R"(,"type":)" +
-                       json_escape(type_str) + R"(,"command":)" + json_escape(msg.command);
+                       json_escape(type_str) + R"(,")" + field_name + R"(":)" +
+                       json_escape(msg.command);
     if (!msg.body.empty()) {
         json += R"(,"body":)" + msg.body;
     }
@@ -360,14 +359,14 @@ std::string DapServer::handle_variables(const std::string &body) {
 }
 
 std::string DapServer::handle_continue() {
-    if (continue_handler_)
-        continue_handler_();
+    if (session_) {
+        session_->resume();
+    }
     return R"({"allThreadsContinued":true})";
 }
 
 std::string DapServer::handle_next() {
-    if (next_handler_)
-        next_handler_();
+    // Stepping arrives with the DebugStepper (RFC 0015, later slice).
     return "{}";
 }
 
@@ -376,14 +375,12 @@ std::string DapServer::handle_evaluate(const std::string &body) {
     auto expression = parsed.has_value() && *parsed && (*parsed)->is_object()
                           ? get_json_string(**parsed, "expression")
                           : "";
-    std::string result_value = "(no result)";
-
-    if (evaluate_handler_ && !expression.empty()) {
-        result_value = evaluate_handler_(expression);
-    }
-
+    (void)expression;
+    // Evaluate in the paused context arrives with the DebugSession evaluator
+    // (RFC 0015, later slice).
     std::ostringstream oss;
-    oss << R"({"result":)" << json_escape(result_value) << R"(,"variablesReference":0})";
+    oss << R"({"result":)" << json_escape("(evaluate not yet supported)")
+        << R"(,"variablesReference":0})";
     return oss.str();
 }
 

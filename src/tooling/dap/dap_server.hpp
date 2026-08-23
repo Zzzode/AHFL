@@ -1,13 +1,22 @@
 #pragma once
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 #include "tooling/dap/breakpoints.hpp"
 #include "tooling/dap/state_inspector.hpp"
 
+namespace ahfl::json {
+struct JsonValue;
+}
+
 namespace ahfl::dap {
+
+class DebugSession;
 
 enum class DapMessageType {
     Request,
@@ -32,16 +41,22 @@ struct DapCapabilities {
 class DapServer {
   public:
     DapServer();
+    ~DapServer();
+
+    DapServer(const DapServer &) = delete;
+    DapServer &operator=(const DapServer &) = delete;
 
     [[nodiscard]] DapMessage handle_request(const DapMessage &request);
     [[nodiscard]] DapCapabilities capabilities() const;
 
-    void set_initialize_handler(std::function<std::string()> handler);
-    void set_launch_handler(std::function<std::string(const std::string &)> handler);
-    void set_disconnect_handler(std::function<void()> handler);
-    void set_continue_handler(std::function<void()> handler);
-    void set_next_handler(std::function<void()> handler);
-    void set_evaluate_handler(std::function<std::string(const std::string &)> handler);
+    /// Emit a DAP event: a Content-Length framed JSON message with
+    /// "type":"event" and the given event type, delivered to the installed
+    /// event output. Safe to call from any thread; the sink must be
+    /// thread-safe.
+    void send_event(std::string_view event_type, std::unique_ptr<json::JsonValue> body);
+
+    /// Install the sink for framed event messages (e.g. write to stdout).
+    void set_event_output(std::function<void(std::string_view framed)> sink);
 
     [[nodiscard]] std::string encode_message(const DapMessage &msg) const;
     [[nodiscard]] DapMessage decode_message(const std::string &raw) const;
@@ -54,18 +69,14 @@ class DapServer {
 
   private:
     bool initialized_ = false;
-    int seq_counter_ = 1;
+    std::atomic<int> seq_counter_{1};
     DapCapabilities capabilities_;
 
     BreakpointManager breakpoint_manager_;
     StateInspector state_inspector_;
 
-    std::function<std::string()> initialize_handler_;
-    std::function<std::string(const std::string &)> launch_handler_;
-    std::function<void()> disconnect_handler_;
-    std::function<void()> continue_handler_;
-    std::function<void()> next_handler_;
-    std::function<std::string(const std::string &)> evaluate_handler_;
+    std::function<void(std::string_view)> event_output_;
+    std::unique_ptr<DebugSession> session_;
 
     // Internal command handlers
     [[nodiscard]] std::string handle_set_breakpoints(const std::string &body);

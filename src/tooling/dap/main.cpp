@@ -3,8 +3,10 @@
 #include <cctype>
 #include <cstddef>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -84,6 +86,16 @@ int main(int argc, char **argv) {
     }
 
     ahfl::dap::DapServer server;
+
+    // Events are emitted from the workflow execution thread; serialize all
+    // writes to stdout against the response path below.
+    std::mutex output_mutex;
+    server.set_event_output([&output_mutex](std::string_view framed) {
+        std::lock_guard lock(output_mutex);
+        std::cout.write(framed.data(), static_cast<std::streamsize>(framed.size()));
+        std::cout << std::flush;
+    });
+
     while (auto frame = read_content_length_frame(std::cin)) {
         auto request = server.decode_message(*frame);
         if (request.command.empty()) {
@@ -91,7 +103,10 @@ int main(int argc, char **argv) {
         }
 
         auto response = server.handle_request(request);
-        std::cout << server.encode_message(response) << std::flush;
+        {
+            std::lock_guard lock(output_mutex);
+            std::cout << server.encode_message(response) << std::flush;
+        }
         if (request.command == "disconnect") {
             break;
         }

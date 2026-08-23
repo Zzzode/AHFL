@@ -683,14 +683,17 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         AgentRuntime agent_rt(*node.agent_decl, *node.flow_decl, config_.default_agent_quota);
         agent_rt.set_invocation_context(node_context);
         agent_rt.set_state_entered_observer(
-            [&result, &emit, node_id = node.id](AgentId agent,
-                                                std::string_view state_name) -> AgentStateId {
+            [this, &result, &emit, node_id = node.id](AgentId agent,
+                                                      std::string_view state_name) -> AgentStateId {
             const auto state = result.metadata.add_agent_state(agent, state_name);
             emit(AgentStateEntered{
                 .node = node_id,
                 .agent = agent,
                 .state = state,
             });
+            if (config_.state_entered_hook) {
+                config_.state_entered_hook(agent, state_name);
+            }
             return state;
         });
         if (runtime_invoker) {

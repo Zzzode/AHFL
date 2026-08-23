@@ -3,6 +3,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
@@ -55,6 +56,10 @@ struct WorkflowRuntimeConfig {
     WorkflowRecoveryStore *recovery_store{nullptr};
     std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
         capability_result_observer;
+    // Debug/test hook invoked after the runtime records an agent state entry.
+    // Runs on the workflow execution thread; a debugger may block inside this
+    // hook to implement pause (RFC 0015).
+    std::function<void(AgentId, std::string_view)> state_entered_hook;
 };
 
 // Workflow runtime

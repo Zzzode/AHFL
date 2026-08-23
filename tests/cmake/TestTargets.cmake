@@ -1004,6 +1004,8 @@ target_link_libraries(ahfl_tooling_dap_tests
     PRIVATE
         ahfl_tooling_dap
 )
+target_include_directories(ahfl_tooling_dap_tests PRIVATE ${PROJECT_SOURCE_DIR}/src
+                                                         ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_tooling_dap_tests)
 
 add_executable(ahfl_tooling_telemetry_tests
