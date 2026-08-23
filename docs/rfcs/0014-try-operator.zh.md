@@ -1,7 +1,7 @@
 ---
 rfc: "0014"
 title: "Try Operator (expr?)"
-status: "review"
+status: "implemented"
 area: ["language", "compiler"]
 stability: "experimental"
 created: "2026-08-21"
@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["language", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["c49090d5"]
 ---
 
 # RFC 0014: Try Operator (`expr?`)
