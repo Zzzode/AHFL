@@ -13,6 +13,10 @@ void DependencyGraph::remove_module(const std::string &path) {
     modules_.erase(path);
 }
 
+[[nodiscard]] bool DependencyGraph::has_module(const std::string &path) const {
+    return modules_.find(path) != modules_.end();
+}
+
 [[nodiscard]] std::vector<std::string>
 DependencyGraph::dependents_of(const std::string &path) const {
     std::vector<std::string> result;

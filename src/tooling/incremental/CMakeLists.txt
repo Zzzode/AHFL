@@ -1,5 +1,7 @@
 add_library(ahfl_tooling_incremental STATIC
+    cache_core.cpp
     dependency_graph.cpp
+    import_graph_discovery.cpp
     ir_cache.cpp
     incremental_compiler.cpp
 )
@@ -7,6 +9,10 @@ add_library(ahfl_tooling_incremental STATIC
 target_link_libraries(ahfl_tooling_incremental
     PUBLIC
         ahfl_compiler_ir
+        ahfl_compiler_project_discovery
+    PRIVATE
+        ahfl_base_json
+        ahfl_base_support
 )
 
 ahfl_enable_cxx23(ahfl_tooling_incremental)

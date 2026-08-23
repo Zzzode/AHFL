@@ -7,6 +7,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -15,6 +16,8 @@
 namespace ahfl::incremental {
 
 namespace {
+
+namespace fs = std::filesystem;
 
 std::uint64_t compute_content_hash(const std::string &file_path) {
     std::ifstream ifs(file_path, std::ios::binary);
@@ -29,6 +32,37 @@ std::uint64_t compute_content_hash(const std::string &file_path) {
         hash *= prime;
     }
     return hash;
+}
+
+// FNV-1a digest of the import graph structure: every module path and every
+// (importer, imported) edge, sorted for determinism. Stored in the cache
+// envelope as source_graph_revision so a structural graph change invalidates
+// entries even when content hashes are unchanged.
+[[nodiscard]] std::string compute_source_graph_revision(const DependencyGraph &graph) {
+    std::vector<std::string> modules;
+    std::vector<std::string> edges;
+    for (const auto &path : graph.topological_order()) {
+        modules.push_back(path);
+        for (const auto &dep : graph.dependencies_of(path)) {
+            edges.push_back(path + "->" + dep);
+        }
+    }
+    std::sort(edges.begin(), edges.end());
+    std::uint64_t hash = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    const auto mix = [&hash](std::string_view text) {
+        for (const char byte : text) {
+            hash ^= static_cast<unsigned char>(byte);
+            hash *= prime;
+        }
+    };
+    for (const auto &module : modules) {
+        mix(module);
+    }
+    for (const auto &edge : edges) {
+        mix(edge);
+    }
+    return std::to_string(hash);
 }
 
 // Compute transitive dependents via BFS
@@ -59,7 +93,68 @@ std::vector<std::string> transitive_dependents(const DependencyGraph &graph,
 } // namespace
 
 IncrementalCompiler::IncrementalCompiler(DependencyGraph &graph, IrCache &cache)
-    : graph_(graph), cache_(cache) {}
+    : IncrementalCompiler(graph, cache, IncrementalCompilerConfig{}) {}
+
+IncrementalCompiler::IncrementalCompiler(DependencyGraph &graph,
+                                         IrCache &cache,
+                                         IncrementalCompilerConfig config)
+    : graph_(graph), cache_(cache), config_(std::move(config)) {
+    if (!config_.project_root.empty()) {
+        project_root_hash_ = project_root_hash(config_.project_root);
+    }
+    if (config_.toolchain_fingerprint.empty()) {
+        config_.toolchain_fingerprint = default_toolchain_fingerprint();
+    }
+}
+
+CacheKey IncrementalCompiler::build_cache_key(const std::string &module_path,
+                                              std::uint64_t content_hash) const {
+    CacheKey key;
+    key.project_root_hash = project_root_hash_;
+    key.content_hash = content_hash;
+    key.toolchain_fingerprint = config_.toolchain_fingerprint;
+    if (config_.project_root.empty()) {
+        key.source_path = module_path;
+        return key;
+    }
+    std::error_code error;
+    const auto relative =
+        fs::relative(fs::path(module_path), config_.project_root, error);
+    key.source_path = error ? module_path : relative.generic_string();
+    return key;
+}
+
+void IncrementalCompiler::hydrate_from_persistent(
+    const std::string &module_path,
+    std::uint64_t content_hash,
+    const PersistentCacheEntry &entry) {
+    CacheEntry in_memory;
+    in_memory.module_path = module_path;
+    in_memory.content_hash = content_hash;
+    in_memory.signature_fingerprint = entry.signature_fingerprint;
+    in_memory.serialized_ir = entry.serialized_typed_hir;
+    in_memory.cached_at = entry.cached_at;
+    cache_.store(std::move(in_memory));
+}
+
+void IncrementalCompiler::persist_entry(const std::string &module_path,
+                                        std::uint64_t content_hash,
+                                        std::uint64_t signature_fingerprint,
+                                        const std::string &serialized_ir,
+                                        const std::string &source_graph_revision) {
+    if (config_.persistent_cache == nullptr) {
+        return;
+    }
+    PersistentCacheEntry record;
+    record.key = build_cache_key(module_path, content_hash);
+    record.source_graph_revision = source_graph_revision;
+    // resolver_snapshot_version: canonical ResolveResult hashing is a
+    // follow-up slice; the envelope field is reserved and stored empty.
+    record.signature_fingerprint = signature_fingerprint;
+    record.serialized_typed_hir = serialized_ir;
+    record.cached_at = std::chrono::system_clock::now();
+    config_.persistent_cache->store(record);
+}
 
 std::vector<CompileResult>
 IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_paths) {
@@ -87,6 +182,12 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
         }
     }
 
+    // The graph revision is stable for the duration of this pass; compute it
+    // once so every envelope written below carries the same value.
+    const std::string source_graph_revision =
+        config_.persistent_cache != nullptr ? compute_source_graph_revision(graph_)
+                                            : std::string{};
+
     // Compile each module
     for (const auto &mod_path : ordered) {
         ++stats_.modules_checked;
@@ -98,6 +199,21 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
             ++stats_.cache_hits;
             results.push_back(CompileResult{CompileStatus::UpToDate, mod_path, ""});
             continue;
+        }
+
+        // In-memory miss: consult the persistent cache (RFC 0016) before
+        // falling back to a full recompile. A persistent hit hydrates the
+        // in-memory cache so subsequent lookups are fast.
+        if (config_.persistent_cache != nullptr) {
+            const auto key = build_cache_key(mod_path, content_hash);
+            auto persistent = config_.persistent_cache->lookup(key);
+            if (persistent.kind == PersistentCacheHitKind::Hit && persistent.entry.has_value()) {
+                hydrate_from_persistent(mod_path, content_hash, *persistent.entry);
+                ++stats_.cache_hits;
+                ++stats_.persistent_cache_hits;
+                results.push_back(CompileResult{CompileStatus::UpToDate, mod_path, ""});
+                continue;
+            }
         }
         ++stats_.cache_misses;
 
@@ -226,8 +342,17 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
             new_entry.serialized_ir = serialized_ir;
             new_entry.cached_at = std::chrono::system_clock::now();
             cache_.store(std::move(new_entry));
+            persist_entry(mod_path,
+                          content_hash,
+                          new_signature_fingerprint,
+                          serialized_ir,
+                          source_graph_revision);
         } else {
             cache_.invalidate(mod_path);
+            if (config_.persistent_cache != nullptr) {
+                config_.persistent_cache->invalidate(
+                    build_cache_key(mod_path, content_hash).source_path);
+            }
         }
 
         ++stats_.modules_recompiled;

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <string>
+#include <tooling/incremental/cache_core.hpp>
 #include <tooling/incremental/dependency_graph.hpp>
 #include <tooling/incremental/ir_cache.hpp>
 #include <vector>
@@ -30,11 +32,28 @@ struct IncrementalStats {
     // distinguishing whitespace/comment churn from real semantic
     // changes when reasoning about reverse-dependency rebuild fan-out.
     std::size_t fingerprint_unchanged = 0;
+    // Number of hits served from the PersistentCache (disk) after the
+    // in-memory IrCache missed. Always zero when no persistent cache is
+    // configured.
+    std::size_t persistent_cache_hits = 0;
+};
+
+// Configuration for the CacheCore-backed persistent layer (RFC 0016). When
+// `persistent_cache` is null the compiler runs in legacy detached mode:
+// string-keyed in-memory cache only, no disk persistence, no project
+// identity.
+struct IncrementalCompilerConfig {
+    std::filesystem::path project_root;
+    std::string toolchain_fingerprint;
+    PersistentCache *persistent_cache{nullptr};
 };
 
 class IncrementalCompiler {
   public:
     explicit IncrementalCompiler(DependencyGraph &graph, IrCache &cache);
+    IncrementalCompiler(DependencyGraph &graph,
+                        IrCache &cache,
+                        IncrementalCompilerConfig config);
 
     [[nodiscard]] std::vector<CompileResult>
     compile_changed(const std::vector<std::string> &changed_paths);
@@ -43,8 +62,21 @@ class IncrementalCompiler {
     void reset_stats();
 
   private:
+    [[nodiscard]] CacheKey build_cache_key(const std::string &module_path,
+                                           std::uint64_t content_hash) const;
+    void hydrate_from_persistent(const std::string &module_path,
+                                 std::uint64_t content_hash,
+                                 const PersistentCacheEntry &entry);
+    void persist_entry(const std::string &module_path,
+                       std::uint64_t content_hash,
+                       std::uint64_t signature_fingerprint,
+                       const std::string &serialized_ir,
+                       const std::string &source_graph_revision);
+
     DependencyGraph &graph_;
     IrCache &cache_;
+    IncrementalCompilerConfig config_;
+    std::string project_root_hash_;
     IncrementalStats stats_{};
 };
 
