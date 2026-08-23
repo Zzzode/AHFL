@@ -87,13 +87,13 @@ rfcs:
     stability: "experimental"
   - rfc: "0015"
     title: "DAP Runtime Integration"
-    status: "review"
+    status: "implementing"
     file: "0015-dap-runtime-integration.zh.md"
     area: ["runtime", "tooling"]
     stability: "experimental"
   - rfc: "0016"
     title: "Incremental Cache Contract"
-    status: "review"
+    status: "implementing"
     file: "0016-incremental-cache-contract.zh.md"
     area: ["compiler", "tooling"]
     stability: "experimental"

@@ -1,7 +1,7 @@
 ---
 rfc: "0015"
 title: "DAP Runtime Integration"
-status: "review"
+status: "implementing"
 area: ["runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-23"
@@ -293,3 +293,4 @@ Frame 2: parent_workflow_node (source.ahfl:line)
 
 - 2026-08-23: Draft opened.
 - 2026-08-23: Open Questions all resolved; status draft → review.
+- 2026-08-23: Status review → implementing; Slice 1 (DebugSession + event emission + state breakpoint) started.

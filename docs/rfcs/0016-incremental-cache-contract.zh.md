@@ -1,7 +1,7 @@
 ---
 rfc: "0016"
 title: "Incremental Cache Contract"
-status: "review"
+status: "implementing"
 area: ["compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-23"
@@ -259,3 +259,4 @@ Cache schema 版本化（`AHFL_TYPED_HIR_CACHE_V1`）确保未来格式变化时
 
 - 2026-08-23: Draft opened.
 - 2026-08-23: Open Questions all resolved; status draft → review.
+- 2026-08-23: Status review → implementing; Slice 1 (CacheCore + import graph discovery) started.
