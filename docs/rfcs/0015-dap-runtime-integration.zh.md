@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["85608c4e", "c5543bf5", "f94b9bcf"]
+implementation_prs: ["85608c4e", "c5543bf5", "f94b9bcf", "2fc2f337"]
 ---
 
 # RFC 0015: DAP Runtime Integration
@@ -297,3 +297,4 @@ Frame 2: parent_workflow_node (source.ahfl:line)
 - 2026-08-23: Slice 1 landed (85608c4e): DebugSession, send_event, state breakpoint wiring, 32/32 DAP tests.
 - 2026-08-23: Slice 2 implemented: `capability_invoked_hook` on `WorkflowRuntimeConfig` wired into the runtime capability dispatch path; `DebugSession` installs a stub contextual invoker so capability calls reach the hook and pauses on `check_capability_breakpoints` hits; 38/38 DAP tests.
 - 2026-08-23: Slice 3 implemented: `DebugSession` builds a breakable source-line set from the IR Program (FlowDecl state handlers, AgentDecl, WorkflowNode) via `SourceFile::locate`, registers it with `BreakpointManager::set_breakable_lines`; `setBreakpoints` now verifies each line against the set; line breakpoints are checked on state entry via a reverse `state_name -> (file, line)` map; 47/47 DAP tests.
+- 2026-08-23: Slice 4 implemented (2fc2f337): stepping state machine — `DebugStepper` (StepKind None/Over/Into/Out) armed by `next` / `stepIn` / `stepOut` from the last reported (agent, state); StepOver/StepIn complete at the first state transition to a different position, StepOut at a transition in a different agent (depth tracking deferred to sub-workflow support); capability invocations also complete a pending step; `continue` cancels armed steps; breakpoints take precedence over steps at the same position; `stopped` events carry reason "step"; `DapServer` routes `stepIn` / `stepOut`; 56/56 DAP tests.
