@@ -165,8 +165,8 @@ std::string DebugSession::launch(const std::string &config_json) {
         }
     }
 
-    if (program_path.empty() || workflow_name.empty()) {
-        emit_output("stderr", "launch config requires \"program\" and \"workflow\" fields");
+    if (program_path.empty()) {
+        emit_output("stderr", "launch config requires a \"program\" field");
         if (mark_terminated()) {
             emit_terminated();
         }
@@ -182,6 +182,26 @@ std::string DebugSession::launch(const std::string &config_json) {
         return "{}";
     }
     program_ = std::move(*compiled.program);
+
+    // Default to the first workflow declaration when the launch config omits
+    // "workflow" (the VS Code contribution documents this as "debug the
+    // file's entry workflow").
+    if (workflow_name.empty()) {
+        for (const auto &decl : program_->declarations) {
+            if (const auto *wf = std::get_if<ir::WorkflowDecl>(&decl)) {
+                workflow_name = wf->name;
+                break;
+            }
+        }
+    }
+    if (workflow_name.empty()) {
+        emit_output("stderr", "no workflow found in the compiled program");
+        if (mark_terminated()) {
+            emit_terminated();
+        }
+        return "{}";
+    }
+
     build_breakable_lines(*compiled.source, program_path, workflow_name);
 
     {
@@ -222,6 +242,34 @@ std::string DebugSession::launch(const std::string &config_json) {
         agent_outputs_[agent_id] = evaluator::clone_value(output);
         node_results_.emplace(std::string(node_name), evaluator::clone_value(output));
     };
+    // Capability output / failures -> DAP `output` events (RFC 0015 Slice 7).
+    // Fires on the workflow thread right after the invoker returns, for every
+    // capability call. A successful call streams its result value (serialized
+    // via value_to_json) on the "stdout" category; a failed call reports its
+    // error message on "stderr" so the runtime's own failure surfaces in the
+    // debug console instead of being swallowed.
+    config.capability_result_observer =
+        [this](const runtime::CapabilityInvocationContext &,
+               const runtime::CapabilityCallResult &result) {
+            {
+                std::lock_guard lock(mutex_);
+                if (stopping_) {
+                    return;
+                }
+            }
+            if (result.status == runtime::CapabilityCallStatus::Success &&
+                result.value.has_value()) {
+                emit_output("stdout", evaluator::value_to_json(*result.value) + "\n");
+                return;
+            }
+            if (result.status != runtime::CapabilityCallStatus::Success) {
+                std::string message = "capability call failed";
+                if (!result.error_message.empty()) {
+                    message += ": " + result.error_message;
+                }
+                emit_output("stderr", message + "\n");
+            }
+        };
     // The debug session owns no capability providers, but the runtime only
     // creates its capability dispatch path (and thus only fires
     // capability_invoked_hook) when an invoker is configured. Install a stub
@@ -326,6 +374,27 @@ void DebugSession::execute(std::string workflow_name, evaluator::Value workflow_
         std::lock_guard lock(mutex_);
         if (const auto *output = result.output(); output != nullptr) {
             workflow_output_ = evaluator::clone_value(*output);
+        }
+    }
+
+    // Runtime failure -> DAP `output` event on "stderr" (RFC 0015 Slice 7).
+    // A workflow that fails (node failure, dependency failure, evaluation
+    // error) carries the failure diagnostics; surface them on the debug
+    // console rather than dropping them silently. Emitted before `terminated`
+    // so the client sees the cause before the session ends.
+    {
+        const bool stopping = [this] {
+            std::lock_guard lock(mutex_);
+            return stopping_;
+        }();
+        if (!stopping && result.has_errors()) {
+            std::ostringstream out;
+            result.diagnostics.render(out);
+            std::string rendered = out.str();
+            if (rendered.empty()) {
+                rendered = "workflow \"" + workflow_name + "\" failed";
+            }
+            emit_output("stderr", rendered);
         }
     }
 

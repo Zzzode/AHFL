@@ -1625,6 +1625,133 @@ int main() {
               "evaluate with no active session returns an error");
     }
 
+    // Test 25: a successful capability call emits an `output` event on the
+    // "stdout" category carrying the serialized result value (RFC 0015 Slice 7).
+    {
+        const auto fixture = write_capability_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::cap_workflow::WorkerWorkflow");
+        (void)server.handle_request(launch_req);
+
+        // The workflow calls DoWork(); the debug session's stub invoker
+        // succeeds with a None value, so an `output` event on "stdout" must be
+        // emitted before the workflow terminates.
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after capability output test");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            bool saw_stdout_output = false;
+            for (const auto &frame : frames) {
+                if (frame.find(R"("event":"output")") != std::string::npos &&
+                    frame.find(R"("category":"stdout")") != std::string::npos) {
+                    saw_stdout_output = true;
+                }
+            }
+            check(saw_stdout_output,
+                  "successful capability call emits an output event on stdout");
+        }
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 26: a launch config missing required fields emits an `output` event
+    // on the "stderr" category (RFC 0015 Slice 7).
+    {
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        // Empty launch config: no "program" / "workflow" fields.
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = "{}";
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after invalid launch config");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            bool saw_stderr_output = false;
+            for (const auto &frame : frames) {
+                if (frame.find(R"("event":"output")") != std::string::npos &&
+                    frame.find(R"("category":"stderr")") != std::string::npos) {
+                    saw_stderr_output = true;
+                }
+            }
+            check(saw_stderr_output,
+                  "invalid launch config emits an output event on stderr");
+        }
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 27: a launch config with "program" but no "workflow" defaults to
+    // the first workflow declaration in the compiled program (RFC 0015
+    // Slice 8: the VS Code contribution documents "workflow" as optional).
+    {
+        const auto fixture = write_simple_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        auto body = ahfl::json::JsonValue::make_object();
+        body->set("program", ahfl::json::JsonValue::make_string(fixture));
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = ahfl::json::serialize_json(*body);
+        const auto resp = server.handle_request(launch_req);
+        check(resp.command == "launch", "launch response command matches");
+
+        check(wait_for_event(frames, frames_mutex, "initialized", std::chrono::seconds(5)),
+              "initialized event emitted after launch without workflow field");
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after default workflow completes");
+
+        // No stderr output event should have been emitted for a missing
+        // workflow field.
+        {
+            std::lock_guard lock(frames_mutex);
+            bool saw_stderr_output = false;
+            for (const auto &frame : frames) {
+                if (frame.find(R"("event":"output")") != std::string::npos &&
+                    frame.find(R"("category":"stderr")") != std::string::npos) {
+                    saw_stderr_output = true;
+                }
+            }
+            check(!saw_stderr_output,
+                  "no stderr output when workflow field is omitted");
+        }
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
     std::printf("%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }

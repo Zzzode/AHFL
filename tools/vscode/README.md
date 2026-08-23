@@ -82,6 +82,33 @@ configured via `ahfl.serverPath`), the following features are active:
 | `AHFL: Format Document`          | Format the active AHFL file                      |
 | `AHFL: Show Language Server Output` | Open the extension output channel for LSP logs  |
 
+### Debugging (Requires `ahfl-dap`)
+
+The extension contributes an `ahfl` debug type backed by the `ahfl-dap` Debug
+Adapter Protocol binary. Press `F5` on an open `.ahfl` file (or add a launch
+configuration) to start a workflow debug session with support for breakpoints
+on state transitions and capability invocations, stepping, and inspecting agent
+state.
+
+A minimal launch configuration:
+
+```jsonc
+{
+  "type": "ahfl",
+  "request": "launch",
+  "name": "AHFL: Debug workflow",
+  // Path to the .ahfl file whose workflow should be debugged.
+  "program": "${file}",
+  // Optional: the specific workflow to debug.
+  "workflow": "",
+  "stopOnEntry": false
+}
+```
+
+The adapter binary is resolved like the language server: `ahfl.debugAdapterPath`
+takes precedence, then the bundled release adapter under `server/`, then
+`ahfl-dap` on `PATH`.
+
 ### Configuration
 
 ```jsonc

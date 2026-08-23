@@ -35,6 +35,8 @@
   ],
   "activationEvents": [
     "onLanguage:ahfl",
+    "onDebug:ahfl",
+    "onDebugResolve:ahfl",
     "onCommand:ahfl.restartServer",
     "onCommand:ahfl.formatDocument",
     "onCommand:ahfl.showOutput"
@@ -81,6 +83,77 @@
         "title": "AHFL: Show Language Server Output"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "ahfl"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "ahfl",
+        "label": "AHFL Debug",
+        "languages": [
+          "ahfl"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to the .ahfl file whose workflow should be debugged.",
+                "default": "${file}"
+              },
+              "workflow": {
+                "type": "string",
+                "description": "Name of the workflow to debug. Leave empty to debug the file's entry workflow."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Pause at the first breakable position when the workflow starts.",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "ahfl",
+            "request": "launch",
+            "name": "AHFL: Debug workflow",
+            "program": "${file}",
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "AHFL: Debug current file's workflow",
+            "description": "Debug the workflow in the active .ahfl file.",
+            "body": {
+              "type": "ahfl",
+              "request": "launch",
+              "name": "AHFL: Debug workflow",
+              "program": "^\"\\${file}\"",
+              "stopOnEntry": false
+            }
+          },
+          {
+            "label": "AHFL: Debug a named workflow",
+            "description": "Debug a specific workflow in a chosen .ahfl file.",
+            "body": {
+              "type": "ahfl",
+              "request": "launch",
+              "name": "AHFL: Debug ${1:workflow}",
+              "program": "^\"\\${workspaceFolder}/${2:path/to/file.ahfl}\"",
+              "workflow": "${1:workflow}",
+              "stopOnEntry": false
+            }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "AHFL",
       "properties": {
@@ -96,6 +169,19 @@
           },
           "default": [],
           "description": "Additional arguments passed to the AHFL language server."
+        },
+        "ahfl.debugAdapterPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the AHFL debug adapter executable (ahfl-dap). Leave empty to use the bundled release adapter when available, falling back to ahfl-dap on PATH."
+        },
+        "ahfl.debugAdapterArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments passed to the AHFL debug adapter (ahfl-dap)."
         },
         "ahfl.toolchain.sysroot": {
           "type": "string",
@@ -155,6 +241,7 @@
     "test:extension": "pnpm run compile && node ./test/runTest.js",
     "test:problems-transcript": "pnpm run compile && node ./test/problemsTranscript.js",
     "test:toolchain-config": "node ./test/toolchainConfig.js",
+    "test:debug-contribution": "node ./test/debugContribution.js",
     "test:syntax-grammar": "node ./test/syntaxGrammar.js",
     "test:package-inventory": "pnpm run compile && node ./test/packageInventory.js",
     "test:vsix-install": "node ./test/installSmoke.js",

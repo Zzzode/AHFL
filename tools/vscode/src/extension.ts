@@ -7,6 +7,7 @@ import {
     workspaceConfigurationFromRequest,
     type ToolchainWorkspaceLike,
 } from './toolchain';
+import { bundledDebugAdapterPath, resolveDebugAdapterCommand } from './debug';
 
 let client: LanguageClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
@@ -78,6 +79,13 @@ export function activate(context: vscode.ExtensionContext) {
                 client.outputChannel.show();
             }
         })
+    );
+
+    // Register the AHFL debug adapter. The `ahfl-dap` binary speaks DAP over
+    // stdin/stdout, so it is launched as an executable descriptor rather than a
+    // network server.
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory('ahfl', new AhflDebugAdapterFactory(context))
     );
 
     // Listen for configuration changes
@@ -259,6 +267,24 @@ function resolveServerCommand(context: vscode.ExtensionContext, configuredPath: 
     }
 
     return 'ahfl-lsp';
+}
+
+class AhflDebugAdapterFactory implements vscode.DebugAdapterDescriptorFactory {
+    constructor(private readonly context: vscode.ExtensionContext) {}
+
+    createDebugAdapterDescriptor(
+        _session: vscode.DebugSession,
+        _executable: vscode.DebugAdapterExecutable | undefined
+    ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
+        const config = vscode.workspace.getConfiguration('ahfl');
+        const command = resolveDebugAdapterCommand({
+            configuredPath: config.get<string>('debugAdapterPath', ''),
+            bundledPath: bundledDebugAdapterPath(this.context.extensionUri.fsPath, process.platform),
+            fileExists: (candidate) => fs.existsSync(candidate),
+        });
+        const args = config.get<string[]>('debugAdapterArgs', []);
+        return new vscode.DebugAdapterExecutable(command, args);
+    }
 }
 
 function updateStatusBar(): void {
