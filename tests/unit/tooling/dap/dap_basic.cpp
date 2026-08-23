@@ -178,6 +178,40 @@ template <typename Rep, typename Period>
     }
 }
 
+// Find the 1-based line number of the first line containing `needle` in a
+// source string. Returns -1 when not found.
+[[nodiscard]] int find_source_line(std::string_view source, std::string_view needle) {
+    int line = 1;
+    std::size_t pos = 0;
+    while (pos < source.size()) {
+        const auto line_end = source.find('\n', pos);
+        const auto segment = line_end == std::string_view::npos
+                                 ? source.substr(pos)
+                                 : source.substr(pos, line_end - pos);
+        if (segment.find(needle) != std::string_view::npos) {
+            return line;
+        }
+        if (line_end == std::string_view::npos) {
+            break;
+        }
+        pos = line_end + 1;
+        ++line;
+    }
+    return -1;
+}
+
+[[nodiscard]] std::string set_breakpoints_config(const std::string &source_path,
+                                                 const std::vector<int> &lines) {
+    auto body = ahfl::json::JsonValue::make_object();
+    body->set("path", ahfl::json::JsonValue::make_string(source_path));
+    auto lines_array = ahfl::json::JsonValue::make_array();
+    for (const int line : lines) {
+        lines_array->array_items.push_back(ahfl::json::JsonValue::make_int(line));
+    }
+    body->set("lines", std::move(lines_array));
+    return ahfl::json::serialize_json(*body);
+}
+
 } // namespace
 
 int main() {
@@ -487,6 +521,108 @@ int main() {
             check(!frame_has_event(frames, "stopped"),
                   "no stopped event when capability breakpoint does not match");
         }
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 12: line breakpoint verification reflects IR-mappable lines
+    {
+        const auto fixture = write_simple_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::simple_workflow::GreetingWorkflow");
+        (void)server.handle_request(launch_req);
+
+        // Wait for the workflow to finish so the breakable line set is
+        // definitely registered before setBreakpoints arrives.
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted before line breakpoint verification");
+
+        const int done_line = find_source_line(kSimpleWorkflowSource, "state Done");
+        const int empty_line = 2; // blank line in the fixture, no IR declaration
+        check(done_line > 0, "found state Done line in fixture");
+
+        ahfl::dap::DapMessage bp_req;
+        bp_req.command = "setBreakpoints";
+        bp_req.body = set_breakpoints_config(fixture, {done_line, empty_line});
+        const auto bp_resp = server.handle_request(bp_req);
+
+        const std::string verified_true =
+            R"("verified":true,"line":)" + std::to_string(done_line);
+        const std::string verified_false =
+            R"("verified":false,"line":)" + std::to_string(empty_line);
+        check(bp_resp.body.find(verified_true) != std::string::npos,
+              "line breakpoint on IR-mapped state handler verifies as true");
+        check(bp_resp.body.find(verified_false) != std::string::npos,
+              "line breakpoint on empty line verifies as false");
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 13: line breakpoint on a state handler line pauses execution
+    {
+        const auto fixture = write_simple_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        const int done_line = find_source_line(kSimpleWorkflowSource, "state Done");
+        check(done_line > 0, "found state Done line in fixture");
+
+        // Set the line breakpoint before launch: it is stored (enabled) even
+        // though verification happens later once the IR is compiled.
+        ahfl::dap::DapMessage bp_req;
+        bp_req.command = "setBreakpoints";
+        bp_req.body = set_breakpoints_config(fixture, {done_line});
+        (void)server.handle_request(bp_req);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::simple_workflow::GreetingWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted on line breakpoint hit");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            bool saw_line_breakpoint = false;
+            for (const auto &frame : frames) {
+                if (frame.find(R"("event":"stopped")") != std::string::npos &&
+                    frame.find("Line breakpoint") != std::string::npos) {
+                    saw_line_breakpoint = true;
+                }
+            }
+            check(saw_line_breakpoint,
+                  "stopped event on line breakpoint carries line breakpoint description");
+            check(!frame_has_event(frames, "terminated"),
+                  "no terminated event while line breakpoint is active");
+        }
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        (void)server.handle_request(cont_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after continue from line breakpoint");
 
         ahfl::dap::DapMessage disc_req;
         disc_req.command = "disconnect";

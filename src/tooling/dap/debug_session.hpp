@@ -7,9 +7,13 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
+#include "tooling/dap/breakpoints.hpp"
 
 namespace ahfl::dap {
 
@@ -60,6 +64,12 @@ class DebugSession {
     void emit_terminated();
     void emit_output(std::string_view category, std::string_view text);
 
+    /// Build the breakable source-line set from the compiled IR Program and
+    /// register it with the BreakpointManager. Also builds the reverse
+    /// state_name -> (file, line) map used to check line breakpoints on state
+    /// entry (RFC 0015 Slice 3).
+    void build_breakable_lines(const ahfl::SourceFile &source, const std::string &source_path);
+
     DapServer &server_;
     BreakpointManager &breakpoints_;
     StateInspector &inspector_;
@@ -67,6 +77,13 @@ class DebugSession {
     std::optional<ahfl::ir::Program> program_;
     std::unique_ptr<ahfl::runtime::WorkflowRuntime> runtime_;
     std::thread worker_;
+
+    /// Source locations that carry an IR declaration (state handlers, agent
+    /// declarations, workflow nodes). Line breakpoints verify against this set.
+    BreakableLineSet breakable_lines_;
+    /// Reverse map from state name to the source location of its handler, so
+    /// line breakpoints can be checked when a state is entered.
+    std::unordered_map<std::string, std::pair<std::string, int>> state_line_map_;
 
     mutable std::mutex mutex_;
     std::condition_variable resume_cv_;

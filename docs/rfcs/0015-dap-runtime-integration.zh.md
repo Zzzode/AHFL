@@ -296,3 +296,4 @@ Frame 2: parent_workflow_node (source.ahfl:line)
 - 2026-08-23: Status review → implementing; Slice 1 (DebugSession + event emission + state breakpoint) started.
 - 2026-08-23: Slice 1 landed (85608c4e): DebugSession, send_event, state breakpoint wiring, 32/32 DAP tests.
 - 2026-08-23: Slice 2 implemented: `capability_invoked_hook` on `WorkflowRuntimeConfig` wired into the runtime capability dispatch path; `DebugSession` installs a stub contextual invoker so capability calls reach the hook and pauses on `check_capability_breakpoints` hits; 38/38 DAP tests.
+- 2026-08-23: Slice 3 implemented: `DebugSession` builds a breakable source-line set from the IR Program (FlowDecl state handlers, AgentDecl, WorkflowNode) via `SourceFile::locate`, registers it with `BreakpointManager::set_breakable_lines`; `setBreakpoints` now verifies each line against the set; line breakpoints are checked on state entry via a reverse `state_name -> (file, line)` map; 47/47 DAP tests.

@@ -1,9 +1,27 @@
 #pragma once
+#include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ahfl::dap {
+
+/// Hash for std::pair specializations, enabling pair-keyed unordered containers.
+struct PairHash {
+    template <typename T1, typename T2>
+    [[nodiscard]] std::size_t operator()(const std::pair<T1, T2> &pair) const noexcept {
+        const std::size_t h1 = std::hash<T1>{}(pair.first);
+        const std::size_t h2 = std::hash<T2>{}(pair.second);
+        return h1 ^ (h2 << 1U);
+    }
+};
+
+/// A breakable source location: (file path, 1-based line).
+using BreakableLine = std::pair<std::string, int>;
+using BreakableLineSet = std::unordered_set<BreakableLine, PairHash>;
 
 enum class BreakpointKind {
     State,      // Break on entering a state
@@ -44,8 +62,19 @@ class BreakpointManager {
     [[nodiscard]] std::vector<BreakpointHit>
     check_capability_breakpoints(const std::string &agent_id, const std::string &capability) const;
 
+    /// Register the set of source locations that have a mappable IR
+    /// declaration. Line breakpoints set on these locations verify as
+    /// `verified: true` in the setBreakpoints response (RFC 0015 Slice 3).
+    void set_breakable_lines(BreakableLineSet lines);
+
+    [[nodiscard]] bool is_line_breakable(const std::string &file, int line) const;
+
+    [[nodiscard]] std::vector<BreakpointHit>
+    check_line_breakpoints(const std::string &file, int line) const;
+
   private:
     std::vector<Breakpoint> breakpoints_;
+    BreakableLineSet breakable_lines_;
     int next_id_ = 1;
 };
 

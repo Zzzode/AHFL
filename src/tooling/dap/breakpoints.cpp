@@ -5,7 +5,6 @@ namespace ahfl::dap {
 
 int BreakpointManager::add_breakpoint(Breakpoint bp) {
     bp.id = next_id_++;
-    bp.verified = true;
     breakpoints_.push_back(std::move(bp));
     return breakpoints_.back().id;
 }
@@ -68,6 +67,30 @@ BreakpointManager::check_capability_breakpoints(const std::string &agent_id,
                             .agent_id = agent_id,
                             .current_state = "",
                             .description = "Capability breakpoint hit: " + capability});
+        }
+    }
+    return hits;
+}
+
+void BreakpointManager::set_breakable_lines(BreakableLineSet lines) {
+    breakable_lines_ = std::move(lines);
+}
+
+bool BreakpointManager::is_line_breakable(const std::string &file, const int line) const {
+    return breakable_lines_.contains({file, line});
+}
+
+std::vector<BreakpointHit>
+BreakpointManager::check_line_breakpoints(const std::string &file, const int line) const {
+    std::vector<BreakpointHit> hits;
+    for (const auto &bp : breakpoints_) {
+        if (bp.enabled && bp.kind == BreakpointKind::Line && bp.source_file == file &&
+            bp.line == line) {
+            hits.push_back({.breakpoint_id = bp.id,
+                            .agent_id = "",
+                            .current_state = "",
+                            .description = "Line breakpoint hit: " + file + ":" +
+                                           std::to_string(line)});
         }
     }
     return hits;

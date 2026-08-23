@@ -3,7 +3,9 @@
 #include <sstream>
 #include <string_view>
 #include <utility>
+#include <variant>
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -21,6 +23,9 @@ namespace {
 
 struct CompileResult {
     std::optional<ir::Program> program;
+    // The parsed source file, retained so IR SourceRange offsets can be mapped
+    // back to 1-based source lines for breakpoint verification (RFC 0015 Slice 3).
+    std::optional<SourceFile> source;
     std::string error;
 };
 
@@ -47,6 +52,7 @@ struct CompileResult {
         result.error = "failed to parse " + path + ":\n" + out.str();
         return result;
     }
+    result.source = parse_result.source;
 
     const Resolver resolver;
     const auto resolve_result = resolver.resolve(*parse_result.program);
@@ -121,6 +127,7 @@ std::string DebugSession::launch(const std::string &config_json) {
         return "{}";
     }
     program_ = std::move(*compiled.program);
+    build_breakable_lines(*compiled.source, program_path);
 
     runtime::WorkflowRuntimeConfig config;
     config.state_entered_hook = [this](const runtime::AgentId agent,
@@ -203,6 +210,50 @@ void DebugSession::execute(std::string workflow_name) {
     }
 }
 
+void DebugSession::build_breakable_lines(const SourceFile &source,
+                                         const std::string &source_path) {
+    breakable_lines_.clear();
+    state_line_map_.clear();
+
+    const auto line_of = [&source](const SourceRange &range) {
+        return static_cast<int>(source.locate(range.begin_offset).line);
+    };
+
+    for (const auto &decl : program_->declarations) {
+        std::visit(
+            Overloaded{
+                [&](const ir::FlowDecl &flow) {
+                    for (const auto &handler : flow.state_handlers) {
+                        if (!handler.source_range.has_value()) {
+                            continue;
+                        }
+                        const int line = line_of(*handler.source_range);
+                        breakable_lines_.emplace(source_path, line);
+                        state_line_map_.emplace(handler.state_name,
+                                                std::make_pair(source_path, line));
+                    }
+                },
+                [&](const ir::AgentDecl &agent) {
+                    if (agent.provenance.source_range.has_value()) {
+                        breakable_lines_.emplace(source_path,
+                                                 line_of(*agent.provenance.source_range));
+                    }
+                },
+                [&](const ir::WorkflowDecl &workflow) {
+                    for (const auto &node : workflow.nodes) {
+                        if (node.source_range.has_value()) {
+                            breakable_lines_.emplace(source_path, line_of(*node.source_range));
+                        }
+                    }
+                },
+                [](const auto &) { /* declarations without a debuggable location */ },
+            },
+            decl);
+    }
+
+    breakpoints_.set_breakable_lines(breakable_lines_);
+}
+
 void DebugSession::on_state_entered(const runtime::AgentId agent,
                                     const std::string_view state_name) {
     {
@@ -215,14 +266,32 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
     const auto agent_id = agent_debug_id(agent);
     inspector_.set_agent_state(agent_id, std::string(state_name), {});
 
-    const auto hits = breakpoints_.check_state_breakpoints(agent_id, std::string(state_name));
-    if (hits.empty()) {
+    const auto state_hits =
+        breakpoints_.check_state_breakpoints(agent_id, std::string(state_name));
+    if (!state_hits.empty()) {
+        std::string description = "state breakpoint: " + std::string(state_name);
+        if (!state_hits.front().description.empty()) {
+            description = state_hits.front().description;
+        }
+        pause("breakpoint", std::move(description));
         return;
     }
 
-    std::string description = "state breakpoint: " + std::string(state_name);
-    if (!hits.front().description.empty()) {
-        description = hits.front().description;
+    // Line breakpoints: map the entered state back to its handler's source
+    // location and pause when a line breakpoint is set there (RFC 0015 Slice 3).
+    const auto line_it = state_line_map_.find(std::string(state_name));
+    if (line_it == state_line_map_.end()) {
+        return;
+    }
+    const auto &[file, line] = line_it->second;
+    const auto line_hits = breakpoints_.check_line_breakpoints(file, line);
+    if (line_hits.empty()) {
+        return;
+    }
+
+    std::string description = "line breakpoint: " + file + ":" + std::to_string(line);
+    if (!line_hits.front().description.empty()) {
+        description = line_hits.front().description;
     }
     pause("breakpoint", std::move(description));
 }

@@ -230,7 +230,8 @@ std::string DapServer::handle_set_breakpoints(const std::string &body) {
         }
     }
 
-    // Add new breakpoints
+    // Add new breakpoints, verifying each line against the breakable line
+    // set registered by the DebugSession after compilation (RFC 0015 Slice 3).
     std::ostringstream oss;
     oss << R"({"breakpoints":[)";
     bool first = true;
@@ -240,12 +241,13 @@ std::string DapServer::handle_set_breakpoints(const std::string &body) {
         bp.source_file = source_path;
         bp.line = line;
         bp.enabled = true;
-        bp.verified = true;
+        bp.verified = breakpoint_manager_.is_line_breakable(source_path, line);
         int id = breakpoint_manager_.add_breakpoint(bp);
 
         if (!first)
             oss << ",";
-        oss << R"({"id":)" << id << R"(,"verified":true,"line":)" << line << "}";
+        oss << R"({"id":)" << id << R"(,"verified":)" << (bp.verified ? "true" : "false")
+            << R"(,"line":)" << line << "}";
         first = false;
     }
     oss << "]}";
