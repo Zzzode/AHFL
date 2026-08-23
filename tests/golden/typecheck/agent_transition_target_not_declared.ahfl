@@ -1,0 +1,23 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent TransitionTargetNotDeclaredAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+    transition Init -> Ghost;
+}

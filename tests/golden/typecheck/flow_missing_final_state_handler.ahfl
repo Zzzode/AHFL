@@ -1,0 +1,28 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent MissingFinalStateHandlerAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for MissingFinalStateHandlerAgent {
+    state Init {
+        goto Done;
+    }
+}

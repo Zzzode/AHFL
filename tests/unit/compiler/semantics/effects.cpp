@@ -3805,3 +3805,116 @@ flow for ATI {
     CHECK(diagnostics_contain(type_result.diagnostics, "multiple trait implementations match"));
     CHECK(diagnostics_contain(type_result.diagnostics, "Container"));
 }
+
+// ---------------------------------------------------------------------------
+// UNKNOWN_CALLABLE — method-dispatch failure site (typecheck_expr.cpp:3728).
+// A method call `s.method_that_does_not_exist()` on a struct with no inherent
+// or trait impl exhausts both dispatch stages and falls through to the generic
+// UNKNOWN_CALLABLE fallback. Existing coverage only exercises free / predicate
+// / capability call targets, not method-dispatch misses.
+// ---------------------------------------------------------------------------
+TEST_CASE("UNKNOWN_CALLABLE method dispatch finds no inherent or trait impl") {
+    const std::string source = R"AHFL(
+struct Request { v: Int; }
+struct Context { scratch: Int = 0; }
+struct Response { out: Int; }
+
+struct S { value: Int; }
+
+agent UcMethodAgent {
+    input: Request; context: Context; output: Response;
+    states: [Done]; initial: Done; final: [Done]; capabilities: [];
+}
+
+flow for UcMethodAgent {
+    state Done {
+        let s: S = S { value: input.v };
+        // S has no impl blocks, so method dispatch fails → UNKNOWN_CALLABLE.
+        let x: Int = s.method_that_does_not_exist();
+        return Response { out: x };
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_project_source("uc_method_dispatch.ahfl", source);
+    CHECK(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_CALLABLE") >= 1);
+    // method_call_name() renders the receiver type and method as "<type>.method".
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "S.method_that_does_not_exist"));
+}
+
+// ---------------------------------------------------------------------------
+// UNKNOWN_ENUM_VARIANT — enum struct-variant literal site
+// (typecheck_expr.cpp:3389). A struct-variant literal `SomeEnum::Nope { ... }`
+// naming a variant that does not exist on the enum reports UNKNOWN_ENUM_VARIANT.
+// Existing coverage only exercises the unit-variant site.
+// ---------------------------------------------------------------------------
+TEST_CASE("UNKNOWN_ENUM_VARIANT struct-variant literal names missing variant") {
+    const std::string source = R"AHFL(
+struct Request { v: Int; }
+struct Context { scratch: Int = 0; }
+struct Response { out: Int; }
+
+enum Packet {
+    Data { code: Int },
+    Empty,
+}
+
+agent UevStructAgent {
+    input: Request; context: Context; output: Response;
+    states: [Done]; initial: Done; final: [Done]; capabilities: [];
+}
+
+flow for UevStructAgent {
+    state Done {
+        // `Nope` is not a variant of Packet → UNKNOWN_ENUM_VARIANT.
+        let p: Packet = Packet::Nope { code: input.v };
+        return Response { out: 0 };
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_project_source("uev_struct_variant.ahfl", source);
+    CHECK(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_ENUM_VARIANT") >=
+          1);
+    CHECK(diagnostics_contain(type_result.diagnostics, "unknown enum variant 'Packet::Nope'"));
+}
+
+// ---------------------------------------------------------------------------
+// UNKNOWN_ENUM_VARIANT — enum tuple-variant call site
+// (typecheck_expr.cpp:4467). A tuple-variant call `SomeEnum::Nope(x)` naming a
+// variant that does not exist on the enum reports UNKNOWN_ENUM_VARIANT.
+// ---------------------------------------------------------------------------
+TEST_CASE("UNKNOWN_ENUM_VARIANT tuple-variant call names missing variant") {
+    const std::string source = R"AHFL(
+struct Request { v: Int; }
+struct Context { scratch: Int = 0; }
+struct Response { out: Int; }
+
+enum Signal {
+    Value(Int),
+    None,
+}
+
+agent UevTupleAgent {
+    input: Request; context: Context; output: Response;
+    states: [Done]; initial: Done; final: [Done]; capabilities: [];
+}
+
+flow for UevTupleAgent {
+    state Done {
+        // `Nope` is not a variant of Signal → UNKNOWN_ENUM_VARIANT.
+        let sig: Signal = Signal::Nope(input.v);
+        return Response { out: 0 };
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_project_source("uev_tuple_variant.ahfl", source);
+    CHECK(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_ENUM_VARIANT") >=
+          1);
+    CHECK(diagnostics_contain(type_result.diagnostics, "unknown enum variant 'Signal::Nope'"));
+}

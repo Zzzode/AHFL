@@ -903,6 +903,36 @@ ahfl_add_check_fail_test(
 )
 
 ahfl_add_check_fail_test(
+    ahflc.fail.workflow_duplicate_node
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_duplicate_node.ahfl"
+    "duplicate workflow node 'run'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.temporal_unknown_workflow_node
+    "${AHFL_TESTS_DIR}/golden/typecheck/temporal_unknown_workflow_node.ahfl"
+    "unknown workflow node 'ghost'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.temporal_completed_in_agent_contract
+    "${AHFL_TESTS_DIR}/golden/typecheck/temporal_completed_in_agent_contract.ahfl"
+    "completed\\(\\.\\.\\.\\) is only valid in workflow safety/liveness formulas"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.temporal_called_in_workflow
+    "${AHFL_TESTS_DIR}/golden/typecheck/temporal_called_in_workflow.ahfl"
+    "called\\(\\.\\.\\.\\) is only valid in agent contracts"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.temporal_in_state_in_workflow
+    "${AHFL_TESTS_DIR}/golden/typecheck/temporal_in_state_in_workflow.ahfl"
+    "in_state\\(\\.\\.\\.\\) is only valid in agent contracts"
+)
+
+ahfl_add_check_fail_test(
     ahflc.fail.agent_unreachable_state
     "${AHFL_TESTS_DIR}/golden/typecheck/agent_unreachable_state.ahfl"
     "state 'Dead' is unreachable"
@@ -924,6 +954,78 @@ ahfl_add_check_fail_test(
     ahflc.fail.flow_return_in_non_final
     "${AHFL_TESTS_DIR}/golden/typecheck/flow_return_in_non_final.ahfl"
     "return is only allowed in final state handlers"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_duplicate_state
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_duplicate_state.ahfl"
+    "duplicate agent state 'Init'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_initial_state_not_declared
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_initial_state_not_declared.ahfl"
+    "initial state 'Ghost' is not declared in agent states"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_duplicate_final_state
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_duplicate_final_state.ahfl"
+    "duplicate final state 'Done'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_final_state_not_declared
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_final_state_not_declared.ahfl"
+    "final state 'Ghost' is not declared in agent states"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_transition_source_not_declared
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_transition_source_not_declared.ahfl"
+    "transition source state 'Ghost' is not declared in agent states"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_transition_target_not_declared
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_transition_target_not_declared.ahfl"
+    "transition target state 'Ghost' is not declared in agent states"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_final_state_outgoing_transition
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_final_state_outgoing_transition.ahfl"
+    "final state 'Done' must not have outgoing transitions"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.flow_handler_state_not_declared
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_handler_state_not_declared.ahfl"
+    "flow handler state 'Bogus' is not declared in the target agent"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.flow_duplicate_handler
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_duplicate_handler.ahfl"
+    "duplicate flow handler for state 'Init'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.flow_missing_final_state_handler
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_missing_final_state_handler.ahfl"
+    "missing final-state handler for 'Done'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.flow_final_handler_must_return
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_final_handler_must_return.ahfl"
+    "final-state handler 'Done' must end with return on all control paths"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.flow_non_final_handler_must_goto
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_non_final_handler_must_goto.ahfl"
+    "non-final-state handler 'Init' must end with goto on all control paths"
 )
 
 ahfl_add_check_fail_test(

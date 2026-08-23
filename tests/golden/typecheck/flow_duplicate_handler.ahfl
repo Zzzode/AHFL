@@ -1,0 +1,38 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent DuplicateFlowHandlerAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for DuplicateFlowHandlerAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
