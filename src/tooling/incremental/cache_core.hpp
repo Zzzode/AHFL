@@ -21,6 +21,16 @@ inline constexpr std::string_view kCacheSchemaVersion = "AHFL_TYPED_HIR_CACHE_V1
 inline constexpr std::string_view kCacheIndexSchemaVersion =
     "AHFL_TYPED_HIR_CACHE_INDEX_V1";
 
+// Default time-to-live for cache entries (RFC 0016 "Cache lifecycle"): an
+// entry whose last_accessed is older than this is evicted lazily on the next
+// lookup or store.
+inline constexpr std::chrono::days kDefaultTtl{7};
+
+// Default cap on the total size of entry files in a project cache directory
+// (RFC 0016 "Cache lifecycle"). When a store pushes the cache past this, the
+// least-recently-accessed entries are evicted eagerly until the cache fits.
+inline constexpr std::size_t kDefaultMaxCacheBytes = 1024ULL * 1024 * 1024;
+
 // FNV-1a 64-bit content hash. This matches the hashing used by IrCache and
 // the LSP DocumentStore so cache identity is consistent across tooling.
 [[nodiscard]] std::uint64_t fnv1a64(std::string_view bytes) noexcept;
@@ -78,16 +88,24 @@ struct PersistentCacheLookupResult {
 // specific (typically <cache-root>/<project-root-hash>/). Entries are stored
 // as one JSON file per source unit, with an index.json mapping source paths
 // to entry files. Single-writer model (RFC 0016 Non-Goals): no locking.
+//
+// Lifecycle (RFC 0016 "Cache lifecycle"): every hit refreshes the entry's
+// last_accessed timestamp in the index. lookup() and store() lazily evict
+// entries older than kDefaultTtl; store() additionally evicts the least-
+// recently-accessed entries once the directory exceeds kDefaultMaxCacheBytes.
 class PersistentCache {
   public:
     explicit PersistentCache(std::filesystem::path cache_dir);
 
     // Loads the entry for `key`. Returns Hit only when the file exists,
     // parses, matches the schema version, and matches every CacheKey field.
-    // Any corruption or mismatch is a Miss (graceful fallback).
-    [[nodiscard]] PersistentCacheLookupResult lookup(const CacheKey &key) const;
+    // Any corruption or mismatch is a Miss (graceful fallback). On Hit the
+    // entry's last_accessed timestamp is refreshed and the index is persisted.
+    // Stale entries (older than kDefaultTtl) are evicted first.
+    [[nodiscard]] PersistentCacheLookupResult lookup(const CacheKey &key);
 
-    // Atomically writes the entry and updates the index.
+    // Atomically writes the entry and updates the index. Evicts expired
+    // entries first, then enforces the size budget via LRU eviction.
     void store(const PersistentCacheEntry &entry);
 
     // Removes the entry for `source_path` (project-relative) and updates the
@@ -97,6 +115,26 @@ class PersistentCache {
     // Removes every entry file and the index.
     void clear();
 
+    // Evicts entries whose last_accessed is older than `ttl`. Invoked
+    // lazily by lookup() and store() with kDefaultTtl; exposed so cache
+    // policies can be driven explicitly (and tested).
+    void evict_expired(std::chrono::seconds ttl);
+
+    // Evicts least-recently-accessed entries until the total size of the
+    // entry files is at most `max_bytes`. Invoked eagerly by store() with
+    // kDefaultMaxCacheBytes; exposed for explicit policy control and tests.
+    void evict_lru(std::size_t max_bytes);
+
+    // Overrides the last_accessed timestamp of a cached entry. Exposed for
+    // cache lifecycle tests; production code never rewinds access time.
+    void set_last_accessed_for_test(const std::string &source_path,
+                                    std::chrono::system_clock::time_point when);
+
+    // Returns the last_accessed timestamp of a cached entry, or nullopt when
+    // the path is not cached. Exposed for cache lifecycle tests.
+    [[nodiscard]] std::optional<std::chrono::system_clock::time_point>
+    last_accessed_for_test(const std::string &source_path) const;
+
     [[nodiscard]] std::size_t entry_count() const;
     [[nodiscard]] const std::filesystem::path &cache_dir() const noexcept;
 
@@ -104,10 +142,14 @@ class PersistentCache {
     struct IndexEntry {
         std::string file_name;
         std::chrono::system_clock::time_point cached_at;
+        std::chrono::system_clock::time_point last_accessed;
     };
 
     [[nodiscard]] std::string entry_file_name(const std::string &source_path) const;
     [[nodiscard]] std::filesystem::path entry_file_path(const std::string &source_path) const;
+    // Deletes the entry file and erases the index record. Returns true when
+    // an entry was removed.
+    [[nodiscard]] bool remove_entry(const std::string &source_path);
     void load_index();
     void save_index() const;
 

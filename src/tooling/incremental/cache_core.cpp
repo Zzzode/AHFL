@@ -4,11 +4,13 @@
 #include "base/support/atomic_file.hpp"
 #include "base/support/sha256.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace ahfl::incremental {
 
@@ -198,6 +200,13 @@ void PersistentCache::load_index() {
         }
         entry.cached_at = from_epoch_seconds(
             static_cast<std::int64_t>(int_field(*value, "cached_at", 0)));
+        // Index files written before the lifecycle slice lack last_accessed;
+        // treat the creation time as the last access time so old caches age
+        // out naturally under the TTL policy.
+        const auto last_accessed =
+            static_cast<std::int64_t>(int_field(*value, "last_accessed", 0));
+        entry.last_accessed = last_accessed != 0 ? from_epoch_seconds(last_accessed)
+                                                 : entry.cached_at;
         index_.emplace(name, std::move(entry));
     }
 }
@@ -209,6 +218,8 @@ void PersistentCache::save_index() const {
         record->set("file", json::JsonValue::make_string(entry.file_name));
         record->set("cached_at",
                     json::JsonValue::make_int(to_epoch_seconds(entry.cached_at)));
+        record->set("last_accessed",
+                    json::JsonValue::make_int(to_epoch_seconds(entry.last_accessed)));
         entries->set(source_path, std::move(record));
     }
     auto root = json::JsonValue::make_object();
@@ -220,7 +231,11 @@ void PersistentCache::save_index() const {
     (void)support::atomic_replace_text(index_path, json::serialize_json(*root));
 }
 
-PersistentCacheLookupResult PersistentCache::lookup(const CacheKey &key) const {
+PersistentCacheLookupResult PersistentCache::lookup(const CacheKey &key) {
+    // Lazy TTL eviction: drop stale entries before serving any request so a
+    // long-lived cache never grows beyond its useful set.
+    evict_expired(kDefaultTtl);
+
     const auto index_it = index_.find(key.source_path);
     if (index_it == index_.end()) {
         return {PersistentCacheHitKind::Miss, std::nullopt};
@@ -254,10 +269,17 @@ PersistentCacheLookupResult PersistentCache::lookup(const CacheKey &key) const {
     entry.serialized_typed_hir = string_field(root, "serialized_typed_hir");
     entry.cached_at =
         from_epoch_seconds(static_cast<std::int64_t>(int_field(root, "cached_at", 0)));
+
+    // Refresh the access time and persist it. This is a write on every read,
+    // but the index is small and writes are atomic (RFC 0016 "Cache lifecycle").
+    index_it->second.last_accessed = std::chrono::system_clock::now();
+    save_index();
     return {PersistentCacheHitKind::Hit, std::move(entry)};
 }
 
 void PersistentCache::store(const PersistentCacheEntry &entry) {
+    evict_expired(kDefaultTtl);
+
     auto root = json::JsonValue::make_object();
     root->set("schema_version",
               json::JsonValue::make_string(std::string{kCacheSchemaVersion}));
@@ -282,20 +304,107 @@ void PersistentCache::store(const PersistentCacheEntry &entry) {
         return;
     }
     index_[entry.key.source_path] =
-        IndexEntry{file_name, entry.cached_at};
+        IndexEntry{file_name, entry.cached_at, std::chrono::system_clock::now()};
     save_index();
+    // Eager LRU eviction: keep the cache directory within its size budget.
+    evict_lru(kDefaultMaxCacheBytes);
+}
+
+bool PersistentCache::remove_entry(const std::string &source_path) {
+    const auto index_it = index_.find(source_path);
+    if (index_it == index_.end()) {
+        return false;
+    }
+    std::error_code error;
+    fs::remove(cache_dir_ / index_it->second.file_name, error);
+    index_.erase(index_it);
+    return true;
 }
 
 void PersistentCache::invalidate(const std::string &source_path) {
+    if (remove_entry(source_path)) {
+        save_index();
+    }
+}
+
+void PersistentCache::evict_expired(std::chrono::seconds ttl) {
+    const auto now = std::chrono::system_clock::now();
+    std::vector<std::string> victims;
+    victims.reserve(index_.size());
+    for (const auto &[source_path, entry] : index_) {
+        if (now - entry.last_accessed > ttl) {
+            victims.push_back(source_path);
+        }
+    }
+    if (victims.empty()) {
+        return;
+    }
+    for (const auto &source_path : victims) {
+        (void)remove_entry(source_path);
+    }
+    save_index();
+}
+
+void PersistentCache::evict_lru(std::size_t max_bytes) {
+    struct SizedEntry {
+        std::string source_path;
+        std::size_t size;
+        std::chrono::system_clock::time_point last_accessed;
+    };
+    std::vector<SizedEntry> entries;
+    entries.reserve(index_.size());
+    std::size_t total = 0;
+    for (const auto &[source_path, entry] : index_) {
+        std::error_code error;
+        const auto file_size = fs::file_size(cache_dir_ / entry.file_name, error);
+        const auto size = error ? std::size_t{0} : static_cast<std::size_t>(file_size);
+        total += size;
+        entries.push_back({source_path, size, entry.last_accessed});
+    }
+    if (total <= max_bytes) {
+        return;
+    }
+    // Oldest access time first; source path breaks ties so eviction is
+    // deterministic regardless of hash-map iteration order.
+    std::sort(entries.begin(), entries.end(),
+              [](const SizedEntry &lhs, const SizedEntry &rhs) {
+                  if (lhs.last_accessed != rhs.last_accessed) {
+                      return lhs.last_accessed < rhs.last_accessed;
+                  }
+                  return lhs.source_path < rhs.source_path;
+              });
+    bool changed = false;
+    for (const auto &entry : entries) {
+        if (total <= max_bytes) {
+            break;
+        }
+        if (remove_entry(entry.source_path)) {
+            total -= entry.size;
+            changed = true;
+        }
+    }
+    if (changed) {
+        save_index();
+    }
+}
+
+void PersistentCache::set_last_accessed_for_test(
+    const std::string &source_path, std::chrono::system_clock::time_point when) {
     const auto index_it = index_.find(source_path);
     if (index_it == index_.end()) {
         return;
     }
-    const auto file_path = cache_dir_ / index_it->second.file_name;
-    std::error_code error;
-    fs::remove(file_path, error);
-    index_.erase(index_it);
+    index_it->second.last_accessed = when;
     save_index();
+}
+
+std::optional<std::chrono::system_clock::time_point>
+PersistentCache::last_accessed_for_test(const std::string &source_path) const {
+    const auto index_it = index_.find(source_path);
+    if (index_it == index_.end()) {
+        return std::nullopt;
+    }
+    return index_it->second.last_accessed;
 }
 
 void PersistentCache::clear() {
