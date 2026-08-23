@@ -82,14 +82,14 @@ struct ToolchainProfileResult {
 
 struct ToolchainProfileSelection {
     ToolchainProfile profile;
-    std::optional<std::filesystem::path> workspace_root;
+    std::optional<std::filesystem::path> workspace_root{};
 };
 
 struct ProjectDiscoveryInput {
     std::filesystem::path document_path;
     std::vector<WorkspaceBoundary> workspace_boundaries;
-    std::optional<std::filesystem::path> explicit_manifest_path;
-    std::optional<std::filesystem::path> explicit_workspace_manifest_path;
+    std::optional<std::filesystem::path> explicit_manifest_path{};
+    std::optional<std::filesystem::path> explicit_workspace_manifest_path{};
     ToolchainProfileSet toolchains;
 };
 
@@ -98,7 +98,7 @@ struct ProjectContext {
     package_graph::PackageGraph graph;
     std::filesystem::path graph_manifest_path;
     std::filesystem::path package_manifest_path;
-    std::optional<std::filesystem::path> workspace_manifest_path;
+    std::optional<std::filesystem::path> workspace_manifest_path{};
     std::filesystem::path sysroot_manifest_path;
 };
 
@@ -111,7 +111,7 @@ struct DetachedSourceUnit {
 
 struct AnalysisContext {
     AnalysisContextKind kind{AnalysisContextKind::DetachedSourceUnit};
-    std::optional<DetachedSourceUnit> detached;
+    std::optional<DetachedSourceUnit> detached{};
 
     [[nodiscard]] static AnalysisContext from_project(ProjectContextKind context_kind) {
         const auto kind = context_kind == ProjectContextKind::SysrootPackage

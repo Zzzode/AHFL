@@ -360,9 +360,9 @@ parse_registry_dependencies(const ahfl::json::JsonValue &object,
 }
 
 struct RegistryResourceFetch {
-    std::optional<std::string> body;
-    std::optional<RegistryError> error;
-    std::string message;
+    std::optional<std::string> body{};
+    std::optional<RegistryError> error{};
+    std::string message{};
 };
 
 [[nodiscard]] RegistryResourceFetch fetch_registry_resource(RegistryTransport &transport,

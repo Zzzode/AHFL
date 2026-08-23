@@ -462,7 +462,7 @@ struct QualifiedValueExpr {
 /// Function call expression: callee(args...)
 struct CallExpr {
     Owned<QualifiedName> callee;
-    std::vector<Owned<TypeSyntax>> type_args;
+    std::vector<Owned<TypeSyntax>> type_args{};
     std::vector<Owned<ExprSyntax>> arguments;
 };
 

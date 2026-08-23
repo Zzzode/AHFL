@@ -54,7 +54,7 @@ struct ExpressionValue {
     // C-5 (Wave-24): for MethodCall expressions, records which impl+method
     // was selected during dispatch. Propagated to TypedExpr via
     // remember_expression_type so downstream passes can read it directly.
-    std::optional<DispatchTarget> dispatch_target;
+    std::optional<DispatchTarget> dispatch_target{};
 };
 
 struct ExpressionPatternLoweringResult {
@@ -75,7 +75,7 @@ struct ExpressionContext {
     // RFC 0014: return type of the innermost enclosing fn or closure body.
     // nullopt outside fn/closure bodies (flow handler, workflow node, contract
     // formula, ...) — the `?` operator is rejected there.
-    std::optional<TypePtr> enclosing_return_type;
+    std::optional<TypePtr> enclosing_return_type{};
     // RFC 0014: innermost enclosing callable is a closure whose return type
     // is not concretely determinable — `?` is rejected there (Rust-consistent).
     bool enclosing_closure_inferred_return{false};

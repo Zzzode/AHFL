@@ -883,7 +883,7 @@ struct Diagnostic {
     std::optional<SourceRange> range;
     std::optional<std::string> source_name;
     std::optional<SourcePosition> position;
-    std::map<std::string, std::vector<std::string>> data;
+    std::map<std::string, std::vector<std::string>> data{};
 
     // Secondary "related" notes attached to this diagnostic. They share the
     // diagnostic's owning bag (i.e. they do not contribute to error/warning
@@ -897,13 +897,13 @@ struct Diagnostic {
         // references a different source unit than the primary diagnostic
         // (e.g. "other declaration in module M" surfaced across module
         // boundaries).
-        std::optional<SourceId> source_id;
+        std::optional<SourceId> source_id{};
 
         // Human-readable display name for the source that owns this note's
         // range. When present, CLI rendering will prefer it over the primary
         // diagnostic's source_name so cross-module notes anchor to the right
         // file label even without a full SourceFile registry.
-        std::optional<std::string> source_name;
+        std::optional<std::string> source_name{};
     };
     std::vector<Related> related;
 };

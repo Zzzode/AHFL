@@ -52,7 +52,7 @@ struct PatternConstructor {
     std::string debug_name;
     std::vector<PatternDomainId> field_domains;
     PatternConstructorDisplay display;
-    std::optional<std::int64_t> int_value;
+    std::optional<std::int64_t> int_value{};
 };
 
 struct PatternIntBounds {
@@ -62,8 +62,8 @@ struct PatternIntBounds {
 
 struct PatternDomain {
     PatternDomainKind kind{PatternDomainKind::Finite};
-    std::vector<PatternConstructorId> constructors;
-    std::optional<PatternIntBounds> int_bounds;
+    std::vector<PatternConstructorId> constructors{};
+    std::optional<PatternIntBounds> int_bounds{};
 };
 
 enum class PatternNodeKind {
@@ -77,16 +77,16 @@ enum class PatternNodeKind {
 struct PatternNode {
     PatternNodeKind kind{PatternNodeKind::Wildcard};
     SourceRange range;
-    std::optional<PatternConstructorId> constructor;
-    std::vector<PatternId> children;
+    std::optional<PatternConstructorId> constructor{};
+    std::vector<PatternId> children{};
     std::int64_t int_range_start{0};
     std::int64_t int_range_end{0};
 };
 
 struct PatternWitness {
     PatternConstructorId constructor;
-    std::vector<PatternWitness> fields;
-    std::optional<std::int64_t> int_value;
+    std::vector<PatternWitness> fields{};
+    std::optional<std::int64_t> int_value{};
 };
 
 class PatternUsefulnessContext {
@@ -128,15 +128,15 @@ class PatternUsefulnessContext {
 
 struct PatternUsefulnessRow {
     PatternId pattern;
-    SourceRange range;
+    SourceRange range{};
     bool contributes_to_exhaustiveness{true};
 };
 
 struct PatternUnreachableRow {
     std::size_t row_index{0};
     SourceRange range;
-    std::vector<std::size_t> covering_row_indices;
-    std::vector<SourceRange> covering_row_ranges;
+    std::vector<std::size_t> covering_row_indices{};
+    std::vector<SourceRange> covering_row_ranges{};
 };
 
 struct PatternOverlapRow {
@@ -151,10 +151,10 @@ struct PatternRedundantOrBranch {
     PatternId or_pattern;
     std::size_t branch_index{0};
     SourceRange branch_range;
-    std::vector<std::size_t> covering_row_indices;
-    std::vector<SourceRange> covering_row_ranges;
-    std::vector<std::size_t> covering_branch_indices;
-    std::vector<SourceRange> covering_branch_ranges;
+    std::vector<std::size_t> covering_row_indices{};
+    std::vector<SourceRange> covering_row_ranges{};
+    std::vector<std::size_t> covering_branch_indices{};
+    std::vector<SourceRange> covering_branch_ranges{};
 };
 
 struct PatternUsefulnessOptions {

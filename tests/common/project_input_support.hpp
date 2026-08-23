@@ -158,8 +158,8 @@ inline void append_repo_std_module_root(ProjectInput &input,
 }
 
 struct PackageProjectInputResult {
-    std::optional<ProjectInput> input;
-    std::vector<package_graph::Diagnostic> diagnostics;
+    std::optional<ProjectInput> input{};
+    std::vector<package_graph::Diagnostic> diagnostics{};
 
     [[nodiscard]] bool has_errors() const {
         return !diagnostics.empty() || !input.has_value();

@@ -30,11 +30,11 @@ enum class TypeFactKind {
 struct TypeFact {
     Place place;
     TypeFactKind kind{TypeFactKind::IsNotNone};
-    SourceRange origin;
+    SourceRange origin{};
 
     // Only populated when kind is IsVariant or IsNotVariant.
-    std::string enum_name;
-    std::string variant_name;
+    std::string enum_name{};
+    std::string variant_name{};
 };
 
 struct FlowFacts {

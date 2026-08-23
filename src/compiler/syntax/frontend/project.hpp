@@ -13,12 +13,12 @@ namespace ahfl {
 
 struct ProjectInput {
     struct ModuleRoot {
-        std::string prefix;
-        std::filesystem::path root;
-        std::vector<std::string> exported_modules;
-        std::vector<std::string> artifact_exports;
-        std::vector<std::string> dependency_prefixes;
-        std::optional<std::vector<std::string>> compiler_intrinsics_allow;
+        std::string prefix{};
+        std::filesystem::path root{};
+        std::vector<std::string> exported_modules{};
+        std::vector<std::string> artifact_exports{};
+        std::vector<std::string> dependency_prefixes{};
+        std::optional<std::vector<std::string>> compiler_intrinsics_allow{};
     };
 
     std::vector<std::filesystem::path> entry_files{};

@@ -27,7 +27,7 @@ struct EnumDomainLowering {
     TypePtr type{nullptr};
     EnumTypeInfo enum_info;
     PatternDomainId domain;
-    std::vector<PatternConstructorId> variant_constructors;
+    std::vector<PatternConstructorId> variant_constructors{};
     bool is_root{false};
 };
 
@@ -62,22 +62,22 @@ struct OpenLiteralDomainLowering {
     PatternDomainId domain;
     OpenLiteralDomainKind kind{OpenLiteralDomainKind::Int};
     PatternConstructorId default_constructor;
-    std::unordered_map<std::string, PatternConstructorId> literal_constructors;
+    std::unordered_map<std::string, PatternConstructorId> literal_constructors{};
 };
 
 struct MatchMatrixLowering {
-    PatternUsefulnessContext context;
+    PatternUsefulnessContext context{};
     PatternDomainId root_domain;
-    std::vector<EnumDomainLowering> enum_domains;
-    std::unordered_map<TypePtr, std::size_t> enum_domain_by_type;
-    std::vector<std::optional<std::size_t>> enum_domain_for_pattern_domain;
-    std::vector<OpenLiteralDomainLowering> open_literal_domains;
-    std::unordered_map<TypePtr, std::size_t> open_literal_domain_by_type;
-    std::vector<std::optional<std::size_t>> open_literal_domain_for_pattern_domain;
-    std::unordered_map<TypePtr, PatternDomainId> bounded_int_domain_by_type;
-    std::vector<std::optional<VariantOrdinal>> variant_for_constructor;
-    std::optional<BoolDomainLowering> bool_domain;
-    std::optional<StringSingletonDomainLowering> empty_string_domain;
+    std::vector<EnumDomainLowering> enum_domains{};
+    std::unordered_map<TypePtr, std::size_t> enum_domain_by_type{};
+    std::vector<std::optional<std::size_t>> enum_domain_for_pattern_domain{};
+    std::vector<OpenLiteralDomainLowering> open_literal_domains{};
+    std::unordered_map<TypePtr, std::size_t> open_literal_domain_by_type{};
+    std::vector<std::optional<std::size_t>> open_literal_domain_for_pattern_domain{};
+    std::unordered_map<TypePtr, PatternDomainId> bounded_int_domain_by_type{};
+    std::vector<std::optional<VariantOrdinal>> variant_for_constructor{};
+    std::optional<BoolDomainLowering> bool_domain{};
+    std::optional<StringSingletonDomainLowering> empty_string_domain{};
     const MatchEnumInfoResolver *enum_resolver{nullptr};
     bool lower_payloads{false};
 };

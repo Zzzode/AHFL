@@ -103,15 +103,15 @@ struct AliasDefId {
 };
 
 struct Symbol {
-    SymbolId id;
+    SymbolId id{};
     SymbolNamespace name_space{SymbolNamespace::Types};
     SymbolKind kind{SymbolKind::Struct};
     ast::Visibility visibility{ast::Visibility::PackageInternal};
-    std::string local_name;
-    std::string canonical_name;
-    std::string module_name;
-    std::optional<SourceId> source_id;
-    SourceRange declaration_range;
+    std::string local_name{};
+    std::string canonical_name{};
+    std::string module_name{};
+    std::optional<SourceId> source_id{};
+    SourceRange declaration_range{};
 };
 
 struct PublicAlias {

@@ -82,7 +82,7 @@ class TypeContext {
         TypeKind kind{TypeKind::Any};
         std::string name;
         std::string variant_name;
-        std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds;
+        std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds{};
         std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
         std::optional<std::int64_t> decimal_scale;
         std::optional<SymbolId> nominal_symbol;
@@ -92,11 +92,11 @@ class TypeContext {
         // practice (Rust Substs position, Swift GenericTypeParamKey depth+index):
         // substitution is O(1) position-based lookup, not string-hash based.
         // The `name` field carries the user-visible label for diagnostics only.
-        std::optional<std::uint32_t> type_var_index;
+        std::optional<std::uint32_t> type_var_index{};
         // RFC 0013 P2-S1 (R0): TypeVar's declaring-scope identity. Nullopt for
         // all non-TypeVar kinds. Same (index, name) from two different generic
         // declarations intern to distinct Type instances.
-        std::optional<std::uint32_t> type_var_scope_id;
+        std::optional<std::uint32_t> type_var_scope_id{};
         // P2 (RFC §5): concrete type arguments of a generic nominal type
         // instantiation (struct/enum). Empty vector for monomorphic types.
         //
@@ -111,7 +111,7 @@ class TypeContext {
         // because the number of unique instantiations per definition is
         // typically small (monomorphization budget is in the hundreds), and a
         // single key keeps the interning model uniform.
-        std::vector<const Type *> type_args;
+        std::vector<const Type *> type_args{};
 
         [[nodiscard]] friend bool operator==(const TypeKey &lhs,
                                              const TypeKey &rhs) noexcept = default;

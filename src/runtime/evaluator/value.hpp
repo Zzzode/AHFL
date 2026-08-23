@@ -279,6 +279,8 @@ void print_value(const Value &v, std::ostream &out);
     return Value{EnumValue{
         .enum_name = std::move(enum_name),
         .variant = std::move(variant),
+        .payload = {},
+        .named_payload = {},
     }};
 }
 

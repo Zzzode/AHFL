@@ -95,13 +95,13 @@ struct StructTypeInfo {
     // variables inside field types and by monomorphization to align arguments.
     std::vector<std::string> type_param_names;
     std::vector<StructFieldInfo> fields;
-    WhereClauseInfo where_clause;
+    WhereClauseInfo where_clause{};
     SourceRange declaration_range;
 
     [[nodiscard]] MaybeCRef<StructFieldInfo> find_field(std::string_view name) const;
     void rebuild_field_index();
 
-    std::unordered_map<std::string, std::size_t> field_index_;
+    std::unordered_map<std::string, std::size_t> field_index_{};
 };
 
 enum class EnumVariantPayloadKind {
@@ -123,16 +123,16 @@ struct EnumVariantInfo {
     EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
     // RFC 0001: positional tuple payload types. Non-empty iff
     // payload_kind == Tuple.
-    std::vector<TypePtr> payload;
+    std::vector<TypePtr> payload{};
     // RFC 0001: named struct payload fields. Non-empty iff
     // payload_kind == Struct.
-    std::vector<EnumVariantFieldInfo> fields;
+    std::vector<EnumVariantFieldInfo> fields{};
     SourceRange declaration_range;
 
     [[nodiscard]] MaybeCRef<EnumVariantFieldInfo> find_field(std::string_view name) const;
     void rebuild_field_index();
 
-    std::unordered_map<std::string, std::size_t> field_index_;
+    std::unordered_map<std::string, std::size_t> field_index_{};
 };
 
 struct EnumTypeInfo {
@@ -144,7 +144,7 @@ struct EnumTypeInfo {
     // variable resolution inside variant payload types and by monomorphization.
     std::vector<std::string> type_param_names;
     std::vector<EnumVariantInfo> variants;
-    WhereClauseInfo where_clause;
+    WhereClauseInfo where_clause{};
     SourceRange declaration_range;
 
     [[nodiscard]] bool has_variant(std::string_view name) const noexcept;
@@ -181,7 +181,7 @@ struct CapabilityTypeInfo {
     std::string canonical_name;
     std::vector<ParamTypeInfo> params;
     TypePtr return_type;
-    WhereClauseInfo where_clause;
+    WhereClauseInfo where_clause{};
     SourceRange declaration_range;
     CapabilityEffectTypeInfo effect;
 };
@@ -305,7 +305,7 @@ struct ContractClauseInfo {
     // the downstream IR pipeline (mirrors naming in ir::ContractClause).
     // Either decreases_is_wildcard is true OR decreases_expr_ranges is
     // populated; both are sourced from the same AST attach point.
-    std::vector<SourceRange> decreases_expr_ranges;
+    std::vector<SourceRange> decreases_expr_ranges{};
     SourceRange decreases_range;
 };
 
@@ -341,7 +341,7 @@ struct FnEffectClauseInfo {
     // executable phase (FlowWorkflowSema) validates that the expression produces Int; the
     // corresponding TypedExpr is recovered via TypedProgram::find_expr_by_range
     // for downstream passes (IR lowering / BMC).
-    SourceRange decreases_expr_range;
+    SourceRange decreases_expr_range{};
 };
 
 // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): declaration-level signature of a
@@ -373,11 +373,11 @@ struct FnTypeInfo {
     // the ambiguity concreteness test, and the monomorphization cache key.
     // kUnknownTypeVarScopeId for monomorphic fns.
     std::uint32_t type_param_scope_id{kUnknownTypeVarScopeId};
-    WhereClauseInfo where_clause;
+    WhereClauseInfo where_clause{};
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;
-    std::optional<std::string> builtin_name; // P5: @builtin hook name, nullopt if not a builtin
+    std::optional<std::string> builtin_name{}; // P5: @builtin hook name, nullopt if not a builtin
     // P2b (RFC §3.2.3): index of the function body's TypedBlock in
     // TypedProgram::blocks. UINT32_MAX when the function has no body or when
     // body type-checking has not been performed yet. Populated by FlowWorkflowSema.
@@ -435,11 +435,11 @@ struct TraitTypeInfo {
     // because the name list doubles as TypeVarT-index-aligned ground truth:
     // any code that builds TypeVarT nodes with indices derived from trait
     // method signatures must use the exact same name ordering.
-    std::vector<std::string> self_augmented_type_param_names;
+    std::vector<std::string> self_augmented_type_param_names{};
     std::vector<SymbolId> super_traits;
     std::vector<TraitMethodInfo> methods;
     std::vector<TraitAssocTypeInfo> assoc_types;
-    WhereClauseInfo where_clause;
+    WhereClauseInfo where_clause{};
     SourceRange declaration_range;
 
     // Linear lookups (small item count per trait, mirrors EnumTypeInfo).
@@ -486,7 +486,7 @@ struct ImplMethodInfo {
     // P5 (RFC §3.3): when non-null, this method was declared with
     // `@builtin("name")` in the source; the name maps to a compiler / runtime
     // builtin hook. Only stdlib modules are allowed to declare these.
-    std::optional<std::string> builtin_name;
+    std::optional<std::string> builtin_name{};
     // P3c: index of the method body's TypedBlock in TypedProgram::blocks.
     // UINT32_MAX when the method has no body or body checking failed before a
     // block was recorded. Populated by FlowWorkflowSema after the environment is built.
@@ -506,26 +506,26 @@ struct ImplTypeInfo {
     std::string trait_name;
     TypePtr target_type;
     std::optional<SymbolId> target_symbol;
-    std::vector<std::string> type_param_names;
+    std::vector<std::string> type_param_names{};
     // P3c (RFC 0013): resolved type arguments of the trait_ref
     // (e.g. [T] for `impl<T> Iterable<T> for List<T>`). Empty for inherent
     // impls and for trait refs without type arguments. The trait/impl
     // signature matcher substitutes trait-level type params with these.
-    std::vector<TypePtr> trait_type_args;
-    std::vector<ImplMethodInfo> methods;
-    std::vector<ImplAssocItemInfo> assoc_items;
-    SourceRange declaration_range;
-    SourceRange trait_ref_range;
-    SourceRange target_type_range;
+    std::vector<TypePtr> trait_type_args{};
+    std::vector<ImplMethodInfo> methods{};
+    std::vector<ImplAssocItemInfo> assoc_items{};
+    SourceRange declaration_range{};
+    SourceRange trait_ref_range{};
+    SourceRange target_type_range{};
     // P3 (RFC §2.2 coherence): source unit the impl lives in, so the
     // orphan-rule check can resolve the impl's defining module without a
     // symbol. Resolved to a module name by the typecheck pass via
     // SourceGraph::sources.
-    std::optional<SourceId> source_id;
-    std::string package_prefix;
+    std::optional<SourceId> source_id{};
+    std::string package_prefix{};
     // Module name the impl is declared in (resolved at typecheck time from
     // source_id). Empty when the impl is in the anonymous top-level program.
-    std::string module_name;
+    std::string module_name{};
 };
 
 } // namespace ahfl

@@ -17,10 +17,10 @@ struct LockfilePackage {
     std::string source;
     std::string manifest;
     std::string checksum;
-    std::optional<std::string> registry_id;
-    std::optional<std::string> source_archive_sha256;
-    std::optional<std::string> manifest_sha256;
-    std::optional<std::string> public_api_sha256;
+    std::optional<std::string> registry_id{};
+    std::optional<std::string> source_archive_sha256{};
+    std::optional<std::string> manifest_sha256{};
+    std::optional<std::string> public_api_sha256{};
 };
 
 struct LockfileEdge {

@@ -201,13 +201,13 @@ struct TypedPattern {
     std::optional<SourceId> source_id;
     TypePtr matched_type{nullptr};
     bool irrefutable{false};
-    std::vector<TypedPatternChild> children;
-    std::vector<TypedPatternBinding> bindings;
-    std::optional<SymbolId> enum_symbol;
-    std::string enum_name;
-    std::string variant_name;
+    std::vector<TypedPatternChild> children{};
+    std::vector<TypedPatternBinding> bindings{};
+    std::optional<SymbolId> enum_symbol{};
+    std::string enum_name{};
+    std::string variant_name{};
     EnumVariantPayloadKind variant_payload_kind{EnumVariantPayloadKind::Unit};
-    std::string literal_spelling;
+    std::string literal_spelling{};
     std::int64_t int_range_start{0};
     std::int64_t int_range_end{0};
 };
@@ -404,7 +404,7 @@ struct TypedExpr {
     // was selected during dispatch. Empty for non-MethodCall expressions.
     // Lets lowering / verification read the dispatch result directly
     // instead of re-running dispatch resolution.
-    std::optional<DispatchTarget> dispatch_target;
+    std::optional<DispatchTarget> dispatch_target{};
     std::string path_root;
     AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;

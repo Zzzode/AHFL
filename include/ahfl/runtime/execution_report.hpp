@@ -19,14 +19,14 @@ enum class NodeReportStatus {
 
 struct ExecutionNodeReport {
     WorkflowNodeId node;
-    AgentId agent;
+    AgentId agent{};
     NodeReportStatus status{NodeReportStatus::Scheduled};
     std::size_t execution_slot{0};
     std::vector<WorkflowNodeId> dependencies;
-    std::optional<RuntimeValueId> output;
-    std::optional<DiagnosticId> diagnostic;
-    std::optional<NodeFailureKind> failure_kind;
-    std::optional<CheckpointId> restored_from_checkpoint;
+    std::optional<RuntimeValueId> output{};
+    std::optional<DiagnosticId> diagnostic{};
+    std::optional<NodeFailureKind> failure_kind{};
+    std::optional<CheckpointId> restored_from_checkpoint{};
 };
 
 struct ExecutionUsageSummary {
@@ -59,9 +59,9 @@ enum class ExecutionReportBuildIssueKind {
 
 struct ExecutionReportBuildError {
     ExecutionReportBuildIssueKind kind{ExecutionReportBuildIssueKind::InvalidEventStream};
-    ExecutionEventValidationResult validation;
-    ExecutionEventId event;
-    WorkflowNodeId node;
+    ExecutionEventValidationResult validation{};
+    ExecutionEventId event{};
+    WorkflowNodeId node{};
 };
 
 using ExecutionReportBuildResult = std::expected<ExecutionReport, ExecutionReportBuildError>;

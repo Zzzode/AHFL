@@ -354,9 +354,9 @@ struct CloneContext {
     TypeContext &types;
 
     // old index -> new index
-    std::unordered_map<std::uint32_t, std::uint32_t> expr_map;
-    std::unordered_map<std::uint32_t, std::uint32_t> stmt_map;
-    std::unordered_map<std::uint32_t, std::uint32_t> block_map;
+    std::unordered_map<std::uint32_t, std::uint32_t> expr_map{};
+    std::unordered_map<std::uint32_t, std::uint32_t> stmt_map{};
+    std::unordered_map<std::uint32_t, std::uint32_t> block_map{};
 };
 
 // Forward declarations.

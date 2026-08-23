@@ -27,8 +27,8 @@ struct PackageMetadata {
 struct RegistryDependencyMetadata {
     std::string name;
     std::string source;
-    std::optional<std::string> registry;
-    std::optional<std::string> version_requirement;
+    std::optional<std::string> registry{};
+    std::optional<std::string> version_requirement{};
 };
 
 struct RegistryIndexEntry {
@@ -40,7 +40,7 @@ struct RegistryIndexEntry {
     std::string source_archive_sha256;
     std::string manifest_sha256;
     std::string public_api_sha256;
-    std::vector<RegistryDependencyMetadata> dependencies;
+    std::vector<RegistryDependencyMetadata> dependencies{};
 };
 
 struct RegistryIndexParseResult {
@@ -53,8 +53,8 @@ struct RegistryIndexParseResult {
 };
 
 struct RegistryCandidateSelection {
-    std::optional<RegistryIndexEntry> entry;
-    std::string error_message;
+    std::optional<RegistryIndexEntry> entry{};
+    std::string error_message{};
 };
 
 struct RegistryPackageArtifacts {
@@ -96,9 +96,9 @@ struct RegistryResult {
 };
 
 struct RegistryPackageArtifactResult {
-    std::optional<RegistryPackageArtifacts> artifacts;
-    std::optional<RegistryError> error;
-    std::vector<std::string> diagnostics;
+    std::optional<RegistryPackageArtifacts> artifacts{};
+    std::optional<RegistryError> error{};
+    std::vector<std::string> diagnostics{};
 
     [[nodiscard]] bool success() const {
         return artifacts.has_value() && !error.has_value() && diagnostics.empty();
@@ -106,7 +106,7 @@ struct RegistryPackageArtifactResult {
 };
 
 struct RegistryPackageIndexResult {
-    std::optional<RegistryPackageIndex> index;
+    std::optional<RegistryPackageIndex> index{};
     std::optional<RegistryError> error;
     std::vector<std::string> diagnostics;
 
@@ -116,9 +116,9 @@ struct RegistryPackageIndexResult {
 };
 
 struct RegistryPublicApiSnapshotResult {
-    std::optional<RegistryPublicApiSnapshot> snapshot;
-    std::optional<RegistryError> error;
-    std::vector<std::string> diagnostics;
+    std::optional<RegistryPublicApiSnapshot> snapshot{};
+    std::optional<RegistryError> error{};
+    std::vector<std::string> diagnostics{};
 
     [[nodiscard]] bool success() const {
         return snapshot.has_value() && !error.has_value() && diagnostics.empty();
@@ -126,9 +126,9 @@ struct RegistryPublicApiSnapshotResult {
 };
 
 struct RegistryMutationResult {
-    std::optional<RegistryIndexEntry> entry;
-    std::optional<RegistryError> error;
-    std::vector<std::string> diagnostics;
+    std::optional<RegistryIndexEntry> entry{};
+    std::optional<RegistryError> error{};
+    std::vector<std::string> diagnostics{};
 
     [[nodiscard]] bool success() const {
         return entry.has_value() && !error.has_value() && diagnostics.empty();

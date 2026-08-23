@@ -136,7 +136,7 @@ struct WildcardPattern {};
 struct BindingPattern {
     std::string name;
     bool is_mut{false};
-    Owned<MatchPattern> nested;
+    Owned<MatchPattern> nested{};
 };
 
 /// Tuple pattern: (a, b, c).
@@ -160,7 +160,7 @@ using MatchPatternNode = std::variant<LiteralPattern,
 struct MatchPattern {
     MatchPatternNode node;
     SourceRangeOpt source_range;
-    std::string text;
+    std::string text{};
 };
 
 /// Boolean literal: true / false
@@ -232,8 +232,8 @@ struct StructLiteralExpr {
     std::string type_name;               // Type name
     std::vector<StructFieldInit> fields; // Field initializer list
     bool is_enum_variant{false};
-    std::string enum_name;
-    std::string variant_name;
+    std::string enum_name{};
+    std::string variant_name{};
 };
 
 /// Unary expression: !expr, -expr

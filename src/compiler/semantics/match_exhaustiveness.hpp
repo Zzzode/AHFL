@@ -21,15 +21,15 @@ struct MatchMissingVariant {
 struct MatchMissingPatternsDiagnostic {
     SourceRange match_range;
     SourceRange enum_declaration_range;
-    std::vector<MatchMissingVariant> variants;
-    std::vector<std::string> witnesses;
+    std::vector<MatchMissingVariant> variants{};
+    std::vector<std::string> witnesses{};
 };
 
 struct MatchUnreachableArmDiagnostic {
     std::size_t arm_index{0}; // 1-based source order.
     SourceRange pattern_range;
-    std::vector<std::size_t> covering_arm_indices;
-    std::vector<SourceRange> covering_arm_ranges;
+    std::vector<std::size_t> covering_arm_indices{};
+    std::vector<SourceRange> covering_arm_ranges{};
 };
 
 struct MatchOverlapDiagnostic {
@@ -43,10 +43,10 @@ struct MatchRedundantPatternDiagnostic {
     std::size_t arm_index{0};    // 1-based source order.
     std::size_t branch_index{0}; // 1-based source order inside the or-pattern.
     SourceRange branch_range;
-    std::vector<std::size_t> covering_arm_indices;
-    std::vector<SourceRange> covering_arm_ranges;
-    std::vector<std::size_t> covering_branch_indices;
-    std::vector<SourceRange> covering_branch_ranges;
+    std::vector<std::size_t> covering_arm_indices{};
+    std::vector<SourceRange> covering_arm_ranges{};
+    std::vector<std::size_t> covering_branch_indices{};
+    std::vector<SourceRange> covering_branch_ranges{};
 };
 
 struct MatchExhaustivenessDiagnostics {

@@ -98,10 +98,10 @@ struct TypeKey {
     };
 
     Kind kind{Kind::Unknown};
-    std::optional<PrimitiveKind> primitive;
+    std::optional<PrimitiveKind> primitive{};
     std::int64_t primitive_parameter{0};
-    std::optional<DefId> def;
-    std::vector<TypeKey> type_args;
+    std::optional<DefId> def{};
+    std::vector<TypeKey> type_args{};
 
     [[nodiscard]] friend bool operator==(const TypeKey &lhs, const TypeKey &rhs) noexcept = default;
 };
@@ -117,7 +117,7 @@ struct SourceUnitFact {
     std::string uri;
     std::uint64_t revision{0};
     std::uint64_t content_fingerprint{0};
-    std::vector<LspNavigationIndexSourceKind> scope_kinds;
+    std::vector<LspNavigationIndexSourceKind> scope_kinds{};
     FactCompleteness completeness{FactCompleteness::Resolved};
     bool valid{false};
 };
@@ -135,22 +135,22 @@ struct ImplFact {
     package_graph::PackageId package_id;
     SourceUnitId source_unit_id;
     TypeKey target_type;
-    std::optional<DefId> trait_def;
-    std::optional<SourceRange> trait_range;
+    std::optional<DefId> trait_def{};
+    std::optional<SourceRange> trait_range{};
     SourceRange declaration_range;
     SourceRange target_range;
     Location location;
-    std::optional<Location> trait_location;
-    std::vector<ImplMethodFact> methods;
+    std::optional<Location> trait_location{};
+    std::vector<ImplMethodFact> methods{};
     std::size_t source_order{0};
     FactCompleteness completeness{FactCompleteness::Typed};
 };
 
 struct SymbolFact {
     DefId def_id;
-    DefFingerprint fingerprint;
-    std::optional<AliasDefId> alias_id;
-    std::optional<DefId> alias_target_def;
+    DefFingerprint fingerprint{};
+    std::optional<AliasDefId> alias_id{};
+    std::optional<DefId> alias_target_def{};
     package_graph::PackageId package_id;
     SourceUnitId source_unit_id;
     SymbolKind kind{SymbolKind::Struct};

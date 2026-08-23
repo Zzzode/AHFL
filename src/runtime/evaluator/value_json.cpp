@@ -360,7 +360,7 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
             }
             lv->items.push_back(std::make_unique<Value>(std::move(*item_value)));
         }
-        return std::move(list);
+        return list;
     }
     case ahfl::json::Kind::Object:
         return struct_or_enum_from_json_object(json_value);

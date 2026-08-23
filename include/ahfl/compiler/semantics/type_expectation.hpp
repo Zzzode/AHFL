@@ -28,10 +28,10 @@ struct TypeExpectation {
     // the expected-side note embeds the callable name (e.g. "declared in
     // `foo`"). Only meaningful when origin_kind == FunctionParameter and the
     // mismatch arose from a call-site argument assignability check.
-    std::string callable_name;
+    std::string callable_name{};
     // g-1 Phase 2: 1-based argument position index. std::nullopt means the
     // mismatch did not arise from a positional argument slot.
-    std::optional<std::size_t> argument_index;
+    std::optional<std::size_t> argument_index{};
 };
 
 [[nodiscard]] std::string describe_type_expectation_origin(TypeExpectationOriginKind kind);

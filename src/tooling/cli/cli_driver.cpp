@@ -443,7 +443,7 @@ sysroot_manifest_from_options(const CommandLineOptions &options, std::ostream &e
             ahfl::project_discovery::ToolchainProfileOrigin::CliFlag);
         if (result.has_errors()) {
             print_toolchain_diagnostics(result.diagnostics, err);
-            return SysrootManifestSelection{.had_error = true};
+            return SysrootManifestSelection{.manifest = std::nullopt, .had_error = true};
         }
         if (result.profile.has_value()) {
             return SysrootManifestSelection{.manifest = result.profile->std_manifest};
@@ -458,7 +458,7 @@ sysroot_manifest_from_options(const CommandLineOptions &options, std::ostream &e
             ahfl::project_discovery::ToolchainProfileOrigin::Environment);
         if (result.has_errors()) {
             print_toolchain_diagnostics(result.diagnostics, err);
-            return SysrootManifestSelection{.had_error = true};
+            return SysrootManifestSelection{.manifest = std::nullopt, .had_error = true};
         }
         if (result.profile.has_value()) {
             return SysrootManifestSelection{.manifest = result.profile->std_manifest};

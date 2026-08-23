@@ -605,13 +605,13 @@ struct SymbolicDomainSpace;
 
 struct SymbolicConstructorSpace {
     PatternConstructorId constructor;
-    std::vector<SymbolicDomainSpace> fields;
+    std::vector<SymbolicDomainSpace> fields{};
 };
 
 struct SymbolicDomainSpace {
     PatternDomainId domain;
-    std::vector<IntInterval> intervals;
-    std::vector<SymbolicConstructorSpace> constructors;
+    std::vector<IntInterval> intervals{};
+    std::vector<SymbolicConstructorSpace> constructors{};
 };
 
 [[nodiscard]] SymbolicDomainSpace make_empty_symbolic_space(PatternDomainId domain) {

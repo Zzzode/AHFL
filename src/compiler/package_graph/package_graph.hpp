@@ -75,7 +75,7 @@ struct Diagnostic {
     std::string code;
     std::string message;
     SourceRange range{};
-    std::vector<Related> related;
+    std::vector<Related> related{};
 };
 
 struct PackageInput {
@@ -83,22 +83,22 @@ struct PackageInput {
     std::filesystem::path package_root;
     PackageSourceKind source{PackageSourceKind::Path};
     std::filesystem::path manifest_path;
-    std::string checksum;
-    std::optional<RegistryPackageIdentity> registry;
+    std::string checksum{};
+    std::optional<RegistryPackageIdentity> registry{};
 };
 
 struct BuildInput {
     PackageInput sysroot_std;
     PackageInput root_package;
-    std::vector<PackageInput> workspace_packages;
-    std::vector<PackageInput> path_packages;
-    std::vector<PackageInput> registry_packages;
+    std::vector<PackageInput> workspace_packages{};
+    std::vector<PackageInput> path_packages{};
+    std::vector<PackageInput> registry_packages{};
 };
 
 struct ManifestBuildInput {
     std::filesystem::path root_manifest_path;
     std::filesystem::path sysroot_manifest_path;
-    std::vector<PackageInput> registry_packages;
+    std::vector<PackageInput> registry_packages{};
 };
 
 struct WorkspaceBuildInput {
@@ -168,7 +168,7 @@ struct PackageGraph {
 };
 
 struct BuildResult {
-    std::optional<PackageGraph> graph;
+    std::optional<PackageGraph> graph{};
     std::vector<Diagnostic> diagnostics;
 
     [[nodiscard]] bool has_errors() const {

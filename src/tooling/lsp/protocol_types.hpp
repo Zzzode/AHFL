@@ -82,8 +82,8 @@ struct LspDiagnostic {
     std::string code;
     std::string source{"ahfl"};
     std::string message;
-    std::map<std::string, std::vector<std::string>> data;
-    std::vector<RelatedInformation> related_information;
+    std::map<std::string, std::vector<std::string>> data{};
+    std::vector<RelatedInformation> related_information{};
 };
 
 // ---------- Completion ----------

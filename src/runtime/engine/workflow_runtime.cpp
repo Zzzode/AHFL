@@ -24,7 +24,7 @@ struct RuntimeNodePlan {
     const ir::WorkflowNode *source{nullptr};
     const ir::AgentDecl *agent_decl{nullptr};
     const ir::FlowDecl *flow_decl{nullptr};
-    std::vector<WorkflowNodeId> dependencies;
+    std::vector<WorkflowNodeId> dependencies{};
 };
 
 struct RuntimeWorkflowPlan {

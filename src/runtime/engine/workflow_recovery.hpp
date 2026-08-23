@@ -19,13 +19,13 @@ inline constexpr std::string_view kWorkflowRecoverySchema{"ahfl.workflow-recover
 struct RecoveredNodeState {
     WorkflowNodeId node;
     AgentId agent;
-    std::optional<evaluator::Value> output;
+    std::optional<evaluator::Value> output{};
 };
 
 struct WorkflowRecoverySnapshot {
     WorkflowId workflow;
     CheckpointId checkpoint;
-    std::vector<RecoveredNodeState> completed_nodes;
+    std::vector<RecoveredNodeState> completed_nodes{};
 };
 
 enum class WorkflowRecoveryError {

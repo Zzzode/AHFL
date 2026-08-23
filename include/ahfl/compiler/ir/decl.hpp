@@ -89,9 +89,9 @@ struct EnumVariantFieldDecl {
 struct EnumVariantDecl {
     std::string name;
     EnumVariantPayloadKind payload_kind{EnumVariantPayloadKind::Unit};
-    std::vector<TypeRef> payload;
-    std::vector<EnumVariantFieldDecl> fields;
-    SourceRangeOpt source_range;
+    std::vector<TypeRef> payload{};
+    std::vector<EnumVariantFieldDecl> fields{};
+    SourceRangeOpt source_range{};
 };
 
 /// Enum declaration: enum Name { Unit, Tuple(T), Struct { field: T } }
@@ -105,8 +105,8 @@ struct EnumDecl {
 /// Parameter declaration
 struct ParamDecl {
     std::string name;
-    TypeRef type_ref;
-    SourceRangeOpt source_range;
+    TypeRef type_ref{};
+    SourceRangeOpt source_range{};
 };
 
 /// Capability side-effect category. The IR keeps a structured value; the backend maps it to a target artifact enum.
@@ -206,7 +206,7 @@ struct ContractClause {
     // expressions for the explicit lexical-order form. The two fields are
     // mutually exclusive: when wildcard is true, `decreases_terms` is empty.
     bool decreases_wildcard{false};
-    std::vector<ExprRef> decreases_terms;
+    std::vector<ExprRef> decreases_terms{};
 };
 
 /// Contract declaration: contract for AgentName { requires ...; ensures ...; }

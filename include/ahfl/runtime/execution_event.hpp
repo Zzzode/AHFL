@@ -147,7 +147,7 @@ struct CapabilityStarted {
 
 struct CapabilityCompleted {
     InvocationId invocation;
-    std::optional<RuntimeValueId> output;
+    std::optional<RuntimeValueId> output{};
     std::size_t attempts{1};
     bool cache_hit{false};
 };
@@ -164,7 +164,7 @@ struct CapabilityUsageRecorded {
     std::size_t total_tokens{0};
     double total_cost_usd{0.0};
     bool cost_estimated{false};
-    std::vector<CapabilityPolicyNotice> notices;
+    std::vector<CapabilityPolicyNotice> notices{};
 };
 
 struct CapabilityFailed {

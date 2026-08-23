@@ -19,26 +19,26 @@ enum class ReplayNodeTerminal {
 
 struct ExecutionReplayNode {
     WorkflowNodeId node;
-    AgentId agent;
+    AgentId agent{};
     std::size_t execution_slot{0};
     std::vector<WorkflowNodeId> dependencies;
     bool scheduled{false};
     bool started{false};
     ReplayNodeTerminal terminal{ReplayNodeTerminal::Pending};
-    std::vector<WorkflowNodeId> blocking_dependencies;
-    std::optional<RuntimeValueId> output;
-    std::optional<DiagnosticId> diagnostic;
+    std::vector<WorkflowNodeId> blocking_dependencies{};
+    std::optional<RuntimeValueId> output{};
+    std::optional<DiagnosticId> diagnostic{};
     bool restored{false};
-    std::optional<CheckpointId> restored_from_checkpoint;
+    std::optional<CheckpointId> restored_from_checkpoint{};
 };
 
 struct ExecutionReplayProjection {
     RunId run;
     WorkflowId workflow;
     RunTerminalStatus status{RunTerminalStatus::Failed};
-    std::vector<WorkflowNodeId> execution_order;
-    std::vector<ExecutionReplayNode> nodes;
-    std::vector<CheckpointId> checkpoints;
+    std::vector<WorkflowNodeId> execution_order{};
+    std::vector<ExecutionReplayNode> nodes{};
+    std::vector<CheckpointId> checkpoints{};
 };
 
 struct ExecutionAuditProjection {
@@ -87,25 +87,25 @@ enum class ExecutionSchedulerStatus {
 
 struct ExecutionSchedulerNode {
     WorkflowNodeId node;
-    AgentId agent;
+    AgentId agent{};
     std::size_t execution_slot{0};
     std::vector<WorkflowNodeId> dependencies;
-    std::vector<WorkflowNodeId> satisfied_dependencies;
+    std::vector<WorkflowNodeId> satisfied_dependencies{};
     std::vector<WorkflowNodeId> blocking_dependencies;
     ExecutionSchedulerNodeState state{ExecutionSchedulerNodeState::Scheduled};
-    std::optional<RuntimeValueId> output;
-    std::optional<DiagnosticId> diagnostic;
-    std::optional<CheckpointId> restored_from_checkpoint;
+    std::optional<RuntimeValueId> output{};
+    std::optional<DiagnosticId> diagnostic{};
+    std::optional<CheckpointId> restored_from_checkpoint{};
 };
 
 struct ExecutionSchedulerProjection {
     RunId run;
     WorkflowId workflow;
     ExecutionSchedulerStatus status{ExecutionSchedulerStatus::Waiting};
-    std::vector<WorkflowNodeId> execution_order;
-    std::vector<ExecutionSchedulerNode> nodes;
-    std::vector<WorkflowNodeId> completed_prefix;
-    std::optional<WorkflowNodeId> next_candidate;
+    std::vector<WorkflowNodeId> execution_order{};
+    std::vector<ExecutionSchedulerNode> nodes{};
+    std::vector<WorkflowNodeId> completed_prefix{};
+    std::optional<WorkflowNodeId> next_candidate{};
 };
 
 struct ExecutionCheckpointNode {
@@ -118,8 +118,8 @@ struct ExecutionCheckpointProjection {
     RunId run;
     WorkflowId workflow;
     CheckpointId checkpoint;
-    std::vector<ExecutionCheckpointNode> completed_nodes;
-    std::optional<WorkflowNodeId> resume_candidate;
+    std::vector<ExecutionCheckpointNode> completed_nodes{};
+    std::optional<WorkflowNodeId> resume_candidate{};
     bool resume_ready{false};
 };
 
