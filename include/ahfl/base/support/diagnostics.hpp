@@ -310,10 +310,7 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingBuiltinEffect{
 // Surfaced by the P3b trait/impl typecheck pass: orphan rule, impl-trait
 // signature matching, super-trait coverage, and (later) method-call resolution.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> OrphanImpl{"ORPHAN_IMPL"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateTraitImpl{
-    "DUPLICATE_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTraitUnknown{"IMPL_TRAIT_UNKNOWN"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTargetUnknown{"IMPL_TARGET_UNKNOWN"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodNotFound{
     "TRAIT_METHOD_NOT_FOUND"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodSignatureMismatch{
@@ -321,19 +318,10 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodSignatureMi
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitAssocTypeNotFound{
     "TRAIT_ASSOC_TYPE_NOT_FOUND"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingSuperTrait{"MISSING_SUPER_TRAIT"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoTraitImpl{"NO_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AmbiguousTraitImpl{
     "AMBIGUOUS_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitBoundNotSatisfied{
     "TRAIT_BOUND_NOT_SATISFIED"};
-// P3c.S6 Trait/Impl additional codes: method-lookup, inherent-vs-trait conflict
-// and signature-mismatch diagnostics used by the Trait/Impl resolver smoke suite.
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MethodNotFound{"METHOD_NOT_FOUND"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MethodSignatureMismatch{
-    "METHOD_SIGNATURE_MISMATCH"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AssocTypeNotFound{"ASSOC_TYPE_NOT_FOUND"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InherentTraitConflict{
-    "INHERENT_TRAIT_CONFLICT"};
 // P3c.S4a: coherence MVP — two trait impls reduce to the same
 // (trait, normalized_type) key. Surfaces in build_impl_types after the
 // shared impls_conflict_for_type() comparison (also used by orphan-rule
@@ -367,15 +355,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NON
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MonomorphizationBudgetExceeded{
     "MONOMORPHIZATION_BUDGET_EXCEEDED"};
 // --- DECREASES / termination clause diagnostics (P4 contract hardening) ---
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesExpectsNumeric{
-    "DECREASES_EXPECTS_NUMERIC"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesExpectsPure{
-    "DECREASES_EXPECTS_PURE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesIllegalOwner{
-    "DECREASES_ILLEGAL_OWNER"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesDuplicate{"DECREASES_DUPLICATE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InNonPure{"IN_NON_PURE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedReceiver{"SHADOWED_RECEIVER"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DecreasesShadowedReceiver{
     "DECREASES_SHADOWED_RECEIVER"};
 // RFC 0014: try operator (`expr?`) diagnostics.
@@ -400,13 +379,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryNotInLetBinding{
     "TRY_NOT_IN_LET_BINDING"};
 } // namespace typecheck
 
-namespace resolve {
-// Deduplicated, single-source-of-truth orphan-rule error code. Trait/Impl
-// orphan-reject diagnostics are surfaced during resolution and re-used by
-// downstream passes via the same identifier.
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> TraitOrphanImpl{"TRAIT_ORPHAN_IMPL"};
-} // namespace resolve
-
 namespace validation {
 inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{"SEMANTIC_INVARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
@@ -425,16 +397,6 @@ inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMe
     "FAILURE_SUMMARY_EMPTY_MESSAGE"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
     "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNotProven{
-    "DECREASES_NOT_PROVEN"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesNonLex{"DECREASES_NON_LEX"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesWildcardInvalid{
-    "DECREASES_WILDCARD_INVALID"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesEmpty{"DECREASES_EMPTY"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesShadowedReceiver{
-    "DECREASES_SHADOWED_RECEIVER"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesInNonPure{
-    "DECREASES_IN_NON_PURE"};
 } // namespace validation
 
 namespace runtime {
@@ -502,10 +464,6 @@ inline constexpr MessageTemplate ModuleBoundaryMismatch{
     "source unit module boundary does not match graph owner"};
 inline constexpr MessageTemplate VariantNameShadowsType{
     "enum variant '{}' in enum '{}' conflicts with type '{}' in the same module"};
-// ---- Trait / Impl messages ----
-inline constexpr MessageTemplate TraitOrphanImpl{
-    "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is "
-    "local to this module"};
 // ---- Structured notes (shared error code with the primary diagnostic; distinguished by message text) ----
 inline constexpr MessageTemplate UnknownCallable{"unknown callable '{}'"};
 inline constexpr MessageTemplate PreviousDeclarationHere{"previous declaration is here"};
@@ -696,8 +654,6 @@ inline constexpr MessageTemplate OrphanImpl{
     "impl '{}' for '{}' is an orphan: neither the type nor the trait is defined in module '{}'"};
 inline constexpr MessageTemplate OrphanImplHint{
     "move this impl to the module that defines '{}' or '{}'"};
-inline constexpr MessageTemplate DuplicateTraitImpl{
-    "impl '{}' for '{}' duplicates an earlier impl of the same trait and type"};
 // P3c.S4a coherence MVP. Same equivalence relation as the orphan-rule check
 // (shared normalize_type_key + impls_conflict_for_type helpers in
 // type_environment.cpp): two trait impls whose (trait, normalized_type) keys
@@ -707,7 +663,6 @@ inline constexpr MessageTemplate CoherenceConflict{
 inline constexpr MessageTemplate CoherenceConflictPrevious{
     "previous impl of '{}' for '{}' declared here"};
 inline constexpr MessageTemplate ImplTraitUnknown{"impl references unknown trait '{}'"};
-inline constexpr MessageTemplate ImplTargetUnknown{"impl targets unknown type '{}'"};
 inline constexpr MessageTemplate ImplTargetMustBeNominal{
     "impl target must be a nominal type (struct/enum), got {}"};
 inline constexpr MessageTemplate TraitMethodNotFound{
@@ -725,13 +680,9 @@ inline constexpr MessageTemplate TraitAssocTypeNotFound{
     "trait '{}' declares associated type '{}' but impl does not provide it"};
 inline constexpr MessageTemplate MissingSuperTrait{
     "trait '{}' requires super-trait '{}' but no impl is found for '{}'"};
-inline constexpr MessageTemplate NoTraitImpl{"type '{}' does not implement trait '{}'"};
-// P3c.S6 (trait/impl smoke) re-words AmbiguousTraitImpl and
-// TraitBoundNotSatisfied to match the smoke-test assertion strings and
-// the extended TraitBoundNotSatisfied placeholder arity (bound_type,
-// bound_trait, impl_type). No src pass uses TraitBoundNotSatisfied yet;
 // AmbiguousTraitImpl call sites in typecheck_expr.cpp pass 2 args which
-// still render with the new 2-placeholder wording.
+// render with the 2-placeholder wording. TraitBoundNotSatisfied carries the
+// extended (bound_type, bound_trait, impl_type) placeholder arity.
 inline constexpr MessageTemplate AmbiguousTraitImpl{
     "multiple trait implementations match for type '{}' and trait '{}'"};
 inline constexpr MessageTemplate TraitBoundNotSatisfied{
@@ -739,15 +690,6 @@ inline constexpr MessageTemplate TraitBoundNotSatisfied{
 inline constexpr MessageTemplate TraitSelfNotYetSupported{
     "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type "
     "references)"};
-// P3c.S6 additional Trait/Impl diagnostic messages: extended signature
-// mismatch (named impl/trait context), inherent-vs-trait conflict and the
-// method/assoc lookup variants used by the Trait/Impl smoke suite.
-inline constexpr MessageTemplate MethodNotFound{"method '{}' not found on type '{}'"};
-inline constexpr MessageTemplate MethodSignatureMismatch{
-    "method '{}' signature mismatch on impl '{}' of trait '{}': expected '{}', got '{}'"};
-inline constexpr MessageTemplate AssocTypeNotFound{"associated type '{}' not found on trait '{}'"};
-inline constexpr MessageTemplate InherentTraitConflict{
-    "member '{}' on '{}' conflicts between inherent impl and trait impl of '{}'"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // messages. Mirror the §4.5 diagnostic catalogue.
 inline constexpr MessageTemplate EffectNotPure{
@@ -770,20 +712,6 @@ inline constexpr MessageTemplate NondetInInvariant{
 inline constexpr MessageTemplate MonomorphizationBudgetExceeded{
     "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: "
     "{})"};
-// --- DECREASES / termination clause messages (P4 contract hardening) ---
-inline constexpr MessageTemplate DecreasesExpectsNumeric{
-    "DECREASES measure must have numeric type (Int, Decimal, or Duration), got {}"};
-inline constexpr MessageTemplate DecreasesExpectsPure{
-    "DECREASES measure must be a pure expression, but contains {}"};
-inline constexpr MessageTemplate DecreasesIllegalOwner{
-    "DECREASES clause is only allowed on predicates and recursive functions, not on {} '{}'"};
-inline constexpr MessageTemplate DecreasesDuplicate{
-    "multiple DECREASES clauses in contract of '{}' (only one termination measure is supported)"};
-inline constexpr MessageTemplate InNonPure{
-    "invariant body must be a pure expression, but contains {}"};
-inline constexpr MessageTemplate ShadowedReceiver{
-    "let binding '{}' shadows receiver '{}' used for termination; termination check may be "
-    "imprecise"};
 } // namespace typecheck
 
 namespace validation {
@@ -843,18 +771,6 @@ inline constexpr MessageTemplate FailureSummaryEmptyMessage{
     "{} contains failure summary with empty message"};
 inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
     "{} contains failure summary with empty node_name"};
-inline constexpr MessageTemplate DecreasesNotProven{
-    "cannot prove termination: measure '{}' is not strictly decreasing along all paths"};
-inline constexpr MessageTemplate DecreasesNonLex{
-    "termination measure '{}' is not a well-founded lexicographic tuple: component {}"};
-inline constexpr MessageTemplate DecreasesWildcardInvalid{
-    "wildcard '_' is not allowed as a termination measure component (position {})"};
-inline constexpr MessageTemplate DecreasesEmpty{
-    "decreases clause is empty: expected at least one measure expression"};
-inline constexpr MessageTemplate DecreasesShadowedReceiver{
-    "termination receiver '{}' shadows an outer binding of type '{}' (receiver is still safe)"};
-inline constexpr MessageTemplate DecreasesInNonPure{
-    "decreases clause is only allowed in pure predicates; '{}' is marked impure"};
 } // namespace validation
 
 // ============================================================================

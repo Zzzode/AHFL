@@ -376,15 +376,6 @@ target_link_libraries(ahfl_base_diagnostic_serialization_tests
 )
 ahfl_apply_project_warnings(ahfl_base_diagnostic_serialization_tests)
 
-add_executable(ahfl_base_decreases_diagnostics_tests
-    unit/base/support/decreases_diagnostics.cpp
-)
-target_link_libraries(ahfl_base_decreases_diagnostics_tests
-    PRIVATE
-        ahfl_base_support
-)
-ahfl_apply_project_warnings(ahfl_base_decreases_diagnostics_tests)
-
 add_executable(ahfl_base_trait_impl_diagnostics_tests
     unit/base/support/trait_impl_diagnostics.cpp
 )
@@ -1142,7 +1133,6 @@ foreach(_tgt
     ahfl_compiler_manifest_tests
     ahfl_compiler_package_graph_tests
     ahfl_base_diagnostic_serialization_tests
-    ahfl_base_decreases_diagnostics_tests
     ahfl_base_trait_impl_diagnostics_tests
     ahfl_base_diagnostics_code_smoke_tests
     ahfl_sha256_tests

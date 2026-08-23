@@ -1295,9 +1295,6 @@ add_test(NAME ahfl.support.diagnostic_serialization_all
     COMMAND $<TARGET_FILE:ahfl_base_diagnostic_serialization_tests>
 )
 
-add_test(NAME ahfl.support.decreases_diagnostics_all
-    COMMAND $<TARGET_FILE:ahfl_base_decreases_diagnostics_tests>
-)
 add_test(NAME ahfl.support.trait_impl_diagnostics_all
     COMMAND $<TARGET_FILE:ahfl_base_trait_impl_diagnostics_tests>
 )

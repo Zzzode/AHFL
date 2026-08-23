@@ -293,3 +293,50 @@ fn run() -> Bool effect Pure decreases 0 {
     CHECK_FALSE(result.has_errors());
     CHECK_FALSE(has_diagnostic_code(result, "TYPE_PARAMETER_AMBIGUOUS"));
 }
+
+// ---------------------------------------------------------------------------
+// R2 (method-call emission site): the second TYPE_PARAMETER_AMBIGUOUS emission
+// site lives in the method-call path (check_method_call), distinct from the
+// free-fn call site exercised by the first test above (`is_none(...)` routes
+// through check_fn_call). Here a generic *method* declares a method-level type
+// parameter `U` that appears in neither the receiver nor any argument, so no
+// inference source can pin it; the method-call ambiguity branch fires.
+//
+// Impl-level type params are always inferred from the receiver and are skipped
+// by the branch, so `U` must be method-level (`fn pick<U>`) to reach the
+// diagnostic. This confirms both emission sites carry the same code + message
+// shape (the message names the method, not the free fn).
+// ---------------------------------------------------------------------------
+TEST_CASE("P2-S1 R2: unconstrained method type parameter emits TYPE_PARAMETER_AMBIGUOUS") {
+    const std::string source = R"AHFL(
+module p2s1_method_ambiguous;
+
+struct Wrap {
+    value: Int;
+}
+
+impl Wrap {
+    fn pick<U>(self: Wrap) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+
+fn run(w: Wrap) -> Int effect Pure decreases 0 {
+    return w.pick();
+}
+)AHFL";
+
+    const auto result = typecheck_source("p2s1_method_ambiguous.ahfl", source);
+    REQUIRE(result.has_errors());
+    CHECK(has_diagnostic_code(result, "TYPE_PARAMETER_AMBIGUOUS"));
+    // The method-call site formats the message with the method name `pick`,
+    // distinguishing it from the free-fn site (which names the callee fn).
+    bool named_method = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "typecheck.TYPE_PARAMETER_AMBIGUOUS" &&
+            entry.message.find("type parameter 'U' of 'pick'") != std::string::npos) {
+            named_method = true;
+        }
+    }
+    CHECK(named_method);
+}

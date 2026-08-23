@@ -3918,3 +3918,58 @@ flow for UevTupleAgent {
           1);
     CHECK(diagnostics_contain(type_result.diagnostics, "unknown enum variant 'Signal::Nope'"));
 }
+
+// ---------------------------------------------------------------------------
+// MissingCallableMetadata (function target site in check_fn_call): a fn call
+// whose FnCallTarget reference resolves to a Function symbol for which
+// TypeEnvironment has no FnTypeInfo. In normal source this never happens — the
+// same declaration that registers the symbol also registers its FnTypeInfo —
+// so the site is only reachable by decoupling resolution from typechecking:
+// resolve a "full" program that declares the fn (so the FnCallTarget reference
+// binds to the Function symbol), then typecheck a "base" program that omits
+// the fn declaration entirely. The reference target survives, get_fn() finds
+// no metadata, and the CallTargetSymbolMissing fallback fires with the stable
+// MISSING_CALLABLE_METADATA code.
+//
+// This mirrors the capability/predicate metadata fabrication already used by
+// "Typecheck missing callable metadata fallbacks use stable typecheck code":
+// the base program keeps the call site, the full program supplies the
+// declaration the resolver needs to bind the reference.
+TEST_CASE("Typecheck missing function metadata fallback uses stable typecheck code") {
+    const std::string fn_base = R"AHFL(
+const Broken: Int = helper();
+)AHFL";
+
+    const std::string fn_full = fn_base + R"AHFL(
+
+fn helper() -> Int effect Pure decreases 0 {
+    return 0;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto base_parse =
+        frontend.parse_text("typecheck_missing_fn_metadata.ahfl", fn_base);
+    REQUIRE_FALSE(base_parse.has_errors());
+    REQUIRE(base_parse.program != nullptr);
+
+    const auto full_parse =
+        frontend.parse_text("typecheck_missing_fn_metadata_full.ahfl", fn_full);
+    REQUIRE_FALSE(full_parse.has_errors());
+    REQUIRE(full_parse.program != nullptr);
+
+    // Resolve the FULL program so the `helper()` call site binds to the
+    // Function symbol; then typecheck the BASE program, which never declares
+    // `helper`, so no FnTypeInfo is registered for the bound target.
+    const ahfl::Resolver resolver;
+    const auto full_resolve = resolver.resolve(*full_parse.program);
+    REQUIRE_FALSE(full_resolve.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto result = type_checker.check(*base_parse.program, full_resolve);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics,
+                                     "typecheck.MISSING_CALLABLE_METADATA") == 1);
+    CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.SEMANTIC_ERROR") == 0);
+    CHECK(diagnostics_contain(result.diagnostics, "call target symbol is missing"));
+}

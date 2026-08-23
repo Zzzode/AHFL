@@ -117,8 +117,8 @@ module trait_impl;
 }
 
 // Exact full-code match (golden-string assertion: category.id, not a substring).
-// Guards against false positives like a "resolve.TRAIT_ORPHAN_IMPL" lookup
-// passing a test that actually requires the typecheck-category orphan code.
+// Guards against false positives like a "resolve.ORPHAN_IMPL" lookup passing a
+// test that actually requires the typecheck-category orphan code.
 [[nodiscard]] bool has_exact_diagnostic_code(const ahfl::TypeCheckResult &result,
                                              std::string_view exact_full_code) {
     for (const auto &entry : result.diagnostics.entries()) {
@@ -797,10 +797,6 @@ impl fmtlib::Describe for shapes::Circle {
     CHECK(has_exact_diagnostic(result,
                                "typecheck.ORPHAN_IMPL",
                                "is an orphan: neither the type nor the trait is defined in module"));
-
-    // Sanity guard: there is *no* resolve-category orphan code emitted for
-    // this fixture (resolver is resolution-only; orphan rule lives downstream).
-    CHECK_FALSE(has_exact_diagnostic_code(result, "resolve.TRAIT_ORPHAN_IMPL"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1131,7 +1127,6 @@ impl Beta for Multi {
     const auto result = typecheck_source("s4a_no_conflict.ahfl", source);
     CHECK_FALSE(result.has_errors());
     CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
-    CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.DUPLICATE_TRAIT_IMPL"));
 }
 
 // S4a-TC7: inherent impls never participate in trait coherence conflict.
@@ -2308,4 +2303,93 @@ impl<T> Iterable<T, T> for List<T> {
         result,
         "typecheck.WRONG_ARITY",
         "trait 'trait_impl::Iterable' expects 1 type argument(s), got 2"));
+}
+
+// ---------------------------------------------------------------------------
+// IMPL_TRAIT_UNKNOWN (typecheck_decls.cpp impl trait_ref site): the impl
+// header names a trait reference that survives resolution (no
+// resolve.UNKNOWN_SYMBOL) yet resolves to no trait symbol at typecheck. The
+// audit flagged "a non-trait symbol that survives resolution" — but a struct /
+// enum / type-alias name DOES resolve to a Types-namespace symbol and is
+// caught one guard later by INVALID_TYPE_REFERENCE ("does not name a type").
+// The IMPL_TRAIT_UNKNOWN branch (the `!trait_id` case) is reached when the
+// trait reference is an in-scope type *parameter*: `impl<T> T for Foo` puts
+// `T` in the impl-level type-param scope so the resolver does not flag it as
+// an unknown symbol, but no trait/type reference is recorded, so trait_id is
+// empty and IMPL_TRAIT_UNKNOWN fires with the bare name `T`.
+TEST_CASE("impl using a type parameter as the trait reference reports IMPL_TRAIT_UNKNOWN") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Foo {
+    value: Int;
+}
+
+impl<T> T for Foo {
+    fn value(self: Foo) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("impl_trait_unknown_type_param.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.IMPL_TRAIT_UNKNOWN",
+                               "impl references unknown trait 'T'"));
+}
+
+// ---------------------------------------------------------------------------
+// IMPL_TRAIT_UNKNOWN (typecheck_decls.cpp super-trait site): the same branch
+// on the trait-declaration super-trait list. `trait Sub<T>: T` lists the
+// in-scope type parameter `T` as a super trait; it survives resolution but is
+// not a trait symbol, so the super-trait loop's `!super_id` branch emits
+// IMPL_TRAIT_UNKNOWN.
+TEST_CASE("super-trait naming a type parameter reports IMPL_TRAIT_UNKNOWN") {
+    const std::string source = module_preamble() + R"AHFL(
+trait Sub<T>: T {
+    fn foo(self: Int) -> Int effect Pure;
+}
+)AHFL";
+
+    const auto result = typecheck_source("impl_trait_unknown_super.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.IMPL_TRAIT_UNKNOWN",
+                               "impl references unknown trait 'T'"));
+}
+
+// ---------------------------------------------------------------------------
+// TRAIT_METHOD_SIGNATURE_MISMATCH (typecheck.cpp signature-comparison site):
+// an impl method whose parameter type differs from the trait declaration but
+// with MATCHING arity, so the signature comparison runs (not the arity /
+// method-not-found guards). The trait's `show(self: Counter, n: Int)` is
+// implemented as `show(self: Counter, n: String)`; both have two params, so
+// signatures_match reaches the per-param comparison and reports the mismatch
+// with the trait's declared types vs the impl's provided types.
+//
+// This exercises the plain (non-Self) mismatch path; the P3c-NEG1 test above
+// covers the Self-substitution variant of the same site.
+TEST_CASE("impl method param type mismatch with matching arity reports TRAIT_METHOD_SIGNATURE_MISMATCH") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+trait Show {
+    fn show(self: Counter, n: Int) -> Int effect Pure;
+}
+
+impl Show for Counter {
+    fn show(self: Counter, n: String) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("trait_method_signature_mismatch.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic(
+        result,
+        "typecheck.TRAIT_METHOD_SIGNATURE_MISMATCH",
+        "method 'show' signature mismatch: trait expects (trait_impl::Counter, Int), "
+        "impl provides (trait_impl::Counter, String)"));
 }
