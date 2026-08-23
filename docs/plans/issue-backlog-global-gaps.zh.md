@@ -155,7 +155,7 @@
 - [ ] 将 BMC/k-induction 从简单状态图 reachability 推进到 AHFL contract/property semantics。
 - [x] 为 nuXmv、SPIN、TLA+ backend 建立机器可读工具能力矩阵和 skip reason，明确 nuXmv/NuSMV 是当前 AHFL SMV 验证路径，SPIN/TLA+ 仍为 emit-only。
 - [x] 将工具能力矩阵接入 CLI/report，让 CI 能区分 `missing_binary`、`verification_unsupported` 和 `checker_error`。
-- [ ] 增强 counterexample 到 source range、workflow node、capability call、contract clause 的映射。
+- [x] 增强 counterexample 到 source range、workflow node、capability call、contract clause 的映射。（2026-08-24：capability call 与 contract clause 映射已落地——SMV backend 为 `agent__*__called__*` 与 contract/workflow LTLSPEC 发射带 source range 的 AHFL_MAP，counterexample 投影新增 `ProjectedCapabilityCall` 与 `ViolatedContractInfo` source range，未映射符号回退空 range 不伪造；185/185 counterexample_parse 单测。）
 - [x] 将 state-space estimator 接入 `verify` report，输出 agent 数、估计状态空间、transition 数和 tractability warning。
 - [x] 建立 NuSMV/nuXmv 输出 parser fixture matrix，覆盖 true/false/error/timeout，并把 timeout 归类为确定 checker failure。
 - [x] 将外部 checker 进程 timeout 接入 `ahflc verify --checker-timeout-seconds`，并用 fake checker CTest 证明卡死进程会被杀掉且报告 `checker_timed_out: true`。
@@ -173,7 +173,7 @@
 
 - [x] 为 pass pipeline 增加 backend-effect 回归，证明 `-O` 会让普通 `emit ir` / `emit smv` 输出发生可审查改变。
 - [x] 将 `--optimize` 与普通 CLI/backend emission 明确绑定，普通 backend 仍消费 Semantic IR，但会先运行 Semantic IR pass pipeline。
-- [ ] 将 backend-effect 回归扩展到 dead state、workflow simplification、SMV size / IR size 指标和 runtime plan 输出。
+- [ ] 将 backend-effect 回归扩展到 dead state、workflow simplification、SMV size / IR size 指标和 runtime plan 输出。（2026-08-24：workflow simplification 与 SMV/IR size delta 已落地——`ok_workflow_simplification.ahfl` fixture + `RunWorkflowSimplificationTest.cmake` 断言 `-O` 真实收缩 transitive edge 与 LTLSPEC，并接入 quality-gates label；剩余 dead-state elimination 与 runtime plan 输出的 backend-effect 回归待补。）
 - [ ] 将当前 CLI 级 trace/metrics 扩展为 pass-level trace event schema、Opt IR function-level timing 与历史对比报告。
 - [ ] 为 WASM backend 定义 runtime model、WASI/capability mapping、browser-side execution boundary。
 - [ ] 为 K8s/OpenAPI/Terraform target 定义稳定 schema、validation 和 golden。
