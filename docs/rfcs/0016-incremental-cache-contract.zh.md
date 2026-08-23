@@ -1,7 +1,7 @@
 ---
 rfc: "0016"
 title: "Incremental Cache Contract"
-status: "implementing"
+status: "implemented"
 area: ["compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-23"

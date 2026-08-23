@@ -1,7 +1,7 @@
 ---
 rfc: "0015"
 title: "DAP Runtime Integration"
-status: "implementing"
+status: "implemented"
 area: ["runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-23"
@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["85608c4e", "c5543bf5", "f94b9bcf", "2fc2f337", "1e04f9c6", "95ed9094"]
+implementation_prs: ["85608c4e", "c5543bf5", "f94b9bcf", "2fc2f337", "1e04f9c6", "95ed9094", "ee166fb2"]
 ---
 
 # RFC 0015: DAP Runtime Integration
