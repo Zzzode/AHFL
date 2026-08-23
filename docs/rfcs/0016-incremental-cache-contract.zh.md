@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["compiler", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["1c6f5aed"]
+implementation_prs: ["1c6f5aed", "c59b2e6a"]
 ---
 
 # RFC 0016: Incremental Cache Contract

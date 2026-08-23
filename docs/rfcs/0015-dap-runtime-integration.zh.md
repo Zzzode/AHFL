@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["85608c4e"]
+implementation_prs: ["85608c4e", "c5543bf5"]
 ---
 
 # RFC 0015: DAP Runtime Integration
