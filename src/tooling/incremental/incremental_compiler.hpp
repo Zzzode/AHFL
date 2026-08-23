@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <tooling/incremental/cache_core.hpp>
@@ -28,10 +29,12 @@ struct IncrementalStats {
     std::size_t cache_hits = 0;
     std::size_t cache_misses = 0;
     // Number of times a recompile produced the same TypeEnvironment
-    // signature fingerprint as the previous cache entry. Useful for
-    // distinguishing whitespace/comment churn from real semantic
-    // changes when reasoning about reverse-dependency rebuild fan-out.
-    std::size_t fingerprint_unchanged = 0;
+    // signature fingerprint as the previous cache entry, so transitive
+    // dependents were NOT invalidated and kept their cache entries
+    // (comment/whitespace/body-only edits). Complements cache_hits: a
+    // fingerprint skip means downstream modules hit the cache on the next
+    // pass even though the upstream module was recompiled.
+    std::size_t fingerprint_skipped = 0;
     // Number of hits served from the PersistentCache (disk) after the
     // in-memory IrCache missed. Always zero when no persistent cache is
     // configured.
@@ -64,6 +67,9 @@ class IncrementalCompiler {
   private:
     [[nodiscard]] CacheKey build_cache_key(const std::string &module_path,
                                            std::uint64_t content_hash) const;
+    // Project-relative source path used as the PersistentCache identity.
+    // Falls back to the raw module path when no project root is configured.
+    [[nodiscard]] std::string source_path_for(const std::string &module_path) const;
     void hydrate_from_persistent(const std::string &module_path,
                                  std::uint64_t content_hash,
                                  const PersistentCacheEntry &entry);

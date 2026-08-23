@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -113,15 +114,18 @@ CacheKey IncrementalCompiler::build_cache_key(const std::string &module_path,
     key.project_root_hash = project_root_hash_;
     key.content_hash = content_hash;
     key.toolchain_fingerprint = config_.toolchain_fingerprint;
+    key.source_path = source_path_for(module_path);
+    return key;
+}
+
+std::string IncrementalCompiler::source_path_for(const std::string &module_path) const {
     if (config_.project_root.empty()) {
-        key.source_path = module_path;
-        return key;
+        return module_path;
     }
     std::error_code error;
     const auto relative =
         fs::relative(fs::path(module_path), config_.project_root, error);
-    key.source_path = error ? module_path : relative.generic_string();
-    return key;
+    return error ? module_path : relative.generic_string();
 }
 
 void IncrementalCompiler::hydrate_from_persistent(
@@ -222,6 +226,10 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
         CompileStatus status = CompileStatus::Recompiled;
         std::string error_msg;
         std::uint64_t new_signature_fingerprint = 0;
+        // Previous fingerprint captured before the new entry overwrites the
+        // cache. A missing old entry (first compile, or cache cleared) means
+        // downstream must be rebuilt conservatively.
+        std::optional<std::uint64_t> old_fingerprint;
 
         ahfl::Frontend frontend;
         auto parse_result = frontend.parse_file(mod_path);
@@ -321,12 +329,15 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
                     ahfl::print_program_ir_json(ir_program, ir_json);
                     serialized_ir = ir_json.str();
 
-                    // Look up the previous cache entry to track whether
-                    // the recompile actually shifted the type environment.
+                    // Capture the previous fingerprint before the new entry
+                    // overwrites the cache. The propagation decision below
+                    // compares it against the freshly computed fingerprint:
+                    // unchanged (comments/whitespace/bodies) means downstream
+                    // cache entries stay valid; changed or missing means
+                    // transitive dependents must be invalidated.
                     if (const auto previous = cache_.lookup(mod_path, 0);
-                        previous.entry.has_value() &&
-                        previous.entry->signature_fingerprint == fingerprint) {
-                        ++stats_.fingerprint_unchanged;
+                        previous.entry.has_value()) {
+                        old_fingerprint = previous.entry->signature_fingerprint;
                     }
 
                     new_signature_fingerprint = fingerprint;
@@ -347,6 +358,27 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
                           new_signature_fingerprint,
                           serialized_ir,
                           source_graph_revision);
+
+            // RFC 0016 Slice 2: signature fingerprint propagation. Only
+            // invalidate transitive dependents when the module's type-
+            // environment shape changed. Comment/whitespace/body-only edits
+            // leave the fingerprint untouched, so downstream cache entries
+            // remain valid and hit on their (unchanged) content hash. A
+            // missing old fingerprint (first compile, cache cleared) is
+            // treated conservatively as a change. The topological loop
+            // processes this module before its dependents, so invalidating
+            // here forces them to recompile later in the same pass.
+            if (!old_fingerprint.has_value() ||
+                *old_fingerprint != new_signature_fingerprint) {
+                for (const auto &dep : transitive_dependents(graph_, mod_path)) {
+                    cache_.invalidate(dep);
+                    if (config_.persistent_cache != nullptr) {
+                        config_.persistent_cache->invalidate(source_path_for(dep));
+                    }
+                }
+            } else {
+                ++stats_.fingerprint_skipped;
+            }
         } else {
             cache_.invalidate(mod_path);
             if (config_.persistent_cache != nullptr) {

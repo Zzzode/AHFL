@@ -21,6 +21,20 @@ static void check(bool condition, const char* name) {
     else { std::printf("  FAIL: %s\n", name); }
 }
 
+// Find the compile status for a module path in a result vector. Returns
+// Failed when the path is absent so assertions fail loudly instead of
+// silently matching a default.
+static ahfl::incremental::CompileStatus
+status_of(const std::vector<ahfl::incremental::CompileResult> &results,
+          const std::string &path) {
+    for (const auto &r : results) {
+        if (r.module_path == path) {
+            return r.status;
+        }
+    }
+    return ahfl::incremental::CompileStatus::Failed;
+}
+
 int main() {
     std::printf("Incremental Compilation Tests\n");
     std::printf("==============================\n\n");
@@ -446,6 +460,202 @@ int main() {
 
         fs::remove_all(project_dir);
         check(valid, "import_graph_discovery: discovers import edges from ahfl.toml");
+    }
+
+    // Test 11: signature fingerprint unchanged -> downstream skip.
+    // A comment-only edit to A flips its content hash (so A recompiles) but
+    // leaves the TypeEnvironment fingerprint untouched, so B must keep its
+    // cache entry and hit on the next pass.
+    {
+        namespace fs = std::filesystem;
+        const auto project_dir =
+            fs::temp_directory_path() /
+            ("ahfl_fp_skip_test_" +
+             std::to_string(static_cast<long long>(
+                 std::chrono::steady_clock::now().time_since_epoch().count())));
+        fs::create_directories(project_dir);
+
+        const auto a_path = (project_dir / "a.ahfl").string();
+        const auto b_path = (project_dir / "b.ahfl").string();
+
+        const auto write_a = [&](const std::string &body) {
+            std::ofstream(project_dir / "a.ahfl") << "module fp::a;\n" << body;
+        };
+        const auto write_b = [&]() {
+            std::ofstream(project_dir / "b.ahfl")
+                << "module fp::b;\n"
+                << "import fp::a as a;\n"
+                << "pub struct Wrapper {\n"
+                << "    count: Int;\n"
+                << "}\n";
+        };
+
+        write_a("pub struct Config {\n    width: Int;\n}\n");
+        write_b();
+
+        ahfl::incremental::DependencyGraph graph;
+        ahfl::incremental::ModuleNode node_a;
+        node_a.module_path = a_path;
+        node_a.imports = {};
+        ahfl::incremental::ModuleNode node_b;
+        node_b.module_path = b_path;
+        node_b.imports = {a_path};
+        graph.add_module(node_a);
+        graph.add_module(node_b);
+
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        // First pass: cold cache, both modules recompile.
+        const auto r1 = compiler.compile_changed({a_path});
+        const bool first_ok =
+            (r1.size() == 2) &&
+            (status_of(r1, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r1, b_path) == ahfl::incremental::CompileStatus::Recompiled);
+
+        // Comment-only edit: content hash flips, fingerprint stays.
+        write_a("// tuning note\npub struct Config {\n    width: Int;\n}\n");
+        compiler.reset_stats();
+        const auto r2 = compiler.compile_changed({a_path});
+        const auto stats2 = compiler.stats();
+
+        const bool second_ok =
+            (status_of(r2, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r2, b_path) == ahfl::incremental::CompileStatus::UpToDate) &&
+            (stats2.fingerprint_skipped == 1) &&
+            (stats2.cache_hits == 1) &&
+            (cache.entry_count() == 2);
+
+        fs::remove_all(project_dir);
+        check(first_ok && second_ok,
+              "incremental_compiler: fingerprint unchanged skips downstream rebuild");
+    }
+
+    // Test 12: signature fingerprint changed -> downstream rebuild.
+    // Adding a struct field to A changes its fingerprint, so B's cached IR
+    // (compiled against the old A) is stale and must be invalidated.
+    {
+        namespace fs = std::filesystem;
+        const auto project_dir =
+            fs::temp_directory_path() /
+            ("ahfl_fp_change_test_" +
+             std::to_string(static_cast<long long>(
+                 std::chrono::steady_clock::now().time_since_epoch().count())));
+        fs::create_directories(project_dir);
+
+        const auto a_path = (project_dir / "a.ahfl").string();
+        const auto b_path = (project_dir / "b.ahfl").string();
+
+        const auto write_a = [&](const std::string &body) {
+            std::ofstream(project_dir / "a.ahfl") << "module fp::a;\n" << body;
+        };
+        const auto write_b = [&]() {
+            std::ofstream(project_dir / "b.ahfl")
+                << "module fp::b;\n"
+                << "import fp::a as a;\n"
+                << "pub struct Wrapper {\n"
+                << "    count: Int;\n"
+                << "}\n";
+        };
+
+        write_a("pub struct Config {\n    width: Int;\n}\n");
+        write_b();
+
+        ahfl::incremental::DependencyGraph graph;
+        ahfl::incremental::ModuleNode node_a;
+        node_a.module_path = a_path;
+        node_a.imports = {};
+        ahfl::incremental::ModuleNode node_b;
+        node_b.module_path = b_path;
+        node_b.imports = {a_path};
+        graph.add_module(node_a);
+        graph.add_module(node_b);
+
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        const auto r1 = compiler.compile_changed({a_path});
+        const bool first_ok =
+            (r1.size() == 2) &&
+            (status_of(r1, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r1, b_path) == ahfl::incremental::CompileStatus::Recompiled);
+
+        // Signature edit: add a field. Fingerprint changes.
+        write_a("pub struct Config {\n    width: Int;\n    height: Int;\n}\n");
+        compiler.reset_stats();
+        const auto r2 = compiler.compile_changed({a_path});
+        const auto stats2 = compiler.stats();
+
+        const bool second_ok =
+            (status_of(r2, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r2, b_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (stats2.fingerprint_skipped == 0) &&
+            (stats2.cache_hits == 0);
+
+        fs::remove_all(project_dir);
+        check(first_ok && second_ok,
+              "incremental_compiler: fingerprint changed rebuilds downstream");
+    }
+
+    // Test 13: no old fingerprint -> downstream rebuild.
+    // When A's cache entry is missing (cold in-memory cache), there is no
+    // old fingerprint to compare against, so dependents are invalidated
+    // conservatively even though A's content is unchanged.
+    {
+        namespace fs = std::filesystem;
+        const auto project_dir =
+            fs::temp_directory_path() /
+            ("ahfl_fp_missing_test_" +
+             std::to_string(static_cast<long long>(
+                 std::chrono::steady_clock::now().time_since_epoch().count())));
+        fs::create_directories(project_dir);
+
+        const auto a_path = (project_dir / "a.ahfl").string();
+        const auto b_path = (project_dir / "b.ahfl").string();
+
+        std::ofstream(project_dir / "a.ahfl")
+            << "module fp::a;\n"
+            << "pub struct Config {\n    width: Int;\n}\n";
+        std::ofstream(project_dir / "b.ahfl")
+            << "module fp::b;\n"
+            << "import fp::a as a;\n"
+            << "pub struct Wrapper {\n"
+            << "    count: Int;\n"
+            << "}\n";
+
+        ahfl::incremental::DependencyGraph graph;
+        ahfl::incremental::ModuleNode node_a;
+        node_a.module_path = a_path;
+        node_a.imports = {};
+        ahfl::incremental::ModuleNode node_b;
+        node_b.module_path = b_path;
+        node_b.imports = {a_path};
+        graph.add_module(node_a);
+        graph.add_module(node_b);
+
+        ahfl::incremental::IrCache cache;
+        ahfl::incremental::IncrementalCompiler compiler(graph, cache);
+
+        const auto r1 = compiler.compile_changed({a_path});
+        const bool first_ok =
+            (r1.size() == 2) &&
+            (status_of(r1, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r1, b_path) == ahfl::incremental::CompileStatus::Recompiled);
+
+        // Drop A's cache entry, then recompile with unchanged content.
+        cache.invalidate(a_path);
+        compiler.reset_stats();
+        const auto r2 = compiler.compile_changed({a_path});
+        const auto stats2 = compiler.stats();
+
+        const bool second_ok =
+            (status_of(r2, a_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (status_of(r2, b_path) == ahfl::incremental::CompileStatus::Recompiled) &&
+            (stats2.fingerprint_skipped == 0);
+
+        fs::remove_all(project_dir);
+        check(first_ok && second_ok,
+              "incremental_compiler: missing old fingerprint rebuilds downstream");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

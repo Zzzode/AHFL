@@ -261,3 +261,4 @@ Cache schema 版本化（`AHFL_TYPED_HIR_CACHE_V1`）确保未来格式变化时
 - 2026-08-23: Open Questions all resolved; status draft → review.
 - 2026-08-23: Status review → implementing; Slice 1 (CacheCore + import graph discovery) started.
 - 2026-08-23: Slice 1 landed (1c6f5aed): CacheKey, PersistentCache, import graph discovery, CLI wiring, 10/10 incremental tests.
+- 2026-08-23: Slice 2 implemented: signature fingerprint propagation in `IncrementalCompiler::compile_changed` — old vs new fingerprint compared after recompile; transitive dependents invalidated (in-memory + persistent) only on fingerprint change or missing old entry; `fingerprint_unchanged` stat renamed to `fingerprint_skipped`; 13/13 incremental tests.

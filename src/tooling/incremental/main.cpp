@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
               << "stats cache_hits " << stats.cache_hits << '\n'
               << "stats cache_misses " << stats.cache_misses << '\n'
               << "stats persistent_cache_hits " << stats.persistent_cache_hits << '\n'
-              << "stats fingerprint_unchanged " << stats.fingerprint_unchanged << '\n';
+              << "stats fingerprint_skipped " << stats.fingerprint_skipped << '\n';
 
     return has_failure ? 1 : 0;
 }
