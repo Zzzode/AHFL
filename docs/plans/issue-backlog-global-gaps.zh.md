@@ -139,7 +139,7 @@
 - [x] 为 telemetry 增加 `--trace-export` 与 `--metrics-export`，输出 CLI command span、duration 和 exit_code 的 JSONL 文件，不污染 stdout artifact。
 - [x] 为 telemetry 增加 `--structured-log`，输出 CLI command completion level、duration 和 exit_code 的 JSONL 文件，不污染 stdout artifact。
 - [x] 为 profiling 增加 `--memory-report`，输出 source、TypedProgram、IR 规模与结构性 memory proxy 的 JSON report，不污染 stdout artifact。
-- [ ] 将 `--memory-report` 从结构性 proxy 扩展到可选平台 RSS / allocator 观测，并保留跨平台可比性边界。
+- [x] 将 `--memory-report` 从结构性 proxy 扩展到可选平台 RSS / allocator 观测，并保留跨平台可比性边界。（`read_process_memory_stats()` 支持 Linux/macOS/Windows，不支持平台返回 nullopt；structural proxy 保持跨平台 baseline。）
 
 验收证据：
 
@@ -192,7 +192,7 @@
 - [x] 将 parser/typechecker/SMV fuzz target 纳入 CI：GitHub Actions 显式运行 `quality-gates`。
 - [x] 为 compile time 建立初始真实前端管线 budget gate，覆盖 parse、resolve、typecheck、validate、IR lowering。
 - [x] 为 memory usage 建立初始结构性 proxy budget gate，覆盖真实 TypedProgram 与 IR 产物规模。
-- [ ] 将 memory usage 从结构性 proxy 扩展到平台可比的 RSS/allocator 观测。
+- [x] 将 memory usage 从结构性 proxy 扩展到平台可比的 RSS/allocator 观测。（`ProcessMemoryStats` + `read_process_memory_stats()`，Linux/macOS/Windows 支持，其他平台 nullopt。）
 - [x] 为真实 `emit smv` 输出建立初始 size/spec budget CTest gate，覆盖 formal workflow、pass-productization fixture 和 refund audit example。
 - [ ] 将 compile time、memory proxy 与 SMV size budget 扩展为趋势报告、release-blocking 阈值和更多 state-space 代表样本。
 - [x] 将 mutation config/report plumbing 纳入 CTest 与 `quality-gates`，输出机器可读 config report。
