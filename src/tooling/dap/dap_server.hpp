@@ -8,7 +8,6 @@
 #include <vector>
 
 #include "tooling/dap/breakpoints.hpp"
-#include "tooling/dap/state_inspector.hpp"
 
 namespace ahfl::json {
 struct JsonValue;
@@ -65,7 +64,6 @@ class DapServer {
     [[nodiscard]] int next_seq();
 
     BreakpointManager &breakpoint_manager();
-    StateInspector &state_inspector();
 
   private:
     bool initialized_ = false;
@@ -73,7 +71,6 @@ class DapServer {
     DapCapabilities capabilities_;
 
     BreakpointManager breakpoint_manager_;
-    StateInspector state_inspector_;
 
     std::function<void(std::string_view)> event_output_;
     std::unique_ptr<DebugSession> session_;

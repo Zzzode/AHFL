@@ -684,11 +684,14 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
 
         emit(NodeStarted{.node = node.id, .agent = node.agent});
+        const std::string agent_name =
+            std::string(ir::symbol_canonical_name(node.source->target_ref));
+        const std::string node_name = node.source->name;
         AgentRuntime agent_rt(*node.agent_decl, *node.flow_decl, config_.default_agent_quota);
         agent_rt.set_invocation_context(node_context);
         agent_rt.set_state_entered_observer(
-            [this, &result, &emit, node_id = node.id](AgentId agent,
-                                                      std::string_view state_name) -> AgentStateId {
+            [this, &result, &emit, node_id = node.id, &agent_name, &node_name](
+                AgentId agent, std::string_view state_name) -> AgentStateId {
             const auto state = result.metadata.add_agent_state(agent, state_name);
             emit(AgentStateEntered{
                 .node = node_id,
@@ -696,18 +699,24 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 .state = state,
             });
             if (config_.state_entered_hook) {
-                config_.state_entered_hook(agent, state_name);
+                config_.state_entered_hook(agent, agent_name, node_name, state_name);
             }
             return state;
         });
         if (runtime_invoker) {
             agent_rt.set_contextual_capability_invoker(runtime_invoker);
         }
+        if (config_.agent_input_hook) {
+            config_.agent_input_hook(node.agent, agent_name, node_name, node_input);
+        }
         AgentResult agent_result = agent_rt.run(std::move(node_input));
 
         if (agent_result.status == AgentStatus::Completed) {
             std::optional<RuntimeValueId> output_id;
             if (agent_result.output.has_value()) {
+                if (config_.node_completed_hook) {
+                    config_.node_completed_hook(node.agent, node_name, *agent_result.output);
+                }
                 output_id = add_runtime_value(result, std::move(*agent_result.output));
                 node_outputs[node.id.index()] = output_id;
             }

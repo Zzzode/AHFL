@@ -58,12 +58,34 @@ struct WorkflowRuntimeConfig {
         capability_result_observer;
     // Debug/test hook invoked after the runtime records an agent state entry.
     // Runs on the workflow execution thread; a debugger may block inside this
-    // hook to implement pause (RFC 0015).
-    std::function<void(AgentId, std::string_view)> state_entered_hook;
+    // hook to implement pause (RFC 0015). `agent_name` / `node_name` are the
+    // canonical agent name and the workflow node name executing it, so a
+    // debugger can build human-readable stack frames without re-deriving
+    // runtime metadata IDs.
+    std::function<void(AgentId,
+                       std::string_view agent_name,
+                       std::string_view node_name,
+                       std::string_view state_name)>
+        state_entered_hook;
     // Debug/test hook invoked right before a capability call is dispatched to
     // the configured invoker. Runs on the workflow execution thread; a
     // debugger may block inside this hook to implement pause (RFC 0015).
     std::function<void(AgentId, std::string_view)> capability_invoked_hook;
+    // Debug/test hook invoked with the evaluated node input right before the
+    // node's agent starts executing. Runs on the workflow execution thread;
+    // a debugger may block inside this hook to implement pause (RFC 0015).
+    // The only way to observe the live agent input, which is otherwise moved
+    // into AgentRuntime::run and never exposed again.
+    std::function<void(AgentId,
+                       std::string_view agent_name,
+                       std::string_view node_name,
+                       const Value &)>
+        agent_input_hook;
+    // Debug/test hook invoked with a node's output value right after the
+    // node's agent completes successfully. Runs on the workflow execution
+    // thread (RFC 0015). Exposes live node results for the debugger's
+    // Workflow scope; the value is consumed by the runtime afterwards.
+    std::function<void(AgentId, std::string_view node_name, const Value &)> node_completed_hook;
 };
 
 // Workflow runtime

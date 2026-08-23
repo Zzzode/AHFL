@@ -1,7 +1,6 @@
 add_library(ahfl_tooling_dap STATIC
     dap_server.cpp
     breakpoints.cpp
-    state_inspector.cpp
     debug_session.cpp
 )
 

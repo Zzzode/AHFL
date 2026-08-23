@@ -77,7 +77,7 @@ DapMessage DapServer::handle_request(const DapMessage &request) {
             session_->disconnect();
             session_.reset();
         }
-        session_ = std::make_unique<DebugSession>(*this, breakpoint_manager_, state_inspector_);
+        session_ = std::make_unique<DebugSession>(*this, breakpoint_manager_);
         response.body = session_->launch(request.body);
     } else if (request.command == "disconnect") {
         if (session_) {
@@ -212,10 +212,6 @@ BreakpointManager &DapServer::breakpoint_manager() {
     return breakpoint_manager_;
 }
 
-StateInspector &DapServer::state_inspector() {
-    return state_inspector_;
-}
-
 // --- Internal command handlers ---
 
 std::string DapServer::handle_set_breakpoints(const std::string &body) {
@@ -263,105 +259,32 @@ std::string DapServer::handle_threads() {
 }
 
 std::string DapServer::handle_stack_trace() {
-    auto frames = state_inspector_.get_stack_frames();
-    std::ostringstream oss;
-    oss << R"({"stackFrames":[)";
-    bool first = true;
-    for (const auto &frame : frames) {
-        if (!first)
-            oss << ",";
-        oss << R"({"id":)" << frame.id << R"(,"name":)" << json_escape(frame.name)
-            << R"(,"source":{"path":)" << json_escape(frame.source_file) << R"(})"
-            << R"(,"line":)" << frame.line << R"(,"column":1})";
-        first = false;
+    if (session_) {
+        return session_->stack_trace_json();
     }
-    oss << R"(],"totalFrames":)" << frames.size() << "}";
-    return oss.str();
+    return R"({"stackFrames":[],"totalFrames":0})";
 }
 
 std::string DapServer::handle_scopes(const std::string &body) {
-    // Extract frameId to determine which agent
     auto parsed = ahfl::json::parse_json(body);
-    auto frame_id = parsed.has_value() && *parsed && (*parsed)->is_object()
-                        ? get_json_int(**parsed, "frameId")
-                        : -1;
-    (void)frame_id;
-
-    // Get scopes for first available agent
-    auto frames = state_inspector_.get_stack_frames();
-    std::string agent_id;
-    for (const auto &f : frames) {
-        if (f.id == frame_id) {
-            agent_id = f.agent_id;
-            break;
-        }
+    const auto frame_id = parsed.has_value() && *parsed && (*parsed)->is_object()
+                              ? get_json_int(**parsed, "frameId")
+                              : -1;
+    if (session_) {
+        return session_->scopes_json(frame_id);
     }
-
-    if (agent_id.empty() && !frames.empty()) {
-        agent_id = frames[0].agent_id;
-    }
-
-    auto scopes = state_inspector_.get_scopes(agent_id);
-    std::ostringstream oss;
-    oss << R"({"scopes":[)";
-    bool first = true;
-    int ref_base = 100; // variablesReference base
-    for (const auto &scope : scopes) {
-        if (!first)
-            oss << ",";
-        oss << R"({"name":)" << json_escape(scope.name) << R"(,"variablesReference":)" << ref_base
-            << R"(,"expensive":false})";
-        first = false;
-        ++ref_base;
-    }
-    oss << "]}";
-    return oss.str();
+    return R"({"scopes":[]})";
 }
 
 std::string DapServer::handle_variables(const std::string &body) {
     auto parsed = ahfl::json::parse_json(body);
-    auto variables_ref = parsed.has_value() && *parsed && (*parsed)->is_object()
-                             ? get_json_int(**parsed, "variablesReference")
-                             : -1;
-
-    // Map variablesReference back to scope
-    // 100 = first scope (Input), 101 = Context, 102 = Output
-    auto frames = state_inspector_.get_stack_frames();
-    std::string agent_id;
-    if (!frames.empty()) {
-        agent_id = frames[0].agent_id;
+    const auto variables_ref = parsed.has_value() && *parsed && (*parsed)->is_object()
+                                   ? get_json_int(**parsed, "variablesReference")
+                                   : -1;
+    if (session_) {
+        return session_->variables_json(variables_ref);
     }
-
-    std::string scope_name;
-    switch (variables_ref) {
-    case 100:
-        scope_name = "Input";
-        break;
-    case 101:
-        scope_name = "Context";
-        break;
-    case 102:
-        scope_name = "Output";
-        break;
-    default:
-        scope_name = "Context";
-        break;
-    }
-
-    auto vars = state_inspector_.get_variables(agent_id, scope_name);
-    std::ostringstream oss;
-    oss << R"({"variables":[)";
-    bool first = true;
-    for (const auto &var : vars) {
-        if (!first)
-            oss << ",";
-        oss << R"({"name":)" << json_escape(var.name) << R"(,"value":)" << json_escape(var.value)
-            << R"(,"type":)" << json_escape(var.type) << R"(,"variablesReference":)"
-            << var.variables_reference << "}";
-        first = false;
-    }
-    oss << "]}";
-    return oss.str();
+    return R"({"variables":[]})";
 }
 
 std::string DapServer::handle_continue() {

@@ -1,5 +1,6 @@
 #include "tooling/dap/debug_session.hpp"
 
+#include <algorithm>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -7,15 +8,16 @@
 
 #include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "base/json/json_value.hpp"
 #include "runtime/evaluator/value.hpp"
+#include "runtime/evaluator/value_json.hpp"
 #include "tooling/dap/breakpoints.hpp"
 #include "tooling/dap/dap_server.hpp"
-#include "tooling/dap/state_inspector.hpp"
 
 namespace ahfl::dap {
 
@@ -28,6 +30,11 @@ struct CompileResult {
     std::optional<SourceFile> source;
     std::string error;
 };
+
+[[nodiscard]] std::string json_escape(std::string_view value) {
+    return ahfl::json::serialize_json(
+        *ahfl::json::JsonValue::make_string(std::string(value)));
+}
 
 [[nodiscard]] std::string json_string_field(const json::JsonValue &object, std::string_view key) {
     const auto *field = object.get(key);
@@ -90,12 +97,52 @@ struct CompileResult {
     return std::to_string(agent.index() + 1);
 }
 
+// Human-readable type name for a runtime value, used as the DAP variable
+// `type` field.
+[[nodiscard]] std::string value_type_name(const evaluator::Value &v) {
+    return std::visit(
+        Overloaded{
+            [](const evaluator::StructValue &sv) -> std::string { return sv.type_name; },
+            [](const evaluator::EnumValue &ev) -> std::string { return ev.enum_name; },
+            [](const evaluator::ListValue &) -> std::string { return "List"; },
+            [](const evaluator::SetValue &) -> std::string { return "Set"; },
+            [](const evaluator::MapValue &) -> std::string { return "Map"; },
+            [](const evaluator::NoneValue &) -> std::string { return "None"; },
+            [](const evaluator::BoolValue &) -> std::string { return "Bool"; },
+            [](const evaluator::IntValue &) -> std::string { return "Int"; },
+            [](const evaluator::FloatValue &) -> std::string { return "Float"; },
+            [](const evaluator::StringValue &) -> std::string { return "String"; },
+            [](const evaluator::DecimalValue &) -> std::string { return "Decimal"; },
+            [](const evaluator::DurationValue &) -> std::string { return "Duration"; },
+            [](const evaluator::UuidValue &) -> std::string { return "Uuid"; },
+            [](const evaluator::TimestampValue &) -> std::string { return "Timestamp"; },
+            [](const evaluator::CallableValue &) -> std::string { return "Callable"; },
+            [](const evaluator::UnitValue &) -> std::string { return "Unit"; },
+        },
+        v.node);
+}
+
+// Whether a value has children that can be expanded via a chained
+// variables request.
+[[nodiscard]] bool is_expandable(const evaluator::Value &v) {
+    return std::visit(
+        Overloaded{
+            [](const evaluator::StructValue &sv) { return !sv.fields.empty(); },
+            [](const evaluator::EnumValue &ev) {
+                return !ev.payload.empty() || !ev.named_payload.empty();
+            },
+            [](const evaluator::ListValue &lv) { return !lv.items.empty(); },
+            [](const evaluator::SetValue &sv) { return !sv.items.empty(); },
+            [](const evaluator::MapValue &mv) { return !mv.entries.empty(); },
+            [](const auto &) { return false; },
+        },
+        v.node);
+}
+
 } // namespace
 
-DebugSession::DebugSession(DapServer &server,
-                           BreakpointManager &breakpoints,
-                           StateInspector &inspector)
-    : server_(server), breakpoints_(breakpoints), inspector_(inspector) {}
+DebugSession::DebugSession(DapServer &server, BreakpointManager &breakpoints)
+    : server_(server), breakpoints_(breakpoints) {}
 
 DebugSession::~DebugSession() {
     disconnect();
@@ -104,10 +151,18 @@ DebugSession::~DebugSession() {
 std::string DebugSession::launch(const std::string &config_json) {
     std::string program_path;
     std::string workflow_name;
+    std::optional<evaluator::Value> workflow_input;
     if (const auto parsed = json::parse_json(config_json);
         parsed.has_value() && *parsed && (*parsed)->is_object()) {
         program_path = json_string_field(**parsed, "program");
         workflow_name = json_string_field(**parsed, "workflow");
+        if (const auto *input_field = (*parsed)->get("input"); input_field != nullptr) {
+            const std::string input_json = ahfl::json::serialize_json(*input_field);
+            workflow_input = evaluator::value_from_json(input_json);
+            if (!workflow_input.has_value()) {
+                emit_output("stderr", "launch config \"input\" is not a valid AHFL value");
+            }
+        }
     }
 
     if (program_path.empty() || workflow_name.empty()) {
@@ -127,16 +182,45 @@ std::string DebugSession::launch(const std::string &config_json) {
         return "{}";
     }
     program_ = std::move(*compiled.program);
-    build_breakable_lines(*compiled.source, program_path);
+    build_breakable_lines(*compiled.source, program_path, workflow_name);
+
+    {
+        std::lock_guard lock(mutex_);
+        if (workflow_input.has_value()) {
+            workflow_input_ = std::move(*workflow_input);
+        } else {
+            workflow_input_ = evaluator::make_none();
+        }
+    }
+    push_workflow_frame(workflow_name);
 
     runtime::WorkflowRuntimeConfig config;
     config.state_entered_hook = [this](const runtime::AgentId agent,
+                                       const std::string_view agent_name,
+                                       const std::string_view node_name,
                                        const std::string_view state_name) {
-        on_state_entered(agent, state_name);
+        on_state_entered(agent, agent_name, node_name, state_name);
     };
     config.capability_invoked_hook = [this](const runtime::AgentId agent,
                                             const std::string_view capability_name) {
         on_capability_invoked(agent, capability_name);
+    };
+    config.agent_input_hook = [this](const runtime::AgentId agent,
+                                     const std::string_view agent_name,
+                                     const std::string_view node_name,
+                                     const runtime::Value &input) {
+        on_agent_input(agent, agent_name, node_name, input);
+    };
+    config.node_completed_hook = [this](const runtime::AgentId agent,
+                                        const std::string_view node_name,
+                                        const runtime::Value &output) {
+        const auto agent_id = agent_debug_id(agent);
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        agent_outputs_[agent_id] = evaluator::clone_value(output);
+        node_results_.emplace(std::string(node_name), evaluator::clone_value(output));
     };
     // The debug session owns no capability providers, but the runtime only
     // creates its capability dispatch path (and thus only fires
@@ -162,8 +246,10 @@ std::string DebugSession::launch(const std::string &config_json) {
     // `stopped` or `terminated` event before it (RFC 0015 event table).
     server_.send_event("initialized", json::JsonValue::make_object());
 
-    worker_ = std::thread([this, workflow_name = std::move(workflow_name)]() mutable {
-        execute(std::move(workflow_name));
+    worker_ = std::thread([this,
+                           workflow_name = std::move(workflow_name),
+                           input = evaluator::clone_value(workflow_input_)]() mutable {
+        execute(std::move(workflow_name), std::move(input));
     });
     return "{}";
 }
@@ -233,8 +319,15 @@ bool DebugSession::is_running() const noexcept {
     return worker_.joinable();
 }
 
-void DebugSession::execute(std::string workflow_name) {
-    (void)runtime_->run(workflow_name, evaluator::make_none());
+void DebugSession::execute(std::string workflow_name, evaluator::Value workflow_input) {
+    auto result = runtime_->run(workflow_name, std::move(workflow_input));
+
+    {
+        std::lock_guard lock(mutex_);
+        if (const auto *output = result.output(); output != nullptr) {
+            workflow_output_ = evaluator::clone_value(*output);
+        }
+    }
 
     if (mark_terminated()) {
         emit_terminated();
@@ -242,9 +335,12 @@ void DebugSession::execute(std::string workflow_name) {
 }
 
 void DebugSession::build_breakable_lines(const SourceFile &source,
-                                         const std::string &source_path) {
+                                         const std::string &source_path,
+                                         const std::string &workflow_name) {
     breakable_lines_.clear();
     state_line_map_.clear();
+    node_line_map_.clear();
+    workflow_location_ = {};
 
     const auto line_of = [&source](const SourceRange &range) {
         return static_cast<int>(source.locate(range.begin_offset).line);
@@ -271,9 +367,21 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
                     }
                 },
                 [&](const ir::WorkflowDecl &workflow) {
+                    if (workflow.provenance.source_range.has_value()) {
+                        const int line = line_of(*workflow.provenance.source_range);
+                        breakable_lines_.emplace(source_path, line);
+                        // Only the launched workflow anchors the root stack frame.
+                        if (workflow_name ==
+                            std::string(ir::symbol_canonical_name(workflow.symbol_ref,
+                                                                  workflow.name))) {
+                            workflow_location_ = std::make_pair(source_path, line);
+                        }
+                    }
                     for (const auto &node : workflow.nodes) {
                         if (node.source_range.has_value()) {
-                            breakable_lines_.emplace(source_path, line_of(*node.source_range));
+                            const int line = line_of(*node.source_range);
+                            breakable_lines_.emplace(source_path, line);
+                            node_line_map_.emplace(node.name, std::make_pair(source_path, line));
                         }
                     }
                 },
@@ -285,24 +393,88 @@ void DebugSession::build_breakable_lines(const SourceFile &source,
     breakpoints_.set_breakable_lines(breakable_lines_);
 }
 
+void DebugSession::push_workflow_frame(std::string workflow_name) {
+    std::lock_guard lock(mutex_);
+    DebugFrame frame;
+    frame.kind = DebugFrame::Kind::Workflow;
+    frame.name = std::move(workflow_name);
+    frame.source_file = workflow_location_.first;
+    frame.line = workflow_location_.second;
+    frames_.push_back(std::move(frame));
+}
+
+void DebugSession::on_agent_input(const runtime::AgentId agent,
+                                  const std::string_view agent_name,
+                                  const std::string_view node_name,
+                                  const evaluator::Value &input) {
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        // A new node starts: the previous node (and its state / capability
+        // frames) completed. Pop everything above the workflow frame.
+        while (!frames_.empty() && frames_.back().kind != DebugFrame::Kind::Workflow) {
+            frames_.pop_back();
+        }
+        DebugFrame frame;
+        frame.kind = DebugFrame::Kind::Node;
+        frame.name = std::string(node_name);
+        frame.agent_id = agent_debug_id(agent);
+        frame.agent_name = std::string(agent_name);
+        frame.node_name = std::string(node_name);
+        if (const auto it = node_line_map_.find(frame.node_name); it != node_line_map_.end()) {
+            frame.source_file = it->second.first;
+            frame.line = it->second.second;
+        }
+        // Capture the agent id before the move: frame.agent_id is moved-from
+        // after push_back, and the input map is keyed by that id.
+        const std::string agent_id = frame.agent_id;
+        frames_.push_back(std::move(frame));
+        agent_inputs_[agent_id] = evaluator::clone_value(input);
+    }
+}
+
 void DebugSession::on_state_entered(const runtime::AgentId agent,
+                                    const std::string_view agent_name,
+                                    const std::string_view node_name,
                                     const std::string_view state_name) {
     {
         std::lock_guard lock(mutex_);
         if (stopping_) {
             return;
         }
+        // Pop capability frames: the previous capability completed before the
+        // state was entered.
+        while (!frames_.empty() && frames_.back().kind == DebugFrame::Kind::Capability) {
+            frames_.pop_back();
+        }
+        // A state entry replaces the top state frame. Same agent: a transition.
+        // Different agent: the previous agent completed (agents run
+        // sequentially, one node at a time).
+        if (!frames_.empty() && frames_.back().kind == DebugFrame::Kind::State) {
+            frames_.pop_back();
+        }
+        DebugFrame frame;
+        frame.kind = DebugFrame::Kind::State;
+        frame.name = std::string(agent_name) + "::" + std::string(state_name);
+        frame.agent_id = agent_debug_id(agent);
+        frame.agent_name = std::string(agent_name);
+        frame.node_name = std::string(node_name);
+        frame.state_name = std::string(state_name);
+        if (const auto it = state_line_map_.find(frame.state_name);
+            it != state_line_map_.end()) {
+            frame.source_file = it->second.first;
+            frame.line = it->second.second;
+        }
+        frames_.push_back(std::move(frame));
+        // Record the current position before any pause so step requests armed
+        // while paused at a breakpoint use it as their origin.
+        last_agent_id_ = frames_.back().agent_id;
+        last_state_name_ = frames_.back().state_name;
     }
 
     const auto agent_id = agent_debug_id(agent);
-    inspector_.set_agent_state(agent_id, std::string(state_name), {});
-    {
-        // Record the current position before any pause so step requests armed
-        // while paused at a breakpoint use it as their origin.
-        std::lock_guard lock(mutex_);
-        last_agent_id_ = agent_id;
-        last_state_name_ = std::string(state_name);
-    }
 
     const auto state_hits =
         breakpoints_.check_state_breakpoints(agent_id, std::string(state_name));
@@ -371,6 +543,18 @@ void DebugSession::on_capability_invoked(const runtime::AgentId agent,
         if (stopping_) {
             return;
         }
+        // Replace the top capability frame (the previous capability completed
+        // before this one was invoked). Capability call sites are not exposed
+        // by the runtime hook, so the frame carries no source location; the
+        // state frame below it locates the call.
+        while (!frames_.empty() && frames_.back().kind == DebugFrame::Kind::Capability) {
+            frames_.pop_back();
+        }
+        DebugFrame frame;
+        frame.kind = DebugFrame::Kind::Capability;
+        frame.name = std::string(capability_name);
+        frame.agent_id = agent_debug_id(agent);
+        frames_.push_back(std::move(frame));
     }
 
     const auto agent_id = agent_debug_id(agent);
@@ -444,6 +628,246 @@ void DebugSession::emit_output(const std::string_view category, const std::strin
     body->set("category", json::JsonValue::make_string(std::string(category)));
     body->set("output", json::JsonValue::make_string(std::string(text)));
     server_.send_event("output", std::move(body));
+}
+
+// --- DAP request handlers (RFC 0015 Slice 5) ---
+
+std::string DebugSession::stack_trace_json() const {
+    std::lock_guard lock(mutex_);
+    std::ostringstream oss;
+    oss << R"({"stackFrames":[)";
+    // DAP lists the top (most recent) frame first. frames_ is stored bottom to
+    // top, so iterate in reverse and assign stable 1-based ids.
+    int id = 1;
+    bool first = true;
+    for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+        const auto &frame = *it;
+        if (!first) {
+            oss << ",";
+        }
+        first = false;
+        oss << R"({"id":)" << id++ << R"(,"name":)" << json_escape(frame.name);
+        if (!frame.source_file.empty()) {
+            oss << R"(,"source":{"path":)" << json_escape(frame.source_file) << "}";
+        }
+        oss << R"(,"line":)" << frame.line << R"(,"column":1})";
+    }
+    oss << R"(],"totalFrames":)" << frames_.size() << "}";
+    return oss.str();
+}
+
+std::string DebugSession::scopes_json(const int frame_id) const {
+    std::lock_guard lock(mutex_);
+    // Resolve the frame's agent. frames_ is bottom to top; frame_id is 1-based
+    // from the top (matching stack_trace_json).
+    std::string agent_id;
+    if (frame_id >= 1 && static_cast<std::size_t>(frame_id) <= frames_.size()) {
+        agent_id = frames_[frames_.size() - static_cast<std::size_t>(frame_id)].agent_id;
+    }
+    // Fall back to the top state frame's agent when the client sent an unknown
+    // or stale frame id.
+    if (agent_id.empty()) {
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            if (it->kind == DebugFrame::Kind::State) {
+                agent_id = it->agent_id;
+                break;
+            }
+        }
+    }
+
+    std::ostringstream oss;
+    oss << R"({"scopes":[)";
+    bool first = true;
+    auto append_scope = [&](const std::string &name, const int ref) {
+        if (!first) {
+            oss << ",";
+        }
+        first = false;
+        oss << R"({"name":)" << json_escape(name) << R"(,"variablesReference":)" << ref
+            << R"(,"expensive":false})";
+    };
+
+    if (agent_id.empty()) {
+        // Workflow frame (or no agent yet): only the Workflow scope applies.
+        append_scope("Workflow", 400);
+    } else {
+        const int agent_index = std::stoi(agent_id);
+        append_scope("Agent State", 100 + agent_index);
+        append_scope("Context", 200 + agent_index);
+        append_scope("Input/Output", 300 + agent_index);
+        append_scope("Workflow", 400);
+    }
+    oss << "]}";
+    return oss.str();
+}
+
+std::string DebugSession::variables_json(const int variables_reference) {
+    std::lock_guard lock(mutex_);
+
+    // Chained expansion of a registered structured value.
+    if (variables_reference >= 1000) {
+        const auto it = variable_store_.find(variables_reference);
+        if (it != variable_store_.end()) {
+            return expand_value_locked(it->second);
+        }
+        return R"({"variables":[]})";
+    }
+
+    std::ostringstream oss;
+    oss << R"({"variables":[)";
+    bool first = true;
+    auto append_var = [&](const std::string &name, const evaluator::Value *value) {
+        if (!first) {
+            oss << ",";
+        }
+        first = false;
+        oss << R"({"name":)" << json_escape(name) << R"(,"value":)"
+            << (value != nullptr ? json_escape(evaluator::value_to_json(*value))
+                                 : json_escape("null"))
+            << R"(,"type":)"
+            << json_escape(value != nullptr ? value_type_name(*value) : std::string("None"))
+            << R"(,"variablesReference":)"
+            << (value != nullptr ? register_variable_locked(*value) : 0) << "}";
+    };
+
+    if (variables_reference >= 100 && variables_reference < 200) {
+        // Agent State scope: the current state name for the agent. State
+        // variables (handler locals) are mutated inside the evaluator and not
+        // exposed by the runtime; only the state name is observable.
+        const std::string agent_id = std::to_string(variables_reference - 100);
+        for (const auto &frame : frames_) {
+            if (frame.kind == DebugFrame::Kind::State && frame.agent_id == agent_id) {
+                if (!first) {
+                    oss << ",";
+                }
+                first = false;
+                oss << R"({"name":)" << json_escape("state") << R"(,"value":)"
+                    << json_escape(frame.state_name) << R"(,"type":)" << json_escape("String")
+                    << R"(,"variablesReference":0})";
+                break;
+            }
+        }
+    } else if (variables_reference >= 200 && variables_reference < 300) {
+        // Context scope: agent context fields are assigned inside state
+        // handlers (evaluator ctx scope) and not exposed by any runtime hook,
+        // so this scope is honestly empty.
+    } else if (variables_reference >= 300 && variables_reference < 400) {
+        // Input/Output scope: the agent's live input (observed via
+        // agent_input_hook) and output (observed via node_completed_hook).
+        const std::string agent_id = std::to_string(variables_reference - 300);
+        if (const auto it = agent_inputs_.find(agent_id); it != agent_inputs_.end()) {
+            append_var("input", &it->second);
+        }
+        if (const auto it = agent_outputs_.find(agent_id); it != agent_outputs_.end()) {
+            append_var("output", &it->second);
+        }
+    } else if (variables_reference >= 400 && variables_reference < 500) {
+        // Workflow scope: workflow input, node results, workflow output.
+        append_var("input", &workflow_input_);
+        std::vector<std::string> node_names;
+        node_names.reserve(node_results_.size());
+        for (const auto &[name, _] : node_results_) {
+            node_names.push_back(name);
+        }
+        std::sort(node_names.begin(), node_names.end());
+        for (const auto &name : node_names) {
+            append_var(name, &node_results_.at(name));
+        }
+        if (workflow_output_.has_value()) {
+            append_var("output", &*workflow_output_);
+        }
+    }
+
+    oss << "]}";
+    return oss.str();
+}
+
+int DebugSession::register_variable_locked(const evaluator::Value &value) {
+    if (!is_expandable(value)) {
+        return 0;
+    }
+    const int ref = next_var_ref_++;
+    variable_store_.emplace(ref, evaluator::clone_value(value));
+    return ref;
+}
+
+std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
+    std::ostringstream oss;
+    oss << R"({"variables":[)";
+    bool first = true;
+    auto append_child = [&](const std::string &name, const evaluator::Value *child) {
+        if (!first) {
+            oss << ",";
+        }
+        first = false;
+        oss << R"({"name":)" << json_escape(name) << R"(,"value":)"
+            << (child != nullptr ? json_escape(evaluator::value_to_json(*child))
+                                 : json_escape("null"))
+            << R"(,"type":)"
+            << json_escape(child != nullptr ? value_type_name(*child) : std::string("None"))
+            << R"(,"variablesReference":)"
+            << (child != nullptr ? register_variable_locked(*child) : 0) << "}";
+    };
+
+    std::visit(
+        Overloaded{
+            [&](const evaluator::StructValue &sv) {
+                std::vector<std::string> names;
+                names.reserve(sv.fields.size());
+                for (const auto &[name, _] : sv.fields) {
+                    names.push_back(name);
+                }
+                std::sort(names.begin(), names.end());
+                for (const auto &name : names) {
+                    append_child(name, sv.fields.at(name).get());
+                }
+            },
+            [&](const evaluator::EnumValue &ev) {
+                // Variant marker (scalar, no children).
+                if (!first) {
+                    oss << ",";
+                }
+                first = false;
+                oss << R"({"name":)" << json_escape("_variant") << R"(,"value":)"
+                    << json_escape(ev.variant) << R"(,"type":)" << json_escape(ev.enum_name)
+                    << R"(,"variablesReference":0})";
+                for (std::size_t i = 0; i < ev.payload.size(); ++i) {
+                    append_child("_" + std::to_string(i), ev.payload[i].get());
+                }
+                std::vector<std::string> names;
+                names.reserve(ev.named_payload.size());
+                for (const auto &[name, _] : ev.named_payload) {
+                    names.push_back(name);
+                }
+                std::sort(names.begin(), names.end());
+                for (const auto &name : names) {
+                    append_child(name, ev.named_payload.at(name).get());
+                }
+            },
+            [&](const evaluator::ListValue &lv) {
+                for (std::size_t i = 0; i < lv.items.size(); ++i) {
+                    append_child(std::to_string(i), lv.items[i].get());
+                }
+            },
+            [&](const evaluator::SetValue &sv) {
+                for (std::size_t i = 0; i < sv.items.size(); ++i) {
+                    append_child(std::to_string(i), sv.items[i].get());
+                }
+            },
+            [&](const evaluator::MapValue &mv) {
+                for (std::size_t i = 0; i < mv.entries.size(); ++i) {
+                    const auto &[key, val] = mv.entries[i];
+                    const std::string key_name =
+                        key != nullptr ? evaluator::value_to_json(*key) : "null";
+                    append_child(key_name, val.get());
+                }
+            },
+            [](const auto &) { /* scalar: no children */ },
+        },
+        value.node);
+
+    oss << "]}";
+    return oss.str();
 }
 
 } // namespace ahfl::dap
