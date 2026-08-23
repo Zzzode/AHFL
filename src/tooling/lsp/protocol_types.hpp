@@ -90,12 +90,15 @@ struct LspDiagnostic {
 
 enum class CompletionItemKind : int {
     Text = 1,
+    Method = 2,
+    Function = 3,
+    Field = 5,
+    Variable = 6,
+    Interface = 8, // used for Capability
+    Enum = 13,
+    EnumMember = 20,
     Keyword = 14,
     Struct = 22,
-    Enum = 13,
-    Interface = 8, // used for Capability
-    Function = 3,
-    Variable = 6,
     Constant = 21,
 };
 

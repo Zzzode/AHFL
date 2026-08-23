@@ -114,9 +114,16 @@ std::unique_ptr<json::JsonValue> serialize_hover(const Hover &hover) {
 std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapabilities &caps) {
     auto obj = json::JsonValue::make_object();
 
-    // textDocumentSync: 1 = Full
+    // textDocumentSync: object form advertising open/close, full-sync change,
+    // and save (without text — the document is already current from didChange).
     if (caps.text_document_sync_full) {
-        obj->set("textDocumentSync", json::JsonValue::make_int(1));
+        auto sync = json::JsonValue::make_object();
+        sync->set("openClose", json::JsonValue::make_bool(true));
+        sync->set("change", json::JsonValue::make_int(1)); // TextDocumentSyncKind.Full
+        auto save = json::JsonValue::make_object();
+        save->set("includeText", json::JsonValue::make_bool(false));
+        sync->set("save", std::move(save));
+        obj->set("textDocumentSync", std::move(sync));
     }
 
     if (caps.completion_provider) {

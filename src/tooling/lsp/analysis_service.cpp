@@ -844,12 +844,73 @@ paths_from_scope_kinds(const NavigationScopeKindMap &scope_kinds) {
     return false;
 }
 
+struct SourceIdHash {
+    [[nodiscard]] std::size_t operator()(SourceId id) const noexcept {
+        return std::hash<std::size_t>{}(id.value);
+    }
+};
+
+/// Computes the reverse import closure of the changed paths inside a source
+/// graph. For every changed source unit S the result contains S itself plus
+/// every source unit that (transitively) imports S. The graph is typically
+/// small (< 100 units), so a single BFS per invalidation pass is sufficient.
+[[nodiscard]] std::unordered_set<SourceId, SourceIdHash> transitive_importer_closure(
+    const SourceGraph &graph,
+    const std::unordered_set<std::string> &path_keys) {
+    std::unordered_map<SourceId, std::vector<SourceId>, SourceIdHash> reverse_deps;
+    reverse_deps.reserve(graph.import_edges.size());
+    for (const auto &edge : graph.import_edges) {
+        reverse_deps[edge.imported].push_back(edge.importer);
+    }
+
+    std::unordered_set<SourceId, SourceIdHash> closure;
+    closure.reserve(graph.sources.size());
+    std::vector<SourceId> pending;
+    pending.reserve(graph.sources.size());
+
+    for (const auto &source : graph.sources) {
+        if (!path_keys.contains(AnalysisService::normalized_path_key(source.path))) {
+            continue;
+        }
+        if (closure.insert(source.id).second) {
+            pending.push_back(source.id);
+        }
+    }
+
+    for (std::size_t head = 0; head < pending.size(); ++head) {
+        const auto found = reverse_deps.find(pending[head]);
+        if (found == reverse_deps.end()) {
+            continue;
+        }
+        for (const auto importer : found->second) {
+            if (closure.insert(importer).second) {
+                pending.push_back(importer);
+            }
+        }
+    }
+    return closure;
+}
+
 [[nodiscard]] bool snapshot_references_path(const LspAnalysisSnapshot &snapshot,
                                             const std::unordered_set<std::string> &path_keys) {
     for (const auto &source : snapshot.sources) {
         if (path_keys.contains(AnalysisService::normalized_path_key(source.path))) {
             return true;
         }
+    }
+    if (snapshot.project_result != nullptr) {
+        // Project-aware snapshots carry their own import graph. Invalidate only
+        // when a changed source unit is in the snapshot's transitive import
+        // closure; the workspace index spans the whole workspace and must not
+        // be used here (it would invalidate every snapshot on every change).
+        const auto closure =
+            transitive_importer_closure(snapshot.project_result->graph, path_keys);
+        for (const auto &source : snapshot.sources) {
+            if (source.source_id.has_value() && closure.contains(*source.source_id)) {
+                return true;
+            }
+        }
+        return false;
     }
     return snapshot.workspace_index != nullptr &&
            source_units_reference_path(*snapshot.workspace_index, path_keys);

@@ -2119,8 +2119,18 @@ void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &sy
     return offset >= 2 && text[offset - 2] == '-' && text[offset - 1] == '>';
 }
 
-[[nodiscard]] std::optional<std::string> member_root_before_cursor(const SourceFile &source,
-                                                                   std::size_t offset) {
+/// Result of scanning backwards from the cursor for an `expr.` member-access
+/// prefix. `name` is the root identifier spelling; `root_end` is the byte
+/// offset just past the root expression's last character (i.e. the position of
+/// the '.'), used to locate the root's typed-HIR node.
+struct MemberRoot {
+    std::string name;
+    std::size_t root_begin{0};
+    std::size_t root_end{0};
+};
+
+[[nodiscard]] std::optional<MemberRoot> member_root_before_cursor(const SourceFile &source,
+                                                                  std::size_t offset) {
     const auto &text = source.content;
     if (offset > text.size()) {
         offset = text.size();
@@ -2147,7 +2157,7 @@ void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &sy
     if (begin == end) {
         return std::nullopt;
     }
-    return text.substr(begin, end - begin);
+    return MemberRoot{.name = text.substr(begin, end - begin), .root_begin = begin, .root_end = end};
 }
 
 [[nodiscard]] const FlowTypeInfo *
@@ -2191,6 +2201,78 @@ flow_at(const TypeEnvironment &environment, std::optional<SourceId> source_id, s
     return nullptr;
 }
 
+/// Generic signature builder shared by fn / impl-method / capability callables
+/// that all carry a `vector<ParamTypeInfo> params` + optional return type.
+[[nodiscard]] std::string callable_signature(std::string_view name,
+                                              const std::vector<ParamTypeInfo> &params,
+                                              TypePtr return_type) {
+    std::string label = std::string(name) + "(";
+    for (std::size_t index = 0; index < params.size(); ++index) {
+        if (index > 0) {
+            label += ", ";
+        }
+        const auto &param = params[index];
+        label += param.name + ": " + (param.type ? param.type->describe() : "?");
+    }
+    label += ")";
+    if (return_type != nullptr) {
+        label += " -> " + return_type->describe();
+    }
+    return label;
+}
+
+/// Extract the nominal symbol (struct/enum) from a type, mirroring
+/// TypeCheckExprServices::nominal_symbol_of_type in typecheck_expr.cpp.
+[[nodiscard]] std::optional<SymbolId> nominal_symbol_of_type(const Type &type) noexcept {
+    if (const auto *structure = type.get_if<types::StructT>(); structure != nullptr) {
+        return structure->symbol;
+    }
+    if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
+        return enumeration->symbol;
+    }
+    return std::nullopt;
+}
+
+/// Resolve a local let-binding's type by name at the given cursor offset.
+/// Scans all typed blocks containing the cursor, innermost-first, so the
+/// innermost (shadowing) binding wins.
+[[nodiscard]] TypePtr resolve_local_binding_type(const TypedProgram &program,
+                                                 std::optional<SourceId> source_id,
+                                                 std::size_t offset,
+                                                 std::string_view name) {
+    // Collect containing blocks sorted by ascending range size (innermost
+    // first) so the first match is the innermost binding.
+    std::vector<const TypedBlock *> containing;
+    for (const auto &block : program.blocks) {
+        if (!same_source(block.source_id, source_id) || !contains(block.range, offset)) {
+            continue;
+        }
+        containing.push_back(&block);
+    }
+    std::sort(containing.begin(), containing.end(), [](const auto *a, const auto *b) {
+        return (a->range.end_offset - a->range.begin_offset) <
+               (b->range.end_offset - b->range.begin_offset);
+    });
+
+    for (const auto *block : containing) {
+        for (const auto stmt_index : block->statement_indexes) {
+            if (stmt_index >= program.statements.size()) {
+                continue;
+            }
+            const auto &stmt = program.statements[stmt_index];
+            if (stmt.kind != TypedStmtKind::Let || stmt.let_type == nullptr ||
+                stmt.is_wildcard || stmt.target_name != name) {
+                continue;
+            }
+            if (stmt.range.end_offset > offset) {
+                continue; // binding is after the cursor
+            }
+            return stmt.let_type;
+        }
+    }
+    return nullptr;
+}
+
 void push_struct_field_completions(std::vector<CompletionItem> &items,
                                    const TypeEnvironment &environment,
                                    TypePtr type) {
@@ -2204,7 +2286,7 @@ void push_struct_field_completions(std::vector<CompletionItem> &items,
     for (const auto &field : struct_info->get().fields) {
         CompletionItem item;
         item.label = field.name;
-        item.kind = CompletionItemKind::Variable;
+        item.kind = CompletionItemKind::Field;
         item.detail = field.type ? field.type->describe() : "field";
         items.push_back(std::move(item));
     }
@@ -2214,12 +2296,113 @@ void push_member_completions(std::vector<CompletionItem> &items,
                              const LspAnalysisSnapshot &snapshot,
                              const LspSourceSnapshot &source,
                              std::size_t offset,
-                             std::string_view root_name) {
+                             const MemberRoot &root) {
     if (!snapshot.type_check_result) {
         return;
     }
 
     const auto &environment = snapshot.type_check_result->environment;
+
+    // Resolve the root expression's type. Three strategies, in order:
+    //   1. Local let-binding lookup — the most reliable path for `x.` where x
+    //      is a local. The typechecker emits a single flat MemberAccess expr
+    //      for field-access chains (e.g. `o.inner`), so find_expr_containing
+    //      would return the chain's result type, not the root's type.
+    //   2. Exact-range typed-HIR lookup — works when the typechecker emitted a
+    //      standalone expr for the root identifier (e.g. method-call receivers
+    //      get their own expr).
+    //   3. Containing-expr lookup — only accept when the expr's range does not
+    //      extend past the root identifier (i.e. it is the root itself, not a
+    //      MemberAccess chain that starts at the root).
+    TypePtr root_type = nullptr;
+    const auto *program = snapshot.typed_program();
+    if (program != nullptr) {
+        root_type = resolve_local_binding_type(*program, source.source_id, offset, root.name);
+        if (root_type == nullptr && root.root_begin < root.root_end) {
+            const SourceRange root_range{root.root_begin, root.root_end};
+            if (const auto *exact =
+                    program->find_expr_by_range(root_range, source.source_id);
+                exact != nullptr && exact->type != nullptr) {
+                root_type = exact->type;
+            }
+        }
+        if (root_type == nullptr && root.root_end > 0) {
+            if (const auto *containing =
+                    program->find_expr_containing(root.root_end - 1, source.source_id);
+                containing != nullptr && containing->type != nullptr &&
+                containing->range.end_offset <= root.root_end) {
+                root_type = containing->type;
+            }
+        }
+    }
+
+    if (root_type != nullptr) {
+        bool added = false;
+
+        if (const auto struct_info = environment.get_struct(*root_type);
+            struct_info.has_value()) {
+            for (const auto &field : struct_info->get().fields) {
+                CompletionItem item;
+                item.label = field.name;
+                item.kind = CompletionItemKind::Field;
+                item.detail = field.type ? field.type->describe() : "field";
+                items.push_back(std::move(item));
+                added = true;
+            }
+        }
+
+        if (const auto enum_info = environment.get_enum(*root_type);
+            enum_info.has_value()) {
+            for (const auto &variant : enum_info->get().variants) {
+                CompletionItem item;
+                item.label = variant.name;
+                item.kind = CompletionItemKind::EnumMember;
+                item.detail = "enum variant";
+                items.push_back(std::move(item));
+                added = true;
+            }
+        }
+
+        // Enumerate methods from ALL impl blocks (inherent + trait) whose
+        // target type matches the receiver. Mirrors method_candidates in
+        // typecheck_expr.cpp: normalize_type_key equality for concrete impls,
+        // nominal-symbol fallback for generic impls (e.g. impl<T> Option<T>
+        // vs concrete Option<Int>). find_impls() is NOT used because it only
+        // returns non-inherent (trait) impls by design.
+        const auto receiver_key = TypeEnvironment::normalize_type_key(*root_type);
+        const auto receiver_nominal = nominal_symbol_of_type(*root_type);
+        for (const auto &[impl_index, impl] : environment.impls()) {
+            (void)impl_index;
+            if (impl.target_type == nullptr) {
+                continue;
+            }
+            const bool key_match =
+                TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key;
+            const bool nominal_match =
+                !key_match && receiver_nominal.has_value() && impl.target_symbol.has_value() &&
+                *receiver_nominal == *impl.target_symbol;
+            if (!key_match && !nominal_match) {
+                continue;
+            }
+            for (const auto &method : impl.methods) {
+                CompletionItem item;
+                item.label = method.name;
+                item.kind = CompletionItemKind::Method;
+                item.detail = callable_signature(method.name, method.params,
+                                                 method.return_type);
+                items.push_back(std::move(item));
+                added = true;
+            }
+        }
+
+        if (added) {
+            return;
+        }
+    }
+
+    // Fallback: flow-scoped input/context/output keywords when the root type
+    // could not be resolved (incomplete parse, no typecheck, or root is a
+    // flow-scoped keyword not in local bindings).
     const auto *flow = flow_at(environment, source.source_id, offset);
     if (flow == nullptr) {
         return;
@@ -2229,11 +2412,11 @@ void push_member_completions(std::vector<CompletionItem> &items,
         return;
     }
 
-    if (root_name == "input") {
+    if (root.name == "input") {
         push_struct_field_completions(items, environment, agent->get().input_type);
-    } else if (root_name == "context" || root_name == "ctx") {
+    } else if (root.name == "context" || root.name == "ctx") {
         push_struct_field_completions(items, environment, agent->get().context_type);
-    } else if (root_name == "output") {
+    } else if (root.name == "output") {
         push_struct_field_completions(items, environment, agent->get().output_type);
     }
 }
@@ -2291,6 +2474,69 @@ void push_enum_variant_completions(std::vector<CompletionItem> &items,
             item.label = enum_info.canonical_name + "::" + variant.name;
             item.kind = CompletionItemKind::Enum;
             item.detail = "enum variant";
+            items.push_back(std::move(item));
+        }
+    }
+}
+
+/// Offer in-scope local `let` bindings as Variable completions. Every typed
+/// block whose range contains the cursor is an ancestor of the cursor's
+/// block (blocks nest or are disjoint), so scanning each ancestor's direct
+/// Let statements yields exactly the bindings visible at the cursor.
+/// Containing blocks are scanned innermost-first so that shadowing bindings
+/// (inner `let x` shadowing outer `let x`) report the inner type.
+void push_local_variable_completions(std::vector<CompletionItem> &items,
+                                     const LspAnalysisSnapshot &snapshot,
+                                     const LspSourceSnapshot &source,
+                                     std::size_t offset) {
+    if (!snapshot.type_check_result) {
+        return;
+    }
+    const auto *program = snapshot.typed_program();
+    if (program == nullptr) {
+        return;
+    }
+
+    std::unordered_set<std::string> existing_labels;
+    existing_labels.reserve(items.size());
+    for (const auto &item : items) {
+        existing_labels.insert(item.label);
+    }
+
+    // Collect containing blocks and sort by ascending range size so the
+    // innermost block is scanned first.
+    std::vector<const TypedBlock *> containing;
+    for (const auto &block : program->blocks) {
+        if (!same_source(block.source_id, source.source_id) || !contains(block.range, offset)) {
+            continue;
+        }
+        containing.push_back(&block);
+    }
+    std::sort(containing.begin(), containing.end(), [](const auto *a, const auto *b) {
+        return (a->range.end_offset - a->range.begin_offset) <
+               (b->range.end_offset - b->range.begin_offset);
+    });
+
+    std::unordered_set<std::string> seen;
+    for (const auto *block : containing) {
+        for (const auto stmt_index : block->statement_indexes) {
+            if (stmt_index >= program->statements.size()) {
+                continue;
+            }
+            const auto &stmt = program->statements[stmt_index];
+            if (stmt.kind != TypedStmtKind::Let || stmt.let_type == nullptr ||
+                stmt.target_name.empty() || stmt.is_wildcard ||
+                stmt.range.end_offset > offset) {
+                continue;
+            }
+            if (!seen.insert(stmt.target_name).second ||
+                existing_labels.contains(stmt.target_name)) {
+                continue;
+            }
+            CompletionItem item;
+            item.label = stmt.target_name;
+            item.kind = CompletionItemKind::Variable;
+            item.detail = stmt.let_type->describe();
             items.push_back(std::move(item));
         }
     }
@@ -3220,6 +3466,98 @@ void fill_signature_parameters(SignatureInformation &signature, const CallableIn
     }
 }
 
+/// Find the smallest Call / MethodCall typed expression whose range contains
+/// the cursor. Typed HIR has no parent links, so this is a linear scan over
+/// the flat expression store (single-file, bounded by document size).
+[[nodiscard]] const TypedExpr *
+find_enclosing_call_expr(const TypedProgram &program, std::optional<SourceId> source_id,
+                         std::size_t offset) noexcept {
+    const TypedExpr *best = nullptr;
+    std::size_t best_size = 0;
+    for (const auto &expr : program.expressions) {
+        if (expr.source_id != source_id) {
+            continue;
+        }
+        if (expr.kind != ast::ExprSyntaxKind::Call &&
+            expr.kind != ast::ExprSyntaxKind::MethodCall) {
+            continue;
+        }
+        if (offset < expr.range.begin_offset || offset > expr.range.end_offset) {
+            continue;
+        }
+        const auto size = expr.range.end_offset - expr.range.begin_offset;
+        if (best == nullptr || size < best_size) {
+            best = &expr;
+            best_size = size;
+        }
+    }
+    return best;
+}
+
+/// Build a SignatureInformation from a typed Call / MethodCall expression.
+/// Returns nullopt when the call has no resolvable signature (e.g. builtin
+/// keywords that are statements, not typed call expressions).
+[[nodiscard]] std::optional<SignatureInformation>
+typed_call_signature_info(const LspAnalysisSnapshot &snapshot, const TypedExpr &call) {
+    if (!snapshot.type_check_result) {
+        return std::nullopt;
+    }
+    const auto &environment = snapshot.type_check_result->environment;
+
+    if (call.kind == ast::ExprSyntaxKind::MethodCall) {
+        if (!call.dispatch_target.has_value()) {
+            return std::nullopt;
+        }
+        const auto &dt = *call.dispatch_target;
+        const auto impl_it = environment.impls().find(dt.impl_index);
+        if (impl_it == environment.impls().end()) {
+            return std::nullopt;
+        }
+        for (const auto &method : impl_it->second.methods) {
+            if (method.name != dt.method_name) {
+                continue;
+            }
+            SignatureInformation info;
+            info.label = callable_signature(method.name, method.params, method.return_type);
+            info.documentation = "method " + method.name;
+            fill_signature_parameters(info, method);
+            return info;
+        }
+        return std::nullopt;
+    }
+
+    if (call.kind == ast::ExprSyntaxKind::Call) {
+        if (!call.resolved_symbol.has_value()) {
+            return std::nullopt;
+        }
+        const auto symbol = *call.resolved_symbol;
+        if (const auto fn = environment.get_fn(symbol); fn.has_value()) {
+            SignatureInformation info;
+            info.label = callable_signature(
+                fn->get().canonical_name, fn->get().params, fn->get().return_type);
+            info.documentation = "fn " + fn->get().canonical_name;
+            fill_signature_parameters(info, fn->get());
+            return info;
+        }
+        if (const auto capability = environment.get_capability(symbol); capability.has_value()) {
+            SignatureInformation info;
+            info.label = callable_signature(capability->get());
+            info.documentation = "capability " + capability->get().canonical_name;
+            fill_signature_parameters(info, capability->get());
+            return info;
+        }
+        if (const auto predicate = environment.get_predicate(symbol); predicate.has_value()) {
+            SignatureInformation info;
+            info.label = callable_signature(predicate->get());
+            info.documentation = "predicate " + predicate->get().canonical_name;
+            fill_signature_parameters(info, predicate->get());
+            return info;
+        }
+    }
+
+    return std::nullopt;
+}
+
 [[nodiscard]] std::optional<std::pair<std::string, int>>
 call_context_before_cursor(const SourceFile &source, std::size_t offset) {
     const auto &text = source.content;
@@ -3487,6 +3825,10 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
         if (notif.params) {
             handle_did_change(*notif.params);
         }
+    } else if (notif.method == "textDocument/didSave") {
+        if (notif.params) {
+            handle_did_save(*notif.params);
+        }
     } else if (notif.method == "textDocument/didClose") {
         if (notif.params) {
             handle_did_close(*notif.params);
@@ -3574,7 +3916,11 @@ void LspServer::handle_did_open(const json::JsonValue &params) {
 
     auto item = parse_text_document_item(*td);
     store_.open(item);
-    analysis_.invalidate_all();
+    if (const auto path = AnalysisService::path_from_uri(item.uri); path.has_value()) {
+        analysis_.invalidate_paths({*path});
+    } else {
+        analysis_.invalidate_all();
+    }
     send_diagnostic_refresh();
 }
 
@@ -3602,6 +3948,23 @@ void LspServer::handle_did_change(const json::JsonValue &params) {
 
     store_.change(versioned.uri, versioned.version, std::string(*text));
     if (const auto path = AnalysisService::path_from_uri(versioned.uri); path.has_value()) {
+        analysis_.invalidate_paths({*path});
+    } else {
+        analysis_.invalidate_all();
+    }
+    send_diagnostic_refresh();
+}
+
+void LspServer::handle_did_save(const json::JsonValue &params) {
+    const auto *td = params.get("textDocument");
+    if (td == nullptr) {
+        return;
+    }
+
+    const auto id = parse_text_document_identifier(*td);
+    // The document text is already current from didChange; didSave only
+    // triggers re-analysis so diagnostics reflect the on-disk state.
+    if (const auto path = AnalysisService::path_from_uri(id.uri); path.has_value()) {
         analysis_.invalidate_paths({*path});
     } else {
         analysis_.invalidate_all();
@@ -3779,6 +4142,7 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
         if (snapshot->type_check_result) {
             push_enum_variant_completions(items, snapshot->type_check_result->environment);
         }
+        push_local_variable_completions(items, *snapshot, *source, offset);
         push_state_completions(items, *snapshot, *source, offset);
         push_workflow_node_completions(items, *snapshot, offset);
     }
@@ -4517,6 +4881,40 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
     }
 
     const auto context = call_context_before_cursor(*source->source, offset);
+
+    // Typed-HIR call resolution: locate the enclosing Call / MethodCall
+    // expression and build the signature from its resolved symbol or
+    // dispatch target. The active parameter still comes from the reliable
+    // text-based comma count.
+    if (has_typecheck) {
+        const auto *program = snapshot->typed_program();
+        if (program != nullptr) {
+            if (const auto *call_expr =
+                    find_enclosing_call_expr(*program, source->source_id, offset);
+                call_expr != nullptr) {
+                if (auto info = typed_call_signature_info(*snapshot, *call_expr);
+                    info.has_value()) {
+                    SignatureHelp help;
+                    help.active_signature = 0;
+                    // MethodCall signatures include `self` as params[0], but
+                    // the text-based comma count counts only explicit
+                    // arguments. Skip self for method calls.
+                    const int comma_count = context.has_value() ? context->second : 0;
+                    help.active_parameter =
+                        call_expr->kind == ast::ExprSyntaxKind::MethodCall ? comma_count + 1
+                                                                           : comma_count;
+                    help.signatures.push_back(std::move(*info));
+                    JsonRpcResponse resp;
+                    resp.id = req.id;
+                    resp.result = serialize_signature_help(help);
+                    transport_.send_response(resp);
+                    return;
+                }
+            }
+        }
+    }
+
+    // Fallback: name-based capability/predicate lookup + keyword signatures.
     if (!context.has_value()) {
         send_null(transport_, req.id);
         return;

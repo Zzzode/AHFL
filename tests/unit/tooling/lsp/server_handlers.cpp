@@ -1900,6 +1900,77 @@ void test_watched_file_path_invalidation_keeps_unaffected_snapshots() {
     }
 }
 
+void test_in_package_non_imported_change_keeps_snapshot() {
+    const auto root = make_temp_project("in_package_non_imported_invalidation");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    const auto util_path = root / "src" / "util.ahfl";
+    write_package_manifest(
+        root, "lsp-in-package-non-imported", "app", "\"main\", \"types\", \"util\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    const std::string util_source = "module app::util;\n"
+                                    "\n"
+                                    "struct Helper {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+    write_file(util_path, util_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = main_source,
+    });
+
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({root});
+
+    const auto *first = analysis.snapshot_for_uri(main_uri);
+    check(first != nullptr, "inPackageNonImported.first_snapshot_exists");
+    check(analysis.analysis_runs() == 1, "inPackageNonImported.initial_run_count");
+
+    // util.ahfl is an exported module in the same package, so the workspace
+    // index covers it, but main does not import it. The snapshot must survive
+    // a change to util.ahfl (this is the transitive-closure invalidation fix).
+    write_file(util_path,
+               "module app::util;\n"
+               "\n"
+               "struct Helper {\n"
+               "    value: String;\n"
+               "}\n");
+    analysis.invalidate_paths({util_path});
+    const auto *after_util = analysis.snapshot_for_uri(main_uri);
+    check(after_util != nullptr, "inPackageNonImported.util_snapshot_exists");
+    check(analysis.analysis_runs() == 1, "inPackageNonImported.non_imported_keeps_cache");
+
+    // types.ahfl is imported by main, so changing it must invalidate.
+    write_file(types_path,
+               "module app::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: Missing;\n"
+               "}\n");
+    analysis.invalidate_paths({types_path});
+    const auto *after_types = analysis.snapshot_for_uri(main_uri);
+    check(after_types != nullptr, "inPackageNonImported.types_snapshot_exists");
+    check(analysis.analysis_runs() == 2, "inPackageNonImported.imported_rebuilds_cache");
+}
+
 void test_manifest_watcher_refreshes_workspace_index_scope() {
     const auto root = make_temp_project("manifest_watcher_workspace_index_scope");
     const auto main_path = root / "src" / "main.ahfl";
@@ -7986,6 +8057,105 @@ void test_completion_type_member_enum_state_and_workflow_contexts() {
           "completion.expression_contains_workflow_node");
 }
 
+/// Typed-HIR member completion: local struct with inherent impl methods.
+/// Verifies that member completion at `c.` offers both the struct's fields
+/// and the inherent impl's methods (not just the flow-scoped fallback).
+/// Regression: find_impls() only returns trait impls, so inherent impl
+/// methods were never offered before the direct environment.impls() scan.
+void test_completion_local_struct_inherent_impl_methods() {
+    const std::string source =
+        "struct Counter {\n"
+        "    count: Int;\n"
+        "}\n"
+        "\n"
+        "impl Counter {\n"
+        "    fn increment(self) -> Int effect Pure decreases 0 {\n"
+        "        return self.count + 1;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "fn test() -> Int effect Pure decreases 0 {\n"
+        "    let c = Counter { count: 0 };\n"
+        "    let v = c.increment();\n"
+        "    return v;\n"
+        "}\n";
+
+    // Cursor after "c." in "let v = c.increment();"
+    const auto cursor = position_after(position_of(source, "c.increment"), "c.");
+    const auto output = run_handler_request(
+        source, "textDocument/completion", hover_params_at("file:///test.ahfl", cursor));
+
+    check(output.find("\"label\":\"count\"") != std::string::npos,
+          "completion.local_struct_offers_field");
+    check(output.find("\"label\":\"increment\"") != std::string::npos,
+          "completion.local_struct_offers_inherent_method");
+}
+
+/// Typed-HIR member completion: generic struct with generic inherent impl.
+/// Verifies that the nominal-symbol fallback matches generic impls
+/// (impl<T> Box<T>) against concrete receivers (Box<Int>).
+/// Regression: normalize_type_key equality fails for generic impl targets
+/// vs concrete receivers, so methods were never offered.
+void test_completion_generic_type_inherent_impl_methods() {
+    const std::string source =
+        "struct Box<T> {\n"
+        "    value: T;\n"
+        "}\n"
+        "\n"
+        "impl<T> Box<T> {\n"
+        "    fn size(self) -> Int effect Pure decreases 0 {\n"
+        "        return 1;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "fn test(b: Box<Int>) -> Int effect Pure decreases 0 {\n"
+        "    let v = b.size();\n"
+        "    return v;\n"
+        "}\n";
+
+    // Cursor after "b." in "let v = b.size();"
+    const auto cursor = position_after(position_of(source, "b.size"), "b.");
+    const auto output = run_handler_request(
+        source, "textDocument/completion", hover_params_at("file:///test.ahfl", cursor));
+
+    check(output.find("\"label\":\"value\"") != std::string::npos,
+          "completion.generic_type_offers_field");
+    check(output.find("\"label\":\"size\"") != std::string::npos,
+          "completion.generic_type_offers_inherent_method");
+}
+
+/// Typed-HIR member completion: field-access chain root resolution.
+/// Verifies that completion at `o.` in `o.inner` offers the root type's
+/// (Outer) members, not the result type's (Inner) members.
+/// Regression: find_expr_containing returned the flat MemberAccess expr
+/// (result type Inner) instead of the root identifier's type (Outer).
+void test_completion_field_access_chain_root_type() {
+    const std::string source =
+        "struct Inner {\n"
+        "    deep: Int;\n"
+        "}\n"
+        "\n"
+        "struct Outer {\n"
+        "    inner: Inner;\n"
+        "}\n"
+        "\n"
+        "fn test() -> Int effect Pure decreases 0 {\n"
+        "    let o = Outer { inner: Inner { deep: 42 } };\n"
+        "    let v = o.inner;\n"
+        "    return v.deep;\n"
+        "}\n";
+
+    // Cursor after "o." in "let v = o.inner;"
+    const auto cursor = position_after(position_of(source, "o.inner"), "o.");
+    const auto output = run_handler_request(
+        source, "textDocument/completion", hover_params_at("file:///test.ahfl", cursor));
+
+    check(output.find("\"label\":\"inner\"") != std::string::npos,
+          "completion.field_chain_offers_root_field");
+    check(output.find("\"label\":\"deep\"") == std::string::npos,
+          "completion.field_chain_rejects_result_field");
+}
+
 void test_completion_pattern_context_uses_typed_pattern_facts() {
     const std::string source = "enum Choice {\n"
                                "    First,\n"
@@ -10232,6 +10402,432 @@ void test_hover_struct_literal_shows_construct_summary() {
           "hover.construct.decl.fields_count_without_total_suffix");
 }
 
+// ---------------------------------------------------------------------------
+// G5 work item C: real edit-sequence tests
+// ---------------------------------------------------------------------------
+
+std::string diagnostic_pull_body(const std::string &uri, int id) {
+    return R"({"jsonrpc":"2.0","id":)" + std::to_string(id) +
+           R"(,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri +
+           R"("}}})";
+}
+
+std::string did_save_body(const std::string &uri) {
+    return R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":")" +
+           uri + R"("}}})";
+}
+
+std::string did_close_body(const std::string &uri) {
+    return R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":")" +
+           uri + R"("}}})";
+}
+
+std::string completion_request_body(const std::string &uri, Position position, int id) {
+    return R"({"jsonrpc":"2.0","id":)" + std::to_string(id) +
+           R"(,"method":"textDocument/completion","params":)" + hover_params_at(uri, position) +
+           R"(})";
+}
+
+/// Test 1: didSave notification triggers re-analysis and diagnostic refresh
+/// without crashing.
+void test_did_save_refreshes_diagnostics() {
+    const std::string uri = "file:///did-save.ahfl";
+    const std::string source = "struct Msg {\n    value: String;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, source),
+        did_save_body(uri),
+        diagnostic_pull_body(uri, 2),
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    // didOpen + didSave should each trigger one $/diagnostic/refresh.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 2,
+          "didSave.triggers_diagnostic_refresh");
+
+    // The pull request after didSave should still respond successfully.
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"kind\":\"full\"") != std::string::npos,
+          "didSave.diagnostic_pull_after_save_succeeds");
+    check(!diagnostic_response_has_error(response), "didSave.clean_source_no_errors");
+}
+
+/// Test 2: Multi-edit sequence with hover requests between edits.
+/// open clean -> hover -> change (type error) -> hover -> change (fix) -> hover.
+void test_multi_edit_sequence_with_hover_requests() {
+    const std::string uri = "file:///multi-edit.ahfl";
+    const std::string clean_source =
+        "fn inspect(x: Int) -> Int effect Pure decreases 0 {\n"
+        "    let item = x;\n"
+        "    return item;\n"
+        "}\n";
+    const std::string error_source =
+        "fn inspect(x: Int) -> Int effect Pure decreases 0 {\n"
+        "    let item = \"hello\";\n"
+        "    return item;\n"
+        "}\n";
+    const std::string fixed_source =
+        "fn inspect(x: String) -> String effect Pure decreases 0 {\n"
+        "    let item = \"hello\";\n"
+        "    return item;\n"
+        "}\n";
+
+    // Hover over `item` in `return item;` — line 2, character 12.
+    const auto hover_pos = Position{.line = 2, .character = 12};
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, clean_source),
+        hover_request_body(uri, hover_pos, 2),
+        did_change_body(uri, 2, error_source),
+        hover_request_body(uri, hover_pos, 3),
+        did_change_body(uri, 3, fixed_source),
+        hover_request_body(uri, hover_pos, 4),
+        R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})",
+    });
+
+    const auto hover1 = response_body_for_id(output, 2);
+    check(hover1.find("item: Int") != std::string::npos, "multiEdit.hover_clean_shows_int");
+
+    const auto hover2 = response_body_for_id(output, 3);
+    // In the error state the diagnostic hover (priority 0) takes precedence
+    // over the local-binding hover (priority 1), so the hover surfaces the
+    // type mismatch rather than the binding type.
+    check(hover2.find("TYPE_MISMATCH") != std::string::npos,
+          "multiEdit.hover_type_error_shows_diagnostic");
+
+    const auto hover3 = response_body_for_id(output, 4);
+    check(hover3.find("item: String") != std::string::npos,
+          "multiEdit.hover_fixed_shows_string");
+
+    // didOpen + 2 didChange = 3 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "multiEdit.diagnostics_refreshed_after_each_change");
+}
+
+/// Test 3: Close-then-reopen with different content.
+void test_close_then_reopen_recovers_diagnostics() {
+    const std::string uri = "file:///close-reopen.ahfl";
+    const std::string clean_source = "struct Msg {\n    value: String;\n}\n";
+    const std::string broken_source = "struct Broken {\n    value: ;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, clean_source),
+        did_close_body(uri),
+        did_open_body(uri, 2, broken_source),
+        diagnostic_pull_body(uri, 2),
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    // didOpen + didClose + didOpen = 3 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "closeReopen.refresh_count");
+
+    // The reopened document has a parse error.
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("parse.diagnostic") != std::string::npos,
+          "closeReopen.reopened_broken_has_parse_error");
+    check(diagnostic_response_has_error(response),
+          "closeReopen.reopened_broken_has_error_severity");
+}
+
+/// Test 4: Broken -> more broken -> fixed recovery.
+/// open with parse error -> change to type error -> change to fix.
+/// Parse errors block typechecking, so stage 2 transitions from parse-broken
+/// to type-broken (the parse error is fixed as a side effect of the edit).
+void test_broken_more_broken_fixed_recovery() {
+    const std::string uri = "file:///broken-recovery.ahfl";
+    const std::string parse_error_source = "struct Broken {\n    value: ;\n}\n";
+    const std::string type_error_source = "struct Envelope {\n    payload: Missing;\n}\n";
+    const std::string clean_source = "struct Envelope {\n    payload: String;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, parse_error_source),
+        diagnostic_pull_body(uri, 2),
+        did_change_body(uri, 2, type_error_source),
+        diagnostic_pull_body(uri, 3),
+        did_change_body(uri, 3, clean_source),
+        diagnostic_pull_body(uri, 4),
+        R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: parse error only.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(stage1.find("parse.diagnostic") != std::string::npos,
+          "brokenRecovery.stage1_parse_error");
+
+    // Stage 2: type error (parse error fixed, type error introduced).
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("detached_unknown_nominal_type") != std::string::npos,
+          "brokenRecovery.stage2_type_error");
+    check(stage2.find("parse.diagnostic") == std::string::npos,
+          "brokenRecovery.stage2_no_parse_error");
+
+    // Stage 3: clean.
+    const auto stage3 = response_body_for_id(output, 4);
+    check(!diagnostic_response_has_error(stage3), "brokenRecovery.stage3_clean");
+
+    // didOpen + 2 didChange = 3 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "brokenRecovery.refresh_count");
+}
+
+/// Test 5: Parse-broken -> typecheck-broken -> clean.
+/// open with parse error -> change to fix parse but introduce type error ->
+/// change to fix type error.
+void test_parse_broken_to_typecheck_broken_to_clean() {
+    const std::string uri = "file:///parse-to-typecheck.ahfl";
+    const std::string parse_error_source = "struct Broken {\n    value: ;\n}\n";
+    const std::string type_error_source = "struct Broken {\n    value: Missing;\n}\n";
+    const std::string clean_source = "struct Broken {\n    value: String;\n}\n";
+
+    const auto output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, parse_error_source),
+        diagnostic_pull_body(uri, 2),
+        did_change_body(uri, 2, type_error_source),
+        diagnostic_pull_body(uri, 3),
+        did_change_body(uri, 3, clean_source),
+        diagnostic_pull_body(uri, 4),
+        R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: parse error.
+    const auto stage1 = response_body_for_id(output, 2);
+    check(stage1.find("parse.diagnostic") != std::string::npos,
+          "parseToTypecheck.stage1_parse_error");
+
+    // Stage 2: type error only (parse fixed).
+    const auto stage2 = response_body_for_id(output, 3);
+    check(stage2.find("detached_unknown_nominal_type") != std::string::npos,
+          "parseToTypecheck.stage2_type_error");
+    check(stage2.find("parse.diagnostic") == std::string::npos,
+          "parseToTypecheck.stage2_no_parse_error");
+
+    // Stage 3: clean.
+    const auto stage3 = response_body_for_id(output, 4);
+    check(!diagnostic_response_has_error(stage3), "parseToTypecheck.stage3_clean");
+
+    // didOpen + 2 didChange = 3 refresh notifications.
+    check(count_substring(output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "parseToTypecheck.refresh_count");
+}
+
+/// Test 6: Cross-file broken-dependency recovery.
+/// Edit types.ahfl to break the struct -> main.ahfl gets dependency diagnostics.
+/// Fix types.ahfl -> main.ahfl diagnostics clear.
+/// Edit an unrelated third file -> main.ahfl stays clean (fine-grained
+/// invalidation).
+void test_cross_file_dependency_recovery() {
+    const auto root = make_temp_project("cross_file_dependency_recovery");
+    const auto main_path = root / "src" / "main.ahfl";
+    const auto types_path = root / "src" / "types.ahfl";
+    const auto util_path = root / "src" / "util.ahfl";
+    write_package_manifest(
+        root, "lsp-cross-file-recovery", "app", "\"main\", \"types\", \"util\"");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import app::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module app::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    const std::string broken_types_source = "module app::types;\n"
+                                             "\n"
+                                             "struct Draft {\n"
+                                             "    value: String;\n"
+                                             "}\n";
+    const std::string util_source = "module app::util;\n"
+                                    "\n"
+                                    "struct Helper {\n"
+                                    "    value: Int;\n"
+                                    "}\n";
+    const std::string changed_util_source = "module app::util;\n"
+                                            "\n"
+                                            "struct Helper {\n"
+                                            "    value: String;\n"
+                                            "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+    write_file(util_path, util_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto util_uri = AnalysisService::uri_from_path(util_path);
+
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        did_change_body(types_uri, 2, broken_types_source),
+        diagnostic_pull_body(main_uri, 2),
+        did_change_body(types_uri, 3, types_source),
+        diagnostic_pull_body(main_uri, 3),
+        did_open_body(util_uri, 1, util_source),
+        did_change_body(util_uri, 2, changed_util_source),
+        diagnostic_pull_body(main_uri, 4),
+        R"({"jsonrpc":"2.0","id":5,"method":"shutdown","params":{}})",
+    });
+
+    // Stage 1: breaking types.ahfl should produce dependency diagnostics in
+    // main.ahfl.
+    const auto broken_response = response_body_for_id(output, 2);
+    check(broken_response.find("unknown type 'types::Msg'") != std::string::npos,
+          "crossFileRecovery.broken_dependency_reported");
+    check(diagnostic_response_has_error(broken_response),
+          "crossFileRecovery.broken_dependency_has_error");
+
+    // Stage 2: fixing types.ahfl should clear main.ahfl diagnostics.
+    const auto fixed_response = response_body_for_id(output, 3);
+    check(!diagnostic_response_has_error(fixed_response),
+          "crossFileRecovery.fixed_dependency_cleared");
+
+    // Stage 3: editing an unrelated in-package file (util.ahfl) should not
+    // introduce diagnostics in main.ahfl (fine-grained invalidation).
+    const auto unrelated_response = response_body_for_id(output, 4);
+    check(!diagnostic_response_has_error(unrelated_response),
+          "crossFileRecovery.unrelated_change_keeps_clean");
+}
+
+/// Test 7: Hover and completion mid-edit.
+/// Hover: change a variable's type and verify hover reflects the new type.
+/// Completion: change a root expression's type and verify completion items
+/// reflect the new type.
+void test_hover_and_completion_mid_edit() {
+    // --- Hover mid-edit ---
+    {
+        const std::string uri = "file:///hover-mid-edit.ahfl";
+        const std::string int_source =
+            "fn inspect(x: Int) -> Int effect Pure decreases 0 {\n"
+            "    let item = x;\n"
+            "    return item;\n"
+            "}\n";
+        const std::string string_source =
+            "fn inspect(x: String) -> String effect Pure decreases 0 {\n"
+            "    let item = x;\n"
+            "    return item;\n"
+            "}\n";
+
+        // Hover over `item` in `return item;` — line 2, character 12.
+        const auto hover_pos = Position{.line = 2, .character = 12};
+
+        const auto output = run_lsp_messages({
+            R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+            did_open_body(uri, 1, int_source),
+            hover_request_body(uri, hover_pos, 2),
+            did_change_body(uri, 2, string_source),
+            hover_request_body(uri, hover_pos, 3),
+            R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+        });
+
+        const auto hover1 = response_body_for_id(output, 2);
+        check(hover1.find("item: Int") != std::string::npos,
+              "hoverMidEdit.before_shows_int");
+
+        const auto hover2 = response_body_for_id(output, 3);
+        check(hover2.find("item: String") != std::string::npos,
+              "hoverMidEdit.after_shows_string");
+    }
+
+    // --- Completion mid-edit ---
+    //
+    // The typed-HIR member path resolves the root expression's type from the
+    // typed program.  When the root is a flow-scoped keyword (`input` /
+    // `context` / `output`) the fallback resolves the type from the
+    // enclosing agent declaration.  Changing the agent's input type must
+    // change the completion items offered at `input.`.
+    {
+        const std::string uri = "file:///completion-mid-edit.ahfl";
+        const std::string msg_source =
+            "struct Msg {\n"
+            "    value: String;\n"
+            "}\n"
+            "\n"
+            "struct Other {\n"
+            "    count: Int;\n"
+            "}\n"
+            "\n"
+            "struct Ctx { }\n"
+            "\n"
+            "agent TestAgent {\n"
+            "    input: Msg;\n"
+            "    context: Ctx;\n"
+            "    output: Msg;\n"
+            "    states: [Init, Done];\n"
+            "    initial: Init;\n"
+            "    final: [Done];\n"
+            "    capabilities: [];\n"
+            "    transition Init -> Done;\n"
+            "}\n"
+            "\n"
+            "flow for TestAgent {\n"
+            "    state Init {\n"
+            "        let x = input.value;\n"
+            "        goto Done;\n"
+            "    }\n"
+            "}\n";
+        const std::string other_source =
+            "struct Msg {\n"
+            "    value: String;\n"
+            "}\n"
+            "\n"
+            "struct Other {\n"
+            "    count: Int;\n"
+            "}\n"
+            "\n"
+            "struct Ctx { }\n"
+            "\n"
+            "agent TestAgent {\n"
+            "    input: Other;\n"
+            "    context: Ctx;\n"
+            "    output: Other;\n"
+            "    states: [Init, Done];\n"
+            "    initial: Init;\n"
+            "    final: [Done];\n"
+            "    capabilities: [];\n"
+            "    transition Init -> Done;\n"
+            "}\n"
+            "\n"
+            "flow for TestAgent {\n"
+            "    state Init {\n"
+            "        let x = input.value;\n"
+            "        goto Done;\n"
+            "    }\n"
+            "}\n";
+
+        // Completion cursor: right after `input.` (between '.' and 'value').
+        const auto completion_pos =
+            position_after(position_of(msg_source, "input."), "input.");
+
+        const auto output = run_lsp_messages({
+            R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+            did_open_body(uri, 1, msg_source),
+            completion_request_body(uri, completion_pos, 2),
+            did_change_body(uri, 2, other_source),
+            completion_request_body(uri, completion_pos, 3),
+            R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})",
+        });
+
+        const auto comp1 = response_body_for_id(output, 2);
+        check(comp1.find("\"label\":\"value\"") != std::string::npos,
+              "completionMidEdit.before_shows_value_field");
+
+        const auto comp2 = response_body_for_id(output, 3);
+        check(comp2.find("\"label\":\"count\"") != std::string::npos,
+              "completionMidEdit.after_shows_count_field");
+        check(comp2.find("\"label\":\"value\"") == std::string::npos,
+              "completionMidEdit.after_hides_value_field");
+    }
+}
+
 } // anonymous namespace
 
 int main() {
@@ -10253,6 +10849,9 @@ int main() {
     test_signature_help_keyword_family();
     test_signature_help_pattern_payloads_use_typed_pattern_facts();
     test_completion_type_member_enum_state_and_workflow_contexts();
+    test_completion_local_struct_inherent_impl_methods();
+    test_completion_generic_type_inherent_impl_methods();
+    test_completion_field_access_chain_root_type();
     test_completion_pattern_context_uses_typed_pattern_facts();
     test_completion_bool_pattern_context_uses_typed_pattern_facts();
     test_completion_bounded_int_pattern_context_uses_typed_pattern_facts();
@@ -10271,6 +10870,7 @@ int main() {
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
     test_watched_file_path_invalidation_keeps_unaffected_snapshots();
+    test_in_package_non_imported_change_keeps_snapshot();
     test_manifest_watcher_refreshes_workspace_index_scope();
     test_manifest_invalidation_preserves_workspace_source_unit_ids();
     test_lsp_workspace_index_uses_package_graph_source_unit_ids();
@@ -10371,6 +10971,15 @@ int main() {
 
     // Wave-21 A-3: tie-break ordering contract between priority and enum ordinal.
     test_hover_target_tie_break_order_contract();
+
+    // G5 work item C: real edit-sequence tests.
+    test_did_save_refreshes_diagnostics();
+    test_multi_edit_sequence_with_hover_requests();
+    test_close_then_reopen_recovers_diagnostics();
+    test_broken_more_broken_fixed_recovery();
+    test_parse_broken_to_typecheck_broken_to_clean();
+    test_cross_file_dependency_recovery();
+    test_hover_and_completion_mid_edit();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

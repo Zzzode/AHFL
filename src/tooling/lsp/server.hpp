@@ -69,6 +69,7 @@ class LspServer {
     void handle_initialized();
     void handle_did_open(const json::JsonValue &params);
     void handle_did_change(const json::JsonValue &params);
+    void handle_did_save(const json::JsonValue &params);
     void handle_did_close(const json::JsonValue &params);
     void handle_did_change_configuration(const json::JsonValue &params);
     void handle_workspace_folders_changed(const json::JsonValue &params);
