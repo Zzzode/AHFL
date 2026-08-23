@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-08-22"
+updated: "2026-08-23"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -84,4 +84,16 @@ rfcs:
     status: "implemented"
     file: "0014-try-operator.zh.md"
     area: ["language", "compiler"]
+    stability: "experimental"
+  - rfc: "0015"
+    title: "DAP Runtime Integration"
+    status: "draft"
+    file: "0015-dap-runtime-integration.zh.md"
+    area: ["runtime", "tooling"]
+    stability: "experimental"
+  - rfc: "0016"
+    title: "Incremental Cache Contract"
+    status: "draft"
+    file: "0016-incremental-cache-contract.zh.md"
+    area: ["compiler", "tooling"]
     stability: "experimental"
