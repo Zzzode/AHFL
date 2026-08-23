@@ -102,6 +102,10 @@ DapMessage DapServer::handle_request(const DapMessage &request) {
         response.body = handle_continue();
     } else if (request.command == "next") {
         response.body = handle_next();
+    } else if (request.command == "stepIn") {
+        response.body = handle_step_in();
+    } else if (request.command == "stepOut") {
+        response.body = handle_step_out();
     } else if (request.command == "evaluate") {
         response.body = handle_evaluate(request.body);
     } else {
@@ -368,7 +372,23 @@ std::string DapServer::handle_continue() {
 }
 
 std::string DapServer::handle_next() {
-    // Stepping arrives with the DebugStepper (RFC 0015, later slice).
+    if (session_) {
+        session_->step_over();
+    }
+    return "{}";
+}
+
+std::string DapServer::handle_step_in() {
+    if (session_) {
+        session_->step_in();
+    }
+    return "{}";
+}
+
+std::string DapServer::handle_step_out() {
+    if (session_) {
+        session_->step_out();
+    }
     return "{}";
 }
 

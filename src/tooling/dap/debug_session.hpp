@@ -21,6 +21,29 @@ class DapServer;
 class BreakpointManager;
 class StateInspector;
 
+/// The kind of step a DebugSession has armed (RFC 0015 Slice 4).
+enum class StepKind {
+    None,  ///< No step pending; execution runs until a breakpoint or completion.
+    Over,  ///< DAP `next`: pause at the next state transition away from the origin.
+    Into,  ///< DAP `stepIn`: same as Over until capability step-into lands.
+    Out    ///< DAP `stepOut`: pause when the workflow nesting depth decreases.
+};
+
+/// State machine for DAP stepping. A step is armed by a `next` / `stepIn` /
+/// `stepOut` request while the session is paused and consumed by the first
+/// debug hook (state entry / capability invocation) that satisfies it.
+struct DebugStepper {
+    StepKind pending{StepKind::None};
+    /// For StepOver / StepIn: the (agent, state) the step was armed from. The
+    /// step completes at the first state transition to a different position.
+    std::string step_over_agent;
+    std::string step_over_state;
+    /// For StepOut: the workflow nesting depth the step was armed from. The
+    /// step completes when the depth drops below this value. Always 0 until
+    /// sub-workflow debugging lands.
+    std::size_t step_out_depth{0};
+};
+
 /// DebugSession owns the debug lifecycle for one launched workflow: source
 /// compilation, the execution thread, pause/resume coordination and DAP event
 /// emission (RFC 0015 Slice 1).
@@ -50,8 +73,17 @@ class DebugSession {
     /// `terminated` event when the stop was caused by the disconnect itself.
     void disconnect();
 
-    /// Resume execution after a stop (DAP `continue`).
+    /// Resume execution after a stop (DAP `continue`). Cancels any pending
+    /// step.
     void resume();
+
+    /// Step commands (DAP `next` / `stepIn` / `stepOut`): arm the stepping
+    /// state machine from the current paused position and resume execution.
+    /// The session pauses again at the first debug hook satisfying the step
+    /// kind, emitting a `stopped` event with reason "step" (RFC 0015 Slice 4).
+    void step_over();
+    void step_in();
+    void step_out();
 
     [[nodiscard]] bool is_running() const noexcept;
 
@@ -60,6 +92,9 @@ class DebugSession {
     void on_state_entered(ahfl::runtime::AgentId agent, std::string_view state_name);
     void on_capability_invoked(ahfl::runtime::AgentId agent, std::string_view capability_name);
     void pause(std::string reason, std::string description);
+    /// Arm a step of `kind` from the last reported (agent, state) and resume
+    /// the worker. Caller must not hold mutex_.
+    void arm_step_and_resume(StepKind kind);
     [[nodiscard]] bool mark_terminated();
     void emit_terminated();
     void emit_output(std::string_view category, std::string_view text);
@@ -90,6 +125,13 @@ class DebugSession {
     bool paused_ = false;
     bool stopping_ = false;
     bool terminated_emitted_ = false;
+
+    /// Stepping state machine (RFC 0015 Slice 4). Guarded by mutex_.
+    DebugStepper stepper_;
+    /// Last (agent, state) reported by on_state_entered; the origin for step
+    /// requests armed while paused. Guarded by mutex_.
+    std::string last_agent_id_;
+    std::string last_state_name_;
 };
 
 } // namespace ahfl::dap

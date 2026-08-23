@@ -86,6 +86,8 @@ class DapServer {
     [[nodiscard]] std::string handle_variables(const std::string &body);
     [[nodiscard]] std::string handle_continue();
     [[nodiscard]] std::string handle_next();
+    [[nodiscard]] std::string handle_step_in();
+    [[nodiscard]] std::string handle_step_out();
     [[nodiscard]] std::string handle_evaluate(const std::string &body);
 };
 

@@ -137,6 +137,65 @@ workflow WorkerWorkflow {
     return path.string();
 }
 
+// Three-state fixture (Init -> Middle -> Done) so stepping has a transition
+// to land on between the breakpoint state and the final state (RFC 0015
+// Slice 4).
+constexpr std::string_view kStepperWorkflowSource = R"(module dap::stepper_workflow;
+
+struct Empty {}
+
+struct Ack {
+    message: String;
+}
+
+agent StepperAgent {
+    input: Empty;
+    context: Empty;
+    output: Ack;
+    states: [Init, Middle, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+
+    transition Init -> Middle;
+    transition Middle -> Done;
+}
+
+flow for StepperAgent {
+    state Init {
+        goto Middle;
+    }
+
+    state Middle {
+        goto Done;
+    }
+
+    state Done {
+        return Ack {
+            message: "stepped",
+        };
+    }
+}
+
+workflow StepperWorkflow {
+    input: Empty;
+    output: Ack;
+
+    node stepper: StepperAgent(Empty {});
+
+    return: stepper;
+}
+)";
+
+[[nodiscard]] std::string write_stepper_workflow_fixture() {
+    const auto dir = std::filesystem::temp_directory_path() / "ahfl_dap_tests";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "stepper_workflow.ahfl";
+    std::ofstream out(path);
+    out << kStepperWorkflowSource;
+    return path.string();
+}
+
 [[nodiscard]] std::string launch_config(const std::string &program_path,
                                         const std::string &workflow_name) {
     auto body = ahfl::json::JsonValue::make_object();
@@ -169,6 +228,34 @@ template <typename Rep, typename Period>
             std::lock_guard lock(mutex);
             if (frame_has_event(frames, event_type)) {
                 return true;
+            }
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+// Poll the captured event frames until a `stopped` event with the given
+// reason appears among frames at or after `start_index`, or the timeout
+// elapses. Used to distinguish step pauses from earlier breakpoint pauses.
+template <typename Rep, typename Period>
+[[nodiscard]] bool wait_for_stopped_reason(const std::vector<std::string> &frames,
+                                           std::mutex &mutex,
+                                           std::string_view reason,
+                                           std::chrono::duration<Rep, Period> timeout,
+                                           std::size_t start_index = 0) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    const std::string needle = R"("reason":")" + std::string(reason) + R"(")";
+    while (true) {
+        {
+            std::lock_guard lock(mutex);
+            for (std::size_t i = start_index; i < frames.size(); ++i) {
+                if (frames[i].find(R"("event":"stopped")") != std::string::npos &&
+                    frames[i].find(needle) != std::string::npos) {
+                    return true;
+                }
             }
         }
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -623,6 +710,150 @@ int main() {
 
         check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
               "terminated event emitted after continue from line breakpoint");
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 14: next (step over) pauses at the next state transition with reason "step"
+    {
+        const auto fixture = write_stepper_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::State;
+        bp.condition = "Init";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::stepper_workflow::StepperWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted on Init state breakpoint");
+
+        const std::size_t frames_before_step = [&] {
+            std::lock_guard lock(frames_mutex);
+            return frames.size();
+        }();
+
+        ahfl::dap::DapMessage next_req;
+        next_req.command = "next";
+        (void)server.handle_request(next_req);
+
+        check(wait_for_stopped_reason(frames, frames_mutex, "step", std::chrono::seconds(5),
+                                      frames_before_step),
+              "stopped event with reason step emitted after next");
+
+        // The step must land on Middle, the transition after Init.
+        const auto inspector_frames = server.state_inspector().get_stack_frames();
+        bool saw_middle = false;
+        for (const auto &frame : inspector_frames) {
+            if (frame.state_name == "Middle") {
+                saw_middle = true;
+            }
+        }
+        check(saw_middle, "inspector shows agent paused in Middle after step over");
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        (void)server.handle_request(cont_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after continue from step");
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 15: stepIn pauses at the next state transition with reason "step"
+    // (identical to step over until capability step-into lands)
+    {
+        const auto fixture = write_stepper_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::State;
+        bp.condition = "Init";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::stepper_workflow::StepperWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted on Init state breakpoint before stepIn");
+
+        const std::size_t frames_before_step = [&] {
+            std::lock_guard lock(frames_mutex);
+            return frames.size();
+        }();
+
+        ahfl::dap::DapMessage step_in_req;
+        step_in_req.command = "stepIn";
+        (void)server.handle_request(step_in_req);
+
+        check(wait_for_stopped_reason(frames, frames_mutex, "step", std::chrono::seconds(5),
+                                      frames_before_step),
+              "stopped event with reason step emitted after stepIn");
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        (void)server.handle_request(cont_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after continue from stepIn");
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 16: without a pending step, state transitions never emit step pauses
+    {
+        const auto fixture = write_stepper_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::stepper_workflow::StepperWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted for unbroken run");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            check(!frame_has_event(frames, "stopped"),
+                  "no stopped event without breakpoints or pending steps");
+        }
 
         ahfl::dap::DapMessage disc_req;
         disc_req.command = "disconnect";

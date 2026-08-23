@@ -193,7 +193,38 @@ void DebugSession::resume() {
         std::lock_guard lock(mutex_);
         if (!stopping_) {
             paused_ = false;
+            // `continue` cancels any step that was armed before it completes.
+            stepper_.pending = StepKind::None;
         }
+    }
+    resume_cv_.notify_all();
+}
+
+void DebugSession::step_over() {
+    arm_step_and_resume(StepKind::Over);
+}
+
+void DebugSession::step_in() {
+    // Capability step-into is a future enhancement (RFC 0015 Open Question 2:
+    // capabilities are external calls); until then stepIn behaves like next.
+    arm_step_and_resume(StepKind::Into);
+}
+
+void DebugSession::step_out() {
+    arm_step_and_resume(StepKind::Out);
+}
+
+void DebugSession::arm_step_and_resume(const StepKind kind) {
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+        stepper_.pending = kind;
+        stepper_.step_over_agent = last_agent_id_;
+        stepper_.step_over_state = last_state_name_;
+        stepper_.step_out_depth = 0; // depth tracking arrives with sub-workflow support
+        paused_ = false;
     }
     resume_cv_.notify_all();
 }
@@ -265,6 +296,13 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
 
     const auto agent_id = agent_debug_id(agent);
     inspector_.set_agent_state(agent_id, std::string(state_name), {});
+    {
+        // Record the current position before any pause so step requests armed
+        // while paused at a breakpoint use it as their origin.
+        std::lock_guard lock(mutex_);
+        last_agent_id_ = agent_id;
+        last_state_name_ = std::string(state_name);
+    }
 
     const auto state_hits =
         breakpoints_.check_state_breakpoints(agent_id, std::string(state_name));
@@ -280,20 +318,50 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
     // Line breakpoints: map the entered state back to its handler's source
     // location and pause when a line breakpoint is set there (RFC 0015 Slice 3).
     const auto line_it = state_line_map_.find(std::string(state_name));
-    if (line_it == state_line_map_.end()) {
-        return;
-    }
-    const auto &[file, line] = line_it->second;
-    const auto line_hits = breakpoints_.check_line_breakpoints(file, line);
-    if (line_hits.empty()) {
-        return;
+    if (line_it != state_line_map_.end()) {
+        const auto &[file, line] = line_it->second;
+        const auto line_hits = breakpoints_.check_line_breakpoints(file, line);
+        if (!line_hits.empty()) {
+            std::string description = "line breakpoint: " + file + ":" + std::to_string(line);
+            if (!line_hits.front().description.empty()) {
+                description = line_hits.front().description;
+            }
+            pause("breakpoint", std::move(description));
+            return;
+        }
     }
 
-    std::string description = "line breakpoint: " + file + ":" + std::to_string(line);
-    if (!line_hits.front().description.empty()) {
-        description = line_hits.front().description;
+    // Stepping (RFC 0015 Slice 4): a pending step completes at the first
+    // state transition satisfying its kind. Checked after breakpoints so a
+    // breakpoint at the same position wins and reports its own reason.
+    bool step_pause = false;
+    std::string step_description;
+    {
+        std::lock_guard lock(mutex_);
+        if (stepper_.pending == StepKind::Over || stepper_.pending == StepKind::Into) {
+            // Step over / step in (state-transition level; capability
+            // step-into is a future enhancement): complete at the first state
+            // transition away from the step origin.
+            if (agent_id != stepper_.step_over_agent ||
+                state_name != stepper_.step_over_state) {
+                step_pause = true;
+            }
+        } else if (stepper_.pending == StepKind::Out) {
+            // Workflow nesting depth tracking arrives with sub-workflow
+            // support; for now step out completes at the next state
+            // transition in a different agent.
+            if (agent_id != stepper_.step_over_agent) {
+                step_pause = true;
+            }
+        }
+        if (step_pause) {
+            stepper_.pending = StepKind::None;
+            step_description = "step: " + std::string(state_name);
+        }
     }
-    pause("breakpoint", std::move(description));
+    if (step_pause) {
+        pause("step", std::move(step_description));
+    }
 }
 
 void DebugSession::on_capability_invoked(const runtime::AgentId agent,
@@ -308,15 +376,32 @@ void DebugSession::on_capability_invoked(const runtime::AgentId agent,
     const auto agent_id = agent_debug_id(agent);
     const auto hits =
         breakpoints_.check_capability_breakpoints(agent_id, std::string(capability_name));
-    if (hits.empty()) {
+    if (!hits.empty()) {
+        std::string description = "capability breakpoint: " + std::string(capability_name);
+        if (!hits.front().description.empty()) {
+            description = hits.front().description;
+        }
+        pause("breakpoint", std::move(description));
         return;
     }
 
-    std::string description = "capability breakpoint: " + std::string(capability_name);
-    if (!hits.front().description.empty()) {
-        description = hits.front().description;
+    // Stepping (RFC 0015 Slice 4): a pending step completes at a capability
+    // call from a different agent than the step origin. Capability calls
+    // carry no state identity, and step-into capability internals is a
+    // future enhancement (RFC 0015 Open Question 2).
+    bool step_pause = false;
+    std::string step_description;
+    {
+        std::lock_guard lock(mutex_);
+        if (stepper_.pending != StepKind::None && agent_id != stepper_.step_over_agent) {
+            step_pause = true;
+            stepper_.pending = StepKind::None;
+            step_description = "step: " + std::string(capability_name);
+        }
     }
-    pause("breakpoint", std::move(description));
+    if (step_pause) {
+        pause("step", std::move(step_description));
+    }
 }
 
 void DebugSession::pause(std::string reason, std::string description) {
