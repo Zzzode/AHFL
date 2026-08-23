@@ -40,6 +40,9 @@ struct MemoryReportSnapshot {
     std::size_t proxy_current_bytes{};
     std::size_t proxy_peak_bytes{};
     std::size_t proxy_allocation_count{};
+    /// Platform RSS in bytes, or nullopt when the platform does not expose
+    /// it. Supplementary to the cross-platform structural proxy above.
+    std::optional<std::size_t> process_rss_bytes{};
 };
 
 class CliDriver final {

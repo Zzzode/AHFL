@@ -150,7 +150,7 @@ void print_usage(std::ostream &out) {
         << "  --trace-export <path>      Write CLI trace spans as JSON lines\n"
         << "  --metrics-export <path>    Write CLI metrics as JSON lines\n"
         << "  --structured-log <path>    Write CLI structured logs as JSON lines\n"
-        << "  --memory-report <path>     Write structural memory proxy report as JSON\n"
+        << "  --memory-report <path>     Write memory report (structural proxy + platform RSS) as JSON\n"
         << "  -h, --help                 Show this help\n";
 }
 

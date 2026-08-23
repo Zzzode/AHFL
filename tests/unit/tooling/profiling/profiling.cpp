@@ -81,6 +81,21 @@ static void test_empty_profiler() {
     check(hotspots.empty(), "fresh analyzer returns empty hotspots");
 }
 
+static void test_process_memory_stats() {
+    const auto stats = ahfl::profiling::read_process_memory_stats();
+    // On Linux/macOS/Windows the RSS should be available and positive.
+    // On other platforms it may be nullopt — that is a valid graceful
+    // fallback, not a failure.
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+    check(stats.rss_bytes.has_value(), "process RSS is available on supported platforms");
+    if (stats.rss_bytes.has_value()) {
+        check(*stats.rss_bytes > 0, "process RSS is positive");
+    }
+#else
+    check(!stats.rss_bytes.has_value(), "process RSS is nullopt on unsupported platforms");
+#endif
+}
+
 int main() {
     std::printf("=== Profiling Tests ===\n\n");
 
@@ -88,6 +103,7 @@ int main() {
     test_memory_tracking();
     test_hotspot_ranking();
     test_empty_profiler();
+    test_process_memory_stats();
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;

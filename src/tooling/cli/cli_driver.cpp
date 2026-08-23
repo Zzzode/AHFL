@@ -1688,6 +1688,7 @@ MemoryReportSnapshot build_memory_report_snapshot(const InputT &input,
         .proxy_current_bytes = tracker.current_usage(),
         .proxy_peak_bytes = tracker.peak_usage(),
         .proxy_allocation_count = tracker.allocation_count(),
+        .process_rss_bytes = ahfl::profiling::read_process_memory_stats().rss_bytes,
     };
 }
 
@@ -1728,6 +1729,11 @@ void export_cli_memory_report(const CommandLineOptions &options,
         out << ",\"proxy_current_bytes\":" << value.proxy_current_bytes;
         out << ",\"proxy_peak_bytes\":" << value.proxy_peak_bytes;
         out << ",\"proxy_allocation_count\":" << value.proxy_allocation_count;
+        if (value.process_rss_bytes.has_value()) {
+            out << ",\"process_rss_bytes\":" << *value.process_rss_bytes;
+        } else {
+            out << ",\"process_rss_bytes\":null";
+        }
     }
     out << "}\n";
 }
