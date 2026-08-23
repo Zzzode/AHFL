@@ -152,6 +152,13 @@ add_test(NAME ahflc.passes.semantic_backend_effect
             -P "${PROJECT_SOURCE_DIR}/cmake/RunPassProductizationTest.cmake"
 )
 
+add_test(NAME ahflc.passes.workflow_simplification_backend_effect
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_simplification.ahfl"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunWorkflowSimplificationTest.cmake"
+)
+
 add_test(NAME ahflc.emit_public_api.package_smoke
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/public_api_artifact_smoke.py"
@@ -211,6 +218,17 @@ add_test(NAME ahflc.quality.smv_size_budget.pass_productization
             "-DMAX_LINES=150"
             "-DMAX_LTLSPEC=18"
             "-DMIN_LTLSPEC=10"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
+)
+
+add_test(NAME ahflc.quality.smv_size_budget.workflow_simplification
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_simplification.ahfl"
+            "-DMAX_BYTES=48000"
+            "-DMAX_LINES=280"
+            "-DMAX_LTLSPEC=40"
+            "-DMIN_LTLSPEC=25"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 

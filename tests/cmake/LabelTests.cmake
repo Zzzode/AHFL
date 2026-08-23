@@ -284,6 +284,7 @@ ahfl_label_tests(
     TESTS
         ahfl.passes.pass_manager_all
         ahflc.passes.semantic_backend_effect
+        ahflc.passes.workflow_simplification_backend_effect
 )
 
 ahfl_label_tests(
@@ -519,6 +520,7 @@ ahfl_label_tests(
         ahfl.bench.ir_pipeline
         ahflc.quality.smv_size_budget.flow_workflow
         ahflc.quality.smv_size_budget.pass_productization
+        ahflc.quality.smv_size_budget.workflow_simplification
         ahflc.quality.smv_size_budget.refund_audit
 )
 
@@ -566,6 +568,7 @@ ahfl_label_tests(
         ahfl.bench.ir_pipeline
         ahflc.quality.smv_size_budget.flow_workflow
         ahflc.quality.smv_size_budget.pass_productization
+        ahflc.quality.smv_size_budget.workflow_simplification
         ahflc.quality.smv_size_budget.refund_audit
         ahfl.mutation.config_report
 )

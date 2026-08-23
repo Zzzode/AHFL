@@ -1,0 +1,61 @@
+module ir::workflow_simplification;
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+predicate ready(value: String) -> Bool;
+capability Decide(request: Request) -> Response;
+
+agent StageAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+contract for StageAgent {
+    requires: true and ready(input.value);
+    ensures: false or ready(output.value);
+    invariant: always always called(Decide);
+}
+
+flow for StageAgent {
+    state Init {
+        let reply = Decide(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}
+
+workflow StageWorkflow {
+    input: Request;
+    output: Response;
+
+    node first: StageAgent(input);
+    node second: StageAgent(input) after [first];
+    node third: StageAgent(input) after [first, second];
+
+    safety: always always (not running(third) or completed(third));
+    liveness: eventually completed(third, Done);
+
+    return: third;
+}
