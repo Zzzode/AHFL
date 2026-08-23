@@ -128,38 +128,6 @@ std::string IncrementalCompiler::source_path_for(const std::string &module_path)
     return error ? module_path : relative.generic_string();
 }
 
-void IncrementalCompiler::hydrate_from_persistent(
-    const std::string &module_path,
-    std::uint64_t content_hash,
-    const PersistentCacheEntry &entry) {
-    CacheEntry in_memory;
-    in_memory.module_path = module_path;
-    in_memory.content_hash = content_hash;
-    in_memory.signature_fingerprint = entry.signature_fingerprint;
-    in_memory.serialized_ir = entry.serialized_typed_hir;
-    in_memory.cached_at = entry.cached_at;
-    cache_.store(std::move(in_memory));
-}
-
-void IncrementalCompiler::persist_entry(const std::string &module_path,
-                                        std::uint64_t content_hash,
-                                        std::uint64_t signature_fingerprint,
-                                        const std::string &serialized_ir,
-                                        const std::string &source_graph_revision) {
-    if (config_.persistent_cache == nullptr) {
-        return;
-    }
-    PersistentCacheEntry record;
-    record.key = build_cache_key(module_path, content_hash);
-    record.source_graph_revision = source_graph_revision;
-    // resolver_snapshot_version: canonical ResolveResult hashing is a
-    // follow-up slice; the envelope field is reserved and stored empty.
-    record.signature_fingerprint = signature_fingerprint;
-    record.serialized_typed_hir = serialized_ir;
-    record.cached_at = std::chrono::system_clock::now();
-    config_.persistent_cache->store(record);
-}
-
 std::vector<CompileResult>
 IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_paths) {
 
@@ -196,10 +164,13 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
     for (const auto &mod_path : ordered) {
         ++stats_.modules_checked;
 
-        // Check cache validity
+        // Check cache validity against the unified cache identity. The
+        // in-memory IrCache tier and the persistent cache share the same
+        // CacheKey, so a content change is a miss in both.
         auto content_hash = compute_content_hash(mod_path);
-        auto cached = cache_.lookup(mod_path, content_hash);
-        if (cached.kind == CacheHitKind::Hit) {
+        const auto key = build_cache_key(mod_path, content_hash);
+        auto cached = cache_.lookup(key);
+        if (cached.kind == PersistentCacheHitKind::Hit) {
             ++stats_.cache_hits;
             results.push_back(CompileResult{CompileStatus::UpToDate, mod_path, ""});
             continue;
@@ -207,12 +178,11 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
 
         // In-memory miss: consult the persistent cache (RFC 0016) before
         // falling back to a full recompile. A persistent hit hydrates the
-        // in-memory cache so subsequent lookups are fast.
+        // in-memory tier so subsequent lookups are fast.
         if (config_.persistent_cache != nullptr) {
-            const auto key = build_cache_key(mod_path, content_hash);
             auto persistent = config_.persistent_cache->lookup(key);
             if (persistent.kind == PersistentCacheHitKind::Hit && persistent.entry.has_value()) {
-                hydrate_from_persistent(mod_path, content_hash, *persistent.entry);
+                cache_.store(*persistent.entry);
                 ++stats_.cache_hits;
                 ++stats_.persistent_cache_hits;
                 results.push_back(CompileResult{CompileStatus::UpToDate, mod_path, ""});
@@ -335,9 +305,10 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
                     // unchanged (comments/whitespace/bodies) means downstream
                     // cache entries stay valid; changed or missing means
                     // transitive dependents must be invalidated.
-                    if (const auto previous = cache_.lookup(mod_path, 0);
-                        previous.entry.has_value()) {
-                        old_fingerprint = previous.entry->signature_fingerprint;
+                    if (const auto *previous =
+                            cache_.find_by_source_path(key.source_path);
+                        previous != nullptr) {
+                        old_fingerprint = previous->signature_fingerprint;
                     }
 
                     new_signature_fingerprint = fingerprint;
@@ -346,18 +317,21 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
         }
 
         if (status == CompileStatus::Recompiled) {
-            CacheEntry new_entry;
-            new_entry.module_path = mod_path;
-            new_entry.content_hash = content_hash;
+            // The in-memory tier and the persistent cache share one envelope
+            // and one identity (RFC 0016 unified cache core), so a single
+            // record is stored into both.
+            PersistentCacheEntry new_entry;
+            new_entry.key = key;
+            new_entry.source_graph_revision = source_graph_revision;
+            // resolver_snapshot_version: canonical ResolveResult hashing is a
+            // follow-up slice; the envelope field is reserved and stored empty.
             new_entry.signature_fingerprint = new_signature_fingerprint;
-            new_entry.serialized_ir = serialized_ir;
+            new_entry.serialized_typed_hir = serialized_ir;
             new_entry.cached_at = std::chrono::system_clock::now();
-            cache_.store(std::move(new_entry));
-            persist_entry(mod_path,
-                          content_hash,
-                          new_signature_fingerprint,
-                          serialized_ir,
-                          source_graph_revision);
+            cache_.store(new_entry);
+            if (config_.persistent_cache != nullptr) {
+                config_.persistent_cache->store(new_entry);
+            }
 
             // RFC 0016 Slice 2: signature fingerprint propagation. Only
             // invalidate transitive dependents when the module's type-
@@ -371,19 +345,19 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
             if (!old_fingerprint.has_value() ||
                 *old_fingerprint != new_signature_fingerprint) {
                 for (const auto &dep : transitive_dependents(graph_, mod_path)) {
-                    cache_.invalidate(dep);
+                    const auto dep_source_path = source_path_for(dep);
+                    cache_.invalidate(dep_source_path);
                     if (config_.persistent_cache != nullptr) {
-                        config_.persistent_cache->invalidate(source_path_for(dep));
+                        config_.persistent_cache->invalidate(dep_source_path);
                     }
                 }
             } else {
                 ++stats_.fingerprint_skipped;
             }
         } else {
-            cache_.invalidate(mod_path);
+            cache_.invalidate(key.source_path);
             if (config_.persistent_cache != nullptr) {
-                config_.persistent_cache->invalidate(
-                    build_cache_key(mod_path, content_hash).source_path);
+                config_.persistent_cache->invalidate(key.source_path);
             }
         }
 

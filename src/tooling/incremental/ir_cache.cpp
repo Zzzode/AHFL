@@ -1,40 +1,45 @@
 #include <tooling/incremental/ir_cache.hpp>
 
+#include <utility>
+
 namespace ahfl::incremental {
 
-void IrCache::store(CacheEntry entry) {
-    cache_[entry.module_path] = std::move(entry);
+void IrCache::store(PersistentCacheEntry entry) {
+    const auto source_path = entry.key.source_path;
+    cache_[source_path] = std::move(entry);
 }
 
-[[nodiscard]] CacheLookupResult IrCache::lookup(const std::string &module_path,
-                                                std::uint64_t current_hash) const {
-    auto it = cache_.find(module_path);
-    if (it == cache_.end()) {
-        return CacheLookupResult{CacheHitKind::Miss, std::nullopt};
+PersistentCacheLookupResult IrCache::lookup(const CacheKey &key) const {
+    const auto it = cache_.find(key.source_path);
+    if (it == cache_.end() || it->second.key != key) {
+        return PersistentCacheLookupResult{PersistentCacheHitKind::Miss, std::nullopt};
     }
-    if (it->second.content_hash != current_hash) {
-        return CacheLookupResult{CacheHitKind::Stale, it->second};
-    }
-    return CacheLookupResult{CacheHitKind::Hit, it->second};
+    return PersistentCacheLookupResult{PersistentCacheHitKind::Hit, it->second};
 }
 
-void IrCache::invalidate(const std::string &module_path) {
-    cache_.erase(module_path);
+const PersistentCacheEntry *
+IrCache::find_by_source_path(const std::string &source_path) const {
+    const auto it = cache_.find(source_path);
+    return it == cache_.end() ? nullptr : &it->second;
+}
+
+void IrCache::invalidate(const std::string &source_path) {
+    cache_.erase(source_path);
 }
 
 void IrCache::clear() {
     cache_.clear();
 }
 
-[[nodiscard]] std::size_t IrCache::entry_count() const {
+std::size_t IrCache::entry_count() const {
     return cache_.size();
 }
 
-[[nodiscard]] std::size_t IrCache::total_size_bytes() const {
+std::size_t IrCache::total_size_bytes() const {
     std::size_t total = 0;
-    for (const auto &[path, entry] : cache_) {
-        (void)path;
-        total += entry.serialized_ir.size();
+    for (const auto &[source_path, entry] : cache_) {
+        (void)source_path;
+        total += entry.serialized_typed_hir.size();
     }
     return total;
 }

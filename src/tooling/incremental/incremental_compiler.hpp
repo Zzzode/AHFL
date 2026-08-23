@@ -36,7 +36,7 @@ struct IncrementalStats {
     // pass even though the upstream module was recompiled.
     std::size_t fingerprint_skipped = 0;
     // Number of hits served from the PersistentCache (disk) after the
-    // in-memory IrCache missed. Always zero when no persistent cache is
+    // in-memory IrCache tier missed. Always zero when no persistent cache is
     // configured.
     std::size_t persistent_cache_hits = 0;
 };
@@ -72,17 +72,9 @@ class IncrementalCompiler {
   private:
     [[nodiscard]] CacheKey build_cache_key(const std::string &module_path,
                                            std::uint64_t content_hash) const;
-    // Project-relative source path used as the PersistentCache identity.
-    // Falls back to the raw module path when no project root is configured.
+    // Project-relative source path used as the unified cache identity. Falls
+    // back to the raw module path when no project root is configured.
     [[nodiscard]] std::string source_path_for(const std::string &module_path) const;
-    void hydrate_from_persistent(const std::string &module_path,
-                                 std::uint64_t content_hash,
-                                 const PersistentCacheEntry &entry);
-    void persist_entry(const std::string &module_path,
-                       std::uint64_t content_hash,
-                       std::uint64_t signature_fingerprint,
-                       const std::string &serialized_ir,
-                       const std::string &source_graph_revision);
 
     DependencyGraph &graph_;
     IrCache &cache_;

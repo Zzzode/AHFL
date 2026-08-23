@@ -135,30 +135,52 @@ int main() {
         check(valid, "dependency_graph: add modules and check topological order");
     }
 
-    // Test 2: ir_cache: store and lookup (hit vs miss)
+    // Test 2: ir_cache: unified identity — store and lookup (hit vs miss vs
+    // stale). The in-memory tier now keys on CacheKey::source_path and
+    // validates the full CacheKey, sharing the CacheCore identity model with
+    // the persistent cache (RFC 0016 unified cache core).
     {
         ahfl::incremental::IrCache cache;
 
-        ahfl::incremental::CacheEntry entry;
-        entry.module_path = "test.ahfl";
-        entry.content_hash = 42;
-        entry.serialized_ir = R"({"ir": "test"})";
+        ahfl::incremental::CacheKey key;
+        key.project_root_hash = "proj";
+        key.source_path = "test.ahfl";
+        key.content_hash = 42;
+        key.toolchain_fingerprint = "tc";
+
+        ahfl::incremental::PersistentCacheEntry entry;
+        entry.key = key;
+        entry.signature_fingerprint = 7;
+        entry.serialized_typed_hir = R"({"ir": "test"})";
         entry.cached_at = std::chrono::system_clock::now();
 
         cache.store(entry);
 
-        auto hit = cache.lookup("test.ahfl", 42);
-        auto miss = cache.lookup("unknown.ahfl", 99);
-        auto stale = cache.lookup("test.ahfl", 99);
+        // Same key -> hit.
+        auto hit = cache.lookup(key);
 
-        bool valid = (hit.kind == ahfl::incremental::CacheHitKind::Hit) &&
+        // Different source path -> miss.
+        auto miss_key = key;
+        miss_key.source_path = "unknown.ahfl";
+        auto miss = cache.lookup(miss_key);
+
+        // Same source path, different content hash -> miss (content changed),
+        // but the stale entry is still readable via find_by_source_path.
+        auto stale_key = key;
+        stale_key.content_hash = 99;
+        auto stale = cache.lookup(stale_key);
+        const auto *resident = cache.find_by_source_path("test.ahfl");
+
+        bool valid = (hit.kind == ahfl::incremental::PersistentCacheHitKind::Hit) &&
                      (hit.entry.has_value()) &&
-                     (miss.kind == ahfl::incremental::CacheHitKind::Miss) &&
+                     (hit.entry->signature_fingerprint == 7) &&
+                     (miss.kind == ahfl::incremental::PersistentCacheHitKind::Miss) &&
                      (!miss.entry.has_value()) &&
-                     (stale.kind == ahfl::incremental::CacheHitKind::Stale) &&
+                     (stale.kind == ahfl::incremental::PersistentCacheHitKind::Miss) &&
+                     (resident != nullptr) && (resident->key.content_hash == 42) &&
                      (cache.entry_count() == 1) &&
                      (cache.total_size_bytes() == 14);
-        check(valid, "ir_cache: store and lookup (hit vs miss vs stale)");
+        check(valid, "ir_cache: unified identity store/lookup (hit vs miss vs stale)");
     }
 
     // Test 3: incremental_compiler: failures are not cached as up-to-date
@@ -1095,6 +1117,123 @@ int main() {
         }
         fs::remove_all(test_dir);
         check(valid, "persistent_cache: legacy index defaults last_accessed to cached_at");
+    }
+
+    // Test 22: ir_cache: unified key isolates on every CacheKey field.
+    // Two entries that differ only in project_root_hash or
+    // toolchain_fingerprint are distinct artifacts and must not alias, proving
+    // the in-memory tier validates the full CacheKey rather than the bare
+    // source path (RFC 0016 unified cache core).
+    {
+        ahfl::incremental::IrCache cache;
+
+        ahfl::incremental::CacheKey key;
+        key.project_root_hash = "projA";
+        key.source_path = "m.ahfl";
+        key.content_hash = 1;
+        key.toolchain_fingerprint = "tc-v1";
+
+        ahfl::incremental::PersistentCacheEntry entry;
+        entry.key = key;
+        entry.serialized_typed_hir = "{}";
+        entry.cached_at = std::chrono::system_clock::now();
+        cache.store(entry);
+
+        auto other_project = key;
+        other_project.project_root_hash = "projB";
+        auto other_toolchain = key;
+        other_toolchain.toolchain_fingerprint = "tc-v2";
+
+        const bool valid =
+            (cache.lookup(key).kind == ahfl::incremental::PersistentCacheHitKind::Hit) &&
+            (cache.lookup(other_project).kind ==
+             ahfl::incremental::PersistentCacheHitKind::Miss) &&
+            (cache.lookup(other_toolchain).kind ==
+             ahfl::incremental::PersistentCacheHitKind::Miss) &&
+            (cache.entry_count() == 1);
+        check(valid, "ir_cache: unified key isolates on project + toolchain");
+    }
+
+    // Test 23: incremental_compiler: persistent hit hydrates the in-memory
+    // tier. A fresh compiler with a cold in-memory cache but a warm persistent
+    // cache must serve the module from disk (persistent_cache_hits), and the
+    // hit must populate the shared-identity in-memory tier so a subsequent
+    // pass hits in memory without touching disk again.
+    {
+        namespace fs = std::filesystem;
+        const auto project_dir =
+            fs::temp_directory_path() /
+            ("ahfl_unify_hydrate_test_" +
+             std::to_string(static_cast<long long>(
+                 std::chrono::steady_clock::now().time_since_epoch().count())));
+        fs::create_directories(project_dir);
+        const auto cache_dir = project_dir / "cache";
+        fs::create_directories(cache_dir);
+
+        const auto a_path =
+            ahfl::project_discovery::normalize_project_path(project_dir / "a.ahfl")
+                .string();
+        std::ofstream(project_dir / "a.ahfl")
+            << "module up::a;\n"
+            << "pub struct Config {\n    width: Int;\n}\n";
+
+        ahfl::incremental::DependencyGraph graph;
+        ahfl::incremental::ModuleNode node_a;
+        node_a.module_path = a_path;
+        node_a.imports = {};
+        graph.add_module(node_a);
+
+        ahfl::incremental::PersistentCache persistent(cache_dir);
+
+        // First compiler: cold everything, compiles once and persists.
+        {
+            ahfl::incremental::IrCache cache;
+            ahfl::incremental::IncrementalCompilerConfig config;
+            config.project_root = project_dir;
+            config.persistent_cache = &persistent;
+            ahfl::incremental::IncrementalCompiler compiler(graph, cache,
+                                                            std::move(config));
+            const auto r = compiler.compile_changed({a_path});
+            const auto stats = compiler.stats();
+            (void)r;
+            (void)stats;
+        }
+
+        // Second compiler: fresh in-memory cache, warm persistent cache. The
+        // first pass hits the disk (persistent_cache_hits == 1), which
+        // hydrates the in-memory tier; the second pass hits in memory.
+        bool valid = (persistent.entry_count() == 1);
+        {
+            ahfl::incremental::IrCache cache;
+            ahfl::incremental::IncrementalCompilerConfig config;
+            config.project_root = project_dir;
+            config.persistent_cache = &persistent;
+            ahfl::incremental::IncrementalCompiler compiler(graph, cache,
+                                                            std::move(config));
+
+            const auto r1 = compiler.compile_changed({a_path});
+            const auto stats1 = compiler.stats();
+            valid = valid && (r1.size() == 1) &&
+                    (status_of(r1, a_path) ==
+                     ahfl::incremental::CompileStatus::UpToDate) &&
+                    (stats1.persistent_cache_hits == 1) &&
+                    (stats1.cache_hits == 1) && (stats1.cache_misses == 0) &&
+                    (cache.entry_count() == 1);
+
+            compiler.reset_stats();
+            const auto r2 = compiler.compile_changed({a_path});
+            const auto stats2 = compiler.stats();
+            valid = valid &&
+                    (status_of(r2, a_path) ==
+                     ahfl::incremental::CompileStatus::UpToDate) &&
+                    (stats2.cache_hits == 1) &&
+                    (stats2.persistent_cache_hits == 0) &&
+                    (stats2.cache_misses == 0);
+        }
+
+        fs::remove_all(project_dir);
+        check(valid,
+              "incremental_compiler: persistent hit hydrates in-memory tier");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
