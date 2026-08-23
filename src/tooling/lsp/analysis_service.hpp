@@ -15,6 +15,7 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/project_discovery/discovery.hpp"
 #include "compiler/syntax/frontend/project.hpp"
+#include "tooling/incremental/cache_core.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"
@@ -94,6 +95,21 @@ class AnalysisService {
 
     void set_workspace_folders(std::vector<std::filesystem::path> roots);
     void set_toolchain_profiles(project_discovery::ToolchainProfileSet profiles);
+
+    // Enables or disables the persistent typed-HIR cache (RFC 0016). When
+    // enabled, a cold start (no in-memory snapshot for a URI) consults the
+    // persistent cache before falling back to full analysis, and a successful
+    // full analysis persists its typed program. The cache lives under the
+    // XDG cache home (<cache>/ahfl/<project-root-hash>/), shared with the
+    // standalone incremental compiler.
+    //
+    // The cold-start snapshot is a *degraded* snapshot: only the typed program
+    // is round-trippable through the current cache envelope, so environment-
+    // dependent features (hover, completion, references) are unavailable on a
+    // cold-start hit until a full analysis rebuilds the snapshot. The cache is
+    // therefore opt-in; the LSP server does not enable it yet.
+    void set_persistent_cache_enabled(bool enabled);
+
     void invalidate_all();
     void invalidate_paths(const std::vector<std::filesystem::path> &paths);
 
@@ -122,6 +138,36 @@ class AnalysisService {
     [[nodiscard]] std::string
     open_document_overlay_revision_set_for_snapshot(const LspAnalysisSnapshot &snapshot) const;
 
+    // Builds the unified RFC 0016 CacheKey for a URI from the LSP toolchain
+    // key. Returns nullopt when the persistent cache is disabled, the file is
+    // detached (no project manifest), or the document is unavailable.
+    [[nodiscard]] std::optional<incremental::CacheKey>
+    persistent_cache_key_for_uri(const std::string &uri,
+                                 const std::optional<LspToolchainCacheKey> &toolchain_key) const;
+    // Returns the persistent cache for a project root, creating it on first
+    // use. The cache directory is <cache-root>/<project-root-hash>/.
+    [[nodiscard]] incremental::PersistentCache *
+    persistent_cache_for_project(const std::filesystem::path &project_root);
+    // Builds a degraded snapshot from a persistent cache hit: the document is
+    // parsed (cheap) and the typed program is deserialized, but resolve,
+    // typecheck, workspace index, and hover indices are skipped. Returns
+    // nullptr on any deserialization failure so the caller falls back to full
+    // analysis (graceful fallback).
+    [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot>
+    build_snapshot_from_persistent(const std::string &uri,
+                                   const LspToolchainCacheKey &toolchain_key,
+                                   const incremental::PersistentCacheEntry &entry);
+    // Serializes the snapshot's typed program into the cache envelope and
+    // stores it. No-op when the snapshot has no typed program.
+    void persist_typed_program(const LspAnalysisSnapshot &snapshot,
+                               const incremental::CacheKey &key,
+                               const std::filesystem::path &project_root);
+    // Removes the persistent entries for the given absolute path keys. Used by
+    // invalidate_paths so stale typed HIR is never reloaded on cold start.
+    void invalidate_persistent_paths(const std::unordered_set<std::string> &path_keys);
+    // Clears every persistent cache managed by this service.
+    void invalidate_persistent_all();
+
     const DocumentStore &store_;
     std::vector<std::filesystem::path> workspace_folders_;
     project_discovery::ToolchainProfileSet toolchain_profiles_;
@@ -133,6 +179,9 @@ class AnalysisService {
     std::unordered_map<std::string, SourceUnitId> extra_source_unit_ids_by_path_;
     std::size_t next_extra_source_unit_id_{0};
     std::size_t analysis_runs_{0};
+    bool persistent_cache_enabled_{false};
+    std::unordered_map<std::string, std::unique_ptr<incremental::PersistentCache>>
+        persistent_caches_;
 };
 
 } // namespace ahfl::lsp

@@ -5,6 +5,7 @@
 #include "tooling/lsp/server.hpp"
 
 #include "compiler/syntax/frontend/project.hpp"
+#include "tooling/incremental/cache_core.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -27,6 +28,7 @@ namespace {
 
 using namespace ahfl::lsp;
 namespace project_discovery = ahfl::project_discovery;
+namespace incremental = ahfl::incremental;
 
 int test_count = 0;
 int pass_count = 0;
@@ -1379,6 +1381,228 @@ void test_analysis_snapshot_reuse_and_invalidation() {
     check(third->document_revision != first_revision, "analysisSnapshot.revision_changes");
     check(third->document_version == 2, "analysisSnapshot.version_changes");
     check(analysis.analysis_runs() == 2, "analysisSnapshot.rebuilds_after_change");
+}
+
+// RFC 0016 Slice 5: LSP persistent cache integration. The persistent cache is
+// opt-in (set_persistent_cache_enabled) because a cold-start hit yields a
+// degraded snapshot (typed program only; the TypeEnvironment is not
+// serializable in the current cache envelope). Each test isolates its cache
+// under a temp XDG_CACHE_HOME so it never touches the developer's real cache.
+
+void test_persistent_cache_cold_start_serves_typed_program() {
+    const auto cache_home = make_temp_project("persistent_cache_cold_start_cache");
+    ScopedEnvVar xdg("XDG_CACHE_HOME", cache_home.string());
+
+    const auto project_root = make_temp_project("persistent_cache_cold_start_project");
+    const auto sysroot = project_root / "sysroot";
+    const auto app_root = project_root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    write_minimal_std_package(sysroot / "std", "persistent-cache-cold-start");
+    write_package_manifest(app_root, "lsp-persistent-cache", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    // First service: cold start misses, full analysis runs, typed HIR persisted.
+    {
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({project_root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+        analysis.set_persistent_cache_enabled(true);
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.coldStart.first_snapshot_exists");
+        check(snapshot != nullptr && snapshot->typed_program() != nullptr,
+              "persistentCache.coldStart.first_has_typed_program");
+        check(analysis.analysis_runs() == 1,
+              "persistentCache.coldStart.first_runs_full_analysis");
+    }
+
+    // The persistent cache directory now holds exactly one entry.
+    const auto cache_dir =
+        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+    {
+        incremental::PersistentCache cache(cache_dir);
+        check(cache.entry_count() == 1, "persistentCache.coldStart.entry_stored");
+    }
+
+    // Second service: cold start hits the persistent cache, no full analysis.
+    {
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({project_root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+        analysis.set_persistent_cache_enabled(true);
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.coldStart.second_snapshot_exists");
+        check(snapshot != nullptr && snapshot->typed_program() != nullptr,
+              "persistentCache.coldStart.second_has_typed_program");
+        check(analysis.analysis_runs() == 0,
+              "persistentCache.coldStart.second_skips_full_analysis");
+        check(snapshot != nullptr && !snapshot->typed_program()->declarations.empty(),
+              "persistentCache.coldStart.typed_program_preserved");
+    }
+}
+
+void test_persistent_cache_invalidation_on_change() {
+    const auto cache_home = make_temp_project("persistent_cache_invalidation_cache");
+    ScopedEnvVar xdg("XDG_CACHE_HOME", cache_home.string());
+
+    const auto project_root = make_temp_project("persistent_cache_invalidation_project");
+    const auto sysroot = project_root / "sysroot";
+    const auto app_root = project_root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    write_minimal_std_package(sysroot / "std", "persistent-cache-invalidation");
+    write_package_manifest(app_root, "lsp-persistent-cache-inv", "app", "\"main\"");
+
+    const std::string source_v1 = "module app::main;\n"
+                                  "\n"
+                                  "struct Msg {\n"
+                                  "    value: String;\n"
+                                  "}\n";
+    write_file(main_path, source_v1);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source_v1,
+    });
+
+    const auto cache_dir =
+        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+
+    // First service: full analysis persists the typed HIR.
+    AnalysisService analysis(store);
+    analysis.set_workspace_folders({project_root});
+    analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+    analysis.set_persistent_cache_enabled(true);
+    {
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.invalidation.first_snapshot_exists");
+        check(analysis.analysis_runs() == 1,
+              "persistentCache.invalidation.first_runs_full_analysis");
+    }
+    {
+        incremental::PersistentCache cache(cache_dir);
+        check(cache.entry_count() == 1, "persistentCache.invalidation.entry_stored");
+    }
+
+    // didChange: update the document content and invalidate the path. This
+    // must remove the persistent entry so stale typed HIR is never reloaded.
+    const std::string source_v2 = "module app::main;\n"
+                                  "\n"
+                                  "struct Msg {\n"
+                                  "    value: Int;\n"
+                                  "}\n";
+    store.change(main_uri, 2, source_v2);
+    analysis.invalidate_paths({main_path});
+    {
+        incremental::PersistentCache cache(cache_dir);
+        check(cache.entry_count() == 0,
+              "persistentCache.invalidation.entry_removed_after_change");
+    }
+
+    // Second service: cold start misses (entry invalidated), full analysis runs.
+    {
+        AnalysisService analysis2(store);
+        analysis2.set_workspace_folders({project_root});
+        analysis2.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+        analysis2.set_persistent_cache_enabled(true);
+        const auto *snapshot = analysis2.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.invalidation.second_snapshot_exists");
+        check(snapshot != nullptr && snapshot->typed_program() != nullptr,
+              "persistentCache.invalidation.second_has_typed_program");
+        check(analysis2.analysis_runs() == 1,
+              "persistentCache.invalidation.second_runs_full_analysis_after_miss");
+    }
+}
+
+void test_persistent_cache_corrupt_file_falls_back() {
+    const auto cache_home = make_temp_project("persistent_cache_corrupt_cache");
+    ScopedEnvVar xdg("XDG_CACHE_HOME", cache_home.string());
+
+    const auto project_root = make_temp_project("persistent_cache_corrupt_project");
+    const auto sysroot = project_root / "sysroot";
+    const auto app_root = project_root / "app";
+    const auto main_path = app_root / "src" / "main.ahfl";
+    write_minimal_std_package(sysroot / "std", "persistent-cache-corrupt");
+    write_package_manifest(app_root, "lsp-persistent-cache-corrupt", "app", "\"main\"");
+
+    const std::string source = "module app::main;\n"
+                               "\n"
+                               "struct Msg {\n"
+                               "    value: String;\n"
+                               "}\n";
+    write_file(main_path, source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = main_uri,
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+
+    const auto cache_dir =
+        cache_home / "ahfl" / incremental::project_root_hash(app_root);
+
+    // First service: full analysis persists the typed HIR.
+    {
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({project_root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+        analysis.set_persistent_cache_enabled(true);
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.corrupt.first_snapshot_exists");
+        check(analysis.analysis_runs() == 1,
+              "persistentCache.corrupt.first_runs_full_analysis");
+    }
+    {
+        incremental::PersistentCache cache(cache_dir);
+        check(cache.entry_count() == 1, "persistentCache.corrupt.entry_stored");
+    }
+
+    // Corrupt the entry file on disk (invalid JSON) while leaving the index
+    // intact, so the lookup finds the index record but fails to parse the
+    // entry payload.
+    for (const auto &entry : std::filesystem::directory_iterator(cache_dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".json" ||
+            entry.path().filename() == "index.json") {
+            continue;
+        }
+        std::ofstream out(entry.path(), std::ios::binary | std::ios::trunc);
+        out << "{ invalid json";
+    }
+
+    // Second service: cold start hits a corrupt cache file and falls back to
+    // full analysis (graceful fallback, no crash, no stale data).
+    {
+        AnalysisService analysis(store);
+        analysis.set_workspace_folders({project_root});
+        analysis.set_toolchain_profiles(toolchain_profile_set_for_sysroot(sysroot));
+        analysis.set_persistent_cache_enabled(true);
+        const auto *snapshot = analysis.snapshot_for_uri(main_uri);
+        check(snapshot != nullptr, "persistentCache.corrupt.second_snapshot_exists");
+        check(snapshot != nullptr && snapshot->typed_program() != nullptr,
+              "persistentCache.corrupt.second_has_typed_program");
+        check(analysis.analysis_runs() == 1,
+              "persistentCache.corrupt.second_runs_full_analysis_after_corrupt");
+    }
 }
 
 void test_diagnostics_reflect_document_version() {
@@ -10832,6 +11056,9 @@ void test_hover_and_completion_mid_edit() {
 
 int main() {
     test_analysis_snapshot_reuse_and_invalidation();
+    test_persistent_cache_cold_start_serves_typed_program();
+    test_persistent_cache_invalidation_on_change();
+    test_persistent_cache_corrupt_file_falls_back();
     test_semantic_tokens_cover_current_syntax_surface();
     test_semantic_tokens_request_uses_document_uri();
     test_hover_pattern_bindings_use_typed_pattern_facts();

@@ -1,6 +1,7 @@
 #include "tooling/lsp/analysis_service.hpp"
 
 #include "ahfl/compiler/frontend/ast.hpp"
+#include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 #include "base/support/sha256.hpp"
 #include "compiler/package_graph/package_graph.hpp"
 #include "compiler/project_discovery/discovery.hpp"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <system_error>
@@ -128,6 +130,33 @@ analysis_mode_from_discovery(project_discovery::AnalysisContextKind kind) noexce
         return "detached-source-unit";
     }
     return "detached-source-unit";
+}
+
+// Inverse of analysis_mode_name: reconstructs the analysis mode from the
+// toolchain cache key's string form. Used when rebuilding a snapshot from a
+// persistent cache hit, where only the serialized key is available.
+[[nodiscard]] LspAnalysisMode analysis_mode_from_name(std::string_view name) noexcept {
+    if (name == "package-graph") {
+        return LspAnalysisMode::PackageGraph;
+    }
+    if (name == "source-sysroot") {
+        return LspAnalysisMode::SourceSysroot;
+    }
+    return LspAnalysisMode::DetachedSourceUnit;
+}
+
+// Default persistent cache root per RFC 0016 (XDG base directory spec):
+// $XDG_CACHE_HOME/ahfl, falling back to ~/.cache/ahfl, then .ahfl-cache.
+// Mirrors the standalone incremental compiler's resolution so both tools
+// share the same cache directory.
+[[nodiscard]] std::filesystem::path default_persistent_cache_root() {
+    if (const char *xdg = std::getenv("XDG_CACHE_HOME"); xdg != nullptr && *xdg != '\0') {
+        return std::filesystem::path(xdg) / "ahfl";
+    }
+    if (const char *home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+        return std::filesystem::path(home) / ".cache" / "ahfl";
+    }
+    return std::filesystem::path{".ahfl-cache"};
 }
 
 [[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
@@ -1454,6 +1483,7 @@ void AnalysisService::invalidate_all() {
     sysroot_primitive_index_cache_.clear();
     sysroot_index_cache_.clear();
     workspace_root_index_cache_.clear();
+    invalidate_persistent_all();
 }
 
 void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> &paths) {
@@ -1471,6 +1501,28 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
         return;
     }
     sysroot_primitive_index_cache_.clear();
+
+    // Collect the paths whose persistent entries must be invalidated: the
+    // changed paths plus their transitive importers (from in-memory project
+    // graphs). This must run before the in-memory snapshots are erased so the
+    // import graphs are still available. Stale typed HIR for a transitive
+    // importer would otherwise be reloaded on the next cold start.
+    std::unordered_set<std::string> persistent_paths = path_keys;
+    if (persistent_cache_enabled_) {
+        for (const auto &[uri, snapshot] : cache_) {
+            (void)uri;
+            if (snapshot == nullptr || snapshot->project_result == nullptr) {
+                continue;
+            }
+            const auto closure =
+                transitive_importer_closure(snapshot->project_result->graph, path_keys);
+            for (const auto &source : snapshot->project_result->graph.sources) {
+                if (closure.contains(source.id)) {
+                    persistent_paths.insert(normalized_path_key(source.path));
+                }
+            }
+        }
+    }
 
     for (auto iter = cache_.begin(); iter != cache_.end();) {
         if (iter->second != nullptr && snapshot_references_path(*iter->second, path_keys)) {
@@ -1496,6 +1548,8 @@ void AnalysisService::invalidate_paths(const std::vector<std::filesystem::path> 
             ++iter;
         }
     }
+
+    invalidate_persistent_paths(persistent_paths);
 }
 
 const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &uri) {
@@ -1507,6 +1561,20 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     }
 
     const auto toolchain_cache_key = toolchain_cache_key_for_uri(uri);
+
+    // Resolve the persistent cache target (unified CacheKey + project root)
+    // once. Nullopt when the persistent cache is disabled, the file is
+    // detached (no project manifest), or the document is unavailable.
+    std::optional<incremental::CacheKey> persistent_key;
+    std::filesystem::path persistent_project_root;
+    if (persistent_cache_enabled_) {
+        persistent_key = persistent_cache_key_for_uri(uri, toolchain_cache_key);
+        if (persistent_key.has_value()) {
+            persistent_project_root =
+                std::filesystem::path(toolchain_cache_key->root_manifest).parent_path();
+        }
+    }
+
     const LspWorkspaceIndex *previous_index = nullptr;
     if (const auto existing = cache_.find(uri); existing != cache_.end()) {
         const auto &snapshot = *existing->second;
@@ -1519,6 +1587,25 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
             return existing->second.get();
         }
         previous_index = snapshot.workspace_index.get();
+    } else if (persistent_key.has_value()) {
+        // Cold start: consult the persistent typed-HIR cache before falling
+        // back to full analysis. A hit yields a degraded snapshot (typed
+        // program only); a miss or any deserialization failure falls through
+        // to build_snapshot (graceful fallback).
+        if (auto *persistent = persistent_cache_for_project(persistent_project_root);
+            persistent != nullptr) {
+            auto lookup = persistent->lookup(*persistent_key);
+            if (lookup.kind == incremental::PersistentCacheHitKind::Hit &&
+                lookup.entry.has_value()) {
+                if (auto cached = build_snapshot_from_persistent(
+                        uri, *toolchain_cache_key, *lookup.entry);
+                    cached != nullptr) {
+                    auto *cached_ptr = cached.get();
+                    cache_[uri] = std::move(cached);
+                    return cached_ptr;
+                }
+            }
+        }
     }
 
     auto snapshot = build_snapshot(uri, toolchain_cache_key, previous_index);
@@ -1527,6 +1614,14 @@ const LspAnalysisSnapshot *AnalysisService::snapshot_for_uri(const std::string &
     }
 
     ++analysis_runs_;
+
+    // Persist the typed program after a successful full analysis so the next
+    // cold start can reuse it. Detached files and snapshots without a typed
+    // program are skipped.
+    if (persistent_key.has_value()) {
+        persist_typed_program(*snapshot, *persistent_key, persistent_project_root);
+    }
+
     auto *snapshot_ptr = snapshot.get();
     cache_[uri] = std::move(snapshot);
     return snapshot_ptr;
@@ -1973,6 +2068,196 @@ AnalysisService::build_snapshot(const std::string &uri,
     snapshot->open_document_overlay_revision_set =
         open_document_overlay_revision_set_for_snapshot(*snapshot);
     return snapshot;
+}
+
+void AnalysisService::set_persistent_cache_enabled(bool enabled) {
+    persistent_cache_enabled_ = enabled;
+    if (!enabled) {
+        // Release cache handles so re-enabling starts from a fresh on-disk
+        // index rather than a stale in-memory view.
+        persistent_caches_.clear();
+    }
+}
+
+std::optional<incremental::CacheKey>
+AnalysisService::persistent_cache_key_for_uri(
+    const std::string &uri,
+    const std::optional<LspToolchainCacheKey> &toolchain_key) const {
+    if (!persistent_cache_enabled_ || !toolchain_key.has_value()) {
+        return std::nullopt;
+    }
+    if (toolchain_key->root_manifest.empty()) {
+        return std::nullopt; // detached source unit: no project root to key on
+    }
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        return std::nullopt;
+    }
+    const auto document_path = path_from_uri(uri);
+    if (!document_path.has_value()) {
+        return std::nullopt;
+    }
+    const auto project_root =
+        std::filesystem::path(toolchain_key->root_manifest).parent_path();
+    std::error_code error;
+    const auto relative =
+        std::filesystem::relative(*document_path, project_root, error);
+
+    incremental::CacheKey key;
+    key.project_root_hash = incremental::project_root_hash(project_root);
+    key.source_path = error ? document_path->generic_string() : relative.generic_string();
+    // Use the shared FNV-1a content hash (matches the standalone compiler and
+    // IrCache) so cache identity is consistent across tooling.
+    key.content_hash = incremental::fnv1a64(document->text);
+    key.toolchain_fingerprint = incremental::default_toolchain_fingerprint();
+    return key;
+}
+
+incremental::PersistentCache *
+AnalysisService::persistent_cache_for_project(const std::filesystem::path &project_root) {
+    const auto root_key = normalized_path_key(project_root);
+    if (const auto existing = persistent_caches_.find(root_key);
+        existing != persistent_caches_.end()) {
+        return existing->second.get();
+    }
+    const auto cache_dir =
+        default_persistent_cache_root() / incremental::project_root_hash(project_root);
+    auto cache = std::make_unique<incremental::PersistentCache>(cache_dir);
+    auto *ptr = cache.get();
+    persistent_caches_.emplace(root_key, std::move(cache));
+    return ptr;
+}
+
+std::unique_ptr<LspAnalysisSnapshot>
+AnalysisService::build_snapshot_from_persistent(
+    const std::string &uri,
+    const LspToolchainCacheKey &toolchain_key,
+    const incremental::PersistentCacheEntry &entry) {
+    const auto *document = store_.get(uri);
+    const auto revision = store_.revision(uri);
+    const auto hash = store_.content_hash(uri);
+    if (document == nullptr || !revision.has_value() || !hash.has_value()) {
+        return nullptr;
+    }
+
+    // Deserialize the typed program from the persistent cache envelope. The
+    // metadata must match what was stored; any mismatch is a miss (graceful
+    // fallback to full analysis).
+    const TypedProgramCacheMetadata metadata{
+        .schema_version = std::string{kTypedProgramCacheSchemaVersion},
+        .source_graph_revision = toolchain_key.package_graph_identity,
+        .source_content_hash = std::to_string(entry.key.content_hash),
+        .resolver_snapshot_version = std::string{},
+    };
+    auto loaded = load_typed_program_cache_json(entry.serialized_typed_hir, metadata);
+    if (loaded.status != TypedProgramCacheLoadStatus::Hit || !loaded.program.has_value()) {
+        return nullptr;
+    }
+
+    // Parse the document to anchor source ranges and populate the source
+    // snapshot. Parse is cheap; the expensive resolve/typecheck phases are
+    // skipped because the typed program is loaded from the persistent cache.
+    Frontend frontend;
+    auto parse_result = frontend.parse_text(document->uri, document->text);
+
+    auto snapshot = std::make_unique<LspAnalysisSnapshot>();
+    snapshot->requested_uri = uri;
+    snapshot->document_version = document->version;
+    snapshot->document_revision = *revision;
+    snapshot->content_hash = *hash;
+    snapshot->workspace_revision = store_.workspace_revision();
+    snapshot->toolchain_cache_key = toolchain_key;
+    snapshot->analysis_mode = analysis_mode_from_name(toolchain_key.analysis_mode);
+    snapshot->project_aware = true;
+    snapshot->parse_result = std::make_unique<ParseResult>(std::move(parse_result));
+
+    index_source(*snapshot,
+                 LspSourceSnapshot{
+                     .uri = uri,
+                     .path = path_from_uri(uri).value_or(std::filesystem::path{}),
+                     .source = &snapshot->parse_result->source,
+                     .program = snapshot->parse_result->program.get(),
+                     .source_id = std::nullopt,
+                 });
+
+    // Wrap the deserialized typed program in a TypeCheckResult. The
+    // environment is default-constructed (not serializable in the current
+    // cache envelope); environment-dependent features require a full rebuild.
+    auto type_check_result = std::make_unique<TypeCheckResult>();
+    type_check_result->typed_program = std::move(*loaded.program);
+    snapshot->type_check_result = std::move(type_check_result);
+
+    snapshot->open_document_overlay_revision_set =
+        open_document_overlay_revision_set_for_snapshot(*snapshot);
+    return snapshot;
+}
+
+void AnalysisService::persist_typed_program(
+    const LspAnalysisSnapshot &snapshot,
+    const incremental::CacheKey &key,
+    const std::filesystem::path &project_root) {
+    const auto *typed_program = snapshot.typed_program();
+    if (typed_program == nullptr) {
+        return; // nothing to persist (analysis failed or produced no typed program)
+    }
+    const auto &toolchain_key = snapshot.toolchain_cache_key;
+    const TypedProgramCacheMetadata metadata{
+        .schema_version = std::string{kTypedProgramCacheSchemaVersion},
+        .source_graph_revision =
+            toolchain_key.has_value() ? toolchain_key->package_graph_identity : std::string{},
+        .source_content_hash = std::to_string(key.content_hash),
+        .resolver_snapshot_version = std::string{},
+    };
+    incremental::PersistentCacheEntry entry;
+    entry.key = key;
+    entry.source_graph_revision = metadata.source_graph_revision;
+    // resolver_snapshot_version: canonical ResolveResult hashing is a
+    // follow-up; the envelope field is reserved and stored empty (consistent
+    // with the standalone incremental compiler).
+    entry.signature_fingerprint = 0;
+    entry.serialized_typed_hir = serialize_typed_program_cache_json(*typed_program, metadata);
+    entry.cached_at = std::chrono::system_clock::now();
+    if (auto *persistent = persistent_cache_for_project(project_root); persistent != nullptr) {
+        persistent->store(entry);
+    }
+}
+
+void AnalysisService::invalidate_persistent_paths(
+    const std::unordered_set<std::string> &path_keys) {
+    if (!persistent_cache_enabled_ || path_keys.empty()) {
+        return;
+    }
+    for (const auto &path_key : path_keys) {
+        const auto path = std::filesystem::path(path_key);
+        const auto manifest =
+            project_discovery::find_package_manifest_for_document(path, {});
+        if (!manifest.has_value()) {
+            continue; // detached file: no persistent entry
+        }
+        const auto project_root = manifest->parent_path();
+        std::error_code error;
+        const auto relative =
+            std::filesystem::relative(path, project_root, error);
+        const auto source_path =
+            error ? path.generic_string() : relative.generic_string();
+        // Open (or reuse) the project cache so the entry is removed even when
+        // it was stored by a previous process (the on-disk index is the
+        // source of truth, not this instance's in-memory cache map).
+        if (auto *persistent = persistent_cache_for_project(project_root);
+            persistent != nullptr) {
+            persistent->invalidate(source_path);
+        }
+    }
+}
+
+void AnalysisService::invalidate_persistent_all() {
+    if (!persistent_cache_enabled_) {
+        return;
+    }
+    for (auto &[root_key, cache] : persistent_caches_) {
+        (void)root_key;
+        cache->clear();
+    }
 }
 
 std::unordered_map<std::string, std::string> AnalysisService::open_document_overlays() const {

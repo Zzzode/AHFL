@@ -23,6 +23,7 @@ target_link_libraries(ahfl_tooling_lsp
         ahfl_compiler_project_discovery
         ahfl_base_json
         ahfl_tooling_formatter
+        ahfl_tooling_incremental
 )
 
 target_include_directories(ahfl_tooling_lsp PRIVATE ${PROJECT_SOURCE_DIR}/src)
