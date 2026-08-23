@@ -2,7 +2,7 @@
 -- This lowering preserves validated state-machine, flow, and workflow structure.
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP agent__lib_agents_AliasAgent__called__lib_agents_Echo => agent lib::agents::AliasAgent called lib::agents::Echo
+-- AHFL_MAP agent__lib_agents_AliasAgent__called__lib_agents_Echo => agent lib::agents::AliasAgent called lib::agents::Echo @ lib/agents.ahfl:53-123
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__state => workflow app::main::MainWorkflow node run state @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__phase => workflow app::main::MainWorkflow node run lifecycle phase @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failure_requested => workflow app::main::MainWorkflow node run environment failure request @ app/main.ahfl:355-391
@@ -12,6 +12,7 @@
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failed => workflow app::main::MainWorkflow node run failed @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovering => workflow app::main::MainWorkflow node run recovering @ app/main.ahfl:355-391
 -- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovered => workflow app::main::MainWorkflow node run recovered @ app/main.ahfl:355-391
+-- AHFL_MAP (G (!workflow__app_main_MainWorkflow__node__run__failure_requested) -> (F ((workflow__app_main_MainWorkflow__node__run__completed & (workflow__app_main_MainWorkflow__node__run__state = Done))))) => workflow app::main::MainWorkflow liveness[0] @ app/main.ahfl:406-437
 MODULE main
 VAR
   workflow__app_main_MainWorkflow__node__run__state : {Init, Done};

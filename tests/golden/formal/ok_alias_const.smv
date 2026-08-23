@@ -2,7 +2,7 @@
 -- This lowering preserves validated state-machine, flow, and workflow structure.
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo => agent ir::alias_const::EchoAgent called ir::alias_const::Echo
+-- AHFL_MAP agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo => agent ir::alias_const::EchoAgent called ir::alias_const::Echo @ ir/alias_const.ahfl:297-348
 -- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0] @ ir/alias_const.ahfl:637-670
 -- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1] @ ir/alias_const.ahfl:675-708
 -- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state @ ir/alias_const.ahfl:398-600

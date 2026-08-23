@@ -40,8 +40,22 @@ void SmvPrinter::index_observations(const ir::Program &program) {
                 [&](const ir::CalledCapabilityObservation &value) {
                     called_observation_symbols_.emplace(
                         called_observation_key(value.agent, value.capability), observation.symbol);
-                    add_symbol_mapping(observation.symbol,
-                                       "agent " + value.agent + " called " + value.capability);
+                    // Attach the capability declaration's source range when we
+                    // can resolve it, so a counterexample can point at the
+                    // capability call site.  Falls back to a description-only
+                    // mapping (no source offsets) when the capability is not
+                    // found — never fabricates a range.
+                    const auto capability = find_capability(value.capability);
+                    if (capability.has_value()) {
+                        add_symbol_mapping(
+                            observation.symbol,
+                            with_source("agent " + value.agent + " called " + value.capability,
+                                        capability->get().provenance.source_path,
+                                        capability->get().provenance.source_range));
+                    } else {
+                        add_symbol_mapping(observation.symbol,
+                                           "agent " + value.agent + " called " + value.capability);
+                    }
                 },
                 [&](const ir::EmbeddedBoolObservation &value) {
                     if (!embedded_observation_requires_variable(value.scope)) {

@@ -574,6 +574,91 @@ build_step_action_trace(const CounterexampleState &prev, const CounterexampleSta
 }
 
 // ========================================================================
+// P2 §3.5 helpers: fired capability-call projection + contract clause source
+// ========================================================================
+
+/// Parse a capability-call smv symbol into (logical_path, capability_name).
+/// Recognized shapes:
+///   - `agent__<Agent>__called__<Cap>`
+///     → ("agent.<Agent>", "<Cap>")
+///   - `workflow__<Wf>__node__<Node>__call__<Cap>`
+///     → ("workflow.<Wf>.node.<Node>", "<Cap>")
+/// The `__committed` / `__failed` lifecycle siblings of the workflow call
+/// symbol are intentionally rejected here: only the base call-event boolean
+/// counts as "the capability fired this step".
+struct CapabilityCallParts {
+    std::string logical_path;
+    std::string capability_name;
+};
+[[nodiscard]] std::optional<CapabilityCallParts>
+parse_capability_call_name(std::string_view smv_symbol) {
+    // agent__<Agent>__called__<Cap>
+    constexpr std::string_view agent_prefix = "agent__";
+    constexpr std::string_view called_sep = "__called__";
+    if (smv_symbol.substr(0, agent_prefix.size()) == agent_prefix) {
+        const auto sep = smv_symbol.find(called_sep, agent_prefix.size());
+        if (sep != std::string_view::npos) {
+            const auto agent = smv_symbol.substr(agent_prefix.size(), sep - agent_prefix.size());
+            const auto cap = smv_symbol.substr(sep + called_sep.size());
+            if (!agent.empty() && !cap.empty()) {
+                CapabilityCallParts out;
+                out.logical_path = "agent." + smv_symbol_to_logical_path(agent);
+                out.capability_name = std::string(cap);
+                return out;
+            }
+        }
+    }
+
+    // workflow__<Wf>__node__<Node>__call__<Cap>  (reject __committed/__failed).
+    constexpr std::string_view wf_prefix = "workflow__";
+    constexpr std::string_view call_sep = "__call__";
+    if (smv_symbol.substr(0, wf_prefix.size()) == wf_prefix) {
+        const auto sep = smv_symbol.find(call_sep);
+        if (sep != std::string_view::npos) {
+            const auto path = smv_symbol.substr(0, sep);
+            auto cap = smv_symbol.substr(sep + call_sep.size());
+            // A base call event has no further `__` after the capability name.
+            // `__committed` / `__failed` lifecycle siblings do — skip them.
+            if (!cap.empty() && cap.find("__") == std::string_view::npos) {
+                CapabilityCallParts out;
+                out.logical_path = smv_symbol_to_logical_path(path);
+                out.capability_name = std::string(cap);
+                return out;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+/// Build one step's fired-capability-call list (step prev→curr).  A call
+/// counts as fired when its call-event boolean is TRUE in `curr`.  The source
+/// range comes from the symbol's AHFL_MAP entry when present; empty otherwise.
+[[nodiscard]] std::vector<ProjectedCapabilityCall>
+build_step_capability_calls(const CounterexampleState &curr) {
+    std::vector<ProjectedCapabilityCall> out;
+    for (const auto &a : curr.assignments) {
+        const auto parts = parse_capability_call_name(a.variable);
+        if (!parts.has_value()) {
+            continue;
+        }
+        if (!parse_bool_value(a.value, false)) {
+            continue;
+        }
+        ProjectedCapabilityCall row;
+        row.logical_path = parts->logical_path;
+        row.capability_name = parts->capability_name;
+        if (a.mapping.has_value()) {
+            row.source.source_path = a.mapping->source_path;
+            row.source.begin_offset = a.mapping->begin_offset;
+            row.source.end_offset = a.mapping->end_offset;
+        }
+        out.push_back(std::move(row));
+    }
+    return out;
+}
+
+// ========================================================================
 // h-12 D6 helpers
 // ========================================================================
 
@@ -778,10 +863,28 @@ ViolatedContractInfo classify_violated_contract(std::string_view violated_spec) 
     return info;
 }
 
-void enhance_counterexample_mapping(CounterexampleTrace &trace,
-                                    ViolationExplanation &explanation) {
+void enhance_counterexample_mapping(
+    CounterexampleTrace &trace,
+    ViolationExplanation &explanation,
+    const std::unordered_map<std::string, SourceMapping> &mappings) {
     // D4 always runs, even on traces with 0 states (no transitions).
     explanation.violated_contract = classify_violated_contract(trace.violated_spec);
+
+    // (P2 §3.5) Attach the violated contract clause's AHFL source range.  The
+    // SMV backend emits an AHFL_MAP entry keyed by the exact LTL formula it
+    // lowered each clause to; the checker echoes that formula verbatim as the
+    // violated spec, so a direct lookup recovers the clause location.  When
+    // the backend emitted no mapped source (synthesized control obligation, or
+    // a backend without AHFL_MAP offsets), the range stays empty — never
+    // fabricated.
+    if (const auto it = mappings.find(trace.violated_spec); it != mappings.end()) {
+        explanation.violated_contract.source.source_path = it->second.source_path;
+        explanation.violated_contract.source.begin_offset = it->second.begin_offset;
+        explanation.violated_contract.source.end_offset = it->second.end_offset;
+        if (explanation.violated_contract.name.empty()) {
+            explanation.violated_contract.name = it->second.description;
+        }
+    }
 
     const auto n = trace.states.size();
 
@@ -831,6 +934,15 @@ void enhance_counterexample_mapping(CounterexampleTrace &trace,
     for (std::size_t i = 1; i < n; ++i) {
         trace.action_trace.push_back(
             build_step_action_trace(trace.states[i - 1], trace.states[i]));
+    }
+
+    // (P2 §3.5) capability_calls: fired capability calls per step, aligned
+    // with action_trace / state_transitions.  A call fires at step i when its
+    // call-event boolean is TRUE in state i+1.
+    trace.capability_calls.clear();
+    trace.capability_calls.reserve(n == 0 ? 0 : n - 1);
+    for (std::size_t i = 1; i < n; ++i) {
+        trace.capability_calls.push_back(build_step_capability_calls(trace.states[i]));
     }
 
     // D6 natural_language_summary: always runs (fallback for empty traces).

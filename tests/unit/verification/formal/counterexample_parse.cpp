@@ -840,6 +840,180 @@ void test_h12_D6_natural_language_summary() {
           "d6.json.has_field");
 }
 
+// ============================================================================
+// P2 §3.5: capability-call and contract-clause source-range projection
+// ============================================================================
+
+void test_p2_capability_call_projection() {
+    // A 2-state trace where an agent-scoped capability-call symbol and a
+    // workflow-node call-event symbol both go TRUE at step 0→1.  Each carries
+    // an AHFL_MAP source range.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(OVERDRAWN)";
+
+    SourceMapping agent_call_map{
+        .smv_symbol = "agent__OrderBot__called__charge_card",
+        .description = "agent OrderBot called charge_card",
+        .source_path = "order.ahfl",
+        .begin_offset = 500,
+        .end_offset = 540,
+    };
+    SourceMapping wf_call_map{
+        .smv_symbol = "workflow__Checkout__node__pay__call__charge_card",
+        .description = "workflow Checkout node pay calls charge_card",
+        .source_path = "order.ahfl",
+        .begin_offset = 600,
+        .end_offset = 660,
+    };
+
+    trace.states.push_back(CounterexampleState{
+        .label = "1.1",
+        .assignments =
+            {
+                CounterexampleAssignment{.variable = "agent__OrderBot__called__charge_card",
+                                         .value = "FALSE",
+                                         .mapping = agent_call_map},
+                CounterexampleAssignment{
+                    .variable = "workflow__Checkout__node__pay__call__charge_card",
+                    .value = "FALSE",
+                    .mapping = wf_call_map},
+            },
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.2",
+        .assignments =
+            {
+                CounterexampleAssignment{.variable = "agent__OrderBot__called__charge_card",
+                                         .value = "TRUE",
+                                         .mapping = agent_call_map},
+                CounterexampleAssignment{
+                    .variable = "workflow__Checkout__node__pay__call__charge_card",
+                    .value = "TRUE",
+                    .mapping = wf_call_map},
+                // A lifecycle sibling must NOT be projected as a call.
+                CounterexampleAssignment{
+                    .variable = "workflow__Checkout__node__pay__call__charge_card__committed",
+                    .value = "TRUE",
+                    .mapping = std::nullopt},
+            },
+    });
+
+    ViolationExplanation expl;
+    enhance_counterexample_mapping(trace, expl);
+
+    // 2 states → 1 step; the fired calls appear at step index 0.
+    check(trace.capability_calls.size() == 1, "p2.cap.step_count_1");
+    if (!trace.capability_calls.empty()) {
+        const auto &step = trace.capability_calls[0];
+        // agent-scoped + workflow-node-scoped, committed sibling excluded.
+        check(step.size() == 2, "p2.cap.two_calls");
+        bool has_agent = false;
+        bool has_wf = false;
+        for (const auto &call : step) {
+            check(call.capability_name == "charge_card", "p2.cap.name");
+            check(!call.source.empty(), "p2.cap.source_populated");
+            check(call.source.source_path == "order.ahfl", "p2.cap.source_path");
+            if (call.logical_path == "agent.OrderBot") {
+                has_agent = true;
+                check(call.source.begin_offset == 500, "p2.cap.agent_begin");
+                check(call.source.end_offset == 540, "p2.cap.agent_end");
+            }
+            if (call.logical_path == "workflow.Checkout.node.pay") {
+                has_wf = true;
+                check(call.source.begin_offset == 600, "p2.cap.wf_begin");
+            }
+        }
+        check(has_agent, "p2.cap.has_agent_scope");
+        check(has_wf, "p2.cap.has_wf_scope");
+    }
+
+    // JSON serialization must carry the new field.
+    const auto json = counterexample_to_json(trace, expl);
+    check(json.find("\"capability_calls\"") != std::string::npos, "p2.cap.json_field");
+    check(json.find("\"capability_name\"") != std::string::npos, "p2.cap.json_name");
+    check(json.find("\"charge_card\"") != std::string::npos, "p2.cap.json_value");
+    check(json.find("\"agent.OrderBot\"") != std::string::npos, "p2.cap.json_agent_path");
+}
+
+void test_p2_capability_call_graceful_without_mapping() {
+    // Same call fires but WITHOUT an AHFL_MAP entry: the projection must still
+    // appear, with an empty (never-fabricated) source range.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(BAD)";
+    trace.states.push_back(CounterexampleState{
+        .label = "1.1",
+        .assignments = {CounterexampleAssignment{
+            .variable = "agent__Bot__called__do_thing", .value = "FALSE", .mapping = std::nullopt}},
+    });
+    trace.states.push_back(CounterexampleState{
+        .label = "1.2",
+        .assignments = {CounterexampleAssignment{
+            .variable = "agent__Bot__called__do_thing", .value = "TRUE", .mapping = std::nullopt}},
+    });
+
+    ViolationExplanation expl;
+    enhance_counterexample_mapping(trace, expl);
+
+    check(trace.capability_calls.size() == 1, "p2.cap_nomap.step_count");
+    if (!trace.capability_calls.empty() && !trace.capability_calls[0].empty()) {
+        const auto &call = trace.capability_calls[0][0];
+        check(call.capability_name == "do_thing", "p2.cap_nomap.name");
+        check(call.source.empty(), "p2.cap_nomap.empty_source");
+    }
+}
+
+void test_p2_contract_clause_source() {
+    // The SMV backend emits an AHFL_MAP entry keyed by the exact LTL formula;
+    // the checker echoes that formula as the violated spec, so a direct lookup
+    // recovers the clause source range.
+    constexpr auto ltl_formula = "G ((agent__OrderBot__state = Paid) -> (context__balance >= 0))";
+
+    std::unordered_map<std::string, SourceMapping> mappings;
+    mappings[ltl_formula] = SourceMapping{
+        .smv_symbol = ltl_formula,
+        .description = "contract shop::OrderBot invariant[0]",
+        .source_path = "order.ahfl",
+        .begin_offset = 800,
+        .end_offset = 880,
+    };
+
+    CounterexampleTrace trace;
+    trace.violated_spec = ltl_formula;
+    trace.states.push_back(CounterexampleState{.label = "1.1", .assignments = {}});
+    trace.states.push_back(CounterexampleState{.label = "1.2", .assignments = {}});
+
+    ViolationExplanation expl;
+    enhance_counterexample_mapping(trace, expl, mappings);
+
+    check(!expl.violated_contract.source.empty(), "p2.contract.source_populated");
+    check(expl.violated_contract.source.source_path == "order.ahfl", "p2.contract.source_path");
+    check(expl.violated_contract.source.begin_offset == 800, "p2.contract.begin");
+    check(expl.violated_contract.source.end_offset == 880, "p2.contract.end");
+    check(expl.violated_contract.name == "contract shop::OrderBot invariant[0]",
+          "p2.contract.name_from_desc");
+    check(expl.violated_contract.kind == ViolatedContractKind::Invariant, "p2.contract.kind");
+
+    const auto json = counterexample_to_json(trace, expl);
+    check(json.find("\"violated_contract\"") != std::string::npos, "p2.contract.json_field");
+    // The source object inside violated_contract must carry the offsets.
+    check(json.find("800") != std::string::npos, "p2.contract.json_begin");
+}
+
+void test_p2_contract_clause_graceful_without_mapping() {
+    // No AHFL_MAP entry for the violated spec → source stays empty, no crash.
+    CounterexampleTrace trace;
+    trace.violated_spec = "never(UNMAPPED)";
+    trace.states.push_back(CounterexampleState{.label = "1.1", .assignments = {}});
+
+    ViolationExplanation expl;
+    // Empty mappings map (default arg path).
+    enhance_counterexample_mapping(trace, expl);
+
+    check(expl.violated_contract.source.empty(), "p2.contract_nomap.empty_source");
+    check(expl.violated_contract.kind == ViolatedContractKind::Invariant,
+          "p2.contract_nomap.kind_still_classified");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -861,6 +1035,11 @@ int main() {
     test_h12_full_4dim_enhance();
     test_h12_D5_action_trace_alignment();
     test_h12_D6_natural_language_summary();
+
+    test_p2_capability_call_projection();
+    test_p2_capability_call_graceful_without_mapping();
+    test_p2_contract_clause_source();
+    test_p2_contract_clause_graceful_without_mapping();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -2,7 +2,7 @@
 -- This lowering preserves validated state-machine, flow, and workflow structure.
 -- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide => agent ir::expr_temporal::ExprAgent called ir::expr_temporal::Decide
+-- AHFL_MAP agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide => agent ir::expr_temporal::ExprAgent called ir::expr_temporal::Decide @ ir/expr_temporal.ahfl:1133-1181
 -- AHFL_MAP contract_ir_expr_temporal_ExprAgent_0_atom_0 => observation contract ir::expr_temporal::ExprAgent[0] @ ir/expr_temporal.ahfl:1468-1505
 -- AHFL_MAP contract_ir_expr_temporal_ExprAgent_1_atom_0 => observation contract ir::expr_temporal::ExprAgent[1] @ ir/expr_temporal.ahfl:1510-1579
 -- AHFL_MAP agent__ir_expr_temporal_ExprAgent__state => agent ir::expr_temporal::ExprAgent state @ ir/expr_temporal.ahfl:1227-1431
@@ -21,6 +21,9 @@
 -- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1614-2138
 -- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1614-2138 committed
 -- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ ir/expr_temporal.ahfl:1614-2138 failed
+-- AHFL_MAP (G (contract_ir_expr_temporal_ExprAgent_1_atom_0) -> (G ((! (agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide) | contract_ir_expr_temporal_ExprAgent_1_atom_0)))) => contract ir::expr_temporal::ExprAgent invariant[1] @ ir/expr_temporal.ahfl:1510-1579
+-- AHFL_MAP (G (!workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested) -> (G ((! (workflow__ir_expr_temporal_ExprWorkflow__node__run__running) | F (workflow__ir_expr_temporal_ExprWorkflow__node__run__completed))))) => workflow ir::expr_temporal::ExprWorkflow safety[0] @ ir/expr_temporal.ahfl:2389-2443
+-- AHFL_MAP (G (!workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested) -> (F ((workflow__ir_expr_temporal_ExprWorkflow__node__run__completed & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done))))) => workflow ir::expr_temporal::ExprWorkflow liveness[0] @ ir/expr_temporal.ahfl:2459-2490
 MODULE main
 VAR
   agent__ir_expr_temporal_ExprAgent__state : {Init, Done};

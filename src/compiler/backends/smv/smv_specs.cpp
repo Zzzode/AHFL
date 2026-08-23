@@ -40,6 +40,17 @@ void SmvPrinter::collect_specs() {
                              contract_clause_kind_name(clause.kind) + "[" + std::to_string(index) +
                              "]");
             specs_.push_back("LTLSPEC " + *formula);
+            // (P2 §3.5) Map the emitted LTL formula back to the contract clause
+            // source range.  The counterexample parser joins the violated spec
+            // (echoed verbatim by the checker) against this AHFL_MAP entry to
+            // attribute the violation to its AHFL location.  The formula uses
+            // `->`/`<->` operators, never ` => `, so it is a safe AHFL_MAP key.
+            add_symbol_mapping(*formula,
+                               with_source("contract " + contract_target + " " +
+                                               contract_clause_kind_name(clause.kind) + "[" +
+                                               std::to_string(index) + "]",
+                                           contract.get().provenance.source_path,
+                                           clause.source_range));
         }
     }
 
@@ -60,8 +71,14 @@ void SmvPrinter::collect_specs() {
                 observation_assumptions);
             specs_.push_back("-- workflow " + workflow.get().name + " safety[" +
                              std::to_string(index) + "]");
-            specs_.push_back("LTLSPEC " + wrap_formula_with_workflow_no_failure_assumption(
-                                              workflow.get(), formula));
+            const auto safety_spec =
+                wrap_formula_with_workflow_no_failure_assumption(workflow.get(), formula);
+            specs_.push_back("LTLSPEC " + safety_spec);
+            add_symbol_mapping(safety_spec,
+                               with_source("workflow " + workflow.get().name + " safety[" +
+                                               std::to_string(index) + "]",
+                                           workflow.get().provenance.source_path,
+                                           workflow.get().safety[index]->source_range));
         }
 
         for (std::size_t index = 0; index < workflow.get().liveness.size(); ++index) {
@@ -77,8 +94,14 @@ void SmvPrinter::collect_specs() {
                 observation_assumptions);
             specs_.push_back("-- workflow " + workflow.get().name + " liveness[" +
                              std::to_string(index) + "]");
-            specs_.push_back("LTLSPEC " + wrap_formula_with_workflow_no_failure_assumption(
-                                              workflow.get(), formula));
+            const auto liveness_spec =
+                wrap_formula_with_workflow_no_failure_assumption(workflow.get(), formula);
+            specs_.push_back("LTLSPEC " + liveness_spec);
+            add_symbol_mapping(liveness_spec,
+                               with_source("workflow " + workflow.get().name + " liveness[" +
+                                               std::to_string(index) + "]",
+                                           workflow.get().provenance.source_path,
+                                           workflow.get().liveness[index]->source_range));
         }
     }
 

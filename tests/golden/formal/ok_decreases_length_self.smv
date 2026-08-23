@@ -13,6 +13,9 @@
 -- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failed => workflow formal::decreases_length_self::WorkerWorkflow node run failed @ formal/decreases_length_self.ahfl:1313-1342
 -- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovering => workflow formal::decreases_length_self::WorkerWorkflow node run recovering @ formal/decreases_length_self.ahfl:1313-1342
 -- AHFL_MAP workflow__formal_decreases_length_self_WorkerWorkflow__node__run__recovered => workflow formal::decreases_length_self::WorkerWorkflow node run recovered @ formal/decreases_length_self.ahfl:1313-1342
+-- AHFL_MAP G ((array_size__formal::decreases_length_self::WorkerAgent__length = (rank__formal::decreases_length_self::WorkerAgent + 1))) => contract formal::decreases_length_self::WorkerAgent decreases[0] @ formal/decreases_length_self.ahfl:1017-1040
+-- AHFL_MAP (G (!workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested) -> (G ((! (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__running) | ((1 + 1) = 2))))) => workflow formal::decreases_length_self::WorkerWorkflow safety[0] @ formal/decreases_length_self.ahfl:1356-1397
+-- AHFL_MAP (G (!workflow__formal_decreases_length_self_WorkerWorkflow__node__run__failure_requested) -> (F ((workflow__formal_decreases_length_self_WorkerWorkflow__node__run__completed & (workflow__formal_decreases_length_self_WorkerWorkflow__node__run__state = Done))))) => workflow formal::decreases_length_self::WorkerWorkflow liveness[0] @ formal/decreases_length_self.ahfl:1413-1444
 MODULE main
 VAR
   agent__formal_decreases_length_self_WorkerAgent__state : {Init, Process, Done};

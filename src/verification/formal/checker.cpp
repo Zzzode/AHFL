@@ -564,7 +564,9 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
                 auto explanation = explain_counterexample(*trace);
                 // (h-12 QW-3) Fill the 4-dim projection fields (state_transitions,
                 // trigger_input, faulty_ctx_fields, violated_contract).
-                enhance_counterexample_mapping(*trace, explanation);
+                // (P2 §3.5) `structured_mappings` also carries the contract
+                // clause and capability-call source ranges recovered here.
+                enhance_counterexample_mapping(*trace, explanation, structured_mappings);
                 result.structured_explanation_json = counterexample_to_json(*trace, explanation);
             }
         }

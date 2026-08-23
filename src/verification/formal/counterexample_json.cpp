@@ -89,6 +89,20 @@ class CounterexampleJsonWriter : public ahfl::PrettyJsonWriter {
                 }
             });
         });
+        // P2 §3.5: capability_calls (parallel to action_trace)
+        field("capability_calls", [&]() {
+            print_array(1, [&](auto step_item) {
+                for (const auto &step : trace.capability_calls) {
+                    step_item([&]() {
+                        print_array(2, [&](auto call_item) {
+                            for (const auto &call : step) {
+                                call_item([&]() { write_capability_call(call, 3); });
+                            }
+                        });
+                    });
+                }
+            });
+        });
     }
 
     void write_explanation(const ViolationExplanation &explanation, int indent) {
@@ -115,6 +129,11 @@ class CounterexampleJsonWriter : public ahfl::PrettyJsonWriter {
             field("raw_spec", [&]() { write_string(explanation.violated_contract.raw_spec); });
             if (!explanation.violated_contract.name.empty()) {
                 field("name", [&]() { write_string(explanation.violated_contract.name); });
+            }
+            if (!explanation.violated_contract.source.empty()) {
+                field("source", [&]() {
+                    write_source_range(explanation.violated_contract.source, indent + 1);
+                });
             }
         });
     }
@@ -225,6 +244,16 @@ class CounterexampleJsonWriter : public ahfl::PrettyJsonWriter {
             field("guard_value", [&]() { out_ << (a.guard_value ? "true" : "false"); });
             if (!a.source.empty()) {
                 field("source", [&]() { write_source_range(a.source, indent + 1); });
+            }
+        });
+    }
+
+    void write_capability_call(const ProjectedCapabilityCall &c, int indent) {
+        print_object(indent, [&](auto field) {
+            field("logical_path", [&]() { write_string(c.logical_path); });
+            field("capability_name", [&]() { write_string(c.capability_name); });
+            if (!c.source.empty()) {
+                field("source", [&]() { write_source_range(c.source, indent + 1); });
             }
         });
     }

@@ -68,6 +68,16 @@ struct ProjectedVariable {
     std::size_t end_offset{0};
 };
 
+/// Light-weight source range (mirrors SourceMapping offsets, no symbol name).
+struct SourceRange {
+    std::string source_path;
+    std::size_t begin_offset{0};
+    std::size_t end_offset{0};
+    [[nodiscard]] bool empty() const {
+        return source_path.empty() && begin_offset == 0 && end_offset == 0;
+    }
+};
+
 /// (h-12 D4) Kind classification for violated_spec.
 enum class ViolatedContractKind {
     /// Global safety: `never(BAD_STATE)` or `G (...)`.
@@ -91,16 +101,12 @@ struct ViolatedContractInfo {
     /// backend via AHFL_MAP when a named `invariant` / `ensures` block is
     /// emitted; empty otherwise.
     std::string name;
-};
-
-/// Light-weight source range (mirrors SourceMapping offsets, no symbol name).
-struct SourceRange {
-    std::string source_path;
-    std::size_t begin_offset{0};
-    std::size_t end_offset{0};
-    [[nodiscard]] bool empty() const {
-        return source_path.empty() && begin_offset == 0 && end_offset == 0;
-    }
+    /// (P2 §3.5) AHFL source range of the violated contract clause, recovered
+    /// from the `spec__<...>` AHFL_MAP entry the SMV backend emits alongside
+    /// each LTLSPEC.  Empty when the backend did not emit a mapped source for
+    /// the clause (e.g. a synthesized lifecycle/control obligation, or a
+    /// backend that does not carry AHFL_MAP source offsets).
+    SourceRange source;
 };
 
 /// (h-12 D5) A single fired transition reconstructed from an SMV trace.
@@ -117,6 +123,25 @@ struct ProjectedAction {
     /// Value of the transition guard at the step the action fired.
     bool guard_value{false};
     /// Source location of the transition definition, if known.
+    SourceRange source;
+};
+
+/// (P2 §3.5) A single fired capability call reconstructed from an SMV trace.
+///
+/// One entry per capability-call define whose value went TRUE at a given
+/// step.  Recognized symbol shapes (both emitted by the SMV backend):
+///   - `agent__<Agent>__called__<Cap>`
+///   - `workflow__<Wf>__node__<Node>__call__<Cap>` (and its `__committed` /
+///     `__failed` lifecycle siblings)
+/// The source range is recovered from the symbol's AHFL_MAP entry when the
+/// backend attached one; otherwise it stays empty (never fabricated).
+struct ProjectedCapabilityCall {
+    /// Dot-separated AHFL path of the caller, e.g. "agent.OrderBot" or
+    /// "workflow.Checkout.node.pay".
+    std::string logical_path;
+    /// The capability name that was called, e.g. "charge_card".
+    std::string capability_name;
+    /// Source location of the capability call site, if known.
     SourceRange source;
 };
 
@@ -151,6 +176,13 @@ struct CounterexampleTrace {
     /// vector length therefore matches state_transitions.length (i.e.
     /// states.empty() ? 0 : (states.size() - 1).
     std::vector<std::vector<ProjectedAction>> action_trace;
+
+    /// (P2 §3.5) Fired-capability-call trace: one element per state step[1..n],
+    /// parallel to action_trace.  Entry i holds the capability calls whose
+    /// call-event define went TRUE between state i and state i+1.  Empty
+    /// per-step vectors are normal; a backend that emits no capability-call
+    /// symbols yields an all-empty outer vector.
+    std::vector<std::vector<ProjectedCapabilityCall>> capability_calls;
 };
 
 /// Human-readable explanation of why verification failed.
@@ -180,8 +212,21 @@ struct ViolationExplanation {
 /// - D3 faulty_ctx_fields:  `context__*` assignments with differing
 ///   initial/final values.
 /// - D4 violated_contract:  enum + description derived from violated_spec.
-void enhance_counterexample_mapping(CounterexampleTrace &trace,
-                                    ViolationExplanation &explanation);
+///   Its `source` range is recovered from the `spec__*` AHFL_MAP entry whose
+///   description matches the violated LTL formula, when present.
+/// - capability_calls:      per-step fired capability-call symbols
+///   (`agent__*__called__*` / `workflow__*__node__*__call__*`), with the
+///   source range from their AHFL_MAP entry when the backend emits one.
+///
+/// `mappings` is the same AHFL_MAP index produced by
+/// parse_structured_symbol_mappings; it is used to recover the violated
+/// contract clause source range (D4) and is optional — pass an empty map when
+/// the backend emits no AHFL_MAP source offsets and the contract source stays
+/// empty.
+void enhance_counterexample_mapping(
+    CounterexampleTrace &trace,
+    ViolationExplanation &explanation,
+    const std::unordered_map<std::string, SourceMapping> &mappings = {});
 
 /// (h-12 D4 helper) Derive ViolatedContractInfo from the raw smv
 /// violated-spec string.  Never returns std::nullopt; unknown specs get
