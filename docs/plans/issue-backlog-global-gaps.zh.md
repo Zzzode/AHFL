@@ -131,9 +131,9 @@
 - [x] 为 DAP 增加独立可执行入口 `ahfl-dap` 与进程级 smoke test。
 - [x] 将 formatter CLI 从单文件扩展到目录/project/workspace 批量模式，并定义 partial failure 输出格式。
 - [x] 修复 REPL `:simulate` 当前复用 verify 的语义偏差，接入基于 IR AgentDecl 的结构化状态机 step simulation。
-- [ ] 将 DAP 接入 runtime state、capability breakpoint、step execution。
+- [x] 将 DAP 接入 runtime state、capability breakpoint、step execution。（RFC 0015 全部 8 个 slice 已实现：DebugSession + DAP 事件 + state/capability/line breakpoint + stepping + stack trace/variables + evaluate + output events + VS Code debuggers contribution。）
 - [x] 为 incremental compiler 增加独立 `ahfl-incremental` 入口和进程级 smoke test。
-- [ ] 为 incremental compiler 定义 project-aware import graph、持久 cache 和 daemon invalidation contract。
+- [x] 为 incremental compiler 定义 project-aware import graph、持久 cache 和 daemon invalidation contract。（RFC 0016 全部 6 个 slice 已实现：CacheCore + import graph discovery + signature fingerprint + daemon mode + cache lifecycle + LSP persistent cache + IrCache unification。）
 - [x] 为 profiling 增加 `--time-passes`，输出 `-O` Semantic IR pass pipeline 耗时。
 - [x] 为 profiling 增加 `--smv-size-report`，输出 `emit smv` artifact 的 byte、line、LTLSPEC 数量。
 - [x] 为 telemetry 增加 `--trace-export` 与 `--metrics-export`，输出 CLI command span、duration 和 exit_code 的 JSONL 文件，不污染 stdout artifact。
