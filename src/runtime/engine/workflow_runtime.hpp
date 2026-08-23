@@ -60,6 +60,10 @@ struct WorkflowRuntimeConfig {
     // Runs on the workflow execution thread; a debugger may block inside this
     // hook to implement pause (RFC 0015).
     std::function<void(AgentId, std::string_view)> state_entered_hook;
+    // Debug/test hook invoked right before a capability call is dispatched to
+    // the configured invoker. Runs on the workflow execution thread; a
+    // debugger may block inside this hook to implement pause (RFC 0015).
+    std::function<void(AgentId, std::string_view)> capability_invoked_hook;
 };
 
 // Workflow runtime

@@ -54,6 +54,7 @@ class DebugSession {
   private:
     void execute(std::string workflow_name);
     void on_state_entered(ahfl::runtime::AgentId agent, std::string_view state_name);
+    void on_capability_invoked(ahfl::runtime::AgentId agent, std::string_view capability_name);
     void pause(std::string reason, std::string description);
     [[nodiscard]] bool mark_terminated();
     void emit_terminated();

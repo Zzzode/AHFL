@@ -127,6 +127,24 @@ std::string DebugSession::launch(const std::string &config_json) {
                                        const std::string_view state_name) {
         on_state_entered(agent, state_name);
     };
+    config.capability_invoked_hook = [this](const runtime::AgentId agent,
+                                            const std::string_view capability_name) {
+        on_capability_invoked(agent, capability_name);
+    };
+    // The debug session owns no capability providers, but the runtime only
+    // creates its capability dispatch path (and thus only fires
+    // capability_invoked_hook) when an invoker is configured. Install a stub
+    // that succeeds with a None value so workflows with capability calls can
+    // be debugged end-to-end; the hook still pauses before the stub runs.
+    config.contextual_capability_invoker =
+        [](const runtime::CapabilityInvocationContext &,
+           const std::string &,
+           const std::vector<runtime::Value> &) -> runtime::CapabilityCallResult {
+        runtime::CapabilityCallResult result;
+        result.status = runtime::CapabilityCallStatus::Success;
+        result.value = evaluator::make_none();
+        return result;
+    };
     config.cancellation_requested = [this] {
         std::lock_guard lock(mutex_);
         return stopping_;
@@ -203,6 +221,29 @@ void DebugSession::on_state_entered(const runtime::AgentId agent,
     }
 
     std::string description = "state breakpoint: " + std::string(state_name);
+    if (!hits.front().description.empty()) {
+        description = hits.front().description;
+    }
+    pause("breakpoint", std::move(description));
+}
+
+void DebugSession::on_capability_invoked(const runtime::AgentId agent,
+                                         const std::string_view capability_name) {
+    {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+            return;
+        }
+    }
+
+    const auto agent_id = agent_debug_id(agent);
+    const auto hits =
+        breakpoints_.check_capability_breakpoints(agent_id, std::string(capability_name));
+    if (hits.empty()) {
+        return;
+    }
+
+    std::string description = "capability breakpoint: " + std::string(capability_name);
     if (!hits.front().description.empty()) {
         description = hits.front().description;
     }

@@ -468,6 +468,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             invocation_context.capability_id = *capability;
             invocation_context.invocation_id = invocation;
 
+            if (config_.capability_invoked_hook) {
+                config_.capability_invoked_hook(context.agent_id, name);
+            }
+
             CapabilityCallResult call_result;
             if (config_.contextual_capability_invoker.has_value()) {
                 call_result =

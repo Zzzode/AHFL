@@ -82,6 +82,61 @@ workflow GreetingWorkflow {
     return path.string();
 }
 
+constexpr std::string_view kCapabilityWorkflowSource = R"(module dap::cap_workflow;
+
+struct Empty {}
+
+struct Result {
+    message: String;
+}
+
+capability DoWork() -> Unit;
+capability OtherWork() -> Unit;
+
+agent WorkerAgent {
+    input: Empty;
+    context: Empty;
+    output: Result;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DoWork, OtherWork];
+
+    transition Init -> Done;
+}
+
+flow for WorkerAgent {
+    state Init {
+        let _ = DoWork();
+        goto Done;
+    }
+
+    state Done {
+        return Result {
+            message: "done",
+        };
+    }
+}
+
+workflow WorkerWorkflow {
+    input: Empty;
+    output: Result;
+
+    node worker: WorkerAgent(Empty {});
+
+    return: worker;
+}
+)";
+
+[[nodiscard]] std::string write_capability_workflow_fixture() {
+    const auto dir = std::filesystem::temp_directory_path() / "ahfl_dap_tests";
+    std::filesystem::create_directories(dir);
+    const auto path = dir / "capability_workflow.ahfl";
+    std::ofstream out(path);
+    out << kCapabilityWorkflowSource;
+    return path.string();
+}
+
 [[nodiscard]] std::string launch_config(const std::string &program_path,
                                         const std::string &workflow_name) {
     auto body = ahfl::json::JsonValue::make_object();
@@ -344,6 +399,98 @@ int main() {
         (void)server.handle_request(disc_req);
         check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
               "terminated event emitted on disconnect");
+    }
+
+    // Test 10: capability breakpoint pauses execution and emits stopped
+    {
+        const auto fixture = write_capability_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::Capability;
+        bp.condition = "dap::cap_workflow::DoWork";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::cap_workflow::WorkerWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted on capability breakpoint hit");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            bool saw_breakpoint_reason = false;
+            for (const auto &frame : frames) {
+                if (frame.find(R"("event":"stopped")") != std::string::npos &&
+                    frame.find(R"("reason":"breakpoint")") != std::string::npos) {
+                    saw_breakpoint_reason = true;
+                }
+            }
+            check(saw_breakpoint_reason,
+                  "stopped event on capability breakpoint carries reason breakpoint");
+            check(!frame_has_event(frames, "terminated"),
+                  "no terminated event while capability breakpoint is active");
+        }
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        (void)server.handle_request(cont_req);
+
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after continue");
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
+    }
+
+    // Test 11: capability breakpoint on a different capability does not stop
+    {
+        const auto fixture = write_capability_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::Capability;
+        bp.condition = "dap::cap_workflow::OtherWork";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::cap_workflow::WorkerWorkflow");
+        (void)server.handle_request(launch_req);
+
+        // The workflow calls DoWork, not OtherWork: it must run to completion
+        // without ever stopping.
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted when capability breakpoint misses");
+
+        {
+            std::lock_guard lock(frames_mutex);
+            check(!frame_has_event(frames, "stopped"),
+                  "no stopped event when capability breakpoint does not match");
+        }
+
+        ahfl::dap::DapMessage disc_req;
+        disc_req.command = "disconnect";
+        (void)server.handle_request(disc_req);
     }
 
     std::printf("%d/%d tests passed\n", pass_count, test_count);
