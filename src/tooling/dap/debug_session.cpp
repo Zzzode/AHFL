@@ -782,6 +782,161 @@ std::string DebugSession::variables_json(const int variables_reference) {
     return oss.str();
 }
 
+namespace {
+
+// Split an evaluate expression into a root identifier and a chain of `.field`
+// segments. Returns nullopt when the expression is not a plain identifier
+// path (empty, contains call syntax, operators, indexing, whitespace inside a
+// segment, etc.) — the debugger only resolves live-value paths, not arbitrary
+// expressions (RFC 0015 Slice 6).
+[[nodiscard]] std::optional<std::vector<std::string>>
+parse_value_path(const std::string &expression) {
+    auto is_ident_start = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    };
+    auto is_ident_char = [&](char c) {
+        return is_ident_start(c) || (c >= '0' && c <= '9');
+    };
+
+    // Trim surrounding whitespace; interior whitespace is rejected below.
+    std::size_t begin = 0;
+    std::size_t end = expression.size();
+    while (begin < end && (expression[begin] == ' ' || expression[begin] == '\t')) {
+        ++begin;
+    }
+    while (end > begin && (expression[end - 1] == ' ' || expression[end - 1] == '\t')) {
+        --end;
+    }
+    if (begin == end) {
+        return std::nullopt;
+    }
+
+    std::vector<std::string> segments;
+    std::string current;
+    bool expect_start = true;
+    for (std::size_t i = begin; i < end; ++i) {
+        const char c = expression[i];
+        if (c == '.') {
+            if (current.empty()) {
+                return std::nullopt; // leading dot or empty segment
+            }
+            segments.push_back(std::move(current));
+            current.clear();
+            expect_start = true;
+            continue;
+        }
+        if (expect_start) {
+            if (!is_ident_start(c)) {
+                return std::nullopt;
+            }
+            expect_start = false;
+        } else if (!is_ident_char(c)) {
+            return std::nullopt;
+        }
+        current.push_back(c);
+    }
+    if (current.empty()) {
+        return std::nullopt; // trailing dot
+    }
+    segments.push_back(std::move(current));
+    return segments;
+}
+
+// Resolve a single `.field` segment against a value: struct fields and named
+// enum payloads are addressable by name. Returns nullptr when the value is not
+// a keyed aggregate or has no such member.
+[[nodiscard]] const evaluator::Value *resolve_member(const evaluator::Value &value,
+                                                     const std::string &field) {
+    if (const auto *sv = std::get_if<evaluator::StructValue>(&value.node)) {
+        if (const auto it = sv->fields.find(field); it != sv->fields.end()) {
+            return it->second.get();
+        }
+        return nullptr;
+    }
+    if (const auto *ev = std::get_if<evaluator::EnumValue>(&value.node)) {
+        if (const auto it = ev->named_payload.find(field); it != ev->named_payload.end()) {
+            return it->second.get();
+        }
+        return nullptr;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+std::string DebugSession::evaluate_json(const std::string &expression, const int frame_id) {
+    const auto path = parse_value_path(expression);
+    if (!path.has_value()) {
+        return R"({"error":)" +
+               json_escape("cannot evaluate \"" + expression +
+                           "\": only identifier and field-access paths are supported") +
+               "}";
+    }
+
+    std::lock_guard lock(mutex_);
+
+    // Resolve the frame's agent (frame_id is 1-based from the top, matching
+    // stack_trace_json / scopes_json).
+    std::string agent_id;
+    if (frame_id >= 1 && static_cast<std::size_t>(frame_id) <= frames_.size()) {
+        agent_id = frames_[frames_.size() - static_cast<std::size_t>(frame_id)].agent_id;
+    }
+    if (agent_id.empty()) {
+        for (auto it = frames_.rbegin(); it != frames_.rend(); ++it) {
+            if (it->kind == DebugFrame::Kind::State || it->kind == DebugFrame::Kind::Node) {
+                agent_id = it->agent_id;
+                break;
+            }
+        }
+    }
+
+    const std::string &root = path->front();
+
+    // Resolve the root binding using the runtime's own scope semantics.
+    const evaluator::Value *current = nullptr;
+    if (root == "input") {
+        if (const auto it = agent_inputs_.find(agent_id); it != agent_inputs_.end()) {
+            current = &it->second;
+        }
+    } else if (root == "output") {
+        if (const auto it = agent_outputs_.find(agent_id); it != agent_outputs_.end()) {
+            current = &it->second;
+        }
+    } else if (const auto node_it = node_results_.find(root); node_it != node_results_.end()) {
+        // Workflow node result (mirrors EvalContext node-output scope).
+        current = &node_it->second;
+    } else if (const auto input_it = agent_inputs_.find(agent_id);
+               input_it != agent_inputs_.end()) {
+        // Unqualified identifier: an agent-input struct field. The runtime
+        // flattens the input struct's fields into its input scope, so
+        // `field` and `input.field` name the same value.
+        current = resolve_member(input_it->second, root);
+    }
+
+    if (current == nullptr) {
+        return R"({"error":)" +
+               json_escape("unknown identifier \"" + root + "\" in the paused context") + "}";
+    }
+
+    // Walk the remaining `.field` segments.
+    for (std::size_t i = 1; i < path->size(); ++i) {
+        const evaluator::Value *next = resolve_member(*current, (*path)[i]);
+        if (next == nullptr) {
+            return R"({"error":)" +
+                   json_escape("no field \"" + (*path)[i] + "\" on \"" +
+                               value_type_name(*current) + "\"") +
+                   "}";
+        }
+        current = next;
+    }
+
+    std::ostringstream oss;
+    oss << R"({"result":)" << json_escape(evaluator::value_to_json(*current)) << R"(,"type":)"
+        << json_escape(value_type_name(*current)) << R"(,"variablesReference":)"
+        << register_variable_locked(*current) << "}";
+    return oss.str();
+}
+
 int DebugSession::register_variable_locked(const evaluator::Value &value) {
     if (!is_expandable(value)) {
         return 0;

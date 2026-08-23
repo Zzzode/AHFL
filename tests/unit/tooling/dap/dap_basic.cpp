@@ -270,6 +270,14 @@ workflow VarsWorkflow {
     return ahfl::json::serialize_json(*body);
 }
 
+// Build a DAP `evaluate` request body with an expression and optional frameId.
+[[nodiscard]] std::string evaluate_config(const std::string &expression, int frame_id = 1) {
+    auto body = ahfl::json::JsonValue::make_object();
+    body->set("expression", ahfl::json::JsonValue::make_string(expression));
+    body->set("frameId", ahfl::json::JsonValue::make_int(frame_id));
+    return ahfl::json::serialize_json(*body);
+}
+
 [[nodiscard]] bool frame_has_event(const std::vector<std::string> &frames,
                                    std::string_view event_type) {
     const std::string needle = R"("event":")" + std::string(event_type) + R"(")";
@@ -1428,6 +1436,193 @@ int main() {
         ahfl::dap::DapMessage disc_req2;
         disc_req2.command = "disconnect";
         (void)server.handle_request(disc_req2);
+    }
+
+    // Test 22: evaluate resolves value paths against the paused context
+    {
+        const auto fixture = write_vars_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::State;
+        bp.condition = "Done";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::vars_workflow::VarsWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted before evaluate");
+
+        // input.tag: a field access on the live agent input struct.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("input.tag"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok, "evaluate(input.tag) parses as JSON object");
+            if (ok) {
+                check(json_string_or(**parsed, "result", "").find("hello") != std::string::npos,
+                      "evaluate(input.tag) returns the live field value");
+                check((*parsed)->get("error") == nullptr,
+                      "evaluate(input.tag) has no error");
+            }
+        }
+
+        // Unqualified field: the runtime flattens input struct fields into the
+        // input scope, so `tag` names the same value as `input.tag`.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("tag"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && json_string_or(**parsed, "result", "").find("hello") != std::string::npos,
+                  "evaluate(tag) resolves an unqualified input field");
+        }
+
+        // Nested field chain reaches the leaf Int and yields a scalar (no
+        // chained reference).
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("input.inner.x"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && json_string_or(**parsed, "result", "") == "42",
+                  "evaluate(input.inner.x) walks the nested field chain");
+            if (ok) {
+                check(json_int_or(**parsed, "variablesReference", -1) == 0,
+                      "scalar evaluate result has no chained reference");
+            }
+        }
+
+        // A structured result registers a chained variablesReference.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("input.inner"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && json_int_or(**parsed, "variablesReference", 0) >= 1000,
+                  "structured evaluate result gets a chained variablesReference");
+        }
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        const std::size_t frames_before_continue = [&] {
+            std::lock_guard lock(frames_mutex);
+            return frames.size();
+        }();
+        (void)server.handle_request(cont_req);
+        check(wait_for_stopped_reason(frames, frames_mutex, "breakpoint",
+                                      std::chrono::seconds(5), frames_before_continue),
+              "second stopped event after evaluate test");
+        ahfl::dap::DapMessage cont_req2;
+        cont_req2.command = "continue";
+        (void)server.handle_request(cont_req2);
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after evaluate test");
+
+        ahfl::dap::DapMessage disc_req2;
+        disc_req2.command = "disconnect";
+        (void)server.handle_request(disc_req2);
+    }
+
+    // Test 23: evaluate reports errors for unresolvable and malformed input
+    {
+        const auto fixture = write_vars_workflow_fixture();
+
+        ahfl::dap::DapServer server;
+        std::vector<std::string> frames;
+        std::mutex frames_mutex;
+        server.set_event_output([&](std::string_view framed) {
+            std::lock_guard lock(frames_mutex);
+            frames.push_back(std::string(framed));
+        });
+
+        ahfl::dap::Breakpoint bp;
+        bp.kind = ahfl::dap::BreakpointKind::State;
+        bp.condition = "Done";
+        bp.enabled = true;
+        (void)server.breakpoint_manager().add_breakpoint(bp);
+
+        ahfl::dap::DapMessage launch_req;
+        launch_req.command = "launch";
+        launch_req.body = launch_config(fixture, "dap::vars_workflow::VarsWorkflow");
+        (void)server.handle_request(launch_req);
+
+        check(wait_for_event(frames, frames_mutex, "stopped", std::chrono::seconds(5)),
+              "stopped event emitted before evaluate error checks");
+
+        // Unknown field on a struct: error.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("input.missing"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && (*parsed)->get("error") != nullptr,
+                  "evaluate(input.missing) returns an error");
+        }
+
+        // Unknown root identifier: error.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("nope"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && (*parsed)->get("error") != nullptr,
+                  "evaluate(nope) returns an error for an unknown identifier");
+        }
+
+        // Non-path expression (call syntax): error, not a crash.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config("foo()"));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && (*parsed)->get("error") != nullptr,
+                  "evaluate(foo()) rejects unsupported expression syntax");
+        }
+
+        // Empty expression: error.
+        {
+            const auto body = dap_command(server, "evaluate", evaluate_config(""));
+            const auto parsed = ahfl::json::parse_json(body);
+            const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+            check(ok && (*parsed)->get("error") != nullptr,
+                  "evaluate(\"\") rejects an empty expression");
+        }
+
+        ahfl::dap::DapMessage cont_req;
+        cont_req.command = "continue";
+        const std::size_t frames_before_continue = [&] {
+            std::lock_guard lock(frames_mutex);
+            return frames.size();
+        }();
+        (void)server.handle_request(cont_req);
+        check(wait_for_stopped_reason(frames, frames_mutex, "breakpoint",
+                                      std::chrono::seconds(5), frames_before_continue),
+              "second stopped event after evaluate error test");
+        ahfl::dap::DapMessage cont_req2;
+        cont_req2.command = "continue";
+        (void)server.handle_request(cont_req2);
+        check(wait_for_event(frames, frames_mutex, "terminated", std::chrono::seconds(5)),
+              "terminated event emitted after evaluate error test");
+
+        ahfl::dap::DapMessage disc_req2;
+        disc_req2.command = "disconnect";
+        (void)server.handle_request(disc_req2);
+    }
+
+    // Test 24: evaluate with no active session returns an error
+    {
+        ahfl::dap::DapServer server;
+        const auto body = dap_command(server, "evaluate", evaluate_config("input.tag"));
+        const auto parsed = ahfl::json::parse_json(body);
+        const bool ok = parsed.has_value() && *parsed && (*parsed)->is_object();
+        check(ok && (*parsed)->get("error") != nullptr,
+              "evaluate with no active session returns an error");
     }
 
     std::printf("%d/%d tests passed\n", pass_count, test_count);

@@ -317,16 +317,18 @@ std::string DapServer::handle_step_out() {
 
 std::string DapServer::handle_evaluate(const std::string &body) {
     auto parsed = ahfl::json::parse_json(body);
-    auto expression = parsed.has_value() && *parsed && (*parsed)->is_object()
-                          ? get_json_string(**parsed, "expression")
-                          : "";
-    (void)expression;
-    // Evaluate in the paused context arrives with the DebugSession evaluator
-    // (RFC 0015, later slice).
-    std::ostringstream oss;
-    oss << R"({"result":)" << json_escape("(evaluate not yet supported)")
-        << R"(,"variablesReference":0})";
-    return oss.str();
+    const bool is_object = parsed.has_value() && *parsed && (*parsed)->is_object();
+    const auto expression = is_object ? get_json_string(**parsed, "expression") : std::string{};
+    // DAP `evaluate` carries an optional `frameId`; default to the top frame.
+    const int frame_id = is_object ? get_json_int(**parsed, "frameId") : -1;
+
+    if (!session_) {
+        return R"({"error":)" + json_escape("no active debug session") + "}";
+    }
+    if (expression.empty()) {
+        return R"({"error":)" + json_escape("evaluate requires a non-empty \"expression\"") + "}";
+    }
+    return session_->evaluate_json(expression, frame_id);
 }
 
 } // namespace ahfl::dap

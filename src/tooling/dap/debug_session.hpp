@@ -139,6 +139,23 @@ class DebugSession {
     /// value's children (struct fields, enum payloads, list items).
     [[nodiscard]] std::string variables_json(int variables_reference);
 
+    /// DAP `evaluate`: evaluate `expression` in the paused context of the
+    /// given frame (RFC 0015 Slice 6). The debugger holds live runtime values
+    /// (agent input/output, node results, workflow input) but no compiled
+    /// `ir::Expr`, so the feasible evaluation surface is an identifier root
+    /// followed by a chain of `.field` accesses, resolved against those live
+    /// bindings using the runtime's own scope semantics: `input` / `output`
+    /// name the frame agent's input / output value, an unqualified identifier
+    /// names a workflow node result or an agent-input field, and each `.field`
+    /// segment indexes into a struct field or a named enum payload. On success
+    /// the result is serialized via `value_to_json`; a structured result gets a
+    /// chained `variablesReference`. Malformed or unresolvable expressions
+    /// return `{"error": "..."}`. Driving the full Evaluator would require a
+    /// parse+resolve+typecheck+lower pipeline over a synthetic program, which
+    /// the paused session cannot honestly reconstruct; this limitation is
+    /// documented in the RFC Decision History.
+    [[nodiscard]] std::string evaluate_json(const std::string &expression, int frame_id);
+
   private:
     void execute(std::string workflow_name, ahfl::evaluator::Value workflow_input);
     void on_agent_input(ahfl::runtime::AgentId agent,
