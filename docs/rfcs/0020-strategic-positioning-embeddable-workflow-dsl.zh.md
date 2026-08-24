@@ -1,21 +1,21 @@
 ---
 rfc: "0020"
 title: "AHFL Strategic Positioning: Embeddable Verifiable Agent-Workflow DSL"
-status: "draft"
+status: "review"
 area: ["process", "language", "runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
 updated: "2026-08-25"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  process: "TBD"
-  language: "TBD"
-  runtime: "TBD"
-  tooling: "TBD"
+  process: "project lead"
+  language: "language owner"
+  runtime: "runtime owner"
+  tooling: "tooling owner"
 required_reviewers: ["process", "language"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-09-30"
 ---
@@ -214,20 +214,51 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
 
 ## Open Questions
 
-1. **embedding ABI 的语言无关形态**:把 [RFC 0019](0019-wasm-runtime-model.zh.md) 的
-   `ahfl_cap`(WASM import 形态)抽象为语言无关的宿主接口时,采用哪种最小 ABI?
-   一个稳定的 C ABI(`extern "C"` + `(ptr,len)` 帧)是主流嵌入式语言(Lua/eBPF)的
-   共同选择,是否直接采纳?
-2. **宿主如何模块化装卸能力**:Claude-Code 式宿主运行时注册/注销 capability 的机制——
-   编译期声明的 capability 白名单如何与运行时可变的宿主能力集协调?(静态声明 +
-   运行时绑定检查?)
-3. **异步能力**:LLM/HTTP 本质异步,而编排 DSL 的 capability 调用点在语义上是"调用→
-   得结果→继续"。这在 WASM 同步 ABI(见 [RFC 0019](0019-wasm-runtime-model.zh.md) 已决:
-   host 侧吸收异步)之外,对原生宿主与 agent-框架宿主分别意味着什么?是否需要语言级的
-   `await`/续延语义,还是全部下沉到宿主?
-4. **多宿主语义一致性的验证深度**:同一 workflow 在 native / WASM / agent-框架宿主下,
-   要求"逐状态迁移一致"(已由 [RFC 0019](0019-wasm-runtime-model.zh.md) Goal 6 对 WASM
-   确立),还是也要求跨所有宿主的 capability 调用序列一致?后者更强但更难。
+四个设计问题已在进入 review 前给出**倾向性结论 + 理由**。它们的共同设计哲学:
+**语言核心保持薄、同步、可验证(状态机 + capability 声明);通用计算、异步、宿主差异
+全部关在 capability ABI 边界的宿主侧。** 结论来源是 capability-based security + 嵌入式
+语言(Lua/eBPF)+ WASI 能力模型三条成熟路线的交集,且每条都强化本 RFC 的定位(薄核心
+才好嵌、好验证、好多宿主)。具体的 ABI 字节格式由后续实现型 RFC 承载;本 RFC 只定方向。
+
+1. **embedding ABI 的语言无关形态** → **决策:稳定的 C ABI + `(ptr,len)` 帧 + 版本号,
+   一个 `ahfl_host.h` 作为唯一契约。** 宿主用任意语言实现(所有语言都有 C FFI,是最大
+   公约数);数据帧为长度前缀序列化字节(沿用 [RFC 0019](0019-wasm-runtime-model.zh.md)
+   的 value_json,序列化格式是版本字段可后换);capability 按 `SymbolId` 命名(索引式
+   身份,重命名不破 ABI);fail-closed。WASM 的 `ahfl_cap` import 与原生宿主的函数指针表
+   都从这个 C 头派生。**理由**:Lua/CPython/eBPF/SQLite 等所有成功嵌入式运行时的宿主
+   接口都是 C ABI——它是唯一能被 C++/Rust/Go/Java(JNI)/Node(N-API)/Python(ctypes)
+   全部调用的东西。WIT/Component Model 更优雅但浏览器支持未成熟,列为未来 major 版本
+   目标(靠版本号留迁移路径);JSON-RPC/gRPC over socket 走进程外,丢掉 in-process 嵌入
+   的性能与沙箱红利,那就不是"嵌入"了。**与 Q3 联合决策**(异步 pending 状态影响帧)。
+2. **宿主如何模块化装卸能力** → **决策:两层——编译期声明白名单(静态上界,不可越)+
+   运行时能力绑定表(动态,可装卸,但只能是白名单的子集)。** agent 的 `capabilities: [...]`
+   声明能力上界(typecheck 强制,现状 `CapabilityNotAllowed`);宿主实例化时提供绑定表,
+   可运行时装卸,但绝不能提供源码未声明的能力;声明了但未绑定 → 调用时 fail-closed 报
+   "capability unbound",不崩溃。**理由**:这正是 WASI 的能力模型(模块声明 import 为
+   上界,宿主 grant 实际能力,模块无法调用未 grant 的)与 capability-based security 经典
+   形态(能力不可伪造、只能授予、可收窄不可放大)。完美契合 AHFL 已有的编译期白名单 +
+   运行时绑定双层,且对 agent-框架宿主场景支持"运行时按信任级别给/收能力,但永远在编译期
+   安全上界内"。纯运行时(无白名单)丢掉"上线前证明能力上界"的核心卖点;纯编译期(不可
+   装卸)太僵,无法表达不同信任级别。**运行时能力集 ⊆ 编译期声明集**。
+3. **异步能力** → **决策:语言语义层 capability 调用保持"同步"(调用→得结果→继续),
+   不引入语言级 async/await;异步性下沉给宿主吸收;但 capability ABI 的返回必须支持一个
+   "pending/挂起"状态,而非只有成功/失败。** 原生宿主内部 block 等待(现状);server 端
+   WASM host import 阻塞([RFC 0019](0019-wasm-runtime-model.zh.md) 已决 host 侧吸收);
+   浏览器宿主用 JSPI(WASM 原生挂起等 Promise,长期正解)或 Asyncify(过渡)。挂起语义
+   复用 workflow 状态机的"停在某状态等外部事件"——即 [RFC 0015](0015-dap-runtime-integration.zh.md)
+   DAP 的 step 语义。**理由**:Deno/Node N-API、gRPC async stub、eBPF 非阻塞 helper 的
+   共同智慧是"把异步关在 ABI 边界宿主侧,语言侧保持简单";语言级 async 是 B 型通用计算,
+   会炸掉验证复杂度(要证无死锁/竞态),违反定位。纯同步不留 pending 在浏览器/serverless
+   (函数有时限,LLM 调用数十秒)会死。
+4. **多宿主语义一致性的验证深度** → **决策:分级——L1 逐状态迁移一致(强制,所有宿主)、
+   L2 capability 调用序列一致(强制)、L3 capability 参数/返回逐字节一致(codegen 落地后
+   作为差分测试回归门,不作语言级保证)。** L1 是"WASM 是另一个执行目标而非另一套语义"
+   ([RFC 0019](0019-wasm-runtime-model.zh.md) Goal 6)的最小锚;L2 因 capability 是可观察
+   外部行为、顺序不一致即语义分歧;L3 更强但依赖完整 codegen,作差分测试。**理由**:这是
+   编译器交叉验证的标准做法——简单参考实现(native 解释器)+ 复杂优化实现(WASM codegen)
+   用差分测试保等价(GCC/LLVM/JIT 皆然),这也是 native 解释器必须永久保留的核心理由。
+   只要 L1 太弱(状态一致但 capability 参数可能全错);一上来要 L3 在 codegen 未做时无从
+   验证且阻塞迭代。分级让验证可渐进。
 
 ## Decision History
 
@@ -235,3 +266,9 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
   workflow 编排 DSL(Lua/eBPF-for-agents),能力由宿主经 capability 边界提供,多宿主
   (native / WASM+WASI / agent 框架)。确立 A 型编排表达力无上限、B 型通用计算留在
   capability 边界外的护栏,并把 capability embedding ABI 提为项目核心资产。
+- 2026-08-25: 四个 Open Questions 给出倾向性结论并进入 review:(Q1)语言无关 C ABI +
+  `(ptr,len)` 帧 + 版本号,SymbolId 命名,WIT 为未来目标;(Q2)编译期白名单上界 +
+  运行时能力绑定子集(WASI 能力模型);(Q3)语言同步语义 + 异步下沉宿主 + ABI 支持
+  pending 挂起(JSPI/Asyncify 于浏览器);(Q4)L1 迁移一致 / L2 capability 序列一致强制、
+  L3 参数逐字节作差分测试回归门。共同哲学:薄核心 + 脏东西关在宿主侧 ABI。Owners /
+  shepherd 分配,tracking_issue / discussion 设为 none。Status draft → review。
