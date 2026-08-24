@@ -1,19 +1,19 @@
 ---
 rfc: "0017"
 title: "BMC Contract Semantics"
-status: "draft"
+status: "review"
 area: ["formal", "compiler"]
 stability: "experimental"
 created: "2026-08-24"
 updated: "2026-08-24"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  formal: "TBD"
-  compiler: "TBD"
+  formal: "formal owner"
+  compiler: "compiler owner"
 required_reviewers: ["formal", "compiler"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-09-30"
 ---
@@ -155,10 +155,21 @@ flowchart TD
 编码是 IR → SMT-LIB 2 的确定性映射（无 wall clock / 无随机 / 无 host path，遵守
 artifact 确定性边界）：
 
-- **类型映射**：`Bool` → `Bool`；`Int` → `Int`（数学整数，溢出语义见 Open Questions）；
+- **类型映射**：`Bool` → SMT `Bool`；`Int` → SMT `Int`（数学整数）。运行时 `Int` 是
+  `int64_t`（`src/runtime/evaluator/value.hpp:34`，`+`/`-`/`*` 环绕、无检查），但 contract
+  验证关心的是逻辑正确性,故默认编码为**数学整数**（可判定、更快）；溢出检查作为
+  **可选**附加断言（在每个算术节点旁发射 `INT64_MIN ≤ result ≤ INT64_MAX`），仅在用户
+  显式请求时开启,不默认拖慢求解。spec 的有界子类型 `Int(lo,hi)`
+  （`docs/spec/core-language.zh.md:176`）额外发射 `lo ≤ x ≤ hi` 约束。
   `Decimal(p)` → 按 scale 提升为 `Int` 的定点表示；struct → 每个字段一个 SMT 常量，
   按 `SymbolId` 而非字段名生成稳定的 SMT 符号名（索引式身份，遵守 AGENTS.md 原则）；
   enum → 判别式为有界 `Int`（variant index），payload 递归编码。
+- **除法 / 取模映射**：`/` 与 `%` 编码为 SMT 的**向零截断整除 / 截断取模**，对齐运行时
+  语义（`src/runtime/evaluator/evaluator.cpp:1364`：整数 `/` 用 C++ `/` 截断，`1377`：`%`
+  用 C++ `%`；除零/模零在运行时是 `make_error`）。因此对每个 `/` 与 `%` 节点**自动附加
+  一条 `divisor != 0` 的验证义务**：若求解器能满足 `divisor == 0`，则该表达式在某执行下
+  会触发运行时除零错误,报为 `Unsafe` 反例；能证明 `divisor != 0` 则安全。这把"除零"
+  从运行时崩溃提升为可静态验证的 contract 属性。
 - **谓词映射**：`ExprRef` 指向的 IR 表达式树按 `std::variant` visitor 递归下降为 SMT
   term；每个 IR 表达式节点有唯一 SMT 编码规则，不存在字符串模板拼接谓词。
 - **符号命名**：SMT 符号从 `SymbolId` + 展开步索引 i 确定性生成（如
@@ -199,9 +210,19 @@ capability/contract 子句映射到 source range）。
 
 ### 求解器后端接线
 
-SMT 求解器（Z3 / cvc5）作为可选外部工具，接入 `checker.cpp` 已有的工具能力矩阵：
+SMT 求解器初期**只接 Z3**（经 `checker.cpp` 已有的工具能力矩阵接入）：
 `missing_binary`（求解器未安装）→ 确定 skip；`solver_error` → 确定 failure；正常
 → `Safe`/`Unsafe`。与 nuXmv 的 skip 语义对齐，CI 在求解器缺失时不 fail、不伪造结论。
+cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 不同时接入两者,避免初期
+维护面过宽。
+
+### `emit smt` artifact
+
+新增 `ahflc emit smt`（与 `emit smv` 对称），把编码后的 SMT-LIB 2 作为可检查 artifact
+输出到 stdout。用途：调试编码层、外部复用（用户自己的 SMT 工作流）、以及作为 golden
+测试的稳定快照。该 artifact 遵守确定性边界（无 wall clock / pid / host path / 随机），
+同一程序多次 `emit smt` 字节一致。它是继 `emit ir` / `emit smv` 之后的又一 emit 目标,
+不引入新的运行时依赖(SMT 文本由编码层直接生成,不需要求解器在场)。
 
 ## User Impact
 
@@ -213,6 +234,10 @@ SMT 求解器（Z3 / cvc5）作为可选外部工具，接入 `checker.cpp` 已�
   结论；`Unsafe` 附具体反例赋值。
 - SMT 求解器未安装时，报告明确标注 `solver_unavailable` skip，退出码语义与 nuXmv 缺失
   一致。
+- 新增 `ahflc emit smt`：把 contract 数据谓词的 SMT-LIB 2 编码输出为可检查 artifact,
+  供调试与外部 SMT 工具复用。
+- 涉及 `/` 或 `%` 的 contract:验证层会尝试证明除数非零,不能证明时报除零反例——此前
+  除零只在运行时以 error 暴露。
 - 时序属性（`safety`/`liveness`）行为完全不变，仍走 SMV/nuXmv。
 
 ## Compatibility and Migration
@@ -226,8 +251,8 @@ SMT 求解器（Z3 / cvc5）作为可选外部工具，接入 `checker.cpp` 已�
   不影响 `check`/`run`。
 - 新诊断 `formal.NOT_IN_VERIFIED_SUBSET` 用于 contract 数据谓词场景是新的触发点，但 code
   本身已存在，消费方（LSP/CLI）无需改动。
-- 无 artifact 格式 breaking：SMT-LIB 编码是内部中间产物，不作为稳定 artifact 发布
-  （见 Open Questions 关于是否 `emit smt` 的问题）。
+- 无 artifact 格式 breaking：新增的 `emit smt` 是一个新 emit 目标（不改动既有
+  `emit ir` / `emit smv` 输出），SMT-LIB 编码遵守确定性边界。
 
 ## Implementation Plan
 
@@ -237,29 +262,37 @@ SMT 求解器（Z3 / cvc5）作为可选外部工具，接入 `checker.cpp` 已�
    `is_verifiable_subset_eligible` 的调用，新增 contract-数据谓词的可编码性判定，产出
    `formal.NOT_IN_VERIFIED_SUBSET` 诊断。
 2. **SMT 编码层**（`src/verification/formal/smt_encode.{hpp,cpp}` 新增）：IR 表达式 →
-   SMT-LIB 2 term 的 visitor；类型映射；`SymbolId` 确定性符号命名。纯函数、可单测。
-3. **SMT 求解器 seam**（`src/verification/formal/`）：可选 Z3/cvc5 进程后端，接入
+   SMT-LIB 2 term 的 visitor；类型映射（含 `Int(lo,hi)` 边界约束、`/`/`%` 的 `divisor != 0`
+   验证义务、可选溢出检查）；`SymbolId` 确定性符号命名。纯函数、可单测。
+3. **`emit smt` artifact**（`src/compiler/backends/driver.cpp` + CLI）：新增 `emit smt`
+   目标，输出编码层产物到 stdout；不需要求解器在场。
+4. **SMT 求解器 seam**（`src/verification/formal/`）：Z3 进程后端（cvc5 后续），接入
    `checker.cpp` 工具能力矩阵，`missing_binary`/`solver_error`/正常三态。
-4. **SMT-BMC 引擎**（`src/verification/formal/bmc.cpp` 扩展）：状态展开 + requires/invariant/
+5. **SMT-BMC 引擎**（`src/verification/formal/bmc.cpp` 扩展）：状态展开 + requires/invariant/
    ensures 断言 + bound-k 查询；替换 `run_cegar` stub 或新增 `run_smt_bmc`。
-5. **k-induction 数据扩展**（`bmc.cpp`）：base case + inductive step 两次查询。
-6. **反例物化**（`bmc.cpp` + `counterexample.cpp`）：SMT model → `BmcCounterexample` +
+6. **k-induction 数据扩展**（`bmc.cpp`）：base case + inductive step 两次查询；inductive
+   step 无法强化时回退到有界结论并标注 `bounded_safe`。
+7. **反例物化**（`bmc.cpp` + `counterexample.cpp`）：SMT model → `BmcCounterexample` +
    source-range 映射。
-7. **verify 报告集成**（`checker.cpp` + `src/tooling/cli/`）：统一呈现 SMV + SMT-BMC 结论
+8. **verify 报告集成**（`checker.cpp` + `src/tooling/cli/`）：统一呈现 SMV + SMT-BMC 结论
    与 skip reason。
-8. **测试**：见 Test Plan。
+9. **测试**：见 Test Plan。
 
 ## Test Plan
 
 - **单元**（`tests/unit/verification/formal/`）：SMT 编码 visitor 逐节点（关系/算术/布尔/
   struct 投影/enum 判别）→ 期望 SMT-LIB term；确定性（同程序两次编码字节一致）；子集
-  边界（String 内容/量化/capability 结果 → `NOT_IN_VERIFIED_SUBSET`）。
+  边界（String 内容/量化/capability 结果 → `NOT_IN_VERIFIED_SUBSET`）；`Int(lo,hi)` 发射
+  边界约束；`/`/`%` 发射 `divisor != 0` 义务；可选溢出检查断言。
+- **`emit smt` golden**：一个数据谓词 contract 程序 `emit smt` → 与捕获的 SMT-LIB golden
+  字节比对；两次 emit 字节一致（确定性）。
 - **Golden 正例**：`ensures: output.total == input.qty * input.price;` 之类可证 contract →
-  `Safe`；k-induction 无界证明。
-- **Golden 负例**：故意违反的 `ensures`（如 off-by-one）→ `Unsafe` + 具体反例赋值。
+  `Safe`；k-induction 无界证明；可证"除数非零"的 `/` contract → `Safe`。
+- **Golden 负例**：故意违反的 `ensures`（如 off-by-one）→ `Unsafe` + 具体反例赋值；
+  可能除零的 `/` contract → `Unsafe`（除零反例）。
 - **集成**（`tests/scripts/`）：`ahflc verify` 全链路——SMV 时序 + SMT-BMC 数据谓词
    混合程序，报告同时呈现两者。
-- **反向/工具缺失**：SMT 求解器不可用 → 确定 `solver_unavailable` skip，退出码正确，
+- **反向/工具缺失**：SMT 求解器（Z3）不可用 → 确定 `solver_unavailable` skip，退出码正确，
    绝不 `Safe`。
 - **回归**：`ctest --preset test-dev`；现有 `ahfl.formal.bmc_all` /
    `ahfl.formal.bmc_depth_customization_all`（`tests/cmake/LabelTests.cmake:341/370`）无回归。
@@ -295,18 +328,27 @@ SMT 求解器（Z3 / cvc5）作为可选外部工具，接入 `checker.cpp` 已�
 
 ## Open Questions
 
-1. 整数溢出语义：`Int` 编码为数学整数（`SMT Int`）还是有界 bitvector？前者简单但不反映
-   运行时 wrap 语义，后者精确但更慢。倾向数学整数 + 可选的溢出检查断言。
-2. 除法/取模：`/` 与 `%` 在 SMT 中的编码（整除 vs 实数除；除零处理）需与 AHFL 运行时
-   语义对齐后确定。
-3. SMT 求解器选型：Z3 vs cvc5 vs 两者皆可（能力矩阵多后端）？初期可只接 Z3。
-4. 是否新增 `ahflc emit smt` 把编码后的 SMT-LIB 作为可检查 artifact 暴露（类比
-   `emit smv`）？有利于调试与外部复用，但增加一个需维护的 artifact 契约。
-5. 可验证子集的渐进扩展路径：`List`/`Map` 的有界量化（展开到固定长度）是否作为后续
-   RFC，还是本 RFC 预留 hook？
-6. k-induction 的 inductive step 强化（needs auxiliary invariants）失败时，是否自动回退到
-   纯 BMC 有界结论并明确标注"仅 ≤k 步安全"？
+1. ~~整数溢出语义~~（已决议，2026-08-24）：`Int` 编码为**数学 `SMT Int`**（可判定、快）;
+   溢出检查作为**可选**附加断言（`INT64_MIN ≤ result ≤ INT64_MAX`），仅在显式请求时开启;
+   `Int(lo,hi)` 有界子类型额外发射 `lo ≤ x ≤ hi`。不默认用 bitvector——contract 验证关心
+   逻辑正确性,溢出是可选的独立检查维度。
+2. ~~除法/取模~~（已决议，2026-08-24）：编码为向零截断整除 / 截断取模,对齐运行时
+   （`evaluator.cpp:1364/1377`）;每个 `/`/`%` 自动附加 `divisor != 0` 验证义务,可能除零
+   报 `Unsafe` 反例（对齐运行时"除零 error"）。
+3. ~~SMT 求解器选型~~（已决议，2026-08-24）：初期只接 **Z3**,经 `checker.cpp` 能力矩阵
+   三态接入;cvc5 作为后续可选后端,不同时接入以控制维护面。
+4. ~~是否新增 `emit smt`~~（已决议，2026-08-24）：**是**,新增 `ahflc emit smt` 与
+   `emit smv` 对称,SMT-LIB 作为可检查 artifact（确定性、无需求解器在场）。
+5. ~~List/Map 量化~~（已决议，2026-08-24）：**明确排除**,列为后续独立 RFC;本 RFC 不
+   预留 hook（避免 YAGNI 抽象）,落在子集外的量化谓词报 `NOT_IN_VERIFIED_SUBSET`。
+6. ~~k-induction 回退~~（已决议，2026-08-24）：inductive step 无法强化时**自动回退到纯
+   BMC 有界结论**,报告标注 `bounded_safe`（"仅 ≤k 步安全"）,绝不谎报无界 `Safe`。
 
 ## Decision History
 
 - 2026-08-24: Draft opened.
+- 2026-08-24: All six Open Questions resolved (Int→math SMT Int + optional overflow
+  check; `/`/`%`→truncating with `divisor != 0` obligation; Z3-only initially; add
+  `emit smt`; List/Map quantification excluded to a follow-up RFC; k-induction falls
+  back to bounded `bounded_safe`). Design / User Impact / Implementation Plan / Test
+  Plan updated to match. Status draft → review.

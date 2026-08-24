@@ -99,7 +99,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0017"
     title: "BMC Contract Semantics"
-    status: "draft"
+    status: "review"
     file: "0017-bmc-contract-semantics.zh.md"
     area: ["formal", "compiler"]
     stability: "experimental"
