@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["formal", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["8778a333"]
+implementation_prs: ["8778a333", "46653a24"]
 decision_due: "2026-09-30"
 ---
 
