@@ -56,6 +56,21 @@ flowchart TD
 
 ---
 
+## 1.5 定位与宿主模型
+
+> 本节的**定位真值来源**是 [RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)（accepted）。此处只给分层地图需要的摘要；完整论证、备选方案与决策见该 RFC。
+
+AHFL 的定位是**一门可嵌入（embeddable）、可验证（verifiable）的 agent workflow 编排 DSL**——agent 时代的 Lua / eBPF / SQL：窄而标准、嵌入宿主、能力由宿主提供、且加载/执行前可被验证。
+
+- **能力由宿主提供**：AHFL 编排 workflow 的结构与行为，但不自己实现底层通用计算；能力由宿主（任意语言实现）经一条 **capability 嵌入边界（capability embedding ABI）** 提供。
+- **多宿主**：同一份 workflow 可嵌入不同宿主——原生解释器（参考语义 + 开发/调试）、WASM+WASI（运行时权限沙箱）、agent 框架宿主（宿主能力当 capability 调用、可模块化装卸）。因此不存在单一"默认 target"，由场景选宿主。
+- **表达力护栏（A 型 / B 型）**：workflow **建模**表达力（状态 / 迁移 / 类型化数据流 / contract / handoff / multi-agent 编排）无上限；节点内**通用计算**（任意算法 / IO / 数据结构）留在 capability 边界之外由宿主实现——`capability` 是通用计算的唯一入口。这条护栏是 AHFL 同时"通用地编排"与"保持可验证 + 不打通用语言生态战"的原因。
+- **capability 嵌入 ABI 是项目核心资产**（非某后端细节）：其第一个具体实例是 [RFC 0019](../rfcs/0019-wasm-runtime-model.zh.md) 的 `ahfl_cap` import 契约 + effect→WASI 投影。
+
+评估任何新特性时的判据：**它增强的是 A 型编排表达力，还是把 AHFL 推向 B 型通用语言？** 前者纳入，后者应留在 capability 边界外。
+
+---
+
 ## 2. L1：语言与编译器核心
 
 ### 2.1 语言表面

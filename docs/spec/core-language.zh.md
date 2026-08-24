@@ -43,6 +43,23 @@ AHFL Core 是面向 agent 编排与控制的强类型 DSL。只覆盖能够稳�
 2. 子集之外的代码（IO、非确定、无度量的递归）合法存在，服务于 runtime / capability / workflow 路径，仅不进入 `contract` / `invariant` / temporal 公式
 3. 不得通过"砍掉 trait / 闭包 / ADT"来换取可判定性——这与上述正交原则相悖
 
+### 1.3 表达力边界：capability 是通用计算的唯一入口
+
+> **定位约束（[RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)，accepted）：AHFL 是一门可嵌入的 agent workflow 编排 DSL。它的表达力聚焦于 workflow 建模，通用计算由宿主经 `capability` 边界提供，不进入语言核心。**
+
+区分两类表达力：
+
+1. **A 型——workflow 建模表达力**：`agent` 状态机、`transition`、类型化数据流、`contract`、handoff、multi-agent 与 workflow DAG 编排。这是 AHFL 语言核心，**无上限做强**。
+2. **B 型——节点内通用计算**：任意算法、裸 IO、可变数据结构、系统调用、字符串处理库等。这些**不进入语言核心**，而是声明为 `capability`（§3.4）由宿主实现——`capability` 是 AHFL 与通用计算世界之间的唯一受控入口。
+
+规范含义：
+
+1. 一个 workflow 节点若需要节点内的通用计算（读任意文件、正则解析、自定义数值计算），应将其声明为 `capability` 并由宿主实现，而非期望语言核心提供该计算。
+2. `fn` / 泛型 / 闭包等（RFC 0013 演进）服务于 A 型编排的表达（如谓词、数据变换的建模），落入 §5.6 可验证子集时可被验证；它们不是把 AHFL 变成通用计算语言的许可。
+3. 该边界与 §4.6 effect 分级、§5.6 可验证子集一致：`capability` 是外部效应（含通用计算）的唯一声明式入口，其 effect 等级（§3.4）向宿主声明每个能力的风险。
+
+评估任何语言特性提案的判据：**它增强 A 型编排表达力，还是把语言核心推向 B 型通用计算？** 后者应留在 `capability` 边界之外。
+
 ## 2. 词法定义
 
 ### 2.1 注释与空白
