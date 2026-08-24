@@ -1,7 +1,7 @@
 ---
 rfc: "0020"
 title: "AHFL Strategic Positioning: Embeddable Verifiable Agent-Workflow DSL"
-status: "review"
+status: "accepted"
 area: ["process", "language", "runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
@@ -272,3 +272,7 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
   pending 挂起(JSPI/Asyncify 于浏览器);(Q4)L1 迁移一致 / L2 capability 序列一致强制、
   L3 参数逐字节作差分测试回归门。共同哲学:薄核心 + 脏东西关在宿主侧 ABI。Owners /
   shepherd 分配,tracking_issue / discussion 设为 none。Status draft → review。
+- 2026-08-25: Owner sign-off; status review → accepted. 定位被采纳为项目北极星。按
+  Implementation Plan 落地:定位写入 `docs/design/architecture-overview.zh.md`,表达力
+  护栏(capability 是通用计算唯一入口)写入 `docs/spec/core-language.zh.md`,并开第一个
+  实现型后继 RFC(Q1+Q3 合并:语言无关的 capability embedding ABI)。

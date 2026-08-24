@@ -117,7 +117,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0020"
     title: "AHFL Strategic Positioning: Embeddable Verifiable Agent-Workflow DSL"
-    status: "review"
+    status: "accepted"
     file: "0020-strategic-positioning-embeddable-workflow-dsl.zh.md"
     area: ["process", "language", "runtime", "tooling"]
     stability: "experimental"
