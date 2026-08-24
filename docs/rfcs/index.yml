@@ -121,3 +121,9 @@ rfcs:
     file: "0020-strategic-positioning-embeddable-workflow-dsl.zh.md"
     area: ["process", "language", "runtime", "tooling"]
     stability: "experimental"
+  - rfc: "0021"
+    title: "Capability Embedding ABI"
+    status: "draft"
+    file: "0021-capability-embedding-abi.zh.md"
+    area: ["runtime", "compiler", "tooling"]
+    stability: "experimental"

@@ -276,3 +276,6 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
   Implementation Plan 落地:定位写入 `docs/design/architecture-overview.zh.md`,表达力
   护栏(capability 是通用计算唯一入口)写入 `docs/spec/core-language.zh.md`,并开第一个
   实现型后继 RFC(Q1+Q3 合并:语言无关的 capability embedding ABI)。
+- 2026-08-25: Implementation Plan 落地——定位入 architecture-overview §1.5、表达力护栏入
+  core-language spec §1.3;[RFC 0021](0021-capability-embedding-abi.zh.md)(Capability
+  Embedding ABI)开题,承接 Q1+Q3(语言无关 `ahfl_host.h` C ABI + pending/异步语义)。
