@@ -27,9 +27,19 @@ enum class BackendKind {
     InfraWasm,
 };
 
+/// RFC 0019: deployment profile for the WASM backend. `wasi` targets a
+/// command-line wasm runtime with WASI imports; `browser` targets a JS host
+/// with capability proxies and no WASI (filesystem capabilities are rejected
+/// at emit time). Ignored by non-WASM backends.
+enum class WasmProfile {
+    Wasi,
+    Browser,
+};
+
 [[nodiscard]] EmitResult emit_backend(BackendKind kind,
                                       ir::Program &program,
                                       std::ostream &out,
-                                      const handoff::PackageMetadata *package_metadata = nullptr);
+                                      const handoff::PackageMetadata *package_metadata = nullptr,
+                                      WasmProfile wasm_profile = WasmProfile::Wasi);
 
 } // namespace ahfl

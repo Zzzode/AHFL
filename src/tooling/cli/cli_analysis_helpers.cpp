@@ -193,24 +193,46 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
         return std::nullopt;
     }
 
+    // RFC 0019: resolve the WASM deployment profile (emit wasm only).
+    auto wasm_profile = ahfl::WasmProfile::Wasi;
+    if (options.wasm_profile.has_value()) {
+        if (*options.wasm_profile == "browser") {
+            wasm_profile = ahfl::WasmProfile::Browser;
+        } else if (*options.wasm_profile == "wasi") {
+            wasm_profile = ahfl::WasmProfile::Wasi;
+        } else {
+            err << "error: unknown --wasm-profile '" << *options.wasm_profile
+                << "' (expected wasi or browser)\n";
+            return 1;
+        }
+    }
+
+    const bool is_wasm = *backend == ahfl::BackendKind::InfraWasm;
+
     const bool needs_smv_size_report =
         options.smv_size_report_requested && effective_command == CommandKind::EmitSmv;
 
     if (!needs_smv_size_report) {
-        auto result = ahfl::emit_backend(*backend, program, out, package_metadata);
+        auto result = ahfl::emit_backend(*backend, program, out, package_metadata, wasm_profile);
         if (!result.has_value()) {
-            err << "internal error: core backend command ";
-            if (effective_command.has_value()) {
-                err << "'" << command_name(*effective_command) << "' ";
+            // A WASM profile rejection is a user error, not an internal fault.
+            if (is_wasm) {
+                err << "error: " << result.error() << "\n";
+            } else {
+                err << "internal error: core backend command ";
+                if (effective_command.has_value()) {
+                    err << "'" << command_name(*effective_command) << "' ";
+                }
+                err << "failed: " << result.error() << "\n";
             }
-            err << "failed: " << result.error() << "\n";
             return 1;
         }
         return 0;
     }
 
     std::ostringstream buffered_output;
-    auto result = ahfl::emit_backend(*backend, program, buffered_output, package_metadata);
+    auto result =
+        ahfl::emit_backend(*backend, program, buffered_output, package_metadata, wasm_profile);
     if (!result.has_value()) {
         err << "internal error: core backend command ";
         if (effective_command.has_value()) {

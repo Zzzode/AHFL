@@ -65,6 +65,7 @@ struct CommandLineOptions {
     std::optional<std::string_view> runtime_input_file;
     std::optional<std::string_view> llm_config_descriptor;
     std::optional<std::string_view> run_profile;
+    std::optional<std::string_view> wasm_profile;
     std::optional<std::string_view> execution_output_format;
     std::optional<std::string_view> execution_verbosity;
     std::optional<std::string_view> input_fixture;

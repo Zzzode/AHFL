@@ -199,6 +199,40 @@ int main() {
         check(import_registered, "module import list registers the ahfl_cap symbol");
     }
 
+    // Test 8 (RFC 0019 slice 4/5): profiled generation + browser boundary.
+    {
+        using ahfl::backends::WasmCapabilityEffect;
+        using ahfl::backends::WasiCapability;
+        using ahfl::backends::WasmProfileKind;
+
+        // Browser support predicate: network/clock yes, filesystem/env no.
+        check(ahfl::backends::wasi_capability_browser_supported(WasiCapability::NetworkAccess) &&
+                  ahfl::backends::wasi_capability_browser_supported(WasiCapability::ClockAccess),
+              "network and clock are browser-supported");
+        check(!ahfl::backends::wasi_capability_browser_supported(WasiCapability::FileRead) &&
+                  !ahfl::backends::wasi_capability_browser_supported(WasiCapability::FileWrite) &&
+                  !ahfl::backends::wasi_capability_browser_supported(WasiCapability::EnvironmentVars),
+              "filesystem and environment are not browser-supported");
+
+        // A network-effect agent has no browser-rejected capabilities (fetch).
+        ahfl::backends::WasmAgentConfig net_agent;
+        net_agent.agent_name = "net";
+        net_agent.states = {"init", "done"};
+        net_agent.transitions = {{"init", "done"}};
+        net_agent.capabilities = {"FetchUrl"};
+        net_agent.capability_effects = {WasmCapabilityEffect::ExternalSideEffect};
+        net_agent.capability_ids = {1};
+        check(ahfl::backends::browser_rejected_capabilities(net_agent).empty(),
+              "network-effect capability is allowed under the browser profile");
+
+        // Profiled generation is ABI-identical (profile only affects host
+        // imports / browser restrictions, not the module ABI).
+        auto wasi_mod = ahfl::backends::generate_wasm(net_agent, WasmProfileKind::Wasi);
+        auto browser_mod = ahfl::backends::generate_wasm(net_agent, WasmProfileKind::Browser);
+        check(wasi_mod.wat_source == browser_mod.wat_source,
+              "module ABI is profile-independent");
+    }
+
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }

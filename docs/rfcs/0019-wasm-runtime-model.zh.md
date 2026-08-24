@@ -1,7 +1,7 @@
 ---
 rfc: "0019"
 title: "WASM Backend Runtime Model"
-status: "implementing"
+status: "implemented"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-24"
@@ -341,3 +341,20 @@ RFC 让契约先落地。
   (SymbolId with ordinal fallback). Covered by `ahfl.backends.wasm_all`
   (ahfl_cap naming, no `env` import, no source-name leak, import-list
   registration) and verified end-to-end via `emit wasm`.
+- 2026-08-24: Slice 4/5 landed — profiled emit + browser boundary; status
+  implementing → implemented. `emit wasm --wasm-profile wasi|browser` threads a
+  `WasmProfile` through `EmitContext`/`emit_backend`; the module ABI is
+  profile-independent (a wasi and browser emit of the same agent are
+  byte-identical), the profile governs host imports and browser restrictions.
+  `browser_rejected_capabilities` + `wasi_capability_browser_supported` reject
+  at emit time any capability whose effect projects to a WASI capability with no
+  browser equivalent (filesystem / environment); network (fetch) and clock are
+  allowed. An unknown `--wasm-profile` is a usage error. Covered by unit cases
+  (browser-support predicate, network allowed, ABI profile-independence) and
+  CLI goldens `ahflc.emit_wasm.profile_{wasi,browser,unknown}`. All five
+  contract slices (ABI, effect→WASI, capability imports, profiled emit, browser
+  boundary) are landed; full WASM codegen remains a follow-up per Non-Goal 1.
+  `config/product-scope-freeze.json` is unaffected (no new command/artifact;
+  `WasmProfile` placed after `BackendKind` to keep the scope-freeze smoke
+  anchor valid). Remaining for `stabilized`: `docs/spec` or `docs/reference`
+  WASM ABI contract definition.

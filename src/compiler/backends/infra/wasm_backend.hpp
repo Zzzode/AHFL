@@ -35,4 +35,28 @@ struct WasmAgentConfig {
 [[nodiscard]] std::string emit_wat_header(const std::string &module_name);
 [[nodiscard]] std::string emit_wat_state_table(const std::vector<std::string> &states);
 
+// RFC 0019 slice 4/5: the WASM deployment profile (backend-local mirror of
+// ahfl::WasmProfile, so the infra backend need not depend on driver.hpp). The
+// module ABI is profile-independent; the profile only changes the host import
+// set (WASI imports vs JS-proxy capability imports) and the browser capability
+// restrictions.
+enum class WasmProfileKind {
+    Wasi,
+    Browser,
+};
+
+// Profile-aware generation. The `wasi` profile is the default and matches the
+// single-arg overload. Pure.
+[[nodiscard]] WasmModule generate_wasm(const WasmAgentConfig &config, WasmProfileKind profile);
+
+// RFC 0019 slice 4: capabilities in `config` that have no browser-profile
+// equivalent (filesystem / environment access), by source name. Empty under
+// the wasi profile's allowances; used to reject a browser emit at compile time.
+[[nodiscard]] std::vector<std::string>
+browser_rejected_capabilities(const WasmAgentConfig &config);
+
+// Whether a WASI capability has a browser-profile equivalent (network via
+// fetch, clock via an injected JS clock). Filesystem / environment do not.
+[[nodiscard]] bool wasi_capability_browser_supported(WasiCapability cap);
+
 } // namespace ahfl::backends

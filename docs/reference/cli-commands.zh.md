@@ -128,6 +128,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--model-checker` | `<path>` | 仅 `verify-formal`: NuSMV/nuXmv checker 路径 |
 | `--checker-timeout-seconds` | `<seconds>` | 仅 `verify-formal`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |
 | `--formal-model-out` | `<model.smv>` | 仅 `verify-formal`: 保留 SMV 模型文件 |
+| `--wasm-profile` | `<wasi\|browser>` | 仅 `emit wasm`: WASM 部署 profile。`wasi`(默认)面向命令行 wasm runtime;`browser` 面向 JS host(capability 走 fetch/JS 代理),无 WASI——文件系统/环境类 capability 在 emit 期被确定拒绝。模块 ABI 与 profile 无关 |
 | `--dump-ast` | - | 输出 AST outline |
 | `--dump-types` | - | 输出类型环境 |
 | `--explain` | - | 启用结构化解释 |

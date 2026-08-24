@@ -64,6 +64,10 @@ void set_run_profile(CommandLineOptions &opts, std::optional<std::string_view> v
     opts.run_profile = val;
 }
 
+void set_wasm_profile(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.wasm_profile = val;
+}
+
 void set_execution_output_format(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.execution_output_format = val;
 }
@@ -271,6 +275,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_run_profile,
      "Named run profile from ahfl.toml",
      "a profile name"},
+    {"--wasm-profile",
+     "",
+     OptionArgKind::RequiredValue,
+     set_wasm_profile,
+     "WASM deployment profile for emit wasm: wasi (default) or browser",
+     "wasi|browser"},
     {"--output-format",
      "",
      OptionArgKind::RequiredValue,

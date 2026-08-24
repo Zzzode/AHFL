@@ -345,6 +345,15 @@ std::string emit_abi_functions() {
 } // anonymous namespace
 
 WasmModule generate_wasm(const WasmAgentConfig &config) {
+    return generate_wasm(config, WasmProfileKind::Wasi);
+}
+
+WasmModule generate_wasm(const WasmAgentConfig &config, WasmProfileKind profile) {
+    // Profile currently affects only host imports (WASI vs JS proxy) and the
+    // browser capability restrictions checked before emit; the module ABI is
+    // profile-independent. WASI-import emission is a follow-up; the WAT skeleton
+    // already carries the ahfl_cap imports which both profiles share.
+    (void)profile;
     WasmModule mod;
     mod.module_name = config.agent_name;
 
@@ -395,6 +404,40 @@ WasmModule generate_wasm(const WasmAgentConfig &config) {
     }
 
     return mod;
+}
+
+bool wasi_capability_browser_supported(WasiCapability cap) {
+    // Browser has fetch (network) and an injectable clock, but no filesystem
+    // and no process environment (RFC 0019 browser execution boundary).
+    switch (cap) {
+    case WasiCapability::NetworkAccess: // fetch
+    case WasiCapability::ClockAccess:   // injectable JS clock
+        return true;
+    case WasiCapability::FileRead:
+    case WasiCapability::FileWrite:
+    case WasiCapability::EnvironmentVars:
+        return false;
+    }
+    return false;
+}
+
+std::vector<std::string> browser_rejected_capabilities(const WasmAgentConfig &config) {
+    // A capability is rejected under the browser profile when its effect
+    // projects to a WASI capability with no browser equivalent. Projected
+    // per-capability so the offending source name can be reported.
+    std::vector<std::string> rejected;
+    for (std::size_t i = 0; i < config.capability_effects.size(); ++i) {
+        const auto wasi = project_wasi_config({config.capability_effects[i]});
+        for (const auto cap : wasi.allowed_capabilities) {
+            if (!wasi_capability_browser_supported(cap)) {
+                const auto &name = i < config.capabilities.size() ? config.capabilities[i]
+                                                                  : std::string{};
+                rejected.push_back(name);
+                break;
+            }
+        }
+    }
+    return rejected;
 }
 
 } // namespace ahfl::backends

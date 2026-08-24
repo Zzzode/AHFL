@@ -159,8 +159,27 @@ void initialize_builtin_backends(BackendRegistry &registry) {
                                                return std::unexpected<std::string>(
                                                    "no agents found in program");
                                            }
+                                           const auto profile =
+                                               ctx.wasm_profile == WasmProfile::Browser
+                                                   ? backends::WasmProfileKind::Browser
+                                                   : backends::WasmProfileKind::Wasi;
                                            for (const auto &c : configs) {
-                                               ctx.out << backends::generate_wasm(c).wat_source;
+                                               // RFC 0019 slice 4: browser profile rejects
+                                               // capabilities with no browser equivalent
+                                               // (e.g. filesystem) at emit time.
+                                               if (auto rejected =
+                                                       backends::browser_rejected_capabilities(c);
+                                                   profile == backends::WasmProfileKind::Browser &&
+                                                   !rejected.empty()) {
+                                                   return std::unexpected<std::string>(
+                                                       "capability '" + rejected.front() +
+                                                       "' on agent '" + c.agent_name +
+                                                       "' has no browser-profile equivalent "
+                                                       "(filesystem/env access is unavailable in "
+                                                       "the browser)");
+                                               }
+                                               ctx.out
+                                                   << backends::generate_wasm(c, profile).wat_source;
                                            }
                                            return {};
                                        }});
@@ -170,10 +189,11 @@ void initialize_builtin_backends(BackendRegistry &registry) {
 EmitResult emit_backend(BackendKind kind,
                         ir::Program &program,
                         std::ostream &out,
-                        const handoff::PackageMetadata *package_metadata) {
+                        const handoff::PackageMetadata *package_metadata,
+                        WasmProfile wasm_profile) {
     ir::ensure_derived_analyses(
         program, ir::all_derived_analysis_kinds(), emission_analysis_phase(program));
-    EmitContext ctx{program, out, package_metadata};
+    EmitContext ctx{program, out, package_metadata, wasm_profile};
     return global_backend_registry().emit(kind, ctx);
 }
 

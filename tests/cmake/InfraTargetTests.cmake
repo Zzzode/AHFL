@@ -24,4 +24,34 @@ if(AHFL_ENABLE_BACKEND_INFRA)
         FAIL_REGULAR_EXPRESSION "FAIL:|NON-DETERMINISTIC|mismatch"
         LABELS "infra;golden;backend;target"
     )
+
+    # RFC 0019 slice 4/5: emit wasm --profile wasi|browser. The wasi (default)
+    # and browser profiles both emit the shared module ABI + ahfl_cap imports;
+    # an unknown profile is a usage error.
+    add_test(NAME ahflc.emit_wasm.profile_wasi
+        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile wasi
+                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+    )
+    set_tests_properties(ahflc.emit_wasm.profile_wasi PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\(export \"run\"\\)"
+        LABELS "wasm;backend;target"
+    )
+
+    add_test(NAME ahflc.emit_wasm.profile_browser
+        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile browser
+                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+    )
+    set_tests_properties(ahflc.emit_wasm.profile_browser PROPERTIES
+        PASS_REGULAR_EXPRESSION "\\(export \"run\"\\)"
+        LABELS "wasm;backend;target"
+    )
+
+    add_test(NAME ahflc.emit_wasm.profile_unknown
+        COMMAND $<TARGET_FILE:ahflc> emit wasm --wasm-profile bogus
+                "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+    )
+    set_tests_properties(ahflc.emit_wasm.profile_unknown PROPERTIES
+        PASS_REGULAR_EXPRESSION "unknown --wasm-profile"
+        LABELS "wasm;backend;target"
+    )
 endif()
