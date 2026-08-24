@@ -1,0 +1,75 @@
+module infra::service_mesh;
+
+struct Request {
+    payload: String;
+}
+
+struct Context {
+    stage: String = "init";
+}
+
+struct Response {
+    payload: String;
+}
+
+predicate ready(value: String) -> Bool;
+
+capability Classify(request: Request) -> Response;
+capability Enrich(request: Request) -> Response;
+capability Dispatch(request: Request) -> Response;
+
+agent Router {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Idle, Classifying, Dispatching, Done];
+    initial: Idle;
+    final: [Done];
+    capabilities: [Classify, Enrich, Dispatch];
+    transition Idle -> Classifying;
+    transition Classifying -> Dispatching;
+    transition Dispatching -> Done;
+}
+
+contract for Router {
+    requires: ready(input.payload);
+    ensures: ready(output.payload);
+}
+
+flow for Router {
+    state Idle {
+        goto Classifying;
+    }
+
+    state Classifying {
+        let classified = Classify(input);
+        let enriched = Enrich(input);
+        ctx.stage = enriched.payload;
+        goto Dispatching;
+    }
+
+    state Dispatching {
+        let dispatched = Dispatch(input);
+        ctx.stage = dispatched.payload;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            payload: ctx.stage,
+        };
+    }
+}
+
+workflow MeshWorkflow {
+    input: Request;
+    output: Response;
+
+    node primary: Router(input);
+    node secondary: Router(input) after [primary];
+
+    safety: always (not running(secondary) or completed(primary));
+    liveness: eventually completed(secondary, Done);
+
+    return: secondary;
+}

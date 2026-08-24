@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AHFL Generated API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/infra::service_mesh::Classify": {
+      "POST": {
+        "summary": "Invoke capability infra::service_mesh::Classify"
+      }
+    },
+    "/infra::service_mesh::Enrich": {
+      "POST": {
+        "summary": "Invoke capability infra::service_mesh::Enrich"
+      }
+    },
+    "/infra::service_mesh::Dispatch": {
+      "POST": {
+        "summary": "Invoke capability infra::service_mesh::Dispatch"
+      }
+    }
+  }
+}

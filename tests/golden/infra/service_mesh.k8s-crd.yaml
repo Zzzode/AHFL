@@ -1,0 +1,25 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: infra::service_mesh::Routers.ahfl.io
+spec:
+  group: ahfl.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                state:
+                  type: string
+                  enum: [Idle, Classifying, Dispatching, Done]
+  scope: Namespaced
+  names:
+    plural: infra::service_mesh::Routers
+    singular: infra::service_mesh::Router
+    kind: Infra::service_mesh::Router
