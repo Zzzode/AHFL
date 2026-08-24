@@ -1,5 +1,5 @@
 schema: 1
-updated: "2026-08-23"
+updated: "2026-08-24"
 rfcs:
   - rfc: "0001"
     title: "Enum Variant Payload Forms"
@@ -96,4 +96,10 @@ rfcs:
     status: "implemented"
     file: "0016-incremental-cache-contract.zh.md"
     area: ["compiler", "tooling"]
+    stability: "experimental"
+  - rfc: "0017"
+    title: "BMC Contract Semantics"
+    status: "draft"
+    file: "0017-bmc-contract-semantics.zh.md"
+    area: ["formal", "compiler"]
     stability: "experimental"
