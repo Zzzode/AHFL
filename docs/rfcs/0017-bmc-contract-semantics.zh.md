@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["formal", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["8778a333", "46653a24", "93b716d0", "ccdaac82", "289dbe04", "a19826a6", "3a35d6cc", "4b105af1"]
+implementation_prs: ["8778a333", "46653a24", "93b716d0", "ccdaac82", "289dbe04", "a19826a6", "3a35d6cc", "4b105af1", "1493239d"]
 decision_due: "2026-09-30"
 ---
 
