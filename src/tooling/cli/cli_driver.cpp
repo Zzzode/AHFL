@@ -1204,7 +1204,48 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
     return metadata;
 }
 
+double duration_ms(std::chrono::steady_clock::time_point start,
+                   std::chrono::steady_clock::time_point end);
+
+// One optimization record per Opt IR function (function-level timing +
+// whether the per-function pass pipeline changed it). Populated by the
+// emit-opt-ir path where the per-function optimize() loop runs.
+struct FunctionOptRecord {
+    std::string name;
+    double duration_ms{0.0};
+    bool modified{false};
+};
+
+// Reads the top-level "total_ms" from a prior pass-trace JSON for the
+// baseline delta. Returns nullopt when the file is absent, unreadable, or
+// malformed (a missing baseline is not an error — the delta is simply
+// omitted).
+[[nodiscard]] std::optional<double> read_pass_trace_total_ms(const std::string &path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    const std::string text((std::istreambuf_iterator<char>(in)),
+                           std::istreambuf_iterator<char>());
+    auto parsed = ahfl::json::parse_json(text);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+    const auto *field = (*parsed)->get("total_ms");
+    if (field == nullptr) {
+        return std::nullopt;
+    }
+    if (const auto as_float = field->as_float(); as_float.has_value()) {
+        return *as_float;
+    }
+    if (const auto as_int = field->as_int(); as_int.has_value()) {
+        return static_cast<double>(*as_int);
+    }
+    return std::nullopt;
+}
+
 void export_pass_trace(const ahfl::passes::PassManager::RunResult &result,
+                       const std::vector<FunctionOptRecord> &functions,
                        const CommandLineOptions &options,
                        std::ostream &err) {
     if (!options.pass_trace_export_path.has_value()) {
@@ -1218,12 +1259,18 @@ void export_pass_trace(const ahfl::passes::PassManager::RunResult &result,
         return;
     }
 
-    double total_ms = 0.0;
+    double semantic_ms = 0.0;
     for (const auto &record : result.pass_records) {
-        total_ms += record.duration_ms;
+        semantic_ms += record.duration_ms;
     }
+    double function_ms = 0.0;
+    for (const auto &function : functions) {
+        function_ms += function.duration_ms;
+    }
+    const double total_ms = semantic_ms + function_ms;
 
-    out << "{\"schema\":\"ahfl.pass_trace.v1\",\"optimized\":true,\"total_ms\":" << total_ms
+    out << "{\"schema\":\"ahfl.pass_trace.v2\",\"optimized\":true,\"total_ms\":" << total_ms
+        << ",\"semantic_ms\":" << semantic_ms << ",\"function_ms\":" << function_ms
         << ",\"passes\":[";
     bool first = true;
     for (const auto &record : result.pass_records) {
@@ -1237,17 +1284,56 @@ void export_pass_trace(const ahfl::passes::PassManager::RunResult &result,
             << ",\"modified\":" << (record.modified ? "true" : "false")
             << ",\"iteration\":" << record.iteration << '}';
     }
-    out << "]}\n";
+    out << "],\"functions\":[";
+    first = true;
+    for (const auto &function : functions) {
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << "{\"name\":";
+        ahfl::write_escaped_json_string(out, function.name);
+        out << ",\"duration_ms\":" << function.duration_ms
+            << ",\"modified\":" << (function.modified ? "true" : "false") << '}';
+    }
+    out << ']';
+
+    // History comparison: when a prior trace is supplied, emit the total-time
+    // delta so CI can track pass-pipeline cost regression across runs.
+    if (options.pass_trace_baseline_path.has_value()) {
+        const std::string baseline_path{*options.pass_trace_baseline_path};
+        if (const auto baseline_ms = read_pass_trace_total_ms(baseline_path);
+            baseline_ms.has_value()) {
+            out << ",\"baseline_delta\":{\"baseline_total_ms\":" << *baseline_ms
+                << ",\"delta_ms\":" << (total_ms - *baseline_ms) << '}';
+        } else {
+            out << ",\"baseline_delta\":null";
+        }
+    }
+    out << "}\n";
 }
 
+// Runs the semantic optimization pipeline and honors --time-passes /
+// --pass-trace-export. `captured_result`, when non-null, receives the pass
+// RunResult and suppresses the pass-trace export here, so a caller that also
+// has function-level records (the emit-opt-ir path) can emit one combined
+// trace instead of two clobbering writes.
 void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
                                                   const CommandLineOptions &options,
-                                                  std::ostream &err) {
-    const auto result = run_requested_semantic_optimization_pipeline(program);
+                                                  std::ostream &err,
+                                                  ahfl::passes::PassManager::RunResult
+                                                      *captured_result = nullptr) {
+    auto result = run_requested_semantic_optimization_pipeline(program);
     if (options.time_passes_requested) {
         print_pass_timing_report(result, err);
     }
-    export_pass_trace(result, options, err);
+    if (captured_result != nullptr) {
+        *captured_result = std::move(result);
+        return;
+    }
+    // No function-level records available on this path (e.g. `emit ir -O`
+    // runs no per-function Opt IR passes): export with an empty functions set.
+    export_pass_trace(result, {}, options, err);
 }
 
 void print_opt_verification_errors(const ahfl::ir::opt::VerificationResult &result,
@@ -1311,22 +1397,37 @@ bool emit_opt_ir_artifact(ahfl::ir::Program &program,
                           std::ostream &out,
                           std::ostream &err) {
     const bool optimize = options.optimize_requested;
+    ahfl::passes::PassManager::RunResult semantic_result;
     if (optimize) {
-        run_requested_semantic_optimization_pipeline(program, options, err);
+        run_requested_semantic_optimization_pipeline(program, options, err, &semantic_result);
     }
     auto opt_program = ahfl::ir::opt::lower_to_opt(program);
     if (!verify_opt_ir_or_report(opt_program, err)) {
         return false;
     }
     bool modified = false;
+    std::vector<FunctionOptRecord> function_records;
     for (auto &function : opt_program.functions) {
         if (optimize) {
-            modified = ahfl::ir::opt::optimize(function) || modified;
+            const auto started = std::chrono::steady_clock::now();
+            const bool fn_modified = ahfl::ir::opt::optimize(function);
+            const auto elapsed = duration_ms(started, std::chrono::steady_clock::now());
+            function_records.push_back(
+                FunctionOptRecord{.name = function.name,
+                                  .duration_ms = elapsed,
+                                  .modified = fn_modified});
+            modified = fn_modified || modified;
         }
     }
     static_cast<void>(modified);
     if (optimize && !verify_opt_ir_or_report(opt_program, err)) {
         return false;
+    }
+    // Combined pass trace: semantic pass records + per-function Opt IR timing.
+    // Only this emit-opt-ir path has function-level data, so it owns the
+    // export (the semantic pipeline deferred it via captured_result above).
+    if (optimize) {
+        export_pass_trace(semantic_result, function_records, options, err);
     }
     if (json) {
         ahfl::ir::opt::print_opt_program_json(opt_program, out);

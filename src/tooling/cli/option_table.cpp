@@ -148,6 +148,10 @@ void set_pass_trace_export(CommandLineOptions &opts, std::optional<std::string_v
     opts.pass_trace_export_path = val;
 }
 
+void set_pass_trace_baseline(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.pass_trace_baseline_path = val;
+}
+
 void set_metrics_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.metrics_export_path = val;
 }
@@ -380,6 +384,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_pass_trace_export,
      "Write optimization pass-level trace as JSON (requires -O)",
      "an output path"},
+    {"--pass-trace-baseline",
+     "",
+     OptionArgKind::RequiredValue,
+     set_pass_trace_baseline,
+     "Prior pass trace JSON to diff against (with --pass-trace-export)",
+     "a baseline path"},
     {"--metrics-export",
      "",
      OptionArgKind::RequiredValue,

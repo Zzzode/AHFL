@@ -83,6 +83,7 @@ struct CommandLineOptions {
     bool smv_size_report_requested{false};
     std::optional<std::string_view> trace_export_path;
     std::optional<std::string_view> pass_trace_export_path;
+    std::optional<std::string_view> pass_trace_baseline_path;
     std::optional<std::string_view> metrics_export_path;
     std::optional<std::string_view> structured_log_path;
     std::optional<std::string_view> memory_report_path;

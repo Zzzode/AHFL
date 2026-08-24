@@ -147,6 +147,7 @@ void print_usage(std::ostream &out) {
         << "  -O                         Enable optimization passes\n"
         << "  --time-passes              Print optimization pass timings (requires -O)\n"
         << "  --pass-trace-export <path> Write optimization pass-level trace as JSON (requires -O)\n"
+        << "  --pass-trace-baseline <path> Prior pass trace to diff total time against\n"
         << "  --smv-size-report          Print SMV output size statistics (emit smv only)\n"
         << "  --trace-export <path>      Write CLI trace spans as JSON lines\n"
         << "  --metrics-export <path>    Write CLI metrics as JSON lines\n"

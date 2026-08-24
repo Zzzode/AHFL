@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Pass-level trace export gate.
 
-Runs `ahflc emit ir -O --pass-trace-export <tmp> <fixture>` and validates the
-emitted JSON document:
+Runs `ahflc emit opt-ir -O --pass-trace-export <tmp> <fixture>` and validates
+the emitted JSON document:
 
   1. Well-formed JSON.
-  2. schema == "ahfl.pass_trace.v1" and optimized == true.
-  3. total_ms is a number and passes is a non-empty list.
-  4. Each pass record carries name/duration_ms/modified/iteration of the right
-     type.
+  2. schema == "ahfl.pass_trace.v2" and optimized == true.
+  3. total_ms / semantic_ms / function_ms are numbers; passes is a non-empty
+     list; functions is a list (non-empty for the emit-opt-ir path).
+  4. Each pass record carries name/duration_ms/modified/iteration and each
+     function record carries name/duration_ms/modified of the right type.
   5. The recorded passes include at least the transformation passes that the
      default optimization pipeline runs under -O.
 
@@ -45,7 +46,7 @@ def main() -> int:
         out_json.unlink()
 
     proc = subprocess.run(
-        [ahflc, "emit", "ir", "-O", "--pass-trace-export", str(out_json), fixture],
+        [ahflc, "emit", "opt-ir", "-O", "--pass-trace-export", str(out_json), fixture],
         capture_output=True,
         text=True,
     )
@@ -67,15 +68,16 @@ def main() -> int:
         print(f"pass trace is not valid JSON: {exc}", file=sys.stderr)
         return 1
 
-    if doc.get("schema") != "ahfl.pass_trace.v1":
+    if doc.get("schema") != "ahfl.pass_trace.v2":
         print(f"unexpected schema: {doc.get('schema')!r}", file=sys.stderr)
         return 1
     if doc.get("optimized") is not True:
         print(f"expected optimized==true, got {doc.get('optimized')!r}", file=sys.stderr)
         return 1
-    if not isinstance(doc.get("total_ms"), (int, float)):
-        print(f"total_ms must be a number, got {doc.get('total_ms')!r}", file=sys.stderr)
-        return 1
+    for key in ("total_ms", "semantic_ms", "function_ms"):
+        if not isinstance(doc.get(key), (int, float)):
+            print(f"{key} must be a number, got {doc.get(key)!r}", file=sys.stderr)
+            return 1
 
     passes = doc.get("passes")
     if not isinstance(passes, list) or not passes:
@@ -100,7 +102,27 @@ def main() -> int:
         print(f"pass trace is missing expected passes: {sorted(missing)}", file=sys.stderr)
         return 1
 
-    print(f"pass trace OK: {len(passes)} records, passes={sorted(names)}")
+    # Function-level records: the emit-opt-ir path lowers per-function Opt IR
+    # and times each function's optimize() run. The list must be present and
+    # non-empty for a fixture with agent flow handlers.
+    functions = doc.get("functions")
+    if not isinstance(functions, list) or not functions:
+        print("functions must be a non-empty list", file=sys.stderr)
+        return 1
+    for record in functions:
+        for key, expected in (
+            ("name", str),
+            ("duration_ms", (int, float)),
+            ("modified", bool),
+        ):
+            if not isinstance(record.get(key), expected):
+                print(f"function record field {key} has wrong type: {record!r}", file=sys.stderr)
+                return 1
+
+    print(
+        f"pass trace OK: {len(passes)} passes, {len(functions)} functions, "
+        f"passes={sorted(names)}"
+    )
     return 0
 
 
