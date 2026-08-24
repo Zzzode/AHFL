@@ -157,6 +157,7 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
     bool any_unknown = false;
     bool any_unsafe = false;
     bool any_unavailable = false;
+    bool any_bounded_only = false;
 
     for (const auto &contract : contracts) {
         for (const auto &goal : contract.goals) {
@@ -174,6 +175,16 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
 
             if (record.proven) {
                 ++result.proven_count;
+                // K-induction: the base case (above) holds. The unbounded proof
+                // needs an inductive step over a data-transition relation, but
+                // the data-predicate fragment is loop-free (no such relation to
+                // induct over), so the step cannot be strengthened. Per RFC 0017
+                // Q6 we keep the bound-limited conclusion and flag it rather than
+                // over-claim an unbounded proof.
+                if (options.use_k_induction) {
+                    record.bounded_only = true;
+                    any_bounded_only = true;
+                }
             } else if (verdict.status == SmtSolverStatus::Sat) {
                 any_unsafe = true;
             } else if (verdict.status == SmtSolverStatus::SolverUnavailable) {
@@ -190,13 +201,16 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
     }
 
     // Resolution order: a real refutation (Unsafe) is the strongest signal; a
-    // missing solver must never read as Safe; then Unknown; else all proven.
+    // missing solver must never read as Safe; then Unknown; then, when every
+    // goal is proven, either unconditional Safe or (k-induction) BoundedSafe.
     if (any_unsafe) {
         result.status = SmtBmcStatus::Unsafe;
     } else if (any_unavailable) {
         result.status = SmtBmcStatus::SolverUnavailable;
     } else if (any_unknown) {
         result.status = SmtBmcStatus::Unknown;
+    } else if (any_bounded_only) {
+        result.status = SmtBmcStatus::BoundedSafe;
     } else {
         result.status = SmtBmcStatus::Safe;
     }
@@ -208,6 +222,8 @@ std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept {
     switch (status) {
     case SmtBmcStatus::Safe:
         return "safe";
+    case SmtBmcStatus::BoundedSafe:
+        return "bounded_safe";
     case SmtBmcStatus::Unsafe:
         return "unsafe";
     case SmtBmcStatus::Unknown:

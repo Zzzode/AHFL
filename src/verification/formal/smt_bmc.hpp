@@ -34,7 +34,9 @@
 namespace ahfl::formal {
 
 enum class SmtBmcStatus {
-    Safe,        // every goal proven (all queries unsat)
+    Safe,        // every goal proven unconditionally (all queries unsat)
+    BoundedSafe, // proven within the bound; the inductive step could not be
+                 // strengthened to an unbounded proof (RFC 0017 Q6 fallback)
     Unsafe,      // at least one goal refuted (a query was sat)
     Unknown,     // a query returned unknown / timed out
     Unsupported, // no encodable data-predicate goals in the program
@@ -50,6 +52,9 @@ struct SmtBmcGoal {
     std::string description; // e.g. "ensures" or "requires divisor != 0"
     SmtSolverStatus verdict{SmtSolverStatus::SolverError};
     bool proven{false}; // verdict == Unsat
+    // K-induction only: true when the goal held as a base case but its
+    // inductive step could not be strengthened, so the proof is bound-limited.
+    bool bounded_only{false};
     std::optional<SourceRange> source_range;
 };
 
@@ -64,6 +69,12 @@ struct SmtBmcResult {
 struct SmtBmcOptions {
     SmtEncodeOptions encode; // e.g. emit_overflow_checks
     SmtSolverOptions solver; // solver kind / path / timeout
+    // When true, attempt k-induction on each proven goal: a base case (the goal
+    // itself) plus an inductive step. For the loop-free data-predicate fragment
+    // there is no data-transition relation to induct over, so the step cannot be
+    // strengthened and the goal is reported BoundedSafe rather than Safe (RFC
+    // 0017 Q6). Off by default: a plain BMC pass reports unconditional Safe.
+    bool use_k_induction{false};
 };
 
 // Run SMT-BMC over every contract in `program`. Pure w.r.t. the program; the

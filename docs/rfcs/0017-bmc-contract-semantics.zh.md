@@ -405,3 +405,12 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   `tests/unit/verification/formal/smt_bmc.cpp` (`ahfl.formal.smt_bmc_all` for
   the solver-independent behaviour; `ahfl.formal.smt_bmc_real_z3` proves an
   `ensures` Safe and refutes an unconditioned one Unsafe against real Z3).
+- 2026-08-24: Slice 6 landed — k-induction data extension. `SmtBmcOptions`
+  gains `use_k_induction`; when set, each proven base-case goal is examined for
+  an inductive step. The data-predicate fragment is loop-free (no
+  data-transition relation to induct over), so the step cannot be strengthened
+  and the goal is flagged `bounded_only`, downgrading the run to a new
+  `BoundedSafe` status instead of over-claiming an unbounded `Safe` (RFC 0017
+  Q6). Refutation/unknown/unavailable precedence is unchanged. Covered by
+  `ahfl.formal.smt_bmc_real_z3` (a provable goal becomes BoundedSafe under
+  k-induction with every proven goal flagged bounded_only).

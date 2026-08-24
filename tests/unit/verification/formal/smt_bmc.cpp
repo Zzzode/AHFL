@@ -183,6 +183,37 @@ void test_real_ensures_refuted() {
     check(r.status == SmtBmcStatus::Unsafe, "unconditioned ensures is refuted (Unsafe)");
 }
 
+void test_real_k_induction_bounded_safe() {
+    if (!z3_available()) {
+        return;
+    }
+    ir::Program p;
+    // A provable goal, but under k-induction the loop-free data fragment has no
+    // inductive step to strengthen, so the conclusion is BoundedSafe, not Safe.
+    add_contract(p, "Agent",
+                 {{ir::ContractClauseKind::Requires,
+                   bin(p, ir::ExprBinaryOp::Greater, int_path(p, "input", {"x"}), int_lit(p, "0"))},
+                  {ir::ContractClauseKind::Ensures,
+                   bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "input", {"x"}),
+                       int_lit(p, "1"))}});
+    SmtBmcOptions options;
+    options.use_k_induction = true;
+    auto r = run_smt_bmc(p, options);
+    check(r.status == SmtBmcStatus::BoundedSafe,
+          "k-induction on the loop-free fragment falls back to BoundedSafe");
+    bool all_bounded = !r.goals.empty();
+    for (const auto &g : r.goals) {
+        if (g.proven && !g.bounded_only) {
+            all_bounded = false;
+        }
+    }
+    check(all_bounded, "proven goals are flagged bounded_only under k-induction");
+}
+
+void test_k_induction_status_name() {
+    check(smt_bmc_status_name(SmtBmcStatus::BoundedSafe) == "bounded_safe", "bounded_safe name");
+}
+
 } // namespace
 
 int main() {
@@ -193,6 +224,8 @@ int main() {
 
     test_real_ensures_proven();
     test_real_ensures_refuted();
+    test_real_k_induction_bounded_safe();
+    test_k_induction_status_name();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
