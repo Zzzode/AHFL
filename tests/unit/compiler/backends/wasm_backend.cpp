@@ -123,6 +123,49 @@ int main() {
               "wasm_abi_exports catalogue + WasmAbiContract constants");
     }
 
+    // Test 6 (RFC 0019 slice 2): least-privilege effect -> WASI projection.
+    {
+        using ahfl::backends::WasmCapabilityEffect;
+        using ahfl::backends::WasiCapability;
+
+        auto has_cap = [](const ahfl::backends::WasiConfig &c, WasiCapability cap) {
+            for (auto v : c.allowed_capabilities) {
+                if (v == cap) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Pure agent (no capabilities) -> zero WASI capability.
+        auto pure = ahfl::backends::project_wasi_config({});
+        check(pure.allowed_capabilities.empty(), "pure agent projects to zero WASI capability");
+
+        // Read-only capability -> still empty (not a WASI resource).
+        auto read_only = ahfl::backends::project_wasi_config({WasmCapabilityEffect::Read});
+        check(read_only.allowed_capabilities.empty(),
+              "read-only capability projects to zero WASI capability");
+
+        // External side effect -> NetworkAccess (external-effect channel).
+        auto external =
+            ahfl::backends::project_wasi_config({WasmCapabilityEffect::ExternalSideEffect});
+        check(external.allowed_capabilities.size() == 1 &&
+                  has_cap(external, WasiCapability::NetworkAccess),
+              "external side effect projects to NetworkAccess");
+
+        // Unknown effect -> conservative NetworkAccess.
+        auto unknown = ahfl::backends::project_wasi_config({WasmCapabilityEffect::Unknown});
+        check(has_cap(unknown, WasiCapability::NetworkAccess),
+              "unknown effect conservatively projects to NetworkAccess");
+
+        // Mixed read + durable write -> single NetworkAccess (deduped severity).
+        auto mixed = ahfl::backends::project_wasi_config(
+            {WasmCapabilityEffect::Read, WasmCapabilityEffect::DurableWrite});
+        check(mixed.allowed_capabilities.size() == 1 &&
+                  has_cap(mixed, WasiCapability::NetworkAccess),
+              "mixed read + durable write projects to a single NetworkAccess");
+    }
+
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }

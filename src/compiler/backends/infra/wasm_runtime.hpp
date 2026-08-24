@@ -16,6 +16,17 @@ enum class WasiCapability {
     ClockAccess
 };
 
+// RFC 0019 slice 2: backend-local mirror of a capability's effect severity
+// (from ir::CapabilityEffectKind), so the infra backend need not depend on IR
+// headers. Drives the least-privilege effect -> WASI projection.
+enum class WasmCapabilityEffect {
+    Unknown,
+    Read,
+    ExternalSideEffect,
+    DurableWrite,
+    FinancialWrite,
+};
+
 struct WasiConfig {
     std::vector<WasiCapability> allowed_capabilities;
     std::vector<std::string> preopen_dirs;
@@ -57,6 +68,20 @@ struct WasmAbiExport {
 
 // The exported functions of the agent ABI, in contract order.
 [[nodiscard]] std::vector<WasmAbiExport> wasm_abi_exports();
+
+// RFC 0019 slice 2: project a capability effect set into the least-privilege
+// WASI capability set. `effects` is the per-capability effect severity of an
+// agent's used capabilities. Rules (least privilege — grant only what the
+// effect severity implies):
+//   * no capabilities / all Pure  -> empty (a pure agent gets zero WASI cap)
+//   * any external side effect / durable write / financial write / unknown
+//     -> NetworkAccess (the external-effect channel; the current IR effect
+//        kind is a severity, not a resource category, so external effects
+//        conservatively map to the network channel)
+//   * Read alone -> empty (reads internal agent state, not a WASI resource)
+// `preopen_dirs` / `env_vars` are left empty here; a real deployment supplies
+// them out of band. Pure and deterministic.
+[[nodiscard]] WasiConfig project_wasi_config(const std::vector<WasmCapabilityEffect> &effects);
 
 [[nodiscard]] std::string generate_wasi_imports(const WasiConfig &config);
 [[nodiscard]] bool validate_runtime_config(const WasmRuntimeConfig &config);

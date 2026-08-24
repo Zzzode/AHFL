@@ -320,3 +320,14 @@ RFC 让契约先落地。
   wrappers over the state-machine primitives; full agent-body codegen stays out
   of scope per Non-Goal 1). Covered by `ahfl.backends.wasm_all` (ABI emission +
   export-list registration + abi-catalogue SoT).
+- 2026-08-24: Slice 2 landed — effect → WASI projection. `project_wasi_config`
+  maps an agent's per-capability effect severities to a least-privilege WASI
+  capability set: a pure agent (no capabilities) and a read-only capability
+  project to zero WASI capability; external side effect / durable write /
+  financial write / unknown project to `NetworkAccess` (the external-effect
+  channel — the IR effect kind is a severity, not a resource category, so
+  external effects conservatively map to network). `WasmAgentConfig` carries a
+  `capability_effects` vector; `lower_wasm` resolves each agent capability to
+  its `CapabilityDecl` effect kind (default Unknown when absent). Covered by
+  `ahfl.backends.wasm_all` (pure/read → empty; external/unknown → NetworkAccess;
+  mixed severities dedupe).

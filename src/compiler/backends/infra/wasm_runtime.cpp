@@ -35,6 +35,30 @@ std::vector<WasmAbiExport> wasm_abi_exports() {
     };
 }
 
+WasiConfig project_wasi_config(const std::vector<WasmCapabilityEffect> &effects) {
+    // Least privilege: only external-effect severities imply a WASI resource.
+    // The current IR effect kind is a severity, not a resource category, so an
+    // external side effect conservatively maps to the network channel.
+    WasiConfig config;
+    bool needs_network = false;
+    for (const auto effect : effects) {
+        switch (effect) {
+        case WasmCapabilityEffect::ExternalSideEffect:
+        case WasmCapabilityEffect::DurableWrite:
+        case WasmCapabilityEffect::FinancialWrite:
+        case WasmCapabilityEffect::Unknown:
+            needs_network = true;
+            break;
+        case WasmCapabilityEffect::Read:
+            break; // reads internal agent state, not a WASI resource
+        }
+    }
+    if (needs_network) {
+        config.allowed_capabilities.push_back(WasiCapability::NetworkAccess);
+    }
+    return config;
+}
+
 std::string generate_wasi_imports(const WasiConfig &config) {
     std::string imports;
     imports += "  ;; WASI imports\n";
