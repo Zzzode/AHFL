@@ -503,13 +503,33 @@ if(AHFL_ENABLE_BACKEND_INFRA)
     )
 endif()
 
-ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-fuzzing
-    TESTS
-        ahfl.fuzz.parser_check
-        ahfl.fuzz.typecheck_check
-        ahfl.fuzz.smv_emitter_check
-)
+# Fuzzing labels track two distinct sets of ctest tests depending on the
+# AHFL_ENABLE_FUZZING build option (see tests/fuzz/CMakeLists.txt):
+#   - OFF (default): standalone *_check executables registered as
+#     ahfl.fuzz.parser_check / typecheck_check / smv_emitter_check.
+#   - ON: libFuzzer binaries with crash-replay regression tests registered as
+#     ahfl.fuzz.fuzz_parser.crash_replay / fuzz_typecheck.crash_replay /
+#     fuzz_smv_emitter.crash_replay.
+# Label only the tests that actually exist in the active configuration; the
+# ahfl_label_tests helper calls set_property(TEST ...) which errors on names
+# that were never registered.
+if(AHFL_ENABLE_FUZZING)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-fuzzing v0.59-quality-gates
+        TESTS
+            ahfl.fuzz.fuzz_parser.crash_replay
+            ahfl.fuzz.fuzz_typecheck.crash_replay
+            ahfl.fuzz.fuzz_smv_emitter.crash_replay
+    )
+else()
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-fuzzing
+        TESTS
+            ahfl.fuzz.parser_check
+            ahfl.fuzz.typecheck_check
+            ahfl.fuzz.smv_emitter_check
+    )
+endif()
 
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-benchmarks
@@ -557,9 +577,6 @@ ahfl_label_tests(
         ahfl.architecture.boundaries
         ahfl.runtime.native_grpc_gate
         ahfl.runtime.transport_gate_smoke
-        ahfl.fuzz.parser_check
-        ahfl.fuzz.typecheck_check
-        ahfl.fuzz.smv_emitter_check
         ahfl.property.lowering_equiv
         ahfl.property.smv_syntax
         ahfl.bench.compile_time
@@ -572,3 +589,16 @@ ahfl_label_tests(
         ahflc.quality.smv_size_budget.refund_audit
         ahfl.mutation.config_report
 )
+
+# The fuzz *_check quality-gate members only exist when fuzzing is OFF; the
+# ON configuration's crash_replay tests carry the v0.59-quality-gates label
+# via the fuzzing block above.
+if(NOT AHFL_ENABLE_FUZZING)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-quality-gates
+        TESTS
+            ahfl.fuzz.parser_check
+            ahfl.fuzz.typecheck_check
+            ahfl.fuzz.smv_emitter_check
+    )
+endif()
