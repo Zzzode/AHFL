@@ -414,3 +414,12 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   Q6). Refutation/unknown/unavailable precedence is unchanged. Covered by
   `ahfl.formal.smt_bmc_real_z3` (a provable goal becomes BoundedSafe under
   k-induction with every proven goal flagged bounded_only).
+- 2026-08-24: Slice 7 landed — counterexample materialization. The solver seam
+  gains `SmtSolverOptions::request_model`: on a Sat verdict it appends
+  `(get-model)` and parses the block into `(name, value)` assignments via the
+  pure `parse_solver_model` (handles Z3's multi-line `define-fun`, negative
+  `(- N)` values, Bool values). The SMT-BMC engine requests a model on every
+  query and attaches the violating assignment to the refuted goal
+  (`SmtBmcGoal::counterexample`). Covered by `parse_solver_model` unit cases and
+  a real-Z3 round-trip that asserts a refuted `ensures` carries a concrete
+  counterexample.

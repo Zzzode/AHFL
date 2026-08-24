@@ -15,6 +15,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ahfl::formal {
 
@@ -35,6 +37,11 @@ struct SmtSolverResult {
     SmtSolverStatus status{SmtSolverStatus::SolverError};
     std::string raw_output;    // solver stdout, for diagnostics
     std::string error_message; // populated for the not-run / error states
+    // Populated only when the query requested a model (options.request_model)
+    // and the verdict was Sat: the parsed (name, value) assignments from the
+    // solver's (get-model) block. Values are normalized SMT-LIB literals
+    // (e.g. "0", "-1", "true").
+    std::vector<std::pair<std::string, std::string>> model;
 
     [[nodiscard]] bool ran() const noexcept {
         return status == SmtSolverStatus::Sat || status == SmtSolverStatus::Unsat ||
@@ -59,6 +66,10 @@ struct SmtSolverOptions {
     SmtSolverKind kind{SmtSolverKind::Z3};
     std::optional<std::string> solver_path; // explicit override; else env/PATH
     std::chrono::seconds timeout{60};
+    // When true, append `(get-model)` after `(check-sat)` and parse the model
+    // into SmtSolverResult::model on a Sat verdict. Off by default: a plain
+    // sat/unsat query needs no model.
+    bool request_model{false};
 };
 
 // Resolve the solver binary: explicit path → AHFL_Z3_PATH → PATH lookup.
@@ -69,6 +80,12 @@ struct SmtSolverOptions {
 // map to Timeout / SolverError. Exposed for unit tests.
 [[nodiscard]] SmtSolverResult
 parse_solver_output(std::string_view output, int exit_code, bool timed_out);
+
+// Parse the `(get-model)` block of a solver's stdout into (name, value)
+// assignments. Handles Z3's `(define-fun NAME () SORT VALUE)` form, including
+// negative values written `(- N)`. Pure; exposed for unit tests.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>>
+parse_solver_model(std::string_view output);
 
 // Run `smtlib_document` through the configured solver and return the result.
 // Never returns Sat/Unsat unless the solver actually ran and agreed — a

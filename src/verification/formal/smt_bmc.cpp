@@ -162,7 +162,11 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
     for (const auto &contract : contracts) {
         for (const auto &goal : contract.goals) {
             const auto query = build_query(contract, goal);
-            const auto verdict = run_smt_solver(query, options.solver);
+            // Request a model so a refutation (Sat) comes with a concrete
+            // counterexample assignment to materialize.
+            SmtSolverOptions solver_options = options.solver;
+            solver_options.request_model = true;
+            const auto verdict = run_smt_solver(query, solver_options);
 
             SmtBmcGoal record;
             record.kind = goal.kind;
@@ -187,6 +191,7 @@ SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &option
                 }
             } else if (verdict.status == SmtSolverStatus::Sat) {
                 any_unsafe = true;
+                record.counterexample = verdict.model; // concrete violating assignment
             } else if (verdict.status == SmtSolverStatus::SolverUnavailable) {
                 any_unavailable = true;
                 if (result.error_message.empty()) {

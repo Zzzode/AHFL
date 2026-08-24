@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ahfl::formal {
 
@@ -122,6 +124,96 @@ SmtSolverResult parse_solver_output(std::string_view output, int exit_code, bool
     return result;
 }
 
+std::vector<std::pair<std::string, std::string>> parse_solver_model(std::string_view output) {
+    // Tokenize into SMT-LIB s-expression atoms: parentheses are their own
+    // tokens, everything else splits on whitespace. This tolerates Z3's
+    // pretty-printed multi-line `(define-fun ...)` layout.
+    std::vector<std::string> tokens;
+    std::string current;
+    const auto flush = [&]() {
+        if (!current.empty()) {
+            tokens.push_back(current);
+            current.clear();
+        }
+    };
+    for (const char c : output) {
+        if (c == '(' || c == ')') {
+            flush();
+            tokens.emplace_back(1, c);
+        } else if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+            flush();
+        } else {
+            current.push_back(c);
+        }
+    }
+    flush();
+
+    std::vector<std::pair<std::string, std::string>> model;
+    // Scan for `( define-fun NAME ( ) SORT VALUE... )`. NAME is the token after
+    // define-fun; the arg list `( )` and SORT are skipped; the value is the
+    // remaining tokens up to the matching close paren of the define-fun.
+    for (std::size_t i = 0; i + 1 < tokens.size(); ++i) {
+        if (tokens[i] != "(" || tokens[i + 1] != "define-fun") {
+            continue;
+        }
+        std::size_t pos = i + 2;
+        if (pos >= tokens.size()) {
+            break;
+        }
+        const std::string name = tokens[pos++];
+        // Skip the parameter list `( ... )`.
+        if (pos < tokens.size() && tokens[pos] == "(") {
+            int depth = 0;
+            do {
+                if (tokens[pos] == "(") {
+                    ++depth;
+                } else if (tokens[pos] == ")") {
+                    --depth;
+                }
+                ++pos;
+            } while (pos < tokens.size() && depth > 0);
+        }
+        // Skip the return sort (one atom, or a parenthesized sort expression).
+        if (pos < tokens.size() && tokens[pos] == "(") {
+            int depth = 0;
+            do {
+                if (tokens[pos] == "(") {
+                    ++depth;
+                } else if (tokens[pos] == ")") {
+                    --depth;
+                }
+                ++pos;
+            } while (pos < tokens.size() && depth > 0);
+        } else if (pos < tokens.size()) {
+            ++pos;
+        }
+        // The value runs to the matching close paren of this define-fun. Track
+        // paren depth from here (currently inside the define-fun, depth 1).
+        std::string value;
+        int depth = 1;
+        while (pos < tokens.size() && depth > 0) {
+            const std::string &tok = tokens[pos];
+            if (tok == "(") {
+                ++depth;
+                value += value.empty() ? "(" : " (";
+            } else if (tok == ")") {
+                --depth;
+                if (depth > 0) {
+                    value += ")";
+                }
+            } else {
+                if (!value.empty() && value.back() != '(') {
+                    value += " ";
+                }
+                value += tok;
+            }
+            ++pos;
+        }
+        model.emplace_back(name, value);
+    }
+    return model;
+}
+
 SmtSolverResult run_smt_solver(const std::string &smtlib_document,
                                const SmtSolverOptions &options) {
     const auto availability = resolve_smt_solver(options);
@@ -132,15 +224,25 @@ SmtSolverResult run_smt_solver(const std::string &smtlib_document,
         return result;
     }
 
+    // Append (get-model) so a Sat verdict comes with a materializable model.
+    std::string document = smtlib_document;
+    if (options.request_model) {
+        document += "(get-model)\n";
+    }
+
     ProcessConfig config;
     config.executable = availability.binary_path;
     // `-in` makes Z3 read an SMT-LIB 2 script from stdin.
     config.arguments = {"-in"};
-    config.stdin_input = smtlib_document;
+    config.stdin_input = document;
     config.timeout = options.timeout;
 
     const auto process = launch_process(config);
-    return parse_solver_output(process.stdout_output, process.exit_code, process.timed_out);
+    auto result = parse_solver_output(process.stdout_output, process.exit_code, process.timed_out);
+    if (options.request_model && result.status == SmtSolverStatus::Sat) {
+        result.model = parse_solver_model(process.stdout_output);
+    }
+    return result;
 }
 
 std::string_view smt_solver_status_name(SmtSolverStatus status) noexcept {

@@ -181,6 +181,14 @@ void test_real_ensures_refuted() {
                        int_lit(p, "1"))}});
     auto r = run_smt_bmc(p, {});
     check(r.status == SmtBmcStatus::Unsafe, "unconditioned ensures is refuted (Unsafe)");
+    // The refuted goal must carry a concrete counterexample assignment.
+    bool has_cex = false;
+    for (const auto &g : r.goals) {
+        if (g.verdict == SmtSolverStatus::Sat && !g.counterexample.empty()) {
+            has_cex = true;
+        }
+    }
+    check(has_cex, "refuted goal carries a materialized counterexample");
 }
 
 void test_real_k_induction_bounded_safe() {

@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
@@ -55,6 +56,11 @@ struct SmtBmcGoal {
     // K-induction only: true when the goal held as a base case but its
     // inductive step could not be strengthened, so the proof is bound-limited.
     bool bounded_only{false};
+    // Populated only when the goal was refuted (verdict == Sat): the concrete
+    // symbol assignments (contract path -> value) that violate the goal, as a
+    // materialized counterexample. Symbol names are the flat SMT names
+    // (e.g. "input__x") the encoder produced.
+    std::vector<std::pair<std::string, std::string>> counterexample;
     std::optional<SourceRange> source_range;
 };
 
