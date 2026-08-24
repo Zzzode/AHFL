@@ -123,7 +123,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0021"
     title: "Capability Embedding ABI"
-    status: "draft"
+    status: "review"
     file: "0021-capability-embedding-abi.zh.md"
     area: ["runtime", "compiler", "tooling"]
     stability: "experimental"

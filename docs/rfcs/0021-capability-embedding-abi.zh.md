@@ -1,20 +1,20 @@
 ---
 rfc: "0021"
 title: "Capability Embedding ABI"
-status: "draft"
+status: "review"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
 updated: "2026-08-25"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  runtime: "TBD"
-  compiler: "TBD"
-  tooling: "TBD"
+  runtime: "runtime owner"
+  compiler: "compiler owner"
+  tooling: "tooling owner"
 required_reviewers: ["runtime", "compiler"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-09-30"
 ---
@@ -223,10 +223,29 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
 
 ## Open Questions
 
-1. 帧序列化格式的版本演进策略:value_json → 紧凑二进制的切换,是靠 ABI 版本号整体切,
-   还是每帧带格式标签允许混用?
-2. pending 恢复接口的具体形态:宿主用什么句柄恢复挂起的 workflow(workflow 实例 id +
-   续延 token?),以及恢复时 capability 结果如何回注入 workflow 状态。
+两个设计问题已在进入 review 前给出**倾向性结论 + 理由**。具体字节布局/函数签名由实现
+切片确定;本 RFC 定方向。
+
+1. **帧序列化格式的版本演进策略** → **决策:靠 ABI 版本号整体切,不给每帧带格式标签。**
+   `ahfl_abi_version()` 决定整个边界用哪种帧格式;一次连接内所有帧同格式,不混用。
+   value_json(v1)→ 紧凑二进制(v2)是一次 ABI 版本升级,宿主与模块必须版本匹配才能
+   连接(连接握手时校验版本)。**理由**:嵌入式边界是**同一次连接内的紧耦合**(不像网络
+   协议要长期向后兼容异构对端),整体版本切换比每帧带标签简单、快(免去每帧解析格式
+   标签)、且不给"同一连接内混用格式"留下未定义组合。这与 [RFC 0019](0019-wasm-runtime-model.zh.md)
+   已发射的 `ahfl_abi_version` 全局一致——版本是连接级事实,不是帧级事实。每帧带标签会
+   引入 N×M 的格式组合测试面,收益(异构混用)在嵌入场景里并不需要。
+2. **pending 恢复接口的具体形态** → **决策:复用 runtime 已有的 workflow 恢复机制
+   (`WorkflowRecoverySnapshot` / `CheckpointId` / `WorkflowNodeId`,见
+   `src/runtime/engine/workflow_recovery.hpp`),不新发明续延机制。** 一个 capability 返回
+   `PENDING` 时,runtime 在**当前 workflow 节点**产生一个挂起点,句柄是
+   `(WorkflowId, CheckpointId)`——即已有恢复快照的坐标;宿主稍后以该句柄 + capability
+   结果(序列化 `Value`,与 `RecoveredNodeState::output` 同类型)恢复,结果按当前节点的
+   capability 调用点回注入 workflow 状态,workflow 从该点继续。**理由**:runtime 已经有
+   一套成熟的"节点级快照 + 按句柄恢复 + 已完成节点携带 output `Value`"机制(RFC 0015
+   DAP step 与 workflow recovery 共用)。pending 挂起本质就是"在某节点等一个外部结果",
+   与"崩溃后从某节点恢复"是同一形状——复用它避免引入平行的续延栈/协程状态机,也让
+   挂起的 workflow 天然可持久化(serverless 冷启动跨请求恢复)。新发明一套续延机制会与
+   既有 recovery 语义漂移,且重复实现"节点级状态捕获"这件已解决的事。
 
 ## Decision History
 
@@ -234,3 +253,9 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   Q1(语言无关 C ABI + `(ptr,len)` 帧 + 版本号 + SymbolId 命名)与 Q3(语言同步语义 +
   异步下沉宿主 + ABI 三态含 pending 挂起)的合并决策,把 [RFC 0019](0019-wasm-runtime-model.zh.md)
   的 `ahfl_cap` 抽象为语言无关的 `ahfl_host.h`,原生与 WASM 从同一契约派生。
+- 2026-08-25: 两个 Open Questions 给出倾向性结论并进入 review:(1)帧格式版本靠连接级
+  `ahfl_abi_version` 整体切换,不给每帧带格式标签(嵌入边界是紧耦合,整体版本比逐帧
+  标签简单且免格式组合测试面);(2)pending 恢复复用 runtime 已有的
+  `WorkflowRecoverySnapshot` / `CheckpointId` 机制,句柄为 `(WorkflowId, CheckpointId)`,
+  结果按 `RecoveredNodeState::output` 同型回注入,不新发明续延机制。Owners / shepherd
+  分配,tracking_issue / discussion 设为 none。Status draft → review。
