@@ -700,6 +700,22 @@ if(AHFL_SMV_CHECKER)
     )
 endif()
 
+# RFC 0017 slice 8: the SMT-BMC data path refutes a contract and fails verify
+# even though the (fake) SMV temporal path passes. Requires a real Z3 solver.
+if(AHFL_Z3_SOLVER)
+    add_test(NAME ahflc.verify_formal.smt_bmc_refutation
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh;${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_smt_bmc_refuted.ahfl"
+                "-DEXPECTED_REGEX=smt_bmc_refuted"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+    set_tests_properties(ahflc.verify_formal.smt_bmc_refutation PROPERTIES
+        ENVIRONMENT "AHFL_Z3_PATH=${AHFL_Z3_SOLVER}"
+    )
+endif()
+
 ahfl_add_package_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics
     "emit ir-json"

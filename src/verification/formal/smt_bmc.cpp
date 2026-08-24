@@ -241,4 +241,35 @@ std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept {
     return "unsupported";
 }
 
+bool smt_bmc_result_is_failure(const SmtBmcResult &result) noexcept {
+    return result.status == SmtBmcStatus::Unsafe;
+}
+
+void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out) {
+    out << "smt_bmc_status: " << smt_bmc_status_name(result.status) << '\n';
+    out << "smt_bmc_goals: " << result.goals.size() << '\n';
+    out << "smt_bmc_proven: " << result.proven_count << '\n';
+
+    if (result.status == SmtBmcStatus::Unsupported) {
+        // No data-predicate goals — nothing more to say.
+        return;
+    }
+    if (result.status == SmtBmcStatus::SolverUnavailable && !result.error_message.empty()) {
+        out << "smt_bmc_skip_reason: " << result.error_message << '\n';
+    }
+
+    for (const auto &goal : result.goals) {
+        if (goal.verdict == SmtSolverStatus::Sat) {
+            out << "smt_bmc_refuted: contract " << goal.target_name << " " << goal.description
+                << "[" << goal.clause_index << "]\n";
+            for (const auto &[name, value] : goal.counterexample) {
+                out << "  counterexample: " << name << " = " << value << '\n';
+            }
+        } else if (goal.bounded_only) {
+            out << "smt_bmc_bounded: contract " << goal.target_name << " " << goal.description
+                << "[" << goal.clause_index << "]\n";
+        }
+    }
+}
+
 } // namespace ahfl::formal

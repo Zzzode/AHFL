@@ -1,7 +1,7 @@
 ---
 rfc: "0017"
 title: "BMC Contract Semantics"
-status: "implementing"
+status: "implemented"
 area: ["formal", "compiler"]
 stability: "experimental"
 created: "2026-08-24"
@@ -423,3 +423,15 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   (`SmtBmcGoal::counterexample`). Covered by `parse_solver_model` unit cases and
   a real-Z3 round-trip that asserts a refuted `ensures` carries a concrete
   counterexample.
+- 2026-08-24: Slice 8 landed — verify report integration; status implementing →
+  implemented. `ahflc verify` now runs the SMT-BMC data path after the SMV
+  temporal path and prints an `smt_bmc_*` report block (status, goal/proven
+  counts, per-goal refutations with counterexample assignments, bounded goals,
+  and the solver skip reason). A genuine SMT-BMC refutation (`Unsafe`) fails the
+  command; a missing solver / no goals / unknown is a skip that never turns a
+  pass into a failure and never fakes a pass (`smt_bmc_result_is_failure`).
+  Covered by the Z3-guarded golden `ahflc.verify_formal.smt_bmc_refutation`
+  (fake SMV passes, SMT-BMC refutes, verify fails with `smt_bmc_refuted`). All
+  eight Implementation-Plan slices are landed with unit + golden + real-Z3
+  coverage. Remaining for `stabilized`: `docs/spec/` verifiable-subset
+  definition and `docs/reference/` verify data-predicate guide.

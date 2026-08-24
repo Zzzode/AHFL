@@ -9,6 +9,7 @@
 #include "compiler/assurance/assurance.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "verification/formal/checker.hpp"
+#include "verification/formal/smt_bmc.hpp"
 #include "verification/formal/smt_emit.hpp"
 #include "verification/formal/subset.hpp"
 
@@ -294,7 +295,19 @@ int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOpt
 
     ahfl::formal::print_formal_verification_report(
         result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
-    return ahfl::formal::is_formal_verification_success(result) ? 0 : 1;
+
+    // RFC 0017 slice 8: run the SMT-BMC data-predicate path alongside the SMV
+    // temporal path and present both conclusions. A genuine refutation fails
+    // the command; a missing solver / no goals is a skip, never a false pass.
+    const auto smt_result = ahfl::formal::run_smt_bmc(program, {});
+    if (smt_result.status != ahfl::formal::SmtBmcStatus::Unsupported) {
+        const bool smt_failed = ahfl::formal::smt_bmc_result_is_failure(smt_result);
+        ahfl::formal::print_smt_bmc_report(smt_result, smt_failed ? std::cerr : std::cout);
+    }
+
+    const bool smv_ok = ahfl::formal::is_formal_verification_success(result);
+    const bool smt_ok = !ahfl::formal::smt_bmc_result_is_failure(smt_result);
+    return (smv_ok && smt_ok) ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

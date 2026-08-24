@@ -24,6 +24,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,5 +89,16 @@ struct SmtBmcOptions {
 [[nodiscard]] SmtBmcResult run_smt_bmc(const ir::Program &program, const SmtBmcOptions &options);
 
 [[nodiscard]] std::string_view smt_bmc_status_name(SmtBmcStatus status) noexcept;
+
+// Render an SMT-BMC result as a text report block for `ahflc verify`. Lines are
+// prefixed `smt_bmc_` to sit alongside the SMV `checker_*` lines. Refuted goals
+// print their counterexample assignments. Deterministic.
+void print_smt_bmc_report(const SmtBmcResult &result, std::ostream &out);
+
+// Whether an SMT-BMC result should fail the verify command. Only a genuine
+// refutation (Unsafe) fails; Unsupported / SolverUnavailable / Unknown /
+// BoundedSafe / Safe never do (a missing solver is a skip, never a failure and
+// never a false pass).
+[[nodiscard]] bool smt_bmc_result_is_failure(const SmtBmcResult &result) noexcept;
 
 } // namespace ahfl::formal

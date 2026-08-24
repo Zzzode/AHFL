@@ -1,0 +1,45 @@
+module formal::smt_refuted;
+
+// RFC 0017 slice 8 fixture: an `ensures` that is refutable (nothing constrains
+// input.x), so the SMT-BMC data path reports unsafe and materializes a
+// counterexample. Used with the fake SMV pass checker so the failure comes
+// solely from the SMT-BMC path.
+
+struct Request {
+    x: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+agent RefutedAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for RefutedAgent {
+    ensures: input.x >= 1;
+}
+
+flow for RefutedAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}

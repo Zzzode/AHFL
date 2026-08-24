@@ -353,6 +353,14 @@ ahfl_label_tests(
         ahflc.verify_formal.not_in_verified_subset_warning
 )
 
+if(AHFL_Z3_SOLVER)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+        TESTS
+            ahflc.verify_formal.smt_bmc_refutation
+    )
+endif()
+
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-integration
     TESTS
