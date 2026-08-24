@@ -1,7 +1,7 @@
 ---
 rfc: "0021"
 title: "Capability Embedding ABI"
-status: "review"
+status: "implementing"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
@@ -259,3 +259,6 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   `WorkflowRecoverySnapshot` / `CheckpointId` 机制,句柄为 `(WorkflowId, CheckpointId)`,
   结果按 `RecoveredNodeState::output` 同型回注入,不新发明续延机制。Owners / shepherd
   分配,tracking_issue / discussion 设为 none。Status draft → review。
+- 2026-08-25: Owner sign-off; status review → implementing. 按 Implementation Plan
+  切片,从 `ahfl_host.h` C ABI 契约(slice 1)开始。各语言宿主 SDK 与完整 WASM codegen
+  仍超出本 RFC 范围。
