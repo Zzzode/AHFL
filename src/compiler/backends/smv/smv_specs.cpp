@@ -37,8 +37,8 @@ void SmvPrinter::collect_specs() {
             }
 
             specs_.push_back("-- contract " + contract_target + " " +
-                             contract_clause_kind_name(clause.kind) + "[" + std::to_string(index) +
-                             "]");
+                             std::string(ir::contract_clause_kind_name(clause.kind)) + "[" +
+                             std::to_string(index) + "]");
             specs_.push_back("LTLSPEC " + *formula);
             // (P2 §3.5) Map the emitted LTL formula back to the contract clause
             // source range.  The counterexample parser joins the violated spec
@@ -47,8 +47,9 @@ void SmvPrinter::collect_specs() {
             // `->`/`<->` operators, never ` => `, so it is a safe AHFL_MAP key.
             add_symbol_mapping(*formula,
                                with_source("contract " + contract_target + " " +
-                                               contract_clause_kind_name(clause.kind) + "[" +
-                                               std::to_string(index) + "]",
+                                               std::string(ir::contract_clause_kind_name(
+                                                   clause.kind)) +
+                                               "[" + std::to_string(index) + "]",
                                            contract.get().provenance.source_path,
                                            clause.source_range));
         }

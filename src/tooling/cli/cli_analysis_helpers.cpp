@@ -2,12 +2,16 @@
 
 #include "ahfl/compiler/backends/driver.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "compiler/assurance/assurance.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "verification/formal/checker.hpp"
+#include "verification/formal/subset.hpp"
+
+#include "ahfl/base/support/diagnostics.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -272,6 +276,20 @@ int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOpt
     }
 
     const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
+
+    // RFC 0017 slice 1: warn per contract data-predicate clause that leaves the
+    // verifiable subset. Such clauses are abstracted by the SMV/BMC path rather
+    // than proven, so surfacing them keeps "verification passed" honest.
+    const auto eligibility = ahfl::formal::analyze_contract_subset_eligibility(program);
+    for (const auto &clause : eligibility.ineligible) {
+        std::cerr << "warning[" << ahfl::error_codes::formal::NotInVerifiedSubset.full_code()
+                  << "]: "
+                  << ahfl::messages::formal::NotInVerifiedSubset.format_with(
+                         ahfl::ir::contract_clause_kind_name(clause.kind),
+                         clause.target_name,
+                         ahfl::formal::describe_rejection(clause.rejection))
+                  << '\n';
+    }
 
     ahfl::formal::print_formal_verification_report(
         result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);

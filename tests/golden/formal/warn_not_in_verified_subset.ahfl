@@ -1,0 +1,46 @@
+module formal::not_in_subset_semantics;
+
+// RFC 0017 slice 1 fixture: one contract data predicate inside the SMT
+// verifiable subset (the arithmetic `ensures`) and one outside it (the
+// String-content `requires`). `ahflc verify` must warn formal.NOT_IN_VERIFIED_SUBSET
+// for the String predicate while leaving the arithmetic predicate unflagged.
+
+struct Request {
+    name: String;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+agent SubsetAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for SubsetAgent {
+    requires: input.name == "alice";
+    ensures: 1 + 1 == 2;
+}
+
+flow for SubsetAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}

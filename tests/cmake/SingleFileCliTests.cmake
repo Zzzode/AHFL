@@ -544,6 +544,19 @@ set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
 )
 
+# RFC 0017 slice 1: a String-content contract predicate leaves the SMT
+# verifiable subset and must warn formal.NOT_IN_VERIFIED_SUBSET, while the
+# sibling arithmetic predicate stays unflagged. Uses the fake pass checker so
+# verification itself succeeds regardless of a real solver being present.
+add_test(NAME ahflc.verify_formal.not_in_verified_subset_warning
+    COMMAND $<TARGET_FILE:ahflc> verify
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
+            "${AHFL_TESTS_DIR}/golden/formal/warn_not_in_verified_subset.ahfl"
+)
+set_tests_properties(ahflc.verify_formal.not_in_verified_subset_warning PROPERTIES
+    PASS_REGULAR_EXPRESSION "warning\\[formal.NOT_IN_VERIFIED_SUBSET\\]: contract requires clause for 'formal::not_in_subset_semantics::SubsetAgent'"
+)
+
 add_test(NAME ahflc.verify_formal.state_space_report
     COMMAND $<TARGET_FILE:ahflc> verify
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"

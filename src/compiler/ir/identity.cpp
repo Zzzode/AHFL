@@ -39,4 +39,20 @@ std::string_view type_display_name(const TypeRef &ref, std::string_view fallback
     return type_canonical_name(ref, fallback);
 }
 
+std::string_view contract_clause_kind_name(ContractClauseKind kind) noexcept {
+    switch (kind) {
+    case ContractClauseKind::Requires:
+        return "requires";
+    case ContractClauseKind::Ensures:
+        return "ensures";
+    case ContractClauseKind::Invariant:
+        return "invariant";
+    case ContractClauseKind::Forbid:
+        return "forbid";
+    case ContractClauseKind::Decreases:
+        return "decreases";
+    }
+    return "invalid";
+}
+
 } // namespace ahfl::ir

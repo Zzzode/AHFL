@@ -362,3 +362,15 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   Subset-boundary violations surface as a structured `SmtEncodeRejection`.
   Covered by `tests/unit/verification/formal/smt_encode.cpp`
   (`ahfl.formal.smt_encode_all`).
+- 2026-08-24: Slice 1 landed — verifiable-subset eligibility. New `formal`
+  diagnostic category + `formal.NOT_IN_VERIFIED_SUBSET` code/message
+  (`include/ahfl/base/support/diagnostics.hpp`), distinct from the typecheck
+  effect-subset code. `src/verification/formal/subset.{hpp,cpp}` walk every
+  contract data-predicate clause through the slice-2 encoder and report the
+  ineligible ones with clause kind / target / rejection reason. `ahflc verify`
+  now warns per abstracted clause instead of silently dropping it. A canonical
+  `ir::contract_clause_kind_name` was promoted to `identity.{hpp,cpp}` and the
+  duplicate SMV-backend helper deleted. Covered by
+  `tests/unit/verification/formal/subset_eligibility.cpp`
+  (`ahfl.formal.subset_eligibility_all`) and the golden
+  `ahflc.verify_formal.not_in_verified_subset_warning`.

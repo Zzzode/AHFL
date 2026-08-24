@@ -105,23 +105,6 @@ namespace ahfl::smv_detail {
     return "(" + join(guards, " & ") + ")";
 }
 
-[[nodiscard]] inline std::string contract_clause_kind_name(ir::ContractClauseKind kind) {
-    switch (kind) {
-    case ir::ContractClauseKind::Requires:
-        return "requires";
-    case ir::ContractClauseKind::Ensures:
-        return "ensures";
-    case ir::ContractClauseKind::Invariant:
-        return "invariant";
-    case ir::ContractClauseKind::Forbid:
-        return "forbid";
-    case ir::ContractClauseKind::Decreases:
-        return "decreases";
-    }
-
-    return "invalid";
-}
-
 [[nodiscard]] inline bool is_integer_literal_spelling(std::string_view spelling) {
     if (spelling.empty()) {
         return false;

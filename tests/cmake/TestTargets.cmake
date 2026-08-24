@@ -314,6 +314,15 @@ target_link_libraries(ahfl_smt_encode_tests
 )
 ahfl_apply_project_warnings(ahfl_smt_encode_tests)
 
+add_executable(ahfl_subset_eligibility_tests
+    unit/verification/formal/subset_eligibility.cpp
+)
+target_link_libraries(ahfl_subset_eligibility_tests
+    PRIVATE
+        ahfl_verification_formal
+)
+ahfl_apply_project_warnings(ahfl_subset_eligibility_tests)
+
 add_executable(ahfl_http_transport_tests
     unit/runtime/engine/http_transport.cpp
 )
@@ -1136,6 +1145,7 @@ foreach(_tgt
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
     ahfl_smt_encode_tests
+    ahfl_subset_eligibility_tests
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests

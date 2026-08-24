@@ -202,7 +202,8 @@ std::optional<std::string> SmvPrinter::render_contract_expr_clause(const ir::Con
     case ir::ContractClauseKind::Invariant:
     case ir::ContractClauseKind::Forbid:
     case ir::ContractClauseKind::Decreases:
-        specs_.push_back("-- contract " + target + " " + contract_clause_kind_name(kind) + "[" +
+        specs_.push_back("-- contract " + target + " " +
+                         std::string(ir::contract_clause_kind_name(kind)) + "[" +
                          std::to_string(clause_index) + "] observation_assumption: " + observation);
         return std::nullopt;
     }

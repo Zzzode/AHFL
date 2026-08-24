@@ -350,6 +350,7 @@ ahfl_label_tests(
         ahflc.verify_formal.unsupported_backend
         ahflc.verify_formal.checker_error
         ahflc.verify_formal.checker_timeout
+        ahflc.verify_formal.not_in_verified_subset_warning
 )
 
 ahfl_label_tests(
@@ -368,6 +369,12 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-smt-encode
     TESTS
         ahfl.formal.smt_encode_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-subset-eligibility
+    TESTS
+        ahfl.formal.subset_eligibility_all
 )
 
 ahfl_label_tests(

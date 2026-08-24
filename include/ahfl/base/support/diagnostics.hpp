@@ -56,6 +56,12 @@ enum class DiagnosticCategory {
     // *never* promoted to errors, even when -Werror is enabled — they surface
     // advisory information to the user rather than correctness failures.
     Lint,
+    // RFC 0017: formal-verification diagnostics emitted by the BMC/SMT path
+    // (src/verification/formal/). Distinct from TypeCheck so a contract
+    // predicate that leaves the verifiable subset at *verification* time
+    // (formal.NOT_IN_VERIFIED_SUBSET) is not confused with the typecheck-time
+    // effect-subset check (typecheck.NOT_IN_VERIFIED_SUBSET).
+    Formal,
 };
 
 [[nodiscard]] inline std::string_view to_string(DiagnosticCategory category) noexcept {
@@ -80,6 +86,8 @@ enum class DiagnosticCategory {
         return "internal";
     case DiagnosticCategory::Lint:
         return "lint";
+    case DiagnosticCategory::Formal:
+        return "formal";
     }
 
     return "unknown";
@@ -436,6 +444,19 @@ inline constexpr ErrorCode<DiagnosticCategory::Lint> NameCollisionAcrossKinds{
 // referenced by any expression / type / callable in that unit.
 inline constexpr ErrorCode<DiagnosticCategory::Lint> UnusedImport{"UNUSED_IMPORT"};
 } // namespace lint
+
+// ============================================================================
+// RFC 0017: formal-verification error codes (BMC/SMT contract semantics)
+// ============================================================================
+namespace formal {
+// A contract data predicate (requires/ensures/invariant/forbid) could not be
+// encoded into the SMT verifiable subset, so the BMC/SMT path cannot prove it
+// and must abstract it away. Emitted per-clause at the clause SourceRange by
+// the eligibility walk (src/verification/formal/subset.cpp). Distinct from the
+// typecheck-time typecheck.NOT_IN_VERIFIED_SUBSET (effect-subset check).
+inline constexpr ErrorCode<DiagnosticCategory::Formal> NotInVerifiedSubset{
+    "NOT_IN_VERIFIED_SUBSET"};
+} // namespace formal
 } // namespace error_codes
 
 // ============================================================================
@@ -786,6 +807,17 @@ inline constexpr MessageTemplate UnusedImport{
 inline constexpr MessageTemplate OtherDefinitionInModule{"other definition in module '{}'"};
 inline constexpr MessageTemplate ImportDeclarationHere{"import declaration is here"};
 } // namespace lint
+
+// ============================================================================
+// RFC 0017: formal-verification message templates
+// ============================================================================
+namespace formal {
+// {0} = clause kind (requires/ensures/invariant/forbid), {1} = contract target
+// name, {2} = the specific reason (SmtEncodeRejection description).
+inline constexpr MessageTemplate NotInVerifiedSubset{
+    "contract {} clause for '{}' is not in the verifiable subset: {}; it will be abstracted and "
+    "not proven by the BMC/SMT engine"};
+} // namespace formal
 } // namespace messages
 
 // ============================================================================
