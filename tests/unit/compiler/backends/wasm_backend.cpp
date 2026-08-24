@@ -181,7 +181,7 @@ int main() {
         const auto &wat = mod.wat_source;
 
         bool has_ahfl_cap =
-            wat.find("(import \"ahfl_cap\" \"cap_42\" (func $cap_42 (param i32 i32) (result i32)))") !=
+            wat.find("(import \"ahfl_cap\" \"cap_42\" (func $cap_42 (param i32 i32) (result i32 i32 i32)))") !=
             std::string::npos;
         bool no_env_import = wat.find("(import \"env\"") == std::string::npos;
         bool no_source_name = wat.find("http_call") == std::string::npos;

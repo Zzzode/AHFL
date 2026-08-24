@@ -249,21 +249,25 @@ std::string emit_helper_functions(const std::vector<std::string> &states,
 
 /// Emit capability import declarations for WASM host bindings.
 ///
-/// RFC 0019 slice 3: each used capability becomes one `ahfl_cap` import whose
-/// field name is the capability's SymbolId (index-based identity), not the
-/// source name — so a rename does not change the ABI. The signature is unified
-/// `(param i32 i32) (result i32)`: (args ptr,len) -> result ptr / error code.
-/// The `$cap_<id>` local alias keeps the WAT readable.
+/// The WASM projection of the ahfl_host.h capability ABI (RFC 0021). Each used
+/// capability becomes one `ahfl_cap` import whose field name is the
+/// capability's SymbolId (index-based identity, not source name — a rename does
+/// not change the ABI). Signature: `(param i32 i32) (result i32 i32 i32)` —
+/// args (ptr,len) in; (status, result_ptr, result_len) out, where status is
+/// the ahfl_cap_status (0=OK, 1=ERROR, 2=PENDING) and (result_ptr,result_len)
+/// is the callee-allocated result frame (both 0 unless OK). This replaces the
+/// earlier single `(result i32)` (RFC 0019) which dropped status and length.
 std::string emit_capability_imports(const std::vector<std::size_t> &capability_ids) {
     if (capability_ids.empty()) {
         return "";
     }
     std::string wat;
-    wat += "  ;; Capability imports (host functions, RFC 0019 ahfl_cap ABI)\n";
+    wat += "  ;; Capability imports (host functions, RFC 0021 ahfl_cap ABI:\n";
+    wat += "  ;;   (args_ptr args_len) -> (status result_ptr result_len))\n";
     for (const auto id : capability_ids) {
         const auto id_str = std::to_string(id);
         wat += "  (import \"ahfl_cap\" \"cap_" + id_str + "\" (func $cap_" + id_str +
-               " (param i32 i32) (result i32)))\n";
+               " (param i32 i32) (result i32 i32 i32)))\n";
     }
     wat += "\n";
     return wat;

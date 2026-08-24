@@ -273,3 +273,11 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   `tests/unit/runtime/engine/ahfl_host_abi.cpp`(`ahfl.runtime.host_abi_all`:定宽/OK=0/
   struct_size 首字段的 static_assert + 版本/wire/args 形态)。原生绑定、WASM pending、
   resume 接口为后续 slice。
+- 2026-08-25: Slice 3 landed — WASM 绑定对齐。`emit_capability_imports`
+  (`src/compiler/backends/infra/wasm_backend.cpp`)的 `ahfl_cap` import 签名从
+  `(param i32 i32) (result i32)`(RFC 0019,丢了 status 与 result_len)改为
+  `(param i32 i32) (result i32 i32 i32)` = args (ptr,len) → (status, result_ptr,
+  result_len),即 `ahfl_host.h` 的 WASM 投影(status 为 ahfl_cap_status,含 PENDING)。
+  确定性不变(纯签名文本)。Covered by `ahfl.backends.wasm_all` 与端到端 `emit wasm`。
+  规划 fan-out(8-agent 分析 workflow)确认此 slice 最隔离、可先行;并确认 slice 4
+  (pending resume)需独立设计评审(见后续 Decision History)。
