@@ -1,0 +1,64 @@
+module ir::dead_state_elimination;
+
+// Fixture for the P2 3.6 dead-state backend-effect regression.
+//
+// `DeadStateEliminationPass` (src/compiler/passes/dead_state_elimination.cpp)
+// runs a BFS from `initial` over the transition graph and drops any agent
+// state that is not reachable. `Orphan` below is declared in `states[]` but no
+// transition ever reaches it, so it is a genuinely dead state as far as that
+// pass is concerned.
+//
+// IMPORTANT (verified by running ahflc, see RunDeadStateEliminationTest.cmake):
+// the semantic validator performs the SAME reachability analysis
+// (src/compiler/semantics/validate.cpp) and rejects this program with a hard
+// `validation.INVALID_STATE` error BEFORE IR lowering. The pass can therefore
+// never observe a dead state on any program that passes `check`, so the
+// dead-state effect is not lockable through `emit ir`/`emit ir -O`. This
+// fixture instead locks the validator gate that makes the pass unreachable:
+// both `emit ir` and `emit ir -O` must reject it identically.
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+predicate ready(value: String) -> Bool;
+capability Decide(request: Request) -> Response;
+
+agent DeadStateAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done, Orphan];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+contract for DeadStateAgent {
+    requires: ready(input.value);
+    ensures: ready(output.value);
+    invariant: called(Decide);
+}
+
+flow for DeadStateAgent {
+    state Init {
+        let reply = Decide(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}

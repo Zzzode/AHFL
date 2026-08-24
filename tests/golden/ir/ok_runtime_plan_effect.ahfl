@@ -1,0 +1,71 @@
+module ir::runtime_plan_effect;
+
+// Fixture for the P2 3.6 runtime-plan backend-effect regression.
+//
+// `emit execution-plan` lowers the (optionally optimized) IR program into the
+// runtime execution plan JSON. Under `-O`, `WorkflowSimplificationPass`
+// (src/compiler/passes/workflow_simplification.cpp) removes transitively
+// redundant `after` dependency edges BEFORE the plan is built, so the effect
+// is observable in the plan's `dependency_edges` and per-node `after` lists.
+//
+// Here `gamma` depends on both `alpha` and `beta`, but `beta` already depends
+// on `alpha`, so the `alpha -> gamma` edge is transitively implied. With `-O`
+// it is dropped from both the IR and the execution plan; the optimized plan is
+// strictly smaller. Verified by running ahflc in RunRuntimePlanEffectTest.cmake.
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+predicate ready(value: String) -> Bool;
+capability Decide(request: Request) -> Response;
+
+agent PlanAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+contract for PlanAgent {
+    requires: ready(input.value);
+    ensures: ready(output.value);
+    invariant: called(Decide);
+}
+
+flow for PlanAgent {
+    state Init {
+        let reply = Decide(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}
+
+workflow PlanWorkflow {
+    input: Request;
+    output: Response;
+
+    node alpha: PlanAgent(input);
+    node beta: PlanAgent(input) after [alpha];
+    node gamma: PlanAgent(input) after [alpha, beta];
+
+    return: gamma;
+}
