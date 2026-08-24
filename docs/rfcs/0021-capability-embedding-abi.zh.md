@@ -281,3 +281,8 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   确定性不变(纯签名文本)。Covered by `ahfl.backends.wasm_all` 与端到端 `emit wasm`。
   规划 fan-out(8-agent 分析 workflow)确认此 slice 最隔离、可先行;并确认 slice 4
   (pending resume)需独立设计评审(见后续 Decision History)。
+- 2026-08-25: Slice 4(pending resume)拆分为独立的
+  [RFC 0022](0022-durable-capability-resume.zh.md)(Durable Capability Resume)。经一次
+  4-lens 设计评审确定其为语义级改动(确定性重放 + memoization),且依赖两处确定性前置
+  (nondet 内建重分类、`unordered_map` 字段序列化),不宜作为本 RFC 的接线型 slice 直接
+  编码。本 RFC 余下 slice(原生绑定 slice 2、参考宿主 + 差分测试 slice 5)不受影响。

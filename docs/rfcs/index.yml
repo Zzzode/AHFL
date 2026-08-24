@@ -127,3 +127,9 @@ rfcs:
     file: "0021-capability-embedding-abi.zh.md"
     area: ["runtime", "compiler", "tooling"]
     stability: "experimental"
+  - rfc: "0022"
+    title: "Durable Capability Resume"
+    status: "review"
+    file: "0022-durable-capability-resume.zh.md"
+    area: ["runtime", "language", "compiler"]
+    stability: "experimental"
