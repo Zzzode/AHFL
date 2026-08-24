@@ -3843,6 +3843,14 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
                                                                 : ExitCode::CompileError;
     }
 
+    if (effective_command_ == CommandKind::EmitSmt) {
+        if (options_.optimize_requested) {
+            run_requested_semantic_optimization_pipeline(ir_program, options_, std::cerr);
+        }
+        return emit_smt_artifact(ir_program, std::cout) == 0 ? ExitCode::Success
+                                                             : ExitCode::CompileError;
+    }
+
     if (effective_command_ == CommandKind::EmitOptIr ||
         effective_command_ == CommandKind::EmitOptIrJson) {
         return emit_opt_ir_artifact(ir_program,

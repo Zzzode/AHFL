@@ -98,6 +98,7 @@ void print_usage(std::ostream &out) {
            "gate\n"
         << "    summary                    Human-readable summary\n"
         << "    smv                        NuSMV model (for verify)\n"
+        << "    smt                        SMT-LIB 2 encoding of contract data predicates\n"
         << "    assurance-json             Assurance model (for validate)\n";
 
     // Dump targets

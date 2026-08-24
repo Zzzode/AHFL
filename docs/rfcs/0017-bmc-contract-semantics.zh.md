@@ -374,3 +374,12 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   `tests/unit/verification/formal/subset_eligibility.cpp`
   (`ahfl.formal.subset_eligibility_all`) and the golden
   `ahflc.verify_formal.not_in_verified_subset_warning`.
+- 2026-08-24: Slice 3 landed — `ahflc emit smt`. The slice-2 encoder now also
+  collects each predicate's free symbols with their SMT sort (Bool/Int, plus
+  `Int(lo,hi)` bounds) in first-encounter order. `smt_emit.{hpp,cpp}` render a
+  full SMT-LIB 2 document (QF_LIA, sort-correct `declare-const`s, per-clause
+  assertions with `forbid` negated, divisor obligations, out-of-subset clauses
+  as comments, trailing `check-sat`) — deterministic, no solver required. New
+  CLI command `EmitSmt` (`emit smt`), single-file capable. Covered by
+  `tests/unit/verification/formal/smt_emit.cpp` (`ahfl.formal.smt_emit_all`)
+  and the byte-compared golden `ahflc.emit_smt.encoding`.

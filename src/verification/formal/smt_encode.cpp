@@ -19,6 +19,7 @@ namespace {
 struct Encoder {
     const SmtEncodeOptions &options;
     std::vector<SmtObligation> obligations;
+    std::vector<SmtSymbol> symbols;
     std::optional<SmtEncodeRejection> rejection;
 
     // Records the first rejection encountered and returns nullopt so callers
@@ -28,6 +29,41 @@ struct Encoder {
             rejection = reason;
         }
         return std::nullopt;
+    }
+
+    // Registers a free symbol with the sort implied by its resolved type. Only
+    // scalar Bool / Int-family types get a declaration; a non-scalar base of a
+    // member access (e.g. a struct root) is not a standalone SMT term and is
+    // skipped so only the projected scalar leaf is declared. The first
+    // declaration wins; a later reference with the same name is ignored
+    // (identical spelling ⇒ identical symbol). Deterministic first-encounter
+    // order is preserved for byte-identical artifacts.
+    void note_symbol(const std::string &name, const ir::TypeRef &type) {
+        SmtSort sort{SmtSort::Int};
+        switch (type.kind) {
+        case ir::TypeRefKind::Bool:
+            sort = SmtSort::Bool;
+            break;
+        case ir::TypeRefKind::Int:
+        case ir::TypeRefKind::BoundedInt:
+            sort = SmtSort::Int;
+            break;
+        default:
+            // Non-scalar (struct/enum/unresolved/string/...) — not a leaf term.
+            return;
+        }
+        for (const auto &existing : symbols) {
+            if (existing.name == name) {
+                return;
+            }
+        }
+        SmtSymbol symbol;
+        symbol.name = name;
+        symbol.sort = sort;
+        if (type.kind == ir::TypeRefKind::BoundedInt) {
+            symbol.int_bounds = type.int_bounds;
+        }
+        symbols.push_back(std::move(symbol));
     }
 
     // Encodes an SMT-LIB 2 path symbol from a contract path (input.field,
@@ -156,7 +192,9 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                 return e.spelling;
             },
             [&](const ir::PathExpr &e) -> std::optional<std::string> {
-                return path_symbol(e.path);
+                auto symbol = path_symbol(e.path);
+                note_symbol(symbol, ref.ptr->resolved_type);
+                return symbol;
             },
             [&](const ir::MemberAccessExpr &e) -> std::optional<std::string> {
                 auto base = encode(e.base);
@@ -164,7 +202,9 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                     return std::nullopt;
                 }
                 // Field projection folds into the flat symbol namespace.
-                return *base + "__" + e.member;
+                auto symbol = *base + "__" + e.member;
+                note_symbol(symbol, ref.ptr->resolved_type);
+                return symbol;
             },
             [&](const ir::BinaryExpr &e) -> std::optional<std::string> {
                 return encode_binary(e);
@@ -186,7 +226,7 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
 } // namespace
 
 SmtEncodeResult encode_predicate(const ir::ExprRef &expr, const SmtEncodeOptions &options) {
-    Encoder encoder{options, {}, std::nullopt};
+    Encoder encoder{options, {}, {}, std::nullopt};
     auto term = encoder.encode(expr);
     SmtEncodeResult result;
     if (!term.has_value()) {
@@ -194,6 +234,7 @@ SmtEncodeResult encode_predicate(const ir::ExprRef &expr, const SmtEncodeOptions
         return result;
     }
     result.term = std::move(term);
+    result.symbols = std::move(encoder.symbols);
     result.obligations = std::move(encoder.obligations);
     return result;
 }

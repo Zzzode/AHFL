@@ -1,0 +1,47 @@
+module formal::smt_encoding;
+
+// RFC 0017 slice 3 fixture for `ahflc emit smt`. Exercises free-symbol
+// declarations (Int-sorted contract paths), a comparison predicate, an
+// arithmetic postcondition, and clause labelling. Kept fully inside the SMT
+// verifiable subset so the emitted document has no "not in subset" comments.
+
+struct Request {
+    qty: Int;
+    price: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    total: Int;
+}
+
+agent CalcAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+contract for CalcAgent {
+    requires: input.qty > 0;
+    ensures: output.total == input.qty * input.price;
+}
+
+flow for CalcAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            total: 0,
+        };
+    }
+}

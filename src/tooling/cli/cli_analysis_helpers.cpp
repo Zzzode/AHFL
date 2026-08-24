@@ -9,6 +9,7 @@
 #include "compiler/assurance/assurance.hpp"
 #include "compiler/syntax/frontend/project.hpp"
 #include "verification/formal/checker.hpp"
+#include "verification/formal/smt_emit.hpp"
 #include "verification/formal/subset.hpp"
 
 #include "ahfl/base/support/diagnostics.hpp"
@@ -294,6 +295,15 @@ int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOpt
     ahfl::formal::print_formal_verification_report(
         result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
     return ahfl::formal::is_formal_verification_success(result) ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// emit_smt_artifact
+// ---------------------------------------------------------------------------
+
+int emit_smt_artifact(const ahfl::ir::Program &program, std::ostream &out) {
+    ahfl::formal::emit_program_smt(program, out);
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

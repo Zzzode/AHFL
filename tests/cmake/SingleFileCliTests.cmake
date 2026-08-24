@@ -523,6 +523,15 @@ ahfl_add_package_output_test(
     PACKAGE_ONLY
 )
 
+# RFC 0017 slice 3: `ahflc emit smt` renders contract data predicates to a
+# deterministic SMT-LIB 2 document. Byte-compared against the golden.
+ahfl_add_output_test(
+    ahflc.emit_smt.encoding
+    "emit smt"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_smt_encoding.smt"
+)
+
 ahfl_add_check_test(
     ahflc.check.formal_real_smv_control
     "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"

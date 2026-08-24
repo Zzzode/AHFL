@@ -37,6 +37,7 @@ enum class CommandKind {
     EmitPublicApiDiff,
     EmitSummary,
     EmitSmv,
+    EmitSmt,
     EmitAssuranceJson,
     EmitK8sCrd,
     EmitOpenApi,

@@ -182,6 +182,7 @@ constexpr CommandSpec kCommandSpecs[] = {
                  105),
     emit_command(CommandKind::EmitSummary, "emit-summary", "summary", "summary", 116, 112, 116, 44),
     emit_command(CommandKind::EmitSmv, "emit-smv", "smv", "smv", 117, 113, 117, 45),
+    emit_command(CommandKind::EmitSmt, "emit-smt", "smt", "smt", 125, 121, 125, 53),
     emit_command(CommandKind::EmitAssuranceJson,
                  "emit-assurance-json",
                  "assurance-json",

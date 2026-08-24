@@ -71,6 +71,10 @@ emit_core_backend(std::optional<CommandKind> effective_command,
 [[nodiscard]] int verify_formal_program(const ahfl::ir::Program &program,
                                         const CommandLineOptions &options);
 
+// RFC 0017 slice 3: `ahflc emit smt` — render the program's contract data
+// predicates to an SMT-LIB 2 document on `out`. No solver is invoked.
+[[nodiscard]] int emit_smt_artifact(const ahfl::ir::Program &program, std::ostream &out);
+
 [[nodiscard]] bool
 read_text_file(const std::filesystem::path &path, std::string &content, std::ostream &diagnostics);
 

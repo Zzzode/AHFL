@@ -14,9 +14,11 @@
 // are reported as a structured rejection rather than silently dropped, so the
 // caller can emit formal.NOT_IN_VERIFIED_SUBSET.
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "ahfl/compiler/ir/expr.hpp"
@@ -42,11 +44,30 @@ struct SmtObligation {
     std::string predicate; // SMT-LIB 2 boolean term, e.g. "(not (= d 0))"
 };
 
+// SMT-LIB 2 sort a contract symbol maps to. Reals/strings are out of the
+// current data-predicate subset, so only the two scalar sorts appear.
+enum class SmtSort {
+    Bool,
+    Int,
+};
+
+// A free symbol referenced by an encoded predicate, with the sort it must be
+// declared at. `int_bounds` is populated for Int(lo,hi) operands so the BMC
+// engine / emit artifact can assert the range constraint. Symbols are
+// collected in first-encounter order for deterministic output.
+struct SmtSymbol {
+    std::string name;
+    SmtSort sort{SmtSort::Int};
+    std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds;
+};
+
 // Result of encoding one contract expression. On success `term` holds the
-// SMT-LIB 2 term and `obligations` any divide/modulo divisor-non-zero goals.
-// On failure `rejection` explains why the expression left the subset.
+// SMT-LIB 2 term, `symbols` the free symbols it references (deduplicated, in
+// first-encounter order), and `obligations` any divide/modulo divisor-non-zero
+// goals. On failure `rejection` explains why the expression left the subset.
 struct SmtEncodeResult {
     std::optional<std::string> term;
+    std::vector<SmtSymbol> symbols;
     std::vector<SmtObligation> obligations;
     std::optional<SmtEncodeRejection> rejection;
 

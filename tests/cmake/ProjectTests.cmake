@@ -1326,6 +1326,10 @@ add_test(NAME ahfl.formal.subset_eligibility_all
     COMMAND $<TARGET_FILE:ahfl_subset_eligibility_tests>
 )
 
+add_test(NAME ahfl.formal.smt_emit_all
+    COMMAND $<TARGET_FILE:ahfl_smt_emit_tests>
+)
+
 add_test(NAME ahfl.formal.bmc_depth_customization_all
     COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )
