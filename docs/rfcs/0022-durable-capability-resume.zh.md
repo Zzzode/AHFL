@@ -253,7 +253,8 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
 ## Decision History
 
 - 2026-08-25: Draft opened。承接 [RFC 0021](0021-capability-embedding-abi.zh.md) slice 4
-  (deferred)。经一次 4-lens 设计评审(replay-vs-coroutine / determinism-purity /
+  (该 slice 在 RFC 0021 中未直接实现,拆出到本 RFC)。经一次 4-lens 设计评审
+  (replay-vs-coroutine / determinism-purity /
   hard-cases / 综合)确立核心决策:确定性重放 + capability 结果 memoization。评审核实了
   两处 AHFL 当前**未满足**重放 soundness 的缺口(nondet 时间/uuid 内建、`unordered_map`
   字段迭代),本 RFC 将其列为实现前必须关闭的确定性前置。
