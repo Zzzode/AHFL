@@ -22,6 +22,19 @@ const char *wasi_capability_name(WasiCapability cap) {
 
 } // anonymous namespace
 
+std::vector<WasmAbiExport> wasm_abi_exports() {
+    // RFC 0019 §"WASM ↔ host 执行契约" — the stable exported ABI, in contract
+    // order. Signatures are WAT fragments; `memory` and the two globals are
+    // exports too but declared inline in the module header.
+    return {
+        {"alloc", "(param i32) (result i32)", "host allocates an input frame buffer"},
+        {"dealloc", "(param i32 i32)", "host releases an output frame buffer"},
+        {"run", "(param i32 i32) (result i32)", "execute to a final state; (input ptr,len) -> output ptr"},
+        {"step", "(result i32)", "single state transition (DAP/playground stepping)"},
+        {"current_state", "(result i32)", "current state index (maps back to the AHFL state name)"},
+    };
+}
+
 std::string generate_wasi_imports(const WasiConfig &config) {
     std::string imports;
     imports += "  ;; WASI imports\n";

@@ -1,6 +1,9 @@
 #include "compiler/backends/infra/wasm_backend.hpp"
 
+#include "compiler/backends/infra/wasm_runtime.hpp"
+
 #include <algorithm>
+#include <string>
 #include <unordered_map>
 
 namespace ahfl::backends {
@@ -20,6 +23,10 @@ std::string emit_wat_header(const std::string &module_name) {
     wat += "  (global $current_state (mut i32) (i32.const 0))\n";
     wat += "  ;; Transition count for quota enforcement\n";
     wat += "  (global $transition_count (mut i32) (i32.const 0))\n";
+    wat += "  ;; RFC 0019: stable ABI version (frame layout / serialization format)\n";
+    wat += "  (global $ahfl_abi_version (export \"ahfl_abi_version\") i32 (i32.const 1))\n";
+    wat += "  ;; RFC 0019: bump pointer for the exported alloc (input/output frames)\n";
+    wat += "  (global $heap_next (mut i32) (i32.const 1024))\n";
     wat += "\n";
     return wat;
 }
@@ -274,6 +281,59 @@ infer_final_states(const std::vector<std::string> &states,
     return finals;
 }
 
+/// Emit the RFC 0019 stable ABI functions: alloc/dealloc (frame memory
+/// ownership) and the run/step/current_state execution entry points.
+///
+/// alloc/dealloc are a minimal bump allocator over $heap_next — enough for the
+/// host to hand input frames in and read output frames out; a real allocator
+/// arrives with codegen. run/step/current_state are thin ABI wrappers over the
+/// existing state-machine primitives ($transition/$get_state); the full agent
+/// body lowering is out of scope (RFC 0019 Non-Goal 1), so run drives no
+/// transitions yet and returns 0 (no output frame).
+std::string emit_abi_functions() {
+    std::string wat;
+    wat += "\n";
+    wat += "  ;; ================================================================\n";
+    wat += "  ;; RFC 0019 stable host ABI\n";
+    wat += "  ;; ================================================================\n";
+
+    // alloc: bump-allocate `size` bytes, return the pointer.
+    wat += "  ;; Allocate `size` bytes in linear memory; returns the pointer\n";
+    wat += "  (func $alloc (export \"alloc\") (param $size i32) (result i32)\n";
+    wat += "    (local $ptr i32)\n";
+    wat += "    (local.set $ptr (global.get $heap_next))\n";
+    wat += "    (global.set $heap_next (i32.add (local.get $ptr) (local.get $size)))\n";
+    wat += "    (local.get $ptr)\n";
+    wat += "  )\n\n";
+
+    // dealloc: bump allocator has no per-block free; accept and no-op.
+    wat += "  ;; Release a frame buffer (bump allocator: accepted, no-op)\n";
+    wat += "  (func $dealloc (export \"dealloc\") (param $ptr i32) (param $len i32)\n";
+    wat += "    (nop)\n";
+    wat += "  )\n\n";
+
+    // current_state: alias of the state-machine current-state read.
+    wat += "  ;; Current state index (ABI alias of $get_state)\n";
+    wat += "  (func $current_state (export \"current_state\") (result i32)\n";
+    wat += "    (global.get $current_state)\n";
+    wat += "  )\n\n";
+
+    // step: one transition step. Full event selection needs codegen; the ABI
+    // entry exists so hosts/DAP can bind it. Returns the resulting state index.
+    wat += "  ;; Single transition step (agent-body lowering pending; returns state)\n";
+    wat += "  (func $step (export \"step\") (result i32)\n";
+    wat += "    (global.get $current_state)\n";
+    wat += "  )\n\n";
+
+    // run: execute to a final state. Body lowering pending — returns 0 (no
+    // output frame) while preserving the (input ptr,len) -> output ptr shape.
+    wat += "  ;; Run to a final state; (input ptr,len) -> output ptr (0 = none yet)\n";
+    wat += "  (func $run (export \"run\") (param $in_ptr i32) (param $in_len i32) (result i32)\n";
+    wat += "    (i32.const 0)\n";
+    wat += "  )\n";
+    return wat;
+}
+
 } // anonymous namespace
 
 WasmModule generate_wasm(const WasmAgentConfig &config) {
@@ -302,6 +362,7 @@ WasmModule generate_wasm(const WasmAgentConfig &config) {
     wat += emit_wat_state_table(config.states);
     wat += emit_transition_function(config.states, config.transitions, state_index);
     wat += emit_helper_functions(config.states, final_states, state_index);
+    wat += emit_abi_functions();
     wat += ")\n";
 
     mod.wat_source = wat;
@@ -314,6 +375,11 @@ WasmModule generate_wasm(const WasmAgentConfig &config) {
     mod.exports.emplace_back("get_transition_count");
     mod.exports.emplace_back("reset");
     mod.exports.emplace_back("state_count");
+    // RFC 0019 stable ABI exports.
+    mod.exports.emplace_back("ahfl_abi_version");
+    for (const auto &abi : wasm_abi_exports()) {
+        mod.exports.emplace_back(std::string(abi.name));
+    }
 
     // Register imports
     for (const auto &cap : config.capabilities) {

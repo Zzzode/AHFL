@@ -311,3 +311,12 @@ RFC 让契约先落地。
   codegen (AHFL evaluator → WASM instructions) stays out of scope per Non-Goal
   1; this RFC lands the contract, effect→WASI projection, capability imports,
   and profiled emit.
+- 2026-08-24: Slice 1 landed — WASM ↔ host ABI contract. `wasm_runtime.hpp`
+  gains `WasmAbiContract` (version + `value_json` frame format) and
+  `wasm_abi_exports()` (exported functions with signatures, single source of
+  truth). `wasm_backend.cpp` emits the stable ABI: an `ahfl_abi_version`
+  global, a bump-allocator `alloc`/`dealloc` for host-owned input / WASM-owned
+  output frames (OQ2), and `run` / `step` / `current_state` entry points (thin
+  wrappers over the state-machine primitives; full agent-body codegen stays out
+  of scope per Non-Goal 1). Covered by `ahfl.backends.wasm_all` (ABI emission +
+  export-list registration + abi-catalogue SoT).

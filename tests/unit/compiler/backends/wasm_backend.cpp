@@ -67,6 +67,62 @@ int main() {
               "generate_wasm with empty agent produces minimal module");
     }
 
+    // Test 4 (RFC 0019 slice 1): the stable host ABI is emitted and exported.
+    {
+        ahfl::backends::WasmAgentConfig config;
+        config.agent_name = "abi_agent";
+        config.states = {"init", "done"};
+        config.transitions = {{"init", "done"}};
+
+        auto mod = ahfl::backends::generate_wasm(config);
+        const auto &wat = mod.wat_source;
+
+        bool has_version =
+            wat.find("(global $ahfl_abi_version (export \"ahfl_abi_version\") i32") !=
+            std::string::npos;
+        bool has_alloc = wat.find("(func $alloc (export \"alloc\")") != std::string::npos;
+        bool has_dealloc = wat.find("(func $dealloc (export \"dealloc\")") != std::string::npos;
+        bool has_run = wat.find("(func $run (export \"run\")") != std::string::npos;
+        bool has_step = wat.find("(func $step (export \"step\")") != std::string::npos;
+        bool has_current =
+            wat.find("(func $current_state (export \"current_state\")") != std::string::npos;
+
+        check(has_version && has_alloc && has_dealloc && has_run && has_step && has_current,
+              "generate_wasm emits the RFC 0019 stable host ABI");
+
+        // The module's registered export list mirrors the emitted ABI.
+        const auto has_export = [&](const std::string &name) {
+            for (const auto &e : mod.exports) {
+                if (e == name) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        check(has_export("ahfl_abi_version") && has_export("alloc") && has_export("dealloc") &&
+                  has_export("run") && has_export("step") && has_export("current_state"),
+              "module export list registers the ABI symbols");
+    }
+
+    // Test 5 (RFC 0019 slice 1): the ABI contract catalogue is the single SoT.
+    {
+        auto abi = ahfl::backends::wasm_abi_exports();
+        bool has_run = false;
+        bool has_alloc = false;
+        for (const auto &e : abi) {
+            if (e.name == "run") {
+                has_run = true;
+            }
+            if (e.name == "alloc") {
+                has_alloc = true;
+            }
+        }
+        check(abi.size() == 5 && has_run && has_alloc &&
+                  ahfl::backends::WasmAbiContract::kVersion == 1 &&
+                  ahfl::backends::WasmAbiContract::kFrameFormat == "value_json",
+              "wasm_abi_exports catalogue + WasmAbiContract constants");
+    }
+
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }
