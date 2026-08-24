@@ -858,23 +858,6 @@ MaybeCRef<SourceUnit> TypeCheckState::source_unit_for(const SourceGraph *graph, 
     return std::nullopt;
 }
 
-void DiagnosticReporter::error(std::string message, SourceRange range) {
-    if (*current_source_ != nullptr) {
-        diagnostics_->error()
-            .code(error_codes::typecheck::SemanticError)
-            .message(std::move(message))
-            .range(range)
-            .source((*current_source_)->source)
-            .emit();
-    } else {
-        diagnostics_->error()
-            .code(error_codes::typecheck::SemanticError)
-            .message(std::move(message))
-            .range(range)
-            .emit();
-    }
-}
-
 void DiagnosticReporter::note(std::string message, SourceRange range) {
     if (*current_source_ != nullptr) {
         diagnostics_->note()
@@ -1205,10 +1188,6 @@ namespace {} // namespace
 MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind kind,
                                                                 SourceRange range) const {
     return resolve_result_.find_reference(kind, range, current_source_id_);
-}
-
-void TypeCheckPass::error_here(std::string message, SourceRange range) {
-    reporter_.error(std::move(message), range);
 }
 
 void TypeCheckPass::note_here(std::string message, SourceRange range) {

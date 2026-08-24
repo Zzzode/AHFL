@@ -133,7 +133,6 @@ class DiagnosticReporter {
     DiagnosticReporter(DiagnosticBag &diagnostics, const SourceUnit *const &current_source)
         : diagnostics_(&diagnostics), current_source_(&current_source) {}
 
-    void error(std::string message, SourceRange range);
     void note(std::string message, SourceRange range);
     void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
                          std::string message,
@@ -485,7 +484,6 @@ class TypeCheckPass final {
                                                     std::string_view name) const;
     [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
                                                                    SourceRange range) const;
-    void error_here(std::string message, SourceRange range);
     void note_here(std::string message, SourceRange range);
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
