@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["5de66701"]
 decision_due: "2026-09-30"
 ---
 
