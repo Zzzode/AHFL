@@ -1,7 +1,7 @@
 ---
 rfc: "0017"
 title: "BMC Contract Semantics"
-status: "implemented"
+status: "stabilized"
 area: ["formal", "compiler"]
 stability: "experimental"
 created: "2026-08-24"
@@ -435,3 +435,13 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   eight Implementation-Plan slices are landed with unit + golden + real-Z3
   coverage. Remaining for `stabilized`: `docs/spec/` verifiable-subset
   definition and `docs/reference/` verify data-predicate guide.
+- 2026-08-24: Stabilization; status implemented → stabilized. The decision is
+  now reflected in the operational docs: `docs/spec/core-language.zh.md` §5.6
+  defines the SMT verifiable subset (encodable nodes, out-of-subset nodes, the
+  proof-by-refutation semantics, and the `bounded_safe` fallback);
+  `docs/reference/cli-commands.zh.md` documents `emit smt` and the `verify`
+  `smt_bmc_*` report block with its skip semantics; and
+  `docs/reference/error-codes.zh.md` catalogues `formal.NOT_IN_VERIFIED_SUBSET`
+  (distinct from the typecheck-time code of the same name). The scope-freeze
+  baseline (`config/product-scope-freeze.json`) records the new `emit smt`
+  surface.

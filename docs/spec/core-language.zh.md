@@ -1232,6 +1232,42 @@ U <: W.output
 5. 节点输入表达式只引用允许的依赖节点
 6. `return` 类型匹配
 
+### 5.6 可验证子集与 SMT-BMC 数据谓词判定
+
+`contract` 的 `requires` / `ensures` / `invariant` / `forbid` 子句携带的**数据谓词**
+（`ExprRef` 分支，区别于 `invariant` / `forbid` 的时序 `TemporalExpr` 分支）在满足下述
+可编码条件时进入**可验证子集(verifiable subset)**，由 SMT-BMC 引擎精确判定；否则被
+形式化后端**抽象**（不证明，仅保留为观测假设），并发出 `formal.NOT_IN_VERIFIED_SUBSET`
+告警。该子集的规范边界由 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md) 定义,
+其判定复用 §4.6 的 effect 分级（要求 `rank(ε) ≤ 2`,即 `Pure` / `ConstOnly` /
+`PredicateCall`)与 §4.7 的合同上下文环境。
+
+**可编码的节点(进入子集):**
+
+1. 布尔字面量 `true` / `false` → SMT `Bool`
+2. 整数字面量(含负号) → SMT `Int`(负号编码为 `(- n)`)
+3. 合同路径 `input.f` / `output.f` / `ctx.f` / `node.f` → 扁平 SMT 符号(点号折叠为 `__`,
+   确定性命名);其 sort 由解析后的类型决定(`Bool` → `Bool`,`Int` / `Int(lo,hi)` → `Int`)
+4. 关系运算 `== != < <= > >=`、逻辑运算 `&& || => !`、算术运算 `+ - *`
+5. 整数除法/取模 `/` `%` → SMT `div` / `mod`,并**自动附加 `divisor != 0` 验证义务**
+   (与 §runtime 求值器的除零错误对齐)
+6. `Int(lo,hi)` 精化类型 → 附加 `lo ≤ x ≤ hi` 边界约束
+
+**离开子集的节点(被抽象,发 `formal.NOT_IN_VERIFIED_SUBSET`):**
+
+1. `String` 内容谓词(字符串等值以外的内容判定)
+2. capability 调用结果、lambda、`struct` / `enum` 字面量、索引访问、`match`、`unwrap`
+3. `List` / `Map` 量化(推迟到后续 RFC)
+4. 非纯表达式(`rank(ε) ≥ 3`,由 §5.3 的纯性检查先行拦截)
+
+**判定语义(证明即反证):** 对每个目标子句 G,SMT-BMC 断言
+`(assumptions ∧ ¬G)` 并检查可满足性——`requires` 作为假设,`invariant` / `ensures`
+作为目标(`invariant` 也作为兄弟目标的假设,但不假设自身),`forbid` 证明其否定,
+除数义务作为独立目标。`unsat` ⇒ G 成立(`Safe`);`sat` ⇒ 存在反例(`Unsafe`,
+satisfying model 即具体违反赋值);`unknown` / 求解器缺失 ⇒ 不下结论(`Unknown` /
+`solver_unavailable`,**绝不静默判 Safe**)。数据谓词片段无循环,单查询即完备;
+k-induction 对该片段无归纳步可强化,回退到 `bounded_safe`(RFC 0017 Q6)。
+
 ## 6. 最小一致性示例
 
 ```ahfl

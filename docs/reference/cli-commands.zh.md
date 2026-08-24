@@ -82,6 +82,7 @@ ahflc emit-public-api-docs --manifest <ahfl.toml>
 ahflc emit-public-api-diff <old-public-api.json> <new-public-api.json>
 ahflc emit-summary <input-mode>
 ahflc emit-smv [--smv-size-report] <input-mode>
+ahflc emit-smt <input-mode>
 ahflc emit-assurance-json <input-mode>
 ahflc validate-assurance <input-mode>
 ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-checker <path>] [--formal-model-out <model.smv>] <input-mode>
@@ -398,6 +399,48 @@ ahflc emit opt-ir-json -O tests/integration/package_golden/ok_expr_temporal/ir/e
 4. `-O` 不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
 5. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
 6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
+
+## SMT Contract Artifact 与数据谓词验证
+
+`emit smt` 把 `contract` 的**数据谓词**子句(`requires` / `ensures` / `invariant` /
+`forbid` 的表达式分支)编码为 SMT-LIB 2 文档输出到 stdout,与 `emit smv` 对称。它是
+[RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md) 定义的可验证子集(见
+`docs/spec/core-language.zh.md` §5.6)的可检查快照,**不需要求解器在场**,遵守确定性
+边界(无 wall clock / pid / host path / 随机),同一程序多次输出字节一致。
+
+```bash
+# 输出合同数据谓词的 SMT-LIB 2 编码
+ahflc emit smt tests/golden/formal/ok_smt_encoding.ahfl
+
+# 编码器产物可直接喂给外部 SMT 求解器
+ahflc emit smt path/to/program.ahfl | z3 -in
+```
+
+文档结构:`(set-logic QF_NIA)`(支持非线性算术,如 `qty * price`)、按首次出现顺序
+的 `declare-const`(bounded int 附加范围约束)、每个可编码子句一条断言(`forbid` 取
+否定)、除法/取模的 `divisor != 0` 义务、结尾 `(check-sat)`。离开子集的子句渲染为结构化
+注释而非断言。
+
+`ahflc verify` 在 SMV 时序路径之外**同时**运行 SMT-BMC 数据路径,报告块以 `smt_bmc_`
+前缀呈现:
+
+```text
+smt_bmc_status: unsafe          # safe / bounded_safe / unsafe / unknown / unsupported / solver_unavailable
+smt_bmc_goals: 1
+smt_bmc_proven: 0
+smt_bmc_refuted: contract pkg::Agent ensures[0]
+  counterexample: input__x = 0
+```
+
+判定与 skip 语义:
+
+1. 真正的反驳(`unsafe`)使 `verify` 失败(退出码非零),即使 SMV 路径通过。
+2. 求解器缺失(`solver_unavailable`)、无可编码目标(`unsupported`)、`unknown` 都是
+   skip,**绝不**把通过变成失败,也**绝不**伪造通过。
+3. 求解器解析:`AHFL_Z3_PATH` 环境变量 → PATH 中的 `z3`(当前 `verify` 使用默认
+   求解器选项,不接受显式路径标志)。
+4. 离开可验证子集的子句发 `formal.NOT_IN_VERIFIED_SUBSET` 告警(见
+   `docs/reference/error-codes.zh.md`),被抽象而非证明。
 
 ## Public API Artifact
 

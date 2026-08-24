@@ -17,7 +17,7 @@ pie title Stable Error-Code 分组分布
     "Callable & Arity" : 9
     "Effects & Contracts + Trait/Impl" : 16
     "Struct/Enum Literals" : 14
-    "Backend SMV/BMC" : 1
+    "Backend SMV/BMC" : 2
     "Linting & Migration" : 1
     "TBD" : 0
 ```
@@ -2075,13 +2075,45 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 
 ---
 
-## 5. Backend SMV/BMC（1）
+## 5. Backend SMV/BMC（2）
 
-传给后端之前最后一道检查，涉及后端可处理规模预算与单形态化预算。
+传给后端之前最后一道检查，涉及后端可处理规模预算与单形态化预算，以及形式化验证阶段的可验证子集判定。
 
 ### MONOMORPHIZATION_BUDGET_EXCEEDED
 
 已在 3.Effects & Contracts 给出完整条目（该码由 typecheck 阶段发射，语义上属于实例化预算检查）。本分组作为 backend 分类的入口锚点保留，详情请跳转该条。
+
+### NOT_IN_VERIFIED_SUBSET
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `formal.NOT_IN_VERIFIED_SUBSET` |
+| SoT | `diagnostics.hpp:457` + template line `817` |
+| MessageTemplate | `contract {} clause for '{}' is not in the verifiable subset: {}; it will be abstracted and not proven by the BMC/SMT engine` |
+| Severity | Warning（建议性；子句被抽象而非拒绝） |
+
+**触发条件**：`ahflc verify` 时，某个 `contract` 数据谓词子句（`requires` / `ensures` /
+`invariant` / `forbid` 的表达式分支）离开 SMT 可验证子集，无法被 SMT-BMC 引擎编码证明，
+因而被形式化后端抽象为观测假设。由 [RFC 0017](../rfcs/0017-bmc-contract-semantics.zh.md)
+定义（可验证子集边界见 `docs/spec/core-language.zh.md` §5.6）。
+
+**与 `typecheck.NOT_IN_VERIFIED_SUBSET` 的区别**：同名但不同分类。`typecheck` 版在类型
+检查阶段拦截"调用进入可验证子集上下文却违反 effect 子集条件"；`formal` 版在验证阶段
+标注"数据谓词无 SMT 编码规则"（如 `String` 内容判定、量化、capability 结果）。
+
+**最小复现**：
+```ahfl
+contract for A {
+    requires: input.name == "alice";   // String 内容谓词，离开子集 -> 告警
+    ensures: 1 + 1 == 2;               // 算术谓词，在子集内 -> 不告警
+}
+```
+
+**常见修复**：
+- 把可验证性依赖的谓词改写为整数/布尔关系（子集内）。
+- 或接受该子句作为观测假设——它仍在 SMV 时序路径中生效，只是不被 SMT-BMC 精确证明。
+
+**Related codes**：`typecheck.NOT_IN_VERIFIED_SUBSET`、`typecheck.EFFECT_NOT_PURE`。
 
 ---
 
