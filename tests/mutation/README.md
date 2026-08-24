@@ -22,11 +22,24 @@ binary (`fallback/target_test.cpp`) against each mutated copy with `$CXX`
 (kills) the mutant. The real source tree is never modified — every build runs
 inside a scratch `mktemp -d` directory.
 
-The mutant set exercises the mutation classes declared in
-`mutation_config.json` (relational-operator swaps, arithmetic-operator swaps).
-It is deterministic: 4 mutants, 3 expected killed, 1 expected survivor
-(`scaled()` is intentionally left untested so the score is an honest 3/4, not
-a rigged 100%).
+The mutant set exercises a range of mutation operator categories a real
+mutation tool would hit — relational-operator swaps, arithmetic-operator
+swaps, boolean-connective swaps, unary-negation removal, constant replacement,
+comparison-boundary swaps, and off-by-one loop bounds. It is deterministic: 9
+mutants, 8 expected killed, 1 expected survivor (`scaled()` is intentionally
+left untested so the score is an honest 8/9, not a rigged 100%).
+
+| Mutant id | Operator category | Mutation | Expected |
+|-----------|-------------------|----------|----------|
+| `classify_rel`    | relational        | `<= ` -> `<` in `classify()`      | killed |
+| `add_arith`       | arithmetic        | `+` -> `-` in `add()`             | killed |
+| `is_valid_rel`    | relational        | `>=` -> `>` in `is_valid()`       | killed |
+| `scaled_arith`    | arithmetic        | `*` -> `+` in `scaled()`          | **survived** (untested) |
+| `bool_connective` | boolean connective| `&&` -> `\|\|` in `in_range()`     | killed |
+| `unary_negation`  | unary negation    | `!a` -> `a` in `negate()`         | killed |
+| `const_replace`   | constant          | `return 0` -> `return 1` in `origin()` | killed |
+| `eq_boundary`     | comparison boundary| `==` -> `!=` in `equals()`       | killed |
+| `loop_bound`      | off-by-one        | `i < n` -> `i <= n` in `count_to()` | killed |
 
 ```bash
 ./run_fallback_mutation.sh --report /tmp/fallback-score.json
@@ -52,16 +65,21 @@ mutation-testing-elements JSON, and computes killed/survived/score. When
   "runner": "fallback",
   "status": "ok",                 // or "tool_unavailable"
   "compiler": "g++",              // present when status == ok
-  "mutants_total": 4,
-  "mutants_evaluated": 4,
-  "killed": 3,
+  "mutants_total": 9,
+  "mutants_evaluated": 9,
+  "killed": 8,
   "survived": 1,
-  "mutation_score": 0.7500,       // killed/evaluated; null when unavailable
+  "mutation_score": 0.8889,       // killed/evaluated; null when unavailable
   "mutants": [
-    {"id": "classify_rel", "description": "...", "outcome": "killed"},
-    {"id": "add_arith",    "description": "...", "outcome": "killed"},
-    {"id": "is_valid_rel", "description": "...", "outcome": "killed"},
-    {"id": "scaled_arith", "description": "...", "outcome": "survived"}
+    {"id": "classify_rel",    "description": "...", "outcome": "killed"},
+    {"id": "add_arith",       "description": "...", "outcome": "killed"},
+    {"id": "is_valid_rel",    "description": "...", "outcome": "killed"},
+    {"id": "scaled_arith",    "description": "...", "outcome": "survived"},
+    {"id": "bool_connective", "description": "...", "outcome": "killed"},
+    {"id": "unary_negation",  "description": "...", "outcome": "killed"},
+    {"id": "const_replace",   "description": "...", "outcome": "killed"},
+    {"id": "eq_boundary",     "description": "...", "outcome": "killed"},
+    {"id": "loop_bound",      "description": "...", "outcome": "killed"}
   ]
 }
 ```

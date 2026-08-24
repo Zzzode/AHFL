@@ -59,7 +59,7 @@ emit_unavailable() {
   "runner": "fallback",
   "status": "tool_unavailable",
   "reason": "${reason}",
-  "mutants_total": 4,
+  "mutants_total": 9,
   "mutants_evaluated": 0,
   "killed": 0,
   "survived": 0,
@@ -80,25 +80,47 @@ fi
 
 # --- Fixed, deterministic mutant set --------------------------------------
 # Each entry: id | from-string | to-string | human description.
-# The from-string must appear verbatim in target.cpp exactly once.
-MUTANT_IDS=(classify_rel add_arith is_valid_rel scaled_arith)
+# The from-string must appear verbatim in target.cpp exactly once, and each
+# substitution is a literal (non-regex) replacement. Every mutant below has
+# been hand-audited: the trailing note on each MUT_DESC states whether it is
+# expected KILLED (a covering assertion exists in target_test.cpp) or expected
+# SURVIVED (the code path is intentionally left untested).
+MUTANT_IDS=(
+    classify_rel add_arith is_valid_rel scaled_arith
+    bool_connective unary_negation const_replace eq_boundary loop_bound
+)
 declare -A MUT_FROM=(
     [classify_rel]="if (x <= 0) {"
     [add_arith]="return a + b;"
     [is_valid_rel]="return n >= 10;"
     [scaled_arith]="return v * 2;"
+    [bool_connective]="return x >= lo && x <= hi;"
+    [unary_negation]="return !a;"
+    [const_replace]="return 0;"
+    [eq_boundary]="return a == b;"
+    [loop_bound]="for (int i = 0; i < n; ++i) {"
 )
 declare -A MUT_TO=(
     [classify_rel]="if (x < 0) {"
     [add_arith]="return a - b;"
     [is_valid_rel]="return n > 10;"
     [scaled_arith]="return v + 2;"
+    [bool_connective]="return x >= lo || x <= hi;"
+    [unary_negation]="return a;"
+    [const_replace]="return 1;"
+    [eq_boundary]="return a != b;"
+    [loop_bound]="for (int i = 0; i <= n; ++i) {"
 )
 declare -A MUT_DESC=(
-    [classify_rel]="relational operator <= -> < in classify()"
-    [add_arith]="arithmetic operator + -> - in add()"
-    [is_valid_rel]="relational operator >= -> > in is_valid()"
+    [classify_rel]="relational operator <= -> < in classify() (expected killed)"
+    [add_arith]="arithmetic operator + -> - in add() (expected killed)"
+    [is_valid_rel]="relational operator >= -> > in is_valid() (expected killed)"
     [scaled_arith]="arithmetic operator * -> + in scaled() (untested; expected survivor)"
+    [bool_connective]="boolean connective && -> || in in_range() (expected killed)"
+    [unary_negation]="unary negation removal !a -> a in negate() (expected killed)"
+    [const_replace]="constant replacement return 0 -> return 1 in origin() (expected killed)"
+    [eq_boundary]="comparison boundary == -> != in equals() (expected killed)"
+    [loop_bound]="off-by-one loop bound < -> <= in count_to() (expected killed)"
 )
 
 SRC_DIR="${SCRIPT_DIR}/fallback"

@@ -3,7 +3,7 @@
 // Exit code 0 => all assertions hold (the "green" baseline). Any non-zero
 // exit means the suite caught a defect; the fallback runner interprets that
 // as "mutant killed". The suite intentionally does NOT test scaled(), so a
-// mutation there survives and the reported score is an honest 3/4.
+// mutation there survives and the reported score is honest (< 100%).
 #include "target.hpp"
 
 #include <cstdio>
@@ -22,7 +22,27 @@ int main() {
     if (is_valid(10) != true) { ++failures; }
     if (is_valid(9) != false) { ++failures; }
 
-    // NOTE: scaled() is intentionally left untested.
+    // Kills bool_connective: in_range(0,10,20) is false with "&&", but the
+    // "||" mutant makes it true (20 >= 0 is enough).
+    if (in_range(0, 10, 5) != true) { ++failures; }
+    if (in_range(0, 10, 20) != false) { ++failures; }
+
+    // Kills unary_negation: negate(true) is false with "!", true without it.
+    if (negate(true) != false) { ++failures; }
+    if (negate(false) != true) { ++failures; }
+
+    // Kills const_replace: origin() is 0, but the mutant returns 1.
+    if (origin() != 0) { ++failures; }
+
+    // Kills eq_boundary: equals(3,3) is true with "==", false with "!=".
+    if (equals(3, 3) != true) { ++failures; }
+    if (equals(3, 4) != false) { ++failures; }
+
+    // Kills loop_bound: count_to(3) is 3 with "<", but 4 with the "<=" mutant.
+    if (count_to(3) != 3) { ++failures; }
+    if (count_to(0) != 0) { ++failures; }
+
+    // NOTE: scaled() is intentionally left untested (expected survivor).
 
     if (failures != 0) {
         std::printf("FAIL: %d assertion(s) failed\n", failures);

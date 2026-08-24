@@ -24,3 +24,27 @@ bool is_valid(int n) {
 int scaled(int v) {
     return v * 2;   // MUT scaled_arith: "v * 2" -> "v + 2" (survives: untested)
 }
+
+bool in_range(int lo, int hi, int x) {
+    return x >= lo && x <= hi;   // MUT bool_connective: "&&" -> "||"
+}
+
+bool negate(bool a) {
+    return !a;      // MUT unary_negation: "return !a;" -> "return a;"
+}
+
+int origin() {
+    return 0;       // MUT const_replace: "return 0;" -> "return 1;"
+}
+
+bool equals(int a, int b) {
+    return a == b;  // MUT eq_boundary: "a == b" -> "a != b"
+}
+
+int count_to(int n) {
+    int c = 0;
+    for (int i = 0; i < n; ++i) {   // MUT loop_bound: "i < n" -> "i <= n"
+        ++c;
+    }
+    return c;
+}
