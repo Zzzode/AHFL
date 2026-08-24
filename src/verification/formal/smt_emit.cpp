@@ -100,7 +100,10 @@ void emit_program_smt(const ir::Program &program, std::ostream &out,
     }
 
     out << "; AHFL contract SMT-LIB 2 encoding (RFC 0017)\n";
-    out << "(set-logic QF_LIA)\n";
+    // QF_NIA: quantifier-free nonlinear integer arithmetic. Covers linear
+    // predicates and the nonlinear ones (e.g. `qty * price`) that contract
+    // postconditions produce; a pure-linear subset still solves under it.
+    out << "(set-logic QF_NIA)\n";
 
     for (const auto &symbol : doc.symbols) {
         out << "(declare-const " << symbol.name << " " << sort_name(symbol.sort) << ")\n";

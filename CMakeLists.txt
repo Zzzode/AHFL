@@ -51,6 +51,33 @@ else()
     message(STATUS "AHFL SMV checker for optional tests: not found")
 endif()
 
+# RFC 0017: optional Z3 SMT solver for the BMC contract-semantics integration
+# tests. Detection mirrors AHFL_SMV_CHECKER: explicit cache var, then
+# AHFL_Z3_PATH env, then a PATH lookup for `z3`.
+set(AHFL_Z3_SOLVER "" CACHE FILEPATH
+    "Path to a Z3 SMT solver used by optional RFC 0017 formal CTest tests"
+)
+if(NOT AHFL_Z3_SOLVER AND DEFINED ENV{AHFL_Z3_PATH})
+    set(AHFL_Z3_SOLVER "$ENV{AHFL_Z3_PATH}" CACHE FILEPATH
+        "Path to a Z3 SMT solver used by optional RFC 0017 formal CTest tests"
+        FORCE
+    )
+endif()
+if(NOT AHFL_Z3_SOLVER)
+    find_program(AHFL_DETECTED_Z3_SOLVER NAMES z3)
+    if(AHFL_DETECTED_Z3_SOLVER)
+        set(AHFL_Z3_SOLVER "${AHFL_DETECTED_Z3_SOLVER}" CACHE FILEPATH
+            "Path to a Z3 SMT solver used by optional RFC 0017 formal CTest tests"
+            FORCE
+        )
+    endif()
+endif()
+if(AHFL_Z3_SOLVER)
+    message(STATUS "AHFL Z3 solver for optional tests: ${AHFL_Z3_SOLVER}")
+else()
+    message(STATUS "AHFL Z3 solver for optional tests: not found")
+endif()
+
 option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
 option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, OpenAPI, Terraform)" ON)
 option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)

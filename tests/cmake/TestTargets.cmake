@@ -332,6 +332,15 @@ target_link_libraries(ahfl_smt_emit_tests
 )
 ahfl_apply_project_warnings(ahfl_smt_emit_tests)
 
+add_executable(ahfl_smt_solver_tests
+    unit/verification/formal/smt_solver.cpp
+)
+target_link_libraries(ahfl_smt_solver_tests
+    PRIVATE
+        ahfl_verification_formal
+)
+ahfl_apply_project_warnings(ahfl_smt_solver_tests)
+
 add_executable(ahfl_http_transport_tests
     unit/runtime/engine/http_transport.cpp
 )
@@ -1156,6 +1165,7 @@ foreach(_tgt
     ahfl_smt_encode_tests
     ahfl_subset_eligibility_tests
     ahfl_smt_emit_tests
+    ahfl_smt_solver_tests
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests

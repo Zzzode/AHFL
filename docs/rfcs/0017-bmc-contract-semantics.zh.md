@@ -383,3 +383,13 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   CLI command `EmitSmt` (`emit smt`), single-file capable. Covered by
   `tests/unit/verification/formal/smt_emit.cpp` (`ahfl.formal.smt_emit_all`)
   and the byte-compared golden `ahflc.emit_smt.encoding`.
+- 2026-08-24: Slice 4 landed — SMT solver seam. `smt_solver.{hpp,cpp}` run an
+  SMT-LIB 2 document through Z3 (`z3 -in`, resolved via explicit path →
+  `AHFL_Z3_PATH` → PATH) and report a three-valued verdict plus the not-run
+  states (`solver_unavailable` / `solver_error` / `timeout`) — a missing binary
+  is never a silent pass. The verdict parser `parse_solver_output` is a pure
+  function split out for testing without a binary. `emit smt` now uses
+  `QF_NIA` so nonlinear postconditions (e.g. `qty * price`) are accepted. New
+  CMake `AHFL_Z3_SOLVER` detection (mirrors `AHFL_SMV_CHECKER`). Covered by
+  `tests/unit/verification/formal/smt_solver.cpp` (`ahfl.formal.smt_solver_all`;
+  a real-Z3 round-trip `ahfl.formal.smt_solver_real_z3` runs when Z3 is present).

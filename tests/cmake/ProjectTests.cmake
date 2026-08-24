@@ -1330,6 +1330,21 @@ add_test(NAME ahfl.formal.smt_emit_all
     COMMAND $<TARGET_FILE:ahfl_smt_emit_tests>
 )
 
+add_test(NAME ahfl.formal.smt_solver_all
+    COMMAND $<TARGET_FILE:ahfl_smt_solver_tests>
+)
+
+# RFC 0017 slice 4: real-solver round-trip, only when a Z3 binary was detected.
+# The env var drives run_smt_solver's resolution and the in-test guard.
+if(AHFL_Z3_SOLVER)
+    add_test(NAME ahfl.formal.smt_solver_real_z3
+        COMMAND $<TARGET_FILE:ahfl_smt_solver_tests>
+    )
+    set_tests_properties(ahfl.formal.smt_solver_real_z3 PROPERTIES
+        ENVIRONMENT "AHFL_Z3_PATH=${AHFL_Z3_SOLVER}"
+    )
+endif()
+
 add_test(NAME ahfl.formal.bmc_depth_customization_all
     COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )

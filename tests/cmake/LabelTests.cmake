@@ -385,6 +385,20 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-smt-solver
+    TESTS
+        ahfl.formal.smt_solver_all
+)
+
+if(AHFL_Z3_SOLVER)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-formal-smt-solver
+        TESTS
+            ahfl.formal.smt_solver_real_z3
+    )
+endif()
+
+ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-bmc-depth
     TESTS
         ahfl.formal.bmc_depth_customization_all

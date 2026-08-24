@@ -1,5 +1,5 @@
 ; AHFL contract SMT-LIB 2 encoding (RFC 0017)
-(set-logic QF_LIA)
+(set-logic QF_NIA)
 (declare-const input__qty Int)
 (declare-const output__total Int)
 (declare-const input__price Int)

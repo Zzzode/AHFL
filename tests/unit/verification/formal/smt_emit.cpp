@@ -94,7 +94,7 @@ std::string emit(const ir::Program &p) {
 void test_header_and_check_sat() {
     ir::Program p;
     auto doc = emit(p);
-    check(contains(doc, "(set-logic QF_LIA)"), "emits QF_LIA logic");
+    check(contains(doc, "(set-logic QF_NIA)"), "emits QF_NIA logic");
     check(contains(doc, "(check-sat)"), "emits check-sat");
 }
 
