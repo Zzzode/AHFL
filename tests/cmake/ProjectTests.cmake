@@ -1039,6 +1039,10 @@ add_test(NAME ahfl.runtime.capability_bridge_all
     COMMAND $<TARGET_FILE:ahfl_capability_bridge_tests>
 )
 
+add_test(NAME ahfl.runtime.host_abi_all
+    COMMAND $<TARGET_FILE:ahfl_host_abi_tests>
+)
+
 add_test(NAME ahfl.runtime.response_schema_validator
     COMMAND $<TARGET_FILE:ahfl_response_schema_validator_tests>
 )

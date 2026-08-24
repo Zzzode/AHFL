@@ -226,6 +226,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-host-abi
+    TESTS
+        ahfl.runtime.host_abi_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.55 v0.55-e2e
     TESTS
         ahfl.runtime.e2e_workflow

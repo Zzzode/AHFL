@@ -262,3 +262,14 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
 - 2026-08-25: Owner sign-off; status review → implementing. 按 Implementation Plan
   切片,从 `ahfl_host.h` C ABI 契约(slice 1)开始。各语言宿主 SDK 与完整 WASM codegen
   仍超出本 RFC 范围。
+- 2026-08-25: Slice 1 landed — `include/ahfl/runtime/ahfl_host.h` C ABI 契约。落地前经
+  一次多 lens 设计评审(ABI 稳定性 / 内存所有权 / 异步-pending / 双绑定一致性),据其
+  must-fix 列表定型:不透明 `ahfl_host*` 句柄作首参(否则 1.0 后不可加)、size-prefixed
+  `ahfl_invoke_args`(append-only 扩展,免每次加参新符号)、`uint32_t` 定宽状态 + OK=0 +
+  fail-closed(未知状态视作 ERROR)、分离 `ahfl_abi_version()` 与 `ahfl_wire_format`、
+  callee-alloc/caller-free 帧所有权(alloc/dealloc 带 `host` 防跨分配器 free)、三态
+  post-condition 逐条写进契约、小端长度前缀帧。原生表与 WASM import 皆从此单一头派生。
+  验证为有效 C11(`-Wall -Wextra -Wpedantic` clean)。Covered by
+  `tests/unit/runtime/engine/ahfl_host_abi.cpp`(`ahfl.runtime.host_abi_all`:定宽/OK=0/
+  struct_size 首字段的 static_assert + 版本/wire/args 形态)。原生绑定、WASM pending、
+  resume 接口为后续 slice。

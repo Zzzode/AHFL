@@ -199,6 +199,15 @@ target_link_libraries(ahfl_capability_bridge_tests
 )
 ahfl_apply_project_warnings(ahfl_capability_bridge_tests)
 
+add_executable(ahfl_host_abi_tests
+    unit/runtime/engine/ahfl_host_abi.cpp
+)
+target_link_libraries(ahfl_host_abi_tests
+    PRIVATE
+        ahfl_base_public
+)
+ahfl_apply_project_warnings(ahfl_host_abi_tests)
+
 add_executable(ahfl_response_schema_validator_tests
     unit/runtime/engine/response_schema_validator.cpp
 )
