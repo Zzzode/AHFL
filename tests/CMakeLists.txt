@@ -183,6 +183,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/ProjectTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/SingleFileCliTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/BackendEffectExtraTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/InfraTargetTests.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/PassTraceTests.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/fuzz/CMakeLists.txt")
 include("${CMAKE_CURRENT_LIST_DIR}/bench/CMakeLists.txt")

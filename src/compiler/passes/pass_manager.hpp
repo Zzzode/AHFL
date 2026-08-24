@@ -62,10 +62,20 @@ class PassManager {
     void add_pass(std::unique_ptr<Pass> pass);
     void add_analysis(std::unique_ptr<AnalysisPass> analysis);
 
+    /// Machine-readable record of a single transformation pass execution.
+    struct PassRunRecord {
+        std::string name;
+        double duration_ms{0.0};
+        bool modified{false};
+        std::size_t iteration{0};
+    };
+
     struct RunResult {
         bool any_modified{false};
         std::vector<std::string> executed;
         std::vector<std::pair<std::string_view, double>> timings_ms;
+        /// Per-transformation-pass structured records (order == execution order).
+        std::vector<PassRunRecord> pass_records;
     };
 
     [[nodiscard]] RunResult run(ir::Program &program);

@@ -1204,6 +1204,42 @@ package_metadata_from_package_graph_target(const ahfl::package_graph::PackageNod
     return metadata;
 }
 
+void export_pass_trace(const ahfl::passes::PassManager::RunResult &result,
+                       const CommandLineOptions &options,
+                       std::ostream &err) {
+    if (!options.pass_trace_export_path.has_value()) {
+        return;
+    }
+
+    const std::string path{*options.pass_trace_export_path};
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        err << "error: failed to write pass trace export " << path << '\n';
+        return;
+    }
+
+    double total_ms = 0.0;
+    for (const auto &record : result.pass_records) {
+        total_ms += record.duration_ms;
+    }
+
+    out << "{\"schema\":\"ahfl.pass_trace.v1\",\"optimized\":true,\"total_ms\":" << total_ms
+        << ",\"passes\":[";
+    bool first = true;
+    for (const auto &record : result.pass_records) {
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << "{\"name\":";
+        ahfl::write_escaped_json_string(out, record.name);
+        out << ",\"duration_ms\":" << record.duration_ms
+            << ",\"modified\":" << (record.modified ? "true" : "false")
+            << ",\"iteration\":" << record.iteration << '}';
+    }
+    out << "]}\n";
+}
+
 void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
                                                   const CommandLineOptions &options,
                                                   std::ostream &err) {
@@ -1211,6 +1247,7 @@ void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program,
     if (options.time_passes_requested) {
         print_pass_timing_report(result, err);
     }
+    export_pass_trace(result, options, err);
 }
 
 void print_opt_verification_errors(const ahfl::ir::opt::VerificationResult &result,
@@ -2262,6 +2299,21 @@ std::optional<ExitCode> CliDriver::validate_options() {
 
     if (options_.time_passes_requested && !options_.optimize_requested) {
         std::cerr << "error: --time-passes requires -O or --optimize\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.pass_trace_export_path.has_value() && !options_.optimize_requested) {
+        std::cerr << "error: --pass-trace-export requires -O or --optimize\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.pass_trace_export_path.has_value() &&
+        (effective_command_ == CommandKind::Format || effective_command_ == CommandKind::DumpAst ||
+         package_graph_descriptor_dump)) {
+        std::cerr << "error: --pass-trace-export is only supported with commands that run "
+                     "optimization passes\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }

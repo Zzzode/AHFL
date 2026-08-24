@@ -95,6 +95,12 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
         auto elapsed = std::chrono::steady_clock::now() - start;
         double ms = std::chrono::duration<double, std::milli>(elapsed).count();
         result.timings_ms.emplace_back(pass->name(), ms);
+        result.pass_records.push_back(PassRunRecord{
+            .name = std::string{pass->name()},
+            .duration_ms = ms,
+            .modified = modified,
+            .iteration = 0,
+        });
 
         if (modified) {
             result.any_modified = true;
@@ -135,6 +141,10 @@ PassManager::RunResult PassManager::run_to_fixpoint(ir::Program &program,
             combined.executed.end(), result.executed.begin(), result.executed.end());
         combined.timings_ms.insert(
             combined.timings_ms.end(), result.timings_ms.begin(), result.timings_ms.end());
+        for (auto &record : result.pass_records) {
+            record.iteration = i;
+            combined.pass_records.push_back(std::move(record));
+        }
         if (!result.any_modified) {
             break;
         }

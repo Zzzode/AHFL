@@ -144,6 +144,10 @@ void set_trace_export(CommandLineOptions &opts, std::optional<std::string_view> 
     opts.trace_export_path = val;
 }
 
+void set_pass_trace_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.pass_trace_export_path = val;
+}
+
 void set_metrics_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.metrics_export_path = val;
 }
@@ -369,6 +373,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      OptionArgKind::RequiredValue,
      set_trace_export,
      "Write CLI trace spans as JSON lines",
+     "an output path"},
+    {"--pass-trace-export",
+     "",
+     OptionArgKind::RequiredValue,
+     set_pass_trace_export,
+     "Write optimization pass-level trace as JSON (requires -O)",
      "an output path"},
     {"--metrics-export",
      "",
