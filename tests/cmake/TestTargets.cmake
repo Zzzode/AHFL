@@ -305,6 +305,15 @@ target_link_libraries(ahfl_counterexample_parse_tests
 )
 ahfl_apply_project_warnings(ahfl_counterexample_parse_tests)
 
+add_executable(ahfl_smt_encode_tests
+    unit/verification/formal/smt_encode.cpp
+)
+target_link_libraries(ahfl_smt_encode_tests
+    PRIVATE
+        ahfl_verification_formal
+)
+ahfl_apply_project_warnings(ahfl_smt_encode_tests)
+
 add_executable(ahfl_http_transport_tests
     unit/runtime/engine/http_transport.cpp
 )
@@ -1126,6 +1135,7 @@ foreach(_tgt
     ahfl_reference_workflow_recovery_worker
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
+    ahfl_smt_encode_tests
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests

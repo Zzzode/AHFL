@@ -1318,6 +1318,10 @@ add_test(NAME ahfl.formal.counterexample_parse_all
     COMMAND $<TARGET_FILE:ahfl_counterexample_parse_tests>
 )
 
+add_test(NAME ahfl.formal.smt_encode_all
+    COMMAND $<TARGET_FILE:ahfl_smt_encode_tests>
+)
+
 add_test(NAME ahfl.formal.bmc_depth_customization_all
     COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )

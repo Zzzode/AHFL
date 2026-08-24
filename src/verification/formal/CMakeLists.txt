@@ -3,6 +3,7 @@ add_library(ahfl_verification_formal STATIC
     counterexample.cpp
     counterexample_json.cpp
     bmc.cpp
+    smt_encode.cpp
     model_checker_backend.cpp
     nuxmv_backend.cpp
     spin_backend.cpp

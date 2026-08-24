@@ -365,6 +365,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-smt-encode
+    TESTS
+        ahfl.formal.smt_encode_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-bmc-depth
     TESTS
         ahfl.formal.bmc_depth_customization_all

@@ -1,7 +1,7 @@
 ---
 rfc: "0017"
 title: "BMC Contract Semantics"
-status: "review"
+status: "implementing"
 area: ["formal", "compiler"]
 stability: "experimental"
 created: "2026-08-24"
@@ -352,3 +352,13 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   `emit smt`; List/Map quantification excluded to a follow-up RFC; k-induction falls
   back to bounded `bounded_safe`). Design / User Impact / Implementation Plan / Test
   Plan updated to match. Status draft → review.
+- 2026-08-24: Owner sign-off; status review → implementing. Slicing per the
+  Implementation Plan, starting with the SMT encoding layer (slice 2).
+- 2026-08-24: Slice 2 landed — `src/verification/formal/smt_encode.{hpp,cpp}`
+  implement the pure IR-expression → SMT-LIB 2 encoder over the data-predicate
+  subset (bool/int literals, contract paths, member access, comparison /
+  logical / arithmetic operators, `!=` rewrite, `/` and `%` with `divisor != 0`
+  obligations, optional INT64 overflow guards, deterministic symbol naming).
+  Subset-boundary violations surface as a structured `SmtEncodeRejection`.
+  Covered by `tests/unit/verification/formal/smt_encode.cpp`
+  (`ahfl.formal.smt_encode_all`).
