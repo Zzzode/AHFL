@@ -173,10 +173,10 @@
 
 - [x] 为 pass pipeline 增加 backend-effect 回归，证明 `-O` 会让普通 `emit ir` / `emit smv` 输出发生可审查改变。
 - [x] 将 `--optimize` 与普通 CLI/backend emission 明确绑定，普通 backend 仍消费 Semantic IR，但会先运行 Semantic IR pass pipeline。
-- [ ] 将 backend-effect 回归扩展到 dead state、workflow simplification、SMV size / IR size 指标和 runtime plan 输出。（2026-08-24：workflow simplification 与 SMV/IR size delta 已落地——`ok_workflow_simplification.ahfl` fixture + `RunWorkflowSimplificationTest.cmake` 断言 `-O` 真实收缩 transitive edge 与 LTLSPEC，并接入 quality-gates label；剩余 dead-state elimination 与 runtime plan 输出的 backend-effect 回归待补。）
+- [x] 将 backend-effect 回归扩展到 dead state、workflow simplification、SMV size / IR size 指标和 runtime plan 输出。（2026-08-24：workflow simplification 与 SMV/IR size delta 已落地——`ok_workflow_simplification.ahfl` fixture + `RunWorkflowSimplificationTest.cmake` 断言 `-O` 真实收缩 transitive edge 与 LTLSPEC；dead-state 与 runtime-plan 已补——`RunDeadStateEliminationTest.cmake` 锁住 validator gate（unreachable state 通过 CLI 前即被 `validation.INVALID_STATE` 拒绝，`-O` 前后一致），`RunRuntimePlanEffectTest.cmake` 断言 execution plan 在 `-O` 下丢弃 transitive dependency edge 且 JSON 收缩；均接入 quality-gates label。）
 - [ ] 将当前 CLI 级 trace/metrics 扩展为 pass-level trace event schema、Opt IR function-level timing 与历史对比报告。
 - [ ] 为 WASM backend 定义 runtime model、WASI/capability mapping、browser-side execution boundary。
-- [ ] 为 K8s/OpenAPI/Terraform target 定义稳定 schema、validation 和 golden。
+- [x] 为 K8s/OpenAPI/Terraform target 定义稳定 schema、validation 和 golden。（2026-08-24：`tests/scripts/infra_target_gate.py` + `InfraTargetTests.cmake` 对三个 emit target 提供 snapshot 比对、结构校验（openapi JSON openapi/info/paths；k8s-crd YAML apiVersion/kind/metadata/spec；terraform HCL resource blocks）与 determinism（两次 emit 字节一致）；顺带修复 `YamlWriter::begin_list_item` 的 dangling-dash YAML 非法输出 bug。）
 
 验收证据：
 
@@ -196,8 +196,8 @@
 - [x] 为真实 `emit smv` 输出建立初始 size/spec budget CTest gate，覆盖 formal workflow、pass-productization fixture 和 refund audit example。
 - [ ] 将 compile time、memory proxy 与 SMV size budget 扩展为趋势报告、release-blocking 阈值和更多 state-space 代表样本。
 - [x] 将 mutation config/report plumbing 纳入 CTest 与 `quality-gates`，输出机器可读 config report。
-- [ ] 将 mutation testing 从 config/report plumbing 升级为真实 runner job，输出 mutation score。
-- [ ] 为 fuzz crash corpus 和 minimized repro 建立保存位置。
+- [x] 将 mutation testing 从 config/report plumbing 升级为真实 runner job，输出 mutation score。（2026-08-24：`run_fallback_mutation.sh` 自包含 runner 对固定 mutant 集应用于 target 拷贝、重建窄测试并记录 killed/survived，输出真实 mutation score JSON（fixture 上 killed=3 survived=1，`scaled_arith` 为刻意 expected survivor）；mull 不可用时 `run_mutation.sh` 输出 `status: tool_unavailable, score: null` 而非伪造分数；`ahfl.mutation.fallback_score` ctest 校验 report 结构与全部 mutant 已评估。）
+- [x] 为 fuzz crash corpus 和 minimized repro 建立保存位置。（2026-08-24：`tests/fuzz/crashes/<target>/` 目录约定 + README + `_TEMPLATE.repro.md`，`crash_replay.sh` 把每个 crash 输入回放给对应 libFuzzer 二进制作为 single-run 回归门（空目录时 no-op 通过，提交 crash 文件即成为回归守卫）；注：crash_replay ctest 因一个 pre-existing 且无关的 fuzzing-configure bug（`LabelTests.cmake` 给仅存在于 non-fuzzing 分支的 `ahfl.fuzz.*_check` 打 label）无法在本机端到端验证，replay path 本身已修正。）
 
 验收证据：
 
