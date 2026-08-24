@@ -103,3 +103,15 @@ rfcs:
     file: "0017-bmc-contract-semantics.zh.md"
     area: ["formal", "compiler"]
     stability: "experimental"
+  - rfc: "0018"
+    title: "NuSMV Library-Mode Embedding"
+    status: "draft"
+    file: "0018-nusmv-library-mode.zh.md"
+    area: ["formal", "tooling"]
+    stability: "experimental"
+  - rfc: "0019"
+    title: "WASM Backend Runtime Model"
+    status: "draft"
+    file: "0019-wasm-runtime-model.zh.md"
+    area: ["runtime", "compiler", "tooling"]
+    stability: "experimental"
