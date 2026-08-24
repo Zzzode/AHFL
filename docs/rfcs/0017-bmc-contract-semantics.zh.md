@@ -393,3 +393,15 @@ cvc5 作为后续可选后端——能力矩阵天然支持多后端,但本 RFC 
   CMake `AHFL_Z3_SOLVER` detection (mirrors `AHFL_SMV_CHECKER`). Covered by
   `tests/unit/verification/formal/smt_solver.cpp` (`ahfl.formal.smt_solver_all`;
   a real-Z3 round-trip `ahfl.formal.smt_solver_real_z3` runs when Z3 is present).
+- 2026-08-24: Slice 5 landed — SMT-BMC engine. `smt_bmc.{hpp,cpp}` turn each
+  contract's data predicates into proof-by-refutation queries: `requires`
+  become assumptions, `invariant`/`ensures` become goals (an invariant is also
+  assumed for other goals but never for itself), `forbid` proves the negation,
+  and each divide/modulo divisor obligation is its own goal. A goal is proven
+  when `assumptions ∧ ¬goal` is `unsat`; `sat` ⇒ Unsafe, `unknown` ⇒ Unknown, a
+  missing solver ⇒ SolverUnavailable — never a silent Safe. The data-predicate
+  fragment is loop-free so one query per goal is complete (unbounded k is the
+  temporal fragment's concern, slice 6). Covered by
+  `tests/unit/verification/formal/smt_bmc.cpp` (`ahfl.formal.smt_bmc_all` for
+  the solver-independent behaviour; `ahfl.formal.smt_bmc_real_z3` proves an
+  `ensures` Safe and refutes an unconditioned one Unsafe against real Z3).

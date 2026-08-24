@@ -6,6 +6,7 @@ add_library(ahfl_verification_formal STATIC
     smt_encode.cpp
     smt_emit.cpp
     smt_solver.cpp
+    smt_bmc.cpp
     subset.cpp
     model_checker_backend.cpp
     nuxmv_backend.cpp

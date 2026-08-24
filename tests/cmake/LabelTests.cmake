@@ -399,6 +399,20 @@ if(AHFL_Z3_SOLVER)
 endif()
 
 ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+    TESTS
+        ahfl.formal.smt_bmc_all
+)
+
+if(AHFL_Z3_SOLVER)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+        TESTS
+            ahfl.formal.smt_bmc_real_z3
+    )
+endif()
+
+ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-bmc-depth
     TESTS
         ahfl.formal.bmc_depth_customization_all

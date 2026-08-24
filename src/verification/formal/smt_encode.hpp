@@ -93,4 +93,8 @@ struct SmtEncodeOptions {
 // Human-readable reason for a rejection, for diagnostic messages.
 [[nodiscard]] std::string_view describe_rejection(SmtEncodeRejection rejection) noexcept;
 
+// SMT-LIB 2 sort keyword for a symbol sort ("Bool" / "Int"). Shared by the
+// emit artifact and the SMT-BMC engine so the sort spelling lives in one place.
+[[nodiscard]] std::string_view smt_sort_keyword(SmtSort sort) noexcept;
+
 } // namespace ahfl::formal

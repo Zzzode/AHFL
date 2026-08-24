@@ -1345,6 +1345,20 @@ if(AHFL_Z3_SOLVER)
     )
 endif()
 
+add_test(NAME ahfl.formal.smt_bmc_all
+    COMMAND $<TARGET_FILE:ahfl_smt_bmc_tests>
+)
+
+# RFC 0017 slice 5: SMT-BMC proof semantics against real Z3 when detected.
+if(AHFL_Z3_SOLVER)
+    add_test(NAME ahfl.formal.smt_bmc_real_z3
+        COMMAND $<TARGET_FILE:ahfl_smt_bmc_tests>
+    )
+    set_tests_properties(ahfl.formal.smt_bmc_real_z3 PROPERTIES
+        ENVIRONMENT "AHFL_Z3_PATH=${AHFL_Z3_SOLVER}"
+    )
+endif()
+
 add_test(NAME ahfl.formal.bmc_depth_customization_all
     COMMAND $<TARGET_FILE:ahfl_bmc_depth_customization_tests>
 )

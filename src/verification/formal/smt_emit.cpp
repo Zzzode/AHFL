@@ -3,23 +3,12 @@
 #include "ahfl/compiler/ir/identity.hpp"
 
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
 namespace ahfl::formal {
 
 namespace {
-
-[[nodiscard]] std::string_view sort_name(SmtSort sort) noexcept {
-    switch (sort) {
-    case SmtSort::Bool:
-        return "Bool";
-    case SmtSort::Int:
-        return "Int";
-    }
-    return "Int";
-}
 
 // Accumulates the unioned symbol table (first-encounter order across all
 // clauses) and the rendered clause bodies before they are written, so symbol
@@ -106,7 +95,7 @@ void emit_program_smt(const ir::Program &program, std::ostream &out,
     out << "(set-logic QF_NIA)\n";
 
     for (const auto &symbol : doc.symbols) {
-        out << "(declare-const " << symbol.name << " " << sort_name(symbol.sort) << ")\n";
+        out << "(declare-const " << symbol.name << " " << smt_sort_keyword(symbol.sort) << ")\n";
         if (symbol.int_bounds.has_value()) {
             out << "(assert (and (>= " << symbol.name << " " << symbol.int_bounds->first
                 << ") (<= " << symbol.name << " " << symbol.int_bounds->second << ")))\n";

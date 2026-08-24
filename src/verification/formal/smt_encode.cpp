@@ -255,4 +255,14 @@ std::string_view describe_rejection(SmtEncodeRejection rejection) noexcept {
     return "unknown rejection";
 }
 
+std::string_view smt_sort_keyword(SmtSort sort) noexcept {
+    switch (sort) {
+    case SmtSort::Bool:
+        return "Bool";
+    case SmtSort::Int:
+        return "Int";
+    }
+    return "Int";
+}
+
 } // namespace ahfl::formal
