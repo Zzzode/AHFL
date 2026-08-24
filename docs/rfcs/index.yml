@@ -111,7 +111,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0019"
     title: "WASM Backend Runtime Model"
-    status: "draft"
+    status: "implementing"
     file: "0019-wasm-runtime-model.zh.md"
     area: ["runtime", "compiler", "tooling"]
     stability: "experimental"

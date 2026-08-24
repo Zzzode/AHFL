@@ -1,20 +1,20 @@
 ---
 rfc: "0019"
 title: "WASM Backend Runtime Model"
-status: "draft"
+status: "implementing"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-24"
 updated: "2026-08-24"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  runtime: "TBD"
-  compiler: "TBD"
-  tooling: "TBD"
+  runtime: "runtime owner"
+  compiler: "compiler owner"
+  tooling: "tooling owner"
 required_reviewers: ["runtime", "compiler"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-09-30"
 ---
@@ -116,16 +116,22 @@ flowchart TD
 编译出的 agent 模块导出稳定 ABI:
 
 - `(memory (export "memory"))` — 线性内存(已存在于 `emit_wat_header`)。
+- `(func (export "alloc") (param i32) (result i32))` — 在 WASM 线性内存中分配 n 字节,
+   返回指针;host 用它写 input 帧(OQ2 决策:导出侧分配)。
+- `(func (export "dealloc") (param i32 i32))` — 释放 (ptr,len);host 读完 output 帧后调用。
 - `(func (export "run") (param i32 i32) (result i32))` — 传入 input 的 (ptr,len),
    执行 agent 到 final 状态,返回 output 的 (ptr) / 错误码。
 - `(func (export "step") (result i32))` — 单步迁移(供 DAP/playground 步进,复用 RFC 0015
    的调试语义)。
 - `(func (export "current_state") (result i32))` — 当前状态 index(映射回 AHFL 状态名)。
 - `(global (export "transition_count"))` — quota 计数(已存在),对齐 native 的 agent quota。
+- `(global (export "ahfl_abi_version") i32)` — ABI 版本号(OQ4/OQ1 决策:版本化契约,
+   序列化格式与帧结构的演进经此号切换,Component Model 为未来 major 版本目标)。
 
-input/context/output 作为长度前缀的序列化 `Value`(复用 `value_json` 或一个紧凑二进制
-编码,见 Open Questions)布局在线性内存;所有权契约:host 写 input、WASM 写 output、
-双方经导出的 alloc 协商内存。
+input/context/output 作为**长度前缀的 `value_json` 字节流**(OQ1 决策:复用
+`value_json` 保证与 native 编解码一致;紧凑二进制为后续版本)布局在线性内存;所有权契约
+(OQ2):host 经导出的 `alloc` 分配并写 input、把 (ptr,len) 传给 `run`;WASM 写 output 帧
+并返回其 ptr,host 读后经 `dealloc` 释放。
 
 ### capability → host import 映射
 
@@ -255,19 +261,53 @@ RFC 让契约先落地。
 
 ## Open Questions
 
-1. input/context/output 的线性内存序列化格式:复用 `value_json`(文本,简单但慢/大)还是
-   定一个紧凑二进制编码(快/小但需维护一个 ABI 契约)?
-2. 内存所有权/分配协商:模块导出 `alloc`/`free` 让 host 在 WASM 内存中写 input,还是
-   host 提供 import 让 WASM 回调分配?
-3. 确定性时钟/随机的注入机制:确定性模式下 `ClockAccess` 由 host 注入固定值的具体
-   契约(每次 step 递增?固定?)。
-4. Component Model / WIT 迁移路径:何时从手写 core WASM import 迁到 WIT?是否本 RFC
-   预留 hook。
-5. capability 的异步性:HTTP/LLM capability 本质异步,core WASM 是同步调用——browser
-   profile 下如何处理(host 侧 block?Asyncify?JSPI?)。这可能显著影响 ABI。
-6. WASM 执行与 native runtime 的一致性验证深度:逐状态迁移一致,还是也要求 capability
-   调用参数/返回值一致?后者更强但更难。
+所有开放问题已在进入 review 前决策；下列为最终结论与理由。
+
+1. **input/context/output 的线性内存序列化格式** → **决策：初期复用 `value_json`（长度前缀
+   的 UTF-8 JSON），二进制编码推迟。** 理由：`value_json`（`src/runtime/`）已是 native
+   runtime 与 handoff artifact 的既有序列化器,复用它保证 WASM 与 native 对同一 `Value`
+   的编解码一致(Goal 6),避免初期维护第二套 ABI;性能/体积优化(紧凑二进制)在有真实
+   codegen 与 benchmark 后再作为独立 RFC 引入。ABI 契约以"长度前缀 + 字节流"描述,
+   编码格式本身是 ABI 的一个版本化字段,便于后续替换而不破坏帧结构。
+2. **内存所有权/分配协商** → **决策：模块导出 `alloc`/`dealloc`,host 在 WASM 线性内存内
+   写 input,WASM 写 output;不使用 host 回调分配。** 理由:导出侧 `alloc` 是 wasm-bindgen /
+   wasmtime embedder 的主流约定,host 无需持有 WASM 内部分配器状态,所有权边界清晰
+   (host 拥有它 alloc 的 input 帧直到传入 `run`;WASM 拥有它返回的 output 帧,host 读后
+   调 `dealloc`)。
+3. **确定性时钟/随机注入** → **决策：确定性模式下 `ClockAccess` 由 host import 提供固定
+   基准 + 单调递增计数,每次时钟读取返回 `base + counter++`;随机同理由 host 注入种子。**
+   理由:满足 artifact 确定性边界(无 wall clock 泄漏),又保留时钟读取之间的可区分性
+   (对超时/顺序敏感的 agent 逻辑);非确定性模式(命令行 wasi)下时钟直连 WASI
+   `clock_time_get`。
+4. **Component Model / WIT 迁移路径** → **决策:本 RFC 用手写 core WASM import 契约,
+   不引入 WIT;但 ABI 契约设一个版本号字段,Component Model 作为未来 major ABI 版本的
+   迁移目标,不预留具体 hook。** 理由:Component Model 浏览器支持尚不完整(Non-Goal 5),
+   过早预留 hook 是投机;版本号让未来迁移有干净切换点而不污染当前契约。
+5. **capability 的异步性** → **决策:ABI 层 capability import 声明为同步 `(param i32 i32)
+   (result i32)`;异步由 host 侧吸收——wasi profile 下 embedder 阻塞等待,browser profile
+   下初期要求 host 用同步桥接(SharedArrayBuffer + Atomics.wait 或预解析),JSPI/Asyncify
+   作为 browser 的后续增强,不改 WASM 侧同步 ABI。** 理由:保持 WASM 模块 ABI 同步且
+   profile 无关(Goal 5 的"共享模块 ABI"),把异步复杂度隔离在 host 侧,模块本身不需
+   Asyncify 变换。这是对 Goal 5 的强化约束。
+6. **WASM 执行与 native runtime 的一致性验证深度** → **决策:分两级——本 RFC 阶段(无
+   完整 codegen)建立"逐状态迁移序列一致"的断言骨架;capability 调用参数/返回值一致
+   作为 codegen 落地后的更强目标,列入一致性框架(slice 6)但不阻塞本 RFC。** 理由:
+   迁移序列一致是可在契约阶段就锚定的最小等价性;参数级一致依赖真实 codegen,过早
+   要求会阻塞契约落地。
 
 ## Decision History
 
 - 2026-08-24: Draft opened.
+- 2026-08-24: All six Open Questions resolved (value_json length-prefixed
+  serialization with a versioned ABI field; module-exported `alloc`/`dealloc`
+  ownership; deterministic clock = host-injected base + monotonic counter;
+  core WASM + versioned ABI, Component Model as a future major-ABI target;
+  synchronous capability
+  ABI with async absorbed host-side; consistency = per-state-transition now,
+  capability-argument parity after codegen). Owners / shepherd assigned;
+  tracking_issue / discussion set to none. Status draft → review.
+- 2026-08-24: Owner sign-off; status review → implementing. Slicing per the
+  Implementation Plan, starting with the ABI contract (slice 1). Full WASM
+  codegen (AHFL evaluator → WASM instructions) stays out of scope per Non-Goal
+  1; this RFC lands the contract, effect→WASI projection, capability imports,
+  and profiled emit.
