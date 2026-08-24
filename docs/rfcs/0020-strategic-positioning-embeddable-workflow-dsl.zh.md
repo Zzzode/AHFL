@@ -1,7 +1,7 @@
 ---
 rfc: "0020"
 title: "AHFL Strategic Positioning: Embeddable Verifiable Agent-Workflow DSL"
-status: "accepted"
+status: "stabilized"
 area: ["process", "language", "runtime", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
@@ -279,3 +279,7 @@ import 契约)。AHFL 的对应物是 **capability embedding ABI**,其第一个�
 - 2026-08-25: Implementation Plan 落地——定位入 architecture-overview §1.5、表达力护栏入
   core-language spec §1.3;[RFC 0021](0021-capability-embedding-abi.zh.md)(Capability
   Embedding ABI)开题,承接 Q1+Q3(语言无关 `ahfl_host.h` C ABI + pending/异步语义)。
+- 2026-08-25: Status accepted → stabilized。定位已在 `docs/design`(architecture-overview
+  §1.5)与 `docs/spec`(core-language §1.3)稳定表述,且项目路线图
+  (`docs/plans/project-status.zh.md` 项目概览 + 路线图组织轴)以本定位为组织轴,后续
+  RFC(0021)据此开题并已开始实现(slice 1 落库)。Rollout 全部条件满足。

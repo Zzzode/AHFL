@@ -17,7 +17,9 @@
 | CI 平台 | GitHub Actions: ubuntu-24.04、macos-14、ASan |
 | 许可证 | Apache-2.0 |
 
-**定位**：AHFL 是面向高风险 AI Agent 工作流的强类型控制平面 DSL 与 C++23 编译器，覆盖状态机建模、行为契约、DAG 编排、形式化验证、event-native runtime 执行与开发者工具链。
+**定位**：AHFL 是一门**可嵌入（embeddable）、可验证（verifiable）的 agent workflow 编排 DSL**（[RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md)，accepted，项目北极星）——agent 时代的 Lua / eBPF / SQL：编排 multi-agent workflow 的结构与行为，通用计算由宿主经 **capability 嵌入边界**提供，多宿主（原生解释器 = 参考语义 + 开发；WASM+WASI = 运行时权限沙箱；agent 框架宿主 = 能力可模块化装卸）。表达力护栏：workflow 建模（A 型）无上限，节点内通用计算（B 型）留在 capability 边界外。覆盖状态机建模、行为契约、DAG 编排、形式化验证、event-native runtime 执行与开发者工具链。
+
+> **路线图组织轴**：后续语言/编译器/运行时工作以上述定位为北极星——评估任何新特性用"增强 A 型编排表达力 vs 推向 B 型通用语言"判据；capability 嵌入边界（[RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md)）是把该定位落地为多宿主能力的核心资产。
 
 ---
 
