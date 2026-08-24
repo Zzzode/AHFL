@@ -122,14 +122,22 @@ std::vector<WasmAgentConfig> lower_wasm(const ir::Program &program) {
             for (const auto &t : agent->transitions) {
                 config.transitions.emplace_back(t.from_state, t.to_state);
             }
-            config.capabilities = symbol_names(agent->capability_refs);
-            // Resolve each capability's effect kind (parallel to capabilities),
-            // defaulting to Unknown (conservative) when the decl is not found.
-            config.capability_effects.reserve(config.capabilities.size());
-            for (const auto &cap_name : config.capabilities) {
-                const auto it = capability_effects.find(cap_name);
+            // RFC 0019: build capabilities / effects / ids as three strictly
+            // parallel vectors in one pass over the agent's capability refs, so
+            // the WASI projection and import naming never desync. Import
+            // identity is the SymbolId (index-based), falling back to the
+            // ordinal when a ref has no resolved id, keeping output deterministic.
+            const auto &refs = agent->capability_refs;
+            config.capabilities.reserve(refs.size());
+            config.capability_effects.reserve(refs.size());
+            config.capability_ids.reserve(refs.size());
+            for (std::size_t i = 0; i < refs.size(); ++i) {
+                const auto name = std::string(ir::symbol_canonical_name(refs[i]));
+                config.capabilities.push_back(name);
+                const auto it = capability_effects.find(name);
                 config.capability_effects.push_back(
                     it != capability_effects.end() ? it->second : WasmCapabilityEffect::Unknown);
+                config.capability_ids.push_back(refs[i].id.value_or(i));
             }
             result.push_back(std::move(config));
         }

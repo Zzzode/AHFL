@@ -331,3 +331,13 @@ RFC 让契约先落地。
   its `CapabilityDecl` effect kind (default Unknown when absent). Covered by
   `ahfl.backends.wasm_all` (pure/read → empty; external/unknown → NetworkAccess;
   mixed severities dedupe).
+- 2026-08-24: Slice 3 landed — capability import generation. Each used
+  capability now emits one `ahfl_cap` import whose field name is the
+  capability's SymbolId (index-based identity, `cap_<id>`), unified signature
+  `(param i32 i32) (result i32)` — replacing the old `env`/source-name imports,
+  so a rename no longer changes the ABI. `WasmAgentConfig` gains
+  `capability_ids`; `lower_wasm` builds capabilities / effects / ids as three
+  strictly parallel vectors in one pass over the agent's capability refs
+  (SymbolId with ordinal fallback). Covered by `ahfl.backends.wasm_all`
+  (ahfl_cap naming, no `env` import, no source-name leak, import-list
+  registration) and verified end-to-end via `emit wasm`.

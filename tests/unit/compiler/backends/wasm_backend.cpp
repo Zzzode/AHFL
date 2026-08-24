@@ -23,6 +23,7 @@ int main() {
         config.states = {"idle", "running", "done"};
         config.transitions = {{"idle", "running"}, {"running", "done"}};
         config.capabilities = {"http_call"};
+        config.capability_ids = {7};
 
         auto mod = ahfl::backends::generate_wasm(config);
 
@@ -164,6 +165,38 @@ int main() {
         check(mixed.allowed_capabilities.size() == 1 &&
                   has_cap(mixed, WasiCapability::NetworkAccess),
               "mixed read + durable write projects to a single NetworkAccess");
+    }
+
+    // Test 7 (RFC 0019 slice 3): capability imports use the ahfl_cap ABI and
+    // are named by SymbolId (index-based identity), not the source name.
+    {
+        ahfl::backends::WasmAgentConfig config;
+        config.agent_name = "cap_agent";
+        config.states = {"init", "done"};
+        config.transitions = {{"init", "done"}};
+        config.capabilities = {"http_call"};
+        config.capability_ids = {42};
+
+        auto mod = ahfl::backends::generate_wasm(config);
+        const auto &wat = mod.wat_source;
+
+        bool has_ahfl_cap =
+            wat.find("(import \"ahfl_cap\" \"cap_42\" (func $cap_42 (param i32 i32) (result i32)))") !=
+            std::string::npos;
+        bool no_env_import = wat.find("(import \"env\"") == std::string::npos;
+        bool no_source_name = wat.find("http_call") == std::string::npos;
+
+        check(has_ahfl_cap && no_env_import,
+              "capability import uses the ahfl_cap ABI named by SymbolId");
+        check(no_source_name, "capability import does not leak the source name");
+
+        bool import_registered = false;
+        for (const auto &imp : mod.imports) {
+            if (imp == "ahfl_cap.cap_42") {
+                import_registered = true;
+            }
+        }
+        check(import_registered, "module import list registers the ahfl_cap symbol");
     }
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);

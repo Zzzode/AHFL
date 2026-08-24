@@ -248,14 +248,22 @@ std::string emit_helper_functions(const std::vector<std::string> &states,
 }
 
 /// Emit capability import declarations for WASM host bindings.
-std::string emit_capability_imports(const std::vector<std::string> &capabilities) {
-    if (capabilities.empty())
+///
+/// RFC 0019 slice 3: each used capability becomes one `ahfl_cap` import whose
+/// field name is the capability's SymbolId (index-based identity), not the
+/// source name — so a rename does not change the ABI. The signature is unified
+/// `(param i32 i32) (result i32)`: (args ptr,len) -> result ptr / error code.
+/// The `$cap_<id>` local alias keeps the WAT readable.
+std::string emit_capability_imports(const std::vector<std::size_t> &capability_ids) {
+    if (capability_ids.empty()) {
         return "";
+    }
     std::string wat;
-    wat += "  ;; Capability imports (host functions)\n";
-    for (const auto &cap : capabilities) {
-        wat +=
-            "  (import \"env\" \"" + cap + "\" (func $cap_" + cap + " (param i32) (result i32)))\n";
+    wat += "  ;; Capability imports (host functions, RFC 0019 ahfl_cap ABI)\n";
+    for (const auto id : capability_ids) {
+        const auto id_str = std::to_string(id);
+        wat += "  (import \"ahfl_cap\" \"cap_" + id_str + "\" (func $cap_" + id_str +
+               " (param i32 i32) (result i32)))\n";
     }
     wat += "\n";
     return wat;
@@ -358,7 +366,7 @@ WasmModule generate_wasm(const WasmAgentConfig &config) {
 
     std::string wat;
     wat += emit_wat_header(config.agent_name);
-    wat += emit_capability_imports(config.capabilities);
+    wat += emit_capability_imports(config.capability_ids);
     wat += emit_wat_state_table(config.states);
     wat += emit_transition_function(config.states, config.transitions, state_index);
     wat += emit_helper_functions(config.states, final_states, state_index);
@@ -381,9 +389,9 @@ WasmModule generate_wasm(const WasmAgentConfig &config) {
         mod.exports.emplace_back(std::string(abi.name));
     }
 
-    // Register imports
-    for (const auto &cap : config.capabilities) {
-        mod.imports.emplace_back("env." + cap);
+    // Register imports (RFC 0019 ahfl_cap ABI, named by SymbolId).
+    for (const auto id : config.capability_ids) {
+        mod.imports.emplace_back("ahfl_cap.cap_" + std::to_string(id));
     }
 
     return mod;

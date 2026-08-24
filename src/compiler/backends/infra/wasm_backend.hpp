@@ -24,6 +24,11 @@ struct WasmAgentConfig {
     // (parallel vector). Drives the least-privilege effect -> WASI projection.
     // An empty vector (e.g. no capabilities) projects to zero WASI capability.
     std::vector<WasmCapabilityEffect> capability_effects;
+    // RFC 0019 slice 3: the SymbolId of each capability in `capabilities`
+    // (parallel vector). The WASM import field name is derived from this
+    // index-based identity, not the source name. When a ref has no resolved id
+    // the ordinal position is used so output stays deterministic.
+    std::vector<std::size_t> capability_ids;
 };
 
 [[nodiscard]] WasmModule generate_wasm(const WasmAgentConfig &config);
