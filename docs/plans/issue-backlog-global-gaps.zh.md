@@ -152,7 +152,7 @@
 
 待办：
 
-- [ ] 将 BMC/k-induction 从简单状态图 reachability 推进到 AHFL contract/property semantics。
+- [x] 将 BMC/k-induction 从简单状态图 reachability 推进到 AHFL contract/property semantics。（2026-08-24：RFC 0017 已 stabilized——SMT 编码层 + 可验证子集判定 + `emit smt` + Z3 求解器 seam + SMT-BMC 引擎 + k-induction `bounded_safe` 回退 + counterexample 物化 + `verify` 集成，全部落库并配单测/golden/真实-Z3 覆盖；规范见 `docs/spec/core-language.zh.md` §5.6。）
 - [x] 为 nuXmv、SPIN、TLA+ backend 建立机器可读工具能力矩阵和 skip reason，明确 nuXmv/NuSMV 是当前 AHFL SMV 验证路径，SPIN/TLA+ 仍为 emit-only。
 - [x] 将工具能力矩阵接入 CLI/report，让 CI 能区分 `missing_binary`、`verification_unsupported` 和 `checker_error`。
 - [x] 增强 counterexample 到 source range、workflow node、capability call、contract clause 的映射。（2026-08-24：capability call 与 contract clause 映射已落地——SMV backend 为 `agent__*__called__*` 与 contract/workflow LTLSPEC 发射带 source range 的 AHFL_MAP，counterexample 投影新增 `ProjectedCapabilityCall` 与 `ViolatedContractInfo` source range，未映射符号回退空 range 不伪造；185/185 counterexample_parse 单测。）
