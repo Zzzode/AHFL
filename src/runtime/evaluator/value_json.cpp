@@ -133,22 +133,18 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     ahfl::write_escaped_json_string(out, "_named_payload");
                     out << ':';
                     out << '{';
-                    std::vector<std::string> names;
-                    names.reserve(inner.named_payload.size());
-                    for (const auto &[name, _] : inner.named_payload) {
-                        names.push_back(name);
-                    }
-                    std::sort(names.begin(), names.end());
-                    for (std::size_t i = 0; i < names.size(); ++i) {
-                        if (i > 0) {
+                    // FieldMap iterates in name-sorted order, giving
+                    // deterministic serialization without an explicit sort.
+                    bool first = true;
+                    for (const auto &[name, value] : inner.named_payload) {
+                        if (!first) {
                             out << ',';
                         }
-                        const auto &name = names[i];
+                        first = false;
                         ahfl::write_escaped_json_string(out, name);
                         out << ':';
-                        if (const auto iter = inner.named_payload.find(name);
-                            iter != inner.named_payload.end() && iter->second) {
-                            write_json_impl(*iter->second, out);
+                        if (value) {
+                            write_json_impl(*value, out);
                         } else {
                             out << "null";
                         }
@@ -291,7 +287,7 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
                 if (!item_value.has_value()) {
                     return std::nullopt;
                 }
-                enum_value.named_payload.emplace(
+                enum_value.named_payload.set(
                     field_name, std::make_unique<Value>(std::move(*item_value)));
             }
         }
@@ -328,7 +324,7 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
         if (!field_value.has_value()) {
             return std::nullopt;
         }
-        struct_value.fields.emplace(key, std::make_unique<Value>(std::move(*field_value)));
+        struct_value.fields.set(key, std::make_unique<Value>(std::move(*field_value)));
     }
 
     return Value{std::move(struct_value)};

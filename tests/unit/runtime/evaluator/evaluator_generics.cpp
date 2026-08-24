@@ -185,15 +185,15 @@ fn caller() -> Packet effect Pure decreases 0 {
 
     const auto code = packet->named_payload.find("code");
     REQUIRE(code != packet->named_payload.end());
-    REQUIRE(code->second != nullptr);
-    const auto *code_value = std::get_if<IntValue>(&code->second->node);
+    REQUIRE(code->value != nullptr);
+    const auto *code_value = std::get_if<IntValue>(&code->value->node);
     REQUIRE(code_value != nullptr);
     CHECK(code_value->value == 7);
 
     const auto label = packet->named_payload.find("label");
     REQUIRE(label != packet->named_payload.end());
-    REQUIRE(label->second != nullptr);
-    const auto *label_value = std::get_if<StringValue>(&label->second->node);
+    REQUIRE(label->value != nullptr);
+    const auto *label_value = std::get_if<StringValue>(&label->value->node);
     REQUIRE(label_value != nullptr);
     CHECK(label_value->value == "ok");
 }

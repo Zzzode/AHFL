@@ -149,8 +149,7 @@ void test_serialize_args_single_struct() {
     Value v;
     StructValue sv;
     sv.type_name = "Request";
-    sv.fields["name"] = std::make_unique<Value>();
-    sv.fields["name"]->node = StringValue{"alice"};
+    sv.fields.set("name", std::make_unique<Value>(Value{StringValue{"alice"}}));
     v.node = std::move(sv);
 
     std::vector<Value> args;

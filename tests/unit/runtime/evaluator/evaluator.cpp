@@ -377,8 +377,8 @@ void test_struct_literal() {
     if (sv) {
         auto it = sv->fields.find("name");
         check(it != sv->fields.end(), "struct_literal.has_name");
-        if (it != sv->fields.end() && it->second) {
-            auto *name_val = std::get_if<StringValue>(&it->second->node);
+        if (it != sv->fields.end() && it->value) {
+            auto *name_val = std::get_if<StringValue>(&it->value->node);
             check(name_val != nullptr && name_val->value == "Alice", "struct_literal.name_value");
         }
     }

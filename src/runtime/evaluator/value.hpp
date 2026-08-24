@@ -5,6 +5,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -51,9 +52,64 @@ struct DurationValue {
     std::string spelling; // preserve original format (e.g. "5s", "100ms")
 };
 
+// Named field storage for struct values and struct-enum-variant payloads.
+//
+// RFC 0022 (durable resume) requires deterministic serialization: the same
+// logical value must produce byte-identical `value_json` output across
+// processes and allocators. A `std::unordered_map` cannot: its iteration order
+// depends on the allocator and insertion history. `FieldMap` is a flat vector
+// (Principle 3) kept sorted by field name, so iteration order is a pure
+// function of the field-name set. The sorted position IS the field's canonical
+// ordinal (Principle 2: index-based identity, not string-keyed hashing). The
+// name is retained only for source-level lookup and diagnostic display.
+//
+// This mirrors the ordered-vector design of `MapValue`/`SetValue` below, and
+// replaces the ad-hoc "collect names, std::sort, then iterate" workarounds that
+// were previously scattered across value.cpp / value_json.cpp to paper over the
+// map's nondeterminism.
+class FieldMap {
+  public:
+    struct Entry {
+        std::string name;
+        std::unique_ptr<Value> value;
+    };
+
+    using const_iterator = std::vector<Entry>::const_iterator;
+    using iterator = std::vector<Entry>::iterator;
+
+    [[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
+    [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
+
+    [[nodiscard]] iterator begin() noexcept { return entries_.begin(); }
+    [[nodiscard]] iterator end() noexcept { return entries_.end(); }
+    [[nodiscard]] const_iterator begin() const noexcept { return entries_.begin(); }
+    [[nodiscard]] const_iterator end() const noexcept { return entries_.end(); }
+
+    // Insert or overwrite the entry for `name`, keeping entries sorted by name.
+    // Mirrors the previous `unordered_map::emplace`/`operator[]=` call sites but
+    // maintains the sorted invariant that guarantees deterministic iteration.
+    void set(std::string name, std::unique_ptr<Value> value);
+
+    // Lookup returning the entry iterator, or end() if absent. Preserves the
+    // `find`/`end` idiom used throughout the runtime.
+    [[nodiscard]] iterator find(std::string_view name);
+    [[nodiscard]] const_iterator find(std::string_view name) const;
+
+    // Value pointer for `name`, or nullptr if absent (or the entry is null).
+    [[nodiscard]] Value *get(std::string_view name);
+    [[nodiscard]] const Value *get(std::string_view name) const;
+
+  private:
+    [[nodiscard]] iterator lower_bound(std::string_view name);
+    [[nodiscard]] const_iterator lower_bound(std::string_view name) const;
+
+    // Sorted by `name`; sorted position is the canonical field ordinal.
+    std::vector<Entry> entries_;
+};
+
 struct StructValue {
     std::string type_name;
-    std::unordered_map<std::string, std::unique_ptr<Value>> fields;
+    FieldMap fields;
 };
 
 struct ListValue {
@@ -67,7 +123,7 @@ struct EnumValue {
     // store one entry per declared payload field.
     std::vector<std::unique_ptr<Value>> payload;
     // Named payload: RFC 0001 struct enum variants.
-    std::unordered_map<std::string, std::unique_ptr<Value>> named_payload;
+    FieldMap named_payload;
 };
 
 struct CallableValue {

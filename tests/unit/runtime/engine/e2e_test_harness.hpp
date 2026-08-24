@@ -88,7 +88,7 @@ build_fields(std::string key, evaluator::Value value, Rest &&...rest) {
     if (iter == value.fields.end()) {
         return nullptr;
     }
-    return iter->second.get();
+    return iter->value.get();
 }
 
 } // namespace ahfl::tests::runtime_e2e

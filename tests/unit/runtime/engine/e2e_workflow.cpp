@@ -243,14 +243,14 @@ int test_priority_low_handling_path(const ir::Program &program) {
             // Verify category = Technical
             auto cat_it = sv->fields.find("category");
             if (cat_it != sv->fields.end()) {
-                auto *ev = std::get_if<EnumValue>(&cat_it->second->node);
+                auto *ev = std::get_if<EnumValue>(&cat_it->value->node);
                 check(ev != nullptr && ev->variant == "Technical", "low.category_technical");
             }
 
             // Verify resolved = true
             auto res_it = sv->fields.find("resolved");
             if (res_it != sv->fields.end()) {
-                auto *bv = std::get_if<BoolValue>(&res_it->second->node);
+                auto *bv = std::get_if<BoolValue>(&res_it->value->node);
                 check(bv != nullptr && bv->value == true, "low.resolved_true");
             }
 
@@ -321,14 +321,14 @@ int test_priority_high_escalated_path(const ir::Program &program) {
             // Verify category = Technical (from classify)
             auto cat_it = sv->fields.find("category");
             if (cat_it != sv->fields.end()) {
-                auto *ev = std::get_if<EnumValue>(&cat_it->second->node);
+                auto *ev = std::get_if<EnumValue>(&cat_it->value->node);
                 check(ev != nullptr && ev->variant == "Technical", "high.category_technical");
             }
 
             // Verify resolved = true
             auto res_it = sv->fields.find("resolved");
             if (res_it != sv->fields.end()) {
-                auto *bv = std::get_if<BoolValue>(&res_it->second->node);
+                auto *bv = std::get_if<BoolValue>(&res_it->value->node);
                 check(bv != nullptr && bv->value == true, "high.resolved_true");
             }
         }
@@ -349,7 +349,7 @@ int test_priority_high_escalated_path(const ir::Program &program) {
                 if (sv) {
                     auto resp_it = sv->fields.find("response");
                     if (resp_it != sv->fields.end()) {
-                        auto *strv = std::get_if<StringValue>(&resp_it->second->node);
+                        auto *strv = std::get_if<StringValue>(&resp_it->value->node);
                         // Should be HandleTechnical's response
                         check(strv != nullptr && strv->value == "Escalated to senior engineer",
                               "high.support_technical_response");

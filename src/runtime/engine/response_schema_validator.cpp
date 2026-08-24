@@ -341,14 +341,14 @@ namespace {
             for (const auto &field : decl->fields) {
                 expected_fields.insert(field.name);
                 const auto found = sv->fields.find(field.name);
-                if (found == sv->fields.end() || found->second == nullptr) {
+                if (found == sv->fields.end() || found->value == nullptr) {
                     return SchemaValidationResult::fail(at_path(
                         path,
                         "missing field '" + field.name + "' for struct '" + decl->name + "'"));
                 }
                 const auto field_path =
                     path.empty() ? field.name : std::string(path) + "." + field.name;
-                auto field_result = check(*found->second, field.type_ref, index, field_path);
+                auto field_result = check(*found->value, field.type_ref, index, field_path);
                 if (!field_result.valid) {
                     return field_result;
                 }

@@ -210,8 +210,8 @@ void test_response_parser_struct() {
             // Check the category field
             auto it_cat = sv->fields.find("category");
             check(it_cat != sv->fields.end(), "response_parser.struct_has_category");
-            if (it_cat != sv->fields.end() && it_cat->second) {
-                auto *ev = std::get_if<EnumValue>(&it_cat->second->node);
+            if (it_cat != sv->fields.end() && it_cat->value) {
+                auto *ev = std::get_if<EnumValue>(&it_cat->value->node);
                 check(ev != nullptr, "response_parser.category_is_enum");
                 if (ev != nullptr) {
                     check(ev->enum_name == "Category", "response_parser.category_enum_name");
@@ -222,8 +222,8 @@ void test_response_parser_struct() {
             // Check the confidence field
             auto it_conf = sv->fields.find("confidence");
             check(it_conf != sv->fields.end(), "response_parser.struct_has_confidence");
-            if (it_conf != sv->fields.end() && it_conf->second) {
-                auto *str = std::get_if<StringValue>(&it_conf->second->node);
+            if (it_conf != sv->fields.end() && it_conf->value) {
+                auto *str = std::get_if<StringValue>(&it_conf->value->node);
                 check(str != nullptr, "response_parser.confidence_is_string");
                 if (str != nullptr) {
                     check(str->value == "high", "response_parser.confidence_value");
@@ -299,8 +299,8 @@ void test_response_parser_bool_field() {
         if (sv != nullptr) {
             auto it = sv->fields.find("resolved");
             check(it != sv->fields.end(), "response_parser.bool_field_exists");
-            if (it != sv->fields.end() && it->second) {
-                auto *bv = std::get_if<BoolValue>(&it->second->node);
+            if (it != sv->fields.end() && it->value) {
+                auto *bv = std::get_if<BoolValue>(&it->value->node);
                 check(bv != nullptr, "response_parser.bool_field_is_bool");
                 if (bv != nullptr) {
                     check(bv->value == true, "response_parser.bool_field_value_true");

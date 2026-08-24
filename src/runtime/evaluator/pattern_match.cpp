@@ -79,10 +79,10 @@ bind_pattern_name(PatternBindings &bindings, std::string_view name, const Value 
                 continue;
             }
             const auto iter = enum_value->named_payload.find(field.name);
-            if (iter == enum_value->named_payload.end() || !iter->second || !field.pattern) {
+            if (iter == enum_value->named_payload.end() || !iter->value || !field.pattern) {
                 return false;
             }
-            if (!match_pattern(*field.pattern, *iter->second, bindings)) {
+            if (!match_pattern(*field.pattern, *iter->value, bindings)) {
                 return false;
             }
         }

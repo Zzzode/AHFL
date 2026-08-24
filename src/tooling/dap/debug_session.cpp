@@ -918,13 +918,13 @@ parse_value_path(const std::string &expression) {
                                                      const std::string &field) {
     if (const auto *sv = std::get_if<evaluator::StructValue>(&value.node)) {
         if (const auto it = sv->fields.find(field); it != sv->fields.end()) {
-            return it->second.get();
+            return it->value.get();
         }
         return nullptr;
     }
     if (const auto *ev = std::get_if<evaluator::EnumValue>(&value.node)) {
         if (const auto it = ev->named_payload.find(field); it != ev->named_payload.end()) {
-            return it->second.get();
+            return it->value.get();
         }
         return nullptr;
     }
@@ -1036,14 +1036,9 @@ std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
     std::visit(
         Overloaded{
             [&](const evaluator::StructValue &sv) {
-                std::vector<std::string> names;
-                names.reserve(sv.fields.size());
-                for (const auto &[name, _] : sv.fields) {
-                    names.push_back(name);
-                }
-                std::sort(names.begin(), names.end());
-                for (const auto &name : names) {
-                    append_child(name, sv.fields.at(name).get());
+                // FieldMap iterates in name-sorted order already.
+                for (const auto &[name, value] : sv.fields) {
+                    append_child(name, value.get());
                 }
             },
             [&](const evaluator::EnumValue &ev) {
@@ -1058,14 +1053,9 @@ std::string DebugSession::expand_value_locked(const evaluator::Value &value) {
                 for (std::size_t i = 0; i < ev.payload.size(); ++i) {
                     append_child("_" + std::to_string(i), ev.payload[i].get());
                 }
-                std::vector<std::string> names;
-                names.reserve(ev.named_payload.size());
-                for (const auto &[name, _] : ev.named_payload) {
-                    names.push_back(name);
-                }
-                std::sort(names.begin(), names.end());
-                for (const auto &name : names) {
-                    append_child(name, ev.named_payload.at(name).get());
+                // FieldMap iterates in name-sorted order already.
+                for (const auto &[name, value] : ev.named_payload) {
+                    append_child(name, value.get());
                 }
             },
             [&](const evaluator::ListValue &lv) {

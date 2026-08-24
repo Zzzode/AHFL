@@ -155,7 +155,7 @@ bool deep_equal(const Value &lhs, const Value &rhs) {
             auto it = rst->fields.find(name);
             if (it == rst->fields.end())
                 return false;
-            if (!deep_equal_value_ptr(val, it->second))
+            if (!deep_equal_value_ptr(val, it->value))
                 return false;
         }
         return true;
@@ -1010,10 +1010,10 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
                 return make_error("cannot access member '" + member + "' on non-struct value");
             }
             auto field_it = sv->fields.find(member);
-            if (field_it == sv->fields.end() || !field_it->second) {
+            if (field_it == sv->fields.end() || !field_it->value) {
                 return make_error("struct has no field: " + member);
             }
-            val = clone_value(*field_it->second);
+            val = clone_value(*field_it->value);
         }
         return EvalResult{std::move(*val), {}};
     }
@@ -1040,10 +1040,10 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
             return make_error("cannot access member '" + member + "' on non-struct value");
         }
         auto field_it = sv->fields.find(member);
-        if (field_it == sv->fields.end() || !field_it->second) {
+        if (field_it == sv->fields.end() || !field_it->value) {
             return make_error("struct has no field: " + member);
         }
-        val = clone_value(*field_it->second);
+        val = clone_value(*field_it->value);
     }
     return EvalResult{std::move(*val), {}};
 }
@@ -1409,10 +1409,10 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
     // Struct member access
     if (auto *sv = std::get_if<StructValue>(&base.value.node)) {
         auto field_it = sv->fields.find(expr.member);
-        if (field_it == sv->fields.end() || !field_it->second) {
+        if (field_it == sv->fields.end() || !field_it->value) {
             return make_error("struct has no field: " + expr.member);
         }
-        return EvalResult{clone_value(*field_it->second), {}};
+        return EvalResult{clone_value(*field_it->value), {}};
     }
 
     // List.length
@@ -1685,9 +1685,9 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
         DiagnosticBag diags;
         diags.append(std::move(key_result.diagnostics));
         diags.append(std::move(val_result.diagnostics));
-        std::unordered_map<std::string, std::unique_ptr<Value>> fields;
-        fields.emplace("key", std::make_unique<Value>(std::move(key_result.value)));
-        fields.emplace("value", std::make_unique<Value>(std::move(val_result.value)));
+        FieldMap fields;
+        fields.set("key", std::make_unique<Value>(std::move(key_result.value)));
+        fields.set("value", std::make_unique<Value>(std::move(val_result.value)));
         return EvalResult{Value{.node = StructValue{.type_name = "MapEntry", .fields = std::move(fields)}},
                           std::move(diags)};
     }
@@ -1711,13 +1711,13 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
                 auto key_it = sv->fields.find("key");
                 auto val_it = sv->fields.find("value");
                 if (key_it == sv->fields.end() || val_it == sv->fields.end() ||
-                    !key_it->second || !val_it->second) {
+                    !key_it->value || !val_it->value) {
                     return make_error("map_from_entries: entry missing key/value fields");
                 }
                 // Move keys directly (entry struct is single-use); frontend
                 // guarantees unique keys per construction site.
-                map.entries.emplace_back(std::move(key_it->second),
-                                         std::move(val_it->second));
+                map.entries.emplace_back(std::move(key_it->value),
+                                         std::move(val_it->value));
             } else {
                 return make_error("map_from_entries: entry is not a MapEntry struct");
             }
@@ -2081,9 +2081,9 @@ EvalResult eval_intrinsic_with_args(const std::string &callee,
         if (args.size() != 2) {
             return make_error("map_entry_new expects two arguments");
         }
-        std::unordered_map<std::string, std::unique_ptr<Value>> fields;
-        fields.emplace("key", std::make_unique<Value>(std::move(args[0])));
-        fields.emplace("value", std::make_unique<Value>(std::move(args[1])));
+        FieldMap fields;
+        fields.set("key", std::make_unique<Value>(std::move(args[0])));
+        fields.set("value", std::make_unique<Value>(std::move(args[1])));
         return EvalResult{Value{.node = StructValue{.type_name = "MapEntry", .fields = std::move(fields)}}, {}};
     }
     if (callee == "std::collections::map_from_entries") {
@@ -2097,10 +2097,10 @@ EvalResult eval_intrinsic_with_args(const std::string &callee,
             auto key_it = sv->fields.find("key");
             auto val_it = sv->fields.find("value");
             if (key_it == sv->fields.end() || val_it == sv->fields.end() ||
-                !key_it->second || !val_it->second) {
+                !key_it->value || !val_it->value) {
                 return make_error("map_from_entries: entry missing key/value fields");
             }
-            map.entries.emplace_back(std::move(key_it->second), std::move(val_it->second));
+            map.entries.emplace_back(std::move(key_it->value), std::move(val_it->value));
         }
         return EvalResult{Value{.node = std::move(map)}, {}};
     }

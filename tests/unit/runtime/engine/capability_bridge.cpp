@@ -1089,8 +1089,8 @@ void test_eval_with_capability_call() {
     const StringValue *field_string = nullptr;
     if (struct_value != nullptr) {
         auto value_field = struct_value->fields.find("value");
-        if (value_field != struct_value->fields.end() && value_field->second) {
-            field_string = std::get_if<StringValue>(&value_field->second->node);
+        if (value_field != struct_value->fields.end() && value_field->value) {
+            field_string = std::get_if<StringValue>(&value_field->value->node);
         }
     }
     check(field_string != nullptr && field_string->value == "inner", "eval_cap.struct_call_value");

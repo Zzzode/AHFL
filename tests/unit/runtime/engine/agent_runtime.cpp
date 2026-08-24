@@ -126,8 +126,8 @@ StateHandler make_conditional_handler(const std::string &state,
 Value make_input_struct(const std::string &type_name,
                         const std::string &field_name,
                         Value field_value) {
-    std::unordered_map<std::string, std::unique_ptr<Value>> fields;
-    fields[field_name] = std::make_unique<Value>(std::move(field_value));
+    evaluator::FieldMap fields;
+    fields.set(field_name, std::make_unique<Value>(std::move(field_value)));
     return Value{StructValue{type_name, std::move(fields)}};
 }
 

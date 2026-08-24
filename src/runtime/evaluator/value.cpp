@@ -6,10 +6,61 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace ahfl::evaluator {
+
+// ============================================================================
+// FieldMap: sorted-by-name flat storage for struct / struct-enum-variant fields
+// ----------------------------------------------------------------------------
+// Kept sorted by field name so iteration order is a pure function of the field
+// set — the invariant RFC 0022 relies on for deterministic `value_json`. The
+// sorted position is the field's canonical ordinal (Principle 2). Method bodies
+// live here (not the header) because they manipulate `unique_ptr<Value>`, which
+// requires `Value` to be a complete type.
+// ============================================================================
+
+FieldMap::iterator FieldMap::lower_bound(std::string_view name) {
+    return std::lower_bound(entries_.begin(), entries_.end(), name,
+                            [](const Entry &e, std::string_view n) { return e.name < n; });
+}
+
+FieldMap::const_iterator FieldMap::lower_bound(std::string_view name) const {
+    return std::lower_bound(entries_.begin(), entries_.end(), name,
+                            [](const Entry &e, std::string_view n) { return e.name < n; });
+}
+
+void FieldMap::set(std::string name, std::unique_ptr<Value> value) {
+    auto it = lower_bound(name);
+    if (it != entries_.end() && it->name == name) {
+        it->value = std::move(value);
+        return;
+    }
+    entries_.insert(it, Entry{std::move(name), std::move(value)});
+}
+
+FieldMap::iterator FieldMap::find(std::string_view name) {
+    auto it = lower_bound(name);
+    return (it != entries_.end() && it->name == name) ? it : entries_.end();
+}
+
+FieldMap::const_iterator FieldMap::find(std::string_view name) const {
+    auto it = lower_bound(name);
+    return (it != entries_.end() && it->name == name) ? it : entries_.end();
+}
+
+Value *FieldMap::get(std::string_view name) {
+    auto it = find(name);
+    return it != entries_.end() ? it->value.get() : nullptr;
+}
+
+const Value *FieldMap::get(std::string_view name) const {
+    auto it = find(name);
+    return it != entries_.end() ? it->value.get() : nullptr;
+}
+
 
 // ============================================================================
 // Structural ordering / equality primitives (RFC P7)
@@ -98,19 +149,15 @@ int compare_values(const Value &lhs, const Value &rhs) {
                 if (inner.named_payload.size() != r->named_payload.size()) {
                     return inner.named_payload.size() < r->named_payload.size() ? -1 : 1;
                 }
-                std::vector<std::string> names;
-                names.reserve(inner.named_payload.size());
-                for (const auto &[name, _] : inner.named_payload) {
-                    names.push_back(name);
-                }
-                std::sort(names.begin(), names.end());
-                for (const auto &name : names) {
-                    const auto rhs_it = r->named_payload.find(name);
-                    if (rhs_it == r->named_payload.end()) {
-                        return 1;
+                // FieldMap is name-sorted, so parallel iteration compares
+                // fields in a canonical order without collecting/sorting names.
+                for (auto li = inner.named_payload.begin(), ri = r->named_payload.begin();
+                     li != inner.named_payload.end(); ++li, ++ri) {
+                    if (int c = li->name.compare(ri->name); c != 0) {
+                        return c;
                     }
-                    const auto &lhs_value = inner.named_payload.at(name);
-                    const auto &rhs_value = rhs_it->second;
+                    const auto &lhs_value = li->value;
+                    const auto &rhs_value = ri->value;
                     if (!lhs_value && !rhs_value) {
                         continue;
                     }
@@ -200,7 +247,7 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                     auto it = r->fields.find(name);
                     if (it == r->fields.end())
                         return false;
-                    if (!structurally_equal(*val, *it->second))
+                    if (!structurally_equal(*val, *it->value))
                         return false;
                 }
                 return true;
@@ -238,13 +285,13 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                     if (rhs_it == r->named_payload.end()) {
                         return false;
                     }
-                    if (!value && !rhs_it->second) {
+                    if (!value && !rhs_it->value) {
                         continue;
                     }
-                    if (!value || !rhs_it->second) {
+                    if (!value || !rhs_it->value) {
                         return false;
                     }
-                    if (!structurally_equal(*value, *rhs_it->second)) {
+                    if (!structurally_equal(*value, *rhs_it->value)) {
                         return false;
                     }
                 }
@@ -420,21 +467,16 @@ void print_value(const Value &v, std::ostream &out) {
                         out << ")";
                     } else if (!inner.named_payload.empty()) {
                         out << " { ";
-                        std::vector<std::string> names;
-                        names.reserve(inner.named_payload.size());
-                        for (const auto &[name, _] : inner.named_payload) {
-                            names.push_back(name);
-                        }
-                        std::sort(names.begin(), names.end());
-                        for (std::size_t i = 0; i < names.size(); ++i) {
-                            if (i > 0) {
+                        // FieldMap iterates in name-sorted order already.
+                        bool first = true;
+                        for (const auto &[name, value] : inner.named_payload) {
+                            if (!first) {
                                 out << ", ";
                             }
-                            const auto &name = names[i];
+                            first = false;
                             out << name << ": ";
-                            if (const auto iter = inner.named_payload.find(name);
-                                iter != inner.named_payload.end() && iter->second) {
-                                print_value(*iter->second, out);
+                            if (value) {
+                                print_value(*value, out);
                             } else {
                                 out << "<null>";
                             }
@@ -504,7 +546,7 @@ Value make_struct(std::string type_name, std::unordered_map<std::string, Value> 
     StructValue sv;
     sv.type_name = std::move(type_name);
     for (auto &[name, val] : fields) {
-        sv.fields.emplace(name, std::make_unique<Value>(std::move(val)));
+        sv.fields.set(name, std::make_unique<Value>(std::move(val)));
     }
     return Value{std::move(sv)};
 }
@@ -527,7 +569,7 @@ Value make_enum(std::string enum_name,
     ev.enum_name = std::move(enum_name);
     ev.variant = std::move(variant);
     for (auto &[name, item] : named_payload) {
-        ev.named_payload.emplace(std::move(name), std::make_unique<Value>(std::move(item)));
+        ev.named_payload.set(std::move(name), std::make_unique<Value>(std::move(item)));
     }
     return Value{std::move(ev)};
 }
@@ -653,7 +695,7 @@ Value clone_value(const Value &v) {
                 sv.type_name = inner.type_name;
                 for (const auto &[name, val] : inner.fields) {
                     if (val) {
-                        sv.fields.emplace(name, std::make_unique<Value>(clone_value(*val)));
+                        sv.fields.set(name, std::make_unique<Value>(clone_value(*val)));
                     }
                 }
                 return Value{std::move(sv)};
@@ -679,9 +721,9 @@ Value clone_value(const Value &v) {
                 }
                 for (const auto &[name, value] : inner.named_payload) {
                     if (value) {
-                        ev.named_payload.emplace(name, std::make_unique<Value>(clone_value(*value)));
+                        ev.named_payload.set(name, std::make_unique<Value>(clone_value(*value)));
                     } else {
-                        ev.named_payload.emplace(name, nullptr);
+                        ev.named_payload.set(name, nullptr);
                     }
                 }
                 return Value{std::move(ev)};

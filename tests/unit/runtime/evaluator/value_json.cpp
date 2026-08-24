@@ -109,6 +109,56 @@ void test_serialize_optional() {
     check(value_to_json(none) == "null", "serialize.optional_none");
 }
 
+// RFC 0022 soundness prerequisite: struct/enum field serialization must be a
+// pure function of the field set, independent of insertion order or allocator.
+// FieldMap keeps entries name-sorted, so two structs with the same fields
+// inserted in opposite orders must serialize to byte-identical JSON, with
+// fields emitted in name-sorted order after the "_type" tag.
+void test_serialize_struct_deterministic() {
+    std::unordered_map<std::string, Value> forward;
+    forward.emplace("alpha", make_int(1));
+    forward.emplace("beta", make_int(2));
+    forward.emplace("gamma", make_int(3));
+    auto sv_forward = make_struct("Rec", std::move(forward));
+
+    std::unordered_map<std::string, Value> reverse;
+    reverse.emplace("gamma", make_int(3));
+    reverse.emplace("beta", make_int(2));
+    reverse.emplace("alpha", make_int(1));
+    auto sv_reverse = make_struct("Rec", std::move(reverse));
+
+    const auto json_forward = value_to_json(sv_forward);
+    const auto json_reverse = value_to_json(sv_reverse);
+    check(json_forward == json_reverse,
+          "serialize.struct_deterministic_order_independent");
+    // Exact byte shape: fields in name-sorted order.
+    check(json_forward == R"({"_type":"Rec","alpha":1,"beta":2,"gamma":3})",
+          "serialize.struct_deterministic_exact_bytes");
+    // Re-serializing the same value is byte-stable.
+    check(value_to_json(sv_forward) == json_forward,
+          "serialize.struct_deterministic_stable");
+}
+
+// Same guarantee for struct-enum-variant named payloads (RFC 0001 + RFC 0022).
+void test_serialize_enum_named_payload_deterministic() {
+    std::unordered_map<std::string, Value> forward;
+    forward.emplace("code", make_int(7));
+    forward.emplace("label", make_string("x"));
+    auto ev_forward = make_enum("Packet", "Data", std::move(forward));
+
+    std::unordered_map<std::string, Value> reverse;
+    reverse.emplace("label", make_string("x"));
+    reverse.emplace("code", make_int(7));
+    auto ev_reverse = make_enum("Packet", "Data", std::move(reverse));
+
+    const auto json_forward = value_to_json(ev_forward);
+    check(json_forward == value_to_json(ev_reverse),
+          "serialize.enum_named_payload_order_independent");
+    check(json_forward.find(R"("_named_payload":{"code":7,"label":"x"})") !=
+              std::string::npos,
+          "serialize.enum_named_payload_sorted_bytes");
+}
+
 // ============================================================================
 // Deserialization tests
 // ============================================================================
@@ -238,8 +288,8 @@ void test_parse_struct() {
             check(sv->type_name == "Point", "parse.struct_type_name");
             check(sv->fields.size() == 2, "parse.struct_field_count");
             auto it_x = sv->fields.find("x");
-            if (it_x != sv->fields.end() && it_x->second) {
-                auto *xv = std::get_if<IntValue>(&it_x->second->node);
+            if (it_x != sv->fields.end() && it_x->value) {
+                auto *xv = std::get_if<IntValue>(&it_x->value->node);
                 check(xv != nullptr && xv->value == 10, "parse.struct_field_x");
             }
         }
@@ -429,6 +479,8 @@ int main() {
     test_serialize_enum();
     test_serialize_list();
     test_serialize_struct();
+    test_serialize_struct_deterministic();
+    test_serialize_enum_named_payload_deterministic();
     test_serialize_optional();
 
     test_parse_null();
