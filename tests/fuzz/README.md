@@ -13,6 +13,7 @@ tests/fuzz/
 ├── fuzz_typecheck.cpp     Parse → resolve → typecheck 全链路
 ├── fuzz_smv_emitter.cpp   SMV/NuSMV 后端 IR emission
 ├── corpus/                归档的历史 crash 样例（详见 corpus-location.md）
+├── crashes/               回归门禁：已修复/待修复 crash 的最小化输入 + repro（见下文「Crash 回归语料」）
 └── seeds/                 可选：各 target 的初始语料（可空）
 ```
 
@@ -55,6 +56,66 @@ mkdir -p /tmp/fuzz_corpus_parser
 ```
 
 跑全链路 typecheck 和 SMV emitter 同理：把 `fuzz_parser` 换成 `fuzz_typecheck` 或 `fuzz_smv_emitter`。
+
+---
+
+## Crash 回归语料（`crashes/`）
+
+`corpus/` 归档的是**按日期分批**的原始 triage 样例；`crashes/` 存的是经过
+**最小化、需要永久回归守护**的 crash 输入。每个文件都被自动接入一条确定性
+CTest（`ahfl.fuzz.<target>.crash_replay`），保证一个被修掉的 crash 不会再次回归。
+
+**目录约定**（完整说明见 [`crashes/README.md`](crashes/README.md)）：
+
+```
+tests/fuzz/crashes/
+├── README.md              约定说明
+├── _TEMPLATE.repro.md     repro 记录模板
+├── fuzz_parser/           每个 target 一个子目录（目录名 == libFuzzer 二进制名）
+│   ├── .gitkeep
+│   ├── <sha256>           最小化后的 crash 输入（原始字节，无扩展名）
+│   └── <sha256>.repro.md  该 crash 的人读记录
+├── fuzz_typecheck/
+└── fuzz_smv_emitter/
+```
+
+目录初始为空——不放任何伪造样例，只定义「真 crash 落哪里」的约定。
+
+**crash 落盘（含最小化）**：
+
+```bash
+cd <AHFL_ROOT>
+cmake --preset fuzz && cmake --build --preset build-fuzz -j8
+
+# libFuzzer 崩溃时会写出 ./crash-<sha1> 原始 artifact。
+# 用 -minimize_crash 反复收缩到仍能复现的最小输入：
+./build-fuzz/tests/fuzz/fuzz_parser -minimize_crash=1 -runs=100000 \
+  -exact_artifact_path=/tmp/min_input  ./crash-<sha1>
+
+# 确认最小化输入仍崩溃（单次 replay，binary 接受文件参数即跑一次）：
+./build-fuzz/tests/fuzz/fuzz_parser /tmp/min_input       # 期望非 0 退出
+
+# 以 sha256 作为文件名归位，并填 repro 记录：
+SHA=$(sha256sum /tmp/min_input | cut -d' ' -f1)
+cp /tmp/min_input tests/fuzz/crashes/fuzz_parser/$SHA
+cp tests/fuzz/crashes/_TEMPLATE.repro.md \
+   tests/fuzz/crashes/fuzz_parser/$SHA.repro.md   # 然后填字段
+```
+
+**回归门禁怎么消费**：`tests/fuzz/crash_replay.sh` 把 `crashes/<target>/` 下
+每个文件（跳过 `README.md`、`*.repro.md`、`.gitkeep`）作为单次输入喂给对应
+libFuzzer 二进制并断言 exit 0。只在 fuzzer-enabled 构建
+（`-DAHFL_ENABLE_FUZZING=ON`）里注册这三条 CTest（`ahfl.fuzz.<target>.crash_replay`），
+因为只有 libFuzzer 二进制接受文件参数跑单次；普通 `dev` 构建里编的是 standalone
+smoke 二进制，不注册该 replay 测试。语料为空时测试为**通过的 no-op**；一旦提交
+crash 文件，它立刻变成实时回归守护——crash 被修好前该测试 fail，修好后转绿并保持绿。
+
+单独手动跑：
+
+```bash
+tests/fuzz/crash_replay.sh ./build-fuzz/tests/fuzz/fuzz_parser \
+  tests/fuzz/crashes/fuzz_parser
+```
 
 ---
 

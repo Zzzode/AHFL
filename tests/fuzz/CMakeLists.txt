@@ -22,6 +22,21 @@ if(AHFL_ENABLE_FUZZING)
     target_compile_options(fuzz_smv_emitter PRIVATE ${FUZZ_COMPILE_FLAGS})
     target_link_options(fuzz_smv_emitter PRIVATE ${FUZZ_LINK_FLAGS})
     ahfl_apply_project_warnings(fuzz_smv_emitter)
+
+    # Crash regression replay: feed every saved crash input under
+    # tests/fuzz/crashes/<target>/ to its libFuzzer binary as a single-run
+    # file argument and assert exit 0 (no crash). With no crash files the
+    # test is a no-op that passes; a committed crash input becomes a live
+    # regression guard. Only registered in a fuzzer-enabled build, because
+    # only the libFuzzer executables accept a file argument and run once.
+    set(_fuzz_crash_replay ${CMAKE_CURRENT_LIST_DIR}/crash_replay.sh)
+    foreach(_fuzz_target IN ITEMS fuzz_parser fuzz_typecheck fuzz_smv_emitter)
+        add_test(
+            NAME ahfl.fuzz.${_fuzz_target}.crash_replay
+            COMMAND ${_fuzz_crash_replay}
+                    $<TARGET_FILE:${_fuzz_target}>
+                    ${CMAKE_CURRENT_LIST_DIR}/crashes/${_fuzz_target})
+    endforeach()
 else()
     # Compile as regular executables for CI validation
     add_executable(fuzz_parser_check fuzz/fuzz_parser.cpp)
