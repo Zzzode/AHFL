@@ -1,7 +1,10 @@
 #include "runtime/evaluator/value.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <ostream>
 #include <sstream>
@@ -61,9 +64,44 @@ const Value *FieldMap::get(std::string_view name) const {
     return it != entries_.end() ? it->value.get() : nullptr;
 }
 
-
 // ============================================================================
-// Structural ordering / equality primitives (RFC P7)
+// Canonical double formatting (RFC 0022 prereq 1b)
+// ----------------------------------------------------------------------------
+// One locale-independent, shortest-round-trip float renderer, shared by
+// value_json and print_value so a given double serializes identically in every
+// artifact. std::to_chars ignores the global locale and ostream format flags,
+// eliminating the platform-default-precision nondeterminism of `os << double`.
+// ============================================================================
+
+std::string format_double(double value, bool json_mode) {
+    if (!std::isfinite(value)) {
+        // JSON has no NaN/Inf literal; the diagnostic/print path shows the sign.
+        if (json_mode) {
+            return "null";
+        }
+        if (std::isnan(value)) {
+            return "NaN";
+        }
+        return value < 0.0 ? "-Infinity" : "Infinity";
+    }
+    char buf[64];
+    auto [ptr, ec] = std::to_chars(buf,
+                                   buf + sizeof(buf),
+                                   value,
+                                   std::chars_format::general,
+                                   std::numeric_limits<double>::max_digits10);
+    (void)ec; // 64 bytes always suffices for a double in general format.
+    std::string_view sv(buf, static_cast<std::size_t>(ptr - buf));
+    std::string out(sv);
+    // Keep the spelling recognizably a float (has '.' or exponent).
+    if (sv.find('.') == std::string_view::npos && sv.find('e') == std::string_view::npos &&
+        sv.find('E') == std::string_view::npos) {
+        out += ".0";
+    }
+    return out;
+}
+
+
 // ----------------------------------------------------------------------------
 // Used by make_set (de-dup + sort) and make_map (sort by key) so that
 // structurally-equal container values always compare equal and print
@@ -407,7 +445,7 @@ void print_value(const Value &v, std::ostream &out) {
             } else if constexpr (std::is_same_v<T, IntValue>) {
                 out << inner.value;
             } else if constexpr (std::is_same_v<T, FloatValue>) {
-                out << inner.value;
+                out << format_double(inner.value, /*json_mode=*/false);
             } else if constexpr (std::is_same_v<T, StringValue>) {
                 out << "\"" << inner.value << "\"";
             } else if constexpr (std::is_same_v<T, DecimalValue>) {

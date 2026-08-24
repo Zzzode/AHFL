@@ -1,11 +1,6 @@
 #include "runtime/evaluator/value_json.hpp"
 
-#include <algorithm>
-#include <charconv>
-#include <cmath>
 #include <cstddef>
-#include <cstdint>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -60,27 +55,7 @@ void write_json_impl(const Value &v, std::ostream &out) {
             } else if constexpr (std::is_same_v<T, IntValue>) {
                 out << inner.value;
             } else if constexpr (std::is_same_v<T, FloatValue>) {
-                if (std::isnan(inner.value)) {
-                    out << "null";
-                } else if (std::isinf(inner.value)) {
-                    out << "null";
-                } else {
-                    // Use max precision for roundtrip fidelity
-                    char buf[64];
-                    auto [ptr, ec] = std::to_chars(buf,
-                                                   buf + sizeof(buf),
-                                                   inner.value,
-                                                   std::chars_format::general,
-                                                   std::numeric_limits<double>::max_digits10);
-                    std::string_view sv(buf, static_cast<std::size_t>(ptr - buf));
-                    out << sv;
-                    // Ensure output looks like a float (has '.' or 'e')
-                    if (sv.find('.') == std::string_view::npos &&
-                        sv.find('e') == std::string_view::npos &&
-                        sv.find('E') == std::string_view::npos) {
-                        out << ".0";
-                    }
-                }
+                out << format_double(inner.value, /*json_mode=*/true);
             } else if constexpr (std::is_same_v<T, StringValue>) {
                 ahfl::write_escaped_json_string(out, inner.value);
             } else if constexpr (std::is_same_v<T, DecimalValue>) {

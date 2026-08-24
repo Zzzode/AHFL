@@ -1,6 +1,7 @@
 #include "runtime/evaluator/value_json.hpp"
 #include "runtime/evaluator/value.hpp"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -47,6 +48,16 @@ void test_serialize_float() {
     // Should contain a decimal point
     check(json.find('.') != std::string::npos || json.find('e') != std::string::npos,
           "serialize.float_has_decimal");
+    // RFC 0022 prereq 1b: canonical, deterministic float rendering.
+    check(value_to_json(make_float(3.14)) == "3.1400000000000001",
+          "serialize.float_canonical_bytes");
+    // Integral doubles keep a float spelling (".0"), never bare "1".
+    check(value_to_json(make_float(1.0)) == "1.0", "serialize.float_integral_suffix");
+    // Non-finite renders as JSON null (no NaN/Inf literal in JSON).
+    check(value_to_json(make_float(std::nan(""))) == "null", "serialize.float_nan_null");
+    // Re-rendering the same double is byte-stable.
+    check(value_to_json(make_float(0.1)) == value_to_json(make_float(0.1)),
+          "serialize.float_stable");
 }
 
 void test_serialize_string() {

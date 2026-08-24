@@ -221,6 +221,17 @@ enum class ValueKind {
 
 void print_value(const Value &v, std::ostream &out);
 
+/// Canonical, locale-independent double→string rendering. Uses
+/// std::to_chars (shortest round-trip at max_digits10 precision) so the output
+/// is a pure function of the bit pattern — no locale, no ostream format flags,
+/// no platform default precision. This is the single float formatter used by
+/// both value_json and print_value, so a given double renders identically in
+/// every artifact. RFC 0022 relies on this for deterministic replay.
+///
+/// When `json_mode` is true, non-finite values render as JSON `null` and an
+/// integral result is suffixed with ".0" so it stays syntactically a float.
+[[nodiscard]] std::string format_double(double value, bool json_mode);
+
 /// Structural equality: two values are equal iff they have the same kind
 /// and their contents compare equal.  Used by Set/Map canonicalization and
 /// by builtin dispatchers for membership / lookup checks.
