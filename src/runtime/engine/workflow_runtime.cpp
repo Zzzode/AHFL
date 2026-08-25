@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <set>
@@ -13,6 +14,7 @@
 #include "ahfl/compiler/ir/identity.hpp"
 #include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/value_json.hpp"
 
 namespace ahfl::runtime {
 
@@ -32,6 +34,33 @@ struct RuntimeWorkflowPlan {
     std::vector<RuntimeNodePlan> nodes;
     std::vector<WorkflowNodeId> execution_order;
     bool dependencies_valid{true};
+};
+
+// RFC 0022 (durable resume): the running memo table for the node currently
+// executing. Lives runtime-side (never rides in EvalResult — only the
+// {cap_id, ordinal} signal propagates up the eval/exec/agent frames). Reset at
+// the start of every node; the capability invoker closure captures it by
+// reference. `next_ordinal` is a SEPARATE per-node counter, NOT the global
+// retry-inflated InvocationId: it is the stable memo key across resume.
+struct NodeMemoState {
+    std::uint64_t next_ordinal{0};             // per-node ordinal generator (memo key)
+    std::vector<CapabilityMemoEntry> memo{};   // append-only, in ordinal order
+    bool suspended{false};                     // a pending call was reached this node
+    std::size_t pending_cap_id{0};             // pending call's capability SymbolId
+    std::uint64_t pending_ordinal{0};          // pending call's ordinal
+    // Resume replay (C7): when true, ordinals below pending_ordinal are served
+    // from `memo` instead of live-invoked, and pending_ordinal receives the
+    // host-supplied resume result.
+    bool replaying{false};
+
+    void reset() {
+        next_ordinal = 0;
+        memo.clear();
+        suspended = false;
+        pending_cap_id = 0;
+        pending_ordinal = 0;
+        replaying = false;
+    }
 };
 
 [[nodiscard]] std::optional<std::string>
@@ -462,9 +491,14 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     }
 
     ContextualCapabilityInvoker runtime_invoker;
+    // RFC 0022 slice 3 (C5): the memo table for the node currently executing.
+    // Reset at the top of every node's execution; the invoker below captures it
+    // by reference and appends one entry per completed capability call, keyed by
+    // a stable per-node ordinal.
+    NodeMemoState node_memo;
     if (effective_contextual_invoker.has_value() || config_.capability_invoker.has_value()) {
         runtime_invoker =
-            [this, &result, &emit, &node_capability_failures, runtime_provider,
+            [this, &result, &emit, &node_capability_failures, &node_memo, runtime_provider,
              contextual_invoker = std::move(effective_contextual_invoker)](
                 const CapabilityInvocationContext &context,
                 const std::string &name,
@@ -478,6 +512,14 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 capability =
                     result.metadata.add_capability(name, context.source_capability_symbol_id);
             }
+
+            // RFC 0022 (C5): assign the stable per-node ordinal BEFORE the global
+            // (retry-inflated) InvocationId. The ordinal is the memo key and must
+            // be reproducible across resume; the InvocationId is telemetry-only.
+            const std::uint64_t memo_ordinal = node_memo.next_ordinal++;
+            const std::size_t cap_symbol_id =
+                context.source_capability_symbol_id.value_or(0);
+            const std::uint64_t arg_hash = evaluator::hash_values(arguments);
 
             const auto invocation =
                 result.metadata.add_invocation(context.workflow_node_id, *capability);
@@ -497,6 +539,27 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             }
             if (config_.capability_result_observer) {
                 config_.capability_result_observer(invocation_context, call_result);
+            }
+
+            // RFC 0022 (C5): a pending call suspends the node. Stamp the memo
+            // coordinate onto both the running memo state and the result so the
+            // CallEvalFn boundary can build an EvalResult::suspension, then return
+            // BEFORE the failure-classification loop — Pending is not a failure,
+            // so no CapabilityFailed event and no node_capability_failures entry.
+            if (call_result.status == CapabilityCallStatus::Pending) {
+                emit(CapabilityStarted{
+                    .invocation = invocation,
+                    .node = context.workflow_node_id,
+                    .capability = *capability,
+                    .provider = runtime_provider,
+                    .attempt = 1,
+                });
+                node_memo.suspended = true;
+                node_memo.pending_cap_id = cap_symbol_id;
+                node_memo.pending_ordinal = memo_ordinal;
+                call_result.pending_cap_id = cap_symbol_id;
+                call_result.pending_ordinal = memo_ordinal;
+                return call_result;
             }
 
             const auto attempts = std::max<std::size_t>(call_result.attempts, 1U);
@@ -573,6 +636,18 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     output =
                         add_runtime_value(result, evaluator::clone_value(*call_result.value));
                 }
+                // RFC 0022 (C5): record the completed call in the node memo so a
+                // later suspension in the same node can replay it deterministically
+                // instead of re-invoking. Keyed by the stable per-node ordinal;
+                // cap_id + arg_hash are integrity cross-checks asserted on replay.
+                node_memo.memo.push_back(CapabilityMemoEntry{
+                    .ordinal = memo_ordinal,
+                    .cap_id = cap_symbol_id,
+                    .arg_hash = arg_hash,
+                    .result = call_result.value.has_value()
+                                  ? evaluator::clone_value(*call_result.value)
+                                  : evaluator::make_none(),
+                });
                 emit(CapabilityCompleted{
                     .invocation = previous,
                     .output = output,
@@ -641,6 +716,9 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
 
         evaluator::Value node_input = evaluator::make_none();
+        // RFC 0022 (C5): fresh memo table per node. Ordinals restart at 0 so the
+        // memo key is stable and reproducible when this node is later resumed.
+        node_memo.reset();
         CapabilityInvocationContext node_context{
             .workflow_name = workflow_name,
             .workflow_node_name = node.source->name,

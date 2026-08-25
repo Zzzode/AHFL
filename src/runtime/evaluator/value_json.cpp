@@ -1,6 +1,7 @@
 #include "runtime/evaluator/value_json.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -202,6 +203,33 @@ std::string value_to_json(const Value &v) {
     std::ostringstream oss;
     write_json_impl(v, oss);
     return oss.str();
+}
+
+std::uint64_t hash_values(const std::vector<Value> &values) {
+    // FNV-1a (64-bit). Deterministic across runs: no pointer identity, no
+    // allocator order — we hash the canonical JSON bytes of each argument.
+    constexpr std::uint64_t kOffsetBasis = 1469598103934665603ULL;
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t hash = kOffsetBasis;
+    const auto mix_byte = [&hash](unsigned char byte) {
+        hash ^= static_cast<std::uint64_t>(byte);
+        hash *= kPrime;
+    };
+    const auto mix_length = [&mix_byte](std::size_t length) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            mix_byte(static_cast<unsigned char>((length >> shift) & 0xFFU));
+        }
+    };
+    mix_length(values.size());
+    for (const auto &value : values) {
+        const std::string json = value_to_json(value);
+        // Length-delimit each argument so ["a","b"] and ["ab"] cannot collide.
+        mix_length(json.size());
+        for (const char ch : json) {
+            mix_byte(static_cast<unsigned char>(ch));
+        }
+    }
+    return hash;
 }
 
 // ============================================================================
