@@ -1,7 +1,7 @@
 ---
 rfc: "0024"
 title: "Bounded Collection Quantification in the Verifiable Subset"
-status: "review"
+status: "accepted"
 area: ["language", "compiler", "formal"]
 stability: "experimental"
 created: "2026-08-25"
@@ -291,3 +291,11 @@ All three resolved for review (2026-08-25).
   refinement only; Map unrolled in normalized key order; temporal layer unchanged,
   quantifier unrolls to a scalar atom beneath it). Owners / shepherd assigned,
   tracking_issue / discussion set to none. Status draft → review.
+- 2026-08-25: Final comment period — no blocking concerns. The design reuses the
+  stabilized RFC 0017 scalar encoder unchanged (quantifiers unroll into it) and
+  adds no new SMT sort or solver theory, so the verified fragment is unchanged in
+  power and decidability; the only new surface is contextual `forall`/`exists`
+  syntax and a fail-closed unbounded-collection diagnostic. Status review → fcp.
+- 2026-08-25: language + formal owner sign-off; no design changes in fcp. Status
+  fcp → accepted. Ready to implement per the Implementation Plan (grammar/type →
+  subset → encoding → BMC/emit → counterexample → spec).
