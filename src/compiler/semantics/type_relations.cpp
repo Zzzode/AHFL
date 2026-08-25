@@ -246,6 +246,22 @@ bool equivalent_pairwise(const Type &lhs_a,
     return lhs_name == rhs_name;
 }
 
+// RFC 0025: capacity subtyping for bounded collection types. A source
+// collection is capacity-assignable to a target when:
+//   - the target is unbounded (nullopt)          -> always OK (drop the bound)
+//   - both are bounded and source_cap <= target  -> OK (widen the bound)
+//   - the target is bounded but the source is not -> FAIL (no static witness)
+[[nodiscard]] bool capacity_assignable(std::optional<std::uint64_t> source_capacity,
+                                       std::optional<std::uint64_t> target_capacity) noexcept {
+    if (!target_capacity.has_value()) {
+        return true;
+    }
+    if (!source_capacity.has_value()) {
+        return false;
+    }
+    return *source_capacity <= *target_capacity;
+}
+
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
@@ -272,6 +288,17 @@ bool equivalent_impl(const Type &lhs,
         if (rhs_view.has_value() && rhs_view->nominal && rhs_view->kind == lhs_view->kind &&
             rhs_view->first != nullptr) {
             FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            // RFC 0025: bounded collection capacity is part of structural
+            // identity, so two collections are equivalent only if their
+            // capacities match. The std_container_type_view does not carry the
+            // capacity, so read it directly off the StructT payload.
+            const auto *lhs_struct = lhs.get_if<types::StructT>();
+            const auto *rhs_struct = rhs.get_if<types::StructT>();
+            const auto lhs_capacity = lhs_struct != nullptr ? lhs_struct->capacity : std::nullopt;
+            const auto rhs_capacity = rhs_struct != nullptr ? rhs_struct->capacity : std::nullopt;
+            if (lhs_capacity != rhs_capacity) {
+                return equivalent_leaf(lhs, rhs, ctx, join_path(path, "collection.capacity"), false);
+            }
             switch (lhs_view->kind) {
             case stdlib_bridge::StdContainerKind::Option:
                 return solver.solve(TypeRelationKind::Equivalent,
@@ -371,6 +398,12 @@ bool equivalent_impl(const Type &lhs,
                                   join_path(path, "struct.type_args[" + std::to_string(i) + "]"))) {
                     return false;
                 }
+            }
+            // RFC 0025: a bounded collection capacity is part of structural
+            // identity. List<Int>(4) and List<Int>(8) are not equivalent, and
+            // neither is bounded vs unbounded.
+            if (l.capacity != r->capacity) {
+                return false;
             }
             return true;
         },
@@ -589,6 +622,14 @@ bool subtype_impl(const Type &source,
                 const auto tgt_container = stdlib_bridge::std_container_type_view(target);
                 if (tgt_container.has_value() && tgt_container->nominal &&
                     tgt_container->kind == src_container->kind && tgt_container->first != nullptr) {
+                    // RFC 0025: the source capacity must be assignable to the
+                    // target capacity (unbounded target accepts any source;
+                    // bounded target requires source_cap <= target_cap and
+                    // rejects an unbounded source).
+                    if (!capacity_assignable(s->capacity, t->capacity)) {
+                        return subtype_leaf(
+                            source, target, ctx, join_path(path, "collection.capacity"), false);
+                    }
                     switch (src_container->kind) {
                     case stdlib_bridge::StdContainerKind::Option:
                     case stdlib_bridge::StdContainerKind::List:

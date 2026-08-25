@@ -296,7 +296,11 @@ namespace {
             for (const auto *a : s.type_args) {
                 new_args.push_back(substitute(a, subst, subst_scope_id, types));
             }
-            return types.struct_type(s.canonical_name, s.symbol, std::move(new_args));
+            // RFC 0025: preserve the bounded collection capacity across
+            // substitution; it is part of structural identity and independent
+            // of the element type args being substituted.
+            return types.struct_type(
+                s.canonical_name, s.symbol, std::move(new_args), s.capacity);
         },
         [&](const types::EnumT &e) -> TypePtr {
             if (e.type_args.empty()) {

@@ -31,6 +31,15 @@ namespace {
                           std::vector{element});
 }
 
+// RFC 0025: a bounded List<T>(N).
+[[nodiscard]] ahfl::TypePtr
+bounded_list_type(ahfl::TypeContext &tc, ahfl::TypePtr element, std::uint64_t capacity) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kListType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element},
+                          std::optional<std::uint64_t>{capacity});
+}
+
 [[nodiscard]] ahfl::TypePtr set_type(ahfl::TypeContext &tc, ahfl::TypePtr element) {
     return tc.struct_type(std::string{ahfl::stdlib_bridge::kSetType},
                           std::optional<ahfl::SymbolId>{},
@@ -92,6 +101,43 @@ TEST_CASE("type relations support covariant container element types") {
     CHECK_FALSE(ahfl::is_subtype_of(*list_string, *list_bounded));
     CHECK_FALSE(ahfl::is_subtype_of(*set_string, *set_bounded));
     CHECK_FALSE(ahfl::is_subtype_of(*optional_string, *optional_bounded));
+}
+
+TEST_CASE("RFC 0025: bounded collection capacity subtyping lattice") {
+    auto &tc = ahfl::TypeContext::global();
+    const auto element = tc.make(ahfl::TypeKind::Int);
+    const auto unbounded = list_type(tc, element);
+    const auto cap4 = bounded_list_type(tc, element, 4);
+    const auto cap8 = bounded_list_type(tc, element, 8);
+    const auto cap4_again = bounded_list_type(tc, element, 4);
+
+    // Interning: same element + same capacity => pointer-equal; distinct
+    // capacities and bounded-vs-unbounded => distinct interned types.
+    CHECK(cap4 == cap4_again);
+    CHECK(cap4 != cap8);
+    CHECK(cap4 != unbounded);
+
+    // Equivalence respects capacity.
+    CHECK(ahfl::are_types_equivalent(*cap4, *cap4_again));
+    CHECK_FALSE(ahfl::are_types_equivalent(*cap4, *cap8));
+    CHECK_FALSE(ahfl::are_types_equivalent(*cap4, *unbounded));
+
+    // Bounded <: unbounded (drop the bound).
+    CHECK(ahfl::is_subtype_of(*cap4, *unbounded));
+    CHECK(ahfl::is_subtype_of(*cap8, *unbounded));
+
+    // Tighter <: looser (widen the bound); looser is NOT <: tighter.
+    CHECK(ahfl::is_subtype_of(*cap4, *cap8));
+    CHECK_FALSE(ahfl::is_subtype_of(*cap8, *cap4));
+
+    // Unbounded is NOT <: bounded (no static capacity witness).
+    CHECK_FALSE(ahfl::is_subtype_of(*unbounded, *cap4));
+
+    // Assignability mirrors subtyping for these cases.
+    CHECK(ahfl::is_assignable_to(*cap4, *unbounded));
+    CHECK(ahfl::is_assignable_to(*cap4, *cap8));
+    CHECK_FALSE(ahfl::is_assignable_to(*cap8, *cap4));
+    CHECK_FALSE(ahfl::is_assignable_to(*unbounded, *cap4));
 }
 
 TEST_CASE("type relations keep map keys invariant but values covariant") {
