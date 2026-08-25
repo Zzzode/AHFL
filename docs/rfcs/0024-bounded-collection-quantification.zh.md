@@ -1,7 +1,7 @@
 ---
 rfc: "0024"
 title: "Bounded Collection Quantification in the Verifiable Subset"
-status: "implementing"
+status: "implemented"
 area: ["language", "compiler", "formal"]
 stability: "experimental"
 created: "2026-08-25"
@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["c8a8bd74"]
+implementation_prs: ["c8a8bd74", "db39a056", "b4e0d2ec", "b2e77158"]
 decision_due: "2026-11-30"
 ---
 
@@ -337,3 +337,14 @@ All three resolved for review (2026-08-25).
   scalar refinement), then resume slices 3-7 reading the capacity off the IR
   `TypeRef`. Design "Bound source" section + Open Question 1 corrected to cite
   RFC 0025 instead of a non-existent bounded type / `bounded` refinement.
+- 2026-08-26: Status implementing → implemented. With [RFC 0025](0025-bounded-collection-types.zh.md)
+  supplying the capacity bound, the remaining slices landed: slice 3-4 (subset
+  eligibility + SMT encoding by finite unrolling) in db39a056 — the encoder reads
+  the collection's IR capacity, unrolls `forall`→`(and …)` / `exists`→`(or …)`
+  with index-based element symbols `coll@i`, empty→`true`/`false`, and
+  fail-closes unbounded collections with `formal.UNBOUNDED_QUANTIFIER`; slice 5
+  (BMC + emit) is delivered by `smt_emit`/`smt_bmc` consuming the encoder output
+  unchanged; slice 6 (counterexample) maps `coll@i`→`coll[i]` (b4e0d2ec); slice 7
+  (spec §5.6) in b2e77158. Unit coverage: smt_encode forall/exists/vacuous/
+  unbounded/determinism. Stabilization pending release-evidence coverage of a
+  quantified contract end-to-end.

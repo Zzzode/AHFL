@@ -1,7 +1,7 @@
 ---
 rfc: "0025"
 title: "Bounded Collection Types"
-status: "implementing"
+status: "implemented"
 area: ["language", "compiler", "ir", "formal"]
 stability: "experimental"
 created: "2026-08-26"
@@ -16,7 +16,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["14b69f2e", "bcd55fe0", "8f71ae1c", "2209e260", "db39a056", "b2e77158"]
 decision_due: "2026-11-30"
 ---
 
@@ -324,3 +324,15 @@ All three resolved for review (2026-08-26):
 - 2026-08-26: Status accepted → implementing. Proceeding per the Implementation
   Plan (grammar/AST → interning → assignability → IR → formal hook → spec), one
   slice per commit.
+- 2026-08-26: Status implementing → implemented. All six slices landed with
+  tests: (1) grammar `collectionCapacity` + `ast::NamedType::collection_capacity`
+  (14b69f2e); (2) `types::StructT::capacity` + interning key + resolver
+  restriction to List/Set/Map, `typecheck.COLLECTION_CAPACITY_NOT_ALLOWED`
+  (bcd55fe0); (3) capacity subtyping lattice in `type_relations.cpp` +
+  substitution-preservation fix (8f71ae1c); (4) `ir::TypeRef::collection_capacity`
+  lowering + ir-json (2209e260); (5) SMT unroll encoder consuming the capacity,
+  `SmtEncodeRejection::UnboundedQuantifier` fail-closed (db39a056, shared with
+  RFC 0024 slices 3-4); (6) spec §4.3/§5.5/§5.6 (b2e77158). Unit coverage:
+  type_relations capacity lattice, smt_encode unroll/vacuous/unbounded cases.
+  Stabilization pending release-evidence coverage of a bounded-collection
+  contract end-to-end via RFC 0024.
