@@ -1,7 +1,7 @@
 ---
 rfc: "0023"
 title: "Capability-Identity Effect Inference"
-status: "draft"
+status: "implementing"
 area: ["language", "compiler"]
 stability: "experimental"
 created: "2026-08-25"
@@ -190,3 +190,6 @@ capability 全程用 `SymbolId`(Principle 2),不以名字为规范身份;体侧�
   推断携带 capability 身份 + 放开 fn 级 capability 调用,作为 1c 的前置。设计经一次
   多 lens 评审(语言模型 / 迁移兼容 / 运行时确定性)确认 `read` 效应等级 + 保留 std
   包装 + 宿主提供默认实现的方向,本 RFC 承接其"让包装成立"的类型系统缺口。
+- 2026-08-25: Owner sign-off。Status draft → review → accepted → implementing。两条实现
+  细节(judgement_le 方向、fn 级 capability 调用上下文规则)在 Design 定稿,无 open
+  question。按 [Q4 2026 Roadmap](../plans/q4-2026-roadmap.zh.md) M1 作为 1c 前置推进。
