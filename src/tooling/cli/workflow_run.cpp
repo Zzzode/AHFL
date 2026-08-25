@@ -7,6 +7,7 @@
 #include "ahfl/runtime/execution_renderer.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/response_schema_validator.hpp"
+#include "runtime/engine/standard_capabilities.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
@@ -1546,6 +1547,12 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     } else {
         runtime_config.contextual_capability_invoker = std::move(llm_invoker);
     }
+    // RFC 0022 slice 1c: the native/dev runtime provides default implementations
+    // of the standard capabilities (Clock, UuidV4) so a workflow using
+    // std::time::now() / std::uuid::new_v4() runs with zero host configuration.
+    // A host-provided binding of the same name still wins (checked first above).
+    runtime_config.contextual_capability_invoker = ahfl::runtime::with_standard_capabilities(
+        std::move(*runtime_config.contextual_capability_invoker));
 
     WorkflowRuntime runtime(program, std::move(runtime_config));
     auto result = runtime.run(workflow_name, std::move(*input_value));

@@ -2,10 +2,16 @@ module std::uuid;
 
 import std::option;
 
-// Compiler-internal builtin hooks.
-@builtin("uuid_new_v4")
-fn uuid_new_v4() -> UUID effect Nondet;
+// Canonical host capability for minting a fresh v4 UUID (RFC 0022 / RFC 0023).
+// Entropy is owned by the host and reified as a named capability so its result
+// flows through the InvocationId / memo path and durable replay is sound.
+pub capability UuidV4() -> UUID {
+    effect: read;
+    receipt: none;
+    retry: safe;
+}
 
+// Deterministic uuid builtins (pure) — unchanged.
 @builtin("uuid_parse")
 fn uuid_parse(s: String) -> option::Option<UUID> effect Pure;
 
@@ -23,8 +29,10 @@ impl UUID {
 }
 
 // Module-level surface.
-pub fn new_v4() -> UUID effect Nondet {
-    return uuid_new_v4();
+// Mints a fresh v4 UUID via the UuidV4 host capability (RFC 0023: the effect row
+// names the capability, so the result is memoizable for durable replay).
+pub fn new_v4() -> UUID effect UuidV4 {
+    return UuidV4();
 }
 
 pub fn parse(s: String) -> option::Option<UUID> effect Pure decreases 0 {

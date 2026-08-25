@@ -446,7 +446,7 @@ fn fold<K: Hash, V, A>(self: Map<K, V>, init: A, f: Fn(A, K, V) -> A)
 
 | hook 签名 | 语义 | 效果 |
 | --- | --- | --- |
-| `@builtin("wall_clock_now") fn wall_clock_now() -> Timestamp` | 读 wall-clock 当前时间戳 | Nondet |
+| `pub capability Clock() -> Timestamp` | 读 wall-clock 当前时间戳(host capability,RFC 0022 slice 1c;曾为 `@builtin("wall_clock_now")` Nondet) | `effect: read` |
 | `@builtin("duration_from_ms") fn duration_from_ms(ms: Int) -> Duration` | 构造 Duration | Pure |
 | `@builtin("timestamp_add") fn timestamp_add(t: Timestamp, d: Duration) -> Timestamp` | 时间戳算术 | Pure |
 
@@ -454,7 +454,7 @@ fn fold<K: Hash, V, A>(self: Map<K, V>, init: A, f: Fn(A, K, V) -> A)
 
 | hook 签名 | 语义 | 效果 |
 | --- | --- | --- |
-| `@builtin("uuid_new") fn uuid_new() -> UUID` | 生成 v4 UUID（随机源） | Nondet |
+| `pub capability UuidV4() -> UUID` | 生成 v4 UUID(host capability,RFC 0022 slice 1c;曾为 `@builtin("uuid_new")` Nondet) | `effect: read` |
 | `@builtin("uuid_from_string") fn uuid_from_string(s: String) -> Option<UUID>` | 解析 UUID 字符串 | Pure |
 | `@builtin("json_parse_raw") fn json_parse_raw(s: String) -> Option<JsonValue>` | 原始 JSON 解析（结果类型见 §10） | Pure |
 | `@builtin("json_emit_raw") fn json_emit_raw(v: JsonValue) -> String` | 原始 JSON 序列化 | Pure |
@@ -951,7 +951,7 @@ type Timestamp;
 type Duration;     // 与 spec §3.2 primitive Duration 同名, 是同一类型
 
 // —— 构造 ——
-fn now() effect Nondet -> Timestamp;     // 包装 @builtin("wall_clock_now")
+fn now() effect Clock -> Timestamp;      // 薄包装 Clock host capability (RFC 0022 slice 1c)
 fn from_unix_ms(ms: Int) effect Pure -> Timestamp;
 fn duration_from_ms(ms: Int) effect Pure -> Duration;
 fn duration_from_seconds(s: Int) effect Pure -> Duration;
@@ -986,7 +986,7 @@ module std::uuid;
 
 type UUID;
 
-fn new() effect Nondet -> UUID;                       // v4, 包装 @builtin("uuid_new")
+fn new_v4() effect UuidV4 -> UUID;                     // v4, 薄包装 UuidV4 host capability (RFC 0022 slice 1c)
 fn from_string(s: String) effect Pure -> Option<UUID>; // 包装 @builtin("uuid_from_string")
 fn to_string(u: UUID) effect Pure -> String;
 fn equals(a: UUID, b: UUID) effect Pure -> Bool;

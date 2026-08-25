@@ -1,9 +1,15 @@
 module std::time;
 
-// Compiler-internal builtin hooks.
-@builtin("time_now")
-fn time_now() -> Timestamp effect Nondet;
+// Canonical host capability for reading the wall clock (RFC 0022 / RFC 0023).
+// Nondeterminism is owned by the host and reified as a named capability so its
+// result flows through the InvocationId / memo path and durable replay is sound.
+pub capability Clock() -> Timestamp {
+    effect: read;
+    receipt: none;
+    retry: safe;
+}
 
+// Deterministic time builtins (pure) — unchanged.
 @builtin("time_epoch")
 fn time_epoch() -> Timestamp effect Pure;
 
@@ -40,8 +46,10 @@ impl Duration {}
 // Module-level surface.
 // ===========================================================================
 
-pub fn now() -> Timestamp effect Nondet {
-    return time_now();
+// Reads the wall clock via the Clock host capability (RFC 0023: the effect row
+// names the capability, so the result is memoizable for durable replay).
+pub fn now() -> Timestamp effect Clock {
+    return Clock();
 }
 
 pub fn epoch() -> Timestamp effect Pure decreases 0 {

@@ -11,8 +11,9 @@ import std::time as time;
 //
 // Pure-safe strategy: use `time::epoch()` (Timestamp at Unix epoch, 0 ms) as a
 // deterministic reference anchor. All identities are stated over explicit
-// Duration literals (1s, 2s, 5s, 100ms, 5m, 24h). `time::time_now()` is NEVER
-// called so the test body retains `effect Pure`.
+// Duration literals (1s, 2s, 5s, 100ms, 5m, 24h). `time::now()` (the Clock host
+// capability, RFC 0022 slice 1c) is NEVER called so the test body retains
+// `effect Pure`.
 //
 // Target: 24 assertions. 8 anchor + 8 symmetry + 8 boundary = 24.
 

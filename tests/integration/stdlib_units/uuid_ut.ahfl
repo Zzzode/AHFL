@@ -105,10 +105,10 @@ fn uuid_ut() -> Int effect Pure decreases 0 {
     return 0;
 }
 
-// Effect-signature smoke: the compiler accepts new_v4() as Nondet. Callers
-// that want to use the returned UUID for something other than Pure assertions
-// can write wrappers like this one.
-fn uuid_new_v4_smoke() -> String effect Nondet decreases 0 {
+// Effect-signature smoke: uuid::new_v4() is a thin wrapper over the UuidV4 host
+// capability (RFC 0022 slice 1c), so a fn that calls it declares `effect UuidV4`
+// rather than the old unnamed `Nondet` taint.
+fn uuid_new_v4_smoke() -> String effect uuid::UuidV4 decreases 0 {
     let u: UUID = uuid::new_v4();
     return u.to_string();
 }

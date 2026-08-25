@@ -3,14 +3,12 @@
 
 #include <algorithm>
 #include <charconv>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
-#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -902,15 +900,6 @@ EvalResult builtin_option_some(const std::vector<Value> &args, const EvalContext
 // Time builtins
 // ----------------------------------------------------------------------------
 
-/// wall_clock_now() -> Timestamp  (effect: Nondet)
-EvalResult builtin_wall_clock_now(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (!args.empty())
-        return arg_count_error(0, args.size());
-    auto now = std::chrono::system_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
-    return EvalResult{make_timestamp(ms), {}};
-}
-
 /// timestamp_epoch() -> Timestamp
 EvalResult builtin_timestamp_epoch(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
     if (!args.empty())
@@ -963,31 +952,6 @@ EvalResult builtin_duration_between(const std::vector<Value> &args, const EvalCo
 // ----------------------------------------------------------------------------
 // UUID builtins
 // ----------------------------------------------------------------------------
-
-/// uuid_new() -> UUID  (effect: Nondet)
-EvalResult builtin_uuid_new(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (!args.empty())
-        return arg_count_error(0, args.size());
-    // P5 placeholder: simple random v4-like UUID (not cryptographically secure)
-    static thread_local std::mt19937 rng(std::random_device{}());
-    std::uniform_int_distribution<uint32_t> dist(0, 0xF);
-    std::string hex;
-    hex.reserve(32);
-    const char *hex_chars = "0123456789abcdef";
-    for (int i = 0; i < 32; ++i) {
-        hex.push_back(hex_chars[dist(rng)]);
-    }
-    // Set version (4) and variant (8/9/a/b) — byte 12 and 14
-    hex[12] = '4';
-    int variant_nibble = dist(rng) & 0x3;
-    hex[16] = "89ab"[variant_nibble];
-    if (auto v = make_uuid(hex)) {
-        EvalResult result;
-        result.value = std::move(*v);
-        return result;
-    }
-    return make_error("uuid_new: internal error");
-}
 
 /// uuid_from_string(s: String) -> Option<UUID>
 EvalResult builtin_uuid_from_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
@@ -1947,19 +1911,17 @@ void BuiltinTable::populate() {
     insert("float_trunc_to_int", builtin_float_trunc_to_int);
     insert("int_to_float", builtin_int_to_float);
 
-    // —— Time ——
-    insert("wall_clock_now", builtin_wall_clock_now);
+    // —— Time —— (wall_clock_now / time_now are host capabilities now: RFC 0022
+    // slice 1c. Only the deterministic/pure time builtins remain here.)
     insert("time_epoch", builtin_timestamp_epoch);
     insert("timestamp_add", builtin_timestamp_add);
-    insert("time_now", builtin_wall_clock_now);
     insert("time_add", builtin_timestamp_add);
     insert("time_sub", builtin_timestamp_sub);
     insert("time_duration_between", builtin_duration_between);
 
-    // —— UUID ——
-    insert("uuid_new", builtin_uuid_new);
+    // —— UUID —— (uuid_new / uuid_new_v4 are host capabilities now: RFC 0022
+    // slice 1c. Only the deterministic parse/format builtins remain here.)
     insert("uuid_from_string", builtin_uuid_from_string);
-    insert("uuid_new_v4", builtin_uuid_new);
     insert("uuid_parse", builtin_uuid_from_string);
     insert("uuid_to_string", builtin_uuid_to_string);
 

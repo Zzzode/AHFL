@@ -232,13 +232,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-native-host-binding
+    LABELS capability-embedding native-host-binding
     TESTS
         ahfl.runtime.native_host_binding_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-native-wasm-differential
+    LABELS capability-embedding native-wasm-differential
     TESTS
         ahfl.runtime.native_wasm_differential
 )
