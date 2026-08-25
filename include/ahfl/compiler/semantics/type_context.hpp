@@ -36,6 +36,12 @@ class TypeContext {
     [[nodiscard]] TypePtr struct_type(std::string canonical_name,
                                       std::optional<SymbolId> symbol,
                                       std::vector<TypePtr> type_args);
+    // RFC 0025: bounded collection struct type carrying a static capacity `N`.
+    // The capacity participates in structural interning.
+    [[nodiscard]] TypePtr struct_type(std::string canonical_name,
+                                      std::optional<SymbolId> symbol,
+                                      std::vector<TypePtr> type_args,
+                                      std::optional<std::uint64_t> capacity);
 
     [[nodiscard]] TypePtr enum_type(std::string canonical_name);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol);
@@ -112,6 +118,12 @@ class TypeContext {
         // typically small (monomorphization budget is in the hundreds), and a
         // single key keeps the interning model uniform.
         std::vector<const Type *> type_args{};
+
+        // RFC 0025: static capacity of a bounded collection type. Participates
+        // in structural interning so `List<Int>(4)`, `List<Int>(8)`, and the
+        // unbounded `List<Int>` are three distinct interned types. Nullopt for
+        // every non-collection type and for unbounded collection forms.
+        std::optional<std::uint64_t> collection_capacity{};
 
         [[nodiscard]] friend bool operator==(const TypeKey &lhs,
                                              const TypeKey &rhs) noexcept = default;

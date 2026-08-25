@@ -97,7 +97,8 @@ class TypeResolver final {
   private:
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name,
                                              std::vector<TypePtr> args,
-                                             SourceRange use_range);
+                                             SourceRange use_range,
+                                             std::optional<std::uint64_t> collection_capacity);
     [[nodiscard]] TypePtr make_error_type() const;
     [[nodiscard]] EffectJudgement
     resolve_effect_judgement(ast::EffectClauseKind kind,

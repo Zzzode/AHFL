@@ -107,6 +107,13 @@ struct StructT {
     // Empty for monomorphic structs or the generic definition itself.
     // Index matches the declaration's type parameter position.
     std::vector<TypePtr> type_args;
+    // RFC 0025: static capacity `N` of a bounded collection type
+    // (`List<T>(N)` / `Set<T>(N)` / `Map<K,V>(N)`). Meaningful only when
+    // `canonical_name` is one of the nominal stdlib collections; `std::nullopt`
+    // for every other struct and for the unbounded collection forms. Part of
+    // structural identity: two collection types with the same element type_args
+    // but different capacities are distinct interned types.
+    std::optional<std::uint64_t> capacity;
 };
 struct EnumT {
     std::string canonical_name;
@@ -262,6 +269,12 @@ struct Type {
                                                      : std::string{"Any"};
                     }
                     result += '>';
+                }
+                // RFC 0025: bounded collection capacity suffix.
+                if (value.capacity.has_value()) {
+                    result += '(';
+                    result += std::to_string(*value.capacity);
+                    result += ')';
                 }
                 return result;
             },

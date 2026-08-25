@@ -4,10 +4,24 @@
 #include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
+#include "compiler/semantics/std_container_types.hpp"
 
+#include <string_view>
 #include <utility>
 
 namespace ahfl {
+
+namespace {
+
+// RFC 0025: true iff the canonical name is one of the nominal stdlib
+// collections that admit a `(N)` capacity refinement.
+[[nodiscard]] bool is_collection_canonical_name(std::string_view canonical_name) noexcept {
+    return canonical_name == stdlib_bridge::kListType ||
+           canonical_name == stdlib_bridge::kSetType ||
+           canonical_name == stdlib_bridge::kMapType;
+}
+
+} // namespace
 
 TypeResolver::TypeResolver(const ResolveResult &resolve_result,
                            TypeContext &types,
@@ -62,7 +76,8 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
                 for (const auto &arg : t.type_args) {
                     args.push_back(resolve_type(*arg));
                 }
-                return resolve_named_type(*t.name, std::move(args), t.name->range);
+                return resolve_named_type(
+                    *t.name, std::move(args), t.name->range, t.collection_capacity);
             },
             [&](const ast::FnType &t) {
                 std::vector<TypePtr> param_types;
@@ -87,7 +102,8 @@ TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
 
 TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
                                          std::vector<TypePtr> args,
-                                         SourceRange use_range) {
+                                         SourceRange use_range,
+                                         std::optional<std::uint64_t> collection_capacity) {
     if (!args.empty()) {
         // P5.5: `name<T1, T2, ...>` with a single-segment name is the new
         // unified syntactic form for generic application. Any type that is
@@ -151,8 +167,22 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
 
         const auto &canonical_name = base_symbol->get().canonical_name;
         switch (base_symbol->get().kind) {
-        case SymbolKind::Struct:
-            return types_.struct_type(canonical_name, base_id, std::move(args));
+        case SymbolKind::Struct: {
+            // RFC 0025: a `(N)` capacity suffix is only meaningful on the
+            // nominal stdlib collections. On any other struct it is a type
+            // error; on a collection it is threaded into the interned type.
+            if (collection_capacity.has_value() && !is_collection_canonical_name(canonical_name)) {
+                diagnose_(error_codes::typecheck::CollectionCapacityNotAllowed,
+                          messages::typecheck::CollectionCapacityNotAllowed.format_with(
+                              name.spelling()),
+                          use_range);
+                return make_error_type();
+            }
+            return types_.struct_type(canonical_name, base_id, std::move(args),
+                                      is_collection_canonical_name(canonical_name)
+                                          ? collection_capacity
+                                          : std::nullopt);
+        }
         case SymbolKind::Enum:
             return types_.enum_type(canonical_name, base_id, std::move(args));
         case SymbolKind::TypeAlias: {
@@ -174,6 +204,15 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
                       name.range);
             return make_error_type();
         }
+        return make_error_type();
+    }
+    // RFC 0025: a `(N)` capacity suffix reached a name with no type arguments
+    // (e.g. `Foo(4)` or a bare `List(4)` without `<T>`). Collections always
+    // carry element type arguments, so a capacity here is never valid.
+    if (collection_capacity.has_value()) {
+        diagnose_(error_codes::typecheck::CollectionCapacityNotAllowed,
+                  messages::typecheck::CollectionCapacityNotAllowed.format_with(name.spelling()),
+                  use_range);
         return make_error_type();
     }
     return resolve_named_type(name);

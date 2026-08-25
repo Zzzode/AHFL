@@ -480,11 +480,13 @@ TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
         .canonical_name = "pkg::Recursive",
         .symbol = SymbolId{1},
         .type_args = {&left},
+        .capacity = std::nullopt,
     };
     right.payload = types::StructT{
         .canonical_name = "pkg::Recursive",
         .symbol = SymbolId{1},
         .type_args = {&right},
+        .capacity = std::nullopt,
     };
 
     TypeRelationContext ctx;

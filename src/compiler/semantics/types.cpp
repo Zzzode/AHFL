@@ -60,6 +60,10 @@ std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexc
     for (const auto *arg : key.type_args) {
         seed = hash_mix(seed, std::hash<const void *>{}(arg));
     }
+    seed = hash_mix(seed, std::hash<bool>{}(key.collection_capacity.has_value()));
+    if (key.collection_capacity.has_value()) {
+        seed = hash_mix(seed, std::hash<std::uint64_t>{}(*key.collection_capacity));
+    }
     return seed;
 }
 
@@ -124,6 +128,7 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
             .canonical_name = key.name,
             .symbol = key.nominal_symbol,
             .type_args = key.type_args,
+            .capacity = key.collection_capacity,
         };
     case TypeKind::Enum:
         return types::EnumT{
@@ -231,6 +236,13 @@ TypePtr TypeContext::struct_type(std::string canonical_name,
 TypePtr TypeContext::struct_type(std::string canonical_name,
                                  std::optional<SymbolId> symbol,
                                  std::vector<TypePtr> type_args) {
+    return struct_type(std::move(canonical_name), symbol, std::move(type_args), std::nullopt);
+}
+
+TypePtr TypeContext::struct_type(std::string canonical_name,
+                                 std::optional<SymbolId> symbol,
+                                 std::vector<TypePtr> type_args,
+                                 std::optional<std::uint64_t> capacity) {
     return intern(TypeKey{
         .kind = TypeKind::Struct,
         .name = std::move(canonical_name),
@@ -240,6 +252,7 @@ TypePtr TypeContext::struct_type(std::string canonical_name,
         .nominal_symbol = symbol,
         .type_var_index = std::nullopt,
         .type_args = std::move(type_args),
+        .collection_capacity = capacity,
     });
 }
 

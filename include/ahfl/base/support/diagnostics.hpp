@@ -393,6 +393,15 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> QuantifierRequiresColl
     "QUANTIFIER_REQUIRES_COLLECTION"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> QuantifierBodyRequiresBool{
     "QUANTIFIER_BODY_REQUIRES_BOOL"};
+// RFC 0025: bounded collection type capacity diagnostics.
+//   collection_capacity_not_allowed — a `(N)` capacity suffix on a type that is
+//                                     not List/Set/Map.
+//   collection_capacity_exceeded    — assigning a wider/unbounded collection
+//                                     into a narrower bounded slot.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CollectionCapacityNotAllowed{
+    "COLLECTION_CAPACITY_NOT_ALLOWED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CollectionCapacityExceeded{
+    "COLLECTION_CAPACITY_EXCEEDED"};
 } // namespace typecheck
 
 namespace validation {
@@ -755,6 +764,13 @@ inline constexpr MessageTemplate QuantifierRequiresCollection{
 // {0} = "forall" | "exists", {1} = the actual body type spelling.
 inline constexpr MessageTemplate QuantifierBodyRequiresBool{
     "the body of a '{}' quantifier must have type Bool, but got {}"};
+// RFC 0025: bounded collection type capacity messages.
+// {0} = the type name the capacity was written on.
+inline constexpr MessageTemplate CollectionCapacityNotAllowed{
+    "a capacity suffix '(N)' is only allowed on List, Set, or Map, not on '{}'"};
+// {0} = source capacity, {1} = target capacity (target is the wider/declared bound).
+inline constexpr MessageTemplate CollectionCapacityExceeded{
+    "collection capacity {} exceeds the target capacity {}"};
 } // namespace typecheck
 
 namespace validation {
