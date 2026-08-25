@@ -1,7 +1,7 @@
 ---
 rfc: "0023"
 title: "Capability-Identity Effect Inference"
-status: "implementing"
+status: "implemented"
 area: ["language", "compiler"]
 stability: "experimental"
 created: "2026-08-25"
@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["language", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["a1d1f9dc"]
 decision_due: "2026-11-30"
 ---
 
@@ -195,3 +195,10 @@ capability 全程用 `SymbolId`(Principle 2),不以名字为规范身份;体侧�
 - 2026-08-25: Owner sign-off。Status draft → review → accepted → implementing。两条实现
   细节(judgement_le 方向、fn 级 capability 调用上下文规则)在 Design 定稿,无 open
   question。按 [Q4 2026 Roadmap](../plans/q4-2026-roadmap.zh.md) M1 作为 1c 前置推进。
+- 2026-08-25: Implemented(PR a1d1f9dc)。`ExpressionValue`/`TypedExpr` 增
+  `effect_capability`;`block_body_effect` 返回 `EffectJudgement` 并递归收集具名
+  capability 集;`judgement_le` CapabilitySet 方向修正为 body ⊆ declared。实现时核实
+  Goal 3(上下文放开)无需改动——fn 体已在 `CallContext::Flow` 下检查。4 个 effects
+  golden(薄包装通过 / over-declare 通过 / under-declare 与 Pure-调-capability 均报
+  `EFFECT_UNDERDECLARED`);effects + typed_hir 全绿。解除 [RFC 0022](0022-durable-capability-resume.zh.md)
+  slice 1c 的类型系统前置阻塞。

@@ -135,7 +135,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0023"
     title: "Capability-Identity Effect Inference"
-    status: "implementing"
+    status: "implemented"
     file: "0023-capability-identity-effect-inference.zh.md"
     area: ["language", "compiler"]
     stability: "experimental"
