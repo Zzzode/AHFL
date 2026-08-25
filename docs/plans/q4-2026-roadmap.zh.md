@@ -33,7 +33,14 @@
 
 ---
 
-## M1 — Durable Resume 打通(旗舰,10 月)
+## M1 — Durable Resume 打通(旗舰,10 月)—— ✅ 已完成
+
+> **状态(2026-08-25):RFC 0022 已 `implemented`,M1 退出达成。** 切片 1c/2/3/4/5 全部
+> 落库 + 测试:PENDING 挂起控制流、resume record + memo 表(schema v2)、exactly-once
+> idempotency key + write-ahead intent、注入/ memo Value 的 fail-closed 类型校验。一个
+> 工作流可在 `PENDING` 处挂起、持久化 v2 记录、从 memo + 注入结果确定性恢复到 final。
+> 实现 PR 见 RFC 0022 frontmatter。**注**:挂起仅在节点派发点(node-input 求值 + agent
+> body)可恢复,不覆盖 workflow 顶层 return 表达式(无节点身份做 resume key)。
 
 把 slice 2 里目前 fail-closed 的 `PENDING` 路径真正跑通。这是 Q4 唯一的强顺序依赖链。
 
