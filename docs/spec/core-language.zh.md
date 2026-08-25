@@ -276,7 +276,28 @@ Param           ::= Ident ":" Type ;
 5. `CapabilityEffectItem` 各字段在 effect block 内至多出现一次；字段顺序任意
 6. `domain`、`compensation`、`policy` 中的 `QualifiedIdent` 在前端只校验词法合法性，不将其解析为强制存在的符号引用；其真实可用性由 assurance profile 在后续阶段校验
 
-### 3.5 agent 定义
+#### 3.4.1 capability 执行语义：同步观感、异步落地、durable resume
+
+> 由 [RFC 0021](../rfcs/0021-capability-embedding-abi.zh.md)（embedding ABI，implemented）与 [RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)（durable resume，implemented）定义。本节规定语言可见的执行语义；宿主 ABI 字节契约见 `docs/reference/`，obligation 合成见 `assurance.zh.md`。
+
+capability 调用在**源码层面始终是同步的**：`let x = Cap(args);` 的观感永远是"调用 → 得结果 → 继续"。语言不引入 `async` / `await`；异步性完全由宿主吸收。宿主对每次调用返回三态之一：
+
+1. **成功**：产出该 capability 声明返回类型的一个值，求值继续。
+2. **错误**：workflow **fail-closed** 终止并传播诊断，绝不静默吞掉。
+3. **挂起（pending）**：宿主尚不能给出结果（如"等一个 LLM 回调 / webhook")。workflow 在**当前节点**挂起为一份纯可序列化的 resume record，进程可退出；宿主稍后用该调用的结果恢复。
+
+**durable resume 的确定性契约。** 挂起 / 恢复对源码语义不可见，其正确性依赖节点内求值的确定性：
+
+- 一个可恢复节点内，capability 调用之间的 AHFL 求值必须是**纯的**——无可变环境、无节点外 IO、无对无序容器的可观察迭代、无未经 capability 的 nondeterminism。文法（无循环 / 无可变赋值 / 节点 input 单次注入 / 求值期 context 只读 / `Set`·`Map` 运行时值 order-normalized）已保证这一点。
+- 恢复时，节点从其被捕获的 input **重跑**；每个已完成的 capability 调用按其**每节点调用序号（ordinal）**命中 memo、返回**原结果、绝不二次调用**；求值推进到原挂起点，此时它有了宿主注入的结果并继续。这与 Temporal / DBOS 式 durable execution 同构。
+- memo 命中以 ordinal 为键，并对 `cap_id` + 参数哈希做冗余完整性交叉校验；不符即 **fail-closed**（视快照损坏而中止），绝不回退到 live 调用。
+- 注入结果与每个 memo 值在重入求值前按该 capability 的声明返回类型做结构校验；类型不符 fail-closed，绝不强转。
+
+**exactly-once 效应。** 每个 effectful 调用有一个可复现的幂等键 `hash(workflow, node, ordinal, cap_id, arg_hash)`；effect 等级 ≥ `durable_write` 的调用在效应发生**前**由宿主持久化一条 "committed, result-pending" 的 write-ahead intent。恢复时该调用命中 memo 而不重放，故已提交的 `durable_write` / `financial_write` 不会二次触发。宿主侧去重实现是宿主的责任。
+
+**nondeterminism 属宿主。** 与"capability 是通用计算的唯一入口"（§1.3）一致，语言核心不提供 nondeterministic 内建：挂钟时间、UUID 生成等经 `capability`（如 `Clock() -> Timestamp`、`UuidV4() -> UUID`，见 stdlib `std::time` / `std::uuid`）由宿主提供，从而其结果走 memo 路径、在恢复时确定可复现。返回常量的纯函数（如 `time_epoch`）不属此列，仍是语言内纯计算。**可恢复节点内任何 nondeterministic 表达式必须经 capability memoize**——否则重放不 sound，前端 fail-closed 拒绝。
+
+
 
 ```ebnf
 AgentDecl           ::= "agent" Ident "{"

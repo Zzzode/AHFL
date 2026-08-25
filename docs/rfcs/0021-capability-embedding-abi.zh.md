@@ -1,7 +1,7 @@
 ---
 rfc: "0021"
 title: "Capability Embedding ABI"
-status: "implementing"
+status: "implemented"
 area: ["runtime", "compiler", "tooling"]
 stability: "experimental"
 created: "2026-08-25"
@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["43c2d159", "99c32fff", "66621682", "c04a1fbc"]
+implementation_prs: ["43c2d159", "99c32fff", "66621682", "c04a1fbc", "0d3ada51", "c6cbcc02", "a2bec68a"]
 decision_due: "2026-09-30"
 ---
 
@@ -308,3 +308,14 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   运行时)与 PENDING/resume(RFC 0022)另行跟踪,测试文件已注明该边界。Covered by
   `tests/unit/runtime/engine/native_wasm_differential.cpp`
   (`ahfl.runtime.native_wasm_differential`,dev + asan,11/11)。
+- 2026-08-25: Status implementing → implemented. Implementation Plan item 4
+  (pending/恢复接口)由 [RFC 0022](0022-durable-capability-resume.zh.md) 的
+  suspend/resume runtime API 交付(`WorkflowStatus::Suspended` +
+  `WorkflowResult::suspended` + `WorkflowRuntimeConfig::{recovery_snapshot,
+  resume_pending_result}`);Test Plan 的 "pending 语义" 用例由端到端 capstone
+  `tests/integration/durable_resume_capstone.cpp`
+  (`ahfl.reference_workflow.durable_resume_capstone`)覆盖:一个 capability 返回
+  `AHFL_CAP_PENDING` → workflow 挂起 → 跨进程冷启动从磁盘快照恢复 → 结果与同步路径
+  逐字节一致。`implemented` 门槛(`ahfl_host.h`、原生 + WASM 两个绑定、pending、参考
+  宿主、契约级测试)已全部落库。`stabilized` 尚需 `docs/reference/` ABI 契约文档 + 至少
+  一个第三方语言绑定(Rust/Node),后者 Q4 范围外。
