@@ -13,6 +13,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
+#include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/expression_sema.hpp"
 #include "ahfl/compiler/semantics/flow_facts.hpp"
 #include "ahfl/compiler/semantics/monomorphization.hpp"
@@ -450,10 +451,11 @@ class TypeCheckPass final {
     // inference lattice) and projected to EffectJudgement via `project()`.
     //
     // FlowWorkflowSema calls this after type-checking the
-    // function body. The body's overall ExprEffect is the join of all
-    // statement/expression effects in the body (see check_block / check_expr).
+    // function body. The body's overall effect (RFC 0023) is an EffectJudgement
+    // carrying the named capability set the body invokes, built by
+    // block_body_effect (see typecheck.cpp).
     void check_fn_effect_underdeclared(SymbolId fn_symbol,
-                                       ExprEffect body_effect,
+                                       EffectJudgement body_judgement,
                                        SourceRange body_range);
 
     // Walks a temporal expression tree, type-checking every embedded Expr

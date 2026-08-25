@@ -1367,7 +1367,7 @@ EffectJudgement DeclarationSema::build_effect_judgement(const ast::EffectClauseS
 // function body. The body's overall ExprEffect is the join of all
 // statement/expression effects in the body (see check_block / check_expr).
 void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
-                                                  ExprEffect body_effect,
+                                                  EffectJudgement body_judgement,
                                                   SourceRange body_range) {
     const auto fn = environment().get_fn(fn_symbol);
     if (!fn.has_value()) {
@@ -1375,7 +1375,6 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
     }
 
     const auto &declared = fn->get().effect.judgement;
-    const auto body_judgement = project(body_effect);
 
     // The declared effect must be an upper bound: body ⊑ declared.
     // If not, the function under-declares its effect.

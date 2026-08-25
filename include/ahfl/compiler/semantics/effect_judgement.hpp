@@ -134,8 +134,12 @@ project(ExprEffect effect, std::optional<SymbolId> called_capability = std::null
 ///   Pure ⊑ Pure
 ///   Pure ⊑ Nondet,  Pure ⊑ CapabilitySet
 ///   Nondet ⊑ Nondet
-///   CapabilitySet ⊑ CapabilitySet  when lhs.capabilities ⊇ rhs.capabilities
-///                                  (reversed: declaring more is stronger)
+///   CapabilitySet ⊑ CapabilitySet  when lhs.capabilities ⊆ rhs.capabilities
+///                                  (RFC 0023: declared is an upper bound; a body
+///                                  invoking a SUBSET of the declared capabilities
+///                                  is covered. Over-declaration is admissible;
+///                                  under-declaration — body uses a capability the
+///                                  signature omits — is the error.)
 ///   Bottom ⊑ anything (error-recovery does not restrict the bound)
 ///   Nondet vs CapabilitySet: incomparable -> false
 [[nodiscard]] inline bool judgement_le(const EffectJudgement &lhs,
@@ -156,7 +160,8 @@ project(ExprEffect effect, std::optional<SymbolId> called_capability = std::null
         if (rhs.kind != EffectJudgement::Kind::CapabilitySet) {
             return false;
         }
-        return lhs.capabilities.is_superset_of(rhs.capabilities);
+        // body ⊑ declared  ⇔  body.caps ⊆ declared.caps  ⇔  declared ⊇ body.
+        return rhs.capabilities.is_superset_of(lhs.capabilities);
     case EffectJudgement::Kind::Bottom:
         return true;
     }

@@ -1868,6 +1868,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         // C-5 (Wave-24): copy dispatch target for method calls so downstream
         // passes can read the selected impl+method directly.
         typed_expr->dispatch_target = typed.dispatch_target;
+        typed_expr->effect_capability = typed.effect_capability;
         return;
     }
 
@@ -1890,6 +1891,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->path_root_kind =
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             typed_expr->dispatch_target = typed.dispatch_target;
+            typed_expr->effect_capability = typed.effect_capability;
             return;
         }
     }
@@ -1906,6 +1908,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .semantic_name = semantic_name_for(expr),
         .call_target_kind = call_target_kind_for(expr, resolve_result_, current_source_id_),
         .dispatch_target = typed.dispatch_target,
+        .effect_capability = typed.effect_capability,
         .path_root = path_payload.has_value() ? path_payload->root : std::string{},
         .path_root_kind = typed.path_root_kind.value_or(AssignTargetRootKind::Identifier),
         .member_path =
@@ -2828,8 +2831,37 @@ namespace {
 /// Compute the overall ExprEffect of a typed block by joining the effects of
 /// all expressions reachable from its statements.
 /// body's effect for the effect-underdeclared check.
-ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &program) {
-    ExprEffect result = ExprEffect::Pure;
+/// RFC 0023: collect the capability SymbolIds invoked anywhere in an
+/// expression's subtree. `effect_capability` is recorded only on the leaf
+/// capability-call node, so we must walk children to reconstruct the full set
+/// (e.g. `f(Clock())` carries Clock on the inner call, not the outer one).
+void collect_expr_capabilities(std::uint32_t expr_idx,
+                               const TypedProgram &program,
+                               CapabilitySymbolSet &out) {
+    if (expr_idx >= program.expressions.size()) {
+        return;
+    }
+    const auto &expr = program.expressions[expr_idx];
+    if (expr.effect_capability.has_value()) {
+        out.insert(*expr.effect_capability);
+    }
+    for (const auto &child : expr.children) {
+        if (child.expr_index != UINT32_MAX) {
+            collect_expr_capabilities(child.expr_index, program, out);
+        }
+    }
+}
+
+/// P4a (RFC corelib-effect-system.zh.md §2.6): compute a block's overall effect
+/// as an EffectJudgement, joining each expression's scalar effect and — per
+/// RFC 0023 — unioning the *named* capability set invoked in each expression
+/// subtree. Returning a judgement (not a scalar ExprEffect) lets the
+/// under-declared check compare the body's concrete capability set against the
+/// declared one.
+EffectJudgement block_body_effect(const TypedBlock &block, const TypedProgram &program) {
+    ExprEffect scalar = ExprEffect::Pure;
+    CapabilitySymbolSet caps;
+    EffectJudgement nested_join = EffectJudgement::make_pure();
     for (auto stmt_idx : block.statement_indexes) {
         if (stmt_idx >= program.statements.size()) {
             continue;
@@ -2839,19 +2871,27 @@ ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &progra
             if (expr_idx >= program.expressions.size()) {
                 continue;
             }
-            result = join_effects(result, program.expressions[expr_idx].effect);
+            scalar = join_effects(scalar, program.expressions[expr_idx].effect);
+            collect_expr_capabilities(expr_idx, program, caps);
         }
         // Recurse into nested blocks (if statements have then/else blocks).
         if (stmt.then_block_index != UINT32_MAX && stmt.then_block_index < program.blocks.size()) {
-            result = join_effects(
-                result, block_body_effect(program.blocks[stmt.then_block_index], program));
+            nested_join =
+                join(nested_join, block_body_effect(program.blocks[stmt.then_block_index], program));
         }
         if (stmt.else_block_index != UINT32_MAX && stmt.else_block_index < program.blocks.size()) {
-            result = join_effects(
-                result, block_body_effect(program.blocks[stmt.else_block_index], program));
+            nested_join =
+                join(nested_join, block_body_effect(program.blocks[stmt.else_block_index], program));
         }
     }
-    return result;
+    // This block's own effect: promote to the named capability set when the
+    // scalar indicates a capability/external call, else project the scalar
+    // (Pure / Nondet keep their kind). Then join the nested-block judgement.
+    EffectJudgement own =
+        (scalar == ExprEffect::CapabilityCall || scalar == ExprEffect::ExternalEffect)
+            ? EffectJudgement::make_capability_set(std::move(caps))
+            : project(scalar);
+    return join(own, nested_join);
 }
 
 } // namespace
@@ -2969,11 +3009,11 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
     // Derive the body's overall effect and check against the declared effect.
     const auto body_block_idx = driver_->find_block_index_by_range(*decl.body);
     const auto &tp = driver_->result_.typed_program;
-    ExprEffect body_effect = ExprEffect::Pure;
+    EffectJudgement body_judgement = EffectJudgement::make_pure();
     if (body_block_idx < tp.blocks.size()) {
-        body_effect = block_body_effect(tp.blocks[body_block_idx], tp);
+        body_judgement = block_body_effect(tp.blocks[body_block_idx], tp);
     }
-    driver_->check_fn_effect_underdeclared(fn_symbol, body_effect, decl.body->range);
+    driver_->check_fn_effect_underdeclared(fn_symbol, body_judgement, decl.body->range);
 
     // Record the body block index on the function's type info.
     // The environment is logically const after DeclarationSema, but the
@@ -3165,12 +3205,11 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
 
     const auto body_block_idx = driver_->find_block_index_by_range(*method_decl.body);
     const auto &typed_program = driver_->result_.typed_program;
-    ExprEffect body_effect = ExprEffect::Pure;
+    EffectJudgement body_judgement = EffectJudgement::make_pure();
     if (body_block_idx < typed_program.blocks.size()) {
-        body_effect = block_body_effect(typed_program.blocks[body_block_idx], typed_program);
+        body_judgement = block_body_effect(typed_program.blocks[body_block_idx], typed_program);
     }
 
-    const auto body_judgement = project(body_effect);
     if (!judgement_le(body_judgement, method_info.effect.judgement)) {
         driver_->typecheck_error_here(error_codes::typecheck::EffectUnderdeclared,
                                       messages::typecheck::EffectUnderdeclared.format_with(

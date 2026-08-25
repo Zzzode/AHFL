@@ -405,6 +405,10 @@ struct TypedExpr {
     // Lets lowering / verification read the dispatch result directly
     // instead of re-running dispatch resolution.
     std::optional<DispatchTarget> dispatch_target{};
+    // RFC 0023: for a capability-call expression, the SymbolId of the invoked
+    // capability. Empty for all other expression kinds. Read by fn-body effect
+    // aggregation to reconstruct the named capability set.
+    std::optional<SymbolId> effect_capability{};
     std::string path_root;
     AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;

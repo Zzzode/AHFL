@@ -4683,10 +4683,14 @@ class ExpressionChecker final {
                                              expectation);
         }
 
-        return values_.typed_effect(capability->get().return_type
-                                        ? capability->get().return_type->clone()
-                                        : values_.make_error_type(),
-                                    ExprEffect::CapabilityCall);
+        auto result = values_.typed_effect(capability->get().return_type
+                                               ? capability->get().return_type->clone()
+                                               : values_.make_error_type(),
+                                           ExprEffect::CapabilityCall);
+        // RFC 0023: record which capability was invoked so fn-body effect
+        // aggregation can reconstruct the named capability set.
+        result.effect_capability = target;
+        return result;
     }
 
     [[nodiscard]] TypedValue check_predicate_call(const ast::ExprSyntax &expr,

@@ -55,6 +55,12 @@ struct ExpressionValue {
     // was selected during dispatch. Propagated to TypedExpr via
     // remember_expression_type so downstream passes can read it directly.
     std::optional<DispatchTarget> dispatch_target{};
+    // RFC 0023: for a capability-call expression, the SymbolId of the capability
+    // invoked. Lets fn-body effect aggregation reconstruct the *named* capability
+    // set (not an anonymous one) so a fn declaring `effect <Cap>` type-checks
+    // against a body that calls that capability. std::nullopt for all other
+    // expression kinds.
+    std::optional<SymbolId> effect_capability{};
 };
 
 struct ExpressionPatternLoweringResult {

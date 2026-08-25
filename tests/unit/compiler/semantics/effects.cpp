@@ -332,6 +332,73 @@ flow for SmokeAgent {
           graph_typecheck.environment.flows().size());
 }
 
+TEST_CASE("RFC 0023: fn wrapping a capability type-checks with a named capability effect") {
+    // A plain fn declaring `effect Clock` may call the Clock capability in its
+    // body: the body's inferred capability set {Clock} is covered by declared {Clock}.
+    const std::string source = R"AHFL(
+struct Response { value: Int; }
+
+capability Clock() -> Response;
+
+fn now_wrapper() -> Response effect Clock {
+    return Clock();
+}
+)AHFL";
+    const auto type_result = typecheck_source("rfc0023_wrap_ok.ahfl", source);
+    CHECK_FALSE(type_result.has_errors());
+}
+
+TEST_CASE("RFC 0023: over-declaring capabilities is admissible (body uses a subset)") {
+    // Declared {A, B}, body only calls A: {A} covered by {A, B}, so allowed.
+    const std::string source = R"AHFL(
+struct Response { value: Int; }
+
+capability A() -> Response;
+capability B() -> Response;
+
+fn uses_a() -> Response effect A, B {
+    return A();
+}
+)AHFL";
+    const auto type_result = typecheck_source("rfc0023_overdeclare_ok.ahfl", source);
+    CHECK_FALSE(type_result.has_errors());
+}
+
+TEST_CASE("RFC 0023: under-declaring a capability reports EFFECT_UNDERDECLARED") {
+    // Declared {A}, body calls B: {B} not covered by {A} -> under-declared.
+    const std::string source = R"AHFL(
+struct Response { value: Int; }
+
+capability A() -> Response;
+capability B() -> Response;
+
+fn wrong_effect() -> Response effect A {
+    return B();
+}
+)AHFL";
+    const auto type_result = typecheck_source("rfc0023_underdeclare.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >=
+          1);
+}
+
+TEST_CASE("RFC 0023: a Pure fn calling a capability reports EFFECT_UNDERDECLARED") {
+    // Declared Pure, body calls a capability: capability set not covered by Pure.
+    const std::string source = R"AHFL(
+struct Response { value: Int; }
+
+capability Cap() -> Response;
+
+fn pretends_pure() -> Response effect Pure decreases 0 {
+    return Cap();
+}
+)AHFL";
+    const auto type_result = typecheck_source("rfc0023_pure_calls_cap.ahfl", source);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EFFECT_UNDERDECLARED") >=
+          1);
+}
+
 TEST_CASE("Expression effects distinguish predicate and capability calls") {
     const std::string source = R"AHFL(
 struct Request {

@@ -138,10 +138,12 @@ capability 全程用 `SymbolId`(Principle 2),不以名字为规范身份;体侧�
 1. `TypedExpr` 增 capability-id 集字段;`check_capability_call` 填充被调
    capability `SymbolId`;Typed HIR 序列化同步。
 2. `judgement_le` CapabilitySet 子集方向修正 + 单测锁定(相等、真子集、真超集三向)。
-3. `block_body_effect` 聚合 capability 集,返回 `EffectJudgement`;
-   `check_fn_effect_underdeclared` 直接比较具名判定。
-4. `check_capability_call` 上下文规则:允许"已声明该 capability 的 fn/agent 体内"调用;
-   非 Flow 但已声明的 fn 合法。
+3. `block_body_effect` 聚合 capability 集(递归 expr 子树收集 `effect_capability`),
+   返回 `EffectJudgement`;`check_fn_effect_underdeclared` 直接比较具名判定。
+4. `check_capability_call` 上下文规则:实现时核实发现 **无需改动**——fn 体已在
+   `CallContext::Flow` 下类型检查(`typecheck.cpp:2961`/`3173`),capability 调用本就
+   被 4632 处的守卫放行;"必须已声明"的保证由步骤 3 的 under-declared 检查(body ⊑
+   declared)提供。故本步为空操作,Goal 3 已由现有上下文 + 步骤 3 满足。
 5. golden 正/负例(见 Test Plan)。
 
 ## Test Plan
