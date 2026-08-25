@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "language"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["fdfb3136", "dfb81f7f", "5e56325c"]
 decision_due: "2026-10-31"
 ---
 
@@ -274,3 +274,11 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   [Q4 2026 Roadmap](../plans/q4-2026-roadmap.zh.md) M1 旗舰推进:确定性前置 1c
   (nondet 内建重分类)→ PENDING 映射 → resume record + memo → exactly-once →
   fail-closed。tracking_issue / discussion 保持 none(无外部追踪器)。
+- 2026-08-25: 确定性前置全部落库。1a(`FieldMap` 有序扁平字段存储,PR fdfb3136)、
+  1b(统一 `format_double`,PR dfb81f7f)、1c(nondet time/uuid 内建重分类为 host
+  capability `Clock`/`UuidV4`,PR 5e56325c)。1c 依赖 [RFC 0023](0023-capability-identity-effect-inference.zh.md)
+  (capability-identity effect 推断,实现时新发现的类型系统前置——粗粒度 `ExprEffect`
+  不携带 capability 身份,std 薄包装 `fn now() effect Clock` 无法通过 under-declared
+  检查),该 RFC 已 implemented。zero-config dev 路径经 `standard_capabilities` 默认
+  provider(system_clock / random_device)+ `with_standard_capabilities` 保留。
+  余下:PENDING 映射 → resume record + memo → exactly-once → fail-closed。
