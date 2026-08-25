@@ -11,6 +11,7 @@ add_library(ahfl_runtime_engine STATIC
     capability_bridge.cpp
     capability_eval.cpp
     capability_transport_adapter.cpp
+    native_host_binding.cpp
     connection_pool.cpp
     http_transport.cpp
     grpc_transport.cpp

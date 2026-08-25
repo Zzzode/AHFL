@@ -208,6 +208,15 @@ target_link_libraries(ahfl_host_abi_tests
 )
 ahfl_apply_project_warnings(ahfl_host_abi_tests)
 
+add_executable(ahfl_native_host_binding_tests
+    unit/runtime/engine/native_host_binding.cpp
+)
+target_link_libraries(ahfl_native_host_binding_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_native_host_binding_tests)
+
 add_executable(ahfl_response_schema_validator_tests
     unit/runtime/engine/response_schema_validator.cpp
 )
@@ -1172,6 +1181,7 @@ foreach(_tgt
     ahfl_workflow_runtime_tests
     ahfl_workflow_recovery_tests
     ahfl_capability_bridge_tests
+    ahfl_native_host_binding_tests
     ahfl_response_schema_validator_tests
     ahfl_e2e_workflow_tests
     ahfl_enum_variant_e2e_tests

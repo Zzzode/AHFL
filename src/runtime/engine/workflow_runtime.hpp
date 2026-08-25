@@ -14,6 +14,7 @@
 #include "ahfl/runtime/execution_report.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/native_host_binding.hpp"
 #include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/evaluator.hpp"
@@ -48,6 +49,12 @@ struct WorkflowRuntimeConfig {
     QuotaConfig default_agent_quota;
     std::optional<CapabilityInvoker> capability_invoker;
     std::optional<ContextualCapabilityInvoker> contextual_capability_invoker;
+    // Native projection of the ahfl_host.h capability ABI (RFC 0021 slice 2).
+    // When set, the runtime derives its capability dispatch from this
+    // function-pointer table via make_native_capability_invoker(). Takes
+    // precedence over contextual_capability_invoker / capability_invoker so a
+    // host that speaks the published ABI need not also wire a std::function.
+    std::optional<NativeHostBinding> native_host_binding;
     std::function<bool()> cancellation_requested;
     std::function<bool()> interruption_requested;
     std::optional<CheckpointId> resume_checkpoint;

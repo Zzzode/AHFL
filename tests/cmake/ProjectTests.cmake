@@ -1043,6 +1043,10 @@ add_test(NAME ahfl.runtime.host_abi_all
     COMMAND $<TARGET_FILE:ahfl_host_abi_tests>
 )
 
+add_test(NAME ahfl.runtime.native_host_binding_all
+    COMMAND $<TARGET_FILE:ahfl_native_host_binding_tests>
+)
+
 add_test(NAME ahfl.runtime.response_schema_validator
     COMMAND $<TARGET_FILE:ahfl_response_schema_validator_tests>
 )

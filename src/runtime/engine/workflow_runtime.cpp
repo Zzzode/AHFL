@@ -444,11 +444,23 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
     }
 
+    // Derive the capability dispatch source. A native host binding (the
+    // ahfl_host.h ABI projection, RFC 0021 slice 2) takes precedence and is
+    // adapted into a ContextualCapabilityInvoker; otherwise fall back to a
+    // directly-wired contextual/plain invoker. This gives one uniform seam
+    // downstream regardless of how the host connected.
+    std::optional<ContextualCapabilityInvoker> effective_contextual_invoker =
+        config_.contextual_capability_invoker;
+    if (config_.native_host_binding.has_value()) {
+        effective_contextual_invoker =
+            make_native_capability_invoker(*config_.native_host_binding);
+    }
+
     ContextualCapabilityInvoker runtime_invoker;
-    if (config_.contextual_capability_invoker.has_value() ||
-        config_.capability_invoker.has_value()) {
+    if (effective_contextual_invoker.has_value() || config_.capability_invoker.has_value()) {
         runtime_invoker =
-            [this, &result, &emit, &node_capability_failures, runtime_provider](
+            [this, &result, &emit, &node_capability_failures, runtime_provider,
+             contextual_invoker = std::move(effective_contextual_invoker)](
                 const CapabilityInvocationContext &context,
                 const std::string &name,
                 const std::vector<Value> &arguments) -> CapabilityCallResult {
@@ -473,9 +485,8 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             }
 
             CapabilityCallResult call_result;
-            if (config_.contextual_capability_invoker.has_value()) {
-                call_result =
-                    (*config_.contextual_capability_invoker)(invocation_context, name, arguments);
+            if (contextual_invoker.has_value()) {
+                call_result = (*contextual_invoker)(invocation_context, name, arguments);
             } else {
                 call_result = (*config_.capability_invoker)(name, arguments);
             }

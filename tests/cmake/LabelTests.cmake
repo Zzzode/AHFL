@@ -232,6 +232,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.6 v0.6-native-host-binding
+    TESTS
+        ahfl.runtime.native_host_binding_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.55 v0.55-e2e
     TESTS
         ahfl.runtime.e2e_workflow
