@@ -92,6 +92,38 @@ validate_recovery_snapshot(const WorkflowRecoverySnapshot &snapshot,
             }
         }
     }
+
+    // RFC 0022 (C7): validate the resume record. The suspended node must exist,
+    // match its plan agent, be disjoint from the completed set (it did not
+    // complete — it is re-run on resume), and have all its dependencies in the
+    // completed set (dependency closure), so the re-run sees every input.
+    if (snapshot.suspended.has_value()) {
+        const auto &suspended = *snapshot.suspended;
+        if (!suspended.node.valid() || suspended.node.index() >= plan.nodes.size()) {
+            return "recovery snapshot suspended node ID is unknown";
+        }
+        if (!suspended.agent.valid() ||
+            suspended.agent != plan.nodes[suspended.node.index()].agent) {
+            return "recovery snapshot suspended agent ID does not match the workflow plan";
+        }
+        if (recovered_nodes.contains(suspended.node)) {
+            return "recovery snapshot suspended node is also marked completed";
+        }
+        for (const auto dependency : plan.nodes[suspended.node.index()].dependencies) {
+            if (!recovered_nodes.contains(dependency)) {
+                return "recovery snapshot suspended node is not closed over its dependencies";
+            }
+        }
+        std::set<std::uint64_t> memo_ordinals;
+        for (const auto &entry : suspended.memo) {
+            if (entry.ordinal >= suspended.pending_ordinal) {
+                return "recovery snapshot memo ordinal is not below the pending ordinal";
+            }
+            if (!memo_ordinals.insert(entry.ordinal).second) {
+                return "recovery snapshot memo contains a duplicate ordinal";
+            }
+        }
+    }
     return std::nullopt;
 }
 
@@ -528,6 +560,63 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 context.source_capability_symbol_id.value_or(0);
             const std::uint64_t arg_hash = evaluator::hash_values(arguments);
 
+            // RFC 0022 (C7): resume replay. While replaying, calls at ordinals
+            // below the pending one are served from the memo (never re-invoked),
+            // and the pending ordinal receives the host-supplied resume result.
+            // Both are matched by ordinal (the stable per-node key) and
+            // cross-checked on cap_id + arg_hash — a mismatch is fail-closed
+            // (non-deterministic replay), never a silent live re-invoke.
+            if (node_memo.replaying && memo_ordinal < node_memo.pending_ordinal) {
+                const auto entry = std::find_if(
+                    node_memo.memo.begin(), node_memo.memo.end(),
+                    [&](const CapabilityMemoEntry &e) { return e.ordinal == memo_ordinal; });
+                if (entry == node_memo.memo.end() || entry->cap_id != cap_symbol_id ||
+                    entry->arg_hash != arg_hash) {
+                    CapabilityCallResult mismatch;
+                    mismatch.status = CapabilityCallStatus::Error;
+                    mismatch.error_message =
+                        "durable resume replay diverged from the recorded memo (ordinal " +
+                        std::to_string(memo_ordinal) + ")";
+                    mismatch.diagnostic_code =
+                        std::string(error_codes::backend::ExecutionError.id);
+                    if (context.workflow_node_id.valid() &&
+                        context.workflow_node_id.index() < node_capability_failures.size()) {
+                        node_capability_failures[context.workflow_node_id.index()] =
+                            CapabilityFailureKind::Error;
+                    }
+                    return mismatch;
+                }
+                CapabilityCallResult memo_hit;
+                memo_hit.status = CapabilityCallStatus::Success;
+                memo_hit.value = evaluator::clone_value(entry->result);
+                memo_hit.cache_hit = true;
+                return memo_hit;
+            }
+            if (node_memo.replaying && memo_ordinal == node_memo.pending_ordinal) {
+                // The previously-pending call: inject the host-supplied result and
+                // leave replay mode so later calls run live again.
+                node_memo.replaying = false;
+                if (!config_.resume_pending_result.has_value()) {
+                    CapabilityCallResult missing;
+                    missing.status = CapabilityCallStatus::Error;
+                    missing.error_message =
+                        "durable resume is missing the pending capability result";
+                    missing.diagnostic_code =
+                        std::string(error_codes::backend::ExecutionError.id);
+                    return missing;
+                }
+                node_memo.memo.push_back(CapabilityMemoEntry{
+                    .ordinal = memo_ordinal,
+                    .cap_id = cap_symbol_id,
+                    .arg_hash = arg_hash,
+                    .result = evaluator::clone_value(*config_.resume_pending_result),
+                });
+                CapabilityCallResult resumed;
+                resumed.status = CapabilityCallStatus::Success;
+                resumed.value = evaluator::clone_value(*config_.resume_pending_result);
+                return resumed;
+            }
+
             const auto invocation =
                 result.metadata.add_invocation(context.workflow_node_id, *capability);
             auto invocation_context = context;
@@ -553,14 +642,11 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             // CallEvalFn boundary can build an EvalResult::suspension, then return
             // BEFORE the failure-classification loop — Pending is not a failure,
             // so no CapabilityFailed event and no node_capability_failures entry.
+            // No CapabilityStarted is emitted either: the invocation has no
+            // terminal yet (it completes on resume), so opening its lifecycle here
+            // would leave a dangling Start. The node-level NodeSuspended terminal
+            // records the pause instead.
             if (call_result.status == CapabilityCallStatus::Pending) {
-                emit(CapabilityStarted{
-                    .invocation = invocation,
-                    .node = context.workflow_node_id,
-                    .capability = *capability,
-                    .provider = runtime_provider,
-                    .attempt = 1,
-                });
                 node_memo.suspended = true;
                 node_memo.pending_cap_id = cap_symbol_id;
                 node_memo.pending_ordinal = memo_ordinal;
@@ -726,6 +812,27 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         // RFC 0022 (C5): fresh memo table per node. Ordinals restart at 0 so the
         // memo key is stable and reproducible when this node is later resumed.
         node_memo.reset();
+        // RFC 0022 (C7): is this the node that suspended? If so, seed replay
+        // state so the invoker serves completed calls from the memo and injects
+        // the host-supplied result at the pending ordinal.
+        const bool resuming_node =
+            config_.recovery_snapshot.has_value() &&
+            config_.recovery_snapshot->suspended.has_value() &&
+            config_.recovery_snapshot->suspended->node == node.id;
+        if (resuming_node) {
+            const auto &record = *config_.recovery_snapshot->suspended;
+            node_memo.replaying = true;
+            node_memo.pending_ordinal = record.pending_ordinal;
+            node_memo.pending_cap_id = record.pending_cap_id;
+            for (const auto &entry : record.memo) {
+                node_memo.memo.push_back(CapabilityMemoEntry{
+                    .ordinal = entry.ordinal,
+                    .cap_id = entry.cap_id,
+                    .arg_hash = entry.arg_hash,
+                    .result = evaluator::clone_value(entry.result),
+                });
+            }
+        }
         CapabilityInvocationContext node_context{
             .workflow_name = workflow_name,
             .workflow_node_name = node.source->name,
@@ -752,6 +859,12 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             // the diagnostic bag). No node_input is captured — resume re-runs the
             // node-input expression, replaying the memo. Not a failure.
             if (eval_result.is_suspended()) {
+                emit(NodeSuspended{
+                    .node = node.id,
+                    .agent = node.agent,
+                    .pending_cap_id = node_memo.pending_cap_id,
+                    .pending_ordinal = node_memo.pending_ordinal,
+                });
                 workflow_suspended = SuspendedNodeState{
                     .node = node.id,
                     .agent = node.agent,
@@ -836,6 +949,12 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         // marking the node failed. Not a failure.
         if (agent_result.status == AgentStatus::Suspended) {
             result.diagnostics.append(agent_result.diagnostics);
+            emit(NodeSuspended{
+                .node = node.id,
+                .agent = node.agent,
+                .pending_cap_id = node_memo.pending_cap_id,
+                .pending_ordinal = node_memo.pending_ordinal,
+            });
             workflow_suspended = SuspendedNodeState{
                 .node = node.id,
                 .agent = node.agent,

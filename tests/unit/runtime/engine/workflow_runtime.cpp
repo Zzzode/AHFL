@@ -1403,6 +1403,233 @@ void test_recovery_snapshot_restores_completed_node_without_reexecution() {
 
 } // anonymous namespace
 
+namespace {
+
+// ============================================================================
+// RFC 0022 slice 3 (C8): durable suspend / resume
+// ============================================================================
+
+// Build a single-node workflow whose node input is a struct literal
+// `{value: <capability>(7)}`. The node's EchoAgent returns input.value, so the
+// workflow output IS the capability result. The capability call lives in the
+// node-input expression — a node-scoped, resumable dispatch site.
+[[nodiscard]] Program make_single_capability_node_program(const std::string &workflow_name,
+                                                          const std::string &capability) {
+    Program program;
+    program.declarations.push_back(make_echo_agent("EchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("EchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = workflow_name;
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+
+    WorkflowNode node;
+    node.name = "n";
+    node.target_ref = make_agent_ref("EchoAgent");
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr call;
+    call.callee = capability;
+    call.arguments.push_back(make_expr_ptr(IntegerLiteralExpr{"7"}));
+    node_input.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = make_expr_ptr(std::move(call)),
+    });
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+
+    PathExpr return_path;
+    return_path.path.root_kind = PathRootKind::Identifier;
+    return_path.path.root_name = "n";
+    workflow.return_value = make_expr_ptr(std::move(return_path));
+
+    program.declarations.push_back(std::move(workflow));
+    return program;
+}
+
+// A capability call that suspends stops the workflow at Suspended (not Failed),
+// populates the resume record, and emits WorkflowSuspended — never
+// WorkflowFailed.
+void test_pending_capability_suspends_without_failure() {
+    auto program = make_single_capability_node_program("SuspendWorkflow", "answer");
+
+    WorkflowRuntimeConfig config;
+    config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext & /*context*/,
+           const std::string &name,
+           const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        CapabilityCallResult pending;
+        pending.status = name == "answer" ? CapabilityCallStatus::Pending
+                                          : CapabilityCallStatus::Error;
+        return pending;
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("SuspendWorkflow", make_none());
+
+    check(result.status() == WorkflowStatus::Suspended, "suspend.status_suspended");
+    check(!result.has_errors(), "suspend.no_error_diagnostics");
+    check(result.suspended.has_value() && result.suspended->suspended.has_value(),
+          "suspend.resume_record_present");
+
+    std::size_t suspended_events = 0;
+    std::size_t failed_events = 0;
+    for (const auto &event : result.events.events()) {
+        suspended_events += std::holds_alternative<WorkflowSuspended>(event.payload) ? 1U : 0U;
+        failed_events += std::holds_alternative<WorkflowFailed>(event.payload) ? 1U : 0U;
+    }
+    check(suspended_events == 1, "suspend.one_workflow_suspended_event");
+    check(failed_events == 0, "suspend.no_workflow_failed_event");
+    check(result.report.status == RunTerminalStatus::Suspended, "suspend.report_status");
+    check(validate_execution_events(result.events.events()).ok(), "suspend.terminal_invariant");
+}
+
+// Resuming with the pending capability result produces exactly the same output
+// as a synchronous run where the capability returned that value immediately.
+void test_resume_round_trip_equals_sync_path() {
+    // Synchronous baseline: `answer` returns 42 directly → node output is 42.
+    {
+        auto program = make_single_capability_node_program("SyncWorkflow", "answer");
+        WorkflowRuntimeConfig config;
+        config.contextual_capability_invoker =
+            [](const CapabilityInvocationContext &, const std::string &name,
+               const std::vector<Value> &) -> CapabilityCallResult {
+            CapabilityCallResult ok;
+            ok.status = CapabilityCallStatus::Success;
+            ok.value = name == "answer" ? make_int(42) : make_none();
+            return ok;
+        };
+        WorkflowRuntime runtime(program, std::move(config));
+        auto sync = runtime.run("SyncWorkflow", make_none());
+        check(sync.status() == WorkflowStatus::Completed, "resume.sync_completed");
+        const auto *out =
+            sync.output() != nullptr ? std::get_if<IntValue>(&sync.output()->node) : nullptr;
+        check(out != nullptr && out->value == 42, "resume.sync_output_42");
+    }
+
+    // Suspend, capture the resume record, then resume by injecting 42.
+    auto program = make_single_capability_node_program("ResumeWorkflow", "answer");
+    WorkflowRuntimeConfig suspend_config;
+    suspend_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult pending;
+        pending.status = CapabilityCallStatus::Pending;
+        return pending;
+    };
+    WorkflowRuntime suspend_runtime(program, std::move(suspend_config));
+    auto suspended = suspend_runtime.run("ResumeWorkflow", make_none());
+    check(suspended.suspended.has_value(), "resume.captured_record");
+
+    WorkflowRuntimeConfig resume_config;
+    resume_config.recovery_snapshot = std::move(suspended.suspended);
+    resume_config.resume_pending_result = make_int(42);
+    // The invoker must NOT be called for the resumed pending ordinal; if it is,
+    // returning a wrong value would change the output and fail the check.
+    resume_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult wrong;
+        wrong.status = CapabilityCallStatus::Success;
+        wrong.value = make_int(-1);
+        return wrong;
+    };
+    WorkflowRuntime resume_runtime(program, std::move(resume_config));
+    auto resumed = resume_runtime.run("ResumeWorkflow", make_none());
+
+    check(resumed.status() == WorkflowStatus::Completed, "resume.completed");
+    check(!resumed.has_errors(), "resume.no_errors");
+    const auto *resumed_out =
+        resumed.output() != nullptr ? std::get_if<IntValue>(&resumed.output()->node) : nullptr;
+    check(resumed_out != nullptr && resumed_out->value == 42, "resume.output_matches_sync");
+}
+
+// A resume whose memo integrity cross-check fails (corrupted arg_hash on a
+// completed call) fails closed rather than silently re-invoking.
+void test_resume_fails_closed_on_memo_mismatch() {
+    // The node input struct has two fields, each a capability call. `aux` (an
+    // offset) is evaluated + memoized first; `value` (answer) suspends. On
+    // resume we corrupt the memoized `aux` arg_hash so replay must fail closed.
+    Program program;
+    program.declarations.push_back(make_echo_agent("EchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("EchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = "MismatchWorkflow";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+
+    WorkflowNode node;
+    node.name = "n";
+    node.target_ref = make_agent_ref("EchoAgent");
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr offset_call;
+    offset_call.callee = "offset";
+    node_input.fields.push_back(StructFieldInit{
+        .name = "aux",
+        .value = make_expr_ptr(std::move(offset_call)),
+    });
+    CallExpr answer_call;
+    answer_call.callee = "answer";
+    node_input.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = make_expr_ptr(std::move(answer_call)),
+    });
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+    PathExpr return_path;
+    return_path.path.root_kind = PathRootKind::Identifier;
+    return_path.path.root_name = "n";
+    workflow.return_value = make_expr_ptr(std::move(return_path));
+    program.declarations.push_back(std::move(workflow));
+
+    // First run: `offset` succeeds (memoized), `answer` suspends.
+    WorkflowRuntimeConfig suspend_config;
+    suspend_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &name,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        if (name == "offset") {
+            r.status = CapabilityCallStatus::Success;
+            r.value = make_int(2);
+        } else {
+            r.status = CapabilityCallStatus::Pending;
+        }
+        return r;
+    };
+    WorkflowRuntime suspend_runtime(program, std::move(suspend_config));
+    auto suspended = suspend_runtime.run("MismatchWorkflow", make_none());
+    check(suspended.suspended.has_value() && suspended.suspended->suspended.has_value() &&
+              !suspended.suspended->suspended->memo.empty(),
+          "mismatch.memo_captured");
+
+    // Corrupt the memoized call's integrity hash, then resume.
+    auto corrupted = std::move(suspended.suspended);
+    corrupted->suspended->memo[0].arg_hash ^= 0xDEADBEEFULL;
+    WorkflowRuntimeConfig resume_config;
+    resume_config.recovery_snapshot = std::move(corrupted);
+    resume_config.resume_pending_result = make_int(40);
+    resume_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = make_int(0);
+        return r;
+    };
+    WorkflowRuntime resume_runtime(program, std::move(resume_config));
+    auto resumed = resume_runtime.run("MismatchWorkflow", make_none());
+
+    check(resumed.status() != WorkflowStatus::Completed, "mismatch.not_completed");
+    check(resumed.status() != WorkflowStatus::Suspended, "mismatch.not_suspended_again");
+    check(diagnostic_message_contains(resumed.diagnostics, "replay diverged"),
+          "mismatch.fail_closed_diagnostic");
+}
+
+} // anonymous namespace
+
 int main() {
     test_single_node_workflow();
     test_run_uses_event_report_as_canonical_result();
@@ -1427,6 +1654,9 @@ int main() {
     test_missing_workflow();
     test_node_input_uses_node_output();
     test_recovery_snapshot_restores_completed_node_without_reexecution();
+    test_pending_capability_suspends_without_failure();
+    test_resume_round_trip_equals_sync_path();
+    test_resume_fails_closed_on_memo_mismatch();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

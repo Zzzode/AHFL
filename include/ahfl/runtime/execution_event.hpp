@@ -211,6 +211,17 @@ struct NodeFailed {
     NodeFailureKind kind{NodeFailureKind::AgentFailed};
 };
 
+// RFC 0022 (durable resume): the node terminal for a node that suspended on a
+// pending capability call. A Node-lifecycle terminal (like NodeCompleted /
+// NodeFailed) so event validation sees exactly one terminal per node; the
+// workflow-level WorkflowSuspended is emitted alongside it.
+struct NodeSuspended {
+    WorkflowNodeId node;
+    AgentId agent;
+    std::size_t pending_cap_id{0};
+    std::uint64_t pending_ordinal{0};
+};
+
 struct NodeSkipped {
     WorkflowNodeId node;
     std::vector<WorkflowNodeId> blocking_dependencies;
@@ -272,6 +283,7 @@ using ExecutionEventPayload = std::variant<RunStarted,
                                            NodeCompleted,
                                            NodeRestored,
                                            NodeFailed,
+                                           NodeSuspended,
                                            NodeSkipped,
                                            WorkflowCompleted,
                                            WorkflowFailed,

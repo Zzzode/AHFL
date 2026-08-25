@@ -147,6 +147,12 @@ struct LifecycleObservation {
                     .key = {LifecycleKind::Node, event.node.index()},
                 };
             },
+            [](const NodeSuspended &event) {
+                return LifecycleObservation{
+                    .kind = LifecycleObservation::Kind::Terminal,
+                    .key = {LifecycleKind::Node, event.node.index()},
+                };
+            },
             [](const NodeSkipped &event) {
                 return LifecycleObservation{
                     .kind = LifecycleObservation::Kind::Terminal,

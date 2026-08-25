@@ -46,6 +46,8 @@ using ahfl::json::JsonValue;
         return "failed";
     case NodeReportStatus::Skipped:
         return "skipped";
+    case NodeReportStatus::Suspended:
+        return "suspended";
     }
     return "failed";
 }
@@ -116,6 +118,7 @@ node_metadata(const WorkflowResult &result, WorkflowNodeId node) {
             [](const NodeCompleted &) -> std::string_view { return "node_completed"; },
             [](const NodeRestored &) -> std::string_view { return "node_restored"; },
             [](const NodeFailed &) -> std::string_view { return "node_failed"; },
+            [](const NodeSuspended &) -> std::string_view { return "node_suspended"; },
             [](const NodeSkipped &) -> std::string_view { return "node_skipped"; },
             [](const WorkflowCompleted &) -> std::string_view {
                 return "workflow_completed";
@@ -224,6 +227,13 @@ event_payload_json(const WorkflowResult &result, const ExecutionEventPayload &pa
             [&](const NodeFailed &value) {
                 object->set("node_id", id_json(value.node.index()));
                 set_diagnostic_fields(*object, result, value.diagnostic);
+            },
+            [&](const NodeSuspended &value) {
+                object->set("node_id", id_json(value.node.index()));
+                object->set("agent_id", id_json(value.agent.index()));
+                object->set("pending_cap_id", id_json(value.pending_cap_id));
+                object->set("pending_ordinal",
+                            id_json(static_cast<std::size_t>(value.pending_ordinal)));
             },
             [&](const NodeSkipped &value) {
                 object->set("node_id", id_json(value.node.index()));

@@ -432,6 +432,16 @@ build_execution_otel_trace(std::span<const ExecutionEvent> events,
                     finish_span(trace, span->second, *time, ExecutionOtelStatus::Error);
                     return ProjectionStep::Continue;
                 },
+                [&](const NodeSuspended &payload) -> ProjectionStep {
+                    // RFC 0022: node paused on a pending capability. If the node
+                    // span was opened (agent started), finish it Unset; a
+                    // node-input suspension has no span yet, which is fine.
+                    const auto span = node_spans.find(payload.node.index());
+                    if (span != node_spans.end()) {
+                        finish_span(trace, span->second, *time, ExecutionOtelStatus::Unset);
+                    }
+                    return ProjectionStep::Continue;
+                },
                 [&](const NodeSkipped &payload) -> ProjectionStep {
                     const auto owner = node_workflows.find(payload.node.index());
                     if (owner == node_workflows.end()) {

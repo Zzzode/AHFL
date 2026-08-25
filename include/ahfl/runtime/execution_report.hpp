@@ -15,6 +15,8 @@ enum class NodeReportStatus {
     Completed,
     Failed,
     Skipped,
+    // RFC 0022 (durable resume): node paused on a pending capability call.
+    Suspended,
 };
 
 struct ExecutionNodeReport {

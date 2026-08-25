@@ -127,6 +127,14 @@ ExecutionReportBuildResult build_execution_report(std::span<const ExecutionEvent
                     report.nodes[found->second].status = NodeReportStatus::Skipped;
                     return true;
                 },
+                [&](const NodeSuspended &payload) {
+                    const auto found = node_indices.find(payload.node);
+                    if (found == node_indices.end()) {
+                        return false;
+                    }
+                    report.nodes[found->second].status = NodeReportStatus::Suspended;
+                    return true;
+                },
                 [&](const WorkflowCompleted &payload) {
                     report.output = payload.output;
                     return true;
