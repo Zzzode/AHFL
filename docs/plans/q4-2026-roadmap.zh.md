@@ -18,6 +18,12 @@
 季度末的验收 = `examples/` 里有一个能跑的程序完整走通上面这句话(native 路径),
 且 RFC 0021 与 0022 均 `stabilized`。
 
+> **达成情况(2026-08-25):** 北极星那句话已是可执行、已测试的事实——
+> `tests/integration/durable_resume_capstone.cpp` 编译 `examples/execution-demo`(全前端
+> 形式验证)→ 能力返回 `PENDING` → 挂起 → 跨进程冷启动从磁盘快照恢复 → 结果与同步路径
+> 逐字节一致。RFC 0022 已 `stabilized`;RFC 0021 已 `implemented`,其 `stabilized` 所需的
+> `docs/reference/` ABI 文档 + 第三方语言绑定为 Q4 明确排除项,是本季目标外的后续工作。
+
 ---
 
 ## 进入 Q4 的基线(已完成)
@@ -29,7 +35,8 @@
   绑定等价性测试(native 路径与直连 invoker 在 L1+L2 可观察等价,asan 干净)。
 - **RFC 0022 prereq 1a/1b**:`FieldMap` 有序扁平字段存储 + 统一 `format_double`,
   使 `value_json` 确定性可复现——durable replay 的地基。
-- RFC 状态:0020 `stabilized`、0021 `implementing`、0022 `review`。
+- RFC 状态(季度进入时):0020 `stabilized`、0021 `implementing`、0022 `review`。
+  **更新(2026-08-25,M1+M2 完成后):0021 `implemented`、0022 `stabilized`。**
 
 ---
 
@@ -66,7 +73,12 @@
 
 ---
 
-## M2 — 可嵌入性收口 + 可演示 capstone(11 月)
+## M2 — 可嵌入性收口 + 可演示 capstone(11 月)—— ✅ 已完成(范围内)
+
+> **状态(2026-08-25):** 端到端 capstone、durable-resume spec 语义、RFC 0022 →
+> `stabilized`(schema v2 标为 stable-artifact)、RFC 0021 → `implemented` 均已落库。
+> RFC 0021 `stabilized` 尚差 `docs/reference/` ABI 文档 + 一个第三方语言绑定(Rust/Node),
+> 后者明确为 Q4 范围外(见"明确排除"),故 M2 在 Q4 范围内已收口。
 
 | 交付物 | 退出标准 |
 |---|---|
