@@ -5,7 +5,10 @@
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/value.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+#include <optional>
 
 namespace ahfl::evaluator {
 
@@ -13,12 +16,34 @@ namespace ahfl::evaluator {
 // Evaluation Result
 // ============================================================================
 
+// RFC 0022 (durable resume): a capability call deep in expression evaluation
+// returned AHFL_CAP_PENDING. Evaluation unwinds to the workflow node loop
+// carrying this record instead of a value or an error diagnostic. It is a third
+// control-flow axis orthogonal to value/diagnostics — a suspended EvalResult has
+// no meaningful value and no error. Identity is index/id-based (Principle 2):
+// cap_id is a capability SymbolId, ordinal a per-node invocation ordinal.
+struct EvalSuspension {
+    std::size_t pending_cap_id{0};   // capability SymbolId of the pending call
+    std::uint64_t pending_ordinal{0}; // per-node invocation ordinal of that call
+};
+
 struct EvalResult {
     Value value;
     DiagnosticBag diagnostics;
+    // Set iff a capability call suspended (AHFL_CAP_PENDING). Default nullopt, so
+    // every existing EvalResult{value, diags} construction is unchanged.
+    std::optional<EvalSuspension> suspension{};
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();
+    }
+
+    // True iff evaluation suspended on a pending capability call. Propagation
+    // sites unwind on `has_errors() || is_suspended()` so a suspension is never
+    // mistaken for a value (which would run further effects) or an error (which
+    // would terminate the workflow).
+    [[nodiscard]] bool is_suspended() const noexcept {
+        return suspension.has_value();
     }
 };
 
