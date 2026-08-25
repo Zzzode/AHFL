@@ -1575,6 +1575,30 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         runtime_config.resume_pending_result = std::move(*pending);
     }
 
+    // RFC 0022: --suspend-capability forces the named capability to return
+    // PENDING on a FRESH run, so a suspend->resume round-trip is drivable from
+    // the shell. Inert when resuming (a loaded recovery_snapshot serves that call
+    // from the memo, so we must NOT re-suspend it). Wrapped outermost so it sees
+    // the canonical capability name before any provider dispatch.
+    if (options.suspend_capability.has_value() &&
+        !runtime_config.recovery_snapshot.has_value()) {
+        std::string suspend_name{*options.suspend_capability};
+        auto inner = std::move(*runtime_config.contextual_capability_invoker);
+        runtime_config.contextual_capability_invoker =
+            [suspend_name = std::move(suspend_name), inner = std::move(inner)](
+                const ahfl::runtime::CapabilityInvocationContext &context,
+                const std::string &name,
+                const std::vector<ahfl::evaluator::Value> &args)
+            -> ahfl::runtime::CapabilityCallResult {
+            if (name == suspend_name) {
+                ahfl::runtime::CapabilityCallResult pending;
+                pending.status = ahfl::runtime::CapabilityCallStatus::Pending;
+                return pending;
+            }
+            return inner(context, name, args);
+        };
+    }
+
     WorkflowRuntime runtime(program, std::move(runtime_config));
     auto result = runtime.run(workflow_name, std::move(*input_value));
 
@@ -1587,7 +1611,8 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
                     << recovery_store->path().string() << '\n';
                 return 1;
             }
-            out << "workflow suspended on a pending capability; resume record written to "
+            // Operational note on stderr so stdout stays a clean canonical report.
+            err << "note: workflow suspended on a pending capability; resume record written to "
                 << recovery_store->path().string() << '\n';
         } else {
             err << "error: workflow suspended but no --recovery-store was given to "

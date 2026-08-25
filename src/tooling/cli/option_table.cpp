@@ -92,6 +92,10 @@ void set_resume_pending_result(CommandLineOptions &opts, std::optional<std::stri
     opts.resume_pending_result_json = val;
 }
 
+void set_suspend_capability(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.suspend_capability = val;
+}
+
 void set_formal_backend(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.formal_backend = val;
 }
@@ -320,6 +324,13 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_resume_pending_result,
      "JSON result for the pending capability when resuming a suspended workflow",
      "a JSON string"},
+    {"--suspend-capability",
+     "",
+     OptionArgKind::RequiredValue,
+     set_suspend_capability,
+     "Force the named capability to return PENDING (suspend) on a fresh run; "
+     "inert when resuming from --recovery-store",
+     "a capability name"},
     {"--formal-backend",
      "",
      OptionArgKind::RequiredValue,

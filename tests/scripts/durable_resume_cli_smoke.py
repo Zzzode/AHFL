@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Shell-level smoke for the RFC 0022 durable-resume CLI flags.
 
-`ahflc run` gained --recovery-store and --resume-pending-result (RFC 0022). The
-CLI cannot itself make a capability return PENDING (that is a host decision; the
-programmatic path is covered by ahfl.reference_workflow.durable_resume_capstone).
-What this smoke pins is the CLI contract that IS shell-observable:
+`ahflc run` gained --recovery-store, --resume-pending-result, and
+--suspend-capability (RFC 0022). This smoke pins the shell-observable contract:
 
   1. The flags are accepted by the parser (not rejected as unknown options).
   2. On a normally-completing run, --recovery-store is inert: no snapshot file is
      written (a snapshot appears only when the workflow suspends).
+  2b. A real shell round-trip: --suspend-capability forces a capability to
+     PENDING, the run suspends + persists a snapshot + exits 0; a second run
+     loads it and resumes with --resume-pending-result to the injected result.
   3. --resume-pending-result rejects invalid JSON with a targeted diagnostic and
      a nonzero exit.
 """
@@ -138,6 +139,48 @@ def main() -> int:
                 f"completing run should exit 0, got {completed.returncode}: {completed.stderr}")
         require(not snapshot.exists(),
                 "no snapshot must be written when the workflow completes (flag is inert on success)")
+
+        # (2b): a REAL shell round-trip. --suspend-capability forces Echo to
+        # PENDING on a fresh run -> the workflow suspends, exits 0, and writes a
+        # snapshot; a second run loads it and resumes with the injected result,
+        # completing without re-invoking the live capability.
+        roundtrip_snapshot = work / "roundtrip.json"
+        if roundtrip_snapshot.exists():
+            roundtrip_snapshot.unlink()
+        base = [
+            str(ahflc), "run",
+            "--workflow", "smoke::SmokeWorkflow",
+            "--input", '{"_type":"smoke::Request","value":"hi"}',
+            "--llm-config", str(config),
+            "--recovery-store", str(roundtrip_snapshot),
+            "--output-format", "json",
+            str(source),
+        ]
+        suspend = subprocess.run(
+            base + ["--suspend-capability", "smoke::Echo"],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(suspend.returncode == 0,
+                f"suspended run should exit 0 (durably parked), got {suspend.returncode}: {suspend.stderr}")
+        require(roundtrip_snapshot.exists(),
+                "a suspended run must persist a resume record to --recovery-store")
+        suspend_report = json.loads(suspend.stdout)
+        require(suspend_report["audit"]["workflow_completed"] == 0,
+                "suspended run must not report a completed workflow")
+
+        resume = subprocess.run(
+            base + ["--resume-pending-result",
+                    '{"_type":"smoke::Response","value":"resumed-ok"}'],
+            env=env, check=False, capture_output=True, text=True, timeout=30,
+        )
+        require(resume.returncode == 0,
+                f"resumed run should exit 0, got {resume.returncode}: {resume.stderr}")
+        resume_report = json.loads(resume.stdout)
+        require(resume_report["audit"]["workflow_completed"] == 1,
+                "resumed run must complete the workflow")
+        result = resume_report.get("result", resume_report.get("output"))
+        require(result is not None and result.get("value") == "resumed-ok",
+                f"resumed output must be the injected result, got {result}")
 
         # (3): invalid --resume-pending-result JSON is rejected with exit 2.
         bad = subprocess.run(
