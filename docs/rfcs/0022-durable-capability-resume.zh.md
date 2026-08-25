@@ -1,7 +1,7 @@
 ---
 rfc: "0022"
 title: "Durable Capability Resume"
-status: "implementing"
+status: "implemented"
 area: ["runtime", "language", "compiler"]
 stability: "experimental"
 created: "2026-08-25"
@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "language"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["fdfb3136", "dfb81f7f", "5e56325c", "858b4f7c", "77ae0d64", "0d3ada51", "c6cbcc02"]
+implementation_prs: ["fdfb3136", "dfb81f7f", "5e56325c", "858b4f7c", "77ae0d64", "0d3ada51", "c6cbcc02", "9ef1a0eb", "920bcca8"]
 decision_due: "2026-10-31"
 ---
 
