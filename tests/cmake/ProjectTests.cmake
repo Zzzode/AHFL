@@ -1047,6 +1047,10 @@ add_test(NAME ahfl.runtime.native_host_binding_all
     COMMAND $<TARGET_FILE:ahfl_native_host_binding_tests>
 )
 
+add_test(NAME ahfl.runtime.native_wasm_differential
+    COMMAND $<TARGET_FILE:ahfl_native_wasm_differential_tests>
+)
+
 add_test(NAME ahfl.runtime.response_schema_validator
     COMMAND $<TARGET_FILE:ahfl_response_schema_validator_tests>
 )
