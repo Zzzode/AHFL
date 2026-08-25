@@ -49,6 +49,8 @@ public:
 
     virtual std::any visitType_(AHFLParser::Type_Context *context) = 0;
 
+    virtual std::any visitCollectionCapacity(AHFLParser::CollectionCapacityContext *context) = 0;
+
     virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *context) = 0;
 
     virtual std::any visitConstDecl(AHFLParser::ConstDeclContext *context) = 0;

@@ -715,6 +715,11 @@ class AstPrinter final {
                             print_type(*arg, indent_level + 1);
                         }
                     }
+                    // RFC 0025: bounded collection capacity suffix.
+                    if (t.collection_capacity.has_value()) {
+                        line(indent_level,
+                             "capacity(" + std::to_string(*t.collection_capacity) + ")");
+                    }
                 },
                 [&](const ast::FnType &t) {
                     line(indent_level, "fn");

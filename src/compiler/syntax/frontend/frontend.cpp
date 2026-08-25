@@ -2797,12 +2797,22 @@ class ProgramBuilder {
             throw std::logic_error("type did not match any supported AHFL type syntax kind");
         }
 
-        ast::NamedType named{.name = build_qualified_name(qualified_name->get()), .type_args = {}};
+        ast::NamedType named{
+            .name = build_qualified_name(qualified_name->get()),
+            .type_args = {},
+            .collection_capacity = std::nullopt,
+        };
         const auto &child_types = context.type_();
         named.type_args.reserve(child_types.size());
         for (auto *child : child_types) {
             named.type_args.push_back(
                 build_type_syntax(require(child, "generic type argument is missing")));
+        }
+        // RFC 0025: optional `(N)` capacity suffix on a bounded collection type.
+        // INT_LITERAL is unsigned in the grammar, so the parsed value is >= 0.
+        if (const auto capacity = borrow(context.collectionCapacity())) {
+            named.collection_capacity = static_cast<std::uint64_t>(parse_integer_literal(
+                text_of(require(capacity->get().INT_LITERAL(), "collection capacity is missing"))));
         }
         type->node = std::move(named);
         return type;

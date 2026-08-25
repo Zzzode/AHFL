@@ -83,7 +83,13 @@ qualifiedIdentListOpt: qualifiedIdentList?;
 type_:
 	primitiveType
 	| fnType
-	| qualifiedIdent ('<' type_ (',' type_)* '>')?;
+	| qualifiedIdent ('<' type_ (',' type_)* '>')? collectionCapacity?;
+
+// RFC 0025: optional static capacity refinement on a nominal collection type,
+// e.g. List<Int>(16). Parsed on any generic named type; the type checker
+// restricts it to List/Set/Map and rejects it elsewhere. Mirrors the
+// primitiveType Int(lo,hi) / String(lo,hi) refinement pattern.
+collectionCapacity: '(' INT_LITERAL ')';
 
 primitiveType:
 	'Unit'

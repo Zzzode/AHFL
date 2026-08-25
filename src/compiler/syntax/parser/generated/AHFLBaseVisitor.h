@@ -75,6 +75,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitCollectionCapacity(AHFLParser::CollectionCapacityContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *ctx) override {
     return visitChildren(ctx);
   }

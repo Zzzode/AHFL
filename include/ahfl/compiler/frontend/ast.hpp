@@ -317,9 +317,16 @@ struct DecimalType {
 /// Named type: references a struct/enum/type alias or parameterised
 /// built-in such as Optional<T>, List<T>, Set<T>, Map<K, V>. When
 /// `type_args` is empty the type is a simple named reference.
+///
+/// RFC 0025: `collection_capacity` carries the optional static capacity `N`
+/// from a bounded collection type spelling (`List<T>(N)`). It is populated for
+/// any named type written with a `(N)` suffix; semantic analysis restricts the
+/// suffix to List/Set/Map and rejects it elsewhere. `std::nullopt` means the
+/// type was written without a capacity (the unbounded form).
 struct NamedType {
     Owned<QualifiedName> name;
     std::vector<Owned<TypeSyntax>> type_args;
+    std::optional<std::uint64_t> collection_capacity;
 };
 
 /// Function type: Fn(A1, A2, ...) -> Ret [effect Spec]

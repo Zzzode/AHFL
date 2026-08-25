@@ -1543,6 +1543,12 @@ struct TypeSyntaxSpellingVisitor {
             }
             result.push_back('>');
         }
+        // RFC 0025: render the bounded collection capacity suffix `(N)`.
+        if (t.collection_capacity.has_value()) {
+            result.push_back('(');
+            result.append(std::to_string(*t.collection_capacity));
+            result.push_back(')');
+        }
         return result;
     }
     std::string operator()(const FnType &t) const {
