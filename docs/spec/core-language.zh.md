@@ -638,6 +638,7 @@ Decimal(scale)
 StructName
 EnumName
 Qualified::Nominal<T...>
+Qualified::Nominal<T...>(N)
 ```
 
 其中：
@@ -657,6 +658,14 @@ Qualified::Nominal<T...>
    nominal types，不是 primitive。用户 package 必须声明
    `std = { source = "sysroot" }` dependency，并显式 import 对应 module
    或 alias 后才能使用这些类型；detached 单文件模式不会隐式注入它们。
+7. `List<T>(N)`、`Set<T>(N)`、`Map<K, V>(N)` 是 collection 的 **static capacity
+   refinement** 形式（[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md)），
+   `N` 为非负整数字面量，表示元素（`Map` 为 entry）数量的静态上界；它是
+   `Int(min, max)` 标量 refinement 在容器上的对应物。capacity 仅出现在
+   `List` / `Set` / `Map` 上，写在其它类型上报告
+   `typecheck.COLLECTION_CAPACITY_NOT_ALLOWED`。capacity 参与结构化 identity 与
+   subtyping（见 §5.5.x），并且是 §5.6 bounded quantification 有限展开所依赖的
+   唯一静态长度来源；capacity 是纯静态 refinement，不引入运行期长度检查。
 
 编译器实现还可以维护少量**内部辅助类型**，例如：
 
@@ -739,6 +748,12 @@ type A = B
 2. `Int(m, n) <: Int`
 3. `String(m1, n1) <: String(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
 4. `String(m, n) <: String`
+5. `C<T...>(N) <: C<T...>`（`C` 为 `List` / `Set` / `Map`）：有界容器可赋给
+   同元素类型的无界容器（丢弃 capacity）
+6. `C<T...>(N) <: C<T...>(M)`，当且仅当 `N <= M`：更紧的 capacity 可赋给更松的
+   capacity（capacity 协变，与 `Int(m,n)` 收紧同理）；反向不成立，无界容器亦
+   **不可**赋给有界容器（缺少静态 capacity 见证）。capacity 子类型与元素
+   variance 复合。
 
 除此之外，所有**名义泛型类型**（`struct<T...>` / `enum<T...>`）的子类型关系按其类型参数上声明的 **variance** 决定。variance 的完整设计（通过 trait 约束对每个泛型参数声明 `covariant` / `contravariant` / `invariant`）在 **PHASE B** 中落地。在当前阶段，以下 variance 对 stdlib 容器按名称硬编码生效，其余用户定义的名义泛型一律视为 invariant：
 
@@ -1290,13 +1305,24 @@ U <: W.output
 5. 整数除法/取模 `/` `%` → SMT `div` / `mod`,并**自动附加 `divisor != 0` 验证义务**
    (与 §runtime 求值器的除零错误对齐)
 6. `Int(lo,hi)` 精化类型 → 附加 `lo ≤ x ≤ hi` 边界约束
+7. **有界集合量化** `forall x in coll: P` / `exists (k, v) in coll: P`
+   （[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)）：当
+   `coll` 具有有界集合类型 `List<T>(N)` / `Set<T>(N)` / `Map<K,V>(N)`
+   （§4.3 clause 7, RFC 0025）时,按 capacity `N` **有限展开**——`forall` 展开为
+   `(and P[x:=coll@0] … P[x:=coll@(N-1)])`,`exists` 展开为 `(or …)`,空集合
+   （`N = 0`）分别编码为 `true` / `false`（vacuous）。每个 `P[x:=coll@i]` 复用上述
+   标量子集编码,binder 替换为按索引命名的元素符号 `coll@i`（`Map` 为
+   `coll@i.key` / `coll@i.val`）;不引入 SMT array / sequence theory,子集保持可判定。
 
 **离开子集的节点(被抽象,发 `formal.NOT_IN_VERIFIED_SUBSET`):**
 
 1. `String` 内容谓词(字符串等值以外的内容判定)
 2. capability 调用结果、lambda、`struct` / `enum` 字面量、索引访问、`match`、`unwrap`
-3. `List` / `Map` 量化(推迟到后续 RFC)
-4. 非纯表达式(`rank(ε) ≥ 3`,由 §5.3 的纯性检查先行拦截)
+3. 非纯表达式(`rank(ε) ≥ 3`,由 §5.3 的纯性检查先行拦截)
+
+**fail-closed:** 对无静态长度上界的集合（无界 `List<T>` 等）量化时,子句以
+`formal.UNBOUNDED_QUANTIFIER` **拒绝**（非抽象）——作者必须给集合一个有界类型
+才能验证其上的量化性质;绝不猜测边界或验证 vacuous 实例。
 
 **判定语义(证明即反证):** 对每个目标子句 G,SMT-BMC 断言
 `(assumptions ∧ ¬G)` 并检查可满足性——`requires` 作为假设,`invariant` / `ensures`
