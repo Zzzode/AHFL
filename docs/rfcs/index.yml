@@ -133,3 +133,9 @@ rfcs:
     file: "0022-durable-capability-resume.zh.md"
     area: ["runtime", "language", "compiler"]
     stability: "experimental"
+  - rfc: "0023"
+    title: "Capability-Identity Effect Inference"
+    status: "draft"
+    file: "0023-capability-identity-effect-inference.zh.md"
+    area: ["language", "compiler"]
+    stability: "experimental"
