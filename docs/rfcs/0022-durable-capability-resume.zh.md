@@ -120,9 +120,12 @@ invocation-ordinal 序列与每个 ordinal 处相同的 resolved args*。这要�
 
 **未保证——本 RFC 必须关闭的缺口**(均已核实存在):
 
-1. `wall_clock_now` / `time_now` / `time_epoch`(`builtins.cpp:905`)与 `uuid_new` /
-   `uuid_new_v4`(`builtins.cpp:967`)是语言可调用的 Nondet 内建——重放会算出不同值。
-   **决策:重分类为零参 host capability**(与 [RFC 0020](0020-strategic-positioning-embeddable-workflow-dsl.zh.md)
+1. `wall_clock_now` / `time_now`(`builtins.cpp:905`,读真实系统时钟)与 `uuid_new` /
+   `uuid_new_v4`(`builtins.cpp:967`,基于 `std::random_device`)是语言可调用的 Nondet
+   内建——重放会算出不同值。注意 `time_epoch`(`builtins.cpp:915`,返回常量 0)与
+   `timestamp_add` / `timestamp_sub` 等是纯函数,**不**在重分类范围内。
+   **决策:仅将这 4 个真正 nondet 的内建重分类为零参 host capability**(与
+   [RFC 0020](0020-strategic-positioning-embeddable-workflow-dsl.zh.md)
    "宿主拥有 nondeterminism" + 索引式身份一致),使其结果走 InvocationId / memo 路径。
 2. `StructValue.fields` / `EnumValue.named_payload`(`value.hpp:56,70`)是 `unordered_map`;
    `value_json` 直接迭代它们 → 跨新进程/allocator 顺序不稳定,违反 artifact 确定性。
@@ -176,9 +179,10 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
 
 **部分 breaking(语言级),但范围明确。**
 
-- **Breaking**:`wall_clock_now` / `time_now` / `time_epoch` / `uuid_new` / `uuid_new_v4`
-  从语言内建移除,重分类为 host capability。**迁移**:用 capability 声明 + 宿主实现替代;
-  提供迁移期诊断指向替代 capability。影响面 = 使用这些内建的源码。
+- **Breaking**:`wall_clock_now` / `time_now` / `uuid_new` / `uuid_new_v4`
+  从语言内建移除,重分类为 host capability(`time_epoch` 等纯函数保留为内建)。
+  **迁移**:用 capability 声明 + 宿主实现替代;提供迁移期诊断指向替代 capability。
+  影响面 = 使用这 4 个 nondet 内建的源码。
 - **内部(非用户 API)**:`StructValue` / `EnumValue` 字段存储从 `unordered_map` 改为
   ordinal vector;`WorkflowRecoverySnapshot` 扩展 node input + memo 表(schema bump
   `ahfl.workflow-recovery.v2`);`CapabilityCallStatus` 增 `Pending`。这些不是用户 API。
@@ -261,3 +265,8 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
 - 2026-08-25: 两个 Open Questions 给出倾向性结论(单节点 suspension 上限;标准 host
   capability 集 time/uuid/random)。Owners / shepherd 分配,tracking_issue / discussion
   设为 none。Status draft → review。
+- 2026-08-25: 修正 soundness 缺口清单——实现前核实源码时发现 `time_epoch`
+  (`builtins.cpp:915`)返回常量 0、`timestamp_add`/`timestamp_sub` 为纯函数,均非
+  nondet;重分类范围收窄为确属 nondet 的 4 个内建
+  (`wall_clock_now` / `time_now` / `uuid_new` / `uuid_new_v4`)。确定性前置 1a
+  (`FieldMap` 有序扁平存储)与 1b(统一 `format_double`)已实现并落库。
