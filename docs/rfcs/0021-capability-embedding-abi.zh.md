@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["43c2d159", "99c32fff"]
+implementation_prs: ["43c2d159", "99c32fff", "66621682"]
 decision_due: "2026-09-30"
 ---
 
@@ -286,3 +286,15 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   4-lens 设计评审确定其为语义级改动(确定性重放 + memoization),且依赖两处确定性前置
   (nondet 内建重分类、`unordered_map` 字段序列化),不宜作为本 RFC 的接线型 slice 直接
   编码。本 RFC 余下 slice(原生绑定 slice 2、参考宿主 + 差分测试 slice 5)不受影响。
+- 2026-08-25: Slice 2 landed — 原生绑定。`WorkflowRuntime` 的 capability 派发改为从
+  `ahfl_host.h` 的函数指针表派生(`NativeHostBinding` +
+  `make_native_capability_invoker`,`src/runtime/engine/native_host_binding.{hpp,cpp}`),
+  取代无契约的 `ContextualCapabilityInvoker` 直连;`WorkflowRuntimeConfig` 新增
+  `native_host_binding`,优先于直连 invoker。适配器按 `AHFL_WIRE_VALUE_JSON` 帧
+  marshal 参数、调 `ahfl_invoke`、解码 status + callee-alloc 结果帧(经 `ahfl_dealloc`
+  单次释放)。status 遵循 ABI fail-closed:OK→Success、ERROR/未知状态→Error、
+  PENDING→Error + 指向 [RFC 0022](0022-durable-capability-resume.zh.md) 的诊断(resume
+  未实现)。既有 invoker 型宿主可观察行为不变。Covered by
+  `tests/unit/runtime/engine/native_host_binding.cpp`(`ahfl.runtime.native_host_binding_all`,
+  dev + asan:OK 无损回环 + 帧单次释放 + cap_id 透传;ERROR/未知/无效绑定 fail-closed;
+  PENDING fail-closed 引用 RFC 0022)。asan 确认跨 ABI alloc/dealloc 无泄漏、无 UAF。
