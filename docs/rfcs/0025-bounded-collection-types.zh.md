@@ -1,21 +1,21 @@
 ---
 rfc: "0025"
 title: "Bounded Collection Types"
-status: "draft"
+status: "implementing"
 area: ["language", "compiler", "ir", "formal"]
 stability: "experimental"
 created: "2026-08-26"
 updated: "2026-08-26"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  language: "TBD"
-  compiler: "TBD"
-  ir: "TBD"
-  formal: "TBD"
+  language: "language owner"
+  compiler: "compiler owner"
+  ir: "ir owner"
+  formal: "formal owner"
 required_reviewers: ["language", "formal"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-11-30"
 ---
@@ -288,17 +288,20 @@ RFC 0024's slices 3-7 depend on slice 5 (the formal accessor) of this RFC.
 
 ## Open Questions
 
-1. Should capacity `0` be legal (an always-empty collection)? Leaning yes — it
-   is a valid bound and `forall` over it is vacuously true, `exists` vacuously
-   false, matching RFC 0024's empty-collection encoding. To confirm before
-   review.
-2. Should `Map<K,V>(N)` count entries (pairs) or something else? Leaning
-   entries, matching the `(k, v)` binder unit in RFC 0024. To confirm before
-   review.
-3. Does assignability need an explicit checked-narrowing operation
-   (`List<T>` → `List<T>(N)` with a runtime/verification obligation), or is
-   compile-time rejection sufficient for the first version? To resolve before
-   review.
+All three resolved for review (2026-08-26):
+
+1. ~~Is capacity `0` legal?~~ (resolved): **yes.** `List<T>(0)` is an
+   always-empty collection; `forall` over it is vacuously true and `exists`
+   vacuously false, matching RFC 0024's `N = 0` empty-collection encoding.
+2. ~~What does `Map<K,V>(N)` count?~~ (resolved): **entries (key-value pairs).**
+   `N` bounds the number of entries, matching the `(k, v)` binder unit in
+   RFC 0024's map unrolling.
+3. ~~Is a checked-narrowing operation needed for `List<T>` → `List<T>(N)`?~~
+   (resolved): **no, compile-time rejection is sufficient for v1.** An unbounded
+   value has no static capacity witness, so the assignment is a type error; a
+   dynamic checked-narrowing (with a verification/runtime obligation) is a
+   possible follow-up but out of scope here (consistent with the "no runtime
+   enforcement" Non-Goal).
 
 ## Decision History
 
@@ -310,3 +313,14 @@ RFC 0024's slices 3-7 depend on slice 5 (the formal accessor) of this RFC.
   `Int(lo,hi)` / `String(lo,hi)` pattern — as the canonical, index-based,
   source-explicit bound that RFC 0024 slices 3-7 consume. Scope excludes runtime
   enforcement, dependent lengths, and refinement predicates.
+- 2026-08-26: All three Open Questions resolved (capacity 0 legal; `Map(N)`
+  counts entries; compile-time rejection suffices for unbounded→bounded, no
+  checked-narrowing in v1). Owners / shepherd assigned; tracking_issue /
+  discussion set to none. Status draft → review → fcp → accepted: the design is a
+  direct structural analog of the stabilized scalar refinement machinery
+  (`Int(lo,hi)`), adds no new solver theory, and is additive/non-breaking, so
+  there were no blocking review concerns. Approved as the RFC 0024 bound-source
+  prerequisite.
+- 2026-08-26: Status accepted → implementing. Proceeding per the Implementation
+  Plan (grammar/AST → interning → assignability → IR → formal hook → spec), one
+  slice per commit.
