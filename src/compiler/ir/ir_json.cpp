@@ -470,8 +470,8 @@ class IrJsonPrinter final {
         return ref.kind != ir::TypeRefKind::Unresolved || !ref.display_name.empty() ||
                !ref.canonical_name.empty() || !ref.variant_name.empty() ||
                ref.int_bounds.has_value() || ref.string_bounds.has_value() ||
-               ref.decimal_scale.has_value() || ref.first || ref.second || !ref.params.empty() ||
-               has_source_range(ref.source_range);
+               ref.decimal_scale.has_value() || ref.collection_capacity.has_value() || ref.first ||
+               ref.second || !ref.params.empty() || has_source_range(ref.source_range);
     }
 
     void print_symbol_ref(const ir::SymbolRef &ref, int indent_level) {
@@ -518,6 +518,11 @@ class IrJsonPrinter final {
             }
             if (ref.decimal_scale.has_value()) {
                 field("decimal_scale", [&]() { write_i64(*ref.decimal_scale); });
+            }
+            // RFC 0025: bounded collection static capacity.
+            if (ref.collection_capacity.has_value()) {
+                field("collection_capacity",
+                      [&]() { write_i64(static_cast<std::int64_t>(*ref.collection_capacity)); });
             }
             if (ref.first) {
                 const auto first_name = "element_type";

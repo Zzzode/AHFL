@@ -174,6 +174,11 @@ struct TypeRef {
     std::optional<std::pair<std::int64_t, std::int64_t>> int_bounds{};
     std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds{};
     std::optional<std::int64_t> decimal_scale{};
+    // RFC 0025: static capacity `N` of a bounded collection type
+    // (`List<T>(N)` / `Set<T>(N)` / `Map<K,V>(N)`). Meaningful only when the
+    // type is one of the nominal stdlib collections; nullopt otherwise and for
+    // unbounded collection forms. Mirrors int_bounds for scalar refinements.
+    std::optional<std::uint64_t> collection_capacity{};
     std::optional<SourceRange> source_range{};
     TypeRefPtr first{};
     TypeRefPtr second{};

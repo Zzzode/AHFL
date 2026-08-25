@@ -1168,6 +1168,9 @@ class TypedIrLowerer final {
                 auto ref = make_type_ref_value(ir::TypeRefKind::Struct, type.describe());
                 ref.canonical_name = value.canonical_name;
                 append_type_args(ref, value.type_args);
+                // RFC 0025: carry the bounded collection capacity into the IR
+                // type ref so the formal backend can read the static bound.
+                ref.collection_capacity = value.capacity;
                 return ref;
             },
             [&](const types::EnumT &value) {
