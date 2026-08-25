@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: []
+implementation_prs: ["c8a8bd74"]
 decision_due: "2026-11-30"
 ---
 
