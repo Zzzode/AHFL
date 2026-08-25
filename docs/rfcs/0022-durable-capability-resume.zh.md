@@ -291,3 +291,9 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   承诺向后兼容——已持久化的 v2 resume record 在后续版本仍可加载;v1 是 v2 的未触碰子集,
   两者 load 路径共存。schema 演进只能 append-only(新字段可选、老 reader 忽略),破坏性
   变更须发新 schema 版本号。
+- 2026-08-25: Test-Plan 覆盖补全 —— 原生 `ahfl_host.h` ABI 的 PENDING→suspend/resume
+  (`native_wasm_differential.cpp::test_native_pending_suspends_and_resumes`)、shell 端
+  suspend→resume 往返(`ahflc.run.durable_resume_flags.smoke` + `examples/durable-resume/`)、
+  以及 Test Plan 的"多次挂起"用例(同节点两个 capability 连续两次 PENDING,append-only
+  memo 正确重建:`workflow_runtime.cpp::test_two_suspensions_on_one_node_rebuild_memo_append_only`)。
+  Test Plan 全部用例现有对应测试。
