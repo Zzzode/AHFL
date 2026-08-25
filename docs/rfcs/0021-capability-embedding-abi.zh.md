@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "compiler"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["43c2d159", "99c32fff", "66621682"]
+implementation_prs: ["43c2d159", "99c32fff", "66621682", "c04a1fbc"]
 decision_due: "2026-09-30"
 ---
 
@@ -298,3 +298,13 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   `tests/unit/runtime/engine/native_host_binding.cpp`(`ahfl.runtime.native_host_binding_all`,
   dev + asan:OK 无损回环 + 帧单次释放 + cap_id 透传;ERROR/未知/无效绑定 fail-closed;
   PENDING fail-closed 引用 RFC 0022)。asan 确认跨 ABI alloc/dealloc 无泄漏、无 UAF。
+- 2026-08-25: Slice 5 landed(可达成部分)— 参考宿主 + 绑定等价性。最小 C 式参考宿主
+  实现 `ahfl_host.h`(`ahfl_invoke`/`alloc`/`dealloc`,不透明 host),经原生绑定跑通一个
+  真 capability workflow;并证明该原生绑定运行与"直连 invoker 返回同值"在 L1(workflow
+  status + 用确定性 `value_json` 得到的逐字节相同输出)与 L2(capability 调用序列
+  `{"is_ready"}`)上可观察等价;golden 负例:未绑定能力(宿主返 ERROR)→ workflow 不成功
+  完成(fail-closed)。**范围**:AHFL 只 emit WAT、不含 WASM VM(RFC 0019/0021),故差分
+  为原生绑定 vs 直连 invoker,而非 vs 执行中的 WASM 模块;执行型 WASM 差分(需 WASM
+  运行时)与 PENDING/resume(RFC 0022)另行跟踪,测试文件已注明该边界。Covered by
+  `tests/unit/runtime/engine/native_wasm_differential.cpp`
+  (`ahfl.runtime.native_wasm_differential`,dev + asan,11/11)。
