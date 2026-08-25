@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -68,9 +69,21 @@ using ExecOutcome = std::variant<ExecContinue, ExecGoto, ExecReturn, ExecAssertF
 struct ExecResult {
     ExecOutcome outcome;
     DiagnosticBag diagnostics;
+    // RFC 0022 slice 3: set iff a capability call suspended during statement
+    // execution. Mirrors EvalResult::suspension so the suspension unwinds
+    // through the agent state machine to the workflow node loop.
+    std::optional<EvalSuspension> suspension{};
 
     [[nodiscard]] bool has_errors() const {
         return diagnostics.has_error();
+    }
+
+    [[nodiscard]] bool is_suspended() const noexcept {
+        return suspension.has_value();
+    }
+
+    [[nodiscard]] bool should_unwind() const noexcept {
+        return has_errors() || is_suspended();
     }
 };
 

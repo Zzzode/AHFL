@@ -70,7 +70,7 @@ eval_failure_message(ExecContext &ctx, const ir::ExprRef &message_expr, std::str
         return std::string{fallback};
     }
     auto result = ctx.eval_expression(*message_expr);
-    if (result.has_errors()) {
+    if (result.should_unwind()) {
         return std::string{fallback};
     }
     if (auto *sv = std::get_if<StringValue>(&result.value.node); sv != nullptr) {
@@ -91,6 +91,15 @@ namespace {
 /// * Otherwise preserve the historical behaviour (ExecContinue + diagnostics).
 [[nodiscard]] ExecResult wrap_expression_errors(EvalResult &&eval_result) {
     ExecResult r;
+    // RFC 0022 slice 3: a suspended expression eval carries no error diagnostic
+    // and no unwrap-None sentinel — propagate the suspension unchanged so it
+    // unwinds through the agent state machine to the node loop.
+    if (eval_result.is_suspended()) {
+        r.outcome = ExecContinue{};
+        r.diagnostics = std::move(eval_result.diagnostics);
+        r.suspension = eval_result.suspension;
+        return r;
+    }
     // Scan the diagnostic bag for the unwrap-None sentinel message.
     bool found_unwrap_none = false;
     std::string unwrap_message = kUnwrapNoneDefault;
@@ -130,7 +139,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("LetStatement has null initializer");
                 }
                 auto eval_result = ctx.eval_expression(*node.initializer);
-                if (eval_result.has_errors()) {
+                if (eval_result.should_unwind()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 ctx.bind_local(node.name, std::move(eval_result.value));
@@ -151,7 +160,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("AssignStatement has null value expression");
                 }
                 auto eval_result = ctx.eval_expression(*node.value);
-                if (eval_result.has_errors()) {
+                if (eval_result.should_unwind()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 ctx.assign_ctx(path.members[0], std::move(eval_result.value));
@@ -163,7 +172,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("IfStatement has null condition");
                 }
                 auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.has_errors()) {
+                if (cond_result.should_unwind()) {
                     return wrap_expression_errors(std::move(cond_result));
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
@@ -193,7 +202,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("IfLetStatement has null scrutinee");
                 }
                 auto scrutinee_result = ctx.eval_expression(*node.scrutinee);
-                if (scrutinee_result.has_errors()) {
+                if (scrutinee_result.should_unwind()) {
                     return wrap_expression_errors(std::move(scrutinee_result));
                 }
                 auto diagnostics = std::move(scrutinee_result.diagnostics);
@@ -234,7 +243,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return ExecResult{ExecReturn{make_none()}, {}};
                 }
                 auto eval_result = ctx.eval_expression(*node.value);
-                if (eval_result.has_errors()) {
+                if (eval_result.should_unwind()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 return ExecResult{
@@ -247,7 +256,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("AssertStatement has null condition");
                 }
                 auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.has_errors()) {
+                if (cond_result.should_unwind()) {
                     return wrap_expression_errors(std::move(cond_result));
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
@@ -274,7 +283,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("UnwrapStatement has null operand");
                 }
                 auto op_result = ctx.eval_expression(*node.operand);
-                if (op_result.has_errors()) {
+                if (op_result.should_unwind()) {
                     return wrap_expression_errors(std::move(op_result));
                 }
                 const bool is_some = [](const Value &v) {
@@ -295,7 +304,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("RequiresStatement has null condition");
                 }
                 auto cond_result = ctx.eval_expression(*node.condition);
-                if (cond_result.has_errors()) {
+                if (cond_result.should_unwind()) {
                     return wrap_expression_errors(std::move(cond_result));
                 }
                 auto *bv = std::get_if<BoolValue>(&cond_result.value.node);
@@ -328,7 +337,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("ExprStatement has null expression");
                 }
                 auto eval_result = ctx.eval_expression(*node.expr);
-                if (eval_result.has_errors()) {
+                if (eval_result.should_unwind()) {
                     return wrap_expression_errors(std::move(eval_result));
                 }
                 return make_continue(std::move(eval_result.diagnostics));
@@ -348,8 +357,9 @@ ExecResult exec_block(const ir::Block &block, ExecContext &ctx) {
             continue;
         auto result = exec_statement(*stmt_ptr, ctx);
         diagnostics.append(result.diagnostics);
-        // If there are errors or control flow is non-Continue, return immediately
-        if (result.has_errors() || !std::holds_alternative<ExecContinue>(result.outcome)) {
+        // Return immediately on errors, a suspension (RFC 0022 — running the next
+        // statement would be a further effect), or non-Continue control flow.
+        if (result.should_unwind() || !std::holds_alternative<ExecContinue>(result.outcome)) {
             result.diagnostics = std::move(diagnostics);
             return result;
         }
