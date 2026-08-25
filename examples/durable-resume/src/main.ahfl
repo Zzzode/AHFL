@@ -1,0 +1,75 @@
+// A minimal durable-resume demo (RFC 0022).
+//
+// One workflow, one agent, one async capability. DraftReply is the "await an
+// LLM" call: a host that isn't ready yet returns AHFL_CAP_PENDING, the workflow
+// suspends here, a resume record is persisted, and a later (cold-start) run
+// resumes with the drafted reply. See README.md for the two-run shell recipe.
+module durable_resume::main;
+
+pub struct Ticket {
+    id: String;
+    question: String;
+}
+
+pub struct DraftInput {
+    id: String;
+    question: String;
+}
+
+pub struct Reply {
+    id: String = "";
+    answer: String = "";
+}
+
+// The async capability: given the ticket, the host drafts a reply. In a browser
+// or serverless host this is where "call the LLM" lands — the host may return
+// PENDING and answer later, suspending the workflow across a process boundary.
+capability DraftReply(request: DraftInput) -> Reply;
+
+pub agent ReplyAgent {
+    input: Ticket;
+    context: Reply;
+    output: Reply;
+    states: [Init, Compose, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [DraftReply];
+
+    transition Init -> Compose;
+    transition Compose -> Done;
+}
+
+flow for ReplyAgent {
+    state Init {
+        goto Compose;
+    }
+
+    state Compose {
+        let draft = DraftReply(DraftInput {
+                id: input.id,
+                question: input.question,
+        });
+        ctx.id = draft.id;
+        ctx.answer = draft.answer;
+        goto Done;
+    }
+
+    state Done {
+        return Reply {
+            id: ctx.id,
+            answer: ctx.answer,
+        };
+    }
+}
+
+pub workflow ReplyWorkflow {
+    input: Ticket;
+    output: Reply;
+
+    node reply: ReplyAgent(input);
+
+    safety: always (not running(reply) or eventually completed(reply));
+    liveness: eventually completed(reply, Done);
+
+    return: reply;
+}

@@ -1,0 +1,31 @@
+manifest_version = 1
+
+[package]
+name = "durable-resume"
+version = "0.1.0"
+edition = "2026"
+kind = "application"
+
+[module]
+prefix = "durable_resume"
+root = "src"
+
+[exports]
+modules = ["main"]
+
+[targets.workflow]
+kind = "handoff"
+entry = "durable_resume::main::ReplyWorkflow"
+exports = [
+  { kind = "workflow", name = "durable_resume::main::ReplyWorkflow" },
+  { kind = "agent", name = "durable_resume::main::ReplyAgent" },
+]
+
+[run]
+target = "workflow"
+input = "inputs/ticket.json"
+output_format = "human"
+verbosity = "normal"
+
+[dependencies]
+std = { source = "sysroot" }

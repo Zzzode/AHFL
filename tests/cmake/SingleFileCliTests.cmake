@@ -369,6 +369,7 @@ add_test(NAME ahflc.run.durable_resume_flags.smoke
             "${AHFL_TESTS_DIR}/scripts/durable_resume_cli_smoke.py"
             $<TARGET_FILE:ahflc>
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/durable-resume-cli-smoke"
+            "${PROJECT_SOURCE_DIR}"
 )
 
 add_test(NAME ahflc.run.profile_and_output_contract.smoke

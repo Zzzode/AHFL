@@ -12,6 +12,8 @@
      loads it and resumes with --resume-pending-result to the injected result.
   3. --resume-pending-result rejects invalid JSON with a targeted diagnostic and
      a nonzero exit.
+  4. (when a repo root is passed) the shipped examples/durable-resume package
+     round-trips end to end via --manifest.
 """
 
 from __future__ import annotations
@@ -86,7 +88,8 @@ workflow SmokeWorkflow {
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print("usage: durable_resume_cli_smoke.py <ahflc> <work-dir>", file=sys.stderr)
+        print("usage: durable_resume_cli_smoke.py <ahflc> <work-dir> [<repo-root>]",
+              file=sys.stderr)
         return 2
     ahflc = Path(sys.argv[1])
     work = Path(sys.argv[2])
@@ -198,6 +201,42 @@ def main() -> int:
                 f"invalid --resume-pending-result JSON should fail, got exit {bad.returncode}")
         require("resume-pending-result" in bad.stderr,
                 "invalid resume-pending-result must produce a targeted diagnostic")
+
+        # (4): the shipped examples/durable-resume package round-trips end to end.
+        if len(sys.argv) >= 4:
+            repo = Path(sys.argv[3])
+            manifest = repo / "examples" / "durable-resume" / "ahfl.toml"
+            wf = "durable_resume::main::ReplyWorkflow"
+            ex_snap = work / "example.snapshot"
+            if ex_snap.exists():
+                ex_snap.unlink()
+            ex_base = [
+                str(ahflc), "run", "--manifest", str(manifest), "--workflow", wf,
+                "--llm-config", str(config), "--recovery-store", str(ex_snap),
+                "--output-format", "json",
+            ]
+            ex_suspend = subprocess.run(
+                ex_base + ["--suspend-capability", "durable_resume::main::DraftReply"],
+                env=env, check=False, capture_output=True, text=True, timeout=30,
+            )
+            require(ex_suspend.returncode == 0,
+                    f"example suspend should exit 0, got {ex_suspend.returncode}: {ex_suspend.stderr}")
+            require(ex_snap.exists(), "example suspend must write a resume record")
+            require(json.loads(ex_suspend.stdout)["audit"]["workflow_completed"] == 0,
+                    "example suspend must not complete")
+            ex_resume = subprocess.run(
+                ex_base + ["--resume-pending-result",
+                           '{"_type":"durable_resume::main::Reply","id":"T-42",'
+                           '"answer":"Use the reset link."}'],
+                env=env, check=False, capture_output=True, text=True, timeout=30,
+            )
+            require(ex_resume.returncode == 0,
+                    f"example resume should exit 0, got {ex_resume.returncode}: {ex_resume.stderr}")
+            ex_report = json.loads(ex_resume.stdout)
+            require(ex_report["audit"]["workflow_completed"] == 1, "example resume must complete")
+            ex_out = ex_report.get("result", ex_report.get("output"))
+            require(ex_out is not None and ex_out.get("answer") == "Use the reset link.",
+                    f"example resume output must be the injected reply, got {ex_out}")
     finally:
         server.shutdown()
         server.server_close()
