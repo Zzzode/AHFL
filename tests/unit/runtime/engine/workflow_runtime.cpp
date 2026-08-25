@@ -1752,6 +1752,93 @@ void test_durable_write_exactly_once_across_resume() {
     check(!first_intents.empty() && first_intents[0] != 0, "exactly_once.intent_key_nonzero");
 }
 
+// RFC 0022 slice 5 (fail-closed): resuming with a pending result whose shape does
+// not match the capability's declared return type aborts with a diagnostic —
+// never coerces, never re-invokes.
+void test_resume_fails_closed_on_pending_result_type_mismatch() {
+    const auto build_program = []() {
+        Program program;
+        CapabilityDecl answer;
+        answer.name = "answer";
+        answer.symbol_ref = SymbolRef{
+            .kind = SymbolRefKind::Capability,
+            .canonical_name = "answer",
+            .local_name = "answer",
+            .id = 81,
+        };
+        answer.return_type_ref = TypeRef{.kind = TypeRefKind::Int, .display_name = "Int"};
+        program.declarations.push_back(std::move(answer));
+        program.declarations.push_back(make_echo_agent("EchoAgent"));
+        program.declarations.push_back(make_input_field_return_flow("EchoAgent", "value"));
+
+        WorkflowDecl workflow;
+        workflow.name = "TypeMismatchWorkflow";
+        workflow.input_type_ref = make_named_type_ref("Input");
+        workflow.output_type_ref = make_named_type_ref("Output");
+        WorkflowNode node;
+        node.name = "n";
+        node.target_ref = make_agent_ref("EchoAgent");
+        StructLiteralExpr node_input;
+        node_input.type_name = "NodeInput";
+        CallExpr call;
+        call.callee = "answer";
+        call.callee_ref = SymbolRef{
+            .kind = SymbolRefKind::Capability,
+            .canonical_name = "answer",
+            .local_name = "answer",
+            .id = 81,
+        };
+        node_input.fields.push_back(StructFieldInit{
+            .name = "value",
+            .value = make_expr_ptr(std::move(call)),
+        });
+        node.input = make_expr_ptr(std::move(node_input));
+        workflow.nodes.push_back(std::move(node));
+        PathExpr return_path;
+        return_path.path.root_kind = PathRootKind::Identifier;
+        return_path.path.root_name = "n";
+        workflow.return_value = make_expr_ptr(std::move(return_path));
+        program.declarations.push_back(std::move(workflow));
+        return program;
+    };
+
+    auto program = build_program();
+    WorkflowRuntimeConfig suspend_config;
+    suspend_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult pending;
+        pending.status = CapabilityCallStatus::Pending;
+        return pending;
+    };
+    WorkflowRuntime suspend_runtime(program, std::move(suspend_config));
+    auto suspended = suspend_runtime.run("TypeMismatchWorkflow", make_none());
+    check(suspended.suspended.has_value(), "type_mismatch.captured_record");
+
+    // The capability is declared to return Int; inject a String → fail closed.
+    auto resume_program = build_program();
+    WorkflowRuntimeConfig resume_config;
+    resume_config.recovery_snapshot = std::move(suspended.suspended);
+    resume_config.resume_pending_result = make_string("not an int");
+    // An invoker must be installed so the replay/inject path (which lives inside
+    // the invoker closure) runs; it is not actually called for the pending
+    // ordinal (the injected result is validated + returned before dispatch).
+    resume_config.contextual_capability_invoker =
+        [](const CapabilityInvocationContext &, const std::string &,
+           const std::vector<Value> &) -> CapabilityCallResult {
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = make_int(0);
+        return r;
+    };
+    WorkflowRuntime resume_runtime(resume_program, std::move(resume_config));
+    auto resumed = resume_runtime.run("TypeMismatchWorkflow", make_none());
+
+    check(resumed.status() != WorkflowStatus::Completed, "type_mismatch.not_completed");
+    check(diagnostic_message_contains(resumed.diagnostics, "type mismatch"),
+          "type_mismatch.fail_closed_diagnostic");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -1782,6 +1869,7 @@ int main() {
     test_resume_round_trip_equals_sync_path();
     test_resume_fails_closed_on_memo_mismatch();
     test_durable_write_exactly_once_across_resume();
+    test_resume_fails_closed_on_pending_result_type_mismatch();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

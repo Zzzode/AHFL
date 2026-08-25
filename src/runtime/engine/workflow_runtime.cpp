@@ -276,6 +276,52 @@ build_runtime_plan(const ir::WorkflowDecl &workflow,
     return hash;
 }
 
+// RFC 0022 slice 5 (fail-closed): does a runtime Value structurally match a
+// declared capability return type? Used to validate an injected resume result
+// and every memo Value before it re-enters evaluation. A mismatch means the
+// snapshot is corrupt / the host replied with the wrong shape — fail closed
+// (abort with a diagnostic), never coerce, never fall back to a live call.
+// `Unresolved`/`Any` accept anything (the type checker already vetted the
+// program; this guards the resume boundary, not the source).
+[[nodiscard]] bool value_matches_return_type(const evaluator::Value &value,
+                                             const ir::TypeRef &type) {
+    using namespace ahfl::evaluator;
+    switch (type.kind) {
+    case ir::TypeRefKind::Unresolved:
+    case ir::TypeRefKind::Any:
+    case ir::TypeRefKind::Never:
+        return true;
+    case ir::TypeRefKind::Unit:
+        return std::holds_alternative<UnitValue>(value.node) ||
+               std::holds_alternative<NoneValue>(value.node);
+    case ir::TypeRefKind::Bool:
+        return std::holds_alternative<BoolValue>(value.node);
+    case ir::TypeRefKind::Int:
+    case ir::TypeRefKind::BoundedInt:
+        return std::holds_alternative<IntValue>(value.node);
+    case ir::TypeRefKind::Float:
+        return std::holds_alternative<FloatValue>(value.node);
+    case ir::TypeRefKind::String:
+    case ir::TypeRefKind::BoundedString:
+        return std::holds_alternative<StringValue>(value.node);
+    case ir::TypeRefKind::UUID:
+        return std::holds_alternative<UuidValue>(value.node);
+    case ir::TypeRefKind::Timestamp:
+        return std::holds_alternative<TimestampValue>(value.node);
+    case ir::TypeRefKind::Duration:
+        return std::holds_alternative<DurationValue>(value.node);
+    case ir::TypeRefKind::Decimal:
+        return std::holds_alternative<DecimalValue>(value.node);
+    case ir::TypeRefKind::Struct:
+        return std::holds_alternative<StructValue>(value.node);
+    case ir::TypeRefKind::Enum:
+        return std::holds_alternative<EnumValue>(value.node);
+    case ir::TypeRefKind::Fn:
+        return std::holds_alternative<CallableValue>(value.node);
+    }
+    return false;
+}
+
 void finalize_report(WorkflowResult &result) {
     auto report = build_execution_report(result.events.events());
     if (report.has_value()) {
@@ -615,6 +661,25 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 memo_hit.status = CapabilityCallStatus::Success;
                 memo_hit.value = evaluator::clone_value(entry->result);
                 memo_hit.cache_hit = true;
+                // RFC 0022 slice 5: fail closed if the memo Value's shape does not
+                // match the capability's declared return type (corrupt snapshot).
+                if (const auto *cap = index_.find_capability(name);
+                    cap != nullptr && memo_hit.value.has_value() &&
+                    !value_matches_return_type(*memo_hit.value, cap->return_type_ref)) {
+                    CapabilityCallResult bad;
+                    bad.status = CapabilityCallStatus::Error;
+                    bad.error_message =
+                        "durable resume memo Value type mismatch for capability '" + name +
+                        "' (ordinal " + std::to_string(memo_ordinal) +
+                        "): recovery snapshot is corrupt";
+                    bad.diagnostic_code = std::string(error_codes::backend::ExecutionError.id);
+                    if (context.workflow_node_id.valid() &&
+                        context.workflow_node_id.index() < node_capability_failures.size()) {
+                        node_capability_failures[context.workflow_node_id.index()] =
+                            CapabilityFailureKind::Error;
+                    }
+                    return bad;
+                }
                 return memo_hit;
             }
             if (node_memo.replaying && memo_ordinal == node_memo.pending_ordinal) {
@@ -629,6 +694,25 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     missing.diagnostic_code =
                         std::string(error_codes::backend::ExecutionError.id);
                     return missing;
+                }
+                // RFC 0022 slice 5: fail closed if the injected result's shape does
+                // not match the capability's declared return type — never coerce.
+                if (const auto *cap = index_.find_capability(name);
+                    cap != nullptr &&
+                    !value_matches_return_type(*config_.resume_pending_result,
+                                               cap->return_type_ref)) {
+                    CapabilityCallResult bad;
+                    bad.status = CapabilityCallStatus::Error;
+                    bad.error_message =
+                        "durable resume pending-result type mismatch for capability '" + name +
+                        "': host supplied a value of the wrong type";
+                    bad.diagnostic_code = std::string(error_codes::backend::ExecutionError.id);
+                    if (context.workflow_node_id.valid() &&
+                        context.workflow_node_id.index() < node_capability_failures.size()) {
+                        node_capability_failures[context.workflow_node_id.index()] =
+                            CapabilityFailureKind::Error;
+                    }
+                    return bad;
                 }
                 node_memo.memo.push_back(CapabilityMemoEntry{
                     .ordinal = memo_ordinal,
