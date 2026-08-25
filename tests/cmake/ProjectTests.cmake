@@ -1083,6 +1083,15 @@ add_test(NAME ahfl.reference_workflow.recovery_smoke
             "${PROJECT_SOURCE_DIR}/build/release-evidence/beta/reference-workflow-recovery.json"
 )
 
+# RFC 0022 durable-resume capstone (Q4 roadmap M2 north-star): compile a verified
+# workflow, suspend on a PENDING capability, persist the resume record, then in a
+# fresh runtime cold-start from the on-disk snapshot and resume deterministically.
+add_test(NAME ahfl.reference_workflow.durable_resume_capstone
+    COMMAND $<TARGET_FILE:ahfl_durable_resume_capstone>
+            "${PROJECT_SOURCE_DIR}"
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/durable-resume-capstone"
+)
+
 add_test(NAME ahfl.reference_workflow.production_matrix
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/reference_workflow_production_matrix.py"

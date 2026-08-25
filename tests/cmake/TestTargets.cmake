@@ -287,6 +287,22 @@ target_include_directories(ahfl_reference_workflow_recovery_worker
 )
 ahfl_apply_project_warnings(ahfl_reference_workflow_recovery_worker)
 
+add_executable(ahfl_durable_resume_capstone
+    integration/durable_resume_capstone.cpp
+)
+target_link_libraries(ahfl_durable_resume_capstone
+    PRIVATE
+        ahfl_compiler_package_graph
+        ahfl_compiler_ir
+        ahfl_runtime_provider_llm
+)
+target_include_directories(ahfl_durable_resume_capstone
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/tests
+)
+ahfl_apply_project_warnings(ahfl_durable_resume_capstone)
+
 add_executable(ahfl_value_json_tests
     unit/runtime/evaluator/value_json.cpp
 )
@@ -1198,6 +1214,7 @@ foreach(_tgt
     ahfl_if_let_e2e_tests
     ahfl_runtime_provider_llm_tests
     ahfl_reference_workflow_recovery_worker
+    ahfl_durable_resume_capstone
     ahfl_value_json_tests
     ahfl_counterexample_parse_tests
     ahfl_smt_encode_tests
