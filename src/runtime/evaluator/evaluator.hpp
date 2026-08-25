@@ -39,11 +39,19 @@ struct EvalResult {
     }
 
     // True iff evaluation suspended on a pending capability call. Propagation
-    // sites unwind on `has_errors() || is_suspended()` so a suspension is never
-    // mistaken for a value (which would run further effects) or an error (which
-    // would terminate the workflow).
+    // sites unwind on `should_unwind()` so a suspension is never mistaken for a
+    // value (which would run further effects) or an error (which would
+    // terminate the workflow).
     [[nodiscard]] bool is_suspended() const noexcept {
         return suspension.has_value();
+    }
+
+    // The single predicate every evaluator/executor short-circuit site checks:
+    // unwind the recursion on either an error or a suspension. RFC 0022 slice 3
+    // routes all propagation through this (a CI guard bans bare has_errors() in
+    // the evaluator/executor) so no site can silently swallow a suspension.
+    [[nodiscard]] bool should_unwind() const noexcept {
+        return has_errors() || is_suspended();
     }
 };
 

@@ -562,7 +562,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
             return append_diagnostics(EvalResult{make_option_none(), {}}, std::move(diagnostics));
         }
         EvalResult mapped = invoke_unary_callable(*callable, *option->inner, call_eval);
-        if (callee == "std::option::map" && !mapped.has_errors()) {
+        if (callee == "std::option::map" && !mapped.should_unwind()) {
             mapped.value = make_option_some(std::move(mapped.value));
         }
         return append_diagnostics(std::move(mapped), std::move(diagnostics));
@@ -596,7 +596,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
             return append_diagnostics(EvalResult{make_option_none(), {}}, std::move(diagnostics));
         }
         EvalResult keep = invoke_unary_callable(*callable, *option->inner, call_eval);
-        if (keep.has_errors()) {
+        if (keep.should_unwind()) {
             return append_diagnostics(std::move(keep), std::move(diagnostics));
         }
         const auto *bool_value = std::get_if<BoolValue>(&keep.value.node);
@@ -672,7 +672,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
                 std::move(diagnostics));
         }
         EvalResult transformed = invoke_unary_callable(*callable, *result->payload.front(), call_eval);
-        if (transformed.has_errors()) {
+        if (transformed.should_unwind()) {
             return append_diagnostics(std::move(transformed), std::move(diagnostics));
         }
         transformed.value = make_result_value(result->variant, std::move(transformed.value));
@@ -829,7 +829,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         for (const auto &item : list->items) {
             Value item_value = item ? clone_value(*item) : make_none();
             EvalResult applied = invoke_unary_callable(*callable, item_value, call_eval);
-            if (applied.has_errors()) {
+            if (applied.should_unwind()) {
                 return append_diagnostics(std::move(applied), std::move(diagnostics));
             }
             if (callee == "std::collections::map") {
@@ -860,7 +860,7 @@ eval_stdlib_wrapper_call(const ir::CallExpr &expr, const EvalContext &ctx, const
         for (const auto &item : list->items) {
             const Value item_value = item ? clone_value(*item) : make_none();
             EvalResult updated = invoke_binary_callable(*callable, accumulator, item_value, call_eval);
-            if (updated.has_errors()) {
+            if (updated.should_unwind()) {
                 return append_diagnostics(std::move(updated), std::move(diagnostics));
             }
             diagnostics.append(std::move(updated.diagnostics));
@@ -1083,6 +1083,14 @@ EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr,
             continue;
         }
         auto result = eval_expr_impl(*field_init.value, ctx, call_eval);
+        // RFC 0022: a suspended field eval must unwind immediately — continuing
+        // the loop would run further field effects and build a struct from a
+        // partial evaluation. Carry the suspension (and any diagnostics) up.
+        if (result.is_suspended()) {
+            diagnostics.append(result.diagnostics);
+            result.diagnostics = std::move(diagnostics);
+            return result;
+        }
         diagnostics.append(result.diagnostics);
         if (!result.has_errors()) {
             fields.emplace(field_init.name, std::move(result.value));
@@ -1111,7 +1119,7 @@ eval_unary_expr(const ir::UnaryExpr &expr, const EvalContext &ctx, const CallEva
         return make_error("UnaryExpr has null operand");
     }
     auto operand = eval_expr_impl(*expr.operand, ctx, call_eval);
-    if (operand.has_errors())
+    if (operand.should_unwind())
         return operand;
 
     switch (expr.op) {
@@ -1199,10 +1207,10 @@ eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallE
     }
 
     auto lhs = eval_expr_impl(*expr.lhs, ctx, call_eval);
-    if (lhs.has_errors())
+    if (lhs.should_unwind())
         return lhs;
     auto rhs = eval_expr_impl(*expr.rhs, ctx, call_eval);
-    if (rhs.has_errors())
+    if (rhs.should_unwind())
         return rhs;
 
     switch (expr.op) {
@@ -1403,7 +1411,7 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
         return make_error("MemberAccessExpr has null base");
     }
     auto base = eval_expr_impl(*expr.base, ctx, call_eval);
-    if (base.has_errors())
+    if (base.should_unwind())
         return base;
 
     // Struct member access
@@ -1453,10 +1461,10 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
         return make_error("IndexAccessExpr has null operand");
     }
     auto base = eval_expr_impl(*expr.base, ctx, call_eval);
-    if (base.has_errors())
+    if (base.should_unwind())
         return base;
     auto index = eval_expr_impl(*expr.index, ctx, call_eval);
-    if (index.has_errors())
+    if (index.should_unwind())
         return index;
 
     auto *lv = get_list_if(base.value);
@@ -1513,7 +1521,7 @@ EvalResult eval_match_expr(const ir::MatchExpr &expr,
     }
 
     auto scrutinee = eval_expr_impl(*expr.scrutinee, ctx, call_eval);
-    if (scrutinee.has_errors()) {
+    if (scrutinee.should_unwind()) {
         return scrutinee;
     }
 
@@ -1530,7 +1538,7 @@ EvalResult eval_match_expr(const ir::MatchExpr &expr,
 
         if (arm.guard) {
             auto guard = eval_expr_impl(*arm.guard, arm_ctx, call_eval);
-            if (guard.has_errors()) {
+            if (guard.should_unwind()) {
                 return guard;
             }
             const auto *guard_value = std::get_if<BoolValue>(&guard.value.node);
@@ -1573,7 +1581,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
             return make_error("Option::Some has null payload expression");
         }
         auto inner = eval_expr_impl(*expr.arguments.front(), ctx, call_eval);
-        if (inner.has_errors()) {
+        if (inner.should_unwind()) {
             return inner;
         }
         return EvalResult{make_option_some(std::move(inner.value)), std::move(inner.diagnostics)};
@@ -1586,7 +1594,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
             return make_error(expr.callee + " has null payload expression");
         }
         auto payload = eval_expr_impl(*expr.arguments.front(), ctx, call_eval);
-        if (payload.has_errors()) {
+        if (payload.should_unwind()) {
             return payload;
         }
         std::vector<Value> values;
@@ -1607,7 +1615,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
                 return make_error("list_from_array: null argument expression");
             }
             auto arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
-            if (arg_result.has_errors()) {
+            if (arg_result.should_unwind()) {
                 return arg_result;
             }
             diags.append(std::move(arg_result.diagnostics));
@@ -1626,7 +1634,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
                 return make_error("set_from_array: null argument expression");
             }
             auto arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
-            if (arg_result.has_errors()) {
+            if (arg_result.should_unwind()) {
                 return arg_result;
             }
             diags.append(std::move(arg_result.diagnostics));
@@ -1675,11 +1683,11 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
             return make_error("map_entry_new has null argument expression");
         }
         auto key_result = eval_expr_impl(*expr.arguments[0], ctx, call_eval);
-        if (key_result.has_errors()) {
+        if (key_result.should_unwind()) {
             return key_result;
         }
         auto val_result = eval_expr_impl(*expr.arguments[1], ctx, call_eval);
-        if (val_result.has_errors()) {
+        if (val_result.should_unwind()) {
             return val_result;
         }
         DiagnosticBag diags;
@@ -1701,7 +1709,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
                 return make_error("map_from_entries: null entry expression");
             }
             auto entry_result = eval_expr_impl(*arg_ref, ctx, call_eval);
-            if (entry_result.has_errors()) {
+            if (entry_result.should_unwind()) {
                 return entry_result;
             }
             diags.append(std::move(entry_result.diagnostics));
@@ -1741,7 +1749,7 @@ EvalResult eval_intrinsic_call(const ir::CallExpr &expr,
                 return make_error("builtin call: null argument expression");
             }
             EvalResult arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
-            if (arg_result.has_errors()) {
+            if (arg_result.should_unwind()) {
                 diags.append(std::move(arg_result.diagnostics));
                 return EvalResult{make_none(), std::move(diags)};
             }
@@ -1776,7 +1784,7 @@ eval_call_expr(const ir::CallExpr &expr,
                         make_error("callable call: null argument expression"));
                 }
                 EvalResult arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
-                if (arg_result.has_errors()) {
+                if (arg_result.should_unwind()) {
                     diags.append(std::move(arg_result.diagnostics));
                     return with_call_range(EvalResult{make_none(), std::move(diags)});
                 }
@@ -1809,7 +1817,7 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
         return make_error("UnwrapExpr has null operand");
     }
     auto op_result = eval_expr_impl(*expr.operand, ctx, call_eval);
-    if (op_result.has_errors()) {
+    if (op_result.should_unwind()) {
         return op_result;
     }
     const Value &v = op_result.value;
@@ -1820,6 +1828,9 @@ EvalResult eval_unwrap_expr(const ir::UnwrapExpr &expr,
             std::string msg = kUnwrapExprDefault;
             if (expr.fallback_none_message) {
                 auto msg_result = eval_expr_impl(*expr.fallback_none_message, ctx, call_eval);
+                if (msg_result.is_suspended()) {
+                    return msg_result; // RFC 0022: propagate a suspended fallback-message eval
+                }
                 if (!msg_result.has_errors()) {
                     if (const auto *sv = std::get_if<StringValue>(&msg_result.value.node);
                         sv != nullptr) {
@@ -1956,7 +1967,7 @@ struct ProgramCallState : std::enable_shared_from_this<ProgramCallState> {
                 return make_error("function call: null argument expression");
             }
             EvalResult arg_result = eval_expr_impl(*arg_ref, ctx, &recursive);
-            if (arg_result.has_errors()) {
+            if (arg_result.should_unwind()) {
                 diags.append(std::move(arg_result.diagnostics));
                 return EvalResult{make_none(), std::move(diags)};
             }
