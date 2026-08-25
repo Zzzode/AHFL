@@ -279,6 +279,15 @@ void ProgramVisitor::visit_expr(const Expr &expr) {
 	                   },
 	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no children to walk.
 	                   [](const UnitLiteralExpr &) {},
+	                   // RFC 0024: quantifier — walk collection then body.
+	                   [&](const QuantifierExpr &value) {
+	                       if (!aborted_ && value.collection) {
+	                           visit_expr(*value.collection);
+	                       }
+	                       if (!aborted_ && value.body) {
+	                           visit_expr(*value.body);
+	                       }
+	                   },
 	               },
 	               expr.node);
 
@@ -734,6 +743,17 @@ bool ProgramRewriter::rewrite_expr(Expr &expr) {
 	                              },
 	                              // RFC 0013 P3-gaps-B: `{}` — leaf, nothing to rewrite.
 	                              [](UnitLiteralExpr &) { return false; },
+	                              // RFC 0024: quantifier — walk + mutate children.
+	                              [&](QuantifierExpr &value) {
+	                                  bool changed = false;
+	                                  if (value.collection) {
+	                                      changed = rewrite_expr(*value.collection) || changed;
+	                                  }
+	                                  if (value.body) {
+	                                      changed = rewrite_expr(*value.body) || changed;
+	                                  }
+	                                  return changed;
+	                              },
 	                          },
 	                          expr.node) ||
                modified;

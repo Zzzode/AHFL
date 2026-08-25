@@ -385,6 +385,14 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryInClosureWithoutRet
     "TRY_IN_CLOSURE_WITHOUT_RETURN_TYPE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TryNotInLetBinding{
     "TRY_NOT_IN_LET_BINDING"};
+// RFC 0024: bounded collection quantifier (`forall`/`exists`) diagnostics.
+//   quantifier_requires_collection — the operand after `in` is not one of the
+//                                    nominal stdlib collections (List/Set/Map).
+//   quantifier_body_requires_bool  — the body predicate is not of type Bool.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> QuantifierRequiresCollection{
+    "QUANTIFIER_REQUIRES_COLLECTION"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> QuantifierBodyRequiresBool{
+    "QUANTIFIER_BODY_REQUIRES_BOOL"};
 } // namespace typecheck
 
 namespace validation {
@@ -456,6 +464,13 @@ namespace formal {
 // typecheck-time typecheck.NOT_IN_VERIFIED_SUBSET (effect-subset check).
 inline constexpr ErrorCode<DiagnosticCategory::Formal> NotInVerifiedSubset{
     "NOT_IN_VERIFIED_SUBSET"};
+// RFC 0024: a bounded collection quantifier (`forall x in coll` /
+// `exists x in coll`) whose collection has no statically resolvable upper
+// bound (neither a bounded collection type nor a `bounded` refinement in
+// scope). Fail-closed: the BMC/SMT path cannot unroll an unbounded collection,
+// so the clause is rejected at its SourceRange rather than silently abstracted.
+inline constexpr ErrorCode<DiagnosticCategory::Formal> UnboundedQuantifier{
+    "UNBOUNDED_QUANTIFIER"};
 } // namespace formal
 } // namespace error_codes
 
@@ -733,6 +748,13 @@ inline constexpr MessageTemplate NondetInInvariant{
 inline constexpr MessageTemplate MonomorphizationBudgetExceeded{
     "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: "
     "{})"};
+// RFC 0024: bounded collection quantifier messages.
+// {0} = the actual (non-collection) operand type spelling.
+inline constexpr MessageTemplate QuantifierRequiresCollection{
+    "quantifier operand after 'in' must be a List, Set, or Map, but got {}"};
+// {0} = "forall" | "exists", {1} = the actual body type spelling.
+inline constexpr MessageTemplate QuantifierBodyRequiresBool{
+    "the body of a '{}' quantifier must have type Bool, but got {}"};
 } // namespace typecheck
 
 namespace validation {

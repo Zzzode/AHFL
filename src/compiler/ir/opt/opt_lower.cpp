@@ -481,6 +481,21 @@ class LoweringContext {
         return make_constant(std::monostate{});
     }
 
+    // RFC 0024: a bounded quantifier is a verification-only contract predicate
+    // and never appears in executable (flow/fn) IR that the optimizer lowers to
+    // SSA. Mirror the MatchExpr placeholder so the visitor stays total: emit a
+    // "<quantifier>" Use-style temporary. The formal backend consumes the
+    // ir::QuantifierExpr directly and does not go through this path.
+    [[nodiscard]] Operand lower_expr_node(const ir::QuantifierExpr & /*e*/, const ir::Expr &expr) {
+        auto dest = new_temp(clone_type_ref(expr.resolved_type), expr.source_range);
+        Rvalue rv;
+        rv.kind = Rvalue::Kind::Use;
+        rv.operands.push_back(make_constant("<quantifier>"));
+        rv.result_type = clone_type_ref(expr.resolved_type);
+        emit_assign(dest, std::move(rv), expr.source_range);
+        return make_local(dest);
+    }
+
     // ---- Helpers ----
 
     static Operand make_constant(Constant c) {

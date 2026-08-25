@@ -36,9 +36,10 @@ public:
     T__124 = 125, T__125 = 126, T__126 = 127, T__127 = 128, T__128 = 129,
     T__129 = 130, T__130 = 131, T__131 = 132, T__132 = 133, T__133 = 134,
     T__134 = 135, T__135 = 136, T__136 = 137, T__137 = 138, T__138 = 139,
-    T__139 = 140, DURATION_LITERAL = 141, DECIMAL_LITERAL = 142, FLOAT_LITERAL = 143,
-    INT_LITERAL = 144, BACKSLASH = 145, STRING_LITERAL = 146, IDENT = 147,
-    DOC_COMMENT = 148, LINE_COMMENT = 149, BLOCK_COMMENT = 150, WS = 151
+    T__139 = 140, T__140 = 141, T__141 = 142, T__142 = 143, DURATION_LITERAL = 144,
+    DECIMAL_LITERAL = 145, FLOAT_LITERAL = 146, INT_LITERAL = 147, BACKSLASH = 148,
+    STRING_LITERAL = 149, IDENT = 150, DOC_COMMENT = 151, LINE_COMMENT = 152,
+    BLOCK_COMMENT = 153, WS = 154
   };
 
   enum {
@@ -72,23 +73,24 @@ public:
     RuleLetStmt = 96, RuleLetBinding = 97, RuleAssignStmt = 98, RuleIfStmt = 99,
     RuleIfLetStmt = 100, RuleGotoStmt = 101, RuleReturnStmt = 102, RuleAssertStmt = 103,
     RuleUnwrapStmt = 104, RuleRequiresStmt = 105, RuleUnreachableStmt = 106,
-    RuleExprStmt = 107, RuleLValue = 108, RuleExpr = 109, RuleImpliesExpr = 110,
-    RuleOrExpr = 111, RuleAndExpr = 112, RuleEqualityExpr = 113, RuleCompareExpr = 114,
-    RuleAddExpr = 115, RuleMulExpr = 116, RuleUnaryExpr = 117, RulePostfixExpr = 118,
-    RulePrimaryExpr = 119, RuleUnwrapExpr = 120, RuleMatchExpr = 121, RuleMatchArm = 122,
-    RulePattern = 123, RuleOrPattern = 124, RuleConcatPattern = 125, RuleIntRangePattern = 126,
-    RuleSignedIntegerPatternBound = 127, RuleLiteralPattern = 128, RuleVariantPattern = 129,
-    RuleQualifiedVariantName = 130, RulePatternFieldList = 131, RulePatternField = 132,
-    RuleWildcardPattern = 133, RuleBindingPattern = 134, RuleTuplePattern = 135,
-    RulePatternList = 136, RulePathExpr = 137, RulePathRoot = 138, RuleQualifiedValueExpr = 139,
-    RuleCallExpr = 140, RuleExprList = 141, RuleLiteral = 142, RuleIntegerLiteral = 143,
-    RuleFloatLiteral = 144, RuleDecimalLiteral = 145, RuleStringLiteral = 146,
-    RuleDurationLiteral = 147, RuleStructLiteral = 148, RuleListLiteral = 149,
-    RuleSetLiteral = 150, RuleMapLiteral = 151, RuleMapEntryList = 152,
-    RuleMapEntry = 153, RuleStructInitList = 154, RuleStructInit = 155,
-    RuleConstExpr = 156, RuleTemporalExpr = 157, RuleWorkflowTemporalExpr = 158,
-    RuleTemporalImpliesExpr = 159, RuleTemporalOrExpr = 160, RuleTemporalAndExpr = 161,
-    RuleTemporalUntilExpr = 162, RuleTemporalUnaryExpr = 163, RuleTemporalAtom = 164
+    RuleExprStmt = 107, RuleLValue = 108, RuleExpr = 109, RuleQuantifierExpr = 110,
+    RuleQuantifierBinder = 111, RuleImpliesExpr = 112, RuleOrExpr = 113,
+    RuleAndExpr = 114, RuleEqualityExpr = 115, RuleCompareExpr = 116, RuleAddExpr = 117,
+    RuleMulExpr = 118, RuleUnaryExpr = 119, RulePostfixExpr = 120, RulePrimaryExpr = 121,
+    RuleUnwrapExpr = 122, RuleMatchExpr = 123, RuleMatchArm = 124, RulePattern = 125,
+    RuleOrPattern = 126, RuleConcatPattern = 127, RuleIntRangePattern = 128,
+    RuleSignedIntegerPatternBound = 129, RuleLiteralPattern = 130, RuleVariantPattern = 131,
+    RuleQualifiedVariantName = 132, RulePatternFieldList = 133, RulePatternField = 134,
+    RuleWildcardPattern = 135, RuleBindingPattern = 136, RuleTuplePattern = 137,
+    RulePatternList = 138, RulePathExpr = 139, RulePathRoot = 140, RuleQualifiedValueExpr = 141,
+    RuleCallExpr = 142, RuleExprList = 143, RuleLiteral = 144, RuleIntegerLiteral = 145,
+    RuleFloatLiteral = 146, RuleDecimalLiteral = 147, RuleStringLiteral = 148,
+    RuleDurationLiteral = 149, RuleStructLiteral = 150, RuleListLiteral = 151,
+    RuleSetLiteral = 152, RuleMapLiteral = 153, RuleMapEntryList = 154,
+    RuleMapEntry = 155, RuleStructInitList = 156, RuleStructInit = 157,
+    RuleConstExpr = 158, RuleTemporalExpr = 159, RuleWorkflowTemporalExpr = 160,
+    RuleTemporalImpliesExpr = 161, RuleTemporalOrExpr = 162, RuleTemporalAndExpr = 163,
+    RuleTemporalUntilExpr = 164, RuleTemporalUnaryExpr = 165, RuleTemporalAtom = 166
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -218,6 +220,8 @@ public:
   class ExprStmtContext;
   class LValueContext;
   class ExprContext;
+  class QuantifierExprContext;
+  class QuantifierBinderContext;
   class ImpliesExprContext;
   class OrExprContext;
   class AndExprContext;
@@ -1907,6 +1911,7 @@ public:
   public:
     ExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
     virtual size_t getRuleIndex() const override;
+    QuantifierExprContext *quantifierExpr();
     ImpliesExprContext *impliesExpr();
 
 
@@ -1915,6 +1920,35 @@ public:
   };
 
   ExprContext* expr();
+
+  class  QuantifierExprContext : public antlr4::ParserRuleContext {
+  public:
+    QuantifierExprContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    QuantifierBinderContext *quantifierBinder();
+    std::vector<ExprContext *> expr();
+    ExprContext* expr(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  QuantifierExprContext* quantifierExpr();
+
+  class  QuantifierBinderContext : public antlr4::ParserRuleContext {
+  public:
+    QuantifierBinderContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<IdentifierContext *> identifier();
+    IdentifierContext* identifier(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  QuantifierBinderContext* quantifierBinder();
 
   class  ImpliesExprContext : public antlr4::ParserRuleContext {
   public:

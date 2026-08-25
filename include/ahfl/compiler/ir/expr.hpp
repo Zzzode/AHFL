@@ -287,7 +287,24 @@ struct UnwrapExpr {
 /// type. Zero-sized; carries no data.
 struct UnitLiteralExpr {};
 
-/// Expression node (18 variant alternatives - P5 Big Bang: container literals
+/// RFC 0024: bounded collection quantifier `forall x in coll: body` /
+/// `exists (k, v) in coll: body`. A verification-only predicate: the SMT-BMC
+/// backend unrolls it over the collection's static bound, substituting the
+/// binder(s) with per-index element symbols. The runtime evaluator never
+/// executes it (quantifiers appear only in contract clauses / pure predicate
+/// position). Binders are name-based, mirroring LambdaExpr — the body
+/// references them through PathExpr, so no new value-identity concept is
+/// introduced.
+struct QuantifierExpr {
+    enum class Kind : std::uint8_t { ForAll, Exists };
+    Kind kind{Kind::ForAll};
+    std::string binder;       // element binder (List/Set) or key binder (Map)
+    std::string value_binder; // Map value binder; empty for List/Set
+    ExprRef collection;       // the quantified collection operand
+    ExprRef body;             // the Bool-typed body predicate
+};
+
+/// Expression node (19 variant alternatives - P5 Big Bang: container literals
 /// lowered to CallExpr via nominal stdlib constructors, Option variants via
 /// QualifiedValueExpr + CallExpr)
 ///
@@ -327,7 +344,8 @@ using ExprNode = std::variant<BoolLiteralExpr,
                               IndexAccessExpr,
                               MatchExpr,
                               UnwrapExpr,
-                              UnitLiteralExpr>;
+                              UnitLiteralExpr,
+                              QuantifierExpr>;
 
 /// Expression wrapper struct
 struct Expr {

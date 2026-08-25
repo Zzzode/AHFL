@@ -463,6 +463,14 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitQuantifierExpr(AHFLParser::QuantifierExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitQuantifierBinder(AHFLParser::QuantifierBinderContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitImpliesExpr(AHFLParser::ImpliesExprContext *ctx) override {
     return visitChildren(ctx);
   }

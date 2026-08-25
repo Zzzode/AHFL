@@ -1016,6 +1016,23 @@ class IrJsonPrinter final {
                         print_expr_common_fields(field, expr, indent_level + 1);
                     });
                 },
+                // RFC 0024: bounded quantifier — quantifier kind, binder name(s),
+                // collection operand, and body predicate.
+                [&](const ir::QuantifierExpr &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("quantifier"); });
+                        print_expr_common_fields(field, expr, indent_level + 1);
+                        field("quantifier", [&]() {
+                            write_string(value.kind == ir::QuantifierExpr::Kind::Exists ? "exists"
+                                                                                        : "forall");
+                        });
+                        field("binder", [&]() { write_string(value.binder); });
+                        field("value_binder", [&]() { write_string(value.value_binder); });
+                        field("collection",
+                              [&]() { print_expr(*value.collection, indent_level + 1); });
+                        field("body", [&]() { print_expr(*value.body, indent_level + 1); });
+                    });
+                },
             },
             expr.node);
     }

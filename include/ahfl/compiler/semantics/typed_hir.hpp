@@ -77,6 +77,11 @@ enum class TypedExprChildRole {
     // typed-tree graph covers all match sub-expressions.
     MatchArmGuard,
     MatchArmBody,
+    // RFC 0024: bounded collection quantifier sub-expressions. The collection
+    // operand (after `in`) and the body predicate are tracked under these
+    // roles so the typed-tree graph covers all quantifier sub-expressions.
+    QuantifierCollection,
+    QuantifierBody,
 };
 
 // Call-target classification for TypedExpr nodes whose kind == Call. Three
@@ -429,6 +434,15 @@ struct TypedExpr {
     /// Explicit capture list for Lambda nodes (parallel meaning to the AST
     /// `LambdaExpr::capture_list` — empty for implicit-capture lambdas).
     std::vector<std::string> captured_names;
+    // RFC 0024: bounded quantifier payload (meaningful only for kind ==
+    // Quantifier). `quantifier_is_exists` selects exists (true) / forall
+    // (false); `quantifier_binder` is the element/key binder name and
+    // `quantifier_value_binder` the Map value binder (empty for List/Set).
+    // The collection + body sub-expressions live in `children` under the
+    // QuantifierCollection / QuantifierBody roles.
+    bool quantifier_is_exists{false};
+    std::string quantifier_binder;
+    std::string quantifier_value_binder;
     std::optional<ConstValue> const_value;
 };
 
@@ -834,6 +848,12 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_try_expr(expr);
     case ast::ExprSyntaxKind::UnitLiteral:
         return std::forward<Visitor>(visitor).visit_unit_literal(expr);
+    case ast::ExprSyntaxKind::Quantifier:
+        // RFC 0024: bounded quantifiers are verification-only contract
+        // predicates encoded by the SMT-BMC backend. They lower to a dedicated
+        // ir::QuantifierExpr (never to executable IR) so the formal path can
+        // unroll them; see TypedExprPerKindLowerer::visit_quantifier.
+        return std::forward<Visitor>(visitor).visit_quantifier(expr);
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);

@@ -790,6 +790,17 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
             },
             // RFC 0013 P3-gaps-B: `{}` — punctuation only, no semantic tokens.
             [](const ast::UnitLiteralExpr &) {},
+            // RFC 0024: bounded quantifier — recurse into the collection and body
+            // sub-expressions; the forall/exists/in keywords are handled by the
+            // keyword tokenizer, the binder is a local name.
+            [&](const ast::QuantifierExprSyntax &e) {
+                if (e.collection != nullptr) {
+                    collect_expr_tokens(*e.collection, source, tokens);
+                }
+                if (e.body != nullptr) {
+                    collect_expr_tokens(*e.body, source, tokens);
+                }
+            },
         },
         expr.node);
 }

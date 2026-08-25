@@ -477,7 +477,16 @@ exprStmt: expr ';';
 
 lValue: pathExpr;
 
-expr: impliesExpr;
+expr: quantifierExpr | impliesExpr;
+
+// RFC 0024: bounded universal / existential quantification over a collection,
+// usable in requires / ensures / invariant predicates. Lowest precedence: the
+// body after ':' extends as far right as possible. The collection operand and
+// body are ordinary exprs; the verifiable-subset check (bounded collection +
+// pure Bool body) happens in semantic analysis, not the grammar.
+quantifierExpr: ('forall' | 'exists') quantifierBinder 'in' expr ':' expr;
+
+quantifierBinder: identifier | '(' identifier ',' identifier ')';
 
 impliesExpr: orExpr ('=>' orExpr)*;
 

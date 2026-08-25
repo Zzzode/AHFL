@@ -1196,6 +1196,13 @@ add_test(NAME ahfl.semantics.try_operator_all
     COMMAND $<TARGET_FILE:ahfl_semantics_try_operator_tests>
 )
 
+add_test(NAME ahfl.semantics.bounded_quantifier_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_bounded_quantifier_tests>
+)
+set_tests_properties(ahfl.semantics.bounded_quantifier_all PROPERTIES
+    LABELS "rfc0024"
+)
+
 add_test(NAME ahfl.semantics.const_sema_negatives_all
     COMMAND $<TARGET_FILE:ahfl_semantics_const_sema_negatives_tests>
 )

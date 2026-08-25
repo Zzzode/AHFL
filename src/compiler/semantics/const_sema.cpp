@@ -403,6 +403,12 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
             },
             // B6 (RFC 0013 P3-gaps-B): `{}` is a compile-time constant.
             [](const ast::UnitLiteralExpr &) { return true; },
+            // RFC 0024: bounded quantifiers are verification-only predicates
+            // evaluated by the BMC encoder, not compile-time constants.
+            [&reason](const ast::QuantifierExprSyntax &) {
+                reason = "quantifier expressions are not compile-time constants";
+                return false;
+            },
         },
         expr.node);
 }
@@ -1324,6 +1330,11 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
             // B6 (RFC 0013 P3-gaps-B): `{}` const-folds to the unit constant.
             [](const ast::UnitLiteralExpr &) -> std::optional<ConstValue> {
                 return make_const_value(ConstValueKind::Unit);
+            },
+            // RFC 0024: bounded quantifiers are verification-only predicates,
+            // never foldable compile-time constants. Mirrors MatchExpr/Lambda.
+            [](const ast::QuantifierExprSyntax &) -> std::optional<ConstValue> {
+                return std::nullopt;
             },
         },
         expr.node);

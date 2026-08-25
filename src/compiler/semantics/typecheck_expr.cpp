@@ -1766,6 +1766,9 @@ class ExpressionChecker final {
                 // Option<T> / Result<T, E>.
                 [&](const ast::TryExpr &) { return visit_try_expr(expr); },
                 [&](const ast::UnitLiteralExpr &) { return visit_unit_literal(expr); },
+                // RFC 0024: forall/exists x in coll: body — bounded collection
+                // quantifier, a verification-only predicate.
+                [&](const ast::QuantifierExprSyntax &) { return visit_quantifier(expr); },
             },
             expr.node);
     }
@@ -1997,6 +2000,89 @@ class ExpressionChecker final {
         }
 
         return values_.error_typed();
+    }
+
+    // RFC 0024: bounded collection quantifier `forall x in coll: body` /
+    // `exists (k, v) in coll: body`.
+    //
+    //   1. The collection operand is checked in the surrounding context. It
+    //      must resolve to one of the nominal stdlib collections
+    //      (List<T> / Set<T> / Map<K, V>); otherwise
+    //      QUANTIFIER_REQUIRES_COLLECTION fires and the result is error-typed.
+    //   2. The binder(s) bind at the element type (List/Set) or the (key,
+    //      value) pair (Map) into a child value context that SHADOWS outer
+    //      bindings of the same name — mirroring lambda-parameter scope.
+    //   3. The body is checked in that child context against a Bool
+    //      expectation; a non-Bool body reports QUANTIFIER_BODY_REQUIRES_BOOL.
+    //
+    // The quantifier itself is a pure Bool-typed predicate. The static-bound
+    // resolution and SMT unrolling live in the verifiable-subset / SMT-encode
+    // passes (RFC 0024 Implementation Plan slices 3-4); type checking only
+    // establishes the binder scope and Bool shape.
+    [[nodiscard]] TypedValue visit_quantifier(const ast::ExprSyntax &expr) const {
+        const auto &quantifier = expr.as<ast::QuantifierExprSyntax>();
+        const std::string_view keyword =
+            quantifier.kind == ast::QuantifierExprSyntax::Kind::Exists ? "exists" : "forall";
+
+        const auto bool_type = values_.make_type(TypeKind::Bool);
+
+        // Step 1: check the collection operand in the surrounding context.
+        const auto collection =
+            quantifier.collection != nullptr
+                ? services_.check_expr(*quantifier.collection, context_, std::nullopt)
+                : values_.error_typed();
+
+        // Bind the quantifier binder(s) into a child scope for the body. When
+        // the collection is not a recognized container the binder types fall
+        // back to the error type so the body still type-checks (cascaded
+        // diagnostics stay localized), matching the match/lambda strategy.
+        ValueContext body_context = context_;
+        body_context.call_context = CallContext::PureOnly;
+
+        TypePtr element_type = values_.make_error_type();
+        TypePtr value_type = nullptr;
+        if (collection.type != nullptr && !is_error_type(*collection.type)) {
+            if (const auto view = stdlib_bridge::std_container_type_view(*collection.type);
+                view.has_value() && view->kind != stdlib_bridge::StdContainerKind::Option) {
+                if (view->kind == stdlib_bridge::StdContainerKind::Map) {
+                    element_type = view->first != nullptr ? view->first : values_.make_error_type();
+                    value_type = view->second != nullptr ? view->second : values_.make_error_type();
+                } else {
+                    element_type = view->first != nullptr ? view->first : values_.make_error_type();
+                }
+            } else {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::QuantifierRequiresCollection,
+                    messages::typecheck::QuantifierRequiresCollection.format_with(
+                        collection.type->describe()),
+                    quantifier.collection != nullptr ? quantifier.collection->range : expr.range);
+            }
+        }
+
+        if (!quantifier.binder.empty()) {
+            body_context.bindings.insert_or_assign(quantifier.binder, element_type);
+        }
+        if (!quantifier.value_binder.empty()) {
+            body_context.bindings.insert_or_assign(
+                quantifier.value_binder, value_type != nullptr ? value_type : element_type);
+        }
+
+        // Step 3: check the body against a Bool expectation in the child scope.
+        ExprEffect joined = collection.effect;
+        if (quantifier.body != nullptr) {
+            const auto body =
+                services_.check_expr(*quantifier.body, body_context, std::cref(*bool_type));
+            joined = join_effects(joined, body.effect);
+            if (body.type != nullptr && !is_bool_type(*body.type) && !is_error_type(*body.type)) {
+                services_.typecheck_error_here(
+                    error_codes::typecheck::QuantifierBodyRequiresBool,
+                    messages::typecheck::QuantifierBodyRequiresBool.format_with(
+                        std::string{keyword}, body.type->describe()),
+                    quantifier.body->range);
+            }
+        }
+
+        return values_.typed_effect(bool_type, joined);
     }
 
     // P1b (ADT, RFC §1.6): full match typecheck.

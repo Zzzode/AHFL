@@ -182,6 +182,7 @@ enum class ExprSyntaxKind {
     UnwrapExpr,      // unwrap(operand_expr) - expr-level Option extract (P4-02)
     Try,             // operand? - failure propagation for Option/Result (RFC 0014)
     UnitLiteral,     // {} - the sole value of Unit (RFC 0013 P3-gaps-B)
+    Quantifier,      // forall/exists <binder> in coll: body - bounded quantifier (RFC 0024)
 };
 
 /// Unary operators
@@ -526,6 +527,26 @@ struct UnwrapExprSyntax {
     Owned<ExprSyntax> operand;
 };
 
+/// Bounded quantifier expression: `forall x in coll: body` / `exists x in coll:
+/// body`, and the map form `forall (k, v) in m: body` (RFC 0024). Verifiable
+/// only when `coll` has a static length bound and `body` stays in the scalar
+/// subset; the grammar accepts it unconditionally and semantic analysis enforces
+/// the subset. The binder names are source-level names for diagnostics; the
+/// verifier binds them index-based per unrolled element (Principle 2).
+struct QuantifierExprSyntax {
+    enum class Kind {
+        ForAll,
+        Exists,
+    };
+    Kind kind{Kind::ForAll};
+    // Element binder (list/set) or the key binder of a `(k, v)` map binder.
+    std::string binder;
+    // Present only for the map `(k, v)` binder form; empty otherwise.
+    std::string value_binder;
+    Owned<ExprSyntax> collection;
+    Owned<ExprSyntax> body;
+};
+
 /// Try expression: `operand?` (RFC 0014).
 ///
 /// Failure-propagation operator for Option/Result. On the success path the
@@ -822,6 +843,7 @@ using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     MatchExpr,
                                     LambdaExpr,
                                     UnwrapExprSyntax,
+                                    QuantifierExprSyntax,
                                     TryExpr,
                                     UnitLiteralExpr>;
 
@@ -1823,6 +1845,11 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [&](const UnwrapExprSyntax &) {
                 return std::forward<Visitor>(visitor).visit_unknown(expr);
             },
+            // RFC 0024: forall/exists quantifier dispatches through the generic
+            // `visit_unknown` fallback (same rationale as LambdaExpr).
+            [&](const QuantifierExprSyntax &) {
+                return std::forward<Visitor>(visitor).visit_unknown(expr);
+            },
             // RFC 0014: operand? — try expression dispatches through the
             // generic `visit_unknown` fallback (same rationale as LambdaExpr).
             [&](const TryExpr &) { return std::forward<Visitor>(visitor).visit_unknown(expr); },
@@ -1859,6 +1886,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const MatchExpr &) { return ExprSyntaxKind::Match; },
             [](const LambdaExpr &) { return ExprSyntaxKind::Lambda; },
             [](const UnwrapExprSyntax &) { return ExprSyntaxKind::UnwrapExpr; },
+            [](const QuantifierExprSyntax &) { return ExprSyntaxKind::Quantifier; },
             [](const TryExpr &) { return ExprSyntaxKind::Try; },
             [](const UnitLiteralExpr &) { return ExprSyntaxKind::UnitLiteral; },
         },

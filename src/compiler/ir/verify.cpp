@@ -680,6 +680,13 @@ class ProgramVerifier {
         verify_optional_expr_ref(expr.fallback_none_message, path + ".fallback_none_message");
     }
 
+    // RFC 0024: bounded quantifier — both the collection operand and the body
+    // predicate are required expression refs.
+    void verify_expr_node(const QuantifierExpr &expr, const std::string &path) {
+        verify_required_expr_ref(expr.collection, path + ".collection");
+        verify_required_expr_ref(expr.body, path + ".body");
+    }
+
     void verify_match_pattern(const MatchPattern &pattern, const std::string &path) {
         if (is_backend_ready_mode(mode_) && contains_sentinel(pattern.text)) {
             add_error(path, "match pattern contains sentinel text");

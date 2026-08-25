@@ -881,6 +881,10 @@ enum_variant_payload_kind_from_name(std::string_view name) {
     object->set("member_name", Json::make_string(expr.member_name));
     object->set("lambda_params", j_string_array(expr.lambda_params));
     object->set("captured_names", j_string_array(expr.captured_names));
+    // RFC 0024: bounded quantifier payload (meaningful only for Quantifier).
+    object->set("quantifier_is_exists", Json::make_bool(expr.quantifier_is_exists));
+    object->set("quantifier_binder", Json::make_string(expr.quantifier_binder));
+    object->set("quantifier_value_binder", Json::make_string(expr.quantifier_value_binder));
     object->set("const_value", j_optional_const_value(expr.const_value));
     return object;
 }
@@ -2119,6 +2123,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .member_name = reader.string_field(object, "member_name"),
         .lambda_params = reader.string_array_field(object, "lambda_params"),
         .captured_names = reader.string_array_field(object, "captured_names"),
+        .quantifier_is_exists = reader.bool_field(object, "quantifier_is_exists"),
+        .quantifier_binder = reader.string_field(object, "quantifier_binder"),
+        .quantifier_value_binder = reader.string_field(object, "quantifier_value_binder"),
         .const_value = read_optional_const_value(reader, object),
     };
 

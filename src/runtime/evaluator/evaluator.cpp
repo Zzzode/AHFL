@@ -1919,6 +1919,12 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
             } else if constexpr (std::is_same_v<T, ir::UnitLiteralExpr>) {
                 // RFC 0013 P3-gaps-B: `{}` evaluates to the sole unit value.
                 return EvalResult{make_unit(), {}};
+            } else if constexpr (std::is_same_v<T, ir::QuantifierExpr>) {
+                // RFC 0024: bounded quantifiers are verification-only contract
+                // predicates encoded by the SMT-BMC backend; they never appear
+                // in executable IR, so reaching the runtime evaluator is a bug.
+                return make_error("quantifier expression is not executable at runtime "
+                                  "(verification-only; SMT-BMC encoded)");
             }
         },
         expr.node);

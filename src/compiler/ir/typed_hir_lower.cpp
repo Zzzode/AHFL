@@ -562,6 +562,17 @@ class TypedIrLowerer final {
                     return value.operand ? find_match_expr_in_expr(*value.operand, typed) : nullptr;
                 },
                 [](const ast::UnitLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
+                // RFC 0024: bounded quantifier — a match expression can appear
+                // inside either the collection operand or the body predicate.
+                [&](const ast::QuantifierExprSyntax &value) -> const ast::ExprSyntax * {
+                    if (value.collection) {
+                        if (const auto *found = find_match_expr_in_expr(*value.collection, typed);
+                            found != nullptr) {
+                            return found;
+                        }
+                    }
+                    return value.body ? find_match_expr_in_expr(*value.body, typed) : nullptr;
+                },
             },
             expr.node);
     }
@@ -1685,6 +1696,28 @@ class TypedIrLowerer final {
                 },
                 range);
         }
+        // RFC 0024: lower a bounded quantifier to ir::QuantifierExpr. The
+        // collection operand and body predicate are the two typed children
+        // (QuantifierCollection / QuantifierBody roles); the binder names and
+        // forall/exists kind are mirrored on the TypedExpr. The formal backend
+        // unrolls this over the collection's static bound; the runtime
+        // evaluator never executes it.
+        ir::ExprRef visit_quantifier(const TypedExpr &e) const {
+            const TypedExpr *collection = TypedIrLowerer::resolve_child_by_role(
+                self, e, TypedExprChildRole::QuantifierCollection);
+            const TypedExpr *body =
+                TypedIrLowerer::resolve_child_by_role(self, e, TypedExprChildRole::QuantifierBody);
+            return self.make_expr(
+                ir::QuantifierExpr{
+                    .kind = e.quantifier_is_exists ? ir::QuantifierExpr::Kind::Exists
+                                                   : ir::QuantifierExpr::Kind::ForAll,
+                    .binder = e.quantifier_binder,
+                    .value_binder = e.quantifier_value_binder,
+                    .collection = collection ? self.lower_typed_expr(*collection) : nullptr,
+                    .body = body ? self.lower_typed_expr(*body) : nullptr,
+                },
+                range);
+        }
         ir::ExprRef visit_method_call(const TypedExpr &e) const {
             ir::CallExpr call{.callee = self.render_method_target(e), .arguments = {}};
             if (const TypedExpr *receiver =
@@ -2512,6 +2545,15 @@ class TypedIrLowerer final {
                        },
                        // RFC 0013 P3-gaps-B: `{}` — leaf, no called targets.
                        [](const ir::UnitLiteralExpr &) {},
+                       // RFC 0024: quantifier — recurse into collection + body.
+                       [this, &called_targets](const ir::QuantifierExpr &value) {
+                           if (value.collection) {
+                               collect_called_targets_from_expr(*value.collection, called_targets);
+                           }
+                           if (value.body) {
+                               collect_called_targets_from_expr(*value.body, called_targets);
+                           }
+                       },
                    },
                    expr.node);
     }
@@ -2621,6 +2663,15 @@ class TypedIrLowerer final {
                        },
                        // RFC 0013 P3-gaps-B: `{}` — leaf, no workflow reads.
                        [](const ir::UnitLiteralExpr &) {},
+                       // RFC 0024: quantifier — recurse into collection + body.
+                       [this, &node_names, &reads](const ir::QuantifierExpr &value) {
+                           if (value.collection) {
+                               collect_workflow_value_reads(*value.collection, node_names, reads);
+                           }
+                           if (value.body) {
+                               collect_workflow_value_reads(*value.body, node_names, reads);
+                           }
+                       },
                    },
                    expr.node);
     }

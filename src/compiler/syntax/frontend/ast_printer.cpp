@@ -882,6 +882,19 @@ class AstPrinter final {
                 },
                 // RFC 0013 P3-gaps-B: the unit literal `{}`.
                 [&](const ast::UnitLiteralExpr &) { line(indent_level, "unit"); },
+                // RFC 0024: bounded quantifier. Prints kind, binder(s), and the
+                // collection + body sub-expressions.
+                [&](const ast::QuantifierExprSyntax &e) {
+                    const bool is_forall = e.kind == ast::QuantifierExprSyntax::Kind::ForAll;
+                    std::string header = is_forall ? "forall" : "exists";
+                    header += " binder=" + e.binder;
+                    if (!e.value_binder.empty()) {
+                        header += "," + e.value_binder;
+                    }
+                    line(indent_level, header);
+                    print_expr_field("collection", e.collection.get(), indent_level + 1);
+                    print_expr_field("body", e.body.get(), indent_level + 1);
+                },
             },
             expr.node);
     }

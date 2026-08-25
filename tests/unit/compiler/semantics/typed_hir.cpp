@@ -2867,8 +2867,8 @@ struct S { x: Int = 0; }
 enum E { A, B }
 type T = String;
 const c: Int = 1;
-capability Cap(in: String) -> S;
-predicate Pred(in: Int) -> Bool;
+capability Cap(arg: String) -> S;
+predicate Pred(arg: Int) -> Bool;
 
 agent X {
     input: S; context: S; output: S;

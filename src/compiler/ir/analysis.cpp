@@ -150,6 +150,15 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
 	                   },
 	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no called targets.
 	                   [](const UnitLiteralExpr &) {},
+	                   // RFC 0024: quantifier — recurse into collection + body.
+	                   [&](const QuantifierExpr &value) {
+	                       if (value.collection) {
+	                           collect_called_targets_from_expr(*value.collection, called_targets);
+	                       }
+	                       if (value.body) {
+	                           collect_called_targets_from_expr(*value.body, called_targets);
+	                       }
+	                   },
 	               },
 	               expr.node);
 }
@@ -395,6 +404,16 @@ void collect_workflow_value_reads(const Expr &expr,
 	                   },
 	                   // RFC 0013 P3-gaps-B: `{}` — leaf, no workflow reads.
 	                   [](const UnitLiteralExpr &) {},
+	                   // RFC 0024: quantifier — recurse into collection + body.
+	                   [&](const QuantifierExpr &value) {
+	                       if (value.collection) {
+	                           collect_workflow_value_reads(
+	                               *value.collection, workflow_node_names, reads);
+	                       }
+	                       if (value.body) {
+	                           collect_workflow_value_reads(*value.body, workflow_node_names, reads);
+	                       }
+	                   },
 	               },
 	               expr.node);
 }

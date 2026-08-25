@@ -332,6 +332,19 @@ class AstInvariantValidator final {
                 },
                 // RFC 0013 P3-gaps-B: `{}` — empty struct, nothing to validate.
                 [](const UnitLiteralExpr &) {},
+                // RFC 0024: bounded quantifier — collection and body children
+                // must be present; subset eligibility is enforced by sema.
+                [&](const QuantifierExprSyntax &e) {
+                    require(e.collection != nullptr, expr.range,
+                            "QuantifierExpr is missing collection");
+                    require(e.body != nullptr, expr.range, "QuantifierExpr is missing body");
+                    if (e.collection) {
+                        validate_expr(*e.collection);
+                    }
+                    if (e.body) {
+                        validate_expr(*e.body);
+                    }
+                },
             },
             expr.node);
     }

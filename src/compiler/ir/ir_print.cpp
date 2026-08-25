@@ -211,6 +211,8 @@ namespace {
                           [](const ir::UnwrapExpr &) { return true; },
                           // RFC 0013 P3-gaps-B: `{}` is an atomic literal.
                           [](const ir::UnitLiteralExpr &) { return false; },
+                          // RFC 0024: a quantifier is a compound expression.
+                          [](const ir::QuantifierExpr &) { return true; },
 	                      },
 	                      expr.node);
 }
@@ -541,6 +543,20 @@ class IrProgramPrinter final {
                 },
                 // RFC 0013 P3-gaps-B: the unit literal renders as its source spelling.
                 [](const ir::UnitLiteralExpr &) { return std::string{"{}"}; },
+                // RFC 0024: bounded quantifier renders as its source syntax
+                // `forall x in coll: body` / `exists (k, v) in coll: body`.
+                [this](const ir::QuantifierExpr &value) {
+                    std::string binder = value.value_binder.empty()
+                                             ? value.binder
+                                             : "(" + value.binder + ", " + value.value_binder + ")";
+                    return (value.kind == ir::QuantifierExpr::Kind::Exists ? std::string{"exists "}
+                                                                           : std::string{"forall "}) +
+                           binder + " in " +
+                           (value.collection ? render_expr(*value.collection)
+                                             : std::string{"<none>"}) +
+                           ": " +
+                           (value.body ? render_expr(*value.body) : std::string{"<none>"});
+                },
             },
             expr.node);
     }

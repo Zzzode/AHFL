@@ -249,6 +249,25 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                         children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
                 }
             },
+            // RFC 0024: forall/exists x in coll: body — the collection operand
+            // and the body predicate both participate as typed children so the
+            // typed-tree graph covers every quantifier sub-expression.
+            [&](const ast::QuantifierExprSyntax &e) {
+                if (e.collection) {
+                    append_typed_child(children,
+                                       program,
+                                       e.collection.get(),
+                                       source_id,
+                                       TypedExprChildRole::QuantifierCollection);
+                }
+                if (e.body) {
+                    append_typed_child(children,
+                                       program,
+                                       e.body.get(),
+                                       source_id,
+                                       TypedExprChildRole::QuantifierBody);
+                }
+            },
         },
         expr.node);
     return children;
@@ -655,6 +674,27 @@ call_target_kind_for(const ast::ExprSyntax &expr,
         names.push_back(param->name);
     }
     return names;
+}
+
+/// RFC 0024: mirrors the bounded quantifier's AST binder payload onto the
+/// TypedExpr so the lowering / verification passes need not reach back into
+/// the AST. Returns default (empty binder, forall) for non-quantifier nodes.
+struct QuantifierFields {
+    bool is_exists{false};
+    std::string binder;
+    std::string value_binder;
+};
+
+[[nodiscard]] QuantifierFields quantifier_fields_for(const ast::ExprSyntax &expr) {
+    const auto *quantifier = std::get_if<ast::QuantifierExprSyntax>(&expr.node);
+    if (quantifier == nullptr) {
+        return {};
+    }
+    return QuantifierFields{
+        .is_exists = quantifier->kind == ast::QuantifierExprSyntax::Kind::Exists,
+        .binder = quantifier->binder,
+        .value_binder = quantifier->value_binder,
+    };
 }
 
 /// C-4 (Wave-24): returns the explicit capture list of a Lambda AST node.
@@ -1865,6 +1905,12 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->member_name = expr_member_name(expr);
         typed_expr->lambda_params = lambda_param_names_for(expr);
         typed_expr->captured_names = lambda_capture_names_for(expr, resolve_result_);
+        {
+            auto quantifier = quantifier_fields_for(expr);
+            typed_expr->quantifier_is_exists = quantifier.is_exists;
+            typed_expr->quantifier_binder = std::move(quantifier.binder);
+            typed_expr->quantifier_value_binder = std::move(quantifier.value_binder);
+        }
         // C-5 (Wave-24): copy dispatch target for method calls so downstream
         // passes can read the selected impl+method directly.
         typed_expr->dispatch_target = typed.dispatch_target;
@@ -1888,6 +1934,12 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->member_name = expr_member_name(expr);
             typed_expr->lambda_params = lambda_param_names_for(expr);
             typed_expr->captured_names = lambda_capture_names_for(expr, resolve_result_);
+            {
+                auto quantifier = quantifier_fields_for(expr);
+                typed_expr->quantifier_is_exists = quantifier.is_exists;
+                typed_expr->quantifier_binder = std::move(quantifier.binder);
+                typed_expr->quantifier_value_binder = std::move(quantifier.value_binder);
+            }
             typed_expr->path_root_kind =
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             typed_expr->dispatch_target = typed.dispatch_target;
@@ -1922,6 +1974,9 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .member_name = expr_member_name(expr),
         .lambda_params = lambda_param_names_for(expr),
         .captured_names = lambda_capture_names_for(expr, resolve_result_),
+        .quantifier_is_exists = quantifier_fields_for(expr).is_exists,
+        .quantifier_binder = quantifier_fields_for(expr).binder,
+        .quantifier_value_binder = quantifier_fields_for(expr).value_binder,
         .const_value = std::nullopt,
     });
     if (expr.node_id != 0) {

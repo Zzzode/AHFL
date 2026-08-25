@@ -934,6 +934,11 @@ class LocalBindingCollector {
                 [&](const ast::TryExpr &try_expr) { collect_expr(try_expr.operand.get()); },
                 // RFC 0013 P3-gaps-B: `{}` — leaf, no sub-expressions to collect.
                 [](const ast::UnitLiteralExpr &) {},
+                // RFC 0024: bounded quantifier — recurse into collection + body.
+                [&](const ast::QuantifierExprSyntax &quantifier) {
+                    collect_expr(quantifier.collection.get());
+                    collect_expr(quantifier.body.get());
+                },
             },
             expr->node);
     }

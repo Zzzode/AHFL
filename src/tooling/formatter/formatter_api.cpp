@@ -354,6 +354,25 @@ void append_expression(std::ostringstream &out, const ast::ExprSyntax &expr) {
             },
             // RFC 0013 P3-gaps-B: the unit literal formats as its source spelling.
             [&](const ast::UnitLiteralExpr &) { out << "{}"; },
+            // RFC 0024: bounded quantifier — `forall x in coll: body` /
+            // `exists (k, v) in coll: body`.
+            [&](const ast::QuantifierExprSyntax &value) {
+                out << (value.kind == ast::QuantifierExprSyntax::Kind::Exists ? "exists "
+                                                                              : "forall ");
+                if (value.value_binder.empty()) {
+                    out << value.binder;
+                } else {
+                    out << "(" << value.binder << ", " << value.value_binder << ")";
+                }
+                out << " in ";
+                if (value.collection) {
+                    append_expression(out, *value.collection);
+                }
+                out << ": ";
+                if (value.body) {
+                    append_expression(out, *value.body);
+                }
+            },
         },
         expr.node);
 }

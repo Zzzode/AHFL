@@ -243,6 +243,10 @@ public:
 
     virtual std::any visitExpr(AHFLParser::ExprContext *context) = 0;
 
+    virtual std::any visitQuantifierExpr(AHFLParser::QuantifierExprContext *context) = 0;
+
+    virtual std::any visitQuantifierBinder(AHFLParser::QuantifierBinderContext *context) = 0;
+
     virtual std::any visitImpliesExpr(AHFLParser::ImpliesExprContext *context) = 0;
 
     virtual std::any visitOrExpr(AHFLParser::OrExprContext *context) = 0;

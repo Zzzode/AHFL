@@ -1,11 +1,11 @@
 ---
 rfc: "0024"
 title: "Bounded Collection Quantification in the Verifiable Subset"
-status: "accepted"
+status: "implementing"
 area: ["language", "compiler", "formal"]
 stability: "experimental"
 created: "2026-08-25"
-updated: "2026-08-25"
+updated: "2026-08-26"
 authors: ["zzzode"]
 shepherd: "project lead"
 owners:
@@ -188,12 +188,16 @@ Binder         ::= Ident | "(" Ident "," Ident ")" ;   // element, or (k,v) for 
 
 ## Compatibility and Migration
 
-**Non-breaking, additive.** `forall` / `exists` / `in` are not currently reserved
-keywords; they become contextual keywords only in predicate position, so existing
-identifiers named `exists` elsewhere are unaffected. No existing contract changes
-meaning: a scalar-only contract encodes exactly as before (the quantifier path is
-entered only for the new syntax). `emit smt` output for pre-existing contracts is
-byte-identical. No migration is required; the feature is opt-in per clause.
+**Additive, effectively non-breaking.** `forall` / `exists` / `in` become new
+reserved words (ANTLR implicit tokens in `grammar/AHFL.g4`). A repo-wide scan of
+every `.ahfl` under `examples/`, `std/`, and `tests/` found **zero** uses of
+these words as identifiers, so no existing source breaks; reserving them is safe
+in practice. No existing contract changes meaning: a scalar-only contract encodes
+exactly as before (the quantifier path is entered only for the new syntax), and
+`emit smt` output for pre-existing contracts is byte-identical. The only
+theoretical breakage is future source that tried to name a value `in` / `forall`
+/ `exists`; such a name must be renamed. No migration is required for existing
+code; the feature is opt-in per clause.
 
 ## Implementation Plan
 
@@ -299,3 +303,27 @@ All three resolved for review (2026-08-25).
 - 2026-08-25: language + formal owner sign-off; no design changes in fcp. Status
   fcp → accepted. Ready to implement per the Implementation Plan (grammar/type →
   subset → encoding → BMC/emit → counterexample → spec).
+- 2026-08-25: Status accepted → implementing. Slice 1 (grammar): `quantifierExpr`
+  added to `grammar/AHFL.g4` as a lowest-precedence `expr` alternative
+  (`('forall'|'exists') quantifierBinder 'in' expr ':' expr`). Compatibility
+  refined: `forall`/`exists`/`in` are new reserved words (implicit tokens), safe
+  because a repo-wide scan found zero identifier uses of them in any `.ahfl`.
+- 2026-08-26: Slices 1-2 landed (parse + type check + IR lowering). Added
+  `ast::QuantifierExprSyntax` and wired it through every exhaustive `ExprSyntax`
+  visitor (frontend, ast printer, ast invariant validator, formatter, LSP
+  semantic tokens + server, const-sema, typed-HIR lowering dispatch). Type
+  checking (`src/compiler/semantics/typecheck_expr.cpp` `visit_quantifier`):
+  the collection operand must be a nominal `List`/`Set`/`Map`
+  (`typecheck.QUANTIFIER_REQUIRES_COLLECTION`), the binder(s) bind at the
+  element / `(K,V)` type in a child scope that shadows outer bindings, and the
+  body is checked against `Bool` (`typecheck.QUANTIFIER_BODY_REQUIRES_BOOL`).
+  Added `ir::QuantifierExpr` (name-based binders mirroring `LambdaExpr`) with the
+  full 8-location IR sweep plus the runtime-evaluator + typed-HIR-serialization
+  arms; contract-clause quantifiers now lower to `ir::QuantifierExpr` for the
+  formal backend to consume (the runtime evaluator rejects them as
+  verification-only). Reserved-word migration exercised: the one identifier use
+  of `in` in an inline test fixture was renamed. New unit test
+  `tests/unit/compiler/semantics/bounded_quantifier.cpp` (label `rfc0024`)
+  covers forall/List, exists/Set, forall/Map `(k,v)`, and both negatives.
+  `formal.UNBOUNDED_QUANTIFIER` (fail-closed bound resolution) is reserved for
+  the subset-eligibility slice (3).

@@ -1402,8 +1402,36 @@ class ProgramBuilder {
 
     [[nodiscard]] Owned<ast::ExprSyntax> build_expr_syntax(AHFLParser::ExprContext &context) const {
         auto guard = RecursionDepthGuard{*this, "expression", context_range(context, source_)};
+        // RFC 0024: `expr` is now `quantifierExpr | impliesExpr`.
+        if (auto *quantifier = context.quantifierExpr(); quantifier != nullptr) {
+            return build_quantifier_expr(*quantifier);
+        }
         return rewrite_diamond_ambiguity(
             build_implies_expr(require(context.impliesExpr(), "expression body is missing")));
+    }
+
+    // RFC 0024: build a bounded `forall`/`exists <binder> in coll: body` node.
+    // Kind is read from the leading keyword; the binder is one identifier (list/
+    // set element) or two (`(k, v)` map entry); collection = expr(0), body = expr(1).
+    [[nodiscard]] Owned<ast::ExprSyntax>
+    build_quantifier_expr(AHFLParser::QuantifierExprContext &context) const {
+        auto expr = make_expr_syntax(ast::ExprSyntaxKind::Quantifier,
+                                     context_range(context, source_));
+        auto &node = std::get<ast::QuantifierExprSyntax>(expr->node);
+        node.kind = require(context.getStart(), "quantifier keyword is missing").getText() ==
+                            "exists"
+                        ? ast::QuantifierExprSyntax::Kind::Exists
+                        : ast::QuantifierExprSyntax::Kind::ForAll;
+        auto &binder = require(context.quantifierBinder(), "quantifier binder is missing");
+        const auto binders = binder.identifier();
+        node.binder = binders.empty() ? std::string{} : text_of(*binders[0]);
+        if (binders.size() >= 2) {
+            node.value_binder = text_of(*binders[1]);
+        }
+        node.collection =
+            build_expr_syntax(require(context.expr(0), "quantifier collection is missing"));
+        node.body = build_expr_syntax(require(context.expr(1), "quantifier body is missing"));
+        return expr;
     }
 
     [[nodiscard]] Owned<ast::TemporalExprSyntax>
@@ -1503,6 +1531,9 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::UnitLiteral:
             expr->node = ast::UnitLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::Quantifier:
+            expr->node = ast::QuantifierExprSyntax{};
             break;
         default:
             throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
