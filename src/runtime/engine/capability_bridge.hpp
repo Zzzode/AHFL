@@ -37,6 +37,11 @@ struct CapabilityInvocationContext {
     CapabilityId capability_id{};
     InvocationId invocation_id{};
     std::optional<std::size_t> source_capability_symbol_id{};
+    // RFC 0022 slice 4 (exactly-once): a stable per-invocation idempotency key,
+    // hash(workflow_id, node_id, per-node ordinal, cap_id, arg_hash). Reproducible
+    // across resume so a host can dedup a `durable_write` / `financial_write`
+    // effect that committed before a crash. 0 when no node context is present.
+    std::uint64_t idempotency_key{0};
 };
 
 // Capability call status

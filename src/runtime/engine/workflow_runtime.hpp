@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -78,6 +79,13 @@ struct WorkflowRuntimeConfig {
     std::optional<Value> resume_pending_result;
     std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
         capability_result_observer;
+    // RFC 0022 slice 4 (exactly-once): invoked with (idempotency_key, capability
+    // name) right BEFORE a capability whose effect level is >= durable_write is
+    // dispatched — the write-ahead "committed, result-pending" intent. The host
+    // persists the key so that on resume it can dedup an effect that committed
+    // before a crash. Called only for durable_write / financial_write effects.
+    std::function<void(std::uint64_t idempotency_key, std::string_view capability_name)>
+        durable_write_intent_sink;
     // Debug/test hook invoked after the runtime records an agent state entry.
     // Runs on the workflow execution thread; a debugger may block inside this
     // hook to implement pause (RFC 0015). `agent_name` / `node_name` are the

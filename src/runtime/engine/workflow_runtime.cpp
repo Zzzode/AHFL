@@ -250,6 +250,32 @@ build_runtime_plan(const ir::WorkflowDecl &workflow,
     return id;
 }
 
+// RFC 0022 slice 4 (exactly-once): a stable per-invocation idempotency key. Same
+// FNV-1a mix used for arg hashing, folded over the invocation coordinate. Must be
+// reproducible across resume — every input is index/id-based (workflow, node, the
+// stable per-node ordinal, capability SymbolId) plus the resolved-argument hash —
+// so a host can dedup a durable_write effect that committed before a crash.
+[[nodiscard]] std::uint64_t compute_idempotency_key(std::size_t workflow_index,
+                                                    std::size_t node_index,
+                                                    std::uint64_t ordinal,
+                                                    std::size_t cap_symbol_id,
+                                                    std::uint64_t arg_hash) {
+    constexpr std::uint64_t kPrime = 1099511628211ULL;
+    std::uint64_t hash = 1469598103934665603ULL;
+    const auto mix = [&hash](std::uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            hash ^= (value >> shift) & 0xFFULL;
+            hash *= kPrime;
+        }
+    };
+    mix(static_cast<std::uint64_t>(workflow_index));
+    mix(static_cast<std::uint64_t>(node_index));
+    mix(ordinal);
+    mix(static_cast<std::uint64_t>(cap_symbol_id));
+    mix(arg_hash);
+    return hash;
+}
+
 void finalize_report(WorkflowResult &result) {
     auto report = build_execution_report(result.events.events());
     if (report.has_value()) {
@@ -277,8 +303,7 @@ void finalize_report(WorkflowResult &result) {
 }
 
 [[nodiscard]] CapabilityFailureKind capability_failure_kind(CapabilityCallStatus status) {
-    switch (status) {
-    case CapabilityCallStatus::Success:
+    switch (status) {    case CapabilityCallStatus::Success:
         return CapabilityFailureKind::Error;
     case CapabilityCallStatus::Error:
     case CapabilityCallStatus::CircuitOpen:
@@ -622,6 +647,26 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             auto invocation_context = context;
             invocation_context.capability_id = *capability;
             invocation_context.invocation_id = invocation;
+            // RFC 0022 slice 4 (exactly-once): stamp the reproducible idempotency
+            // key so the host can dedup effects across a crash/resume.
+            invocation_context.idempotency_key = compute_idempotency_key(
+                context.workflow_id.valid() ? context.workflow_id.index() : 0,
+                context.workflow_node_id.valid() ? context.workflow_node_id.index() : 0,
+                memo_ordinal, cap_symbol_id, arg_hash);
+
+            // RFC 0022 slice 4: for an effect at level >= durable_write, persist a
+            // write-ahead "committed, result-pending" intent BEFORE dispatch, so a
+            // crash between the host effect and the memo append is recoverable: on
+            // resume the host sees the same idempotency key and dedups rather than
+            // re-committing. Read-only / external-side-effect calls skip this.
+            if (config_.durable_write_intent_sink && cap_symbol_id != 0) {
+                if (const auto *cap = index_.find_capability(name);
+                    cap != nullptr &&
+                    (cap->effect.kind == ir::CapabilityEffectKind::DurableWrite ||
+                     cap->effect.kind == ir::CapabilityEffectKind::FinancialWrite)) {
+                    config_.durable_write_intent_sink(invocation_context.idempotency_key, name);
+                }
+            }
 
             if (config_.capability_invoked_hook) {
                 config_.capability_invoked_hook(context.agent_id, name);
