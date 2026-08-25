@@ -45,6 +45,11 @@ enum class CapabilityCallStatus {
     Timeout,
     RetryExhausted,
     CircuitOpen,
+    // RFC 0022 (durable resume): the host accepted the call but the result is
+    // not yet available; the workflow must suspend at its current node and be
+    // resumed later with the result. Distinct from Error so the runtime can
+    // persist a resume record rather than terminate the workflow.
+    Pending,
 };
 
 struct CapabilityUsage {

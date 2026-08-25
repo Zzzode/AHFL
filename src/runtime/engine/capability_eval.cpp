@@ -20,6 +20,8 @@ namespace {
         return "retry_exhausted";
     case CapabilityCallStatus::CircuitOpen:
         return "circuit_open";
+    case CapabilityCallStatus::Pending:
+        return "pending";
     }
 
     return "unknown";

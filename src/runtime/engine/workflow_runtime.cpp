@@ -226,6 +226,11 @@ void finalize_report(WorkflowResult &result) {
         return CapabilityFailureKind::Timeout;
     case CapabilityCallStatus::RetryExhausted:
         return CapabilityFailureKind::RetryExhausted;
+    case CapabilityCallStatus::Pending:
+        // Pending is not a failure; it is handled on the suspend path before
+        // failure classification. Reaching here means a Pending result was
+        // misrouted — classify as Error (fail-closed) rather than assert.
+        return CapabilityFailureKind::Error;
     }
     return CapabilityFailureKind::Error;
 }
