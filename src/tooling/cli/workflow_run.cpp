@@ -8,6 +8,7 @@
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/response_schema_validator.hpp"
 #include "runtime/engine/standard_capabilities.hpp"
+#include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
@@ -1554,8 +1555,46 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     runtime_config.contextual_capability_invoker = ahfl::runtime::with_standard_capabilities(
         std::move(*runtime_config.contextual_capability_invoker));
 
+    // RFC 0022 durable resume: --recovery-store persists a resume record on
+    // suspend and reloads it to resume; --resume-pending-result supplies the
+    // awaited capability result. If a snapshot already exists at the store path,
+    // this run resumes from it; otherwise it runs fresh and may suspend.
+    std::optional<ahfl::runtime::WorkflowRecoveryStore> recovery_store;
+    if (options.recovery_store_path.has_value()) {
+        recovery_store.emplace(std::filesystem::path{*options.recovery_store_path});
+        if (auto loaded = recovery_store->load(); loaded.has_value()) {
+            runtime_config.recovery_snapshot = std::move(*loaded);
+        }
+    }
+    if (options.resume_pending_result_json.has_value()) {
+        auto pending = ahfl::evaluator::value_from_json(*options.resume_pending_result_json);
+        if (!pending.has_value()) {
+            err << "error: --resume-pending-result is not valid JSON\n";
+            return 2;
+        }
+        runtime_config.resume_pending_result = std::move(*pending);
+    }
+
     WorkflowRuntime runtime(program, std::move(runtime_config));
     auto result = runtime.run(workflow_name, std::move(*input_value));
+
+    // RFC 0022: a suspended run persists its resume record so a later invocation
+    // (a fresh process / cold start) can resume it from disk.
+    if (result.status() == ahfl::runtime::WorkflowStatus::Suspended) {
+        if (recovery_store.has_value() && result.suspended.has_value()) {
+            if (const auto saved = recovery_store->save(*result.suspended); !saved.has_value()) {
+                err << "error: failed to persist durable-resume snapshot to "
+                    << recovery_store->path().string() << '\n';
+                return 1;
+            }
+            out << "workflow suspended on a pending capability; resume record written to "
+                << recovery_store->path().string() << '\n';
+        } else {
+            err << "error: workflow suspended but no --recovery-store was given to "
+                   "persist the resume record\n";
+            return 1;
+        }
+    }
 
     const auto render_result = ahfl::runtime::render_execution_result(
         result,
@@ -1570,6 +1609,11 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
     }
     if (result.diagnostics.has_error() || result.diagnostics.has_warning()) {
         result.diagnostics.render(err, std::nullopt, true);
+    }
+    // A cleanly suspended + persisted run is a successful outcome (the workflow
+    // is durably parked awaiting a capability result), distinct from failure.
+    if (result.status() == ahfl::runtime::WorkflowStatus::Suspended) {
+        return result.has_errors() ? 1 : 0;
     }
     return result.status() == ahfl::runtime::WorkflowStatus::Completed && !result.has_errors() &&
                    result.report.status == ahfl::runtime::RunTerminalStatus::Completed

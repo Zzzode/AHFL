@@ -70,6 +70,11 @@ struct CommandLineOptions {
     std::optional<std::string_view> execution_verbosity;
     std::optional<std::string_view> input_fixture;
     std::optional<std::string_view> run_id;
+    // RFC 0022 durable resume: --recovery-store persists a resume record on
+    // suspend and loads it on the next run; --resume-pending-result supplies the
+    // awaited capability result (JSON) when resuming a suspended workflow.
+    std::optional<std::string_view> recovery_store_path;
+    std::optional<std::string_view> resume_pending_result_json;
     std::optional<std::string_view> formal_backend;
     std::optional<std::string_view> model_checker;
     std::optional<std::string_view> checker_timeout_seconds;

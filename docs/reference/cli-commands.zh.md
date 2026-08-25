@@ -117,6 +117,8 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--input-file` | `<path>` | `run` 命令的 runtime 输入 JSON 文件 |
 | `--llm-config` | `<path>` | `run` 命令的 LLM Provider 配置，默认 `~/.ahfl/llm_config.json` |
 | `--profile` | `<name>` | 选择 `ahfl.toml` 中的 `[run.profiles.<name>]` |
+| `--recovery-store` | `<path>` | durable resume([RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)):存在则本次 `run` 从该快照恢复;能力返回 `PENDING` 挂起时把 resume record 写到该路径。完成的 run 不写快照。 |
+| `--resume-pending-result` | `<json>` | 恢复挂起 workflow 时,为那个 pending 能力注入的结果 JSON。非法 JSON 报错并中止。 |
 | `--output-format` | `<human\|json\|jsonl\|quiet>` | 选择同一 canonical event/report 的输出 renderer |
 | `--verbosity` | `<normal\|verbose\|trace>` | 控制展示细节，不改变 event 语义 |
 

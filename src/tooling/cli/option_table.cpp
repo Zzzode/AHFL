@@ -84,6 +84,14 @@ void set_run_id(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.run_id = val;
 }
 
+void set_recovery_store(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.recovery_store_path = val;
+}
+
+void set_resume_pending_result(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.resume_pending_result_json = val;
+}
+
 void set_formal_backend(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.formal_backend = val;
 }
@@ -300,6 +308,18 @@ constexpr OptionSpec kOptionSpecs[] = {
      "Input fixture string",
      "a fixture string"},
     {"--run-id", "", OptionArgKind::RequiredValue, set_run_id, "Run identifier", "an id string"},
+    {"--recovery-store",
+     "",
+     OptionArgKind::RequiredValue,
+     set_recovery_store,
+     "Durable-resume snapshot path: persist a resume record on suspend, load it on resume",
+     "a snapshot file path"},
+    {"--resume-pending-result",
+     "",
+     OptionArgKind::RequiredValue,
+     set_resume_pending_result,
+     "JSON result for the pending capability when resuming a suspended workflow",
+     "a JSON string"},
     {"--formal-backend",
      "",
      OptionArgKind::RequiredValue,

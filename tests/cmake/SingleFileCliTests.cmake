@@ -362,6 +362,15 @@ add_test(NAME ahflc.run.llm_provider_runtime.smoke
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-provider-runtime-smoke"
 )
 
+# RFC 0022 durable-resume CLI flags: --recovery-store / --resume-pending-result
+# are accepted, inert on a completing run, and reject invalid pending JSON.
+add_test(NAME ahflc.run.durable_resume_flags.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/durable_resume_cli_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/durable-resume-cli-smoke"
+)
+
 add_test(NAME ahflc.run.profile_and_output_contract.smoke
     COMMAND ${Python3_EXECUTABLE}
             "${AHFL_TESTS_DIR}/scripts/run_profile_smoke.py"
