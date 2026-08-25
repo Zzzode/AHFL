@@ -18,11 +18,16 @@
 季度末的验收 = `examples/` 里有一个能跑的程序完整走通上面这句话(native 路径),
 且 RFC 0021 与 0022 均 `stabilized`。
 
-> **达成情况(2026-08-25):** 北极星那句话已是可执行、已测试的事实——
-> `tests/integration/durable_resume_capstone.cpp` 编译 `examples/execution-demo`(全前端
+> **达成情况(2026-08-25):** 北极星那句话已是可执行、已测试的事实,三条路径证明:
+> (1)**可运行的 `examples/` 程序** —— `examples/durable-resume/`(单模块 package + README
+> 两步 shell recipe):`ahflc run --suspend-capability … --recovery-store S` 挂起写快照,
+> 第二次 `run --recovery-store S --resume-pending-result …` 冷启动恢复到确定 final;
+> (2)`tests/integration/durable_resume_capstone.cpp` 编译 `examples/execution-demo`(全前端
 > 形式验证)→ 能力返回 `PENDING` → 挂起 → 跨进程冷启动从磁盘快照恢复 → 结果与同步路径
-> 逐字节一致。RFC 0022 已 `stabilized`;RFC 0021 已 `implemented`,其 `stabilized` 所需的
-> `docs/reference/` ABI 文档 + 第三方语言绑定为 Q4 明确排除项,是本季目标外的后续工作。
+> 逐字节一致;(3)`native_wasm_differential` 证明 PENDING 亦经原生 `ahfl_host.h` ABI 打通。
+> RFC 0022 已 `stabilized`;RFC 0021 已 `implemented`,其 `stabilized` 所需的
+> `docs/reference/` ABI 文档已补(`host-abi.zh.md`),仅剩第三方语言绑定 —— Q4 明确排除项,
+> 是本季目标外的后续工作。
 
 ---
 
