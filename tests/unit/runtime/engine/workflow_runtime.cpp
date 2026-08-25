@@ -1839,6 +1839,115 @@ void test_resume_fails_closed_on_pending_result_type_mismatch() {
           "type_mismatch.fail_closed_diagnostic");
 }
 
+// RFC 0022 Test Plan (多次挂起): a node with TWO capability calls can suspend
+// twice — once per call — across separate runs, and the memo table is rebuilt
+// append-only each time so the earlier result is never re-invoked. This is the
+// hard case where resume itself hits a fresh PENDING.
+void test_two_suspensions_on_one_node_rebuild_memo_append_only() {
+    // Node input struct: {aux: first(), value: second()}. StructLiteral fields
+    // evaluate in source order, so first() is ordinal 0 and second() is ordinal 1.
+    const auto build_program = []() {
+        Program program;
+        program.declarations.push_back(make_echo_agent("EchoAgent"));
+        program.declarations.push_back(make_input_field_return_flow("EchoAgent", "value"));
+        WorkflowDecl workflow;
+        workflow.name = "TwoSuspendWorkflow";
+        workflow.input_type_ref = make_named_type_ref("Input");
+        workflow.output_type_ref = make_named_type_ref("Output");
+        WorkflowNode node;
+        node.name = "n";
+        node.target_ref = make_agent_ref("EchoAgent");
+        StructLiteralExpr node_input;
+        node_input.type_name = "NodeInput";
+        CallExpr first_call;
+        first_call.callee = "first";
+        node_input.fields.push_back(
+            StructFieldInit{.name = "aux", .value = make_expr_ptr(std::move(first_call))});
+        CallExpr second_call;
+        second_call.callee = "second";
+        node_input.fields.push_back(
+            StructFieldInit{.name = "value", .value = make_expr_ptr(std::move(second_call))});
+        node.input = make_expr_ptr(std::move(node_input));
+        workflow.nodes.push_back(std::move(node));
+        PathExpr return_path;
+        return_path.path.root_kind = PathRootKind::Identifier;
+        return_path.path.root_name = "n";
+        workflow.return_value = make_expr_ptr(std::move(return_path));
+        program.declarations.push_back(std::move(workflow));
+        return program;
+    };
+
+    // An invoker that suspends on `which` and serves the other from a fixed value.
+    const auto pending_on = [](const std::string &which) {
+        return [which](const CapabilityInvocationContext &, const std::string &name,
+                       const std::vector<Value> &) -> CapabilityCallResult {
+            CapabilityCallResult r;
+            if (name == which) {
+                r.status = CapabilityCallStatus::Pending;
+            } else {
+                r.status = CapabilityCallStatus::Success;
+                r.value = make_int(0);
+            }
+            return r;
+        };
+    };
+
+    // Run 1: `first` (ordinal 0) suspends; memo is empty.
+    auto program = build_program();
+    WorkflowRuntimeConfig c1;
+    c1.contextual_capability_invoker = pending_on("first");
+    WorkflowRuntime r1(program, std::move(c1));
+    auto s1 = r1.run("TwoSuspendWorkflow", make_none());
+    check(s1.status() == WorkflowStatus::Suspended, "two_suspend.run1_suspended");
+    check(s1.suspended.has_value() && s1.suspended->suspended.has_value(),
+          "two_suspend.run1_record");
+    check(s1.suspended->suspended->memo.empty(), "two_suspend.run1_memo_empty");
+    check(s1.suspended->suspended->pending_ordinal == 0, "two_suspend.run1_pending_ord0");
+
+    // Run 2: resume ordinal 0 with first's result; `second` (ordinal 1) now
+    // suspends. The memo must be rebuilt append-only to contain exactly first@0.
+    auto program2 = build_program();
+    WorkflowRuntimeConfig c2;
+    c2.recovery_snapshot = std::move(s1.suspended);
+    c2.resume_pending_result = make_int(11);
+    c2.contextual_capability_invoker = pending_on("second");
+    WorkflowRuntime r2(program2, std::move(c2));
+    auto s2 = r2.run("TwoSuspendWorkflow", make_none());
+    check(s2.status() == WorkflowStatus::Suspended, "two_suspend.run2_suspended_again");
+    check(s2.suspended.has_value() && s2.suspended->suspended.has_value(),
+          "two_suspend.run2_record");
+    check(s2.suspended->suspended->pending_ordinal == 1, "two_suspend.run2_pending_ord1");
+    check(s2.suspended->suspended->memo.size() == 1, "two_suspend.run2_memo_one_entry");
+    check(!s2.suspended->suspended->memo.empty() &&
+              s2.suspended->suspended->memo[0].ordinal == 0,
+          "two_suspend.run2_memo_is_ordinal0");
+
+    // Run 3: resume ordinal 1 with second's result; memo replays first@0 (never
+    // re-invoked). The echo agent returns input.value, so the output is second's
+    // injected result.
+    auto program3 = build_program();
+    WorkflowRuntimeConfig c3;
+    c3.recovery_snapshot = std::move(s2.suspended);
+    c3.resume_pending_result = make_int(22);
+    std::size_t live_calls = 0;
+    c3.contextual_capability_invoker =
+        [&live_calls](const CapabilityInvocationContext &, const std::string &,
+                      const std::vector<Value> &) -> CapabilityCallResult {
+        ++live_calls; // neither call should run live: ord0 from memo, ord1 injected
+        CapabilityCallResult r;
+        r.status = CapabilityCallStatus::Success;
+        r.value = make_int(-1);
+        return r;
+    };
+    WorkflowRuntime r3(program3, std::move(c3));
+    auto s3 = r3.run("TwoSuspendWorkflow", make_none());
+    check(s3.status() == WorkflowStatus::Completed, "two_suspend.run3_completed");
+    check(live_calls == 0, "two_suspend.run3_no_live_calls");
+    const auto *out =
+        s3.output() != nullptr ? std::get_if<IntValue>(&s3.output()->node) : nullptr;
+    check(out != nullptr && out->value == 22, "two_suspend.run3_output_is_second_result");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -1870,6 +1979,7 @@ int main() {
     test_resume_fails_closed_on_memo_mismatch();
     test_durable_write_exactly_once_across_resume();
     test_resume_fails_closed_on_pending_result_type_mismatch();
+    test_two_suspensions_on_one_node_rebuild_memo_append_only();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
