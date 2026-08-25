@@ -1,9 +1,9 @@
 ---
 rfc: "0022"
 title: "Durable Capability Resume"
-status: "implemented"
+status: "stabilized"
 area: ["runtime", "language", "compiler"]
-stability: "experimental"
+stability: "stable-artifact"
 created: "2026-08-25"
 updated: "2026-08-25"
 authors: ["zzzode"]
@@ -282,3 +282,12 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   检查),该 RFC 已 implemented。zero-config dev 路径经 `standard_capabilities` 默认
   provider(system_clock / random_device)+ `with_standard_capabilities` 保留。
   余下:PENDING 映射 → resume record + memo → exactly-once → fail-closed。
+- 2026-08-25: Status implemented → stabilized. 全部 Implementation-Plan 切片(1a/1b/1c
+  确定性前置、2 PENDING 映射 + 挂起控制流、3 resume record + memo、4 exactly-once
+  idempotency key + write-ahead intent、5 fail-closed 类型校验)落库并测试;durable-resume
+  语义 + nondet-capability 迁移写入 `docs/spec/core-language.zh.md` §3.4.1;端到端
+  capstone(`tests/integration/durable_resume_capstone.cpp`)证明"挂起 → 跨进程冷启动 →
+  确定恢复"。**recovery schema v2 标记为 stable-artifact**:`kWorkflowRecoverySchemaV2`
+  承诺向后兼容——已持久化的 v2 resume record 在后续版本仍可加载;v1 是 v2 的未触碰子集,
+  两者 load 路径共存。schema 演进只能 append-only(新字段可选、老 reader 忽略),破坏性
+  变更须发新 schema 版本号。

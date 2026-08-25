@@ -129,10 +129,10 @@ rfcs:
     stability: "experimental"
   - rfc: "0022"
     title: "Durable Capability Resume"
-    status: "implemented"
+    status: "stabilized"
     file: "0022-durable-capability-resume.zh.md"
     area: ["runtime", "language", "compiler"]
-    stability: "experimental"
+    stability: "stable-artifact"
   - rfc: "0023"
     title: "Capability-Identity Effect Inference"
     status: "implemented"

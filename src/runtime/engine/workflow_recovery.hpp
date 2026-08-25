@@ -22,6 +22,12 @@ inline constexpr std::string_view kWorkflowRecoverySchema{"ahfl.workflow-recover
 // within that node — so a workflow that suspended on an AHFL_CAP_PENDING
 // capability call can be re-run deterministically from the node input, replaying
 // completed capability calls from the memo instead of re-invoking them.
+//
+// STABLE ARTIFACT (RFC 0022 stabilized): v2 resume records are backward-compatible.
+// A persisted v2 snapshot MUST stay loadable by future runtime versions. Schema
+// evolution is append-only — new fields are optional and ignored by older readers;
+// any breaking change requires a new schema version string, never a redefinition
+// of v2. v1 remains an untouched subset; both load paths coexist.
 inline constexpr std::string_view kWorkflowRecoverySchemaV2{"ahfl.workflow-recovery.v2"};
 
 struct RecoveredNodeState {
