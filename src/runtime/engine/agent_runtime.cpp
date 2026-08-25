@@ -160,6 +160,15 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         // Merge diagnostics
         result.diagnostics.append(exec_result.diagnostics);
 
+        // RFC 0022 slice 3: a suspended capability call stops the agent WITHOUT
+        // failing — checked before the error path so no further state/effect
+        // runs. The node loop turns Suspended into a persisted resume record.
+        if (exec_result.is_suspended()) {
+            result.status = AgentStatus::Suspended;
+            result.pending = exec_result.suspension;
+            break;
+        }
+
         // If execution itself produced error diagnostics, mark as failed
         if (exec_result.has_errors()) {
             result.status = AgentStatus::Failed;

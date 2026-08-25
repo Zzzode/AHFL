@@ -26,6 +26,11 @@ enum class AgentStatus {
     QuotaExceeded,
     InvalidTransition,
     InfiniteLoop,
+    // RFC 0022 slice 3: a capability call in the agent body suspended
+    // (AHFL_CAP_PENDING). The agent stops without failing; the workflow node
+    // loop persists a resume record. Distinct from Failed so the run is durably
+    // resumable rather than terminated.
+    Suspended,
 };
 
 // Agent execution statistics
@@ -45,6 +50,9 @@ struct AgentResult {
     std::unordered_set<std::string> visited_states;
     AgentStats stats;
     DiagnosticBag diagnostics;
+    // RFC 0022 slice 3: set iff status == Suspended — which capability call
+    // suspended, so the node loop can build the resume record.
+    std::optional<evaluator::EvalSuspension> pending{};
     [[nodiscard]] bool is_terminal() const;
 };
 
