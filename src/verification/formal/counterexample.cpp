@@ -357,6 +357,18 @@ namespace {
         if (smv_symbol[i] == '_' && i + 1 < smv_symbol.size() && smv_symbol[i + 1] == '_') {
             out.push_back('.');
             ++i;
+        } else if (smv_symbol[i] == '@') {
+            // RFC 0024/0025: a bounded-quantifier element symbol `coll@i` maps
+            // back to the source-level indexed element `coll[i]`, so a
+            // falsifying model names the offending element index directly.
+            out.push_back('[');
+            ++i;
+            while (i < smv_symbol.size() && smv_symbol[i] >= '0' && smv_symbol[i] <= '9') {
+                out.push_back(smv_symbol[i]);
+                ++i;
+            }
+            out.push_back(']');
+            --i; // the outer loop will ++i past the last consumed char
         } else {
             out.push_back(smv_symbol[i]);
         }
