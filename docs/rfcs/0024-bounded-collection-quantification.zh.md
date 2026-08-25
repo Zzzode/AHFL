@@ -1,20 +1,20 @@
 ---
 rfc: "0024"
 title: "Bounded Collection Quantification in the Verifiable Subset"
-status: "draft"
+status: "review"
 area: ["language", "compiler", "formal"]
 stability: "experimental"
 created: "2026-08-25"
 updated: "2026-08-25"
 authors: ["zzzode"]
-shepherd: "TBD"
+shepherd: "project lead"
 owners:
-  language: "TBD"
-  compiler: "TBD"
-  formal: "TBD"
+  language: "language owner"
+  compiler: "compiler owner"
+  formal: "formal owner"
 required_reviewers: ["language", "formal"]
-tracking_issue: "TBD"
-discussion: "TBD"
+tracking_issue: "none"
+discussion: "none"
 implementation_prs: []
 decision_due: "2026-11-30"
 ---
@@ -29,7 +29,7 @@ values to AHFL's verifiable subset — `forall x in items: P(x)` and
 contract clauses. Quantifiers are encoded into the existing SMT-BMC engine by
 **finite unrolling to a static bound**, not by handing an unbounded `forall` to
 the solver. This closes the one data-predicate gap [RFC 0017](0017-bmc-contract-semantics.zh.md)
-explicitly deferred (Open Question 5, resolved 2026-08-24: "List/Map
+left as follow-up work (Open Question 5, resolved 2026-08-24: "List/Map
 quantification excluded to a follow-up RFC"), and is the roadmap M3 "second
 moat" continuation — pushing contract semantics from scalars over the whole of a
 node's data.
@@ -214,8 +214,8 @@ byte-identical. No migration is required; the feature is opt-in per clause.
 6. **Counterexample** (`counterexample.cpp`): map a falsifying model back to the
    offending element index.
 7. **Spec** (`docs/spec/core-language.zh.md` §5.6): define the bounded-quantifier
-   subset rule and replace the "List/Map quantification deferred" note (line
-   ~1298) with the now-specified semantics.
+   subset rule and replace the "List/Map quantification is follow-up work" note
+   (line ~1298) with the now-specified semantics.
 
 ## Test Plan
 
@@ -263,19 +263,21 @@ byte-identical. No migration is required; the feature is opt-in per clause.
 
 ## Open Questions
 
-1. **Bound-source syntax.** Should the per-collection bound come solely from the
-   collection's bounded *type* (`List(N)`), or should a clause be allowed to
-   supply a local `forall x in coll (bound N): ...` when the type is unbounded?
-   Leaning type-only for v1 (keeps the bound in the type system, one source of
-   truth); a clause-local bound is a possible ergonomic follow-up.
-2. **Map ordering in the unrolling.** `Map` runtime values are order-normalized
-   (RFC P7); the unrolling must key element symbols on a deterministic order.
-   Leaning: unroll in the normalized key order, so `emit smt` stays deterministic
-   regardless of insertion order.
-3. **Interaction with `always` (temporal) wrappers.** A quantified `invariant`
-   nests a data quantifier inside a temporal operator. Leaning: the temporal
-   layer is unchanged; the quantifier unrolls to a scalar predicate that the
-   existing temporal encoding then treats as an atom.
+All three resolved for review (2026-08-25).
+
+1. ~~Bound-source syntax~~ (resolved): **type-only for v1.** The per-collection
+   bound comes solely from the collection's bounded type (`List(N)`) or an
+   in-scope `bounded` refinement — one source of truth in the type system, no
+   clause-local bound. A clause-local `(bound N)` override is a possible
+   ergonomic follow-up, not v1.
+2. ~~Map unrolling order~~ (resolved): **normalized key order.** `Map` runtime
+   values are order-normalized (RFC P7); the unrolling keys element symbols on
+   that normalized order, so `emit smt` output is deterministic regardless of
+   insertion order.
+3. ~~Interaction with `always` / temporal wrappers~~ (resolved): **temporal layer
+   unchanged.** A quantified `invariant` unrolls its data quantifier to a scalar
+   predicate first; the existing temporal encoding then treats that predicate as
+   an atom. No new temporal-encoding rule.
 
 ## Decision History
 
@@ -285,3 +287,7 @@ byte-identical. No migration is required; the feature is opt-in per clause.
   finite unrolling into the existing scalar SMT-BMC subset; explicitly rejects SMT
   array theory / unbounded quantification to preserve decidability. Roadmap M3
   ("second moat") continuation.
+- 2026-08-25: All three Open Questions resolved (bound source = collection type /
+  refinement only; Map unrolled in normalized key order; temporal layer unchanged,
+  quantifier unrolls to a scalar atom beneath it). Owners / shepherd assigned,
+  tracking_issue / discussion set to none. Status draft → review.

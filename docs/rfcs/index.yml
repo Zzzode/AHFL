@@ -141,7 +141,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0024"
     title: "Bounded Collection Quantification in the Verifiable Subset"
-    status: "draft"
+    status: "review"
     file: "0024-bounded-collection-quantification.zh.md"
     area: ["language", "compiler", "formal"]
     stability: "experimental"
