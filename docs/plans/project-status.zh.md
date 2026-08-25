@@ -84,8 +84,9 @@ flowchart TD
 | Lifecycle closure | 已实现 | success、skip、retry/fallback、cancel、budget rejection、timeout、interruption、checkpoint/resume |
 | Report/renderers | 已实现 | human、JSON、JSONL、quiet 共享 event/report facts |
 | Runtime projections | 已实现 | replay、audit、scheduler、checkpoint 全部从 `WorkflowResult.events` 构造 |
-| Recovery store | 已实现 | `ahfl.workflow-recovery.v1`、atomic replace、deep-cloned values |
+| Recovery store | 已实现 | `ahfl.workflow-recovery.v1` + `v2`(RFC 0022 durable resume,schema v2 = stable-artifact)、atomic replace、deep-cloned values |
 | Reference recovery path | 已实现 | local HTTP provider、`SIGKILL`、approval、partial write、resume、side-effect dedupe |
+| Durable capability resume | 已实现(RFC 0022 `stabilized`) | capability 返回 `AHFL_CAP_PENDING` → 节点挂起 + v2 resume record（node input + per-node ordinal memo）→ 跨进程冷启动从磁盘恢复 → 确定复现；memo 命中不二次调用、cap_id+arg_hash 交叉校验、注入/memo 值 fail-closed 类型校验、`durable_write` 写前 idempotency-key intent。经原生 `ahfl_host.h` ABI 与 shell（`--recovery-store`/`--resume-pending-result`/`--suspend-capability`/`--intent-log`）均可驱动；`examples/durable-resume/` 为可运行 demo |
 
 旧 `RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> persistence/store-import/provider artifact` 链已物理删除。它们曾经形成第二套 name-based runtime fact source；不能再以“历史上有源码和 golden”为理由恢复。
 
@@ -216,6 +217,7 @@ Runtime 提供单路径真实执行；Formal 提供安全/活性属性验证。�
 | Event-native Runtime Kernel | runtime execution facts | 已实现 |
 | Replay / Audit / Scheduler / Checkpoint | event projections | 已实现 |
 | Crash / Resume | recovery | reference workflow 已实现 |
+| Durable capability resume | RFC 0022 embedding | 已实现(`stabilized`)——PENDING 挂起 + 跨进程冷启动 memo 恢复 + exactly-once |
 | Bounded soak / network matrix / OTel adapter | controlled pilot | 已实现 |
 | Hour-scale soak / RSS trend | production confidence | 仅由 `Production Confidence` GitHub Actions workflow 执行；本地只读取 live gate，不运行 hour-scale，文档不缓存 ready 状态 |
 | 解释器与 runtime baseline | runtime execution | 已实现 |
