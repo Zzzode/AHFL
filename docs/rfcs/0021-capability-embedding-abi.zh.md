@@ -319,3 +319,8 @@ Q2 的"编译期白名单上界 + 运行时绑定子集"在本 ABI 上体现为:
   逐字节一致。`implemented` 门槛(`ahfl_host.h`、原生 + WASM 两个绑定、pending、参考
   宿主、契约级测试)已全部落库。`stabilized` 尚需 `docs/reference/` ABI 契约文档 + 至少
   一个第三方语言绑定(Rust/Node),后者 Q4 范围外。
+- 2026-08-25: `stabilized` 前置之一落地 —— `docs/reference/host-abi.zh.md` 宿主嵌入 ABI
+  契约文档(版本/wire format 两轴、三态 fail-closed 状态码、不透明 host 句柄、单一所有者
+  分配器、`ahfl_invoke_args` size-prefixed 契约、durable-resume 挂起/恢复、原生 vs 直连
+  等价性范围说明)。`stabilized` 剩余门槛为一个第三方语言绑定(Rust/Node),明确为 Q4
+  范围外的后续工作;故本 RFC 保持 `implemented`。
