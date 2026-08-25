@@ -274,6 +274,9 @@ WorkflowStatus WorkflowResult::status() const noexcept {
     if (report.status == RunTerminalStatus::Completed) {
         return WorkflowStatus::Completed;
     }
+    if (report.status == RunTerminalStatus::Suspended) {
+        return WorkflowStatus::Suspended;
+    }
     if (!report.failure_kind.has_value()) {
         return WorkflowStatus::NodeFailed;
     }
@@ -459,6 +462,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         node_capability_failures(plan.nodes.size());
     std::optional<WorkflowFailureKind> workflow_failure;
     std::optional<DiagnosticId> workflow_diagnostic;
+    // RFC 0022 (C6): set when a node suspends on a pending capability call. When
+    // present the run terminates as Suspended (not Failed) and a v2 resume record
+    // is built from the suspended node's input + running memo.
+    std::optional<SuspendedNodeState> workflow_suspended;
 
     if (config_.recovery_snapshot.has_value()) {
         for (const auto &state : config_.recovery_snapshot->completed_nodes) {
@@ -740,6 +747,21 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 result,
                 runtime_invoker ? &runtime_invoker : nullptr,
                 node_context);
+            // RFC 0022 (C6): a capability nested in the node-input expression
+            // suspended. Checked before has_errors() (suspension never rides in
+            // the diagnostic bag). No node_input is captured — resume re-runs the
+            // node-input expression, replaying the memo. Not a failure.
+            if (eval_result.is_suspended()) {
+                workflow_suspended = SuspendedNodeState{
+                    .node = node.id,
+                    .agent = node.agent,
+                    .node_input = std::nullopt,
+                    .pending_cap_id = node_memo.pending_cap_id,
+                    .pending_ordinal = node_memo.pending_ordinal,
+                    .memo = std::move(node_memo.memo),
+                };
+                break;
+            }
             if (eval_result.has_errors()) {
                 const auto diagnostic = append_diagnostics(result, eval_result.diagnostics);
                 failed_nodes[node.id.index()] = true;
@@ -803,7 +825,27 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         if (config_.agent_input_hook) {
             config_.agent_input_hook(node.agent, agent_name, node_name, node_input);
         }
+        // RFC 0022 (C6): preserve the node input before it is moved into the
+        // agent — a suspension needs it verbatim to re-run the node on resume.
+        evaluator::Value node_input_snapshot = evaluator::clone_value(node_input);
         AgentResult agent_result = agent_rt.run(std::move(node_input));
+
+        // RFC 0022 (C6): the agent suspended on a pending capability call.
+        // Checked before the Completed / failure branches: build the resume
+        // record from the captured input + running memo and stop the run without
+        // marking the node failed. Not a failure.
+        if (agent_result.status == AgentStatus::Suspended) {
+            result.diagnostics.append(agent_result.diagnostics);
+            workflow_suspended = SuspendedNodeState{
+                .node = node.id,
+                .agent = node.agent,
+                .node_input = std::move(node_input_snapshot),
+                .pending_cap_id = node_memo.pending_cap_id,
+                .pending_ordinal = node_memo.pending_ordinal,
+                .memo = std::move(node_memo.memo),
+            };
+            break;
+        }
 
         if (agent_result.status == AgentStatus::Completed) {
             std::optional<RuntimeValueId> output_id;
@@ -887,7 +929,8 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     }
 
     std::optional<RuntimeValueId> workflow_output;
-    if (!workflow_failure.has_value() && workflow->return_value) {
+    if (!workflow_failure.has_value() && !workflow_suspended.has_value() &&
+        workflow->return_value) {
         CapabilityInvocationContext context;
         context.workflow_name = workflow_name;
         context.run_id = run_id;
@@ -907,7 +950,56 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
     }
 
-    if (workflow_failure.has_value()) {
+    if (workflow_suspended.has_value()) {
+        // RFC 0022 (C6): build the v2 resume record — the completed nodes so far
+        // plus the suspended node's input and memo — persist it, and terminate as
+        // Suspended (not Failed). If persistence fails we cannot resume, so we
+        // fail closed: downgrade to a NodeFailed terminal.
+        WorkflowRecoverySnapshot snapshot{
+            .workflow = plan.workflow,
+            .checkpoint = CheckpointId{0},
+            .suspended = std::move(*workflow_suspended),
+        };
+        for (const auto &completed_node : plan.nodes) {
+            if (!completed_nodes[completed_node.id.index()]) {
+                continue;
+            }
+            RecoveredNodeState node_state{
+                .node = completed_node.id,
+                .agent = completed_node.agent,
+            };
+            if (node_outputs[completed_node.id.index()].has_value()) {
+                const auto *value = result.value(*node_outputs[completed_node.id.index()]);
+                if (value != nullptr) {
+                    node_state.output = evaluator::clone_value(*value);
+                }
+            }
+            snapshot.completed_nodes.push_back(std::move(node_state));
+        }
+
+        const bool persisted = config_.recovery_store == nullptr ||
+                               config_.recovery_store->save(snapshot).has_value();
+        if (persisted) {
+            emit(WorkflowSuspended{
+                .workflow = plan.workflow,
+                .node = snapshot.suspended->node,
+                .pending_cap_id = snapshot.suspended->pending_cap_id,
+                .pending_ordinal = snapshot.suspended->pending_ordinal,
+            });
+            emit(RunCompleted{.run = run_id, .status = RunTerminalStatus::Suspended});
+            result.suspended = std::move(snapshot);
+        } else {
+            const auto diagnostic = add_runtime_error(
+                result, "failed to persist workflow suspension resume record");
+            emit(WorkflowFailed{
+                .workflow = plan.workflow,
+                .diagnostic = diagnostic,
+                .kind = WorkflowFailureKind::NodeFailed,
+            });
+            emit(RunCompleted{.run = run_id,
+                              .status = terminal_status(WorkflowFailureKind::NodeFailed)});
+        }
+    } else if (workflow_failure.has_value()) {
         const auto diagnostic =
             workflow_diagnostic.has_value()
                 ? *workflow_diagnostic

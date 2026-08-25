@@ -176,6 +176,9 @@ build_execution_scheduler_projection(const WorkflowResult &result) {
     case RunTerminalStatus::Interrupted:
         projection.status = ExecutionSchedulerStatus::TerminalInterrupted;
         break;
+    case RunTerminalStatus::Suspended:
+        projection.status = ExecutionSchedulerStatus::TerminalSuspended;
+        break;
     }
 
     std::set<WorkflowNodeId> completed;

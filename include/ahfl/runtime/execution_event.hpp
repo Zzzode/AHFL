@@ -69,6 +69,11 @@ enum class RunTerminalStatus {
     Failed,
     Cancelled,
     Interrupted,
+    // RFC 0022 (durable resume): the run stopped because a node suspended on a
+    // pending capability call. Not a failure — a resume record was persisted and
+    // the run can be continued. A distinct terminal so a host can tell "paused,
+    // awaiting a capability result" apart from "failed".
+    Suspended,
 };
 
 enum class CapabilityFailureKind {
@@ -240,6 +245,18 @@ struct RunCompleted {
     RunTerminalStatus status{RunTerminalStatus::Completed};
 };
 
+// RFC 0022 (durable resume): a workflow-level terminal marking that the run
+// suspended on a pending capability call at `node`. Carries the pending call's
+// capability SymbolId + per-node ordinal for telemetry / diagnostics. A
+// terminal for the Workflow lifecycle, exactly like WorkflowCompleted /
+// WorkflowFailed, so event validation sees one terminal per workflow.
+struct WorkflowSuspended {
+    WorkflowId workflow;
+    WorkflowNodeId node;
+    std::size_t pending_cap_id{0};
+    std::uint64_t pending_ordinal{0};
+};
+
 using ExecutionEventPayload = std::variant<RunStarted,
                                            RunResumed,
                                            WorkflowStarted,
@@ -258,6 +275,7 @@ using ExecutionEventPayload = std::variant<RunStarted,
                                            NodeSkipped,
                                            WorkflowCompleted,
                                            WorkflowFailed,
+                                           WorkflowSuspended,
                                            CheckpointSaved,
                                            RunCancellationRequested,
                                            RunInterrupted,

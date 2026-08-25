@@ -123,6 +123,12 @@ struct LifecycleObservation {
                     .key = {LifecycleKind::Workflow, event.workflow.index()},
                 };
             },
+            [](const WorkflowSuspended &event) {
+                return LifecycleObservation{
+                    .kind = LifecycleObservation::Kind::Terminal,
+                    .key = {LifecycleKind::Workflow, event.workflow.index()},
+                };
+            },
             [](const NodeCompleted &event) {
                 return LifecycleObservation{
                     .kind = LifecycleObservation::Kind::Terminal,

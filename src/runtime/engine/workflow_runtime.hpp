@@ -28,6 +28,9 @@ enum class WorkflowStatus {
     NodeFailed,
     DependencyFailed,
     EvalError,
+    // RFC 0022 (durable resume): a node suspended on a pending capability call.
+    // Not a failure — WorkflowResult::suspended holds the resume record.
+    Suspended,
 };
 
 // Workflow execution result
@@ -37,6 +40,12 @@ struct WorkflowResult {
     ExecutionReport report;
     std::vector<Value> values;
     DiagnosticBag diagnostics;
+    // RFC 0022 (durable resume): present iff status() == Suspended. The resume
+    // record for the suspended node — its input Value plus the memo table of
+    // capability results already produced — so the run can be continued by
+    // passing this snapshot back via WorkflowRuntimeConfig::recovery_snapshot
+    // together with resume_pending_result.
+    std::optional<WorkflowRecoverySnapshot> suspended{};
 
     [[nodiscard]] bool has_errors() const;
     [[nodiscard]] WorkflowStatus status() const noexcept;
@@ -61,6 +70,12 @@ struct WorkflowRuntimeConfig {
     std::function<std::optional<CheckpointId>(WorkflowNodeId)> checkpoint_after_node;
     std::optional<WorkflowRecoverySnapshot> recovery_snapshot;
     WorkflowRecoveryStore *recovery_store{nullptr};
+    // RFC 0022 (durable resume): the host-supplied result for the capability
+    // call that previously suspended the workflow. Set together with
+    // recovery_snapshot to resume: the runtime re-runs the suspended node from
+    // its captured input, replays completed calls from the memo, and injects
+    // this value at the pending ordinal instead of re-invoking the host.
+    std::optional<Value> resume_pending_result;
     std::function<void(const CapabilityInvocationContext &, const CapabilityCallResult &)>
         capability_result_observer;
     // Debug/test hook invoked after the runtime records an agent state entry.

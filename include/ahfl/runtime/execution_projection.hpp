@@ -83,6 +83,8 @@ enum class ExecutionSchedulerStatus {
     TerminalFailed,
     TerminalCancelled,
     TerminalInterrupted,
+    // RFC 0022 (durable resume): the run suspended on a pending capability call.
+    TerminalSuspended,
 };
 
 struct ExecutionSchedulerNode {

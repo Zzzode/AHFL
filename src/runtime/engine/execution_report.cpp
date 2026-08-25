@@ -135,6 +135,12 @@ ExecutionReportBuildResult build_execution_report(std::span<const ExecutionEvent
                     report.failure_kind = payload.kind;
                     return true;
                 },
+                [&](const WorkflowSuspended &) {
+                    // RFC 0022: suspension is not a failure and carries no
+                    // failure_kind. The terminal RunCompleted{Suspended} sets the
+                    // run status; the suspended node keeps its Running status.
+                    return true;
+                },
                 [&](const RunCompleted &payload) {
                     report.status = payload.status;
                     saw_run_terminal = true;

@@ -95,7 +95,7 @@ TEST_CASE("workflow recovery store rejects unknown and legacy schemas") {
 
     {
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
-        output << R"({"schema":"ahfl.workflow-recovery.v2","workflow_id":0,)"
+        output << R"({"schema":"ahfl.workflow-recovery.v99","workflow_id":0,)"
                   R"("checkpoint_id":0,"completed_nodes":[]})";
     }
     auto loaded = store.load();

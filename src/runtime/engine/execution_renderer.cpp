@@ -28,6 +28,8 @@ using ahfl::json::JsonValue;
         return "cancelled";
     case RunTerminalStatus::Interrupted:
         return "interrupted";
+    case RunTerminalStatus::Suspended:
+        return "suspended";
     }
     return "failed";
 }
@@ -119,6 +121,7 @@ node_metadata(const WorkflowResult &result, WorkflowNodeId node) {
                 return "workflow_completed";
             },
             [](const WorkflowFailed &) -> std::string_view { return "workflow_failed"; },
+            [](const WorkflowSuspended &) -> std::string_view { return "workflow_suspended"; },
             [](const CheckpointSaved &) -> std::string_view { return "checkpoint_saved"; },
             [](const RunCancellationRequested &) -> std::string_view {
                 return "run_cancellation_requested";
@@ -237,6 +240,13 @@ event_payload_json(const WorkflowResult &result, const ExecutionEventPayload &pa
             [&](const WorkflowFailed &value) {
                 object->set("workflow_id", id_json(value.workflow.index()));
                 set_diagnostic_fields(*object, result, value.diagnostic);
+            },
+            [&](const WorkflowSuspended &value) {
+                object->set("workflow_id", id_json(value.workflow.index()));
+                object->set("node_id", id_json(value.node.index()));
+                object->set("pending_cap_id", id_json(value.pending_cap_id));
+                object->set("pending_ordinal",
+                            id_json(static_cast<std::size_t>(value.pending_ordinal)));
             },
             [&](const CheckpointSaved &value) {
                 object->set("run_id", id_json(value.run.index()));

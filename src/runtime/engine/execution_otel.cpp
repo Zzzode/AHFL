@@ -476,6 +476,16 @@ build_execution_otel_trace(std::span<const ExecutionEvent> events,
                     finish_span(trace, span->second, *time, ExecutionOtelStatus::Error);
                     return ProjectionStep::Continue;
                 },
+                [&](const WorkflowSuspended &payload) -> ProjectionStep {
+                    // RFC 0022: suspension is not an error — finish the workflow
+                    // span Unset (paused, awaiting a capability result).
+                    const auto span = workflow_spans.find(payload.workflow.index());
+                    if (span == workflow_spans.end()) {
+                        return ProjectionStep::MissingParentSpan;
+                    }
+                    finish_span(trace, span->second, *time, ExecutionOtelStatus::Unset);
+                    return ProjectionStep::Continue;
+                },
                 [&](const CheckpointSaved &payload) -> ProjectionStep {
                     if (!run_span.has_value()) {
                         return ProjectionStep::MissingParentSpan;
@@ -508,9 +518,13 @@ build_execution_otel_trace(std::span<const ExecutionEvent> events,
                     if (!run_span.has_value()) {
                         return ProjectionStep::MissingParentSpan;
                     }
-                    const auto status = payload.status == RunTerminalStatus::Completed
-                                            ? ExecutionOtelStatus::Ok
-                                            : ExecutionOtelStatus::Error;
+                    // RFC 0022: a suspended run is paused, not failed — Unset.
+                    ExecutionOtelStatus status = ExecutionOtelStatus::Error;
+                    if (payload.status == RunTerminalStatus::Completed) {
+                        status = ExecutionOtelStatus::Ok;
+                    } else if (payload.status == RunTerminalStatus::Suspended) {
+                        status = ExecutionOtelStatus::Unset;
+                    }
                     finish_span(trace, *run_span, *time, status);
                     return ProjectionStep::Continue;
                 },
