@@ -1575,6 +1575,31 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         runtime_config.resume_pending_result = std::move(*pending);
     }
 
+    // RFC 0022 slice 4 (exactly-once): --intent-log installs a write-ahead intent
+    // sink that appends one JSONL record {idempotency_key, capability} before each
+    // durable_write / financial_write capability dispatch, so a host can dedup an
+    // effect that committed before a crash. Keys are reproducible across resume.
+    std::shared_ptr<std::ofstream> intent_log;
+    if (options.intent_log_path.has_value()) {
+        intent_log = std::make_shared<std::ofstream>(
+            std::filesystem::path{*options.intent_log_path}, std::ios::app | std::ios::binary);
+        if (!intent_log->is_open()) {
+            err << "error: failed to open --intent-log path '" << *options.intent_log_path
+                << "'\n";
+            return 2;
+        }
+        runtime_config.durable_write_intent_sink =
+            [intent_log](std::uint64_t idempotency_key, std::string_view capability) {
+                auto record = ahfl::json::JsonValue::make_object();
+                record->set("idempotency_key",
+                            ahfl::json::JsonValue::make_string(std::to_string(idempotency_key)));
+                record->set("capability",
+                            ahfl::json::JsonValue::make_string(std::string(capability)));
+                (*intent_log) << ahfl::json::serialize_json(*record) << '\n';
+                intent_log->flush();
+            };
+    }
+
     // RFC 0022: --suspend-capability forces the named capability to return
     // PENDING on a FRESH run, so a suspend->resume round-trip is drivable from
     // the shell. Inert when resuming (a loaded recovery_snapshot serves that call

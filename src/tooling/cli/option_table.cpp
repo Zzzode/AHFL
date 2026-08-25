@@ -96,6 +96,10 @@ void set_suspend_capability(CommandLineOptions &opts, std::optional<std::string_
     opts.suspend_capability = val;
 }
 
+void set_intent_log(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.intent_log_path = val;
+}
+
 void set_formal_backend(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.formal_backend = val;
 }
@@ -331,6 +335,13 @@ constexpr OptionSpec kOptionSpecs[] = {
      "Force the named capability to return PENDING (suspend) on a fresh run; "
      "inert when resuming from --recovery-store",
      "a capability name"},
+    {"--intent-log",
+     "",
+     OptionArgKind::RequiredValue,
+     set_intent_log,
+     "Append a JSONL write-ahead intent {idempotency_key, capability} before each "
+     "durable_write/financial_write dispatch, for host-side exactly-once dedup",
+     "an intent log path"},
     {"--formal-backend",
      "",
      OptionArgKind::RequiredValue,

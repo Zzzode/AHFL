@@ -52,7 +52,12 @@ would produce.
   (recovery schema `v2`, a stable artifact). Run 2 shares nothing with run 1 but
   the on-disk snapshot.
 - **Exactly-once + deterministic.** On resume the completed calls replay from the
-  memo and are never re-invoked; the final result is deterministic.
+  memo and are never re-invoked; the final result is deterministic. `DraftReply`
+  is declared `durable_write`, so a write-ahead intent (a stable idempotency key)
+  is recorded before dispatch — add `--intent-log /tmp/intent.jsonl` to either
+  run to capture it. The key is logged once on the suspend run and NOT re-logged
+  on resume (the memoized call is replayed, not re-dispatched), which is exactly
+  what a host uses to dedup an effect that committed just before a crash.
 
 `--suspend-capability` is a shell affordance for driving the demo. A real host
 returns `AHFL_CAP_PENDING` from its own `ahfl_host.h` implementation — see

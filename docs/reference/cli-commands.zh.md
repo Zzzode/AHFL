@@ -120,6 +120,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 | `--recovery-store` | `<path>` | durable resume([RFC 0022](../rfcs/0022-durable-capability-resume.zh.md)):存在则本次 `run` 从该快照恢复;能力返回 `PENDING` 挂起时把 resume record 写到该路径。完成的 run 不写快照。 |
 | `--resume-pending-result` | `<json>` | 恢复挂起 workflow 时,为那个 pending 能力注入的结果 JSON。非法 JSON 报错并中止。 |
 | `--suspend-capability` | `<name>` | 令指定能力在**全新** run 时返回 `PENDING`(挂起),用于从 shell 驱动 suspend→resume 往返;从 `--recovery-store` 恢复时该标志无效(该调用从 memo 命中)。 |
+| `--intent-log` | `<path>` | exactly-once([RFC 0022](../rfcs/0022-durable-capability-resume.zh.md) slice 4):在每次 `durable_write`/`financial_write` 能力派发**前**向该路径追加一行 JSONL write-ahead intent `{idempotency_key, capability}`,供宿主跨崩溃去重。恢复时命中 memo 的调用不重放派发,故不重复记录。 |
 | `--output-format` | `<human\|json\|jsonl\|quiet>` | 选择同一 canonical event/report 的输出 renderer |
 | `--verbosity` | `<normal\|verbose\|trace>` | 控制展示细节，不改变 event 语义 |
 

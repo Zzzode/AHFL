@@ -210,9 +210,13 @@ def main() -> int:
             ex_snap = work / "example.snapshot"
             if ex_snap.exists():
                 ex_snap.unlink()
+            ex_intent = work / "example.intent.jsonl"
+            if ex_intent.exists():
+                ex_intent.unlink()
             ex_base = [
                 str(ahflc), "run", "--manifest", str(manifest), "--workflow", wf,
                 "--llm-config", str(config), "--recovery-store", str(ex_snap),
+                "--intent-log", str(ex_intent),
                 "--output-format", "json",
             ]
             ex_suspend = subprocess.run(
@@ -224,6 +228,16 @@ def main() -> int:
             require(ex_snap.exists(), "example suspend must write a resume record")
             require(json.loads(ex_suspend.stdout)["audit"]["workflow_completed"] == 0,
                     "example suspend must not complete")
+            # Exactly-once: the durable_write intent is logged once, before dispatch.
+            intents_after_suspend = [
+                line for line in ex_intent.read_text().splitlines() if line.strip()
+            ] if ex_intent.exists() else []
+            require(len(intents_after_suspend) == 1,
+                    f"suspend must log exactly one write-ahead intent, got {intents_after_suspend}")
+            first_intent = json.loads(intents_after_suspend[0])
+            require(first_intent.get("capability") == "durable_resume::main::DraftReply"
+                    and first_intent.get("idempotency_key"),
+                    f"intent record must name the capability + a key, got {first_intent}")
             ex_resume = subprocess.run(
                 ex_base + ["--resume-pending-result",
                            '{"_type":"durable_resume::main::Reply","id":"T-42",'
@@ -237,6 +251,13 @@ def main() -> int:
             ex_out = ex_report.get("result", ex_report.get("output"))
             require(ex_out is not None and ex_out.get("answer") == "Use the reset link.",
                     f"example resume output must be the injected reply, got {ex_out}")
+            # Exactly-once across resume: the memoized durable_write is replayed, not
+            # re-dispatched, so NO second intent is written.
+            intents_after_resume = [
+                line for line in ex_intent.read_text().splitlines() if line.strip()
+            ]
+            require(len(intents_after_resume) == 1,
+                    f"resume must NOT re-log the intent (memo replay), got {intents_after_resume}")
     finally:
         server.shutdown()
         server.server_close()

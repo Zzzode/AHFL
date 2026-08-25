@@ -79,6 +79,10 @@ struct CommandLineOptions {
     // run, so a suspend->resume round-trip is drivable from the shell. Inert when
     // resuming (a loaded recovery_snapshot serves that call from the memo).
     std::optional<std::string_view> suspend_capability;
+    // RFC 0022 slice 4 (exactly-once): append a JSONL write-ahead intent record
+    // {idempotency_key, capability} to this path before each durable_write /
+    // financial_write capability dispatch, for host-side dedup across a crash.
+    std::optional<std::string_view> intent_log_path;
     std::optional<std::string_view> formal_backend;
     std::optional<std::string_view> model_checker;
     std::optional<std::string_view> checker_timeout_seconds;

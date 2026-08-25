@@ -24,7 +24,13 @@ pub struct Reply {
 // The async capability: given the ticket, the host drafts a reply. In a browser
 // or serverless host this is where "call the LLM" lands — the host may return
 // PENDING and answer later, suspending the workflow across a process boundary.
-capability DraftReply(request: DraftInput) -> Reply;
+// Declared durable_write so it participates in the exactly-once contract: the
+// runtime emits a write-ahead intent (idempotency key) before dispatch, and on
+// resume the memoized result is replayed rather than re-invoked (RFC 0022).
+capability DraftReply(request: DraftInput) -> Reply {
+    effect: durable_write;
+    retry: safe_if_idempotent;
+}
 
 pub agent ReplyAgent {
     input: Ticket;
