@@ -33,6 +33,7 @@ enum class SmtEncodeRejection {
     StringContent,        // a String-valued operand used beyond equality
     UnsupportedType,      // an operand type with no SMT sort mapping
     NullExpr,             // a null ExprRef (malformed contract)
+    UnboundedQuantifier,  // RFC 0024/0025: quantified collection has no static bound
 };
 
 // A divide/modulo node emits a `divisor != 0` verification obligation: the

@@ -252,12 +252,114 @@ void test_describe_rejection_nonempty() {
     bool all_nonempty = true;
     for (auto reason : {SmtEncodeRejection::UnsupportedNode, SmtEncodeRejection::UnsupportedOperator,
                         SmtEncodeRejection::StringContent, SmtEncodeRejection::UnsupportedType,
-                        SmtEncodeRejection::NullExpr}) {
+                        SmtEncodeRejection::NullExpr, SmtEncodeRejection::UnboundedQuantifier}) {
         if (describe_rejection(reason).empty()) {
             all_nonempty = false;
         }
     }
     check(all_nonempty, "every rejection reason has a human-readable description");
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0024/0025: bounded quantifier encoding via finite unrolling.
+// ---------------------------------------------------------------------------
+
+// A bounded List<Int>(capacity) type ref for the quantified-collection operand.
+ir::TypeRef bounded_list_int(std::uint64_t capacity) {
+    ir::TypeRef list;
+    list.kind = ir::TypeRefKind::Struct;
+    list.canonical_name = "std::collections::List";
+    list.collection_capacity = capacity;
+    auto element = ahfl::Owned<ir::TypeRef>(new ir::TypeRef{});
+    element->kind = ir::TypeRefKind::Int;
+    list.params.push_back(std::move(element));
+    return list;
+}
+
+// forall x in <coll>: <body>, with `coll` a path carrying `coll_type`.
+ir::ExprRef quantifier(ir::ExprArena &arena,
+                       ir::QuantifierExpr::Kind kind,
+                       const std::string &binder,
+                       ir::TypeRef coll_type,
+                       ir::ExprRef body) {
+    ir::Path p;
+    p.root_kind = ir::PathRootKind::Identifier;
+    p.root_name = "coll";
+    auto coll = arena.make(ir::PathExpr{.path = std::move(p)}, std::nullopt, std::move(coll_type));
+    return arena.make(ir::QuantifierExpr{
+        .kind = kind,
+        .binder = binder,
+        .value_binder = {},
+        .collection = coll,
+        .body = body,
+    });
+}
+
+void test_quantifier_forall_unrolls_to_and() {
+    ir::ExprArena arena;
+    // forall x in coll: x > 0, coll : List<Int>(3)
+    auto body = binary(arena, ir::ExprBinaryOp::Greater, path(arena, "x", {}), int_lit(arena, "0"));
+    auto q =
+        quantifier(arena, ir::QuantifierExpr::Kind::ForAll, "x", bounded_list_int(3), body);
+    auto r = encode_predicate(q);
+    check(r.ok() && r.term == "(and (> coll@0 0) (> coll@1 0) (> coll@2 0))",
+          "forall unrolls to a conjunction with per-index element symbols");
+}
+
+void test_quantifier_exists_unrolls_to_or() {
+    ir::ExprArena arena;
+    auto body = binary(arena, ir::ExprBinaryOp::Equal, path(arena, "x", {}), int_lit(arena, "7"));
+    auto q = quantifier(arena, ir::QuantifierExpr::Kind::Exists, "x", bounded_list_int(2), body);
+    auto r = encode_predicate(q);
+    check(r.ok() && r.term == "(or (= coll@0 7) (= coll@1 7))",
+          "exists unrolls to a disjunction with per-index element symbols");
+}
+
+void test_quantifier_empty_collection_vacuous() {
+    ir::ExprArena arena;
+    auto body_all =
+        binary(arena, ir::ExprBinaryOp::Greater, path(arena, "x", {}), int_lit(arena, "0"));
+    auto forall =
+        quantifier(arena, ir::QuantifierExpr::Kind::ForAll, "x", bounded_list_int(0), body_all);
+    auto rf = encode_predicate(forall);
+    check(rf.ok() && rf.term == "true", "forall over empty collection is vacuously true");
+
+    auto body_ex =
+        binary(arena, ir::ExprBinaryOp::Greater, path(arena, "x", {}), int_lit(arena, "0"));
+    auto exists =
+        quantifier(arena, ir::QuantifierExpr::Kind::Exists, "x", bounded_list_int(0), body_ex);
+    auto re = encode_predicate(exists);
+    check(re.ok() && re.term == "false", "exists over empty collection is vacuously false");
+}
+
+void test_quantifier_unbounded_rejected() {
+    ir::ExprArena arena;
+    // Collection type has no capacity => fail-closed.
+    ir::TypeRef unbounded;
+    unbounded.kind = ir::TypeRefKind::Struct;
+    unbounded.canonical_name = "std::collections::List";
+    auto element = ahfl::Owned<ir::TypeRef>(new ir::TypeRef{});
+    element->kind = ir::TypeRefKind::Int;
+    unbounded.params.push_back(std::move(element));
+
+    auto body =
+        binary(arena, ir::ExprBinaryOp::Greater, path(arena, "x", {}), int_lit(arena, "0"));
+    auto q =
+        quantifier(arena, ir::QuantifierExpr::Kind::ForAll, "x", std::move(unbounded), body);
+    auto r = encode_predicate(q);
+    check(!r.ok() && r.rejection == SmtEncodeRejection::UnboundedQuantifier,
+          "quantifier over an unbounded collection is fail-closed");
+}
+
+void test_quantifier_determinism() {
+    ir::ExprArena arena;
+    auto body =
+        binary(arena, ir::ExprBinaryOp::GreaterEqual, path(arena, "x", {}), int_lit(arena, "0"));
+    auto q = quantifier(arena, ir::QuantifierExpr::Kind::ForAll, "x", bounded_list_int(4), body);
+    auto a = encode_predicate(q);
+    auto b = encode_predicate(q);
+    check(a.ok() && b.ok() && a.term == b.term,
+          "quantifier unrolling is byte-identical across repeated encodings");
 }
 
 } // namespace
@@ -284,6 +386,12 @@ int main() {
     test_reject_null_expr();
     test_reject_propagates_through_operator();
     test_describe_rejection_nonempty();
+
+    test_quantifier_forall_unrolls_to_and();
+    test_quantifier_exists_unrolls_to_or();
+    test_quantifier_empty_collection_vacuous();
+    test_quantifier_unbounded_rejected();
+    test_quantifier_determinism();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

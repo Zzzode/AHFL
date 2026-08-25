@@ -22,6 +22,28 @@ struct Encoder {
     std::vector<SmtSymbol> symbols;
     std::optional<SmtEncodeRejection> rejection;
 
+    // RFC 0024/0025: active quantifier binder substitutions. When encoding a
+    // quantifier body at unroll index i, each binder name maps to the SMT
+    // symbol standing for the i-th element (e.g. `coll@i`). A bare PathExpr
+    // whose root matches a bound binder encodes as that element symbol instead
+    // of a free path symbol. Innermost binding wins (back()-to-front lookup),
+    // so nested quantifiers over the same binder name shadow correctly.
+    struct BinderBinding {
+        std::string name;         // source binder name (e.g. "x")
+        std::string symbol;       // substituted element symbol (e.g. "coll@0")
+        SmtSort sort{SmtSort::Int};
+    };
+    std::vector<BinderBinding> binder_stack;
+
+    [[nodiscard]] const BinderBinding *find_binder(std::string_view name) const {
+        for (auto it = binder_stack.rbegin(); it != binder_stack.rend(); ++it) {
+            if (it->name == name) {
+                return &*it;
+            }
+        }
+        return nullptr;
+    }
+
     // Records the first rejection encountered and returns nullopt so callers
     // can short-circuit. Subsequent rejections do not overwrite the first.
     std::optional<std::string> reject(SmtEncodeRejection reason) {
@@ -172,6 +194,38 @@ struct Encoder {
         }
         return reject(SmtEncodeRejection::UnsupportedOperator);
     }
+
+    // RFC 0025: scalar SMT sort implied by an element type ref. Only Bool /
+    // Int-family element types are in the subset; anything else is unsupported
+    // and the quantifier body encoding will reject when it references the
+    // binder (its element symbol has no scalar sort).
+    [[nodiscard]] static std::optional<SmtSort> element_sort(const ir::TypeRef *type) noexcept {
+        if (type == nullptr) {
+            return std::nullopt;
+        }
+        switch (type->kind) {
+        case ir::TypeRefKind::Bool:
+            return SmtSort::Bool;
+        case ir::TypeRefKind::Int:
+        case ir::TypeRefKind::BoundedInt:
+            return SmtSort::Int;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // RFC 0024/0025: encode a bounded quantifier by finite unrolling.
+    //
+    // The collection's resolved type must be a bounded collection
+    // (collection_capacity present); otherwise the clause is fail-closed with
+    // UnboundedQuantifier. For a capacity N the body is encoded once per index
+    // 0..N-1 with the binder(s) substituted by fresh per-index element symbols,
+    // then folded into (and ...) for forall / (or ...) for exists. The empty
+    // collection (N == 0) encodes to the vacuous truth value: true for forall,
+    // false for exists.
+    [[nodiscard]] std::optional<std::string> encode_quantifier(const ir::QuantifierExpr &q,
+                                                               const ir::Expr &node);
+
 };
 
 std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
@@ -192,6 +246,15 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
                 return e.spelling;
             },
             [&](const ir::PathExpr &e) -> std::optional<std::string> {
+                // RFC 0024/0025: a bare binder reference inside a quantifier
+                // body encodes as the per-index element symbol, not a free
+                // path symbol. Only a single-segment path (no member access)
+                // can name a binder.
+                if (e.path.members.empty()) {
+                    if (const auto *binding = find_binder(e.path.root_name); binding != nullptr) {
+                        return binding->symbol;
+                    }
+                }
                 auto symbol = path_symbol(e.path);
                 note_symbol(symbol, ref.ptr->resolved_type);
                 return symbol;
@@ -216,6 +279,10 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
             [&](const ir::StringLiteralExpr &) -> std::optional<std::string> {
                 return reject(SmtEncodeRejection::StringContent);
             },
+            // RFC 0024/0025: bounded quantifier — finite unrolling.
+            [&](const ir::QuantifierExpr &e) -> std::optional<std::string> {
+                return encode_quantifier(e, *ref.ptr);
+            },
             [&](const auto &) -> std::optional<std::string> {
                 return reject(SmtEncodeRejection::UnsupportedNode);
             },
@@ -223,10 +290,108 @@ std::optional<std::string> Encoder::encode(const ir::ExprRef &ref) {
         ref.ptr->node);
 }
 
+std::optional<std::string> Encoder::encode_quantifier(const ir::QuantifierExpr &q,
+                                                      const ir::Expr &node) {
+    if (!q.collection.has_value() || q.collection.ptr == nullptr || !q.body.has_value() ||
+        q.body.ptr == nullptr) {
+        return reject(SmtEncodeRejection::NullExpr);
+    }
+
+    // The static bound comes solely from the collection's bounded type
+    // (RFC 0025 capacity). No capacity => fail-closed (RFC 0024).
+    const ir::TypeRef &collection_type = q.collection.ptr->resolved_type;
+    if (!collection_type.collection_capacity.has_value()) {
+        return reject(SmtEncodeRejection::UnboundedQuantifier);
+    }
+    const std::uint64_t capacity = *collection_type.collection_capacity;
+
+    const bool is_forall = q.kind == ir::QuantifierExpr::Kind::ForAll;
+
+    // Empty collection: forall is vacuously true, exists vacuously false.
+    if (capacity == 0) {
+        return std::string(is_forall ? "true" : "false");
+    }
+
+    // Element (and, for Map, value) sorts from the collection type args. A
+    // non-scalar element sort means the body cannot stay in the scalar subset;
+    // the per-index element symbol is registered at that sort and the body
+    // encoding rejects on use if it is unsupported. List/Set: params[0] is the
+    // element. Map: params[0] key, params[1] value.
+    const ir::TypeRef *key_type =
+        !collection_type.params.empty() ? collection_type.params.front().get() : nullptr;
+    const ir::TypeRef *value_type =
+        collection_type.params.size() >= 2 ? collection_type.params[1].get() : nullptr;
+    const bool is_map = !q.value_binder.empty();
+
+    // A stable, index-based element symbol base derived from the collection's
+    // encoded path. Using the path symbol keeps element names deterministic and
+    // tied to the source collection (`coll@i`), never to iteration order.
+    std::string collection_base;
+    if (const auto *collection_path = std::get_if<ir::PathExpr>(&q.collection.ptr->node)) {
+        collection_base = path_symbol(collection_path->path);
+    } else {
+        // Non-path collection operand (e.g. a nested member access). Encode it
+        // to obtain a deterministic symbol base; if that leaves the subset the
+        // encoding already recorded the rejection.
+        auto encoded = encode(q.collection);
+        if (!encoded.has_value()) {
+            return std::nullopt;
+        }
+        collection_base = *encoded;
+    }
+
+    std::vector<std::string> terms;
+    terms.reserve(capacity);
+    for (std::uint64_t i = 0; i < capacity; ++i) {
+        const std::string index = std::to_string(i);
+        // Bind the element / (key, value) binder(s) to per-index symbols.
+        const std::size_t binders_before = binder_stack.size();
+        if (is_map) {
+            const std::string key_symbol = collection_base + "@" + index + ".key";
+            const std::string val_symbol = collection_base + "@" + index + ".val";
+            const auto key_sort = element_sort(key_type).value_or(SmtSort::Int);
+            const auto val_sort = element_sort(value_type).value_or(SmtSort::Int);
+            if (key_type != nullptr) {
+                note_symbol(key_symbol, *key_type);
+            }
+            if (value_type != nullptr) {
+                note_symbol(val_symbol, *value_type);
+            }
+            binder_stack.push_back(BinderBinding{q.binder, key_symbol, key_sort});
+            binder_stack.push_back(BinderBinding{q.value_binder, val_symbol, val_sort});
+        } else {
+            const std::string elem_symbol = collection_base + "@" + index;
+            const auto elem_sort = element_sort(key_type).value_or(SmtSort::Int);
+            if (key_type != nullptr) {
+                note_symbol(elem_symbol, *key_type);
+            }
+            binder_stack.push_back(BinderBinding{q.binder, elem_symbol, elem_sort});
+        }
+
+        auto body_term = encode(q.body);
+        binder_stack.resize(binders_before);
+        if (!body_term.has_value()) {
+            return std::nullopt;
+        }
+        terms.push_back(std::move(*body_term));
+    }
+
+    (void)node;
+    const std::string_view connective = is_forall ? "and" : "or";
+    std::string result = "(";
+    result += connective;
+    for (const auto &term : terms) {
+        result += ' ';
+        result += term;
+    }
+    result += ')';
+    return result;
+}
+
 } // namespace
 
 SmtEncodeResult encode_predicate(const ir::ExprRef &expr, const SmtEncodeOptions &options) {
-    Encoder encoder{options, {}, {}, std::nullopt};
+    Encoder encoder{options, {}, {}, std::nullopt, {}};
     auto term = encoder.encode(expr);
     SmtEncodeResult result;
     if (!term.has_value()) {
@@ -251,6 +416,9 @@ std::string_view describe_rejection(SmtEncodeRejection rejection) noexcept {
         return "operand type has no SMT sort mapping in the verifiable subset";
     case SmtEncodeRejection::NullExpr:
         return "contract predicate is malformed (null expression)";
+    case SmtEncodeRejection::UnboundedQuantifier:
+        return "quantified collection has no static capacity bound; give it a bounded "
+               "collection type (e.g. List<T>(N)) to verify a quantified property over it";
     }
     return "unknown rejection";
 }
