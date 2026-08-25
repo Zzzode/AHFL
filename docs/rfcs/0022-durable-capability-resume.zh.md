@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["runtime", "language"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["fdfb3136", "dfb81f7f", "5e56325c"]
+implementation_prs: ["fdfb3136", "dfb81f7f", "5e56325c", "858b4f7c", "77ae0d64", "0d3ada51", "c6cbcc02"]
 decision_due: "2026-10-31"
 ---
 
