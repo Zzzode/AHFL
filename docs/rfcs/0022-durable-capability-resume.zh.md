@@ -1,7 +1,7 @@
 ---
 rfc: "0022"
 title: "Durable Capability Resume"
-status: "review"
+status: "implementing"
 area: ["runtime", "language", "compiler"]
 stability: "experimental"
 created: "2026-08-25"
@@ -270,3 +270,7 @@ fail-closed,绝不回退到 live 调用)。运行时已经按求值顺序为每�
   nondet;重分类范围收窄为确属 nondet 的 4 个内建
   (`wall_clock_now` / `time_now` / `uuid_new` / `uuid_new_v4`)。确定性前置 1a
   (`FieldMap` 有序扁平存储)与 1b(统一 `format_double`)已实现并落库。
+- 2026-08-25: Owner sign-off。Status review → accepted → implementing。按
+  [Q4 2026 Roadmap](../plans/q4-2026-roadmap.zh.md) M1 旗舰推进:确定性前置 1c
+  (nondet 内建重分类)→ PENDING 映射 → resume record + memo → exactly-once →
+  fail-closed。tracking_issue / discussion 保持 none(无外部追踪器)。

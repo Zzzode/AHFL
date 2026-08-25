@@ -129,7 +129,7 @@ rfcs:
     stability: "experimental"
   - rfc: "0022"
     title: "Durable Capability Resume"
-    status: "review"
+    status: "implementing"
     file: "0022-durable-capability-resume.zh.md"
     area: ["runtime", "language", "compiler"]
     stability: "experimental"
