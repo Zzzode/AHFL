@@ -102,26 +102,26 @@ real agent-workflow contracts) stalls at toy predicates.
 
 ### Bound source: where the finite length comes from
 
-Unrolling needs a static length `N` for each quantified collection. AHFL already
-carries bounded collection types — `List(n)` / bounded refinements exist in the
-type layer (the same `Int(lo,hi)` machinery RFC 0017 uses for scalar bounds). The
-bound for `forall x in coll` is resolved, in priority order:
+Unrolling needs a static length `N` for each quantified collection. That bound
+comes from a **bounded collection type** — `List<T>(N)` / `Set<T>(N)` /
+`Map<K,V>(N)` — introduced by
+[RFC 0025](0025-bounded-collection-types.zh.md), the collection analog of the
+scalar `Int(lo,hi)` refinement (RFC 0017). The bound for `forall x in coll` is
+the declared capacity of `coll`'s type:
 
-1. The **declared capacity** of `coll`'s type when it is a bounded collection
-   (`List(N)` etc.) — the canonical, index-based source.
-2. A **`bounded` refinement** in scope that constrains `len(coll)` to a literal
-   upper bound.
+1. The **declared capacity** `N` of `coll`'s bounded collection type
+   (`List<T>(N)` etc.) — the canonical, index-based source (RFC 0025).
 
-If neither yields a static upper bound, the clause is **rejected**
-(fail-closed) with `formal.UNBOUNDED_QUANTIFIER` — the author must bound the
-collection type to verify a quantified property over it. This mirrors RFC 0017's
-philosophy: verification is bounded, and the bound is explicit in the source, not
-guessed.
+If the collection type carries no capacity (an unbounded `List<T>`), the clause
+is **rejected** (fail-closed) with `formal.UNBOUNDED_QUANTIFIER` — the author
+must give the collection a bounded type to verify a quantified property over it.
+This mirrors RFC 0017's philosophy: verification is bounded, and the bound is
+explicit in the source, not guessed.
 
 ```mermaid
 flowchart TD
     Clause["forall x in coll: P(x)"] --> Bound{"static upper bound N for len(coll)?"}
-    Bound -->|"bounded type / refinement"| Unroll["unroll: (and P(coll[0]) ... P(coll[N-1]))"]
+    Bound -->|"bounded collection type (RFC 0025)"| Unroll["unroll: (and P(coll[0]) ... P(coll[N-1]))"]
     Bound -->|"none"| Reject["formal.UNBOUNDED_QUANTIFIER (SourceRange, fail-closed)"]
     Unroll --> Encode["encode each P(coll[i]) via existing scalar subset"]
     Encode --> BMC["SMT-BMC proof goal / emit smt artifact"]
@@ -270,10 +270,10 @@ code; the feature is opt-in per clause.
 All three resolved for review (2026-08-25).
 
 1. ~~Bound-source syntax~~ (resolved): **type-only for v1.** The per-collection
-   bound comes solely from the collection's bounded type (`List(N)`) or an
-   in-scope `bounded` refinement — one source of truth in the type system, no
-   clause-local bound. A clause-local `(bound N)` override is a possible
-   ergonomic follow-up, not v1.
+   bound comes solely from the collection's bounded type (`List<T>(N)`,
+   introduced by [RFC 0025](0025-bounded-collection-types.zh.md)) — one source
+   of truth in the type system, no clause-local bound. A clause-local
+   `(bound N)` override is a possible ergonomic follow-up, not v1.
 2. ~~Map unrolling order~~ (resolved): **normalized key order.** `Map` runtime
    values are order-normalized (RFC P7); the unrolling keys element symbols on
    that normalized order, so `emit smt` output is deterministic regardless of
@@ -327,3 +327,13 @@ All three resolved for review (2026-08-25).
   covers forall/List, exists/Set, forall/Map `(k,v)`, and both negatives.
   `formal.UNBOUNDED_QUANTIFIER` (fail-closed bound resolution) is reserved for
   the subset-eligibility slice (3).
+- 2026-08-26: Prerequisite discovered while starting slice 3. The Design assumed
+  a static per-collection length bound already existed in the type layer; it does
+  not — AHFL has scalar `Int(lo,hi)` / `String(lo,hi)` refinements only, and
+  collections are unrefined nominal `StructT`. Slices 3-7 (SMT unrolling, BMC,
+  counterexample, spec) are blocked on a bound source. Resolution: introduce
+  bounded collection types `List<T>(N)` via
+  [RFC 0025](0025-bounded-collection-types.zh.md) (the collection analog of the
+  scalar refinement), then resume slices 3-7 reading the capacity off the IR
+  `TypeRef`. Design "Bound source" section + Open Question 1 corrected to cite
+  RFC 0025 instead of a non-existent bounded type / `bounded` refinement.
