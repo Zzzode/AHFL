@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -74,6 +75,11 @@ struct CapabilityCallResult {
     bool cache_hit{false};
     std::string diagnostic_code{};
     std::optional<CapabilityUsage> usage{};
+    // RFC 0022 slice 3: set only when status == Pending. Identify the pending
+    // call so the CallEvalFn boundary can build an EvalResult::suspension
+    // (index/id-based: cap_id is a SymbolId, ordinal a per-node counter).
+    std::size_t pending_cap_id{0};
+    std::uint64_t pending_ordinal{0};
 };
 
 using CapabilityInvoker =

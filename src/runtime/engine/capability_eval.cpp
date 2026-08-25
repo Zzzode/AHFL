@@ -74,6 +74,20 @@ capability_call_result_to_eval_result(const std::string &callee, CapabilityCallR
         return result;
     }
 
+    // RFC 0022 slice 3: a pending capability call suspends evaluation. Carry the
+    // suspension (which call, which ordinal) up the eval recursion instead of an
+    // error diagnostic, so has_errors() stays false and the workflow node loop
+    // persists a resume record rather than terminating.
+    if (call_result.status == CapabilityCallStatus::Pending) {
+        evaluator::EvalResult result;
+        result.value = evaluator::make_none();
+        result.suspension = evaluator::EvalSuspension{
+            .pending_cap_id = call_result.pending_cap_id,
+            .pending_ordinal = call_result.pending_ordinal,
+        };
+        return result;
+    }
+
     std::string message = "capability '" + callee + "' failed with status " +
                           std::string(capability_call_status_name(call_result.status));
     if (!call_result.error_message.empty()) {
@@ -103,7 +117,9 @@ template <typename InvokeCall>
                                              "' has null argument expression");
             }
             auto arg_result = evaluator::eval_expr(*arg_ptr, current_ctx, call_eval);
-            if (arg_result.has_errors()) {
+            // RFC 0022: a capability nested in another call's arguments suspends
+            // here — unwind on suspension too, not just errors.
+            if (arg_result.should_unwind()) {
                 return arg_result;
             }
             arg_values.push_back(std::move(arg_result.value));
