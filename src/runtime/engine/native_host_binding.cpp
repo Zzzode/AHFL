@@ -80,15 +80,19 @@ ContextualCapabilityInvoker make_native_capability_invoker(const NativeHostBindi
             result.value = std::move(decoded);
             return result;
         }
-        case AHFL_CAP_PENDING:
-            // ahfl_host.h transfers argument-frame ownership to the host on
-            // PENDING, but AHFL has no resume path yet (RFC 0022). Fail closed
-            // with an actionable diagnostic rather than blocking or silently
-            // dropping the suspension.
-            return error_result(
-                "native capability '" + name +
-                "' returned AHFL_CAP_PENDING, but durable resume is not yet implemented "
-                "(RFC 0022); the workflow cannot suspend at this call");
+        case AHFL_CAP_PENDING: {
+            // RFC 0022 (durable resume): the host accepted the call but the
+            // result is not yet available. ahfl_host.h transfers argument-frame
+            // ownership to the host for the suspension lifetime; the callee set
+            // *result_ptr = NULL, so there is nothing to decode or free. Map to
+            // a Pending result — the workflow runtime suspends at this node,
+            // persists a resume record, and resumes later with the host result.
+            // The pending memo coordinate (cap_id / ordinal) is stamped by the
+            // runtime invoker from the invocation context downstream.
+            CapabilityCallResult result;
+            result.status = CapabilityCallStatus::Pending;
+            return result;
+        }
         case AHFL_CAP_ERROR:
         default:
             // Fail-closed: AHFL_CAP_ERROR and ANY unrecognized status collapse to

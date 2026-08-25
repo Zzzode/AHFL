@@ -8,7 +8,8 @@
 //   - the callee-allocated result frame is freed exactly once (alloc/dealloc
 //     call counts balance),
 //   - AHFL_CAP_ERROR and any unrecognized status fail closed (Error),
-//   - AHFL_CAP_PENDING fails closed with the RFC 0022 "no resume yet" diagnostic,
+//   - AHFL_CAP_PENDING surfaces as a Pending result (workflow suspends; durable
+//     resume per RFC 0022), not a fail-closed error,
 //   - an unconfigured binding fails closed rather than crashing.
 
 #include "runtime/engine/native_host_binding.hpp"
@@ -187,14 +188,17 @@ void test_unknown_status_fails_closed() {
     check(result.status == CapabilityCallStatus::Error, "bad_status.fails_closed");
 }
 
-void test_pending_fails_closed_until_resume() {
+void test_pending_surfaces_suspension() {
+    // RFC 0022: AHFL_CAP_PENDING maps to a Pending result (the workflow suspends
+    // at this node and is durably resumable), NOT a fail-closed error. The callee
+    // set *result_ptr = NULL under PENDING, so nothing is decoded or freed.
     StubHostState state;
     state.mode = StubMode::Pending;
     auto invoker = make_native_capability_invoker(make_binding(state));
     const auto result = invoker(make_context(1), "llm_call", {});
-    check(result.status == CapabilityCallStatus::Error, "pending.status_error");
-    check(result.error_message.find("PENDING") != std::string::npos, "pending.mentions_pending");
-    check(result.error_message.find("RFC 0022") != std::string::npos, "pending.cites_rfc");
+    check(result.status == CapabilityCallStatus::Pending, "pending.status_pending");
+    check(!result.value.has_value(), "pending.no_value");
+    check(state.dealloc_calls == 0, "pending.no_free");
 }
 
 void test_invalid_binding_fails_closed() {
@@ -211,7 +215,7 @@ int main() {
     test_ok_roundtrip();
     test_error_fails_closed();
     test_unknown_status_fails_closed();
-    test_pending_fails_closed_until_resume();
+    test_pending_surfaces_suspension();
     test_invalid_binding_fails_closed();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";

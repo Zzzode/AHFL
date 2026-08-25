@@ -20,6 +20,7 @@
 // separately (a WASM runtime is unscoped; resume is RFC 0022).
 
 #include "runtime/engine/native_host_binding.hpp"
+#include "runtime/engine/workflow_recovery.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/evaluator/value_json.hpp"
@@ -229,12 +230,132 @@ void test_unbound_capability_fails_closed() {
           "unbound.fails_closed");
 }
 
+// A single-node workflow whose node input is `{ready: is_ready()}`; the echo
+// agent returns input.ready, so the workflow output IS the capability result.
+// The capability lives in a NODE dispatch site, so a PENDING there is durably
+// resumable (unlike a return-value expression, which has no node identity).
+Program make_node_capability_workflow() {
+    Program program;
+
+    AgentDecl agent;
+    agent.name = "EchoAgent";
+    agent.symbol_ref = SymbolRef{.kind = SymbolRefKind::Agent, .canonical_name = "EchoAgent",
+                                 .local_name = "EchoAgent"};
+    agent.input_type_ref = named_type("EchoInput");
+    agent.context_type_ref = named_type("EchoCtx");
+    agent.output_type_ref = named_type("EchoOutput");
+    agent.states = {"Init", "Done"};
+    agent.initial_state = "Init";
+    agent.final_states = {"Done"};
+    agent.transitions = {{"Init", "Done"}};
+    program.declarations.push_back(std::move(agent));
+
+    FlowDecl flow;
+    flow.target_ref = SymbolRef{.kind = SymbolRefKind::Agent, .canonical_name = "EchoAgent",
+                                .local_name = "EchoAgent"};
+    StateHandler init_handler;
+    init_handler.state_name = "Init";
+    init_handler.body.statements.push_back(
+        std::make_unique<Statement>(Statement{GotoStatement{"Done"}, {}}));
+    flow.state_handlers.push_back(std::move(init_handler));
+    StateHandler done_handler;
+    done_handler.state_name = "Done";
+    PathExpr ready_path;
+    ready_path.path.root_kind = PathRootKind::Input;
+    ready_path.path.root_name = "input";
+    ready_path.path.members = {"ready"};
+    done_handler.body.statements.push_back(
+        std::make_unique<Statement>(Statement{ReturnStatement{expr(std::move(ready_path))}, {}}));
+    flow.state_handlers.push_back(std::move(done_handler));
+    program.declarations.push_back(std::move(flow));
+
+    WorkflowDecl workflow;
+    workflow.name = "NodePendingWorkflow";
+    workflow.input_type_ref = named_type("Input");
+    workflow.output_type_ref = named_type("Output");
+    WorkflowNode node;
+    node.name = "n";
+    node.target_ref = SymbolRef{.kind = SymbolRefKind::Agent, .canonical_name = "EchoAgent",
+                                .local_name = "EchoAgent"};
+    StructLiteralExpr node_input;
+    node_input.type_name = "EchoInput";
+    CallExpr ready_call;
+    ready_call.callee = "is_ready";
+    node_input.fields.push_back(StructFieldInit{.name = "ready", .value = expr(std::move(ready_call))});
+    node.input = expr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+    PathExpr return_path;
+    return_path.path.root_kind = PathRootKind::Identifier;
+    return_path.path.root_name = "n";
+    workflow.return_value = expr(std::move(return_path));
+    program.declarations.push_back(std::move(workflow));
+    return program;
+}
+
+// A host that returns PENDING for the capability (the async / "await an LLM"
+// case), transferring frame ownership per ahfl_host.h.
+struct PendingHost {
+    int invoke_calls{0};
+};
+ahfl_cap_status pending_invoke(ahfl_host *host, ahfl_invoke_args *args) {
+    reinterpret_cast<PendingHost *>(host)->invoke_calls++;
+    *args->result_ptr = nullptr;
+    *args->result_len = 0;
+    return AHFL_CAP_PENDING;
+}
+
+// RFC 0022 through the native ahfl_host.h ABI: a host returning AHFL_CAP_PENDING
+// suspends the workflow (Suspended + resume record), and a fresh runtime resumes
+// from the persisted record to a deterministic final. The ABI-level analog of
+// the durable-resume capstone.
+void test_native_pending_suspends_and_resumes() {
+    const Program program = make_node_capability_workflow();
+
+    // Process A: the native host returns PENDING -> the workflow suspends.
+    PendingHost host;
+    NativeHostBinding binding;
+    binding.host = reinterpret_cast<ahfl_host *>(&host);
+    binding.invoke = &pending_invoke;
+    binding.alloc = &ref_alloc;
+    binding.dealloc = &ref_dealloc;
+    WorkflowRuntimeConfig suspend_config;
+    suspend_config.native_host_binding = binding;
+    WorkflowRuntime suspend_runtime(program, std::move(suspend_config));
+    auto suspended = suspend_runtime.run("NodePendingWorkflow", make_none());
+
+    check(suspended.status() == WorkflowStatus::Suspended, "native_pending.suspended");
+    check(host.invoke_calls == 1, "native_pending.host_called_once");
+    check(suspended.suspended.has_value(), "native_pending.resume_record");
+
+    // Process B (cold start): a fresh runtime resumes from the snapshot with the
+    // injected result. The native host must NOT be invoked again.
+    PendingHost resume_host;
+    NativeHostBinding resume_binding;
+    resume_binding.host = reinterpret_cast<ahfl_host *>(&resume_host);
+    resume_binding.invoke = &pending_invoke; // would re-suspend if wrongly called
+    resume_binding.alloc = &ref_alloc;
+    resume_binding.dealloc = &ref_dealloc;
+    WorkflowRuntimeConfig resume_config;
+    resume_config.native_host_binding = resume_binding;
+    resume_config.recovery_snapshot = std::move(suspended.suspended);
+    resume_config.resume_pending_result = make_bool(true);
+    WorkflowRuntime resume_runtime(program, std::move(resume_config));
+    auto resumed = resume_runtime.run("NodePendingWorkflow", make_none());
+
+    check(resumed.status() == WorkflowStatus::Completed, "native_pending.resumed_completed");
+    check(resume_host.invoke_calls == 0, "native_pending.not_reinvoked_on_resume");
+    const auto *out =
+        resumed.output() != nullptr ? std::get_if<BoolValue>(&resumed.output()->node) : nullptr;
+    check(out != nullptr && out->value, "native_pending.deterministic_final");
+}
+
 } // namespace
 
 int main() {
     test_reference_host_runs_capability_workflow();
     test_native_and_direct_invoker_are_equivalent();
     test_unbound_capability_fails_closed();
+    test_native_pending_suspends_and_resumes();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
