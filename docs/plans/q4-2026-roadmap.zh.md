@@ -119,10 +119,11 @@ RFC 0017(标量 SMT-BMC 数据谓词,`stabilized`)本已把 Bool/Int 谓词编�
   identity)→ capacity 子类型格(`(N) <: 无界`、`N <= M` 放宽)→ IR 下沉 → 形式化访问器
   + `UNBOUNDED_QUANTIFIER` fail-closed → spec §4.3/§5.5/§5.6。
 
-**退出:RFC 0024/0025 均 `implemented`。** 无静态上界的集合上做量化按
+**退出:RFC 0024/0025 均 `stabilized`。** 无静态上界的集合上做量化按
 `formal.UNBOUNDED_QUANTIFIER` fail-closed 拒绝;有界集合契约端到端可验证。
-两者 `stabilized` 待 release-evidence 覆盖一个量化契约端到端(需先补 `rg` 环境,
-见"机动/次要")。
+spec(§4.3/§5.5/§5.6)+ reference(error-code 目录 5 个新码)已补齐,beta-evidence
+bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修复)——stabilization
+所需的 evidence 前置已满足。
 
 ---
 
@@ -168,7 +169,7 @@ RFC 0017(标量 SMT-BMC 数据谓词,`stabilized`)本已把 Bool/Int 谓词编�
 - **两个 sign-off 门都在 M1 开头**:RFC 0022 `accepted` + 1c 授权。一旦点头,M1 全程
   可自主推进到 `implemented`。
 - **M3 已提前完成**:原推到 Q1,因 M1/M2 提前收口而作为机动主线提前落地
-  (RFC 0024/0025 均 `implemented`),不占用 Q4 主线余量。
+  (RFC 0024/0025 均 `stabilized`),不占用 Q4 主线余量。
 - **风险点**:1c 的迁移面(corelib 文档 + 两个 stdlib_unit 测试 + 诊断)可能比预期
   大;memo 核心的 effect-suppressed 重放是语义敏感区,需要充分的负例测试(exactly-once、
   fail-closed 类型不符)。
