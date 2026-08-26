@@ -294,8 +294,14 @@ bool equivalent_impl(const Type &lhs,
             // capacity, so read it directly off the StructT payload.
             const auto *lhs_struct = lhs.get_if<types::StructT>();
             const auto *rhs_struct = rhs.get_if<types::StructT>();
-            const auto lhs_capacity = lhs_struct != nullptr ? lhs_struct->capacity : std::nullopt;
-            const auto rhs_capacity = rhs_struct != nullptr ? rhs_struct->capacity : std::nullopt;
+            std::optional<std::uint64_t> lhs_capacity;
+            std::optional<std::uint64_t> rhs_capacity;
+            if (lhs_struct != nullptr) {
+                lhs_capacity = lhs_struct->capacity;
+            }
+            if (rhs_struct != nullptr) {
+                rhs_capacity = rhs_struct->capacity;
+            }
             if (lhs_capacity != rhs_capacity) {
                 return equivalent_leaf(lhs, rhs, ctx, join_path(path, "collection.capacity"), false);
             }

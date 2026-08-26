@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -28,12 +29,46 @@ def write_evidence(path: Path, value: dict[str, object]) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+# Text file extensions the source-pattern gates search. Kept narrow to the
+# source/header/test surfaces the patterns target; binary and generated
+# artifacts are irrelevant to these identity checks.
+_SEARCH_SUFFIXES = {".hpp", ".h", ".cpp", ".cc", ".ahfl", ".json", ".py", ".md", ".cmake"}
+
+
+def _iter_text_files(root: Path, target: str):
+    """Yield text files under a repo-relative file or directory path."""
+    base = root / target
+    if base.is_file():
+        yield base
+        return
+    if base.is_dir():
+        for path in sorted(base.rglob("*")):
+            if path.is_file() and path.suffix in _SEARCH_SUFFIXES:
+                yield path
+
+
 def require_no_match(repo: Path, pattern: str, paths: list[str], label: str) -> None:
-    result = run(["rg", "-n", pattern, *paths], repo)
-    if result.returncode == 0:
-        raise RuntimeError(f"{label} still present:\n{result.stdout}")
-    if result.returncode not in {1}:
-        raise RuntimeError(result.stderr)
+    """Fail if `pattern` (a regex) matches any line in the given files/dirs.
+
+    Python-native replacement for a former `rg` shell-out: portable to any
+    environment (no external ripgrep dependency), consistent with AHFL's
+    no-external-runtime-dependency stance. Matches ripgrep's line semantics
+    (per-line search) closely enough for these source-identity gates.
+    """
+    regex = re.compile(pattern)
+    hits: list[str] = []
+    for target in paths:
+        for file in _iter_text_files(repo, target):
+            try:
+                text = file.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                if regex.search(line):
+                    rel = file.relative_to(repo)
+                    hits.append(f"{rel}:{lineno}:{line}")
+    if hits:
+        raise RuntimeError(f"{label} still present:\n" + "\n".join(hits))
 
 
 def main() -> int:
