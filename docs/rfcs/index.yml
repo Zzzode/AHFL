@@ -69,7 +69,7 @@ rfcs:
     stability: "stable-language"
   - rfc: "0012"
     title: "Structured Workflow Execution Events and CLI Presentation"
-    status: "accepted"
+    status: "implementing"
     file: "0012-structured-workflow-execution-ux.zh.md"
     area: ["runtime", "tooling"]
     stability: "developer-facing"

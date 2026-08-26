@@ -1,11 +1,11 @@
 ---
 rfc: "0012"
 title: "Structured Workflow Execution Events and CLI Presentation"
-status: "accepted"
+status: "implementing"
 area: ["runtime", "tooling"]
 stability: "developer-facing"
 created: "2026-07-10"
-updated: "2026-07-11"
+updated: "2026-08-26"
 authors: ["LLM-orchestrated"]
 shepherd: "project lead"
 owners:
@@ -14,7 +14,7 @@ owners:
 required_reviewers: ["runtime", "tooling"]
 tracking_issue: "https://github.com/Zzzode/AHFL/issues/16"
 discussion: "https://github.com/Zzzode/AHFL/issues/16"
-implementation_prs: []
+implementation_prs: ["7c3ae2d2"]
 decision_due: "2026-08-07"
 ---
 
@@ -446,3 +446,4 @@ automation and configure input/LLM defaults under [run] in ahfl.toml.
 
 - 2026-07-10: Draft opened after validating the real `examples/execution-demo` LLM run output and identifying the current printer/observability coupling.
 - 2026-07-11: Product direction accepted; issue #16 became the implementation tracker, `examples/execution-demo` became the sole reference workflow, and the scope-freeze and beta gates became normative acceptance conditions.
+- 2026-08-26: Status `accepted` → `implementing`, reconciling the frontmatter with the tree. An audit against the 8-slice Implementation Plan found the core already landed (in the breaking commit `7c3ae2d2` "establish canonical execution and release gates", later extended by the RFC 0022 suspension/resume events) but never recorded here. Slice-by-slice: 1 Runtime identity (all 11 IDs + `CheckpointId`, `ExecutionEvent` variant, `ExecutionEventSink`, flat `ExecutionEventStore`), 3 Provider bridge (invocation-scoped usage/retry/fallback/cache events), 4 Report aggregation (`ExecutionReport` from the event store, canonical value JSON), 5 Renderer layer (human/json/jsonl/quiet; both old printers deleted), 6 Project launch (`[run]` + `run.profiles` manifest parsing, ancestor discovery, precedence, `--input-file`), and 8 Consumer migration (legacy title-string assertions gone, `--llm-observability` removed, docs migrated) are **DONE**, with unit tests (`execution_event`/`execution_report`/`execution_renderer`/`execution_otel`), the `ahfl.beta-gate.v1` machine report, and `docs/reference/user-guide-execution.zh.md`. Two slices remain **PARTIAL** and block `implemented`: slice 2's injectable monotonic clock (runtime still hardcodes `steady_clock::now()`, so no fake-clock golden path) and slice 7's TTY/`NO_COLOR` detection + ANSI human presentation (the `use_color`/`interactive_terminal` options exist but are never set and the renderer emits no ANSI). `stabilized` additionally still needs a synced release migration note and real (non-stub) LLM run evidence.
