@@ -388,6 +388,51 @@ def run_budget_case(
         )
 
 
+def run_cost_budget_case(ahflc: Path, source: Path, work: Path) -> None:
+    # KR3.3: cover runtime.LLM_COST_BUDGET_EXCEEDED, previously emitted but never
+    # exercised by a test. Normal token usage (16 prompt / 4 completion) but a
+    # per-million cost that dwarfs a near-zero max_total_cost_usd forces the
+    # estimated cost over budget under the `fail` policy → terminal failure with
+    # the stable cost-budget code.
+    server = start_server(CacheHandler)
+    try:
+        config = work / "cost-budget-fail.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "endpoint": f"http://127.0.0.1:{server.server_port}/v1",
+                    "model": "cost-budget-fail",
+                    "api_key_secret": "AHFL_TEST_LLM_PROVIDER_RUNTIME_KEY",
+                    "max_retries": 0,
+                    "token_budget_policy": "fail",
+                    "response_cache_enabled": False,
+                    "prompt_token_cost_per_million": 1000000.0,
+                    "completion_token_cost_per_million": 1000000.0,
+                    "max_total_cost_usd": 0.000001,
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = run_ahflc(ahflc, source, config, work / "cost-budget-fail.jsonl")
+    finally:
+        stop_servers(server)
+
+    events = load_events(work / "cost-budget-fail.jsonl")
+    require(
+        terminal_status(events) == "failed",
+        f"cost budget fail policy produced terminal status {terminal_status(events)!r}",
+    )
+    require(
+        "runtime.LLM_COST_BUDGET_EXCEEDED" in result.stderr,
+        "cost budget fail policy lacks the stable LLM_COST_BUDGET_EXCEEDED code",
+    )
+    require(result.returncode != 0, "cost budget fail policy unexpectedly succeeded")
+    require(
+        capability_events(events, "capability_failed"),
+        "cost budget fail policy lacks capability_failed",
+    )
+
+
 def main() -> int:
     require(
         len(sys.argv) == 3,
@@ -405,6 +450,7 @@ def main() -> int:
     run_persistent_cache_case(ahflc, source, work)
     run_budget_case(ahflc, source, work, "warn", "completed")
     run_budget_case(ahflc, source, work, "fail", "failed")
+    run_cost_budget_case(ahflc, source, work)
 
     print("LLM provider runtime smoke passed")
     return 0
