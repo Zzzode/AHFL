@@ -46,6 +46,15 @@ bounded_list_type(ahfl::TypeContext &tc, ahfl::TypePtr element, std::uint64_t ca
                           std::vector{element});
 }
 
+// RFC 0025: a bounded Set<T>(N).
+[[nodiscard]] ahfl::TypePtr
+bounded_set_type(ahfl::TypeContext &tc, ahfl::TypePtr element, std::uint64_t capacity) {
+    return tc.struct_type(std::string{ahfl::stdlib_bridge::kSetType},
+                          std::optional<ahfl::SymbolId>{},
+                          std::vector{element},
+                          std::optional<std::uint64_t>{capacity});
+}
+
 [[nodiscard]] ahfl::TypePtr
 map_type(ahfl::TypeContext &tc, ahfl::TypePtr key, ahfl::TypePtr value) {
     return tc.struct_type(std::string{ahfl::stdlib_bridge::kMapType},
@@ -138,6 +147,45 @@ TEST_CASE("RFC 0025: bounded collection capacity subtyping lattice") {
     CHECK(ahfl::is_assignable_to(*cap4, *cap8));
     CHECK_FALSE(ahfl::is_assignable_to(*cap8, *cap4));
     CHECK_FALSE(ahfl::is_assignable_to(*unbounded, *cap4));
+}
+
+TEST_CASE("RFC 0025: collection_capacity_overflow isolates the capacity-only failure") {
+    auto &tc = ahfl::TypeContext::global();
+    const auto element = tc.make(ahfl::TypeKind::Int);
+    const auto unbounded = list_type(tc, element);
+    const auto cap2 = bounded_list_type(tc, element, 2);
+    const auto cap3 = bounded_list_type(tc, element, 3);
+
+    // The exact failure the specialized diagnostic targets: a bounded source
+    // whose capacity strictly exceeds a bounded target's => (source, target).
+    const auto overflow = ahfl::collection_capacity_overflow(*cap3, *cap2);
+    REQUIRE(overflow.has_value());
+    CHECK(overflow->first == 3);
+    CHECK(overflow->second == 2);
+
+    // Within the bound (or equal) is not an overflow — that assignment succeeds
+    // outright, so no specialized diagnostic is warranted.
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*cap2, *cap3).has_value());
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*cap2, *cap2).has_value());
+
+    // An unbounded source or target is never a capacity overflow: the failure
+    // (if any) is about the missing/dropped bound, handled by subtyping.
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*unbounded, *cap2).has_value());
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*cap3, *unbounded).has_value());
+
+    // Different collection kinds are a genuine type mismatch, not an overflow,
+    // even when both carry a capacity.
+    const auto set3 = bounded_set_type(tc, element, 3);
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*set3, *cap2).has_value());
+
+    // Same kind + overflowing capacity but incompatible element types stays a
+    // generic mismatch: capacity is not the *sole* culprit.
+    const auto string_cap3 = bounded_list_type(tc, string_type(), 3);
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*string_cap3, *cap2).has_value());
+
+    // A non-collection struct pair never overflows.
+    const auto bounded_string = bounded_string_type(2, 8);
+    CHECK_FALSE(ahfl::collection_capacity_overflow(*bounded_string, *cap2).has_value());
 }
 
 TEST_CASE("type relations keep map keys invariant but values covariant") {

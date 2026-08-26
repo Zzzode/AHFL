@@ -1,0 +1,6 @@
+module typecheck::capacity_set_exceeded;
+import typecheck::capacity_set_exceeded as self;
+import std::collections;
+
+const Big: collections::Set<Int>(5) = collections::set_empty<Int>();
+const Small: collections::Set<Int>(2) = self::Big;

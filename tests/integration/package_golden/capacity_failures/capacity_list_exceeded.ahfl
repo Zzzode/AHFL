@@ -1,0 +1,8 @@
+module typecheck::capacity_list_exceeded;
+import typecheck::capacity_list_exceeded as self;
+import std::collections;
+
+// A List bounded at 3 elements is not assignable to one bounded at 2:
+// the source capacity (3) exceeds the target capacity (2).
+const Big: collections::List<Int>(3) = collections::empty<Int>();
+const Small: collections::List<Int>(2) = self::Big;

@@ -2,6 +2,9 @@ set(AHFL_STDLIB_UNITS_MANIFEST "${AHFL_TESTS_DIR}/integration/stdlib_units/ahfl.
 set(AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST
     "${AHFL_TESTS_DIR}/integration/package_golden/container_variance_failures/ahfl.toml"
 )
+set(AHFL_CAPACITY_FAILURES_MANIFEST
+    "${AHFL_TESTS_DIR}/integration/package_golden/capacity_failures/ahfl.toml"
+)
 set(AHFL_IMPORT_ALIAS_MANIFEST
     "${AHFL_TESTS_DIR}/integration/package_golden/import_alias/ahfl.toml"
 )
@@ -876,6 +879,38 @@ ahfl_add_manifest_check_fail_test(
     "${AHFL_CONTAINER_VARIANCE_FAILURES_MANIFEST}"
     map-value-reverse-mismatch
     "expected std::collections::Map<String, String\\(2, 8\\)>, got std::collections::Map<String, String>"
+)
+
+# RFC 0025: bounded collection capacity diagnostics. A bounded source capacity
+# that exceeds a bounded target capacity is COLLECTION_CAPACITY_EXCEEDED (the
+# specialized, actionable code — not a generic type mismatch); a capacity
+# suffix on a non-collection struct is COLLECTION_CAPACITY_NOT_ALLOWED.
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_list_exceeded
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    list-exceeded
+    "COLLECTION_CAPACITY_EXCEEDED.*collection capacity 3 exceeds the target capacity 2"
+)
+
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_set_exceeded
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    set-exceeded
+    "COLLECTION_CAPACITY_EXCEEDED.*collection capacity 5 exceeds the target capacity 2"
+)
+
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_map_exceeded
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    map-exceeded
+    "COLLECTION_CAPACITY_EXCEEDED.*collection capacity 4 exceeds the target capacity 2"
+)
+
+ahfl_add_manifest_check_fail_test(
+    ahflc.fail.collection_capacity_not_allowed_struct
+    "${AHFL_CAPACITY_FAILURES_MANIFEST}"
+    not-allowed-struct
+    "COLLECTION_CAPACITY_NOT_ALLOWED.*only allowed on List, Set, or Map, not on 'Payload'"
 )
 
 ahfl_add_check_fail_test(

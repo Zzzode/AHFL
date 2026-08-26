@@ -2077,6 +2077,27 @@ bool TypeCheckPass::check_assignable(const Type &source,
         return true;
     }
 
+    // RFC 0025: specialized capacity-overflow diagnostic (Principle 5) before
+    // falling back to the generic type-mismatch.
+    if (const auto overflow = ahfl::collection_capacity_overflow(source, target, relations_);
+        overflow.has_value()) {
+        std::vector<Diagnostic::Related> capacity_notes;
+        capacity_notes.push_back(Diagnostic::Related{
+            .message = expected_type_note(target, expectation),
+            .range = expectation.origin_range,
+        });
+        capacity_notes.push_back(Diagnostic::Related{
+            .message = actual_type_note(source),
+            .range = range,
+        });
+        typecheck_error_here(error_codes::typecheck::CollectionCapacityExceeded,
+                             messages::typecheck::CollectionCapacityExceeded.format_with(
+                                 std::to_string(overflow->first), std::to_string(overflow->second)),
+                             range,
+                             std::move(capacity_notes));
+        return false;
+    }
+
     std::vector<Diagnostic::Related> notes;
     notes.push_back(Diagnostic::Related{
         .message = expected_type_note(target, expectation),

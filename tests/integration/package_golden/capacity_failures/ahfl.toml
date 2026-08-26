@@ -1,0 +1,38 @@
+manifest_version = 1
+
+[package]
+name = "capacity-failures"
+version = "0.1.0"
+edition = "2026"
+kind = "library"
+
+[module]
+prefix = "typecheck"
+root = "."
+
+[exports]
+modules = [
+  "capacity_list_exceeded",
+  "capacity_set_exceeded",
+  "capacity_map_exceeded",
+  "capacity_not_allowed_struct",
+]
+
+[targets.list-exceeded]
+kind = "library"
+entry = "capacity_list_exceeded.ahfl"
+
+[targets.set-exceeded]
+kind = "library"
+entry = "capacity_set_exceeded.ahfl"
+
+[targets.map-exceeded]
+kind = "library"
+entry = "capacity_map_exceeded.ahfl"
+
+[targets.not-allowed-struct]
+kind = "library"
+entry = "capacity_not_allowed_struct.ahfl"
+
+[dependencies]
+std = { source = "sysroot" }

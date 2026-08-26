@@ -2140,8 +2140,10 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 | Severity | Error |
 
 **触发条件**：把更宽/无界的集合赋给更窄的有界集合槽位——违反 capacity 子类型格
-（`List<T>(N) <: List<T>(M)` 当且仅当 `N <= M`；无界 **不** <: 有界）。
-参见 `docs/spec/core-language.zh.md` §5.5。
+（`List<T>(N) <: List<T>(M)` 当且仅当 `N <= M`；无界 **不** <: 有界）。当且仅当
+capacity 是赋值失败的**唯一**原因（源/目标同为 List/Set/Map,元素/键/值类型互相可赋值,
+仅 `源 capacity > 目标 capacity`）时发射此专用码;元素类型不符或无界源等其它失败形态
+仍走通用 `TYPE_MISMATCH`。参见 `docs/spec/core-language.zh.md` §5.5。
 
 **常见修复**：收紧源集合的 capacity 到 `<= 目标`，或把目标槽位放宽/改为无界。
 

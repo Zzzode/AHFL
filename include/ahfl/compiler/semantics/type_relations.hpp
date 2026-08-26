@@ -3,9 +3,11 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace ahfl {
@@ -430,6 +432,21 @@ enum class SchemaBoundaryKind {
 };
 
 [[nodiscard]] std::string_view to_string(SchemaBoundaryKind kind) noexcept;
+
+// RFC 0025: detect the "bounded source capacity exceeds bounded target
+// capacity" assignment failure. Returns (source_capacity, target_capacity)
+// when `source` and `target` are the same nominal stdlib collection kind, their
+// element/key/value type arguments are mutually assignable, and the source's
+// static capacity strictly exceeds the target's. Returns nullopt for every
+// other failure shape (differing element types, unbounded source, non-
+// collections) so callers keep the generic type-mismatch diagnostic. This lets
+// each check_assignable site emit the specialized, actionable
+// typecheck.COLLECTION_CAPACITY_EXCEEDED code when — and only when — capacity is
+// provably the sole culprit.
+[[nodiscard]] std::optional<std::pair<std::uint64_t, std::uint64_t>>
+collection_capacity_overflow(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] std::optional<std::pair<std::uint64_t, std::uint64_t>>
+collection_capacity_overflow(const Type &source, const Type &target);
 
 [[nodiscard]] bool are_types_equivalent(const Type &lhs, const Type &rhs);
 [[nodiscard]] bool is_subtype_of(const Type &source, const Type &target);

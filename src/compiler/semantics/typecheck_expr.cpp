@@ -1220,6 +1220,32 @@ class ExpressionCheckerServices final {
             return true;
         }
 
+        // RFC 0025: when the assignment fails purely because a bounded source
+        // collection's capacity exceeds the (also bounded) target capacity,
+        // surface the specialized, actionable COLLECTION_CAPACITY_EXCEEDED code
+        // rather than the generic type-mismatch. The element types must be
+        // otherwise assignable so we only claim "capacity" when that is truly
+        // the sole culprit (Principle 5: actionable diagnostics).
+        if (const auto overflow = ahfl::collection_capacity_overflow(source, target, relations_);
+            overflow.has_value()) {
+            std::vector<Diagnostic::Related> notes;
+            notes.push_back(Diagnostic::Related{
+                .message = expected_type_note(target, expectation),
+                .range = expectation.origin_range,
+            });
+            notes.push_back(Diagnostic::Related{
+                .message = actual_type_note(source),
+                .range = range,
+            });
+            typecheck_error_here(
+                error_codes::typecheck::CollectionCapacityExceeded,
+                messages::typecheck::CollectionCapacityExceeded.format_with(
+                    std::to_string(overflow->first), std::to_string(overflow->second)),
+                range,
+                std::move(notes));
+            return false;
+        }
+
         std::vector<Diagnostic::Related> notes;
         append_multi_declaration_notes(
             notes,
@@ -1256,6 +1282,8 @@ class ExpressionCheckerServices final {
                              std::move(notes));
         return false;
     }
+
+
 
     [[nodiscard]] MaybeCRef<ResolvedReference> find_reference(ReferenceKind kind,
                                                               SourceRange range) const {

@@ -1103,6 +1103,46 @@ bool is_assignable_to(const Type &source, const Type &target) {
     return is_assignable_to(source, target, ctx);
 }
 
+// ---- Bounded collection capacity overflow ----------------------------------
+
+std::optional<std::pair<std::uint64_t, std::uint64_t>>
+collection_capacity_overflow(const Type &source, const Type &target, TypeRelationContext &ctx) {
+    const auto *source_struct = source.get_if<types::StructT>();
+    const auto *target_struct = target.get_if<types::StructT>();
+    if (source_struct == nullptr || target_struct == nullptr) {
+        return std::nullopt;
+    }
+    if (!source_struct->capacity.has_value() || !target_struct->capacity.has_value()) {
+        return std::nullopt;
+    }
+    if (*source_struct->capacity <= *target_struct->capacity) {
+        return std::nullopt;
+    }
+    const auto source_view = stdlib_bridge::std_container_type_view(source);
+    const auto target_view = stdlib_bridge::std_container_type_view(target);
+    if (!source_view.has_value() || !target_view.has_value() ||
+        source_view->kind != target_view->kind) {
+        return std::nullopt;
+    }
+    // The element (and, for Map, key/value) types must themselves be assignable
+    // so capacity is provably the only reason for the failure.
+    if (source_view->first != nullptr && target_view->first != nullptr &&
+        !is_assignable_to(*source_view->first, *target_view->first, ctx)) {
+        return std::nullopt;
+    }
+    if (source_view->second != nullptr && target_view->second != nullptr &&
+        !is_assignable_to(*source_view->second, *target_view->second, ctx)) {
+        return std::nullopt;
+    }
+    return std::make_pair(*source_struct->capacity, *target_struct->capacity);
+}
+
+std::optional<std::pair<std::uint64_t, std::uint64_t>>
+collection_capacity_overflow(const Type &source, const Type &target) {
+    TypeRelationContext ctx;
+    return collection_capacity_overflow(source, target, ctx);
+}
+
 // ---- Exact schema match ----------------------------------------------------
 
 bool is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx) {

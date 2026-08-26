@@ -1,0 +1,9 @@
+module typecheck::capacity_not_allowed_struct;
+
+// A capacity suffix '(N)' is only meaningful on List / Set / Map. Writing it
+// on a user-defined struct is a type error (COLLECTION_CAPACITY_NOT_ALLOWED).
+struct Payload { value: Int; }
+
+struct Holder {
+    items: Payload(4);
+}

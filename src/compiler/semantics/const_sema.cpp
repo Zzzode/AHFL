@@ -521,6 +521,33 @@ bool ConstTypeRelationValidator::check_assignable(const Type &source,
         return true;
     }
 
+    // RFC 0025: specialized, actionable capacity-overflow diagnostic when a
+    // bounded source collection's capacity exceeds the bounded target's and
+    // that is provably the sole reason for the failure (Principle 5).
+    if (const auto overflow = ahfl::collection_capacity_overflow(source, target, relations_);
+        overflow.has_value()) {
+        std::vector<ConstDiagnosticRelated> capacity_notes;
+        capacity_notes.push_back(ConstDiagnosticRelated{
+            .message = expected_type_note(target, expectation),
+            .range = expectation.origin_range,
+        });
+        capacity_notes.push_back(ConstDiagnosticRelated{
+            .message = actual_type_note(source),
+            .range = range,
+        });
+        diagnostics_.emit(ConstDiagnosticReport{
+            .diagnostic =
+                ConstTypeCheckDiagnostic{
+                    .code = error_codes::typecheck::CollectionCapacityExceeded,
+                    .message = messages::typecheck::CollectionCapacityExceeded.format_with(
+                        std::to_string(overflow->first), std::to_string(overflow->second)),
+                    .related = std::move(capacity_notes),
+                },
+            .range = range,
+        });
+        return false;
+    }
+
     std::vector<ConstDiagnosticRelated> notes;
     notes.push_back(ConstDiagnosticRelated{
         .message = expected_type_note(target, expectation),

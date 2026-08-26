@@ -1,0 +1,6 @@
+module typecheck::capacity_map_exceeded;
+import typecheck::capacity_map_exceeded as self;
+import std::collections;
+
+const Big: collections::Map<Int, Int>(4) = collections::map_empty<Int, Int>();
+const Small: collections::Map<Int, Int>(2) = self::Big;
