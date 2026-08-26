@@ -67,7 +67,7 @@ capstone)已全部落库并测试。
 |----|----------------|------|-------------|
 | KR3.1 | §3.2 死代码诊断清理:`diagnostics.hpp` 无"定义但零发射"的 ErrorCode | ✅ | 审计 23 个:3 wired(`UNEXPECTED_TOKEN`/`MATCH_ARM_TYPE_MISMATCH`/`EFFECT_INCOMPATIBLE`)+ 补 golden,20 删除;计数 134 → 114。commit 779765a6 / d59510e1 |
 | KR3.2 | §3.2 `ConstSema` 收尾:剥离 `TypeCheckPass` 的 source/diagnostic context 状态依赖 | 🔵 | 部分已拆(`const_sema.*`/`expression_sema.*`);剩余状态依赖待剥离 |
-| KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | 🔵 | 大部分已覆盖,一致性收口 + 矩阵完成度待补 |
+| KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | 🔵 | 审计:114 定义 / 113 发射 / 99 code-string 有测试;缺口多为 message-text 已覆盖。`LLM_COST_BUDGET_EXCEEDED` 补齐(cost-budget smoke,commit f4e116b3)。仍窄可达未测:`MISSING_IMPORT` / `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH`(resolver visibility,需特定 package-graph 状态,natural repro 先命中 `UNKNOWN_SYMBOL`) |
 | KR3.4 | §3.1 Runtime/LLM 生产化:hour-scale soak、RSS/allocator 趋势可本地 / 常态观测 | ⬜ | 目前只在 `Production Confidence` GitHub Actions 跑,本地不闭环 |
 | KR3.5 | §3.3 LSP 从"handler 可用"到"IDE 可用":hover/completion/signatureHelp 用 Typed HIR + condition facts,source-graph 级增量失效,真实编辑序列回归 | ⬜ | 后两项纠缠,需新 Typed HIR 字段 |
 | KR3.6 | §3.4 工具链入口补齐(P1/P2) | 🔵 | 多数入口已补(fmt/repl/dap/incremental/telemetry),尾巴待收 |
