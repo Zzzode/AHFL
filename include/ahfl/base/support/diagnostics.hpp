@@ -155,8 +155,6 @@ struct MessageTemplate {
 namespace error_codes {
 namespace parse {
 inline constexpr ErrorCode<DiagnosticCategory::Parse> UnexpectedToken{"UNEXPECTED_TOKEN"};
-inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidSyntax{"INVALID_SYNTAX"};
-inline constexpr ErrorCode<DiagnosticCategory::Parse> UnterminatedString{"UNTERMINATED_STRING"};
 // Wave-21 A-1: fired when ANTLR visitor recursion (tuple/paren/block/type nesting)
 // exceeds the ProgramBuilder::kMaxRecursionDepth (256) safety limit. Prevents
 // the native stack overflow observed in fuzz batch 2026-06-22 (deep parentheses).
@@ -167,7 +165,6 @@ namespace resolve {
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateSymbol{"DUPLICATE_SYMBOL"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownSymbol{"UNKNOWN_SYMBOL"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> CyclicTypeAlias{"CYCLIC_TYPE_ALIAS"};
-inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousReference{"AMBIGUOUS_REFERENCE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownCallable{"UNKNOWN_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousCallable{"AMBIGUOUS_CALLABLE"};
 inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateImport{"DUPLICATE_IMPORT"};
@@ -241,10 +238,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateVariantField{
     "DUPLICATE_VARIANT_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidIndexAccess{
     "INVALID_INDEX_ACCESS"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoneWithoutContext{
-    "NONE_WITHOUT_CONTEXT"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EmptyLiteralWithoutContext{
-    "EMPTY_LITERAL_WITHOUT_CONTEXT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidAgentType{"INVALID_AGENT_TYPE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownCapability{"UNKNOWN_CAPABILITY"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
@@ -294,8 +287,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
     "MATCH_DUPLICATE_BINDING"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchOrPatternBindingMismatch{
     "MATCH_OR_PATTERN_BINDING_MISMATCH"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
-    "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidRangePattern{
     "INVALID_RANGE_PATTERN"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidEnumVariantShape{
@@ -405,12 +396,6 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CollectionCapacityExce
 } // namespace typecheck
 
 namespace validation {
-inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{"SEMANTIC_INVARIANT"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
-    "REQUIRED_FIELD_EMPTY"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> OptionalFieldEmpty{
-    "OPTIONAL_FIELD_EMPTY"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidState{"INVALID_STATE"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> DuplicateCapability{
     "DUPLICATE_CAPABILITY"};
@@ -418,10 +403,6 @@ inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidTemporalFormul
     "INVALID_TEMPORAL_FORMULA"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidWorkflowGraph{
     "INVALID_WORKFLOW_GRAPH"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMessage{
-    "FAILURE_SUMMARY_EMPTY_MESSAGE"};
-inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
-    "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
 } // namespace validation
 
 namespace runtime {
@@ -434,14 +415,7 @@ inline constexpr ErrorCode<DiagnosticCategory::Runtime> LLMCostBudgetExceeded{
 } // namespace runtime
 
 namespace backend {
-inline constexpr ErrorCode<DiagnosticCategory::Backend> BootstrapError{"BOOTSTRAP_ERROR"};
 inline constexpr ErrorCode<DiagnosticCategory::Backend> ExecutionError{"EXECUTION_ERROR"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownTarget{"UNKNOWN_TARGET"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> DuplicateWorkflow{"DUPLICATE_WORKFLOW"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> NoWorkflows{"NO_WORKFLOWS"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownWorkflow{"UNKNOWN_WORKFLOW"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> MissingBootstrap{"MISSING_BOOTSTRAP"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> InvalidDependency{"INVALID_DEPENDENCY"};
 } // namespace backend
 
 // ============================================================================
@@ -452,11 +426,6 @@ namespace lint {
 // declared under the same local name in 2+ modules. Cross-module only —
 // same-module duplicates are already reported as DuplicateSymbol.
 inline constexpr ErrorCode<DiagnosticCategory::Lint> DuplicateStructName{"DUPLICATE_STRUCT_NAME"};
-// L2: a name collides across different symbol kinds (e.g. struct Foo vs
-// capability Foo). Kept for completeness; only fires when a single user
-// namespace carries multiple kinds with the same local spelling.
-inline constexpr ErrorCode<DiagnosticCategory::Lint> NameCollisionAcrossKinds{
-    "NAME_COLLISION_ACROSS_KINDS"};
 // L3: an `import Alias from Module` binding in a source unit is never
 // referenced by any expression / type / callable in that unit.
 inline constexpr ErrorCode<DiagnosticCategory::Lint> UnusedImport{"UNUSED_IMPORT"};
@@ -604,8 +573,6 @@ inline constexpr MessageTemplate ComparisonOperandsIncompatible{
 inline constexpr MessageTemplate ArithmeticOperatorInvalid{
     "arithmetic operator is not defined for {} and {}"};
 inline constexpr MessageTemplate ModuloRequiresInt{"operator '%' requires Int operands"};
-inline constexpr MessageTemplate NoneWithoutContext{
-    "cannot infer type of 'none' without an expected Optional<T> context"};
 // RFC0011 match typecheck messages.
 inline constexpr MessageTemplate MatchScrutineeRequiresEnum{
     "'match' scrutinee must have an enum type, got {}"};
@@ -625,8 +592,6 @@ inline constexpr MessageTemplate MatchArmTypeMismatch{
 inline constexpr MessageTemplate MatchDuplicateBinding{"duplicate binding '{}' in match pattern"};
 inline constexpr MessageTemplate MatchOrPatternBindingMismatch{
     "or-pattern binding '{}' must appear with equivalent types in every branch"};
-inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
-    "match binding '{}' expects type {}, got payload slot type {}"};
 inline constexpr MessageTemplate InvalidRangePattern{
     "invalid range pattern: lower bound {} exceeds upper bound {}"};
 inline constexpr MessageTemplate InvalidEnumVariantShape{
@@ -645,9 +610,6 @@ inline constexpr MessageTemplate BuiltinHookNotAllowed{
     "@builtin hook '{}' is not allowed by compiler_intrinsics.allow"};
 inline constexpr MessageTemplate MissingBuiltinEffect{
     "@builtin functions must declare an explicit effect clause"};
-inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
-inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
-inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};
 inline constexpr MessageTemplate ListIndexRequiresInt{"list index must have type Int"};
 inline constexpr MessageTemplate IndexTargetRequiresCollection{
     "index access requires a List or Map value, got {}"};
@@ -774,9 +736,6 @@ inline constexpr MessageTemplate CollectionCapacityExceeded{
 } // namespace typecheck
 
 namespace validation {
-inline constexpr MessageTemplate VersionMismatch{"{} must be '{}'"};
-inline constexpr MessageTemplate RequiredFieldEmpty{"{} must not be empty"};
-inline constexpr MessageTemplate OptionalFieldEmpty{"{} {}"};
 inline constexpr MessageTemplate DuplicateAgentState{"duplicate agent state '{}'"};
 inline constexpr MessageTemplate InitialStateNotDeclared{
     "initial state '{}' is not declared in agent states"};
@@ -826,10 +785,6 @@ inline constexpr MessageTemplate DuplicateWorkflowNode{"duplicate workflow node 
 inline constexpr MessageTemplate UnknownWorkflowDependency{"unknown workflow dependency '{}'"};
 inline constexpr MessageTemplate WorkflowDependencyCycle{
     "workflow dependency cycle detected involving '{}'"};
-inline constexpr MessageTemplate FailureSummaryEmptyMessage{
-    "{} contains failure summary with empty message"};
-inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
-    "{} contains failure summary with empty node_name"};
 } // namespace validation
 
 // ============================================================================
@@ -838,8 +793,6 @@ inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
 namespace lint {
 inline constexpr MessageTemplate DuplicateStructName{
     "{} '{}' is defined in {} locations within project scope; use module qualification or rename"};
-inline constexpr MessageTemplate NameCollisionAcrossKinds{
-    "{} '{}' collides with {} with same name"};
 inline constexpr MessageTemplate UnusedImport{
     "import '{}' from module '{}' is never used; remove to silence"};
 inline constexpr MessageTemplate OtherDefinitionInModule{"other definition in module '{}'"};

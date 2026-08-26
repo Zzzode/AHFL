@@ -1844,11 +1844,6 @@ predicate Foo(x: Int) -> Bool;   // same spelling, different namespace
         // different NamespaceIndex instances, so the by_kind sub-partition
         // of L1 never reaches size >= 2 for the same (ns, local_name).
         CHECK(diagnostic_count_with_code(res.diagnostics, "lint.DUPLICATE_STRUCT_NAME") == 0);
-        // Compile-time pin: the error code identifier still resolves so
-        // future implementations (e.g. a unified user namespace) can re-use
-        // it without updating the catalogue elsewhere.
-        const ahfl::ErrorCode<ahfl::DiagnosticCategory::Lint> _pin{"NAME_COLLISION_ACROSS_KINDS"};
-        (void)_pin;
     }
 
     // --- L3 positive: import X::Foo from std-like module, body never uses Foo ---

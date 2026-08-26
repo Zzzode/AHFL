@@ -15,8 +15,8 @@
 pie title Stable Error-Code 分组分布
     "Type System" : 27
     "Callable & Arity" : 9
-    "Effects & Contracts + Trait/Impl" : 16
-    "Struct/Enum Literals" : 18
+    "Effects & Contracts + Trait/Impl" : 17
+    "Struct/Enum Literals" : 19
     "Backend SMV/BMC" : 3
     "Linting & Migration" : 1
     "TBD" : 0
@@ -24,7 +24,7 @@ pie title Stable Error-Code 分组分布
 
 ---
 
-## 1. Type System（25）
+## 1. Type System（27）
 
 类型等价、符号解析、成员访问、trait/impl 解析等核心类型系统错误。
 
@@ -962,36 +962,6 @@ fn builtin_len(xs: Object) -> Int decreases 0 { return 0; }
 
 ---
 
-### MATCH_PATTERN_BINDING_TYPE_MISMATCH
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.MATCH_PATTERN_BINDING_TYPE_MISMATCH` |
-| SoT | `diagnostics.hpp:222` + template line `464` |
-| MessageTemplate | `match binding '{}' expects type {}, got payload slot type {}` |
-
-**触发条件**：match 分支 pattern 里的显式标注类型与该 variant 的 payload 类型不一致。
-
-**最小复现**：
-```ahfl
-module repro;
-enum R { Ok(Int), Err(String) }
-fn f(r: R) -> Int effect Pure decreases 0 {
-    return match r {
-        R::Ok(x: Bool) => 0,
-        _ => 1
-    };
-}
-```
-
-**常见修复**：
-- 删除显式类型注释让编译器自行推断；或把类型写成 payload 的真实类型。
-- 如确实需要做子类型判断，改用 guard 或辅助谓词。
-
-**Related codes**：`MATCH_ARM_TYPE_MISMATCH`、`MATCH_DUPLICATE_BINDING`、`TYPE_MISMATCH`。
-
----
-
 ### INVALID_RANGE_PATTERN
 
 | 字段 | 值 |
@@ -1553,64 +1523,9 @@ fn f() -> String effect Pure decreases 0 { return print(S{}); }
 
 ---
 
-## 4. Struct/Enum Literals（13）
+## 4. Struct/Enum Literals（19）
 
-与 struct/enum 字面量、`none`/空容器推断、struct/enum 字段/成员操作相关的类型检查错误。
-
-### NONE_WITHOUT_CONTEXT
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.NONE_WITHOUT_CONTEXT` |
-| SoT | `diagnostics.hpp:196` + template line `447` |
-| MessageTemplate | `cannot infer type of 'none' without an expected Optional<T> context` |
-
-**触发条件**：孤立地使用 `none`，而周围上下文不能把它约束到具体 `Optional<T>`。
-
-**最小复现**：
-```ahfl
-module repro;
-// NONE_WITHOUT_CONTEXT：孤立 Option::None 无法推断 T 时触发。
-// 显式写类型时为合法写法；去掉显式类型时可触发本码（示意如下）：
-//   const x = Option::None;  <- 缺少类型标注时编译器无法推断 T
-const x: Optional<Int> = Option::None;
-```
-
-**常见修复**：
-- 加显式类型标注：`const Optional<Int> x = none`。
-- 在同一表达式中搭配 `some(value)` 或返回类型使用 Optional，让上下文提供类型。
-
-**Related codes**：`EMPTY_LITERAL_WITHOUT_CONTEXT`、`TYPE_MISMATCH`。
-
----
-
-### EMPTY_LITERAL_WITHOUT_CONTEXT
-
-| 字段 | 值 |
-| --- | --- |
-| Error code | `typecheck.EMPTY_LITERAL_WITHOUT_CONTEXT` |
-| SoT | `diagnostics.hpp:198` + template line `476` |
-| MessageTemplate | （list/set/map 三模板共用）`cannot infer type of empty list literal` / `... empty set literal` / `... empty map literal` |
-
-**触发条件**：空 List/Set/Map 字面量无足够上下文推断元素类型。
-
-**最小复现**：
-```ahfl
-module repro;
-// EMPTY_LITERAL_WITHOUT_CONTEXT：空容器构造没有类型上下文，
-// 去掉显式返回类型时触发本码（示意如下）：
-//   fn make() { return empty(); }  <- 无法推断元素类型
-fn make() -> List<Int> effect Pure decreases 0 { return empty<Int>(); }
-const xs: List<Int> = empty<Int>();
-```
-
-**常见修复**：
-- 用显式类型标注容器元素类型：`List<Int>`。
-- 在使用点传入元素样本，或立即绑定到已标注的字段/返回值。
-
-**Related codes**：`NONE_WITHOUT_CONTEXT`、`INVALID_INDEX_ACCESS`。
-
----
+与 struct/enum 字面量、struct/enum 字段/成员操作相关的类型检查错误。
 
 ### MATCH_SCRUTINEE_REQUIRES_ENUM
 
@@ -2012,7 +1927,7 @@ fn f(e: E) -> Int effect Pure decreases 0 {
 - 让所有分支返回相同类型；需要多种结果时用 enum 包装。
 - 若本质为副作用分支，把 match 改为语句形式并统一为 Unit。
 
-**Related codes**：`TYPE_MISMATCH`、`MATCH_VARIANT_PAYLOAD_ARITY`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`。
+**Related codes**：`TYPE_MISMATCH`、`MATCH_VARIANT_PAYLOAD_ARITY`。
 
 ---
 
@@ -2041,7 +1956,7 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 - 将各槽位使用不同名字；要表达两槽相等，改用 guard 或 `if` 判定。
 - 不关心的槽使用 `_` 占位。
 
-**Related codes**：`SHADOWED_BINDING`、`MATCH_OR_PATTERN_BINDING_MISMATCH`、`MATCH_VARIANT_PAYLOAD_ARITY`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`。
+**Related codes**：`SHADOWED_BINDING`、`MATCH_OR_PATTERN_BINDING_MISMATCH`、`MATCH_VARIANT_PAYLOAD_ARITY`。
 
 ---
 
@@ -2071,7 +1986,7 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 - 如果某个分支不需要值，所有分支都改用 `_`，或拆成多个 match arm。
 - 不要依赖外层同名变量来补齐缺失分支 binding；pattern binding 会形成 arm-local 作用域。
 
-**Related codes**：`MATCH_DUPLICATE_BINDING`、`MATCH_PATTERN_BINDING_TYPE_MISMATCH`、`TYPE_MISMATCH`。
+**Related codes**：`MATCH_DUPLICATE_BINDING`、`TYPE_MISMATCH`。
 
 ---
 
