@@ -16,7 +16,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["14b69f2e", "bcd55fe0", "8f71ae1c", "2209e260", "db39a056", "b2e77158", "aeedabbe"]
+implementation_prs: ["14b69f2e", "bcd55fe0", "8f71ae1c", "2209e260", "db39a056", "b2e77158", "aeedabbe", "779765a6"]
 decision_due: "2026-11-30"
 ---
 
@@ -345,3 +345,18 @@ All three resolved for review (2026-08-26):
   closing entry for the gate-portability fixes). Capacity is a purely static
   refinement: no runtime enforcement, no new SMT sort — additive and
   non-breaking, consistent with the scalar `Int(lo,hi)` precedent it mirrors.
+- 2026-08-26: Post-stabilization fix (779765a6). Audit of RFC 0024/0025
+  diagnostic coverage found `typecheck.COLLECTION_CAPACITY_EXCEEDED` was defined
+  and documented (this RFC's Implementation Plan and the error-code reference
+  both describe it firing "on violation") but had **no emission site** — a
+  bounded-capacity overflow surfaced only as a generic `TYPE_MISMATCH`. Wired it
+  up: a new shared `collection_capacity_overflow()` in the type_relations layer
+  is the single source of truth consulted by all three `check_assignable` paths
+  (TypeCheckPass, the typecheck_expr validator, ConstSema), so an assignment that
+  fails *purely* because a bounded source capacity exceeds the (also bounded)
+  target capacity now reports the specialized, actionable code (Principle 5),
+  while every other failure shape keeps the generic mismatch. Added a
+  `capacity_failures` package golden + four `ahflc.fail.*` CLI tests covering
+  `COLLECTION_CAPACITY_EXCEEDED` (list/set/map) and `COLLECTION_CAPACITY_NOT_ALLOWED`
+  (suffix on a non-collection struct), plus a type_relations unit test pinning the
+  overflow-isolation semantics. Full ctest suite green.
