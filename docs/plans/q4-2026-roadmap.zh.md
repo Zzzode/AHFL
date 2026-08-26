@@ -1,162 +1,101 @@
-# AHFL Q4 2026 Roadmap — 可嵌入性做透
+# AHFL Q4 2026 OKR — 可嵌入性做透
 
 > 规划轴:项目北极星([RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md))——
-> 可嵌入、可验证的 agent workflow 编排 DSL。本季度**深度优先**:集中火力把
-> **可嵌入性**从"文档定位 + 已铺地基"推到**一个可演示的端到端事实**;第二护城河
-> BMC 契约语义(M3)原计划推到 Q1,**已在 8 月机动提前完成**(见 M3)。
+> 可嵌入、可验证的 agent workflow 编排 DSL。本季度**深度优先**:把可嵌入性从"文档定位 +
+> 已铺地基"推到**一个可演示的端到端事实**,并把已落库的能力从"有源码"推到"可产品化验收"。
 >
-> 状态以当前源码/测试/RFC frontmatter 为准。时间窗:Q4 = 2026-10 ~ 2026-12(9 月预热)。
+> 本文档采用 **OKR** 结构:每个 Objective 是定性方向,其下的 Key Result 是可度量、可由
+> 源码 / 测试 / RFC frontmatter / gate 脚本验证的结果。KR 状态:✅ 已达成 · 🔵 进行中 ·
+> ⬜ 未开始 · 🚫 环境阻塞(非本季可单独闭环)。
 >
-> **进度(2026-08-26):** M1/M2/M3 三条里程碑及机动项均已落地(RFC 0021 `implemented`;
-> RFC 0022/0024/0025 `stabilized`;基础设施 beta-gate 10/10 全绿;vN.N 标签退役完成)。
-> 后续推进:死代码诊断清理完成(23 个未发射 ErrorCode:3 wired / 20 删除);RFC 0012
-> 从 `accepted` 核对为 `implementing`,并补齐 slice 2(可注入 clock)与 slice 7
-> (TTY/NO_COLOR + ANSI)两处真实缺口。但本季**仍未收官**——"已落库但未产品化"的 backlog
-> 主线(Sema 闭环、Runtime/LLM 生产化、LSP IDE 化、真实求解器 CI 证据、RFC 0012 →
-> implemented/stabilized 等)仍在 Q4 验收口径内,见文末"剩余工作(Q4 尚未完成)"。
+> 时间窗:Q4 = 2026-10 ~ 2026-12(9 月预热)。状态以当前源码 / 测试 / RFC frontmatter 为准。
+>
+> **本季不算收官**:仍有 🔵/⬜ KR 未达成即代表 Q4 未完成——这些 KR 就是 Q4 的验收口径。
 
 ---
 
-## 北极星(季度目标)
+## 北极星(季度愿景)
 
-> 让 AHFL 从"文档里的定位"变成**可演示的端到端事实**:把 AHFL 嵌入宿主 → 跑一个经
-> 形式验证的工作流 → 遇到 `PENDING` 的能力调用挂起 → **跨进程 / 冷启动恢复** →
-> 结果确定可复现。
+> 让 AHFL 从"文档里的定位"变成**可演示的端到端事实**:把 AHFL 嵌入宿主 → 跑一个经形式
+> 验证的工作流 → 遇到 `PENDING` 的能力调用挂起 → **跨进程 / 冷启动恢复** → 结果确定可复现。
 
-季度末的验收 = `examples/` 里有一个能跑的程序完整走通上面这句话(native 路径),
-且 RFC 0021 与 0022 均 `stabilized`。
-
-> **达成情况(2026-08-25):** 北极星那句话已是可执行、已测试的事实,三条路径证明:
-> (1)**可运行的 `examples/` 程序** —— `examples/durable-resume/`(单模块 package + README
-> 两步 shell recipe):`ahflc run --suspend-capability … --recovery-store S` 挂起写快照,
-> 第二次 `run --recovery-store S --resume-pending-result …` 冷启动恢复到确定 final;
-> (2)`tests/integration/durable_resume_capstone.cpp` 编译 `examples/execution-demo`(全前端
-> 形式验证)→ 能力返回 `PENDING` → 挂起 → 跨进程冷启动从磁盘快照恢复 → 结果与同步路径
-> 逐字节一致;(3)`native_wasm_differential` 证明 PENDING 亦经原生 `ahfl_host.h` ABI 打通。
-> RFC 0022 已 `stabilized`;RFC 0021 已 `implemented`,其 `stabilized` 所需的
-> `docs/reference/` ABI 文档已补(`host-abi.zh.md`),仅剩第三方语言绑定 —— Q4 明确排除项,
-> 是本季目标外的后续工作。
+这句话对应 **Objective 1**;其余三个 Objective 把"第二护城河可信"、"已落库能力产品化"、
+"结构化执行 UX 收口"作为支撑方向。
 
 ---
 
-## 进入 Q4 的基线(已完成)
+## Objective 1 — 可嵌入性成为可演示、可测试的端到端事实
 
-能力嵌入的地基已在上一轮里程碑铺好(见 [capability-embedding 记忆] / RFC frontmatter):
+> 承接 M1(Durable Resume)+ M2(可嵌入性收口 + capstone)。**本 Objective 已在 8 月达成。**
 
-- **RFC 0021 slice 1/2/3/5**:`ahfl_host.h` C ABI 契约;`WorkflowRuntime` capability
-  派发从 ABI 函数指针表派生(`NativeHostBinding`);WASM import 对齐;参考宿主 +
-  绑定等价性测试(native 路径与直连 invoker 在 L1+L2 可观察等价,asan 干净)。
-- **RFC 0022 prereq 1a/1b**:`FieldMap` 有序扁平字段存储 + 统一 `format_double`,
-  使 `value_json` 确定性可复现——durable replay 的地基。
-- RFC 状态(季度进入时):0020 `stabilized`、0021 `implementing`、0022 `review`。
-  **更新(2026-08-25,M1+M2 完成后):0021 `implemented`、0022 `stabilized`。**
+| KR | 目标(可验收) | 状态 | 证据 |
+|----|----------------|------|------|
+| KR1.1 | `examples/` 有一个能跑通"挂起 → 冷启动恢复 → 确定 final"的程序(native 路径) | ✅ | `examples/durable-resume/`:`ahflc run --suspend-capability … --recovery-store S` 写快照,二次 `run --resume-pending-result …` 冷启动恢复到确定 final |
+| KR1.2 | 端到端 capstone 测试:能力 `PENDING` → 挂起 → 跨进程从磁盘快照恢复 → 与同步路径逐字节一致 | ✅ | `tests/integration/durable_resume_capstone.cpp`(编译 `examples/execution-demo`,全前端形式验证) |
+| KR1.3 | PENDING 经原生 `ahfl_host.h` ABI 打通 | ✅ | `native_wasm_differential` |
+| KR1.4 | RFC 0022 → `stabilized`(durable-resume 语义入 spec,recovery schema v2 标 stable-artifact) | ✅ | RFC 0022 frontmatter `stabilized` |
+| KR1.5 | RFC 0021 → `implemented`,`docs/reference/` ABI 文档补齐 | ✅ | `host-abi.zh.md`;`stabilized` 仅差第三方语言绑定(明确排除项) |
 
----
-
-## M1 — Durable Resume 打通(旗舰,10 月)—— ✅ 已完成
-
-> **状态(2026-08-25):RFC 0022 已 `implemented`,M1 退出达成。** 切片 1c/2/3/4/5 全部
-> 落库 + 测试:PENDING 挂起控制流、resume record + memo 表(schema v2)、exactly-once
-> idempotency key + write-ahead intent、注入/ memo Value 的 fail-closed 类型校验。一个
-> 工作流可在 `PENDING` 处挂起、持久化 v2 记录、从 memo + 注入结果确定性恢复到 final。
-> 实现 PR 见 RFC 0022 frontmatter。**注**:挂起仅在节点派发点(node-input 求值 + agent
-> body)可恢复,不覆盖 workflow 顶层 return 表达式(无节点身份做 resume key)。
-
-把 slice 2 里目前 fail-closed 的 `PENDING` 路径真正跑通。这是 Q4 唯一的强顺序依赖链。
-
-### 依赖门槛(需 owner sign-off,在 M1 开头)
-
-1. **RFC 0022 `review → accepted`** —— 语义型 RFC,owner 决定。
-2. **prereq 1c 授权** —— breaking 语言面(见下),需明确点头。
-
-### 切片(RFC 0022 Implementation Plan)
-
-| # | 交付物 | 退出标准 |
-|---|---|---|
-| 1c | nondet 内建 → host capability | `wall_clock_now`/`time_now`/`uuid_new`/`uuid_new_v4` 重分类;corelib API 文档 + `time_ut.ahfl`/`uuid_ut.ahfl` 迁移;迁移诊断 golden。**注**:`time_epoch` 等纯函数不在范围内 |
-| 2 | PENDING 映射 | `CapabilityCallStatus::Pending` + invoker 映射;`EvalResult::Suspended` 控制流逃逸穿透 eval 递归到节点循环 |
-| 3 | resume record + memo | `WorkflowRecoverySnapshot` 扩 node input + memo 表(schema `v2`);effect-suppressed 重放 |
-| 4 | exactly-once | idempotency key + write-ahead intent(等级 ≥ `durable_write`) |
-| 5 | fail-closed | 注入 / memo Value 的 interned-type 校验 + SourceRange 诊断 |
-
-**顺序约束**:1c 必须先于 memo 核心(2–5),否则重放对时间/uuid 不 sound。
-
-**退出:RFC 0022 → `implemented`。** 一个工作流能挂起、进程退出、重启后从 memo
-恢复到 final,且已完成的 `durable_write` 不二次触发(exactly-once 负例测试通过)。
+**Objective 1 判定:达成(范围内)。** M1 的强顺序依赖链(1c breaking → memo 核心 2–5 →
+capstone)已全部落库并测试。
 
 ---
 
-## M2 — 可嵌入性收口 + 可演示 capstone(11 月)—— ✅ 已完成(范围内)
+## Objective 2 — 第二护城河(形式化验证)从"可跑"推到"可信"
 
-> **状态(2026-08-25):** 端到端 capstone、durable-resume spec 语义、RFC 0022 →
-> `stabilized`(schema v2 标为 stable-artifact)、RFC 0021 → `implemented` 均已落库。
-> RFC 0021 `stabilized` 尚差 `docs/reference/` ABI 文档 + 一个第三方语言绑定(Rust/Node),
-> 后者明确为 Q4 范围外(见"明确排除"),故 M2 在 Q4 范围内已收口。
+> 承接 M3(BMC 契约语义,原推 Q1,已于 8 月机动提前完成)。核心已 `stabilized`,
+> **真实求解器 CI 证据仍是本 Objective 的开放 KR。**
 
-| 交付物 | 退出标准 |
-|---|---|
-| **端到端演示** | `examples/` 里一个"调 LLM(mock)→ 挂起 → 冷启动恢复 → final"的工作流,参考宿主驱动,native 路径全绿;作为北极星那句话的可执行证据 |
-| `docs/spec` 补 durable-resume 语义 | durable-resume 挂起/恢复语义 + nondet-capability 迁移写入 spec |
-| RFC 0021 → `implemented` / `stabilized` | pending 由 M1 补齐后,把 0021 收口到 spec + reference |
-| RFC 0022 → `stabilized` | 语义入 spec;recovery schema `v2` 若承诺稳定则标 stable-artifact |
-
-**退出:北极星那句话变成 `examples/` 里能跑的东西,RFC 0021/0022 均 `stabilized`。**
-
----
-
-## M3 — 第二护城河:BMC 契约语义(原推迟 Q1,✅ 已于 8 月机动提前完成)
-
-backlog §3.5 item 1:把 BMC 从"状态图可达性"推进到真正的 AHFL 契约/属性语义
-(requires/ensures/invariant 数据谓词编码进 SMT、定义可验证子集边界、与 SMV/nuXmv
-后端共存)。**原定深度优先推迟到 Q1**;因 M1/M2 提前收口,已作为机动主线提前启动并完成。
-
-RFC 0017(标量 SMT-BMC 数据谓词,`stabilized`)本已把 Bool/Int 谓词编码进可验证子集。
-本季在其之上补齐了集合量化这一缺口,通过两个新 RFC:
-
-- **[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)(有界集合量化)→ `implemented`**:
-  `forall x in coll: P` / `exists (k,v) in coll: P` over List/Set/Map,经**有限展开**进
-  已有的标量 SMT-BMC 编码器(`forall`→`(and …)`、`exists`→`(or …)`、空集合→`true`/`false`
-  vacuous),不引入 SMT array/sequence theory,可验证子集保持可判定。语法 → 类型检查
-  (`QUANTIFIER_REQUIRES_COLLECTION` / `QUANTIFIER_BODY_REQUIRES_BOOL`)→ `ir::QuantifierExpr`
-  → SMT 展开(index-based `coll@i` 元素符号)→ 反例元素索引映射(`coll@i`→`coll[i]`)→
-  spec §5.6,全链路 + 单测落库。
-- **[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md)(有界集合类型 `List<T>(N)`)→ `implemented`**:
-  实现 RFC 0024 时发现其展开所依赖的"集合长度静态上界来源"在 AHFL 并不存在(彼时只有
-  标量 `Int(lo,hi)` 精化,集合是无精化的名义 `StructT`)。补上 `List<T>(N)` / `Set<T>(N)` /
-  `Map<K,V>(N)` capacity 精化(标量精化在容器上的对应物):语法 → interning(参与结构化
-  identity)→ capacity 子类型格(`(N) <: 无界`、`N <= M` 放宽)→ IR 下沉 → 形式化访问器
-  + `UNBOUNDED_QUANTIFIER` fail-closed → spec §4.3/§5.5/§5.6。
-
-**退出:RFC 0024/0025 均 `stabilized`。** 无静态上界的集合上做量化按
-`formal.UNBOUNDED_QUANTIFIER` fail-closed 拒绝;有界集合契约端到端可验证。
-spec(§4.3/§5.5/§5.6)+ reference(error-code 目录 5 个新码)已补齐,beta-evidence
-bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修复)——stabilization
-所需的 evidence 前置已满足。
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR2.1 | 标量 SMT-BMC 数据谓词可验证子集 | ✅ | RFC 0017 `stabilized` |
+| KR2.2 | 有界集合量化 `forall/exists in coll` 经有限展开进 SMT-BMC | ✅ | RFC 0024 `stabilized`(全链路 + 单测) |
+| KR2.3 | 有界集合类型 `List<T>(N)` capacity 精化 + `UNBOUNDED_QUANTIFIER` fail-closed | ✅ | RFC 0025 `stabilized`(spec §4.3/§5.5/§5.6) |
+| KR2.4 | 真实 Z3 在 CI 端到端验证有界量化契约(可证 Safe / 无前置 Unsafe 带反例) | ✅ | `smt_bmc.cpp` 两个 `AHFL_Z3_PATH` 守卫用例;`ahfl.formal.smt_bmc_real_z3` ctest。commit a4b68265 / 90fbf241 |
+| KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | 🚫 | 本机仅有 z3,NuSMV/nuXmv 缺,需环境提供 |
+| KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | ⬜ | — |
+| KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | ⬜ | — |
 
 ---
 
-## 机动 / 次要(有余量时穿插,不阻塞主线)
+## Objective 3 — 已落库但未产品化的 backlog 主线收口
 
-- **基础设施全绿(✅ 已达成)**:本机全量 ctest 的 `ahfl.product.*` beta-gate 曾因三类
-  环境问题挂,均已在仓库内修复,现 **beta-gate 10/10 全绿**:(1)evidence 脚本 shell out
-  `rg`——已改为 Python 原生递归正则搜索,去掉 ripgrep 外部依赖
-  (`generate-beta-runtime-evidence.py`);(2)GCC 12 `-O2 -Werror` 在 ~16 个 TU 上的
-  `-Wrestrict` / `-Wmaybe-uninitialized` 误报(clang/dev preset 不触发)——已在
-  `AhflCompiler.cmake` 中对 GCC **单点**把这两个 flag 从 error 降为 warning(仍告警;clang
-  保持全量 -Werror);(3)VS Code VSIX 打包步 `corepack prepare pnpm@10.10.0` 报 "Cannot
-  find matching keyid"——是 Node 20.18.x 自带 corepack 的**过期签名密钥 bug**(非坏包、非网络
-  墙),已在 `package-vscode-vsix-release.sh` 设 `COREPACK_INTEGRITY_KEYS=0` 绕过(签名仍走
-  TLS + registry integrity hash,不弱化真实校验)。三者修复后 beta-evidence bundle 可在无
-  特殊环境的机器上跑通,`beta_evidence_bundle_ready` 亦绿——RFC 0024/0025 从 `implemented`
-  推到 `stabilized` 的 evidence 前置已解锁。
-- **vN.N 版本号测试标签退役(已完成)**:`ctest` 标签从 `ahfl-vN.N` / `vN.N-<feature>`
-  版本号方案退役为纯语义 feature 标签(`formatter`、`lsp`、`passes` …);伞标签删除,
-  文档漂移(`ahfl-core-suite` 等不存在的标签)一并订正。
-- **RFC 0013 边界重审**:4 个 A/B guardrail 冲突(P5 容器、P6 string/json/decimal、
-  P2 通用 fn、P3 容器代数 trait)。是 RFC 修订(改决策文档),非写码。
-- **LSP §3.3**:item 1(position-aware completion gating)、item 2(narrowing facts
-  持久化进 TypedExpr)、item 3(fact-driven active_parameter)。真特性,item 2/3
-  纠缠需新 Typed HIR 字段。
+> 把"有源码 / handler"的能力推到"有用户入口 / 端到端路径 / CI 门禁 / 产品体验"。
+> 依据 `issue-backlog-global-gaps.zh.md` §3.1–§3.4。**本 Objective 是本季主要开放面。**
+
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR3.1 | §3.2 死代码诊断清理:`diagnostics.hpp` 无"定义但零发射"的 ErrorCode | ✅ | 审计 23 个:3 wired(`UNEXPECTED_TOKEN`/`MATCH_ARM_TYPE_MISMATCH`/`EFFECT_INCOMPATIBLE`)+ 补 golden,20 删除;计数 134 → 114。commit 779765a6 / d59510e1 |
+| KR3.2 | §3.2 `ConstSema` 收尾:剥离 `TypeCheckPass` 的 source/diagnostic context 状态依赖 | 🔵 | 部分已拆(`const_sema.*`/`expression_sema.*`);剩余状态依赖待剥离 |
+| KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | 🔵 | 大部分已覆盖,一致性收口 + 矩阵完成度待补 |
+| KR3.4 | §3.1 Runtime/LLM 生产化:hour-scale soak、RSS/allocator 趋势可本地 / 常态观测 | ⬜ | 目前只在 `Production Confidence` GitHub Actions 跑,本地不闭环 |
+| KR3.5 | §3.3 LSP 从"handler 可用"到"IDE 可用":hover/completion/signatureHelp 用 Typed HIR + condition facts,source-graph 级增量失效,真实编辑序列回归 | ⬜ | 后两项纠缠,需新 Typed HIR 字段 |
+| KR3.6 | §3.4 工具链入口补齐(P1/P2) | 🔵 | 多数入口已补(fmt/repl/dap/incremental/telemetry),尾巴待收 |
+
+---
+
+## Objective 4 — 结构化 workflow 执行 UX(RFC 0012)收口
+
+> RFC 0012 核心早在 breaking commit `7c3ae2d2` 落地(事件模型 + 投影 + 报告 + renderer +
+> `[run]` 工程启动 + 旧 printer 删除),但 frontmatter 曾停在 `accepted` / `implementation_prs: []`。
+> 本季做了状态核对与真实缺口补齐,目标是把 RFC 推进到 `implemented` / `stabilized`。
+
+| KR | 目标(可验收) | 状态 | 证据 / 待做 |
+|----|----------------|------|-------------|
+| KR4.1 | frontmatter 核对为 `implementing`,8 个实现切片逐项审计入 Decision History | ✅ | commit 4a2cfc28;scope-freeze gate 同步放宽为 `accepted\|implementing` |
+| KR4.2 | slice 7:TTY/`NO_COLOR` 检测 + 状态词 ANSI(剥离 ANSI 后与纯文本逐字节相同) | ✅ | commit 373e65b5 + renderer 单测 |
+| KR4.3 | slice 2:可注入 monotonic clock + fake-clock 确定性单测 | ✅ | commit e980eba1 |
+| KR4.4 | RFC 0012 → `implemented`:逐项 beta-gate 证据核对(`check-beta-gate.py` BETA-01..10) | 🔵 | 把"离 implemented 还差什么"从判断变成机器可验证事实(纯脚本,下一步抓手) |
+| KR4.5 | RFC 0012 → `stabilized`:同步 release migration note + 真实 LLM run 证据 | 🚫 | 当前 run 证据用 local deterministic stub;真实 LLM 需外部 API,环境阻塞 |
+
+---
+
+## 需外部决策 / 决策文档修订(非写码,不计入上述 KR)
+
+- **RFC 0013 边界重审**(`implementing`):4 个 A/B guardrail 冲突(P5 容器、P6
+  string/json/decimal、P2 通用 fn、P3 容器代数 trait),是 RFC 修订而非写码。
+- 明确排除表中的项(gRPC / nuXmv / 第三方 SDK / WASM codegen)维持冻结,除非外部条件
+  (license 可核实、宿主 SDK 立项)变化。
 
 ---
 
@@ -171,76 +110,24 @@ bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修
 
 ---
 
-## 剩余工作(Q4 尚未完成)
+## 进入 Q4 的基线(已完成,支撑 Objective 1)
 
-> M1/M2/M3 与机动项已落地,但 Q4 尚未收官——以下是规划内仍需推进的工作,依据
-> `docs/plans/issue-backlog-global-gaps.zh.md` 的分类与当前 RFC 状态整理。列在这里
-> 即表示它们属于 Q4 验收口径:在这些清完之前,本季规划不算完成。
-
-### 甲、Backlog 主线:已落库但未产品化(优先)
-
-- **§3.2 P0 TypeCheck / Sema 最终闭环**:`TypeCheckPass` 的 source/diagnostic context
-  注入等状态依赖拆分 + 剩余语义测试矩阵。纯代码工程,边界清晰,收益直接。
-  - ✅ **死代码诊断清理(已落地,2026-08-26)**:审计出 23 个 `diagnostics.hpp` 里定义
-    但零发射点的 ErrorCode。3 个有真实站点且被文档化(`parse.UNEXPECTED_TOKEN`、
-    `typecheck.MATCH_ARM_TYPE_MISMATCH`、`typecheck.EFFECT_INCOMPATIBLE`)已 wire up +
-    补 golden;其余 20 个删除(连同未用 template / catalogue 条目 / 编译期 pin)。header
-    ErrorCode 计数 134 → 114。commit 779765a6 / d59510e1。
-  - **待做**:`ConstSema` 收尾(继续剥离 `TypeCheckPass` 状态依赖)、剩余诊断迁移到稳定
-    code/template/related-notes 的一致性收口、语义矩阵测试升级为完成标准。
-- **§3.1 P0 Runtime / LLM Provider 生产化**:hour-scale soak、RSS/allocator 趋势目前
-  只在 `Production Confidence` GitHub Actions workflow 跑,本地不闭环;推进到可本地/常态
-  观测。
-- **§3.3 P1 LSP 从"handler 可用"到"IDE 可用"**:position-aware completion gating、
-  narrowing facts 持久化进 TypedExpr、fact-driven active_parameter(后两项纠缠,需新
-  Typed HIR 字段)。
-- **§3.4 P1/P2 工具链入口补齐**。
-
-### 乙、Formal backend 深化(承接已 stabilized 的 M3)
-
-- **真实求解器 CI 证据**:让真实求解器在 CI 中实际运行并留证,把形式化从"可跑 +
-  fixture/parser 层"推到"可信"。
-  - ✅ **Z3(已落地)**:`smt_bmc.cpp` 新增两个真实 Z3 集成用例(`AHFL_Z3_PATH` 守卫,
-    `ahfl.formal.smt_bmc_real_z3` ctest 在检测到 z3 时运行),端到端验证 RFC 0024/0025
-    的有界量化契约(`forall x in List<Int>(N): P` → 展开 → BMC → 真 Z3:可证 `Safe`、
-    无前置条件时 `Unsafe` 带反例)。commit a4b68265 / 90fbf241。
-  - **待做**:真实 NuSMV / nuXmv 在 CI 留证(本机 z3 有、NuSMV/nuXmv 缺,需环境提供)。
-- counterexample 更深映射、AHFL property semantics 继续深化(§3.5)。
-- §3.6 Pass 与 target backend 产品化;§3.7 质量工程门禁趋势化(compile-time /
-  memory-proxy / SMV-size budget 扩展为趋势报告 + release-blocking 阈值)。
-
-### 丙、RFC 0012 结构化 workflow 执行 UX(`implementing`,承接本季进展)
-
-RFC 0012 的核心其实早在 breaking commit `7c3ae2d2` 就落地了(事件模型 + 投影 + 报告 +
-renderer + `[run]` 工程启动 + 旧 printer 删除),但 frontmatter 一直停在 `accepted` /
-`implementation_prs: []`。2026-08-26 做了状态核对与两处真实缺口补齐:
-
-- ✅ frontmatter `accepted → implementing`,8 个实现切片逐项审计入 Decision History
-  (commit 4a2cfc28)。
-- ✅ slice 7:TTY/`NO_COLOR` 检测 + 状态词 ANSI 上色,剥离 ANSI 后与纯文本逐字节相同
-  (commit 373e65b5)。
-- ✅ slice 2:可注入 monotonic clock + fake-clock 确定性单测(commit e980eba1)。
-- **待做(→ `implemented`)**:逐项 beta-gate 证据核对(`check-beta-gate.py` 的
-  BETA-01..10),把"离 implemented 还差什么"从判断变成机器可验证事实。
-- **待做(→ `stabilized`,env-gated)**:同步 release migration note + **真实 LLM run
-  证据**(当前 run 证据用 local deterministic stub,真实 LLM 需外部 API,环境阻塞)。
-
-### 丁、需外部决策 / 决策文档修订(非写码)
-
-- **RFC 0013 边界重审**(`implementing`):4 个 A/B guardrail 冲突(P5 容器、P6
-  string/json/decimal、P2 通用 fn、P3 容器代数 trait),是 RFC 修订而非写码。
-- 明确排除表中的项(gRPC / nuXmv / 第三方 SDK / WASM codegen)维持冻结,除非外部条件
-  (license 可核实、宿主 SDK 立项)变化。
+- **RFC 0021 slice 1/2/3/5**:`ahfl_host.h` C ABI 契约;`WorkflowRuntime` capability
+  派发从 ABI 函数指针表派生(`NativeHostBinding`);WASM import 对齐;参考宿主 + 绑定
+  等价性测试(native 路径与直连 invoker 在 L1+L2 可观察等价,asan 干净)。
+- **RFC 0022 prereq 1a/1b**:`FieldMap` 有序扁平字段存储 + 统一 `format_double`,使
+  `value_json` 确定性可复现——durable replay 的地基。
+- **基础设施全绿**:`ahfl.product.*` beta-gate 10/10(rg 去依赖化 / GCC `-Werror` 单点降级 /
+  corepack `COREPACK_INTEGRITY_KEYS=0` VSIX 修复);vN.N 版本号测试标签退役为语义 feature 标签。
 
 ---
 
 ## 关键路径与风险
 
-- **M1 是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ M2 演示。这是 Q4 唯一的强顺序约束。
-- **两个 sign-off 门都在 M1 开头**:RFC 0022 `accepted` + 1c 授权。一旦点头,M1 全程
-  可自主推进到 `implemented`。
-- **M3 已提前完成**:原推到 Q1,因 M1/M2 提前收口而作为机动主线提前落地
-  (RFC 0024/0025 均 `stabilized`),不占用 Q4 主线余量。
-- **风险点**:1c 的迁移面(corelib 文档 + 两个 stdlib_unit 测试 + 诊断)可能比预期
-  大;memo 核心的 effect-suppressed 重放是语义敏感区,需要充分的负例测试(exactly-once、
-  fail-closed 类型不符)。
+- **Objective 1 曾是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ capstone 演示,已全部收口。
+- **Objective 4 的下一步抓手是 KR4.4**(beta-gate 逐项核对):纯脚本、可验证,能把 RFC 0012
+  的剩余差距从判断变成事实,是推进到 `implemented` 的前提。
+- **环境阻塞 KR(🚫)不占主线余量**:KR2.5(NuSMV/nuXmv)、KR4.5(真实 LLM)需外部条件,
+  应在环境具备时单独闭环,不阻塞其余 Objective。
+- **风险点**:KR3.2/KR3.5 涉及 `TypeCheckPass` 状态剥离与 Typed HIR 新字段,是语义敏感区,
+  需充分的负例 / 语义矩阵测试;不要为赶 KR 引入临时规则(违反核心设计原则)。
