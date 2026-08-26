@@ -128,11 +128,15 @@ RFC 0017(标量 SMT-BMC 数据谓词,`stabilized`)本已把 Bool/Int 谓词编�
 
 ## 机动 / 次要(有余量时穿插,不阻塞主线)
 
-- **基础设施全绿**:本机全量 ctest 有 4 个 `ahfl.product.*` beta-gate 因**环境缺
-  `rg`(ripgrep)**挂(非回归):evidence 生成脚本 shell out `rg`,本机无该二进制,
-  级联导致 evidence bundle / readme-capabilities 门失败。修法:装 ripgrep 后即绿。
-  这也是 RFC 0024/0025 从 `implemented` 推到 `stabilized` 的唯一卡点(需要 evidence
-  门能跑起来覆盖一个量化契约)。
+- **基础设施全绿(大部分已修复)**:本机全量 ctest 的 `ahfl.product.*` beta-gate 曾因两类
+  环境问题挂,均已在仓库内修复:(1)evidence 脚本 shell out `rg`——已改为 Python 原生
+  递归正则搜索,去掉 ripgrep 外部依赖(`generate-beta-runtime-evidence.py`);(2)GCC 12
+  `-O2 -Werror` 在 ~16 个 TU 上的 `-Wrestrict` / `-Wmaybe-uninitialized` 误报(clang/dev
+  preset 不触发)——已在 `AhflCompiler.cmake` 中对 GCC **单点**把这两个 flag 从 error 降为
+  warning(仍告警;clang 保持全量 -Werror)。**剩余唯一卡点**:`install_evidence_smoke` /
+  `beta_evidence_bundle_ready` 的 VS Code **VSIX 打包步**需要联网(corepack 拉取
+  `pnpm@10.10.0` + registry,离线签名校验失败)——纯环境依赖,非代码问题。这也是把
+  RFC 0024/0025 从 `implemented` 推到 `stabilized` 前,唯一挡在 beta-evidence 门前的外部约束。
 - **vN.N 版本号测试标签退役(已完成)**:`ctest` 标签从 `ahfl-vN.N` / `vN.N-<feature>`
   版本号方案退役为纯语义 feature 标签(`formatter`、`lsp`、`passes` …);伞标签删除,
   文档漂移(`ahfl-core-suite` 等不存在的标签)一并订正。
