@@ -78,14 +78,15 @@ capstone)已全部落库并测试。
 
 > RFC 0012 核心早在 breaking commit `7c3ae2d2` 落地(事件模型 + 投影 + 报告 + renderer +
 > `[run]` 工程启动 + 旧 printer 删除),但 frontmatter 曾停在 `accepted` / `implementation_prs: []`。
-> 本季做了状态核对与真实缺口补齐,目标是把 RFC 推进到 `implemented` / `stabilized`。
+> 本季完成状态核对 + 真实缺口补齐,RFC 已推进到 **`implemented`**(beta-gate 10/10 `ready`);
+> `stabilized` 仅剩 KR4.5(真实 LLM 证据,环境阻塞)。
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
 | KR4.1 | frontmatter 核对为 `implementing`,8 个实现切片逐项审计入 Decision History | ✅ | commit 4a2cfc28;scope-freeze gate 同步放宽为 `accepted\|implementing` |
 | KR4.2 | slice 7:TTY/`NO_COLOR` 检测 + 状态词 ANSI(剥离 ANSI 后与纯文本逐字节相同) | ✅ | commit 373e65b5 + renderer 单测 |
 | KR4.3 | slice 2:可注入 monotonic clock + fake-clock 确定性单测 | ✅ | commit e980eba1 |
-| KR4.4 | RFC 0012 → `implemented`:逐项 beta-gate 证据核对(`check-beta-gate.py` BETA-01..10) | 🔵 | 把"离 implemented 还差什么"从判断变成机器可验证事实(纯脚本,下一步抓手) |
+| KR4.4 | RFC 0012 → `implemented`:逐项 beta-gate 证据核对(`check-beta-gate.py` BETA-01..10) | ✅ | 重新生成证据后 gate `status: ready`,BETA-01..10 全 `passed`;RFC 0012 `implementing → implemented`(commit 见下)。scope-freeze gate 放宽为 `accepted\|implementing\|implemented` |
 | KR4.5 | RFC 0012 → `stabilized`:同步 release migration note + 真实 LLM run 证据 | 🚫 | 当前 run 证据用 local deterministic stub;真实 LLM 需外部 API,环境阻塞 |
 
 ---

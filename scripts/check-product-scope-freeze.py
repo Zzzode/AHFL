@@ -80,23 +80,26 @@ def require_rfc_contract(root: Path) -> list[str]:
     index = read(root, "docs/rfcs/index.yml")
 
     # RFC 0012 defines the freeze as active "从 accepted 到 beta gate 关闭"
-    # (from accepted until the beta gate closes). `implementing` is inside that
-    # window — the surface must stay frozen while the accepted plan is being
-    # built out — so both statuses keep the freeze active.
-    if not re.search(r'^status:\s*"(accepted|implementing)"\s*$', rfc, re.MULTILINE):
+    # (from accepted until the beta gate closes). The gate closes at
+    # `stabilized`, so `implementing` and `implemented` are both still inside the
+    # window — the surface must stay frozen while the accepted plan is built out
+    # and while it awaits stabilization evidence — so all three keep the freeze
+    # active. Only `stabilized` (and pre-acceptance states) lift it.
+    if not re.search(r'^status:\s*"(accepted|implementing|implemented)"\s*$', rfc, re.MULTILINE):
         failures.append(
-            "RFC 0012 must remain accepted or implementing while the beta scope freeze is active"
+            "RFC 0012 must remain accepted, implementing, or implemented while the "
+            "beta scope freeze is active"
         )
     if "https://github.com/Zzzode/AHFL/issues/16" not in rfc:
         failures.append("RFC 0012 must retain tracking issue #16")
     if "### Reference Workflow" not in rfc or "`examples/execution-demo`" not in rfc:
         failures.append("RFC 0012 must define examples/execution-demo as the reference workflow")
     if not re.search(
-        r'rfc:\s*"0012".*?status:\s*"(accepted|implementing)"',
+        r'rfc:\s*"0012".*?status:\s*"(accepted|implementing|implemented)"',
         index,
         re.DOTALL,
     ):
-        failures.append("RFC registry must record RFC 0012 as accepted or implementing")
+        failures.append("RFC registry must record RFC 0012 as accepted, implementing, or implemented")
     return failures
 
 
