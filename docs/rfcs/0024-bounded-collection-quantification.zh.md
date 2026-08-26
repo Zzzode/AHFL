@@ -1,7 +1,7 @@
 ---
 rfc: "0024"
 title: "Bounded Collection Quantification in the Verifiable Subset"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler", "formal"]
 stability: "experimental"
 created: "2026-08-25"
@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["c8a8bd74", "db39a056", "b4e0d2ec", "b2e77158"]
+implementation_prs: ["c8a8bd74", "db39a056", "b4e0d2ec", "b2e77158", "aeedabbe"]
 decision_due: "2026-11-30"
 ---
 
@@ -348,3 +348,16 @@ All three resolved for review (2026-08-25).
   (spec §5.6) in b2e77158. Unit coverage: smt_encode forall/exists/vacuous/
   unbounded/determinism. Stabilization pending release-evidence coverage of a
   quantified contract end-to-end.
+- 2026-08-26: Status implemented → stabilized. The five new diagnostics are
+  documented in the reference catalogue (`docs/reference/error-codes.zh.md`:
+  `formal.UNBOUNDED_QUANTIFIER`, `typecheck.QUANTIFIER_REQUIRES_COLLECTION` /
+  `QUANTIFIER_BODY_REQUIRES_BOOL`, and the RFC 0025
+  `COLLECTION_CAPACITY_*` companions), completing the spec + reference surface.
+  The `ahfl.product.*` beta-evidence gates that run `ahflc verify` / `emit smt`
+  over the contract corpus now pass 10/10 on a stock machine — the release-
+  evidence bundle (`beta_evidence_bundle_ready`) is green — after removing the
+  `rg` shell-out, fixing GCC 12 `-O2 -Werror` false positives at the CMake
+  level, and working around the corepack stale-key bug in VSIX packaging
+  (commits ebf63552, bf243500). Encoding is byte-deterministic and no new SMT
+  sort/theory was introduced, so the verifiable fragment's power and
+  decidability are unchanged from RFC 0017.

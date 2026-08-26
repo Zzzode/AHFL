@@ -1,7 +1,7 @@
 ---
 rfc: "0025"
 title: "Bounded Collection Types"
-status: "implemented"
+status: "stabilized"
 area: ["language", "compiler", "ir", "formal"]
 stability: "experimental"
 created: "2026-08-26"
@@ -16,7 +16,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["14b69f2e", "bcd55fe0", "8f71ae1c", "2209e260", "db39a056", "b2e77158"]
+implementation_prs: ["14b69f2e", "bcd55fe0", "8f71ae1c", "2209e260", "db39a056", "b2e77158", "aeedabbe"]
 decision_due: "2026-11-30"
 ---
 
@@ -336,3 +336,12 @@ All three resolved for review (2026-08-26):
   type_relations capacity lattice, smt_encode unroll/vacuous/unbounded cases.
   Stabilization pending release-evidence coverage of a bounded-collection
   contract end-to-end via RFC 0024.
+- 2026-08-26: Status implemented → stabilized. Spec (§4.3 type form, §5.5
+  capacity subtyping, §5.6 bound source for quantification) and reference
+  (`docs/reference/error-codes.zh.md`: `COLLECTION_CAPACITY_NOT_ALLOWED` /
+  `COLLECTION_CAPACITY_EXCEEDED`, cross-linked from `UNBOUNDED_QUANTIFIER`)
+  surfaces are complete. The `ahfl.product.*` beta-evidence gates pass 10/10 and
+  the release-evidence bundle is green on a stock machine (see RFC 0024's
+  closing entry for the gate-portability fixes). Capacity is a purely static
+  refinement: no runtime enforcement, no new SMT sort — additive and
+  non-breaking, consistent with the scalar `Int(lo,hi)` precedent it mirrors.

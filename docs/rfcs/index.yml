@@ -141,13 +141,13 @@ rfcs:
     stability: "experimental"
   - rfc: "0024"
     title: "Bounded Collection Quantification in the Verifiable Subset"
-    status: "implemented"
+    status: "stabilized"
     file: "0024-bounded-collection-quantification.zh.md"
     area: ["language", "compiler", "formal"]
     stability: "experimental"
   - rfc: "0025"
     title: "Bounded Collection Types"
-    status: "implemented"
+    status: "stabilized"
     file: "0025-bounded-collection-types.zh.md"
     area: ["language", "compiler", "ir", "formal"]
     stability: "experimental"
