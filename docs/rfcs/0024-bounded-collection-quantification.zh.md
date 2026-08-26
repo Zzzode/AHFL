@@ -15,7 +15,7 @@ owners:
 required_reviewers: ["language", "formal"]
 tracking_issue: "none"
 discussion: "none"
-implementation_prs: ["c8a8bd74", "db39a056", "b4e0d2ec", "b2e77158", "aeedabbe"]
+implementation_prs: ["c8a8bd74", "db39a056", "b4e0d2ec", "b2e77158", "aeedabbe", "a4b68265"]
 decision_due: "2026-11-30"
 ---
 
@@ -361,3 +361,10 @@ All three resolved for review (2026-08-25).
   (commits ebf63552, bf243500). Encoding is byte-deterministic and no new SMT
   sort/theory was introduced, so the verifiable fragment's power and
   decidability are unchanged from RFC 0017.
+- 2026-08-26: Real-solver evidence added (commit a4b68265). `smt_bmc.cpp` gains
+  two Z3-backed integration cases (guarded by `AHFL_Z3_PATH`, run by
+  `ahfl.formal.smt_bmc_real_z3` when z3 is detected): a bounded `forall x in xs:
+  x>=1` under precondition `forall x in xs: x>0` proves `Safe`, and the
+  unconditioned form is refuted `Unsafe` with a materialized counterexample —
+  the full encode → unroll → BMC → real Z3 path over a `List<Int>(N)` collection,
+  discharged end-to-end by an actual solver rather than the parse-only fixture.
