@@ -38,6 +38,12 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace ahfl::cli {
 namespace {
 
@@ -113,6 +119,26 @@ execution_verbosity_from_options(const CommandLineOptions &options) {
         return ahfl::runtime::ExecutionVerbosity::Trace;
     }
     return ahfl::runtime::ExecutionVerbosity::Normal;
+}
+
+// RFC 0012 Human Presentation: the human renderer emits ANSI color only when
+// stdout is an interactive terminal and the user has not opted out via the
+// NO_COLOR convention (https://no-color.org). Redirected / piped output and
+// NO_COLOR both fall back to deterministic append-only plain text. Terminal
+// capability only changes styling, never field semantics.
+[[nodiscard]] bool stdout_is_terminal() {
+#if defined(_WIN32)
+    return _isatty(_fileno(stdout)) != 0;
+#else
+    return isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
+[[nodiscard]] bool human_color_enabled() {
+    if (const char *no_color = std::getenv("NO_COLOR"); no_color != nullptr && *no_color != '\0') {
+        return false;
+    }
+    return stdout_is_terminal();
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -1646,11 +1672,17 @@ int run_workflow_with_llm(const ahfl::ir::Program &program,
         }
     }
 
+    const auto output_format = execution_output_format_from_options(options);
+    const bool interactive = stdout_is_terminal();
+    const bool color =
+        output_format == ahfl::runtime::ExecutionOutputFormat::Human && human_color_enabled();
     const auto render_result = ahfl::runtime::render_execution_result(
         result,
         ahfl::runtime::ExecutionOutputOptions{
-            .format = execution_output_format_from_options(options),
+            .format = output_format,
             .verbosity = execution_verbosity_from_options(options),
+            .use_color = color,
+            .interactive_terminal = interactive,
         },
         out);
     if (!render_result.has_value()) {

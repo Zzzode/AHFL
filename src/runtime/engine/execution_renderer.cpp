@@ -397,13 +397,38 @@ event_payload_json(const WorkflowResult &result, const ExecutionEventPayload &pa
     return root;
 }
 
-ExecutionRenderResult render_human(const WorkflowResult &result, std::ostream &out) {
+ExecutionRenderResult render_human(const WorkflowResult &result, std::ostream &out,
+                                   bool use_color) {
+    // RFC 0012 Human Presentation: ANSI styling is applied ONLY to status
+    // keywords and ONLY when the caller has confirmed a color-capable TTY
+    // (use_color). Field content is byte-identical with and without color, so
+    // redirected / NO_COLOR / non-TTY output stays deterministic append-only
+    // plain text.
+    const auto status = [use_color](std::string_view word) -> std::string {
+        if (!use_color) {
+            return std::string(word);
+        }
+        // green = success, red = failure, yellow = skipped, default otherwise.
+        std::string_view code;
+        if (word == "completed") {
+            code = "\x1b[32m";
+        } else if (word == "failed") {
+            code = "\x1b[31m";
+        } else if (word == "skipped") {
+            code = "\x1b[33m";
+        }
+        if (code.empty()) {
+            return std::string(word);
+        }
+        return std::string(code) + std::string(word) + "\x1b[0m";
+    };
+
     const auto *workflow = workflow_metadata(result);
     out << (workflow != nullptr ? workflow->display_name : std::string{"<workflow>"}) << "  "
-        << run_status_name(result.report.status) << "\n\nSteps\n";
+        << status(run_status_name(result.report.status)) << "\n\nSteps\n";
     for (const auto &node : result.report.nodes) {
         const auto *metadata = node_metadata(result, node.node);
-        out << "  " << node_status_name(node.status) << "  "
+        out << "  " << status(node_status_name(node.status)) << "  "
             << (metadata != nullptr ? metadata->display_name : std::string{"<node>"});
         if (metadata != nullptr) {
             if (const auto *agent = result.metadata.agent(metadata->agent); agent != nullptr) {
@@ -419,8 +444,8 @@ ExecutionRenderResult render_human(const WorkflowResult &result, std::ostream &o
     } else {
         out << "(none)";
     }
-    out << "\n\n" << run_status_name(result.report.status) << ' ' << result.report.nodes.size()
-        << '/' << result.report.nodes.size() << " nodes";
+    out << "\n\n" << status(run_status_name(result.report.status)) << ' '
+        << result.report.nodes.size() << '/' << result.report.nodes.size() << " nodes";
     if (result.report.usage.records != 0) {
         out << ", " << result.report.usage.records << " usage record";
         if (result.report.usage.records != 1) {
@@ -475,7 +500,7 @@ ExecutionRenderResult render_execution_result(const WorkflowResult &result,
 
     switch (options.format) {
     case ExecutionOutputFormat::Human:
-        return render_human(result, out);
+        return render_human(result, out, options.use_color);
     case ExecutionOutputFormat::Json:
         out << ahfl::json::serialize_json(*report_json(result)) << '\n';
         return {};

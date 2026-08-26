@@ -225,6 +225,50 @@ void test_human_renderer_uses_metadata_boundary() {
     check(first == text.rfind("incident resolved"), "final value is not duplicated");
 }
 
+// RFC 0012 Human Presentation: ANSI color is applied only under use_color, and
+// only to status keywords — field content must be byte-identical to the
+// plain-text path once escape sequences are stripped.
+void test_human_renderer_color_is_opt_in_and_semantics_preserving() {
+    const auto result = make_result();
+
+    std::ostringstream plain_out;
+    const auto plain = render_execution_result(
+        result,
+        ExecutionOutputOptions{.format = ExecutionOutputFormat::Human, .use_color = false},
+        plain_out);
+    check(plain.has_value(), "plain human render succeeds");
+    const auto plain_text = plain_out.str();
+    check(plain_text.find('\x1b') == std::string::npos,
+          "color-off human output contains no ANSI escape");
+
+    std::ostringstream color_out;
+    const auto colored = render_execution_result(
+        result,
+        ExecutionOutputOptions{.format = ExecutionOutputFormat::Human, .use_color = true},
+        color_out);
+    check(colored.has_value(), "colored human render succeeds");
+    const auto color_text = color_out.str();
+    check(color_text.find("\x1b[32m") != std::string::npos,
+          "color-on human output styles the completed status green");
+    check(color_text.find("\x1b[0m") != std::string::npos, "color-on output resets styling");
+
+    // Stripping every ANSI SGR sequence from the colored output must reproduce
+    // the plain output exactly: color changes styling, never field semantics.
+    std::string stripped;
+    for (std::size_t i = 0; i < color_text.size();) {
+        if (color_text[i] == '\x1b' && i + 1 < color_text.size() && color_text[i + 1] == '[') {
+            const auto end = color_text.find('m', i);
+            if (end != std::string::npos) {
+                i = end + 1;
+                continue;
+            }
+        }
+        stripped.push_back(color_text[i]);
+        ++i;
+    }
+    check(stripped == plain_text, "stripped colored output equals plain output byte for byte");
+}
+
 void test_json_renderer_emits_versioned_report() {
     const auto result = make_result();
     std::ostringstream out;
@@ -349,6 +393,7 @@ void test_quiet_renderer_only_emits_value_json() {
 
 int main() {
     test_human_renderer_uses_metadata_boundary();
+    test_human_renderer_color_is_opt_in_and_semantics_preserving();
     test_json_renderer_emits_versioned_report();
     test_jsonl_renderer_emits_terminal_event_last();
     test_jsonl_renderer_materializes_referenced_diagnostics();

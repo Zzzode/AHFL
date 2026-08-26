@@ -132,13 +132,21 @@ def main() -> int:
         require(result.returncode == 0, f"surface deletion must remain allowed:\n{result.stderr}")
 
         rfc = root / "docs/rfcs/0012-structured-workflow-execution-ux.zh.md"
+        # The freeze is active while RFC 0012 is accepted OR implementing (from
+        # accepted until the beta gate closes). Flipping it to a status outside
+        # that window (draft) must trip the gate.
         rfc.write_text(
-            rfc.read_text(encoding="utf-8").replace('status: "accepted"', 'status: "draft"', 1),
+            rfc.read_text(encoding="utf-8").replace(
+                'status: "implementing"', 'status: "draft"', 1
+            ),
             encoding="utf-8",
         )
         result = run_checker(checker, root)
-        require(result.returncode != 0, "freeze gate must require accepted RFC 0012")
-        require("accepted" in result.stderr, "RFC status failure must explain accepted requirement")
+        require(result.returncode != 0, "freeze gate must require accepted or implementing RFC 0012")
+        require(
+            "accepted or implementing" in result.stderr,
+            "RFC status failure must explain the accepted/implementing requirement",
+        )
 
     print("product scope freeze smoke passed")
     return 0
