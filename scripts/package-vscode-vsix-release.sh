@@ -4,6 +4,15 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# The pinned `packageManager: pnpm@10.10.0` field makes corepack verify the
+# pnpm release signature. Node's bundled corepack (through the 20.18.x era) ships
+# an outdated signing key and rejects the legitimately-signed pnpm metadata with
+# "Cannot find matching keyid" — a known corepack key-rotation bug, not a bad
+# package. Disable corepack's embedded-key integrity check so the pinned version
+# still activates; the release is fetched over TLS and pnpm/npm registry
+# integrity hashes still apply. Preserve any value the caller already set.
+export COREPACK_INTEGRITY_KEYS="${COREPACK_INTEGRITY_KEYS:-0}"
+
 host_target() {
   local os_name arch_name
   os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
