@@ -163,6 +163,46 @@ bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修
 
 ---
 
+## Q4 收官后的后续工作(下一阶段候选,非本季)
+
+> Q4 本季范围(M1/M2/M3 + 机动)已全部达成。以下是收官后的候选主线,依据
+> `docs/plans/issue-backlog-global-gaps.zh.md` 的分类与当前 RFC 状态整理,供下一阶段
+> 排期,**不属于 Q4 验收口径**。
+
+### 甲、Backlog 主线:已落库但未产品化(优先)
+
+- **§3.2 P0 TypeCheck / Sema 最终闭环**:`TypeCheckPass` 的 source/diagnostic context
+  注入等状态依赖拆分 + 剩余语义测试矩阵。纯代码工程,边界清晰,收益直接。
+- **§3.1 P0 Runtime / LLM Provider 生产化**:hour-scale soak、RSS/allocator 趋势目前
+  只在 `Production Confidence` GitHub Actions workflow 跑,本地不闭环;推进到可本地/常态
+  观测。
+- **§3.3 P1 LSP 从"handler 可用"到"IDE 可用"**:position-aware completion gating、
+  narrowing facts 持久化进 TypedExpr、fact-driven active_parameter(后两项纠缠,需新
+  Typed HIR 字段)。
+- **§3.4 P1/P2 工具链入口补齐**。
+
+### 乙、Formal backend 深化(承接已 stabilized 的 M3)
+
+- **真实求解器 CI 证据(推荐首选)**:让真实 NuSMV / nuXmv / Z3 在 CI 中实际运行并留证,
+  把形式化从"可跑 + fixture/parser 层"推到"可信"。这是把第二护城河做实的关键一步,直接
+  承接 RFC 0017/0024/0025 已 `stabilized` 的成果。
+- counterexample 更深映射、AHFL property semantics 继续深化(§3.5)。
+- §3.6 Pass 与 target backend 产品化;§3.7 质量工程门禁趋势化。
+
+### 丙、待实现的已接受 RFC(可独立启动)
+
+- **RFC 0012 结构化 workflow 执行 UX**(`accepted`):唯一"已接受但未实现"的 RFC,是个
+  完整特性,可作为一条独立主线启动(执行事件模型 + CLI 呈现)。
+
+### 丁、需外部决策 / 决策文档修订(非写码)
+
+- **RFC 0013 边界重审**(`implementing`):4 个 A/B guardrail 冲突(P5 容器、P6
+  string/json/decimal、P2 通用 fn、P3 容器代数 trait),是 RFC 修订而非写码。
+- 明确排除表中的项(gRPC / nuXmv / 第三方 SDK / WASM codegen)维持冻结,除非外部条件
+  (license 可核实、宿主 SDK 立项)变化。
+
+---
+
 ## 关键路径与风险
 
 - **M1 是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ M2 演示。这是 Q4 唯一的强顺序约束。
