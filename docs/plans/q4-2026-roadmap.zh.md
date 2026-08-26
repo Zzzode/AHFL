@@ -3,7 +3,7 @@
 > 规划轴:项目北极星([RFC 0020](../rfcs/0020-strategic-positioning-embeddable-workflow-dsl.zh.md))——
 > 可嵌入、可验证的 agent workflow 编排 DSL。本季度**深度优先**:集中火力把
 > **可嵌入性**从"文档定位 + 已铺地基"推到**一个可演示的端到端事实**;第二护城河
-> BMC 契约语义(M3)推到 Q1。
+> BMC 契约语义(M3)原计划推到 Q1,**已在 8 月机动提前完成**(见 M3)。
 >
 > 状态以当前源码/测试/RFC frontmatter 为准。时间窗:Q4 = 2026-10 ~ 2026-12(9 月预热)。
 
@@ -96,20 +96,46 @@
 
 ---
 
-## M3 — 第二护城河:BMC 契约语义(推迟到 Q1,本季度不做)
+## M3 — 第二护城河:BMC 契约语义(原推迟 Q1,✅ 已于 8 月机动提前完成)
 
 backlog §3.5 item 1:把 BMC 从"状态图可达性"推进到真正的 AHFL 契约/属性语义
 (requires/ensures/invariant 数据谓词编码进 SMT、定义可验证子集边界、与 SMV/nuXmv
-后端共存)。**本季度深度优先决策下推迟到 Q1**;若 M1 提前完成且有余量,可作为 12 月
-的机动主线提前启动。
+后端共存)。**原定深度优先推迟到 Q1**;因 M1/M2 提前收口,已作为机动主线提前启动并完成。
+
+RFC 0017(标量 SMT-BMC 数据谓词,`stabilized`)本已把 Bool/Int 谓词编码进可验证子集。
+本季在其之上补齐了集合量化这一缺口,通过两个新 RFC:
+
+- **[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)(有界集合量化)→ `implemented`**:
+  `forall x in coll: P` / `exists (k,v) in coll: P` over List/Set/Map,经**有限展开**进
+  已有的标量 SMT-BMC 编码器(`forall`→`(and …)`、`exists`→`(or …)`、空集合→`true`/`false`
+  vacuous),不引入 SMT array/sequence theory,可验证子集保持可判定。语法 → 类型检查
+  (`QUANTIFIER_REQUIRES_COLLECTION` / `QUANTIFIER_BODY_REQUIRES_BOOL`)→ `ir::QuantifierExpr`
+  → SMT 展开(index-based `coll@i` 元素符号)→ 反例元素索引映射(`coll@i`→`coll[i]`)→
+  spec §5.6,全链路 + 单测落库。
+- **[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md)(有界集合类型 `List<T>(N)`)→ `implemented`**:
+  实现 RFC 0024 时发现其展开所依赖的"集合长度静态上界来源"在 AHFL 并不存在(彼时只有
+  标量 `Int(lo,hi)` 精化,集合是无精化的名义 `StructT`)。补上 `List<T>(N)` / `Set<T>(N)` /
+  `Map<K,V>(N)` capacity 精化(标量精化在容器上的对应物):语法 → interning(参与结构化
+  identity)→ capacity 子类型格(`(N) <: 无界`、`N <= M` 放宽)→ IR 下沉 → 形式化访问器
+  + `UNBOUNDED_QUANTIFIER` fail-closed → spec §4.3/§5.5/§5.6。
+
+**退出:RFC 0024/0025 均 `implemented`。** 无静态上界的集合上做量化按
+`formal.UNBOUNDED_QUANTIFIER` fail-closed 拒绝;有界集合契约端到端可验证。
+两者 `stabilized` 待 release-evidence 覆盖一个量化契约端到端(需先补 `rg` 环境,
+见"机动/次要")。
 
 ---
 
 ## 机动 / 次要(有余量时穿插,不阻塞主线)
 
-- **基础设施全绿**:本机全量 ctest 有 4 个 `ahfl.product.*` gate 因环境挂(非回归):
-  2 个缺 `rg`,2 个是 GCC 12 `-O3` 在 `src/base/support/curl.cpp` 的
-  `-Werror=restrict` 误报。修法:装 ripgrep + 对该误报加局部 pragma 抑制或降优化级。
+- **基础设施全绿**:本机全量 ctest 有 4 个 `ahfl.product.*` beta-gate 因**环境缺
+  `rg`(ripgrep)**挂(非回归):evidence 生成脚本 shell out `rg`,本机无该二进制,
+  级联导致 evidence bundle / readme-capabilities 门失败。修法:装 ripgrep 后即绿。
+  这也是 RFC 0024/0025 从 `implemented` 推到 `stabilized` 的唯一卡点(需要 evidence
+  门能跑起来覆盖一个量化契约)。
+- **vN.N 版本号测试标签退役(已完成)**:`ctest` 标签从 `ahfl-vN.N` / `vN.N-<feature>`
+  版本号方案退役为纯语义 feature 标签(`formatter`、`lsp`、`passes` …);伞标签删除,
+  文档漂移(`ahfl-core-suite` 等不存在的标签)一并订正。
 - **RFC 0013 边界重审**:4 个 A/B guardrail 冲突(P5 容器、P6 string/json/decimal、
   P2 通用 fn、P3 容器代数 trait)。是 RFC 修订(改决策文档),非写码。
 - **LSP §3.3**:item 1(position-aware completion gating)、item 2(narrowing facts
@@ -134,7 +160,8 @@ backlog §3.5 item 1:把 BMC 从"状态图可达性"推进到真正的 AHFL 契�
 - **M1 是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ M2 演示。这是 Q4 唯一的强顺序约束。
 - **两个 sign-off 门都在 M1 开头**:RFC 0022 `accepted` + 1c 授权。一旦点头,M1 全程
   可自主推进到 `implemented`。
-- **M3 已解耦**:推到 Q1,不阻塞 Q4;若 M1 提前完成可作为机动提前启动。
+- **M3 已提前完成**:原推到 Q1,因 M1/M2 提前收口而作为机动主线提前落地
+  (RFC 0024/0025 均 `implemented`),不占用 Q4 主线余量。
 - **风险点**:1c 的迁移面(corelib 文档 + 两个 stdlib_unit 测试 + 诊断)可能比预期
   大;memo 核心的 effect-suppressed 重放是语义敏感区,需要充分的负例测试(exactly-once、
   fail-closed 类型不符)。
