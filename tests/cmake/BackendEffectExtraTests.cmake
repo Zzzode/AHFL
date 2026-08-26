@@ -28,7 +28,7 @@ add_test(NAME ahflc.passes.runtime_plan_backend_effect
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-passes
+    LABELS passes
     TESTS
         ahflc.passes.dead_state_elimination_gate
         ahflc.passes.runtime_plan_backend_effect

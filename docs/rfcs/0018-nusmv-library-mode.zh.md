@@ -179,7 +179,7 @@ nuXmv 的分发许可（非 OSI 开源，学术/评估许可）与"链接进发�
    可信的核心 gate。
 - **工具缺失（反向）**：库路径未提供 / `dlopen` 失败 → 确定 `MissingLibrary` skip，
    退出码与 `MissingBinary` 一致，绝不伪造 verdict。
-- **回归**：`ctest --preset test-dev -L v0.59-formal-integration`；默认（OFF）构建的现有
+- **回归**：`ctest --preset test-dev -L formal-integration`；默认（OFF）构建的现有
    nuXmv process 测试无回归。
 - **确定性**：library-mode 结果无 wall-clock / host-path 泄漏进 artifact。
 

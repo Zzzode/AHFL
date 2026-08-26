@@ -54,9 +54,7 @@
 - `reference-consumer`
   - direct handoff Package Reader Summary / Execution Planner Bootstrap 正例与负例
 
-这些标签都挂在统一总标签：
-
-- `ahfl-package-suite`
+这些切片通过 `package-*` 等按能力命名的语义标签选择（不再有统一总标签或版本号）。
 
 ### 为什么分成这四层
 
@@ -287,8 +285,8 @@ project-aware 能力不是“给单文件命令加搜索路径”，它引入了
 
 当前通过 `tests/cmake/*.cmake` 这组注册文件为关键新增能力追加显式标签与回归项：
 
-- `ahfl-core-suite`
-  - 所有收口回归的总标签。
+- 收口回归通过按能力命名的语义标签（feature label）选择，不再有版本号或总标签；
+  用 `ctest -L '(...)'` 组合多个 feature label 选择一组切片。
 - `project-model`
   - manifest / workspace 的 descriptor 驱动入口、正例与负例。
 - `project-debug`
@@ -311,7 +309,6 @@ project-aware 能力不是“给单文件命令加搜索路径”，它引入了
 本地可直接执行：
 
 ```bash
-ctest --preset test-dev -L ahfl-core-suite
 ctest --preset test-dev -L '(project-model|project-debug|semantics|compat)'
 ctest --preset test-dev -L '(ir|backend)'
 ```
@@ -405,7 +402,7 @@ CI 也显式执行这些切片，然后再继续跑全量 `ctest --preset test-d
 
 - `tests/handoff/*.cpp`
 - `tests/native/*.native.json`
-- `ahfl_label_tests(... LABELS ahfl-package-suite package-*)`
+- `ahfl_label_tests(... LABELS package-*)`
 
 ### 新能力的最小补测路径
 

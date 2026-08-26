@@ -39,5 +39,5 @@ add_test(NAME ahfl.mutation.fallback_score
 )
 set_tests_properties(ahfl.mutation.fallback_score PROPERTIES
     PASS_REGULAR_EXPRESSION "Mutation fallback score report ok"
-    LABELS "ahfl-v0.59;v0.59-mutation;v0.59-quality-gates"
+    LABELS "mutation;quality-gates"
 )

@@ -300,5 +300,5 @@ git diff --check
 ```bash
 cmake --build --preset build-release --target ahfl-lsp
 cmake --build --preset build-dev --target ahfl_tooling_lsp_json_rpc_tests ahfl_tooling_lsp_handler_tests
-ctest --preset test-dev --output-on-failure -L ahfl-lsp
+ctest --preset test-dev --output-on-failure -L lsp
 ```

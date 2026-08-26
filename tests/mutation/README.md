@@ -111,8 +111,8 @@ score.
 | `ahfl.mutation.config_report` | `mutation_config.json` plumbing is well-formed (budgets on targets/suites/mutators) |
 | `ahfl.mutation.fallback_score` | Runs `run_fallback_mutation.sh` and validates the JSON score report is produced and structurally well-formed: schema, status, `killed + survived == evaluated`, at least the fixed mutant set was evaluated, each mutant has an `id` and a valid `outcome`. It does **not** gate on an absolute score threshold (that would be flaky). |
 
-Both are labelled `v0.59-mutation` and `v0.59-quality-gates`.
+Both are labelled `mutation` and `quality-gates`.
 
 ```bash
-ctest --preset test-dev -L v0.59-mutation --output-on-failure
+ctest --preset test-dev -L mutation --output-on-failure
 ```

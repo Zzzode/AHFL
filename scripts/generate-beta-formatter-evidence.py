@@ -41,7 +41,7 @@ def main() -> int:
             str(build),
             "--output-on-failure",
             "-L",
-            "v0.59-formatter",
+            "formatter",
         ],
         repo,
     )
@@ -107,7 +107,7 @@ def main() -> int:
             "imports",
             "visibility",
         ],
-        "test_command": f"ctest --test-dir {build} --output-on-failure -L v0.59-formatter",
+        "test_command": f"ctest --test-dir {build} --output-on-failure -L formatter",
         "gate_command": "AHFLC=build/dev/src/tooling/cli/ahflc scripts/ci-format-check.sh",
     }
     output.parent.mkdir(parents=True, exist_ok=True)

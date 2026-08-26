@@ -1,5 +1,5 @@
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-project-model
+    LABELS project-model
     TESTS
         ahflc.dump_package_graph.workspace_basic
         ahflc.check.discover_nested_package_uses_nearest_manifest
@@ -11,14 +11,14 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-project-debug
+    LABELS project-debug
     TESTS
         ahflc.dump_package_graph.manifest_basic
         ahflc.dump_lockfile.manifest_basic
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-semantics
+    LABELS semantics
     TESTS
         ahflc.check.workspace.check_ok_cross_file
         ahflc.check.workspace.fail_node_input
@@ -29,7 +29,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-ir
+    LABELS ir
     TESTS
         ahflc.emit_ir.workflow_value_flow
         ahflc.emit_ir_json.workflow_value_flow
@@ -38,7 +38,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-backend
+    LABELS backend
     TESTS
         ahflc.emit_summary.workflow_value_flow
         ahflc.emit_summary.manifest.workflow_value_flow
@@ -46,7 +46,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.3 v0.3-compat
+    LABELS compat
     TESTS
         ahflc.check.search_root_removed
         ahflc.check.detached_import_rejected
@@ -56,14 +56,14 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.4 v0.4-package-model
+    LABELS package-model
     TESTS
         ahfl.handoff.package.project_workflow_value_flow
         ahfl.handoff.package.file_expr_temporal
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.4 v0.4-package-emission
+    LABELS package-emission
     TESTS
         ahflc.emit_native_json.expr_temporal
         ahflc.emit_native_json.workflow_value_flow
@@ -72,7 +72,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.4 v0.4-package-compat
+    LABELS package-compat
     TESTS
         ahfl.handoff.package_compat.normalize_identity_format_version
         ahfl.handoff.package_compat.omit_empty_provenance
@@ -80,7 +80,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.5 v0.5-package-authoring-emission
+    LABELS package-authoring-emission
     TESTS
         ahflc.emit_native_json.package_requires_workspace
         ahflc.emit_native_json.rejects_legacy_package_json
@@ -91,7 +91,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.5 v0.5-package-authoring-validation
+    LABELS package-authoring-validation
     TESTS
         ahfl.handoff.package.validate_normalizes_display_names
         ahfl.handoff.package.validate_rejects_wrong_kind
@@ -100,7 +100,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.5 v0.5-package-review
+    LABELS package-review
     TESTS
         ahflc.emit_package_review.workflow_value_flow.with_package
         ahflc.emit_package_review.manifest_basic
@@ -110,7 +110,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.5 v0.5-reference-consumer
+    LABELS reference-consumer
     TESTS
         ahfl.handoff.package.package_reader_summary.project_workflow_value_flow
         ahfl.handoff.package.package_reader_summary.fail_missing_export
@@ -125,14 +125,14 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-execution-plan-model
+    LABELS execution-plan-model
     TESTS
         ahfl.handoff.package.execution_plan.project_workflow_value_flow
         ahfl.handoff.package.execution_plan.fail_agent_entry
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-execution-plan-emission
+    LABELS execution-plan-emission
     TESTS
         ahflc.emit_execution_plan.workflow_value_flow.with_package
         ahflc.emit_execution_plan.manifest_basic
@@ -141,7 +141,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-execution-plan-validation
+    LABELS execution-plan-validation
     TESTS
         ahfl.handoff.package.execution_plan.validate_project_workflow_value_flow
         ahfl.handoff.package.execution_plan.validate_fail_missing_entry_workflow
@@ -150,14 +150,14 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-dry-run-model
+    LABELS dry-run-model
     TESTS
         ahfl.dry_run.local.project_workflow_value_flow
         ahfl.dry_run.local.fail_missing_workflow
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-dry-run-mock-input
+    LABELS dry-run-mock-input
     TESTS
         ahfl.dry_run.mock_set.parse_ok
         ahfl.dry_run.mock_set.parse_fail_duplicate_selector
@@ -167,7 +167,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.6 v0.6-dry-run-trace
+    LABELS dry-run-trace
     TESTS
         ahflc.emit_dry_run_trace.workflow_value_flow.with_package
         ahflc.emit_dry_run_trace.manifest_requires_capability_mocks
@@ -177,7 +177,7 @@ ahfl_label_tests(
 
 
 ahfl_label_tests(
-    LABELS ahfl-v0.51 v0.51-expression-evaluator
+    LABELS expression-evaluator
     TESTS
         ahfl.evaluator.eval_all
 )
@@ -202,31 +202,31 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.52 v0.52-statement-executor
+    LABELS statement-executor
     TESTS
         ahfl.executor.exec_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.53 v0.53-agent-state-machine-runtime
+    LABELS agent-state-machine-runtime
     TESTS
         ahfl.runtime.agent_runtime_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.54 v0.54-workflow-integration
+    LABELS workflow-integration
     TESTS
         ahfl.runtime.workflow_runtime_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.55 v0.55-capability-bridge
+    LABELS capability-bridge
     TESTS
         ahfl.runtime.capability_bridge_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-host-abi
+    LABELS host-abi
     TESTS
         ahfl.runtime.host_abi_all
 )
@@ -244,7 +244,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.55 v0.55-e2e
+    LABELS e2e
     TESTS
         ahfl.runtime.e2e_workflow
         ahfl.runtime.enum_variant_e2e
@@ -252,7 +252,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.56 v0.56-llm-provider
+    LABELS llm-provider
     TESTS
         ahfl.llm_provider.all
         ahflc.run.llm_config.fail_missing_api_key_secret
@@ -270,13 +270,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.57 v0.57-http-transport
+    LABELS http-transport
     TESTS
         ahfl.runtime.http_transport_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.57 v0.57-grpc-transport
+    LABELS grpc-transport
     TESTS
         ahfl.runtime.grpc_transport_all
         ahfl.runtime.native_grpc_gate
@@ -284,21 +284,21 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-json-dom
+    LABELS json-dom
     TESTS
         ahfl.json.value_all
         ahfl.runtime.value_json_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-secret
+    LABELS secret
     TESTS
         ahfl.secret.provider_all
         ahfl.secret.vault_rotation_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-passes
+    LABELS passes
     TESTS
         ahfl.passes.pass_manager_all
         ahflc.passes.semantic_backend_effect
@@ -306,45 +306,45 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-llm-streaming
+    LABELS llm-streaming
     TESTS
         ahfl.llm_provider.streaming_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-lsp
+    LABELS lsp
     TESTS
         ahfl.lsp.json_rpc_all
         ahfl.lsp.process_smoke
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-lsp-handlers
+    LABELS lsp-handlers
     TESTS
         ahfl.lsp.handler_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.58 v0.58-connection-pool
+    LABELS connection-pool
     TESTS
         ahfl.runtime.connection_pool_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-error-recovery
+    LABELS error-recovery
     TESTS
         ahfl.frontend.error_recovery_all
 )
 
 # Wave-21 A-1: parser stack-depth guard (PARSER_STACK_OVERFLOW diagnostic)
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-parser-hardening
+    LABELS parser-hardening
     TESTS
         ahfl.frontend.parser_stack_depth_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-support-lib
+    LABELS support-lib
     TESTS
         ahfl.support.thread_pool_all
         ahfl.support.version_all
@@ -354,13 +354,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-bmc
+    LABELS formal-bmc
     TESTS
         ahfl.formal.bmc_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-model-checker
+    LABELS formal-model-checker
     TESTS
         ahfl.formal.model_checker_backends_all
         ahflc.verify_formal.state_space_report
@@ -373,97 +373,97 @@ ahfl_label_tests(
 
 if(AHFL_Z3_SOLVER)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+        LABELS formal-smt-bmc
         TESTS
             ahflc.verify_formal.smt_bmc_refutation
     )
 endif()
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-integration
+    LABELS formal-integration
     TESTS
         ahfl.formal.integration_improvement_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-counterexample
+    LABELS formal-counterexample
     TESTS
         ahfl.formal.counterexample_parse_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-smt-encode
+    LABELS formal-smt-encode
     TESTS
         ahfl.formal.smt_encode_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-subset-eligibility
+    LABELS formal-subset-eligibility
     TESTS
         ahfl.formal.subset_eligibility_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-smt-emit
+    LABELS formal-smt-emit
     TESTS
         ahfl.formal.smt_emit_all
         ahflc.emit_smt.encoding
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-smt-solver
+    LABELS formal-smt-solver
     TESTS
         ahfl.formal.smt_solver_all
 )
 
 if(AHFL_Z3_SOLVER)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-formal-smt-solver
+        LABELS formal-smt-solver
         TESTS
             ahfl.formal.smt_solver_real_z3
     )
 endif()
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+    LABELS formal-smt-bmc
     TESTS
         ahfl.formal.smt_bmc_all
 )
 
 if(AHFL_Z3_SOLVER)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-formal-smt-bmc
+        LABELS formal-smt-bmc
         TESTS
             ahfl.formal.smt_bmc_real_z3
     )
 endif()
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formal-bmc-depth
+    LABELS formal-bmc-depth
     TESTS
         ahfl.formal.bmc_depth_customization_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-parallel-scheduler
+    LABELS parallel-scheduler
     TESTS
         ahfl.runtime.parallel_scheduler_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-sandbox
+    LABELS sandbox
     TESTS
         ahfl.runtime.sandbox_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-distributed
+    LABELS distributed
     TESTS
         ahfl.runtime.distributed_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-formatter
+    LABELS formatter
     TESTS
         ahflc.fmt.formats_file_with_config
         ahflc.fmt.check_pass
@@ -476,21 +476,21 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-repl
+    LABELS repl
     TESTS
         ahfl.repl.repl_all
         ahfl.repl.process_smoke
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-dap
+    LABELS dap
     TESTS
         ahfl.dap.basic_all
         ahfl.dap.process_smoke
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-telemetry
+    LABELS telemetry
     TESTS
         ahfl.telemetry.telemetry_all
 )
@@ -540,7 +540,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-profiling
+    LABELS profiling
     TESTS
         ahfl.profiling.profiling_all
         ahflc.profile.time_passes.emit_summary
@@ -551,13 +551,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-abi
+    LABELS abi
     TESTS
         ahfl.abi.compat_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-incremental
+    LABELS incremental
     TESTS
         ahfl.incremental.incremental_all
         ahfl.incremental.process_smoke
@@ -565,13 +565,13 @@ ahfl_label_tests(
 
 if(AHFL_ENABLE_BACKEND_INFRA)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-wasm-backend
+        LABELS wasm-backend
         TESTS
             ahfl.backends.wasm_all
     )
 
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-target-backends
+        LABELS target-backends
         TESTS
             ahfl.backends.targets_all
     )
@@ -589,7 +589,7 @@ endif()
 # that were never registered.
 if(AHFL_ENABLE_FUZZING)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-fuzzing v0.59-quality-gates
+        LABELS fuzzing quality-gates
         TESTS
             ahfl.fuzz.fuzz_parser.crash_replay
             ahfl.fuzz.fuzz_typecheck.crash_replay
@@ -597,7 +597,7 @@ if(AHFL_ENABLE_FUZZING)
     )
 else()
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-fuzzing
+        LABELS fuzzing
         TESTS
             ahfl.fuzz.parser_check
             ahfl.fuzz.typecheck_check
@@ -606,7 +606,7 @@ else()
 endif()
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-benchmarks
+    LABELS benchmarks
     TESTS
         ahfl.bench.compile_time
         ahfl.bench.memory_usage
@@ -619,7 +619,7 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-docs
+    LABELS docs
     TESTS
         ahfl.docs.ir_sync_gate
         ahfl.docs.rfc_check
@@ -627,26 +627,26 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-package
+    LABELS package
     TESTS
         ahfl.package.package_all
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-property-testing
+    LABELS property-testing
     TESTS
         ahfl.property.lowering_equiv
         ahfl.property.smv_syntax
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-mutation
+    LABELS mutation
     TESTS
         ahfl.mutation.config_report
 )
 
 ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-quality-gates
+    LABELS quality-gates
     TESTS
         ahfl.architecture.boundaries
         ahfl.runtime.native_grpc_gate
@@ -665,11 +665,11 @@ ahfl_label_tests(
 )
 
 # The fuzz *_check quality-gate members only exist when fuzzing is OFF; the
-# ON configuration's crash_replay tests carry the v0.59-quality-gates label
+# ON configuration's crash_replay tests carry the quality-gates label
 # via the fuzzing block above.
 if(NOT AHFL_ENABLE_FUZZING)
     ahfl_label_tests(
-        LABELS ahfl-v0.59 v0.59-quality-gates
+        LABELS quality-gates
         TESTS
             ahfl.fuzz.parser_check
             ahfl.fuzz.typecheck_check
