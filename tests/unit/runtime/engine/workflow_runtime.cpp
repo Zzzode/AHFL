@@ -5,6 +5,7 @@
 #include "runtime/evaluator/value.hpp"
 
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -250,6 +251,68 @@ void test_single_node_workflow() {
     check(result.report.nodes[0].status == NodeReportStatus::Completed,
           "single_node.node_completed");
     check(!result.has_errors(), "single_node.no_errors");
+}
+
+// RFC 0012 slice 2: an injected monotonic clock makes event offsets fully
+// deterministic — the runtime measures every event against the first reading,
+// so a clock that advances a fixed step per call yields offsets 0, step, 2*step,
+// ... regardless of wall time (Test Plan #3, fake-clock).
+void test_injected_monotonic_clock_is_deterministic() {
+    Program program;
+    program.declarations.push_back(make_echo_agent("EchoAgent"));
+    program.declarations.push_back(make_echo_flow("EchoAgent", "42"));
+
+    WorkflowDecl workflow;
+    workflow.name = "ClockWorkflow";
+    workflow.input_type_ref = make_named_type_ref("WfInput");
+    workflow.output_type_ref = make_named_type_ref("WfOutput");
+    workflow.nodes.push_back(make_node("echo", "EchoAgent"));
+    program.declarations.push_back(std::move(workflow));
+
+    // A fake clock that advances exactly 1ms each time it is read, from a fixed
+    // origin. std::function is called once for started_at then once per emitted
+    // event, so offsets are (reading_index) * 1ms.
+    const auto origin = std::chrono::steady_clock::time_point{};
+    std::uint64_t ticks = 0;
+    WorkflowRuntimeConfig config;
+    config.monotonic_clock = [origin, &ticks]() {
+        return origin + std::chrono::milliseconds(static_cast<long long>(ticks++));
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("ClockWorkflow", make_none());
+
+    check(result.status() == WorkflowStatus::Completed, "clock.status_completed");
+    const auto &events = result.events.events();
+    check(!events.empty(), "clock.events_present");
+    // started_at consumed reading 0; event i was emitted at reading (i+1), so
+    // its offset is exactly (i+1) ms. Strictly increasing, deterministic.
+    bool offsets_deterministic = true;
+    for (std::size_t i = 0; i < events.size(); ++i) {
+        const auto expected =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::milliseconds(
+                static_cast<long long>(i + 1)));
+        if (events[i].monotonic_offset != expected) {
+            offsets_deterministic = false;
+        }
+    }
+    check(offsets_deterministic, "clock.offsets_match_injected_sequence");
+
+    // Re-running with a fresh identical fake clock reproduces the same offsets.
+    std::uint64_t ticks2 = 0;
+    WorkflowRuntimeConfig config2;
+    config2.monotonic_clock = [origin, &ticks2]() {
+        return origin + std::chrono::milliseconds(static_cast<long long>(ticks2++));
+    };
+    WorkflowRuntime runtime2(program, std::move(config2));
+    auto result2 = runtime2.run("ClockWorkflow", make_none());
+    bool reproducible = result2.events.events().size() == events.size();
+    for (std::size_t i = 0; reproducible && i < events.size(); ++i) {
+        if (result2.events.events()[i].monotonic_offset != events[i].monotonic_offset) {
+            reproducible = false;
+        }
+    }
+    check(reproducible, "clock.reproducible_across_runs");
 }
 
 void test_run_uses_event_report_as_canonical_result() {
@@ -1952,6 +2015,7 @@ void test_two_suspensions_on_one_node_rebuild_memo_append_only() {
 
 int main() {
     test_single_node_workflow();
+    test_injected_monotonic_clock_is_deterministic();
     test_run_uses_event_report_as_canonical_result();
     test_linear_three_node_workflow();
     test_diamond_workflow();

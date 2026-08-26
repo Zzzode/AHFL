@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -116,6 +117,13 @@ struct WorkflowRuntimeConfig {
     // thread (RFC 0015). Exposes live node results for the debugger's
     // Workflow scope; the value is consumed by the runtime afterwards.
     std::function<void(AgentId, std::string_view node_name, const Value &)> node_completed_hook;
+    // RFC 0012 slice 2: injectable monotonic clock for execution-event offsets.
+    // Every event's monotonic_offset is measured against the first reading taken
+    // at the start of run(). Defaults to std::chrono::steady_clock::now; tests
+    // inject a deterministic clock so golden output does not depend on wall time
+    // (Test Plan #3). Must be monotonic non-decreasing; it never sources
+    // wall-clock timestamps (those are optional run metadata only).
+    std::function<std::chrono::steady_clock::time_point()> monotonic_clock;
 };
 
 // Workflow runtime

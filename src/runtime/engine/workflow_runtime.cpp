@@ -474,11 +474,17 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
 
 WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value input) {
     WorkflowResult result;
-    const auto started_at = std::chrono::steady_clock::now();
+    // RFC 0012 slice 2: read time through the injectable monotonic clock so
+    // event offsets are deterministic under a fake clock in tests.
+    const auto now = [this]() -> std::chrono::steady_clock::time_point {
+        return config_.monotonic_clock ? config_.monotonic_clock()
+                                       : std::chrono::steady_clock::now();
+    };
+    const auto started_at = now();
     const RunId run_id{0};
     auto emit = [&](auto payload) {
-        const auto offset = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - started_at);
+        const auto offset =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now() - started_at);
         (void)result.events.append(std::move(payload), offset);
     };
 
