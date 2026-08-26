@@ -61,6 +61,42 @@ ir::ExprRef bin(ir::Program &p, ir::ExprBinaryOp op, ir::ExprRef lhs, ir::ExprRe
     return p.expr_arena.make(ir::BinaryExpr{.op = op, .lhs = lhs, .rhs = rhs});
 }
 
+// RFC 0025: a bounded List<Int>(capacity) type ref, used as the resolved type
+// of a quantified collection operand so the SMT-BMC encoder can unroll it.
+ir::TypeRef bounded_list_int_type(std::uint64_t capacity) {
+    ir::TypeRef list;
+    list.kind = ir::TypeRefKind::Struct;
+    list.canonical_name = "std::collections::List";
+    list.display_name = "std::collections::List<Int>(" + std::to_string(capacity) + ")";
+    list.collection_capacity = capacity;
+    auto element = ahfl::Owned<ir::TypeRef>(new ir::TypeRef{int_type()});
+    list.params.push_back(std::move(element));
+    return list;
+}
+
+// A path expression whose resolved type is a bounded List<Int>(capacity).
+ir::ExprRef bounded_list_path(ir::Program &p, const std::string &root,
+                              std::vector<std::string> members, std::uint64_t capacity) {
+    ir::Path path;
+    path.root_kind = ir::PathRootKind::Identifier;
+    path.root_name = root;
+    path.members = std::move(members);
+    return p.expr_arena.make(ir::PathExpr{.path = std::move(path)}, std::nullopt,
+                             bounded_list_int_type(capacity));
+}
+
+// RFC 0024: forall x in <collection>: <body>.
+ir::ExprRef forall_expr(ir::Program &p, const std::string &binder, ir::ExprRef collection,
+                        ir::ExprRef body) {
+    return p.expr_arena.make(ir::QuantifierExpr{
+        .kind = ir::QuantifierExpr::Kind::ForAll,
+        .binder = binder,
+        .value_binder = {},
+        .collection = collection,
+        .body = body,
+    });
+}
+
 void add_contract(ir::Program &p, const std::string &target,
                   std::vector<std::pair<ir::ContractClauseKind, ir::ExprRef>> clauses) {
     ir::ContractDecl contract;
@@ -191,6 +227,54 @@ void test_real_ensures_refuted() {
     check(has_cex, "refuted goal carries a materialized counterexample");
 }
 
+// RFC 0024/0025: a bounded-collection quantifier discharged end-to-end by real
+// Z3 — the encoder unrolls `forall x in coll: P` over the List capacity, the
+// BMC engine threads it as a goal, and Z3 returns a verdict.
+void test_real_forall_proven() {
+    if (!z3_available()) {
+        return;
+    }
+    ir::Program p;
+    // requires: forall x in input.xs: x > 0   (xs : List<Int>(3))
+    // ensures:  forall x in input.xs: x >= 1  — provable under the precondition
+    //           (each element's x>0 implies x>=1 over Int, per unrolled index).
+    auto req = forall_expr(
+        p, "x", bounded_list_path(p, "input", {"xs"}, 3),
+        bin(p, ir::ExprBinaryOp::Greater, int_path(p, "x", {}), int_lit(p, "0")));
+    auto ens = forall_expr(
+        p, "x", bounded_list_path(p, "input", {"xs"}, 3),
+        bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "x", {}), int_lit(p, "1")));
+    add_contract(p, "Agent",
+                 {{ir::ContractClauseKind::Requires, req},
+                  {ir::ContractClauseKind::Ensures, ens}});
+    auto r = run_smt_bmc(p, {});
+    check(r.status == SmtBmcStatus::Safe,
+          "bounded forall ensures is proven Safe by real Z3 under a matching precondition");
+}
+
+void test_real_forall_refuted() {
+    if (!z3_available()) {
+        return;
+    }
+    ir::Program p;
+    // ensures: forall x in input.xs: x >= 1  with NO precondition — refutable
+    // (some unrolled element can be 0), so Unsafe with a counterexample.
+    auto ens = forall_expr(
+        p, "x", bounded_list_path(p, "input", {"xs"}, 2),
+        bin(p, ir::ExprBinaryOp::GreaterEqual, int_path(p, "x", {}), int_lit(p, "1")));
+    add_contract(p, "Agent", {{ir::ContractClauseKind::Ensures, ens}});
+    auto r = run_smt_bmc(p, {});
+    check(r.status == SmtBmcStatus::Unsafe,
+          "unconditioned bounded forall ensures is refuted (Unsafe) by real Z3");
+    bool has_cex = false;
+    for (const auto &g : r.goals) {
+        if (g.verdict == SmtSolverStatus::Sat && !g.counterexample.empty()) {
+            has_cex = true;
+        }
+    }
+    check(has_cex, "refuted quantified goal carries a materialized counterexample");
+}
+
 void test_real_k_induction_bounded_safe() {
     if (!z3_available()) {
         return;
@@ -232,6 +316,8 @@ int main() {
 
     test_real_ensures_proven();
     test_real_ensures_refuted();
+    test_real_forall_proven();
+    test_real_forall_refuted();
     test_real_k_induction_bounded_safe();
     test_k_induction_status_name();
 
