@@ -9,8 +9,11 @@
 >
 > **进度(2026-08-26):** M1/M2/M3 三条里程碑及机动项均已落地(RFC 0021 `implemented`;
 > RFC 0022/0024/0025 `stabilized`;基础设施 beta-gate 10/10 全绿;vN.N 标签退役完成)。
-> 但本季**尚未收官**——"已落库但未产品化"的 backlog 主线(Sema 闭环、Runtime/LLM 生产化、
-> LSP IDE 化、真实求解器 CI 证据等)仍在 Q4 验收口径内,见文末"剩余工作(Q4 尚未完成)"。
+> 后续推进:死代码诊断清理完成(23 个未发射 ErrorCode:3 wired / 20 删除);RFC 0012
+> 从 `accepted` 核对为 `implementing`,并补齐 slice 2(可注入 clock)与 slice 7
+> (TTY/NO_COLOR + ANSI)两处真实缺口。但本季**仍未收官**——"已落库但未产品化"的 backlog
+> 主线(Sema 闭环、Runtime/LLM 生产化、LSP IDE 化、真实求解器 CI 证据、RFC 0012 →
+> implemented/stabilized 等)仍在 Q4 验收口径内,见文末"剩余工作(Q4 尚未完成)"。
 
 ---
 
@@ -178,6 +181,13 @@ bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修
 
 - **§3.2 P0 TypeCheck / Sema 最终闭环**:`TypeCheckPass` 的 source/diagnostic context
   注入等状态依赖拆分 + 剩余语义测试矩阵。纯代码工程,边界清晰,收益直接。
+  - ✅ **死代码诊断清理(已落地,2026-08-26)**:审计出 23 个 `diagnostics.hpp` 里定义
+    但零发射点的 ErrorCode。3 个有真实站点且被文档化(`parse.UNEXPECTED_TOKEN`、
+    `typecheck.MATCH_ARM_TYPE_MISMATCH`、`typecheck.EFFECT_INCOMPATIBLE`)已 wire up +
+    补 golden;其余 20 个删除(连同未用 template / catalogue 条目 / 编译期 pin)。header
+    ErrorCode 计数 134 → 114。commit 779765a6 / d59510e1。
+  - **待做**:`ConstSema` 收尾(继续剥离 `TypeCheckPass` 状态依赖)、剩余诊断迁移到稳定
+    code/template/related-notes 的一致性收口、语义矩阵测试升级为完成标准。
 - **§3.1 P0 Runtime / LLM Provider 生产化**:hour-scale soak、RSS/allocator 趋势目前
   只在 `Production Confidence` GitHub Actions workflow 跑,本地不闭环;推进到可本地/常态
   观测。
@@ -196,12 +206,24 @@ bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修
     无前置条件时 `Unsafe` 带反例)。commit a4b68265 / 90fbf241。
   - **待做**:真实 NuSMV / nuXmv 在 CI 留证(本机 z3 有、NuSMV/nuXmv 缺,需环境提供)。
 - counterexample 更深映射、AHFL property semantics 继续深化(§3.5)。
-- §3.6 Pass 与 target backend 产品化;§3.7 质量工程门禁趋势化。
+- §3.6 Pass 与 target backend 产品化;§3.7 质量工程门禁趋势化(compile-time /
+  memory-proxy / SMV-size budget 扩展为趋势报告 + release-blocking 阈值)。
 
-### 丙、待实现的已接受 RFC(可独立启动)
+### 丙、RFC 0012 结构化 workflow 执行 UX(`implementing`,承接本季进展)
 
-- **RFC 0012 结构化 workflow 执行 UX**(`accepted`):唯一"已接受但未实现"的 RFC,是个
-  完整特性,可作为一条独立主线启动(执行事件模型 + CLI 呈现)。
+RFC 0012 的核心其实早在 breaking commit `7c3ae2d2` 就落地了(事件模型 + 投影 + 报告 +
+renderer + `[run]` 工程启动 + 旧 printer 删除),但 frontmatter 一直停在 `accepted` /
+`implementation_prs: []`。2026-08-26 做了状态核对与两处真实缺口补齐:
+
+- ✅ frontmatter `accepted → implementing`,8 个实现切片逐项审计入 Decision History
+  (commit 4a2cfc28)。
+- ✅ slice 7:TTY/`NO_COLOR` 检测 + 状态词 ANSI 上色,剥离 ANSI 后与纯文本逐字节相同
+  (commit 373e65b5)。
+- ✅ slice 2:可注入 monotonic clock + fake-clock 确定性单测(commit e980eba1)。
+- **待做(→ `implemented`)**:逐项 beta-gate 证据核对(`check-beta-gate.py` 的
+  BETA-01..10),把"离 implemented 还差什么"从判断变成机器可验证事实。
+- **待做(→ `stabilized`,env-gated)**:同步 release migration note + **真实 LLM run
+  证据**(当前 run 证据用 local deterministic stub,真实 LLM 需外部 API,环境阻塞)。
 
 ### 丁、需外部决策 / 决策文档修订(非写码)
 
