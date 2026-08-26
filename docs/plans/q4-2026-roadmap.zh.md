@@ -54,7 +54,7 @@ capstone)已全部落库并测试。
 | KR2.4 | 真实 Z3 在 CI 端到端验证有界量化契约(可证 Safe / 无前置 Unsafe 带反例) | ✅ | `smt_bmc.cpp` 两个 `AHFL_Z3_PATH` 守卫用例;`ahfl.formal.smt_bmc_real_z3` ctest。commit a4b68265 / 90fbf241 |
 | KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | 🚫 | 本机仅有 z3,NuSMV/nuXmv 缺,需环境提供 |
 | KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | ⬜ | — |
-| KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | ⬜ | — |
+| KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | 🔵 | §3.6 已 stabilized(pass/backend 产品化项全绿);SMV-size budget 新增 bounded-collection 代表样本(commit bade4719);仍待:budget → 趋势报告 + release-blocking 阈值(需 baseline-delta artifact,较大) |
 
 ---
 
