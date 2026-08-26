@@ -6,7 +6,7 @@
 | Status | 草稿 · 可审查 |
 | SoT | `include/ahfl/base/support/diagnostics.hpp`（C++ `error_codes::*` + `messages::*` 命名空间） |
 | Created | 2026-06-28 |
-| Updated | 2026-08-24 |
+| Updated | 2026-08-26 |
 | Coverage | Typecheck stable code catalogue plus RFC/tooling diagnostics; unmapped typecheck templates are listed at the end |
 
 ## 分组分布
@@ -16,8 +16,8 @@ pie title Stable Error-Code 分组分布
     "Type System" : 27
     "Callable & Arity" : 9
     "Effects & Contracts + Trait/Impl" : 16
-    "Struct/Enum Literals" : 14
-    "Backend SMV/BMC" : 2
+    "Struct/Enum Literals" : 18
+    "Backend SMV/BMC" : 3
     "Linting & Migration" : 1
     "TBD" : 0
 ```
@@ -1553,7 +1553,7 @@ fn f() -> String effect Pure decreases 0 { return print(S{}); }
 
 ---
 
-## 4. Struct/Enum Literals（9）
+## 4. Struct/Enum Literals（13）
 
 与 struct/enum 字面量、`none`/空容器推断、struct/enum 字段/成员操作相关的类型检查错误。
 
@@ -2075,7 +2075,81 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 
 ---
 
-## 5. Backend SMV/BMC（2）
+### QUANTIFIER_REQUIRES_COLLECTION
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.QUANTIFIER_REQUIRES_COLLECTION` |
+| SoT | `diagnostics.hpp:392` + template line `763` |
+| MessageTemplate | `quantifier operand after 'in' must be a List, Set, or Map, but got {}` |
+| Severity | Error |
+
+**触发条件**：`forall x in coll: …` / `exists (k, v) in coll: …` 的集合操作数
+`coll` 解析后不是名义 `List<T>` / `Set<T>` / `Map<K,V>`（[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)）。
+
+**常见修复**：把 `in` 后面的操作数改为集合类型的值；标量/结构体不可被量化遍历。
+
+**Related codes**：`QUANTIFIER_BODY_REQUIRES_BOOL`、`formal.UNBOUNDED_QUANTIFIER`。
+
+---
+
+### QUANTIFIER_BODY_REQUIRES_BOOL
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.QUANTIFIER_BODY_REQUIRES_BOOL` |
+| SoT | `diagnostics.hpp:394` + template line `765` |
+| MessageTemplate | `the body of a '{}' quantifier must have type Bool, but got {}` |
+| Severity | Error |
+
+**触发条件**：量化 body 谓词类型不是 `Bool`。binder 在 body 作用域内绑定为元素类型
+（List/Set）或 `(K, V)` 对（Map），body 必须是对该 binder 的布尔判定。
+
+**常见修复**：把 body 写成返回 `Bool` 的关系/逻辑表达式（如 `x > 0`、`k <= v`）。
+
+**Related codes**：`QUANTIFIER_REQUIRES_COLLECTION`、`TYPE_MISMATCH`。
+
+---
+
+### COLLECTION_CAPACITY_NOT_ALLOWED
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.COLLECTION_CAPACITY_NOT_ALLOWED` |
+| SoT | `diagnostics.hpp:401` + template line `769` |
+| MessageTemplate | `a capacity suffix '(N)' is only allowed on List, Set, or Map, not on '{}'` |
+| Severity | Error |
+
+**触发条件**：把 `(N)` capacity 精化后缀写在了非集合类型上
+（[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md) 只允许 `List<T>(N)` /
+`Set<T>(N)` / `Map<K,V>(N)`），如 `MyStruct(4)` 或无类型参数的裸名。
+
+**常见修复**：capacity 仅用于 List/Set/Map；其它类型删除 `(N)` 后缀。
+
+**Related codes**：`COLLECTION_CAPACITY_EXCEEDED`。
+
+---
+
+### COLLECTION_CAPACITY_EXCEEDED
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `typecheck.COLLECTION_CAPACITY_EXCEEDED` |
+| SoT | `diagnostics.hpp:403` + template line `772` |
+| MessageTemplate | `collection capacity {} exceeds the target capacity {}` |
+| Severity | Error |
+
+**触发条件**：把更宽/无界的集合赋给更窄的有界集合槽位——违反 capacity 子类型格
+（`List<T>(N) <: List<T>(M)` 当且仅当 `N <= M`；无界 **不** <: 有界）。
+参见 `docs/spec/core-language.zh.md` §5.5。
+
+**常见修复**：收紧源集合的 capacity 到 `<= 目标`，或把目标槽位放宽/改为无界。
+
+**Related codes**：`COLLECTION_CAPACITY_NOT_ALLOWED`、`TYPE_MISMATCH`。
+
+---
+
+## 5. Backend SMV/BMC（3）
 
 传给后端之前最后一道检查，涉及后端可处理规模预算与单形态化预算，以及形式化验证阶段的可验证子集判定。
 
@@ -2099,7 +2173,9 @@ fn f(p: P) -> Int effect Pure decreases 0 {
 
 **与 `typecheck.NOT_IN_VERIFIED_SUBSET` 的区别**：同名但不同分类。`typecheck` 版在类型
 检查阶段拦截"调用进入可验证子集上下文却违反 effect 子集条件"；`formal` 版在验证阶段
-标注"数据谓词无 SMT 编码规则"（如 `String` 内容判定、量化、capability 结果）。
+标注"数据谓词无 SMT 编码规则"（如 `String` 内容判定、capability 结果、非纯表达式）。
+注：有界集合上的 `forall`/`exists` 量化**在子集内**（[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md)
+经有限展开编码）；仅当集合无静态上界时按 `formal.UNBOUNDED_QUANTIFIER` 拒绝（见下）。
 
 **最小复现**：
 ```ahfl
@@ -2114,6 +2190,41 @@ contract for A {
 - 或接受该子句作为观测假设——它仍在 SMV 时序路径中生效，只是不被 SMT-BMC 精确证明。
 
 **Related codes**：`typecheck.NOT_IN_VERIFIED_SUBSET`、`typecheck.EFFECT_NOT_PURE`。
+
+---
+
+### UNBOUNDED_QUANTIFIER
+
+| 字段 | 值 |
+| --- | --- |
+| Error code | `formal.UNBOUNDED_QUANTIFIER` |
+| SoT | `diagnostics.hpp:481` |
+| MessageTemplate | `quantified collection has no static capacity bound; give it a bounded collection type (e.g. List<T>(N)) to verify a quantified property over it` |
+| Severity | Warning（子集边界；子句被 fail-closed 拒绝，不抽象） |
+
+**触发条件**：`ahflc verify` 时，`contract` 数据谓词中的有界量化子句
+（`forall x in coll: P` / `exists (k, v) in coll: P`）的集合 `coll` 没有静态长度上界
+——即其类型是无界的 `List<T>` / `Set<T>` / `Map<K,V>`，而非有界的 `List<T>(N)`
+（[RFC 0025](../rfcs/0025-bounded-collection-types.zh.md) capacity 精化）。SMT-BMC 引擎
+只能对有界集合做有限展开，故 **fail-closed 拒绝**该子句（区别于 `NOT_IN_VERIFIED_SUBSET`
+的"抽象为假设"）：绝不猜测边界、也不验证 vacuous 实例。由
+[RFC 0024](../rfcs/0024-bounded-collection-quantification.zh.md) 定义（语义见
+`docs/spec/core-language.zh.md` §5.6）。
+
+**最小复现**：
+```ahfl
+struct Req { xs: collections::List<Int>; }        // 无界 -> 量化被拒
+contract for A {
+    requires: forall x in input.xs: x > 0;         // formal.UNBOUNDED_QUANTIFIER
+}
+```
+
+**常见修复**：
+- 给集合一个有界类型：`xs: collections::List<Int>(8)` —— capacity `N` 作为展开上界。
+- 展开后每个元素谓词复用标量子集编码；元素越界即超出 `N` 的部分不在验证范围内。
+
+**Related codes**：`formal.NOT_IN_VERIFIED_SUBSET`、`typecheck.COLLECTION_CAPACITY_NOT_ALLOWED`、
+`typecheck.QUANTIFIER_REQUIRES_COLLECTION`。
 
 ---
 
