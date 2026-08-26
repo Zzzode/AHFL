@@ -1376,6 +1376,20 @@ void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
 
     const auto &declared = fn->get().effect.judgement;
 
+    // A Bottom body judgement is not an under-declaration: it is the effect
+    // lattice's incompatibility sentinel — the body joined a Nondet effect with
+    // a concrete capability effect, which AHFL forbids in a single judgement to
+    // keep the effect algebra decidable (join(Nondet, CapSet) = Bottom, see
+    // effect_judgement.hpp). Report the dedicated EFFECT_INCOMPATIBLE rather
+    // than letting `judgement_le(Bottom, declared)` silently accept it (Bottom
+    // is the ⊑ floor, so the under-declared check never fires for it).
+    if (body_judgement.is_bottom()) {
+        typecheck_error_here(error_codes::typecheck::EffectIncompatible,
+                             messages::typecheck::EffectIncompatible.format_with(),
+                             body_range);
+        return;
+    }
+
     // The declared effect must be an upper bound: body ⊑ declared.
     // If not, the function under-declares its effect.
     if (!judgement_le(body_judgement, declared)) {

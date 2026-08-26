@@ -1,0 +1,6 @@
+module repro;
+
+// A syntax error against a concrete offending token is reported as
+// parse.UNEXPECTED_TOKEN (ANTLR's mismatched/extraneous-input case), carrying
+// ANTLR's own human-readable message and the offending token's source range.
+fn f() -> Int effect Pure decreases 0 { return 1 + ; }

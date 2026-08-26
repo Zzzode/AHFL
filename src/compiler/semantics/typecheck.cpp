@@ -3286,7 +3286,14 @@ void FlowWorkflowSema::check_impl_method_body(std::size_t impl_index,
         body_judgement = block_body_effect(typed_program.blocks[body_block_idx], typed_program);
     }
 
-    if (!judgement_le(body_judgement, method_info.effect.judgement)) {
+    if (body_judgement.is_bottom()) {
+        // Incompatible effect combination (Nondet joined with a capability
+        // effect) — the lattice sentinel, not an under-declaration. See
+        // effect_judgement.hpp and check_fn_effect_underdeclared.
+        driver_->typecheck_error_here(error_codes::typecheck::EffectIncompatible,
+                                      messages::typecheck::EffectIncompatible.format_with(),
+                                      method_decl.body->range);
+    } else if (!judgement_le(body_judgement, method_info.effect.judgement)) {
         driver_->typecheck_error_here(error_codes::typecheck::EffectUnderdeclared,
                                       messages::typecheck::EffectUnderdeclared.format_with(
                                           method_info.name,

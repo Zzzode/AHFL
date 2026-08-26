@@ -359,7 +359,11 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
                      const std::string &message,
                      std::exception_ptr) override {
         if (const auto offending = borrow(offending_symbol)) {
+            // ANTLR surfaces mismatched / extraneous / missing-token errors
+            // against a concrete offending token: the canonical UNEXPECTED_TOKEN
+            // case. The message is ANTLR's own human-readable text.
             diagnostics_.error()
+                .code(error_codes::parse::UnexpectedToken)
                 .message(message)
                 .range(token_range(offending->get(), offending, source_))
                 .emit();

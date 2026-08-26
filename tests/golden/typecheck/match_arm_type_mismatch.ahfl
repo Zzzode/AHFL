@@ -1,0 +1,13 @@
+module repro;
+
+// RFC 0003 / diagnostics: match arms must agree on a single body type so the
+// match expression has a well-defined type. Divergent arms report the
+// dedicated typecheck.MATCH_ARM_TYPE_MISMATCH, not a generic type mismatch.
+enum E { A, B }
+
+fn f(e: E) -> Int effect Pure decreases 0 {
+    return match e {
+        E::A => 1,
+        E::B => "oops",
+    };
+}

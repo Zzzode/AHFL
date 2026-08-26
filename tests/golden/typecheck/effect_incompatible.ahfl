@@ -1,0 +1,17 @@
+module repro;
+
+// The AHFL effect lattice forbids combining a Nondet effect with a concrete
+// capability effect in a single judgement (join(Nondet, CapabilitySet) =
+// Bottom) to keep the effect algebra decidable. A function body whose branches
+// disagree — one Nondet, one capability — reports typecheck.EFFECT_INCOMPATIBLE.
+capability C() -> Int;
+
+fn nd() -> Int effect Nondet decreases 0 { return 0; }
+
+fn mix() -> Int effect C decreases 0 {
+    let x: Int = nd();
+    if x > 0 {
+        let y: Int = C();
+    }
+    return x;
+}

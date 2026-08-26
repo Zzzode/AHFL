@@ -1207,6 +1207,17 @@ class ExpressionCheckerServices final {
         return ahfl::are_types_equivalent(lhs, rhs, relations_);
     }
 
+    // Non-emitting assignability predicate (the check_assignable overloads all
+    // emit a diagnostic on failure). Callers that need to choose a specialized
+    // diagnostic themselves — e.g. match-arm divergence reporting
+    // MATCH_ARM_TYPE_MISMATCH rather than a generic mismatch — test with this.
+    [[nodiscard]] bool types_assignable(const Type &source, const Type &target) const {
+        if (is_error_type(source) || is_error_type(target)) {
+            return true;
+        }
+        return ahfl::is_assignable_to(source, target, relations_);
+    }
+
     [[nodiscard]] bool check_assignable(const Type &source,
                                         const Type &target,
                                         SourceRange range,
@@ -2235,8 +2246,18 @@ class ExpressionChecker final {
                     unified_is_error = true;
                 }
             } else if (!unified_is_error && body.type != nullptr && !is_error_type(*body.type)) {
-                (void)services_.check_assignable(
-                    *body.type, **unified_body_type, arm->body->range, "match arm body");
+                // All arms must agree on a single body type so the match
+                // expression has a well-defined type. Report divergence with the
+                // dedicated MATCH_ARM_TYPE_MISMATCH code rather than the generic
+                // type-mismatch (Principle 5: the match-specific message points
+                // the user at reconciling the arms).
+                if (!services_.types_assignable(*body.type, **unified_body_type)) {
+                    services_.typecheck_error_here(
+                        error_codes::typecheck::MatchArmTypeMismatch,
+                        messages::typecheck::MatchArmTypeMismatch.format_with(
+                            (*unified_body_type)->describe(), body.type->describe()),
+                        arm->body->range);
+                }
             }
         }
 

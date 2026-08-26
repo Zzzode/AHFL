@@ -979,6 +979,27 @@ ahfl_add_check_fail_test(
     "type mismatch in assert condition: expected Bool, got"
 )
 
+# Previously-dead diagnostics now wired up (see the no-dead-code cleanup):
+# a match with divergent arm body types, an effect-incompatible body (Nondet
+# joined with a capability), and a syntax error against a concrete token.
+ahfl_add_check_fail_test(
+    ahflc.fail.match_arm_type_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/match_arm_type_mismatch.ahfl"
+    "MATCH_ARM_TYPE_MISMATCH.*match arm body type mismatch: expected Int, got String"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.effect_incompatible
+    "${AHFL_TESTS_DIR}/golden/typecheck/effect_incompatible.ahfl"
+    "EFFECT_INCOMPATIBLE.*Nondet and capability effects cannot be combined"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.unexpected_token
+    "${AHFL_TESTS_DIR}/golden/resolver/unexpected_token.ahfl"
+    "UNEXPECTED_TOKEN.*mismatched input"
+)
+
 ahfl_add_check_fail_test(
     ahflc.fail.contract_capability_call
     "${AHFL_TESTS_DIR}/golden/typecheck/contract_capability_call.ahfl"
