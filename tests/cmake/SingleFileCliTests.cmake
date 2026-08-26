@@ -246,6 +246,22 @@ add_test(NAME ahflc.quality.smv_size_budget.refund_audit
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
+# RFC 0024/0025 bounded-collection contract state-space sample (KR2.7): a
+# representative formal fixture with bounded data predicates that previously
+# had no SMV size budget. Actuals at add time: ~10520 bytes / 78 lines / 8
+# LTLSPEC; budgets carry ~10-15% headroom with a MIN_LTLSPEC floor so both
+# growth and accidental spec-dropping regress.
+add_test(NAME ahflc.quality.smv_size_budget.bounded_data
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+            "-DMAX_BYTES=12000"
+            "-DMAX_LINES=90"
+            "-DMAX_LTLSPEC=10"
+            "-DMIN_LTLSPEC=6"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
+)
+
 ahfl_add_output_test(
     ahflc.emit_ir.example
     "emit ir"
