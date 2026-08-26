@@ -188,9 +188,13 @@ bundle 在普通机器上 10/10 全绿(见"机动/次要"的 rg / GCC / VSIX 修
 
 ### 乙、Formal backend 深化(承接已 stabilized 的 M3)
 
-- **真实求解器 CI 证据(推荐首选)**:让真实 NuSMV / nuXmv / Z3 在 CI 中实际运行并留证,
-  把形式化从"可跑 + fixture/parser 层"推到"可信"。这是把第二护城河做实的关键一步,直接
-  承接 RFC 0017/0024/0025 已 `stabilized` 的成果。
+- **真实求解器 CI 证据**:让真实求解器在 CI 中实际运行并留证,把形式化从"可跑 +
+  fixture/parser 层"推到"可信"。
+  - ✅ **Z3(已落地)**:`smt_bmc.cpp` 新增两个真实 Z3 集成用例(`AHFL_Z3_PATH` 守卫,
+    `ahfl.formal.smt_bmc_real_z3` ctest 在检测到 z3 时运行),端到端验证 RFC 0024/0025
+    的有界量化契约(`forall x in List<Int>(N): P` → 展开 → BMC → 真 Z3:可证 `Safe`、
+    无前置条件时 `Unsafe` 带反例)。commit a4b68265 / 90fbf241。
+  - **待做**:真实 NuSMV / nuXmv 在 CI 留证(本机 z3 有、NuSMV/nuXmv 缺,需环境提供)。
 - counterexample 更深映射、AHFL property semantics 继续深化(§3.5)。
 - §3.6 Pass 与 target backend 产品化;§3.7 质量工程门禁趋势化。
 
