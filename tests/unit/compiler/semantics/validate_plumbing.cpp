@@ -214,3 +214,115 @@ contract for Beta {
     CHECK_EQ(result.validation.total_decreases_clauses, 7u);
     CHECK_EQ(result.validation.wildcard_decreases_clauses, 3u);
 }
+
+// ---------------------------------------------------------------------------
+// KR5.3 helpers: an agent whose state machine is either acyclic (Init -> Done)
+// or cyclic (Init <-> Work) so termination validation has a real control graph
+// to analyze.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::string cyclic_agent_with_contract(std::string_view agent_name,
+                                                     std::string_view contract_body) {
+    return std::string{kAgentPreamble} + "agent " + std::string{agent_name} + R"AHFL( {
+    input: Request;
+    context: UnitCtx;
+    output: UnitCtx;
+    states: [Init, Work, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Work;
+    transition Work -> Init;
+    transition Work -> Done;
+}
+
+flow for )AHFL" + std::string{agent_name} + R"AHFL( {
+    state Init { goto Work; }
+    state Work { goto Done; }
+    state Done { return UnitCtx { }; }
+}
+
+contract for )AHFL" + std::string{agent_name} + " {\n" + std::string{contract_body} + R"AHFL(
+}
+)AHFL";
+}
+
+// ---------------------------------------------------------------------------
+// KR5.3 TC5: wildcard decreases on an ACYCLIC agent is sound — no error.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.3 wildcard decreases on an acyclic agent is accepted") {
+    // agent_with_contract builds a single-state (Done) machine — acyclic.
+    const auto source = agent_with_contract("AcyclicWildcard", "decreases: *;");
+    const auto result = run_pipeline(source, "kr53_tc5.ahfl");
+    CHECK_FALSE(result.validation.has_errors());
+}
+
+// ---------------------------------------------------------------------------
+// KR5.3 TC6: wildcard decreases on a CYCLIC agent is unsound — hard error with
+// the DECREASES_STAR_ON_CYCLIC_AGENT code.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.3 wildcard decreases on a cyclic agent is rejected") {
+    const auto source = cyclic_agent_with_contract("CyclicWildcard", "decreases: *;");
+    const auto result = run_pipeline(source, "kr53_tc6.ahfl");
+    REQUIRE(result.validation.has_errors());
+    bool saw_code = false;
+    for (const auto &d : result.validation.diagnostics.entries()) {
+        if (d.code.value_or("") == "validation.DECREASES_STAR_ON_CYCLIC_AGENT") {
+            saw_code = true;
+        }
+    }
+    CHECK(saw_code);
+}
+
+// ---------------------------------------------------------------------------
+// KR5.3 TC7: a concrete but unrecognized measure shape is a warning (not an
+// error) — termination degrades to an abstract observation in SMV.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.3 unrecognized concrete measure emits a recognizer warning") {
+    // `input.a` is not a recognized well-founded shape (not length(self) /
+    // self.<field> / <ident> - 1).
+    const auto source = agent_with_contract("UnrecognizedMeasure", "decreases: input.a;");
+    const auto result = run_pipeline(source, "kr53_tc7.ahfl");
+    CHECK_FALSE(result.validation.has_errors()); // warning, not error
+    bool saw_warning = false;
+    for (const auto &d : result.validation.diagnostics.entries()) {
+        if (d.code.value_or("") == "validation.DECREASES_MEASURE_NOT_RECOGNIZED") {
+            saw_warning = true;
+        }
+    }
+    CHECK(saw_warning);
+}
+
+// ---------------------------------------------------------------------------
+// KR5.3 TC8: a recognized concrete measure (self.<field>) is silent — no
+// warning, no error. The agent context carries an Int `length` field so the
+// measure both typechecks and matches the SelfField recognizer shape.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.3 recognized self-field measure is accepted silently") {
+    const std::string source = std::string{R"AHFL(
+struct Request { a: Int; }
+struct Ctx { length: Int = 0; }
+
+agent RecognizedMeasure {
+    input: Request;
+    context: Ctx;
+    output: Ctx;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+flow for RecognizedMeasure {
+    state Init { goto Done; }
+    state Done { return Ctx { length: 0 }; }
+}
+contract for RecognizedMeasure {
+    decreases: self.length;
+}
+)AHFL"};
+    const auto result = run_pipeline(source, "kr53_tc8.ahfl");
+    CHECK_FALSE(result.validation.has_errors());
+    for (const auto &d : result.validation.diagnostics.entries()) {
+        CHECK(d.code.value_or("") != "validation.DECREASES_MEASURE_NOT_RECOGNIZED");
+    }
+}

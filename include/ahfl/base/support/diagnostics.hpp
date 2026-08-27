@@ -403,6 +403,18 @@ inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidTemporalFormul
     "INVALID_TEMPORAL_FORMULA"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidWorkflowGraph{
     "INVALID_WORKFLOW_GRAPH"};
+// KR5.3: decreases / termination-measure validation on contract clauses.
+//   decreases_star_on_cyclic_agent — `decreases: *;` (trivial measure) declared
+//     on an agent whose state machine contains a cycle. The wildcard measure is
+//     only sound for acyclic (non-recursive) control flow; a revisitable state
+//     may loop forever. Mirrors the design doc's E::decreases_star_on_recursive.
+//   decreases_measure_not_recognized — a concrete decreases term is not one of
+//     the recognized well-founded shapes, so termination cannot be
+//     machine-checked (the SMV backend degrades it to an abstract observation).
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesStarOnCyclicAgent{
+    "DECREASES_STAR_ON_CYCLIC_AGENT"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DecreasesMeasureNotRecognized{
+    "DECREASES_MEASURE_NOT_RECOGNIZED"};
 } // namespace validation
 
 namespace runtime {
@@ -785,6 +797,14 @@ inline constexpr MessageTemplate DuplicateWorkflowNode{"duplicate workflow node 
 inline constexpr MessageTemplate UnknownWorkflowDependency{"unknown workflow dependency '{}'"};
 inline constexpr MessageTemplate WorkflowDependencyCycle{
     "workflow dependency cycle detected involving '{}'"};
+inline constexpr MessageTemplate DecreasesStarOnCyclicAgent{
+    "wildcard decreases 'decreases: *' is not allowed on agent '{}' because its "
+    "state machine contains a cycle (state '{}' is reachable from itself); supply "
+    "a concrete termination measure such as 'decreases: self.length'"};
+inline constexpr MessageTemplate DecreasesMeasureNotRecognized{
+    "decreases measure is not a recognized termination shape (length(self), "
+    "self.<field>, or <ident> - 1); formal verification will treat it as an "
+    "abstract observation and cannot machine-check termination"};
 } // namespace validation
 
 // ============================================================================

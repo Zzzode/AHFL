@@ -1,6 +1,7 @@
 #include "ahfl/compiler/semantics/validate.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/decreases_recognizer.hpp"
 
 #include "ahfl/base/support/overloaded.hpp"
 
@@ -201,6 +202,25 @@ class ValidationPass final {
                 .emit();
         } else {
             result_.diagnostics.error().code(code).message(std::move(message)).range(range).emit();
+        }
+    }
+
+    void validation_warning_here(ErrorCode<DiagnosticCategory::Validation> code,
+                                 std::string message,
+                                 SourceRange range) {
+        if (current_source_ != nullptr) {
+            result_.diagnostics.warning()
+                .code(code)
+                .message(std::move(message))
+                .range(range)
+                .source(current_source_->source)
+                .emit();
+        } else {
+            result_.diagnostics.warning()
+                .code(code)
+                .message(std::move(message))
+                .range(range)
+                .emit();
         }
     }
 
@@ -461,27 +481,129 @@ class ValidationPass final {
         check_contracts_in_program(require(program_, "validate program must exist"));
     }
 
-    // R-04: explicit typed-program walk over every contract clause.
-    // Today this is a no-op traversal whose sole purpose is to keep the
-    // iteration surface visible for S5a. Decreases-specific validation
-    // should be inserted here instead of being scattered into AST-level
-    // check_contracts() above, because the decreases metadata lives on
-    // TypedProgram/ContractClauseInfo after P4.S3 plumbing.
-    void walk_typed_contract_clauses_in_program(const ast::Program &program) {
-        (void)program;
-        const auto &typed_decls = type_check_result_.typed_program.declarations;
-        for (const auto &decl : typed_decls) {
-            if (decl.kind != ast::NodeKind::ContractDecl) {
+    // KR5.3: real termination-measure validation over every contract's
+    // decreases clauses. Grounded in the verified subset
+    // (corelib-effect-system.zh.md §2.1 / §3.1):
+    //
+    //   (1) A wildcard `decreases: *;` asserts trivial termination — only sound
+    //       when the target agent's control flow is acyclic. If the agent's
+    //       state machine can revisit a state (a cycle), the machine may loop
+    //       forever, so the wildcard is rejected (DECREASES_STAR_ON_CYCLIC_AGENT,
+    //       mirroring the design doc's E::decreases_star_on_recursive).
+    //   (2) Cross-clause lexicographic ranking: every concrete `decreases:`
+    //       clause on a contract contributes one term to the combined
+    //       lexicographic termination order (§2.1 tuple measure, generalized
+    //       across clauses). Each term must be a recognized well-founded shape
+    //       (length(self), self.<field>, or <ident> - 1); a term the recognizer
+    //       cannot classify degrades to an abstract observation in the SMV
+    //       backend (see smv_formula.cpp), so we surface it as an actionable
+    //       warning making the loss of machine-checked termination visible.
+    //
+    // Detecting a self-reachable state (a directed cycle) in the agent's
+    // transition graph. A final state has no outgoing edges (enforced by
+    // check_agents), so any back-edge implies non-termination of the machine.
+    [[nodiscard]] static bool agent_has_cycle(const ast::AgentDecl &agent) {
+        std::unordered_map<std::string, std::vector<std::string>> adjacency;
+        for (const auto &transition : agent.transitions) {
+            adjacency[transition->from_state].push_back(transition->to_state);
+        }
+
+        enum class Color { White, Gray, Black };
+        std::unordered_map<std::string, Color> color;
+
+        // Iterative DFS with an explicit stack so deep graphs do not overflow.
+        for (const auto &state : agent.states) {
+            if (color[state] != Color::White) {
                 continue;
             }
-            const auto *contract_info = std::get_if<ContractTypeInfo>(&decl.payload);
-            if (contract_info == nullptr) {
+            std::vector<std::pair<std::string, std::size_t>> stack;
+            stack.emplace_back(state, 0);
+            color[state] = Color::Gray;
+            while (!stack.empty()) {
+                auto &[node, next_index] = stack.back();
+                const auto adjacency_iter = adjacency.find(node);
+                if (adjacency_iter == adjacency.end() ||
+                    next_index >= adjacency_iter->second.size()) {
+                    color[node] = Color::Black;
+                    stack.pop_back();
+                    continue;
+                }
+                const auto &neighbor = adjacency_iter->second[next_index++];
+                const auto neighbor_color = color[neighbor];
+                if (neighbor_color == Color::Gray) {
+                    return true; // back-edge → cycle
+                }
+                if (neighbor_color == Color::White) {
+                    color[neighbor] = Color::Gray;
+                    stack.emplace_back(neighbor, 0);
+                }
+            }
+        }
+        return false;
+    }
+
+    void validate_decreases_in_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
+            const auto *contract = std::get_if<ast::ContractDecl>(&declaration);
+            if (contract == nullptr) {
                 continue;
             }
-            for (const auto &clause : contract_info->clauses) {
-                // TODO(P4.S5a): validate clause.decreases_{exprs,is_wildcard,range}
-                // and cross-clause termination ranking rules here.
-                (void)clause;
+
+            const auto &decl = *contract;
+            const auto target =
+                find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
+            if (!target.has_value()) {
+                continue;
+            }
+            const auto agent_decl = agent_decl_of(target->get().target);
+            if (!agent_decl.has_value()) {
+                continue;
+            }
+            const auto agent_symbol = symbol_of(target->get().target);
+            const auto agent_name = agent_symbol.has_value()
+                                        ? agent_symbol->get().canonical_name
+                                        : std::string("<agent>");
+
+            const bool has_cycle = agent_has_cycle(agent_decl->get());
+
+            for (const auto &clause : decl.clauses) {
+                if (clause->kind != ast::ContractClauseKind::Decreases) {
+                    continue;
+                }
+
+                // (1) Wildcard measure on a cyclic agent is unsound.
+                if (clause->is_wildcard) {
+                    if (has_cycle) {
+                        // Report the offending cycle by naming a state that is
+                        // reachable from itself, for an actionable range.
+                        std::string cyclic_state = agent_decl->get().initial_state;
+                        for (const auto &transition : agent_decl->get().transitions) {
+                            if (transition->from_state == transition->to_state) {
+                                cyclic_state = transition->from_state;
+                                break;
+                            }
+                        }
+                        validation_error_here(
+                            error_codes::validation::DecreasesStarOnCyclicAgent,
+                            messages::validation::DecreasesStarOnCyclicAgent.format_with(
+                                agent_name, cyclic_state),
+                            clause->range);
+                    }
+                    continue;
+                }
+
+                // (2) Concrete measure term: must be a recognized well-founded
+                // shape, else it degrades to an abstract observation and
+                // termination cannot be machine-checked.
+                if (clause->expr) {
+                    const auto entry = sema::recognize_single(*clause->expr, 0);
+                    if (entry.kind == sema::DecreasePatternKind::Unknown) {
+                        validation_warning_here(
+                            error_codes::validation::DecreasesMeasureNotRecognized,
+                            messages::validation::DecreasesMeasureNotRecognized.format_with(),
+                            clause->expr->range);
+                    }
+                }
             }
         }
     }
@@ -490,14 +612,14 @@ class ValidationPass final {
         if (graph_ != nullptr) {
             for (const auto &source : graph_->sources) {
                 enter_source(source);
-                walk_typed_contract_clauses_in_program(require(
+                validate_decreases_in_program(require(
                     source.program.get(), "source graph program must exist before validate"));
                 leave_source();
             }
             return;
         }
 
-        walk_typed_contract_clauses_in_program(require(program_, "validate program must exist"));
+        validate_decreases_in_program(require(program_, "validate program must exist"));
     }
 
     [[nodiscard]] bool has_transition(const ast::AgentDecl &agent_decl,
