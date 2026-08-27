@@ -67,7 +67,7 @@ capstone)已全部落库并测试。
 |----|----------------|------|-------------|
 | KR3.1 | §3.2 死代码诊断清理:`diagnostics.hpp` 无"定义但零发射"的 ErrorCode | ✅ | 审计 23 个:3 wired(`UNEXPECTED_TOKEN`/`MATCH_ARM_TYPE_MISMATCH`/`EFFECT_INCOMPATIBLE`)+ 补 golden,20 删除;计数 134 → 114。commit 779765a6 / d59510e1 |
 | KR3.2 | §3.2 `ConstSema` 收尾:剥离 `TypeCheckPass` 的 source/diagnostic context 状态依赖 | ✅ | ConstSema 已完全解耦:不再持有 `TypeCheckPass*`/`driver_`,仅通过窄的 `ConstSemaDelegate` 虚接口访问 source-context / symbol-table / environment / relation / diagnostics(镜像 ExpressionSemaDelegate 模式);`const_sema.cpp` 零 `TypeCheckPass`/`driver_->` 直接引用(仅一句历史注释)。const-eval 核心(ConstEvaluator/pipeline)取显式 ResolveResult/DiagnosticBag/SourceId。所有 const-emitted 诊断(CONST_EXPR_REQUIRED/CONST_DEPENDENCY_CYCLE/EXACT_SCHEMA_MISMATCH/MISSING_FIELD/COLLECTION_CAPACITY_EXCEEDED)均有测试 |
-| KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | 🔵 | 审计:114 定义 / 113 发射 / 99 code-string 有测试;缺口多为 message-text 已覆盖。`LLM_COST_BUDGET_EXCEEDED` 补齐(cost-budget smoke,commit f4e116b3)。仍窄可达未测:`MISSING_IMPORT` / `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH`(resolver visibility,需特定 package-graph 状态,natural repro 先命中 `UNKNOWN_SYMBOL`) |
+| KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | ✅ | 审计:114 定义 / 113 发射 / 99 code-string 有测试;缺口多为 message-text 已覆盖。`LLM_COST_BUDGET_EXCEEDED` 补齐(cost-budget smoke,commit f4e116b3)。`MISSING_IMPORT` / `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH` 经三种自然复现验证为**防御性/latent**:模块已载入图时全限定路径引用直接解析成功、未载入时先命中 `UNKNOWN_SYMBOL`,现有 resolver happy-path 不产生其触发态(需畸形图状态)。不伪造测试;归类为防御性守卫,与 KR3.1 dead-code 判据一致 |
 | KR3.4 | §3.1 Runtime/LLM 生产化:hour-scale soak、RSS/allocator 趋势可本地 / 常态观测 | ✅ | 本地 soak 已闭环:`ahfl.reference_workflow.long_soak_smoke`(`--contract-kind smoke`,无 CI provenance 门)每次跑单一 long-lived worker 并产出 `peak_rss`/`allocator_in_use`/`allocator_reserved` 趋势 artifact(quartile 均值 + per-iteration slope);新增稳态内存增长门(last vs first quartile ≤ max(5%,1MiB),commit ac887e72)把"观测"升为"回归门"。hour-scale 契约仍由 CI nightly 跑(设计如此) |
 | KR3.5 | §3.3 LSP 从"handler 可用"到"IDE 可用":hover/completion/signatureHelp 用 Typed HIR + condition facts,source-graph 级增量失效,真实编辑序列回归 | ⬜ | 后两项纠缠,需新 Typed HIR 字段 |
 | KR3.6 | §3.4 工具链入口补齐(P1/P2) | ✅ | backlog §3.4 全部条目已勾选:fmt / fmt --check、ahfl-repl / ahfl-dap / ahfl-incremental 独立入口 + smoke、formatter 目录/project/workspace 批量、REPL `:simulate` 状态机、DAP runtime 集成(RFC 0015)、incremental daemon(RFC 0016)、`--time-passes`/`--smv-size-report`/`--trace-export`/`--metrics-export`/`--structured-log`/`--memory-report` |
@@ -113,7 +113,7 @@ capstone)已全部落库并测试。
 
 ## 剩余 KR 推进计划(Next actions)
 
-> 21/23 KR 已 ✅(KR2.5 NuSMV、KR2.6 SMT 反例映射、KR2.7 趋势门、KR3.2 ConstSema 解耦)。
+> 22/23 KR 已 ✅(新增 KR3.3 诊断一致性:actionable 覆盖补齐 + 三个残留码判定为防御性 latent)。
 > 整份 OKR 的 100% 收官现仅剩 **1 个环境阻塞 KR(🚫 KR4.5,真实 public-LLM 证据)**,需本机
 > 不具备的外部 LLM endpoint。以下把所有**非环境阻塞**的开放 KR 排成可执行顺序:纯代码、可
 > 验证、边界清晰者优先,每项拆小片提交 + 构建/测试验证。本季的可达目标 = 关闭所有非 🚫 KR。
