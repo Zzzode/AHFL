@@ -53,7 +53,7 @@ capstone)已全部落库并测试。
 | KR2.3 | 有界集合类型 `List<T>(N)` capacity 精化 + `UNBOUNDED_QUANTIFIER` fail-closed | ✅ | RFC 0025 `stabilized`(spec §4.3/§5.5/§5.6) |
 | KR2.4 | 真实 Z3 在 CI 端到端验证有界量化契约(可证 Safe / 无前置 Unsafe 带反例) | ✅ | `smt_bmc.cpp` 两个 `AHFL_Z3_PATH` 守卫用例;`ahfl.formal.smt_bmc_real_z3` ctest。commit a4b68265 / 90fbf241 |
 | KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | ✅ | 从源码构建了真实 **NuSMV 2.6.0**(hklarner/NuSMV-a fork,MiniSat-linked)装到 `~/.local/bin/NuSMV`,CMake `find_program` 自动发现;7 个 `AHFL_SMV_CHECKER`-gated 真实模型检查用例(`ahflc.verify_formal.real_smv*`:verify pass / counterexample AHFL 映射 / bounded-data)全绿。构建修了 4 处 GCC12/py3 陈旧代码(见 [[nusmv-built-locally]] 记忆)。nuXmv 仍不可得(闭源、仅 fbk binary,fbk DNS 不可达);NuSMV 已覆盖 SMV 检查路径 |
-| KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | 🔵 | 审计:SMV 侧映射已相当完整(agent state / workflow node state·phase / failure-request / capability call / embedded observation / 违约 contract clause 均带 AHFL_MAP source range,185 单测)。剩余深度在 **SMT-BMC 侧**:D2 `input__*` / D3 `context__*` 标量字段的反例投影(`make_projected`)会消费 AHFL_MAP,但 SMT 编码器目前不为这些字段发 source map → 投影 source range 为空。补齐需把 struct-field 声明 range 穿过 SMT 编码器,较大且跨切面,单列后续 slice |
+| KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | ✅ | SMV 侧映射本已完整(agent state / node state·phase / capability call / observation / 违约 contract clause 带 AHFL_MAP,185 单测)。SMT-BMC 侧缺口已补(commit e5e97fe0):`SmtSymbol` 带 source_range,编码器 PathExpr/MemberAccess 记录字段引用 range,`SmtBmcGoal.symbols` 透传,反例每个赋值标注源码 offset。端到端验证 `ahflc verify` 输出 `input__x = 0 @[642,649)`(真 z3);编码器 + real-z3 单测各 1;formal 套件 30/30 绿 |
 | KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | 🔵 | §3.6 已 stabilized(pass/backend 产品化项全绿);SMV-size budget 新增 bounded-collection 代表样本(commit bade4719);仍待:budget → 趋势报告 + release-blocking 阈值(需 baseline-delta artifact,较大) |
 
 ---
@@ -113,22 +113,20 @@ capstone)已全部落库并测试。
 
 ## 剩余 KR 推进计划(Next actions)
 
-> 18/23 KR 已 ✅(KR2.5 通过从源码构建 NuSMV 解除了原环境阻塞)。整份 OKR 的 100% 收官
-> 现仅剩 **1 个环境阻塞 KR(🚫 KR4.5,真实 public-LLM 证据)**,需本机不具备的外部
-> LLM endpoint。以下把所有**非环境阻塞**的开放 KR 排成可执行顺序:纯代码、可验证、边界
-> 清晰者优先,每项拆小片提交 + 构建/测试验证。本季的可达目标 = 关闭所有非 🚫 KR。
+> 19/23 KR 已 ✅(KR2.5 通过从源码构建 NuSMV 解除了原环境阻塞,KR2.6 SMT 反例源码映射打通)。
+> 整份 OKR 的 100% 收官现仅剩 **1 个环境阻塞 KR(🚫 KR4.5,真实 public-LLM 证据)**,需本机
+> 不具备的外部 LLM endpoint。以下把所有**非环境阻塞**的开放 KR 排成可执行顺序:纯代码、可
+> 验证、边界清晰者优先,每项拆小片提交 + 构建/测试验证。本季的可达目标 = 关闭所有非 🚫 KR。
 
 **推进顺序(可达目标口径):**
 
 1. ~~**KR3.4 — Runtime 本地 soak / 内存趋势可观测**~~ ✅ 已完成:本地 soak smoke 已闭环并
    产出 RSS/allocator 趋势 artifact,新增稳态内存增长回归门(commit ac887e72)。
-2. **KR2.6 — counterexample 更深映射**(🔵,审计已完成)。SMV 侧映射已完整;剩余深度是
-   SMT-BMC 侧 `input__*`/`context__*` 标量字段的 source map(需把 struct-field range 穿过
-   SMT 编码器,较大跨切面)。下一步:在 SMT 编码器为 bounded scalar 字段发 AHFL_MAP,
-   `make_projected` 已就绪消费。
-3. **KR2.7 尾 — budget 趋势报告 + release-blocking 阈值**(🔵 已加 bounded-collection
-   样本)。复用 pass-trace 已有的 `--pass-trace-baseline` baseline-delta 模式,给
-   compile-time / memory-proxy / SMV-size budget 产出趋势 artifact 与可阻断阈值。
+2. ~~**KR2.6 — counterexample 更深映射**~~ ✅ 已完成:SMT-BMC 侧字段 source map 打通,
+   反例赋值标注源码 offset(commit e5e97fe0)。
+3. **KR2.7 尾 — budget 趋势报告 + release-blocking 阈值**(🔵,**下一步抓手**,已加
+   bounded-collection 样本)。复用 pass-trace 已有的 `--pass-trace-baseline` baseline-delta
+   模式,给 compile-time / memory-proxy / SMV-size budget 产出趋势 artifact 与可阻断阈值。
 4. **KR3.2 尾 — `ConstSema` 状态剥离**(🔵,语义敏感)。继续从 `TypeCheckPass` 剥离
    source/diagnostic context 依赖,需足够负例;小步推进。
 5. **KR3.5 — LSP Typed HIR + condition facts**(⬜,大,需新 Typed HIR 字段)。切成小片:
