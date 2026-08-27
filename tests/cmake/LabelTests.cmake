@@ -617,6 +617,7 @@ ahfl_label_tests(
         ahflc.quality.smv_size_budget.workflow_simplification
         ahflc.quality.smv_size_budget.refund_audit
         ahflc.quality.smv_size_budget.bounded_data
+        ahflc.quality.smv_size_trend
 )
 
 ahfl_label_tests(
@@ -663,6 +664,7 @@ ahfl_label_tests(
         ahflc.quality.smv_size_budget.workflow_simplification
         ahflc.quality.smv_size_budget.refund_audit
         ahflc.quality.smv_size_budget.bounded_data
+        ahflc.quality.smv_size_trend
         ahfl.mutation.config_report
 )
 

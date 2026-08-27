@@ -262,6 +262,19 @@ add_test(NAME ahflc.quality.smv_size_budget.bounded_data
             -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
 )
 
+# KR2.7: SMV-size trend gate. Beyond the static per-fixture budgets above, this
+# compares emit-smv sizes against a committed baseline (config/smv-size-baseline
+# .json) and blocks on regression beyond a relative tolerance, emitting a trend
+# report artifact (ahfl.smv-size-trend.v1). Turns the budget from a ceiling into
+# a release-blocking drift guard.
+add_test(NAME ahflc.quality.smv_size_trend
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/smv_size_trend_gate.py"
+            $<TARGET_FILE:ahflc>
+            "${PROJECT_SOURCE_DIR}/config/smv-size-baseline.json"
+            "${CMAKE_CURRENT_BINARY_DIR}/formal/smv-size-trend.json"
+)
+
 ahfl_add_output_test(
     ahflc.emit_ir.example
     "emit ir"
