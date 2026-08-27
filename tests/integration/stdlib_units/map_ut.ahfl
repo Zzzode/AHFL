@@ -2,6 +2,7 @@ module stdlib_units::map_ut;
 
 import std::collections as collections;
 import std::option as option;
+import std::traits as traits;
 
 // Map<K, V> unit-test matrix (M1-7 / B3). UFCS surface.
 fn map_ut() -> Int effect Pure decreases 0 {
@@ -35,6 +36,14 @@ fn map_ut() -> Int effect Pure decreases 0 {
     assert(collections::contains_key<String, Int>(only_a, "a"));
     assert(not collections::contains_key<String, Int>(only_a, "b"));
     assert(not collections::contains_key<String, Int>(only_a, "c"));
+
+    // ---- §6.2 Functor dispatch on Map (RFC 0013 P5 / KR5.5) ---------------
+    // Functor<V>::map for Map maps every value (keys preserved), dispatched
+    // through the std::traits impl rather than the map_values UFCS helper.
+    let via_trait: traits::Map<String, Int> = m2.map(\ (v: Int) -> v + 10);
+    assert(collections::contains_key<String, Int>(via_trait, "a"));
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(via_trait, "a"), 0) == 11);
+    assert(option::unwrap_or<Int>(collections::map_get<String, Int>(via_trait, "d"), 0) == 14);
 
     return 0;
 }

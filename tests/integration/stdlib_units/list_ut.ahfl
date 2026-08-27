@@ -2,6 +2,7 @@ module stdlib_units::list_ut;
 
 import std::collections as collections;
 import std::option as option;
+import std::traits as traits;
 
 // List<T> unit-test matrix (M1-7 / B3). UFCS surface.
 fn list_ut() -> Int effect Pure decreases 0 {
@@ -42,6 +43,34 @@ fn list_ut() -> Int effect Pure decreases 0 {
     assert(option::unwrap_or<Int>(collections::first<Int>(sorted), 0) == 1);
     assert(option::unwrap_or<Int>(collections::last<Int>(sorted), 0) == 3);
     assert(collections::length<Int>(collections::dedup<Int>(sorted)) == 3);
+
+    // ---- §6.2 container-trait dispatch (RFC 0013 P5 / KR5.5) ---------------
+    // These call the Foldable / Iterable / Functor trait methods on List<Int>.
+    // iter_head / iter_tail / iter_next / to_list / for_each have NO inherent
+    // namesake, so resolving them is a genuine test of trait-impl dispatch.
+    assert(option::unwrap_or<Int>(xs.iter_head(), 0) == 1);
+    assert(option::unwrap_or<Int>(xs.iter_next(), 0) == 1);
+    assert(xs.iter_tail().length() == 2);
+    assert(option::is_none<Int>(ys.iter_head()));
+    assert(ys.iter_tail().length() == 0);
+
+    // to_list returns Self (element-typed Foldable), length preserved.
+    // Bind through the traits::List<T> alias so the std::traits import is
+    // counted as used (the trait impls it brings into scope are consumed by
+    // method dispatch, which the unused-import lint does not track).
+    let same: traits::List<Int> = xs.to_list();
+    assert(same.length() == 3);
+
+    // Foldable::fold has an element-typed accumulator (T == Int here); this
+    // dispatches through the trait, distinct from the inherent fold<U>.
+    assert(xs.fold(0, \ (acc: Int, x: Int) -> acc + x) == 6);
+
+    // for_each returns Unit; called for the (Pure) traversal.
+    xs.for_each(\ (x: Int) -> {});
+
+    // Functor::map is Fn(T) -> T -> Self (T == Int), unlike inherent map<U>.
+    assert(xs.map(\ (x: Int) -> x + 1).length() == 3);
+    assert(option::unwrap_or<Int>(xs.map(\ (x: Int) -> x + 1).first(), 0) == 2);
 
     return 0;
 }

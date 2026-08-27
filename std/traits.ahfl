@@ -232,6 +232,87 @@ fn ord_default_clamp_impl<T>(
     return self;
 }
 
+// ===========================================================================
+// §6.2 container trait impls (RFC 0013 P5 / KR5.5).
+//
+// Orphan rule: `impl Trait for Type` must live in the module owning the Trait
+// (this file, std::traits) OR the module owning the Type (std::collections).
+// We author them here, co-located with the traits, because std::collections
+// cannot import std::traits without an import cycle (traits.ahfl already
+// imports collections for its JsonValue payloads / type aliases). Bodies
+// therefore delegate to List's PUBLIC inherent methods — the raw `@builtin`
+// ops are private to std::collections and unavailable here.
+//
+// Signatures are ELEMENT-TYPED and match the trait declarations by
+// substitution: Self -> collections::List<T>, trait T -> the impl's T.
+// fold's accumulator is `T` (not a generic U) and map is `Fn(T) -> T -> Self`
+// exactly as the traits declare; these differ from List's richer inherent
+// `fold<U>` / `map<U>` and are expressed by instantiating those at U = T.
+// ===========================================================================
+
+impl<T> Foldable<T> for collections::List<T> {
+    fn length(self: Self) -> Int effect Pure decreases 0 {
+        return self.length();
+    }
+
+    fn fold(self: Self, init: T, f: Fn(T, T) -> T) -> T effect Pure decreases 0 {
+        return self.fold<T>(init, f);
+    }
+
+    fn for_each(self: Self, f: Fn(T) -> Unit) -> Unit effect Pure decreases 0 {
+        // No inherent for_each; express it as a fold whose accumulator is Unit
+        // and whose step applies f for its effect (Pure here) and yields Unit.
+        // Lambda body is expression-only per RFC §6 closure grammar.
+        return self.fold<Unit>({}, \ (acc, item) -> f(item));
+    }
+
+    fn to_list(self: Self) -> Self effect Pure decreases 0 {
+        return self;
+    }
+}
+
+impl<T> Iterable<T> for collections::List<T> {
+    fn iter_next(self: Self) -> Option<T> effect Pure decreases 0 {
+        return self.first();
+    }
+
+    fn iter_head(self: Self) -> Option<T> effect Pure decreases 0 {
+        return self.first();
+    }
+
+    fn iter_tail(self: Self) -> Self effect Pure decreases 0 {
+        // tail() -> Option<List<T>>; on the empty list yield the empty list so
+        // the Iterable contract (Self in, Self out) is total.
+        return self.tail().unwrap_or(collections::empty<T>());
+    }
+}
+
+impl<T> Functor<T> for collections::List<T> {
+    fn map(self: Self, f: Fn(T) -> T) -> Self effect Pure decreases 0 {
+        return self.map<T>(f);
+    }
+}
+
+// ---- Map<K, V>: Functor over the value type -------------------------------
+//
+// Only Functor is expressible for Map with the current PUBLIC surface:
+// `collections::map_values` maps every value through `f` while preserving
+// keys, which is exactly Functor::map at U = V (Self -> Map<K, V>, trait
+// T -> V). Foldable<V> and Iterable<V> are NOT implementable for Map: there is
+// no PUBLIC op that folds over / enumerates a Map's values (map_raw_keys /
+// map_raw_get are private @builtins of std::collections). We deliberately do
+// NOT invent evaluator @builtins for that (out of RFC 0013 P5 scope).
+//
+// Set<T> gets NO container-trait impl at all: its only public surface is
+// is_empty / length / contains / the algebraic set ops, none of which can
+// enumerate or transform elements, so Foldable / Iterable / Functor are all
+// unimplementable without new @builtins.
+impl<K, V> Functor<V> for collections::Map<K, V> {
+    fn map(self: Self, f: Fn(V) -> V) -> Self effect Pure decreases 0 {
+        return collections::map_values<K, V, V>(self, f);
+    }
+}
+
 // NOTE: JsonValue is now declared at the TOP of this file (immediately after
 // imports) so FromJson/ToJson trait signatures in the middle of the file can
 // resolve it. The full ADT + APIs live in std/json.ahfl and take over the
