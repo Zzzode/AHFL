@@ -1,5 +1,7 @@
 #include "compiler/syntax/frontend/error_recovery.hpp"
 
+#include "ahfl/compiler/frontend/frontend.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <string>
@@ -104,66 +106,21 @@ std::vector<std::string> AhflErrorStrategy::keyword_dictionary() {
 
 namespace {
 
-/// Check if a token matches a top-level declaration keyword
-bool is_declaration_keyword(std::string_view token) {
-    static const std::vector<std::string_view> decl_keywords = {"struct",
-                                                                "enum",
-                                                                "agent",
-                                                                "workflow",
-                                                                "contract",
-                                                                "flow",
-                                                                "capability",
-                                                                "predicate",
-                                                                "type",
-                                                                "module",
-                                                                "const"};
-    for (auto kw : decl_keywords) {
-        if (token == kw) {
-            return true;
-        }
+/// Extract the offending token spelling from an ANTLR diagnostic message.
+/// ANTLR phrases parse errors as e.g. "extraneous input 'xyz' expecting ..."
+/// or "mismatched input 'foo' expecting ...". We pull the first single-quoted
+/// lexeme so we can offer an edit-distance keyword suggestion for it. Returns
+/// an empty string when no quoted token is present.
+[[nodiscard]] std::string offending_token_from_message(std::string_view message) {
+    const auto open = message.find('\'');
+    if (open == std::string_view::npos) {
+        return {};
     }
-    return false;
-}
-
-/// Check if a token is a known keyword
-bool is_keyword(std::string_view token) {
-    auto dict = AhflErrorStrategy::keyword_dictionary();
-    for (const auto &kw : dict) {
-        if (token == kw) {
-            return true;
-        }
+    const auto close = message.find('\'', open + 1);
+    if (close == std::string_view::npos || close <= open + 1) {
+        return {};
     }
-    return false;
-}
-
-/// Simple tokenizer: split source into whitespace-separated tokens
-std::vector<std::string> tokenize(std::string_view source) {
-    std::vector<std::string> tokens;
-    std::size_t i = 0;
-    while (i < source.size()) {
-        // Skip whitespace and punctuation that isn't part of identifiers
-        while (i < source.size() &&
-               (source[i] == ' ' || source[i] == '\t' || source[i] == '\n' || source[i] == '\r' ||
-                source[i] == '{' || source[i] == '}' || source[i] == '(' || source[i] == ')' ||
-                source[i] == ';' || source[i] == ':' || source[i] == ',' || source[i] == '.')) {
-            ++i;
-        }
-        if (i >= source.size()) {
-            break;
-        }
-        // Collect token characters (identifiers and underscores)
-        std::size_t start = i;
-        while (i < source.size() && source[i] != ' ' && source[i] != '\t' && source[i] != '\n' &&
-               source[i] != '\r' && source[i] != '{' && source[i] != '}' && source[i] != '(' &&
-               source[i] != ')' && source[i] != ';' && source[i] != ':' && source[i] != ',' &&
-               source[i] != '.') {
-            ++i;
-        }
-        if (i > start) {
-            tokens.emplace_back(source.substr(start, i - start));
-        }
-    }
-    return tokens;
+    return std::string(message.substr(open + 1, close - open - 1));
 }
 
 } // anonymous namespace
@@ -171,49 +128,39 @@ std::vector<std::string> tokenize(std::string_view source) {
 PartialParseResult parse_with_recovery(std::string_view source, std::string_view filename) {
     PartialParseResult result;
 
-    auto tokens = tokenize(source);
-    auto dict = AhflErrorStrategy::keyword_dictionary();
-    AhflErrorStrategy strategy;
+    // KR5.6: drive the real ANTLR-backed front end instead of an ad-hoc
+    // whitespace re-tokenizer. ANTLR's default error strategy already recovers
+    // from syntax errors (extraneous / missing / mismatched tokens) and keeps
+    // parsing, so a single call yields BOTH the surviving partial AST and the
+    // full multi-error diagnostic set. We derive the PartialParseResult from
+    // those real results and reuse the unified edit_distance for suggestions.
+    const ahfl::Frontend frontend;
+    auto parse_result = frontend.parse_text(std::string(filename), std::string(source));
 
-    // Scan for top-level declaration keywords to count valid declarations
-    for (const auto &tok : tokens) {
-        if (is_declaration_keyword(tok)) {
-            ++result.valid_declaration_count;
-        }
+    if (parse_result.program != nullptr) {
+        result.valid_declaration_count = parse_result.program->declarations.size();
     }
+    result.has_partial_ast = result.valid_declaration_count > 0;
 
-    result.has_partial_ast = (result.valid_declaration_count > 0);
+    const auto dictionary = AhflErrorStrategy::keyword_dictionary();
+    const AhflErrorStrategy strategy;
 
-    // Identify tokens that look like they could be misspelled keywords
-    // Heuristic: if a token is not a keyword, not a common identifier pattern
-    // (starts with uppercase = type name, or contains digits), check if it's
-    // close to a keyword
-    for (const auto &tok : tokens) {
-        if (is_keyword(tok)) {
+    for (const auto &diagnostic : parse_result.diagnostics.entries()) {
+        if (diagnostic.severity != DiagnosticSeverity::Error) {
             continue;
         }
-        // Skip tokens that look like identifiers (capitalized names, numbers)
-        if (!tok.empty() && (tok[0] >= 'A' && tok[0] <= 'Z')) {
+        ++result.error_count;
+        result.error_messages.push_back(diagnostic.message);
+
+        // Offer a "did you mean <keyword>?" suggestion when the offending token
+        // is a near-miss of an AHFL keyword (misspelled keyword recovery).
+        const auto token = offending_token_from_message(diagnostic.message);
+        if (token.empty()) {
             continue;
         }
-        // Skip string literals or numeric tokens
-        if (!tok.empty() && (tok[0] >= '0' && tok[0] <= '9')) {
-            continue;
-        }
-        // Check edit distance to keywords
-        auto best = strategy.best_match(tok, dict);
+        auto best = strategy.best_match(token, dictionary);
         if (best.confidence > 0.6 && best.confidence < 1.0) {
-            // This token is close to a keyword but not exact — likely an error
-            ++result.error_count;
-            result.suggestions.push_back(best);
-            std::string msg = "unknown token '" + tok + "'";
-            if (!filename.empty()) {
-                msg = std::string(filename) + ": " + msg;
-            }
-            if (!best.suggested_token.empty()) {
-                msg += "; did you mean '" + best.suggested_token + "'?";
-            }
-            result.error_messages.push_back(std::move(msg));
+            result.suggestions.push_back(std::move(best));
         }
     }
 

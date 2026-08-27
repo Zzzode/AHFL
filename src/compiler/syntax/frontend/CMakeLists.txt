@@ -24,6 +24,7 @@ add_library(ahfl_compiler_syntax_recovery STATIC
 target_link_libraries(ahfl_compiler_syntax_recovery
     PUBLIC
         ahfl_base_public
+        ahfl_compiler_syntax
 )
 
 target_include_directories(ahfl_compiler_syntax_recovery PRIVATE ${PROJECT_SOURCE_DIR}/src)
