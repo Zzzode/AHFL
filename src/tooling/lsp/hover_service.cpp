@@ -219,6 +219,38 @@ void add_secondary_fact(HoverPayload &payload, std::string label, std::string va
     add_hover_fact(payload, HoverFactImportance::Secondary, std::move(label), std::move(value));
 }
 
+// KR3.5: render a persisted flow-narrowing fact (TypedNarrowingFact) as a
+// human-readable "place → refinement" string for hover.
+[[nodiscard]] std::string narrowing_fact_text(const TypedNarrowingFact &fact) {
+    std::string place = fact.root;
+    for (const auto &member : fact.members) {
+        place += '.';
+        place += member;
+    }
+    std::string refinement;
+    if (fact.kind == "is_none") {
+        refinement = "is none";
+    } else if (fact.kind == "is_not_none") {
+        refinement = "is not none";
+    } else if (fact.kind == "is_variant") {
+        refinement = "is " + fact.enum_name + "::" + fact.variant_name;
+    } else if (fact.kind == "is_not_variant") {
+        refinement = "is not " + fact.enum_name + "::" + fact.variant_name;
+    } else {
+        refinement = fact.kind;
+    }
+    return place + " " + refinement;
+}
+
+void add_narrowing_facts(HoverPayload &payload, const TypedExpr &expr) {
+    for (const auto &fact : expr.narrowing_when_true) {
+        add_secondary_fact(payload, "narrows (then)", narrowing_fact_text(fact));
+    }
+    for (const auto &fact : expr.narrowing_when_false) {
+        add_secondary_fact(payload, "narrows (else)", narrowing_fact_text(fact));
+    }
+}
+
 [[nodiscard]] std::string inline_code(std::string_view value) {
     return "`" + std::string(value) + "`";
 }
@@ -798,6 +830,9 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
             payload.canonical_name = symbol->get().canonical_name;
         }
     }
+    // KR3.5: surface flow-narrowing facts this expression establishes (populated
+    // for if-conditions during type checking).
+    add_narrowing_facts(payload, expr);
     return payload;
 }
 

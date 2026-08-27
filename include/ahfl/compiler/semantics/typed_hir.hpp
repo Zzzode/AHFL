@@ -394,6 +394,19 @@ struct MonomorphizeResult {
 [[nodiscard]] TypedExpr *resolve_child_mut(TypedProgram &program,
                                            const TypedExprChild &child) noexcept;
 
+// KR3.5: a serializable mirror of a flow-narrowing fact (semantics/flow_facts.hpp
+// TypeFact) recorded onto the condition TypedExpr so LSP hover can surface how a
+// condition narrows a place, without re-running the type checker. `kind` uses
+// the stable spellings "is_none" / "is_not_none" / "is_variant" / "is_not_variant";
+// enum_name/variant_name are populated only for the variant kinds.
+struct TypedNarrowingFact {
+    std::string root;
+    std::vector<std::string> members;
+    std::string kind;
+    std::string enum_name;
+    std::string variant_name;
+};
+
 struct TypedExpr {
     ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::Group};
     SourceRange range;
@@ -444,6 +457,11 @@ struct TypedExpr {
     std::string quantifier_binder;
     std::string quantifier_value_binder;
     std::optional<ConstValue> const_value;
+    // KR3.5: flow-narrowing facts a boolean condition establishes on its
+    // then / else branches (populated for if-conditions during type checking).
+    // Empty for non-condition expressions.
+    std::vector<TypedNarrowingFact> narrowing_when_true{};
+    std::vector<TypedNarrowingFact> narrowing_when_false{};
 };
 
 struct TypedDecl {

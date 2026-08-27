@@ -1958,6 +1958,69 @@ flow for NarrowDebugAgent {
                               "narrows 'ctx.token' to none on else branch"));
 }
 
+// KR3.5: the narrowing facts an if-condition establishes are persisted onto the
+// condition's TypedExpr (narrowing_when_true / narrowing_when_false) so LSP
+// hover can surface them without re-running the type checker.
+TEST_CASE("if-condition TypedExpr carries persisted narrowing facts") {
+    const std::string source = R"AHFL(
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    token: Optional<String> = std::option::Option::None;
+}
+
+struct Response {
+    value: String;
+}
+
+agent NarrowPersistAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowPersistAgent {
+    state Done {
+        if (ctx.token != std::option::Option::None) {
+            return Response { value: ctx.token };
+        } else {
+            return Response { value: input.fallback };
+        }
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_project_source("narrow_persist.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    // The narrowing facts are stamped onto the if-condition's TypedExpr; find it
+    // by scanning for the expression that carries them (the exact stored range —
+    // parenthesized vs bare — is an internal detail).
+    bool true_has_not_none = false;
+    bool false_has_none = false;
+    for (const auto &expr : result.typed_program.expressions) {
+        for (const auto &fact : expr.narrowing_when_true) {
+            if (fact.root == "ctx" && fact.members == std::vector<std::string>{"token"} &&
+                fact.kind == "is_not_none") {
+                true_has_not_none = true;
+            }
+        }
+        for (const auto &fact : expr.narrowing_when_false) {
+            if (fact.root == "ctx" && fact.members == std::vector<std::string>{"token"} &&
+                fact.kind == "is_none") {
+                false_has_none = true;
+            }
+        }
+    }
+    CHECK(true_has_not_none);
+    CHECK(false_has_none);
+}
+
 TEST_CASE("Optional narrowing explanations describe unsupported disjunctive conditions") {
     const std::string source = R"AHFL(
 struct Request {

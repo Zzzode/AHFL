@@ -3629,6 +3629,44 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         }
 
         const auto condition_facts = extract_condition_facts(*statement.if_stmt->condition);
+        // KR3.5: persist the narrowing facts onto the condition's TypedExpr so
+        // LSP hover can surface how the condition narrows a place, without
+        // re-running the type checker. Stamped for every if-condition (not only
+        // under explain_narrowing).
+        if (TypedExpr *condition_expr = result_.typed_program.find_expr_by_range(
+                statement.if_stmt->condition->range, current_source_id_);
+            condition_expr != nullptr) {
+            const auto to_typed_fact = [](const TypeFact &fact) {
+                TypedNarrowingFact out;
+                out.root = fact.place.root;
+                out.members = fact.place.members;
+                switch (fact.kind) {
+                case TypeFactKind::IsNone:
+                    out.kind = "is_none";
+                    break;
+                case TypeFactKind::IsNotNone:
+                    out.kind = "is_not_none";
+                    break;
+                case TypeFactKind::IsVariant:
+                    out.kind = "is_variant";
+                    break;
+                case TypeFactKind::IsNotVariant:
+                    out.kind = "is_not_variant";
+                    break;
+                }
+                out.enum_name = fact.enum_name;
+                out.variant_name = fact.variant_name;
+                return out;
+            };
+            condition_expr->narrowing_when_true.clear();
+            condition_expr->narrowing_when_false.clear();
+            condition_facts.when_true.for_each([&](const TypeFact &fact) {
+                condition_expr->narrowing_when_true.push_back(to_typed_fact(fact));
+            });
+            condition_facts.when_false.for_each([&](const TypeFact &fact) {
+                condition_expr->narrowing_when_false.push_back(to_typed_fact(fact));
+            });
+        }
         if (options_.explain_narrowing) {
             const std::string condition_text = current_source_ != nullptr
                                                    ? std::string(current_source_->source.slice(
