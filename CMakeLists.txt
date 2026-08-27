@@ -78,6 +78,35 @@ else()
     message(STATUS "AHFL Z3 solver for optional tests: not found")
 endif()
 
+# KR4.5 / RFC 0012 stabilized: optional real (non-stub) local LLM engine for the
+# real-LLM run evidence CTest. Detection mirrors AHFL_Z3_SOLVER: explicit cache
+# var, then AHFL_LLAMA_SERVER env, then a PATH lookup for `llama-server`. When
+# present, the evidence test drives genuine llama.cpp autoregressive inference
+# through AHFL's production provider path (see tests/scripts/real_llm_run_evidence.py).
+set(AHFL_LLAMA_SERVER "" CACHE FILEPATH
+    "Path to a llama.cpp llama-server used by the optional real-LLM run evidence test"
+)
+if(NOT AHFL_LLAMA_SERVER AND DEFINED ENV{AHFL_LLAMA_SERVER})
+    set(AHFL_LLAMA_SERVER "$ENV{AHFL_LLAMA_SERVER}" CACHE FILEPATH
+        "Path to a llama.cpp llama-server used by the optional real-LLM run evidence test"
+        FORCE
+    )
+endif()
+if(NOT AHFL_LLAMA_SERVER)
+    find_program(AHFL_DETECTED_LLAMA_SERVER NAMES llama-server)
+    if(AHFL_DETECTED_LLAMA_SERVER)
+        set(AHFL_LLAMA_SERVER "${AHFL_DETECTED_LLAMA_SERVER}" CACHE FILEPATH
+            "Path to a llama.cpp llama-server used by the optional real-LLM run evidence test"
+            FORCE
+        )
+    endif()
+endif()
+if(AHFL_LLAMA_SERVER)
+    message(STATUS "AHFL llama-server for optional real-LLM test: ${AHFL_LLAMA_SERVER}")
+else()
+    message(STATUS "AHFL llama-server for optional real-LLM test: not found")
+endif()
+
 option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
 option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, OpenAPI, Terraform)" ON)
 option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)

@@ -269,6 +269,16 @@ ahfl_label_tests(
         ahflc.run.default_manifest.entry_workflow_default
 )
 
+# KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Only
+# registered when a llama-server binary was discovered at configure time.
+if(AHFL_LLAMA_SERVER)
+    ahfl_label_tests(
+        LABELS llm-provider
+        TESTS
+            ahflc.run.real_llm.evidence
+    )
+endif()
+
 ahfl_label_tests(
     LABELS http-transport
     TESTS

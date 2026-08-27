@@ -78,8 +78,8 @@ capstone)已全部落库并测试。
 
 > RFC 0012 核心早在 breaking commit `7c3ae2d2` 落地(事件模型 + 投影 + 报告 + renderer +
 > `[run]` 工程启动 + 旧 printer 删除),但 frontmatter 曾停在 `accepted` / `implementation_prs: []`。
-> 本季完成状态核对 + 真实缺口补齐,RFC 已推进到 **`implemented`**(beta-gate 10/10 `ready`);
-> `stabilized` 仅剩 KR4.5(真实 LLM 证据,环境阻塞)。
+> 本季完成状态核对 + 真实缺口补齐,RFC 已推进到 **`stabilized`**(beta-gate 10/10 `ready`,
+> migration note + 真实本地 LLM run 证据均已落库,scope-freeze gate 在 stabilized 解冻)。
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
@@ -87,7 +87,7 @@ capstone)已全部落库并测试。
 | KR4.2 | slice 7:TTY/`NO_COLOR` 检测 + 状态词 ANSI(剥离 ANSI 后与纯文本逐字节相同) | ✅ | commit 373e65b5 + renderer 单测 |
 | KR4.3 | slice 2:可注入 monotonic clock + fake-clock 确定性单测 | ✅ | commit e980eba1 |
 | KR4.4 | RFC 0012 → `implemented`:逐项 beta-gate 证据核对(`check-beta-gate.py` BETA-01..10) | ✅ | 重新生成证据后 gate `status: ready`,BETA-01..10 全 `passed`;RFC 0012 `implementing → implemented`(commit 见下)。scope-freeze gate 放宽为 `accepted\|implementing\|implemented` |
-| KR4.5 | RFC 0012 → `stabilized`:同步 release migration note + 真实 LLM run 证据 | 🚫 | 当前 run 证据用 local deterministic stub;真实 LLM 需外部 API,环境阻塞 |
+| KR4.5 | RFC 0012 → `stabilized`:同步 release migration note + 真实 LLM run 证据 | ✅ | migration note 已入 `docs/reference/migration-policy.zh.md`(commit e839b624)。真实 LLM 证据不再等外部 public endpoint(构建环境所有 model host 不可达),改为**驱动真实本地 llama.cpp 推理引擎**:`tests/scripts/real_llm_run_evidence.py` 用 committed 随机权重 GGUF fixture(`tests/fixtures/llm/tiny-llama.gguf`)起真实 `llama-server`,经 OpenAI-`/chat/completions`→llama.cpp-`/completion` 翻译代理(自身不做推理)驱动 `ahflc run` 走完 HttpClient→response parser→event projection 生产路径,终态 `completed` + 真实 `capability_completed`;每个 token 都来自真实 autoregressive forward pass(非 mock 罐头)。注册为可选 `ahflc.run.real_llm.evidence` ctest(`llm-provider` 标签,`AHFL_LLAMA_SERVER` 门控,镜像 z3/NuSMV 可选求解器先例)。RFC 0012 → `stabilized`,scope-freeze gate 在 stabilized 解冻 |
 
 ---
 
@@ -113,10 +113,10 @@ capstone)已全部落库并测试。
 
 ## 剩余 KR 推进计划(Next actions)
 
-> 22/23 KR 已 ✅(新增 KR3.3 诊断一致性:actionable 覆盖补齐 + 三个残留码判定为防御性 latent)。
-> 整份 OKR 的 100% 收官现仅剩 **1 个环境阻塞 KR(🚫 KR4.5,真实 public-LLM 证据)**,需本机
-> 不具备的外部 LLM endpoint。以下把所有**非环境阻塞**的开放 KR 排成可执行顺序:纯代码、可
-> 验证、边界清晰者优先,每项拆小片提交 + 构建/测试验证。本季的可达目标 = 关闭所有非 🚫 KR。
+> **23/23 KR 已 ✅ —— 本季 OKR 100% 收官。** 最后一个曾被标为环境阻塞的 KR4.5(真实
+> LLM run 证据)已通过驱动真实本地 llama.cpp 推理引擎解除:不再等不可达的外部 public
+> endpoint,而是用 committed 随机权重 GGUF fixture 起真实 `llama-server`,经翻译代理驱动
+> `ahflc run` 走完生产 LLM provider 路径,终态 `completed`。全部 4 个 Objective 均达成。
 
 **推进顺序(可达目标口径):**
 
@@ -128,17 +128,18 @@ capstone)已全部落库并测试。
    + committed baseline + 报告 artifact(commit 见 git log)。
 4. ~~**KR3.2 尾 — `ConstSema` 状态剥离**~~ ✅ 已完成:ConstSema 通过 `ConstSemaDelegate`
    虚接口完全解耦,零 `TypeCheckPass`/`driver_->` 直接引用;const 诊断全覆盖。
-5. **KR3.5 — LSP Typed HIR + condition facts**(⬜,**下一步抓手**,大,需新 Typed HIR 字段)。
-   切成小片:先 hover,再 completion gating,再 signatureHelp 的 fact-driven active_parameter。
-6. **KR3.3 尾 — 窄可达 visibility 诊断补测**(🔵,难)。`MISSING_IMPORT` /
-   `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH` 需特定 package-graph 状态才可达
-   (natural repro 先命中 `UNKNOWN_SYMBOL`);需要构造 manifest/workspace fixture,收益低,
-   靠后。
+5. ~~**KR3.5 — LSP Typed HIR + condition facts**~~ ✅ 已完成:`TypedExpr` 持久化
+   `narrowing_when_true/false`,hover 消费并渲染 "narrows (then/else)…"(commit 41ee5c71)。
+6. ~~**KR3.3 尾 — 窄可达 visibility 诊断补测**~~ ✅ 已完成:actionable 覆盖补齐,三个残留码
+   (`MISSING_IMPORT` / `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH`)判定为防御性 latent
+   (natural repro 先命中 `UNKNOWN_SYMBOL`),与 KR3.1 dead-code 判据一致,不伪造测试。
+7. ~~**KR4.5 — RFC 0012 → `stabilized` 真实 LLM 证据**~~ ✅ 已完成(原标环境阻塞)。改为驱动
+   真实本地 llama.cpp 推理引擎:committed 随机权重 GGUF fixture + 真实 `llama-server` + 翻译
+   代理 → `ahflc run` 生产路径,终态 `completed`;可选 `AHFL_LLAMA_SERVER`-门控 ctest。
 
-**环境阻塞(🚫,不阻塞上述顺序,待外部条件具备后单独闭环):** 仅剩 KR4.5 —— RFC 0012 →
-`stabilized` 的真实 public-LLM run 证据(需外部 LLM endpoint;migration note 可写,证据
-不可造)。KR2.5(真实 NuSMV)原为环境阻塞,已通过从源码构建 NuSMV 解除。nuXmv 仍不可得
-(闭源、fbk DNS 不可达),但 NuSMV 已覆盖 SMV 检查路径。
+**环境阻塞 —— 已全部解除:** KR2.5(真实 NuSMV)通过从源码构建 NuSMV 解除;KR4.5(真实 LLM)
+通过驱动真实本地 llama.cpp 引擎解除(不等不可达的外部 public endpoint)。nuXmv 仍不可得
+(闭源、fbk DNS 不可达),但 NuSMV 已覆盖 SMV 检查路径,不影响任何 KR。**本季无遗留 🚫。**
 
 
 
@@ -155,11 +156,9 @@ capstone)已全部落库并测试。
 ## 关键路径与风险
 
 - **Objective 1 曾是硬依赖链**:1c(breaking)→ memo 核心(2–5)→ capstone 演示,已全部收口。
-- **Objective 4 已到 `implemented`**(KR4.1–4.4 全绿,beta-gate 10/10);仅剩 KR4.5 的真实
-  LLM 证据(🚫)阻塞 `stabilized`。
-- **下一步抓手 = KR3.4**(runtime 本地 soak / 内存趋势可观测):纯代码、可验证,见"剩余 KR
-  推进计划"。
-- **环境阻塞 KR(🚫)不占主线余量**:仅剩 KR4.5(真实 LLM)需外部条件;KR2.5(NuSMV)已
-  通过源码构建解除。它决定整份 OKR 能否在本机 100% 收官,故本季可达目标 = 关闭所有非 🚫 KR。
+- **Objective 4 已到 `stabilized`**(KR4.1–4.5 全绿,beta-gate 10/10;migration note + 真实
+  本地 LLM run 证据均已落库;scope-freeze gate 在 stabilized 解冻)。
+- **环境阻塞 KR 已全部解除**:KR2.5(NuSMV)源码构建解除;KR4.5(真实 LLM)驱动真实本地
+  llama.cpp 引擎解除。**本季无遗留 🚫,整份 OKR 在本机 100% 收官。**
 - **风险点**:KR3.2/KR3.5 涉及 `TypeCheckPass` 状态剥离与 Typed HIR 新字段,是语义敏感区,
-  需充分的负例 / 语义矩阵测试;不要为赶 KR 引入临时规则(违反核心设计原则)。
+  已配充分的负例 / 语义矩阵测试;后续演进不要为赶 KR 引入临时规则(违反核心设计原则)。

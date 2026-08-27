@@ -394,6 +394,22 @@ add_test(NAME ahflc.run.llm_provider_runtime.smoke
             "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-provider-runtime-smoke"
 )
 
+# KR4.5 / RFC 0012 stabilized: real (non-stub) local LLM run evidence. Unlike the
+# mock-server smoke above, this drives a genuine llama.cpp llama-server doing
+# real autoregressive inference over the committed tiny-llama GGUF fixture,
+# through AHFL's production LLM provider path. Optional: only registered when a
+# llama-server binary was discovered at configure time (see AHFL_LLAMA_SERVER).
+if(AHFL_LLAMA_SERVER)
+    add_test(NAME ahflc.run.real_llm.evidence
+        COMMAND ${Python3_EXECUTABLE}
+                "${AHFL_TESTS_DIR}/scripts/real_llm_run_evidence.py"
+                $<TARGET_FILE:ahflc>
+                "${CMAKE_CURRENT_BINARY_DIR}/runtime/real-llm-evidence"
+                "${AHFL_TESTS_DIR}/fixtures/llm/tiny-llama.gguf"
+                "${AHFL_LLAMA_SERVER}"
+    )
+endif()
+
 # RFC 0022 durable-resume CLI flags: --recovery-store / --resume-pending-result
 # are accepted, inert on a completing run, and reject invalid pending JSON.
 add_test(NAME ahflc.run.durable_resume_flags.smoke

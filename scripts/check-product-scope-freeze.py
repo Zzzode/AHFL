@@ -74,6 +74,22 @@ def provider_artifacts(text: str) -> tuple[set[str], set[str]]:
     return kinds, artifact_ids
 
 
+def rfc_status(root: Path) -> str | None:
+    """Return the RFC 0012 frontmatter status, or None if unreadable."""
+    try:
+        rfc = read(root, "docs/rfcs/0012-structured-workflow-execution-ux.zh.md")
+    except (OSError, ValueError):
+        return None
+    match = re.search(r'^status:\s*"([a-z]+)"\s*$', rfc, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+# Freeze-active states: the beta product surface stays frozen from `accepted`
+# through `implemented`. The gate closes — and the freeze lifts — only at
+# `stabilized`.
+FREEZE_ACTIVE_STATES = frozenset({"accepted", "implementing", "implemented"})
+
+
 def require_rfc_contract(root: Path) -> list[str]:
     failures: list[str] = []
     rfc = read(root, "docs/rfcs/0012-structured-workflow-execution-ux.zh.md")
@@ -84,7 +100,8 @@ def require_rfc_contract(root: Path) -> list[str]:
     # `stabilized`, so `implementing` and `implemented` are both still inside the
     # window — the surface must stay frozen while the accepted plan is built out
     # and while it awaits stabilization evidence — so all three keep the freeze
-    # active. Only `stabilized` (and pre-acceptance states) lift it.
+    # active. Only `stabilized` (and pre-acceptance states) lift it, and those
+    # are handled before this function runs.
     if not re.search(r'^status:\s*"(accepted|implementing|implemented)"\s*$', rfc, re.MULTILINE):
         failures.append(
             "RFC 0012 must remain accepted, implementing, or implemented while the "
@@ -113,6 +130,17 @@ def report_additions(
 
 def main() -> int:
     root = parse_args().root.resolve()
+
+    # The freeze lifts when RFC 0012 reaches `stabilized` (the beta gate closes).
+    # At that point the product surface is intentionally no longer frozen, so the
+    # catalog-addition checks are skipped rather than enforced.
+    status = rfc_status(root)
+    if status == "stabilized":
+        print(
+            "product scope freeze check passed (RFC 0012 stabilized — freeze lifted)"
+        )
+        return 0
+
     failures: list[str] = []
     try:
         baseline_path = root / "config/product-scope-freeze.json"

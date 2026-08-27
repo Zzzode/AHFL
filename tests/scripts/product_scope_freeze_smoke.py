@@ -55,6 +55,20 @@ def remove_enum_value(path: Path, value: str) -> None:
     path.write_text(text.replace(needle, "", 1), encoding="utf-8")
 
 
+def force_rfc_status(rfc: Path, status: str) -> None:
+    """Rewrite the RFC 0012 frontmatter status line to `status`."""
+    text = rfc.read_text(encoding="utf-8")
+    new_text, count = re.subn(
+        r'^status:\s*"[a-z]+"\s*$',
+        f'status: "{status}"',
+        text,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    require(count == 1, "could not locate RFC 0012 status line to rewrite")
+    rfc.write_text(new_text, encoding="utf-8")
+
+
 def main() -> int:
     require(len(sys.argv) == 3, "usage: product_scope_freeze_smoke.py <checker> <repo-root>")
     checker = Path(sys.argv[1]).resolve()
@@ -69,6 +83,13 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="ahfl-scope-freeze-") as temp_dir:
         root = Path(temp_dir)
         copy_gate_inputs(source_root, root)
+
+        rfc = root / "docs/rfcs/0012-structured-workflow-execution-ux.zh.md"
+        # The freeze lifts once RFC 0012 reaches `stabilized`. So that the
+        # mutation-detection assertions below exercise the FROZEN behavior
+        # regardless of the real RFC's current status (which may already be
+        # stabilized), pin the temp copy to a freeze-active status first.
+        force_rfc_status(rfc, "implemented")
 
         result = run_checker(checker, root)
         require(result.returncode == 0, f"baseline must pass:\n{result.stderr}")
@@ -156,6 +177,23 @@ def main() -> int:
         require(
             "accepted, implementing, or implemented" in result.stderr,
             "RFC status failure must explain the accepted/implementing/implemented requirement",
+        )
+
+        # `stabilized` closes the beta gate and LIFTS the freeze: the checker
+        # must pass even when a forbidden CommandKind addition is present, since
+        # the surface is intentionally no longer frozen at that point.
+        force_rfc_status(rfc, "stabilized")
+        add_enum_value(
+            command_header, "    _Count, // sentinel — must be last", "EmitPostFreezeSurface"
+        )
+        result = run_checker(checker, root)
+        require(
+            result.returncode == 0,
+            f"stabilized RFC 0012 must lift the freeze even with new surface:\n{result.stderr}",
+        )
+        require(
+            "freeze lifted" in result.stdout,
+            "stabilized pass must report the freeze as lifted",
         )
 
     print("product scope freeze smoke passed")
