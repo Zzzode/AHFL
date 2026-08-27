@@ -340,3 +340,87 @@ fn run(w: Wrap) -> Int effect Pure decreases 0 {
     }
     CHECK(named_method);
 }
+
+// ===========================================================================
+// KR5.2 (RFC 0013 §3.5): return-position where-bound enforcement. A fn whose
+// declared return type references a concrete nominal that is the subject of a
+// `where <Nominal>: Trait` bound must have that bound actually satisfied — an
+// unsatisfied concrete return-position bound previously passed silently (the
+// (void)clause; TODO hook at the fn body site did no work).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// KR5.2 negative: `-> Widget ... where Widget: Show` with NO impl Show for
+// Widget must emit TRAIT_BOUND_NOT_SATISFIED at the return-type range.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.2 unsatisfied return-position where-bound is rejected") {
+    const std::string source = R"AHFL(
+module test::rb;
+
+struct Widget { n: Int; }
+
+trait Show {
+    fn show(self: Widget) -> Int;
+}
+
+fn make() -> Widget effect Pure decreases 0 where Widget: Show {
+    return Widget { n: 1 };
+}
+)AHFL";
+    const auto result = typecheck_source("kr52_neg.ahfl", source);
+    REQUIRE(result.has_errors());
+    CHECK(has_bound_not_satisfied(result));
+}
+
+// ---------------------------------------------------------------------------
+// KR5.2 positive: the same signature with a real `impl Show for Widget`
+// satisfies the return-position bound — no error.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.2 satisfied return-position where-bound is accepted") {
+    const std::string source = R"AHFL(
+module test::rb;
+
+struct Widget { n: Int; }
+
+trait Show {
+    fn show(self: Widget) -> Int;
+}
+
+impl Show for Widget {
+    fn show(self: Widget) -> Int effect Pure decreases 0 {
+        return self.n;
+    }
+}
+
+fn make() -> Widget effect Pure decreases 0 where Widget: Show {
+    return Widget { n: 1 };
+}
+)AHFL";
+    const auto result = typecheck_source("kr52_pos.ahfl", source);
+    CHECK_FALSE(result.has_errors());
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+// ---------------------------------------------------------------------------
+// KR5.2 scope guard: a where-bound whose subject is a generic type parameter
+// (not referenced concretely by the return type) is NOT enforced here — it is
+// the call site's responsibility. `-> Int` return type references no nominal,
+// so the body checks clean even though `T: Show` has no witness in the body.
+// ---------------------------------------------------------------------------
+TEST_CASE("KR5.2 generic-parameter bound is not enforced at the return site") {
+    const std::string source = R"AHFL(
+module test::rb;
+
+trait Show {
+    fn show(self: Int) -> Int;
+}
+
+fn ident<T>(x: T) -> T effect Pure decreases 0 where T: Show {
+    return x;
+}
+)AHFL";
+    const auto result = typecheck_source("kr52_generic.ahfl", source);
+    // T is abstract in the body; the return-site check skips generic-parameter
+    // subjects, so no TRAIT_BOUND_NOT_SATISFIED is raised here.
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}

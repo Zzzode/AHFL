@@ -1876,6 +1876,90 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     return false;
 }
 
+namespace {
+
+// Strip any leading `module::path::` qualifier, returning the trailing type
+// name segment used for matching a where-bound subject spelling ("Widget")
+// against a resolved nominal's canonical name ("pkg::mod::Widget").
+[[nodiscard]] std::string_view last_type_segment(std::string_view name) {
+    if (const auto sep = name.rfind("::"); sep != std::string_view::npos) {
+        return name.substr(sep + 2);
+    }
+    return name;
+}
+
+// Collect the nominal types referenced by `type`: the type itself (if it is a
+// struct/enum) plus, recursively, its generic type arguments. Keyed by the
+// trailing name segment so a where-bound subject spelling ("Widget") can be
+// matched against a resolved nominal ("pkg::mod::Widget"). Used to enforce
+// return-position where-bounds (KR5.2) directly against the resolved return
+// type, without re-resolving the subject name through the symbol table (which
+// only accepts fully-qualified canonical names).
+void collect_nominal_types(const Type &type,
+                           std::unordered_map<std::string, const Type *> &out) {
+    type.visit(Overloaded{
+        [&](const types::StructT &s) {
+            out.emplace(std::string(last_type_segment(s.canonical_name)), &type);
+            for (const auto &arg : s.type_args) {
+                if (arg != nullptr) {
+                    collect_nominal_types(*arg, out);
+                }
+            }
+        },
+        [&](const types::EnumT &e) {
+            out.emplace(std::string(last_type_segment(e.canonical_name)), &type);
+            for (const auto &arg : e.type_args) {
+                if (arg != nullptr) {
+                    collect_nominal_types(*arg, out);
+                }
+            }
+        },
+        [&](const auto &) {},
+    });
+}
+
+} // namespace
+
+void TypeCheckPass::check_return_position_bounds(const FnTypeInfo &info) {
+    if (info.return_type == nullptr || info.where_clause.bounds.empty()) {
+        return;
+    }
+
+    // Nominal types referenced by the declared return type, keyed by trailing
+    // name segment.
+    std::unordered_map<std::string, const Type *> return_nominals;
+    collect_nominal_types(*info.return_type, return_nominals);
+    if (return_nominals.empty()) {
+        return;
+    }
+
+    for (const auto &bound : info.where_clause.bounds) {
+        // Skip bounds on generic type parameters: those are enforced at the
+        // call site (typecheck_expr.cpp) where the concrete substitution is
+        // known. Here we only handle concrete nominal subjects.
+        if (std::find(info.type_param_names.begin(),
+                      info.type_param_names.end(),
+                      bound.subject_name) != info.type_param_names.end()) {
+            continue;
+        }
+
+        // Only enforce bounds whose subject nominal is actually referenced by
+        // the return type — that is the return-position scope of KR5.2. Use the
+        // already-resolved nominal type from the return signature as the check
+        // subject.
+        const auto nominal_iter =
+            return_nominals.find(std::string(last_type_segment(bound.subject_name)));
+        if (nominal_iter == return_nominals.end() || nominal_iter->second == nullptr) {
+            continue;
+        }
+        const Type &subject_type = *nominal_iter->second;
+
+        for (const auto &trait_name : bound.trait_names) {
+            (void)check_bound(subject_type, trait_name, info.return_type_range);
+        }
+    }
+}
+
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {
     const auto path_payload = path_payload_for(expr);
     if (auto *typed_expr = result_.typed_program.find_expr(expr.node_id, current_source_id_);
@@ -3058,16 +3142,12 @@ void FlowWorkflowSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl
     // Note: no expected_return_origin so the return statement uses
     // assignability check (not schema boundary check — that's for agent output).
     //
-    // TODO(hook_for_p3c): P3c return-site where-bound validation. After the
-    // body block is type-checked, walk every ReturnStmtSyntax in the typed
-    // block, collect the inferred return value type, and validate it against
-    // any `where T:Trait` constraints that apply to the fn's return type
-    // (i.e. bounds whose subject type is the declared return type or a
-    // type parameter referenced by it). Emit TRAIT_BOUND_NOT_SATISFIED at
-    // the return expression range for each unsatisfied bound. The hook is
-    // intentionally a placeholder here (no logic) so P3c can slot in the
-    // full bound-expansion + type-parameter-walk without touching call-site
-    // code. See RFC §3.5 return-bound semantics.
+    // KR5.2 (RFC 0013 §3.5): enforce return-position where-bounds. A concrete
+    // nominal referenced by the declared return type whose `where <Nominal>:
+    // Trait` bound does not hold would otherwise pass silently — the call-site
+    // check only covers bounds on generic parameters. Validated once per fn
+    // against the resolved signature (independent of the body's control flow).
+    driver_->check_return_position_bounds(info);
     if (info.return_type != nullptr) {
         driver_->check_block(*decl.body,
                              context,
@@ -3978,16 +4058,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 } else {
                     // Ordinary function return: check assignability.
                     //
-                    // TODO(hook_for_p3c): P3c return-bound hook. After the
-                    // assignability check passes, inspect the fn's
-                    // where_clause for any bounds whose subject type (or a
-                    // type parameter referenced by it) matches the declared
-                    // return type. For each such bound, call
-                    // `check_bound(value.type, trait_name, range)`. The
-                    // check logic lives in P3c (it needs generic bound
-                    // expansion: `where T: Eq` where `-> T` for example) so
-                    // this site deliberately performs no work beyond the
-                    // assignability check today.
+                    // KR5.2: return-position where-bounds are enforced once per
+                    // fn in check_return_position_bounds (called from
+                    // check_fn_body) against the resolved signature, so no
+                    // per-return-statement bound work is needed here — the
+                    // declared return type and its where-clause are the same
+                    // for every return statement. This site only checks that
+                    // the returned value is assignable to the declared type.
                     const auto value =
                         check_expr(*statement.return_stmt->value, context, expected_return_type);
                     (void)check_assignable(*value.type,

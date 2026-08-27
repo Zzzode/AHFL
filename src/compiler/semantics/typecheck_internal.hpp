@@ -583,6 +583,17 @@ class TypeCheckPass final {
     [[nodiscard]] bool
     check_bound(const Type &subject_type, std::string_view trait_name, SourceRange range);
 
+    // KR5.2 (RFC 0013 §3.5): validate return-position where-bounds. For a fn
+    // whose declared return type references a concrete nominal that is also the
+    // subject of a `where <Nominal>: Trait` bound, the bound must actually hold
+    // — an unsatisfied concrete return-position bound would otherwise pass
+    // silently (the call-site check only covers bounds on generic parameters,
+    // and the body sees the return type parameter abstractly). Emits
+    // TRAIT_BOUND_NOT_SATISFIED at the return-type range for each unsatisfied
+    // bound. Bounds whose subject is a generic type parameter are skipped here
+    // (they are the call-site's responsibility).
+    void check_return_position_bounds(const FnTypeInfo &info);
+
     [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
 
     void remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed);
