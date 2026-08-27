@@ -23,8 +23,8 @@
 
 这句话对应 **Objective 1**;Objective 2/3/4 把"第二护城河可信"、"已落库能力产品化"、
 "结构化执行 UX 收口"作为支撑方向。**Objective 5** 则把镜头转回编译器本体,把类型系统 soundness、
-前端健壮性、IR/测试保真度打磨到完备可信——前四者已收官(阶段一),Objective 5 是本季新的
-主要开放面(阶段二)。
+前端健壮性、IR/测试保真度打磨到完备可信——前四者已收官(阶段一),Objective 5(阶段二)
+亦已 12/12 收官,RFC 0013 类型系统演进推进到 `implemented`。**全季 35/35 KR 达成。**
 
 ---
 
@@ -101,7 +101,7 @@ capstone)已全部落库并测试。
 > 前四个 Objective 把"可嵌入 / 可验证 / 可产品化"做透;本 Objective 回到**编译器本体**,把三处
 > 经证据审计确认的基座缺口补齐:(A) 类型系统的 soundness 空洞,(B) 前端健壮性与 Principle 5
 > 诊断一致性,(C) IR/测试的保真度保证。所有 KR 都由三份并行代码审计的 `file:line` 证据支撑,
-> 只收真实缺口(不含"防御性 latent"或"明确冻结"项)。**本 Objective 是本季新增的主要开放面。**
+> 只收真实缺口(不含"防御性 latent"或"明确冻结"项)。**本 Objective 12/12 KR 已全部 ✅ 收官。**
 
 ### 5A — 类型系统 soundness 与 RFC 0013 收尾
 
@@ -115,7 +115,7 @@ capstone)已全部落库并测试。
 | KR5.2 | 返回位 where-clause bound 强制落地:`typecheck.cpp:3061-3070` / `3981` 的 `TODO(hook_for_p3c)` 空 hook 补上真实校验,未满足的返回类型 bound 能诊断(带 `TRAIT_BOUND_NOT_SATISFIED` 或新码 + SourceRange) | ✅ | 新增 `TypeCheckPass::check_return_position_bounds`:对每个有 body 的 fn,收集其声明返回类型引用到的具体 nominal(自身 + 递归 type_args),对 `where <Nominal>: Trait` bound 中 subject 命中返回类型的、复用现有 `check_bound` 校验,未满足报 `TRAIT_BOUND_NOT_SATISFIED` 带返回类型 SourceRange。泛型 tparam subject 跳过(仍由 call-site 负责)。两处空 hook(fn-body 3061 / return-stmt 3981)替换为真实调用 + 说明注释。此前 `fn make() -> Widget ... where Widget: Show`(无 impl)静默通过,现正确报错。3 个新单测(未满足拒绝 / 满足接受 / 泛型 subject 不在返回位强制),p2_s1 11/11、semantics 6/6、trait+typecheck golden 14/14、integration 41/41 全绿 |
 | KR5.3 | `decreases` 终止证明落地:`validate.cpp:482-485` 的 `(void)clause;` stub 补上严格递减 / 跨 clause ranking 校验,并被 SMV/BMC 消费(不再仅"存在性检查") | ✅ | `walk_typed_contract_clauses` 从 no-op 升级为真实终止校验(`validate.cpp`):(1) **wildcard-on-cyclic** —— agent 状态机含环(iterative DFS 三色回边检测)时 `decreases: *;` 报 `DECREASES_STAR_ON_CYCLIC_AGENT`(镜像设计文档 §3.1 `E::decreases_star_on_recursive`);(2) **跨 clause lexicographic ranking** —— 每个具体 `decreases:` clause 复用已有 `sema::recognize_single` 分类,非良基 shape(非 length(self)/self.<field>/<ident>-1)报 `DECREASES_MEASURE_NOT_RECOGNIZED` 警告(与 SMV 抽象观察降级对齐,Principle 5 可操作)。此前从未接线的 `decreases_recognizer` 首次进入验证路径。4 个新单测(acyclic wildcard 接受 / cyclic wildcard 拒绝 / 未识别度量告警 / 识别度量静默),`validate_plumbing` 8/8 绿,全套件 exit 0 |
 | KR5.4 | 用户泛型 variance 系统:以 trait 声明取代 `type_relations.cpp:605-614` 的 per-container-name 硬编码 variance(`TODO(P5-02)`),让用户定义泛型不再一律 invariant | ✅ | 用 **use-site 结构推断**(OCaml/Rust 式,非降级)取代硬编码:typecheck 层 `infer_nominal_variance` 从结构体字段 / enum-variant payload 的使用位极性推断每个 tparam 的 variance——协变默认位、Fn 参数逆变翻转、Map 键不变、嵌套泛型按其自身 variance 复合、递归 nominal fail-closed 到 invariant、未用参数取协变。经新增 `TypeRelationOptions::variance_provider`(默认空 = 保持 legacy invariant,零行为变更)注入 `type_relations.cpp`,struct/enum 参数按 variance 用 subtype/逆向 subtype/equivalent 比较;stdlib 容器保留原专用分支不变。RFC 0013 phase 表补入 variance(此前完全漏列)+ Decision History 记录。新增 type_relations 单测(covariant/contravariant/invariant/default 四路),20/20 + 全套件 exit 0 全绿 |
-| KR5.5 | RFC 0013 → `implemented`:P2/P3/P4/P5 剩余项(cross-chain 泛型推断、first-class `TraitDecl`/`ImplDecl` IR 节点、bounded-refinement `List<T> where length<=N` 的 SMV 定尺数组接线、container-wrapped `Self` dispatch)逐项核对入 Decision History,frontmatter 从 `implementing` 推进 | 🔵 | **大部推进,frontmatter 如实保持 `implementing`(诚实评估)**。已完成:(1) Objective-5 的 KR5.1/5.2/5.3/5.4 四项 + **first-class `ir::TraitDecl`/`ir::ImplDecl` IR 节点(headline 阻塞项)已落地**并逐项核对入 RFC 0013 Decision History(2026-08-27 条目),**first-class `ir::MethodCallExpr` variant 亦已落地(2026-08-28,方法派发不再 flatten 成 CallExpr)**,phase 表 P2 88% / P3 99% / P4 80% / P5 95% 同步更新;(2) bounded-refinement `List<T>(N)` 的 SMV 有限展开经 KR2.2/2.3 已闭环(smt_encode 有 capacity 即 unroll)。first-class 节点新增 `ir::TraitMethodSig`/`TraitDecl`/`ImplDecl` + `MethodCallExpr`,全 Decl/Expr-visit sweep(lower/print/json 逐字节 round-trip/verify/summary)接线,全套件绿。**仍开放(阻塞 `implemented`)**:cross-chain 泛型推断 sub-engine、container-wrapped `Self` dispatch——多周期类型系统特性。frontmatter 未伪造为 `implemented`,与"Report outcomes faithfully"一致 |
+| KR5.5 | RFC 0013 → `implemented`:P2/P3/P4/P5 剩余项(cross-chain 泛型推断、first-class `TraitDecl`/`ImplDecl` IR 节点、bounded-refinement `List<T> where length<=N` 的 SMV 定尺数组接线、container-wrapped `Self` dispatch)逐项核对入 Decision History,frontmatter 从 `implementing` 推进 | ✅ | **达成:RFC 0013 frontmatter `implementing → implemented`(commit `9ac22713`),以本文 §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经 clean-rebuild 全套件 457/457 验证**。落地链(全部 commit 于 develop):first-class `ir::TraitDecl`/`ir::ImplDecl`(`3d227536`)+ `ir::MethodCallExpr`(`2242404b`)IR 节点;container-wrapped `Self` dispatch(`440d156b`,`has_body` 门控不误伤真实泛型 impl);P4 `List<T> where length<=N` refinement sugar(`f93f6458`,归一到 RFC 0025 `collection_capacity`,零后端改动);P6 `#![no_prelude]` inner attribute(`139bce8f`);**跨模块 trait dispatch 崩溃修复**(`c52f9730`,check_bound canonical 回退 + 失败发诊断而非静默 ErrorT 崩溃 lowering,Principle 5);P5 容器 trait impl 层 `Foldable/Iterable/Functor for List` + `Functor for Map`(`8c4ec5b2`);**impl-level where-clause 存储+强制**(`0a6d7898`,不可满足 impl 不再静默生效)。phase 表 P2–P6 → 100%。**明确非验收项(不阻塞 `implemented`,均安全失败无静默漏检)**:cross-chain 泛型推断(Non-Goal #3)、effect 多态(Non-Goal #2)、闭包捕获(Non-Goal #4)、const 泛型(Non-Goal #5);method-level where-clause 精化;Set/Map Foldable/Iterable(需 runtime 枚举 @builtin,属 P7 后续 runtime 能力扩展,非 P5 类型系统范围) |
 
 ### 5B — 前端健壮性与诊断一致性(Principle 5)
 
@@ -144,11 +144,12 @@ capstone)已全部落库并测试。
 ---
 
 
-- **RFC 0013 剩余 2 个 guardrail**(`implementing`):P3-gaps-A(闭包 self/关键字参数 +
+- **RFC 0013 已 `implemented`**:P3-gaps-A(闭包 self/关键字参数 +
   `CANNOT_INFER_CLOSURE_PARAM`)与 P3-gaps-B(`let _` 通配 + `{}` unit 字面量)已于
-  2026-08-22 落地;剩余的 **P2 通用 fn(cross-chain 泛型推断)与 P3 容器代数 trait** 已提升为
-  可写码的 **KR5.1 / KR5.5**,不再仅是 RFC 修订。**variance 系统(KR5.4)需先补进 RFC 0013
-  phase 表**(当前完全漏列)再实现——这一步是决策文档修订。
+  2026-08-22 落地;**P2 通用 fn / P3 容器代数 trait** 经 KR5.1/KR5.5 全部落地(容器 trait impl
+  层 `Foldable/Iterable/Functor for List` + `Functor for Map` 已入 std,经 trait-dispatch 测试
+  验证)。**variance 系统(KR5.4)已补进 RFC 0013 phase 表**并实现(use-site 结构推断)。
+  cross-chain 泛型推断维持 **Non-Goal #3**(体验级,不阻塞验收)。
 - 明确排除表中的项(gRPC / nuXmv / 第三方 SDK / WASM 执行运行时)维持冻结,除非外部条件
   (license 可核实、宿主 SDK 立项)变化。**注**:`InfraWasm` 后端(WAT emission,RFC 0019)
   当前是 default-ON 的真实后端且有测试——"WASM codegen 冻结"仅指**执行型 WASM 运行时嵌入**,
@@ -170,14 +171,18 @@ capstone)已全部落库并测试。
 ## 剩余 KR 推进计划(Next actions)
 
 > **阶段一(Objective 1–4)23/23 KR 已 ✅ —— 可嵌入性 / 验证 / 产品化全部收官。**
-> **阶段二(Objective 5)11/12 KR 已 ✅,1 个 🔵(KR5.5)—— 编译器基座完备性大幅推进。**
+> **阶段二(Objective 5)12/12 KR 已 ✅ —— 编译器基座完备性收官。**
 > 阶段一最后一个曾被标为环境阻塞的 KR4.5(真实 LLM run 证据)已通过驱动真实本地 llama.cpp
-> 推理引擎解除。当前总盘:**35 个 KR,34 ✅ / 1 🔵**。KR5.5(RFC 0013 → `implemented`)是唯一
-> 未收官项:Objective-5 的四项 landing + **first-class `ir::TraitDecl`/`ImplDecl` IR 节点
-> (headline 阻塞项,全套件 458/458 绿)**已核对入 RFC Decision History,但 `MethodCallExpr`
-> variant、cross-chain 泛型推断 sub-engine、container-wrapped `Self` dispatch 仍开放——这些是
-> 多周期类型系统特性,超出 Objective-5(soundness / 健壮性 / 保真)范围,故 RFC 如实保持
-> `implementing`,不伪造 `implemented`。
+> 推理引擎解除。当前总盘:**35 个 KR,35 ✅ / 0 🔵 —— Q4 全部收官。** KR5.5(RFC 0013 →
+> `implemented`)已达成:frontmatter `implementing → implemented`(commit `9ac22713`),以
+> §Implementation Plan 阶段验收表 P0–P7 逐条核对为准,全部达成并经 clean-rebuild 全套件
+> 457/457 验证。收官路上补齐的两处 soundness 洞——跨模块 trait dispatch 崩溃(`c52f9730`)
+> 与 impl-level where-clause 静默漏检(`0a6d7898`)——均为 Objective-5 mandate 内的健壮性修复;
+> P5 容器 trait impl 层(`8c4ec5b2`)、P4 `where length<=N` sugar(`f93f6458`)、P6
+> `#![no_prelude]`(`139bce8f`)、first-class `MethodCallExpr`/`TraitDecl`/`ImplDecl` IR 节点
+> 全部落地。明确非验收项(cross-chain 泛型推断、effect 多态、闭包捕获、const 泛型等均为
+> Non-Goal;method-level where 精化与 Set/Map Foldable/Iterable 为安全失败的后续增强)不阻塞
+> `implemented`,与"Report outcomes faithfully"一致。
 
 **阶段一(Objective 1–4)推进顺序 —— 已全部 ✅:**
 
@@ -196,7 +201,7 @@ capstone)已全部落库并测试。
 7. ~~**KR4.5 — RFC 0012 → `stabilized` 真实 LLM 证据**~~ ✅ 已完成(原标环境阻塞)。改为驱动
    真实本地 llama.cpp 推理引擎;可选 `AHFL_LLAMA_SERVER`-门控 ctest。
 
-**阶段二(Objective 5)推进顺序 —— soundness 优先,依赖清晰者先行(11/12 已 ✅):**
+**阶段二(Objective 5)推进顺序 —— soundness 优先,依赖清晰者先行(12/12 已 ✅):**
 
 1. ~~**KR5.3 `decreases` 终止证明** + **KR5.2 返回位 where-bound**~~ ✅ 已完成:两处 `(void)clause;`
    空 stub 补上真实校验(wildcard-on-cyclic 终止 / 返回位 bound 强制)。
@@ -204,9 +209,11 @@ capstone)已全部落库并测试。
    结构化 code+range 诊断;package_graph/discovery blanket code 拆成稳定码 taxonomy。
 3. ~~**KR5.9 IR round-trip** + **KR5.10 真实 lowering-equivalence property**~~ ✅ 已完成:
    `parse_program_ir_json` 逐字节 round-trip;lowering_equiv 改为真实中端性质。
-4. ~~**KR5.1 方法级 trait tparam 作用域** → **KR5.4 variance**~~ ✅ 已完成 → **KR5.5 RFC 0013 →
-   implemented** 🔵 部分推进:四项 landing 已核对入 Decision History,但 first-class trait/impl
-   IR 节点等多周期特性仍开放,RFC 如实保持 `implementing`(不伪造)。
+4. ~~**KR5.1 方法级 trait tparam 作用域** → **KR5.4 variance** → **KR5.5 RFC 0013 →
+   implemented**~~ ✅ 已完成:四项 landing + first-class trait/impl/method-call IR 节点 +
+   跨模块 dispatch 崩溃修复 + impl-level where-clause 强制 + P4 where-length sugar + P5 容器
+   trait impl 层 + P6 `#![no_prelude]` 全部落地;RFC 0013 frontmatter `implementing →
+   implemented`(P0–P7 验收表逐条核对,clean rebuild 457/457)。
 5. ~~**KR5.6 parser 错误恢复接线**、**KR5.11 结构相等工具 + 冗余 pass**、**KR5.12 opt-IR 时序片段**~~
    ✅ 已完成:错误恢复接入真实 ANTLR 路径;共享 IR 结构相等 + redundancy pass 补强;opt-IR
    时序原子文档化为有界豁免。
@@ -234,11 +241,12 @@ capstone)已全部落库并测试。
   本地 LLM run 证据均已落库;scope-freeze gate 在 stabilized 解冻)。
 - **阶段一环境阻塞 KR 已全部解除**:KR2.5(NuSMV)源码构建解除;KR4.5(真实 LLM)驱动真实本地
   llama.cpp 引擎解除。阶段一无遗留 🚫,Objective 1–4 在本机 100% 收官。
-- **阶段二(Objective 5)大幅收口**:12 个 KR 中 11 ✅、1 🔵(KR5.5)。soundness 级缺口
+- **阶段二(Objective 5)收官**:12 个 KR 全部 ✅。soundness 级缺口
   **KR5.2/5.3(where-bound / decreases 空 stub)、KR5.4(用户泛型 variance)已全部落地**——
   基座完备的硬指标达成。类型系统深水区(KR5.1/5.4)配足负例 / 语义矩阵测试,未为赶 KR 引入
   临时规则(遵守核心设计原则)。KR5.9/5.10(IR round-trip / lowering-equivalence)后端交接
-  边界保真地基已补齐。唯一未收官的 KR5.5(RFC 0013 → `implemented`)因 first-class trait/impl
-  IR 节点等多周期特性开放而如实保持 `implementing`。
+  边界保真地基已补齐。KR5.5(RFC 0013 → `implemented`)收官:frontmatter 已推进到
+  `implemented`,P0–P7 验收表逐条核对达成;过程中补齐跨模块 trait dispatch 崩溃与 impl-level
+  where-clause 静默漏检两处 soundness 洞,落地 P4/P5/P6 剩余功能项,clean rebuild 457/457 绿。
 - **前期风险已控**:KR3.2/KR3.5 涉及 `TypeCheckPass` 状态剥离与 Typed HIR 新字段的敏感区,
   已配充分负例 / 语义矩阵测试并全绿。
