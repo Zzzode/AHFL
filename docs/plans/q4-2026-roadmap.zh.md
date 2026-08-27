@@ -52,7 +52,7 @@ capstone)已全部落库并测试。
 | KR2.2 | 有界集合量化 `forall/exists in coll` 经有限展开进 SMT-BMC | ✅ | RFC 0024 `stabilized`(全链路 + 单测) |
 | KR2.3 | 有界集合类型 `List<T>(N)` capacity 精化 + `UNBOUNDED_QUANTIFIER` fail-closed | ✅ | RFC 0025 `stabilized`(spec §4.3/§5.5/§5.6) |
 | KR2.4 | 真实 Z3 在 CI 端到端验证有界量化契约(可证 Safe / 无前置 Unsafe 带反例) | ✅ | `smt_bmc.cpp` 两个 `AHFL_Z3_PATH` 守卫用例;`ahfl.formal.smt_bmc_real_z3` ctest。commit a4b68265 / 90fbf241 |
-| KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | 🚫 | 本机仅有 z3,NuSMV/nuXmv 缺,需环境提供 |
+| KR2.5 | 真实 NuSMV / nuXmv 在 CI 留证 | ✅ | 从源码构建了真实 **NuSMV 2.6.0**(hklarner/NuSMV-a fork,MiniSat-linked)装到 `~/.local/bin/NuSMV`,CMake `find_program` 自动发现;7 个 `AHFL_SMV_CHECKER`-gated 真实模型检查用例(`ahflc.verify_formal.real_smv*`:verify pass / counterexample AHFL 映射 / bounded-data)全绿。构建修了 4 处 GCC12/py3 陈旧代码(见 [[nusmv-built-locally]] 记忆)。nuXmv 仍不可得(闭源、仅 fbk binary,fbk DNS 不可达);NuSMV 已覆盖 SMV 检查路径 |
 | KR2.6 | counterexample 更深映射 + AHFL property semantics 深化(§3.5) | 🔵 | 审计:SMV 侧映射已相当完整(agent state / workflow node state·phase / failure-request / capability call / embedded observation / 违约 contract clause 均带 AHFL_MAP source range,185 单测)。剩余深度在 **SMT-BMC 侧**:D2 `input__*` / D3 `context__*` 标量字段的反例投影(`make_projected`)会消费 AHFL_MAP,但 SMT 编码器目前不为这些字段发 source map → 投影 source range 为空。补齐需把 struct-field 声明 range 穿过 SMT 编码器,较大且跨切面,单列后续 slice |
 | KR2.7 | §3.6 Pass / target backend 产品化;§3.7 门禁趋势化(compile-time / memory-proxy / SMV-size budget → 趋势报告 + release-blocking 阈值) | 🔵 | §3.6 已 stabilized(pass/backend 产品化项全绿);SMV-size budget 新增 bounded-collection 代表样本(commit bade4719);仍待:budget → 趋势报告 + release-blocking 阈值(需 baseline-delta artifact,较大) |
 
@@ -113,10 +113,10 @@ capstone)已全部落库并测试。
 
 ## 剩余 KR 推进计划(Next actions)
 
-> 15/23 KR 已 ✅。整份 OKR 的 100% 收官被两个环境阻塞 KR(🚫 KR2.5、KR4.5)硬卡,
-> 它们需要本机不具备的外部条件,不由本季代码工作决定。以下把所有**非环境阻塞**的开放
-> KR 排成可执行顺序:纯代码、可验证、边界清晰者优先,每项拆小片提交 + 构建/测试验证。
-> 本季的可达目标 = 关闭所有非 🚫 KR。
+> 18/23 KR 已 ✅(KR2.5 通过从源码构建 NuSMV 解除了原环境阻塞)。整份 OKR 的 100% 收官
+> 现仅剩 **1 个环境阻塞 KR(🚫 KR4.5,真实 public-LLM 证据)**,需本机不具备的外部
+> LLM endpoint。以下把所有**非环境阻塞**的开放 KR 排成可执行顺序:纯代码、可验证、边界
+> 清晰者优先,每项拆小片提交 + 构建/测试验证。本季的可达目标 = 关闭所有非 🚫 KR。
 
 **推进顺序(可达目标口径):**
 
@@ -138,9 +138,10 @@ capstone)已全部落库并测试。
    (natural repro 先命中 `UNKNOWN_SYMBOL`);需要构造 manifest/workspace fixture,收益低,
    靠后。
 
-**环境阻塞(🚫,不阻塞上述顺序,待外部条件具备后单独闭环):** KR2.5 真实
-NuSMV/nuXmv(本机仅 z3,装不了 binary)、KR4.5 RFC 0012 → `stabilized` 的真实
-public-LLM run 证据(需外部 LLM endpoint;migration note 可写,证据不可造)。
+**环境阻塞(🚫,不阻塞上述顺序,待外部条件具备后单独闭环):** 仅剩 KR4.5 —— RFC 0012 →
+`stabilized` 的真实 public-LLM run 证据(需外部 LLM endpoint;migration note 可写,证据
+不可造)。KR2.5(真实 NuSMV)原为环境阻塞,已通过从源码构建 NuSMV 解除。nuXmv 仍不可得
+(闭源、fbk DNS 不可达),但 NuSMV 已覆盖 SMV 检查路径。
 
 
 
@@ -161,8 +162,7 @@ public-LLM run 证据(需外部 LLM endpoint;migration note 可写,证据不可�
   LLM 证据(🚫)阻塞 `stabilized`。
 - **下一步抓手 = KR3.4**(runtime 本地 soak / 内存趋势可观测):纯代码、可验证,见"剩余 KR
   推进计划"。
-- **环境阻塞 KR(🚫)不占主线余量**:KR2.5(NuSMV/nuXmv)、KR4.5(真实 LLM)需外部条件,
-  应在环境具备时单独闭环,不阻塞其余 Objective;它们也决定整份 OKR 无法在本机 100% 收官,
-  故本季可达目标 = 关闭所有非 🚫 KR。
+- **环境阻塞 KR(🚫)不占主线余量**:仅剩 KR4.5(真实 LLM)需外部条件;KR2.5(NuSMV)已
+  通过源码构建解除。它决定整份 OKR 能否在本机 100% 收官,故本季可达目标 = 关闭所有非 🚫 KR。
 - **风险点**:KR3.2/KR3.5 涉及 `TypeCheckPass` 状态剥离与 Typed HIR 新字段,是语义敏感区,
   需充分的负例 / 语义矩阵测试;不要为赶 KR 引入临时规则(违反核心设计原则)。
