@@ -68,7 +68,7 @@ capstone)已全部落库并测试。
 | KR3.1 | §3.2 死代码诊断清理:`diagnostics.hpp` 无"定义但零发射"的 ErrorCode | ✅ | 审计 23 个:3 wired(`UNEXPECTED_TOKEN`/`MATCH_ARM_TYPE_MISMATCH`/`EFFECT_INCOMPATIBLE`)+ 补 golden,20 删除;计数 134 → 114。commit 779765a6 / d59510e1 |
 | KR3.2 | §3.2 `ConstSema` 收尾:剥离 `TypeCheckPass` 的 source/diagnostic context 状态依赖 | 🔵 | 部分已拆(`const_sema.*`/`expression_sema.*`);剩余状态依赖待剥离 |
 | KR3.3 | §3.2 诊断迁移到稳定 code/template/related-notes 的一致性收口 + 语义矩阵测试升级为完成标准 | 🔵 | 审计:114 定义 / 113 发射 / 99 code-string 有测试;缺口多为 message-text 已覆盖。`LLM_COST_BUDGET_EXCEEDED` 补齐(cost-budget smoke,commit f4e116b3)。仍窄可达未测:`MISSING_IMPORT` / `PRIVATE_MODULE` / `MODULE_BOUNDARY_MISMATCH`(resolver visibility,需特定 package-graph 状态,natural repro 先命中 `UNKNOWN_SYMBOL`) |
-| KR3.4 | §3.1 Runtime/LLM 生产化:hour-scale soak、RSS/allocator 趋势可本地 / 常态观测 | ⬜ | 目前只在 `Production Confidence` GitHub Actions 跑,本地不闭环 |
+| KR3.4 | §3.1 Runtime/LLM 生产化:hour-scale soak、RSS/allocator 趋势可本地 / 常态观测 | ✅ | 本地 soak 已闭环:`ahfl.reference_workflow.long_soak_smoke`(`--contract-kind smoke`,无 CI provenance 门)每次跑单一 long-lived worker 并产出 `peak_rss`/`allocator_in_use`/`allocator_reserved` 趋势 artifact(quartile 均值 + per-iteration slope);新增稳态内存增长门(last vs first quartile ≤ max(5%,1MiB),commit ac887e72)把"观测"升为"回归门"。hour-scale 契约仍由 CI nightly 跑(设计如此) |
 | KR3.5 | §3.3 LSP 从"handler 可用"到"IDE 可用":hover/completion/signatureHelp 用 Typed HIR + condition facts,source-graph 级增量失效,真实编辑序列回归 | ⬜ | 后两项纠缠,需新 Typed HIR 字段 |
 | KR3.6 | §3.4 工具链入口补齐(P1/P2) | ✅ | backlog §3.4 全部条目已勾选:fmt / fmt --check、ahfl-repl / ahfl-dap / ahfl-incremental 独立入口 + smoke、formatter 目录/project/workspace 批量、REPL `:simulate` 状态机、DAP runtime 集成(RFC 0015)、incremental daemon(RFC 0016)、`--time-passes`/`--smv-size-report`/`--trace-export`/`--metrics-export`/`--structured-log`/`--memory-report` |
 
@@ -120,13 +120,12 @@ capstone)已全部落库并测试。
 
 **推进顺序(可达目标口径):**
 
-1. **KR3.4 — Runtime 本地 soak / 内存趋势可观测**(⬜,纯代码,首选)。把 hour-scale
-   soak 与 `read_process_memory_stats()`(Linux/macOS/Windows,已存在)接成本地可跑
-   target,输出 RSS/allocator 趋势 JSON,不再只依赖 `Production Confidence` GitHub
-   Actions。下一步:定义本地 soak 入口 + 趋势 artifact schema + ctest 冒烟。
-2. **KR2.6 — counterexample 更深映射**(⬜,纯代码)。在 `counterexample.cpp`(+185
-   单测基座)上,把反例映射深化到 source range / workflow node / capability call /
-   contract clause 的更细粒度。下一步:选一条尚未映射的符号类别补映射 + 单测。
+1. ~~**KR3.4 — Runtime 本地 soak / 内存趋势可观测**~~ ✅ 已完成:本地 soak smoke 已闭环并
+   产出 RSS/allocator 趋势 artifact,新增稳态内存增长回归门(commit ac887e72)。
+2. **KR2.6 — counterexample 更深映射**(⬜,纯代码,**下一步抓手**)。在
+   `counterexample.cpp`(+185 单测基座)上,把反例映射深化到 source range / workflow
+   node / capability call / contract clause 的更细粒度。下一步:选一条尚未映射的符号
+   类别补映射 + 单测。
 3. **KR2.7 尾 — budget 趋势报告 + release-blocking 阈值**(🔵 已加 bounded-collection
    样本)。复用 pass-trace 已有的 `--pass-trace-baseline` baseline-delta 模式,给
    compile-time / memory-proxy / SMV-size budget 产出趋势 artifact 与可阻断阈值。
