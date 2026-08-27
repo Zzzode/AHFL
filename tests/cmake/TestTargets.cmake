@@ -49,6 +49,18 @@ target_include_directories(ahfl_compiler_ir_tests PRIVATE ${PROJECT_SOURCE_DIR}/
 target_include_directories(ahfl_compiler_ir_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
 ahfl_apply_project_warnings(ahfl_compiler_ir_tests)
 
+add_executable(ahfl_compiler_ir_equal_tests
+    unit/compiler/ir/ir_equal.cpp
+)
+target_link_libraries(ahfl_compiler_ir_equal_tests
+    PRIVATE
+        ahfl_compiler_ir
+        doctest
+)
+target_include_directories(ahfl_compiler_ir_equal_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_compiler_ir_equal_tests)
+
+
 add_executable(ahfl_compiler_ir_opt_tests
     unit/compiler/ir/opt_ir.cpp
 )

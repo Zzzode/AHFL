@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/ir_equal.hpp"
 
 #include <string>
 #include <variant>
@@ -11,27 +12,31 @@ namespace ahfl::passes {
 
 namespace {
 
-// Simple structural equality check for expressions (by kind only for now).
-// A full deep comparison would need recursive traversal; this catches
-// identical clause references (same pointer) and trivially equal structures.
+// KR5.11: structural clause equality. Two contract clauses are redundant when
+// they are the same clause kind and their conditions are structurally equal —
+// i.e. the same expression / temporal-formula shape and payload, regardless of
+// which flat-store slot each was lowered into. This replaces the previous
+// pointer-identity comparison (which only caught exact copies still sharing a
+// slot) with the reusable ir::*_structurally_equal utility, so semantically
+// duplicate-but-separately-lowered clauses are detected.
 bool clauses_structurally_equal(const ir::ContractClause &a, const ir::ContractClause &b) {
     if (a.kind != b.kind) {
         return false;
     }
-    // Compare by variant index — same index means same expression type
     if (a.value.index() != b.value.index()) {
         return false;
     }
-    // For a deeper structural comparison we'd need recursive equality on Expr trees.
-    // For now, compare by pointer identity (catches exact duplicates from copy).
-    if (std::holds_alternative<ir::ExprRef>(a.value) &&
-        std::holds_alternative<ir::ExprRef>(b.value)) {
-        return std::get<ir::ExprRef>(a.value).get() == std::get<ir::ExprRef>(b.value).get();
+    if (std::holds_alternative<ir::ExprRef>(a.value)) {
+        return ir::exprs_structurally_equal(std::get<ir::ExprRef>(a.value),
+                                            std::get<ir::ExprRef>(b.value));
     }
-    if (std::holds_alternative<ir::TemporalExprPtr>(a.value) &&
-        std::holds_alternative<ir::TemporalExprPtr>(b.value)) {
-        return std::get<ir::TemporalExprPtr>(a.value).get() ==
-               std::get<ir::TemporalExprPtr>(b.value).get();
+    if (std::holds_alternative<ir::TemporalExprPtr>(a.value)) {
+        const auto &lhs = std::get<ir::TemporalExprPtr>(a.value);
+        const auto &rhs = std::get<ir::TemporalExprPtr>(b.value);
+        if (lhs == nullptr || rhs == nullptr) {
+            return lhs == rhs;
+        }
+        return ir::temporal_exprs_structurally_equal(*lhs, *rhs);
     }
     return false;
 }

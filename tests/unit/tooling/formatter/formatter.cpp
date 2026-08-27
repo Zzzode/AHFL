@@ -1,6 +1,8 @@
 #include "tooling/formatter/formatter.hpp"
 #include "tooling/formatter/format_config.hpp"
 #include <cstdio>
+#include <string>
+#include <vector>
 
 static int test_count = 0;
 static int pass_count = 0;
@@ -211,6 +213,43 @@ fn declared<T>(value: T)
                   "fn declared<T>(value: T)\n"
                   "    -> T effect Pure;\n") != std::string::npos,
               "continuation lines receive canonical indentation");
+    }
+
+    // KR5.11: formatter idempotence property — format(format(x)) == format(x).
+    // Formatting is a normalization; a second pass over already-formatted text
+    // must be a no-op (a fixpoint). This is the parse->print->parse idempotence
+    // property asserted directly on the formatter's output.
+    {
+        const std::vector<std::string> sources = {
+            "struct Foo {\n  value: String;\n}\n",
+            "struct Bar { a: Int; b: Bool; }\n",
+            R"AHFL(fn combine<T>(
+left: T,
+right: T
+) -> T effect Pure
+decreases 1 {
+return choose(
+left,
+right);
+}
+)AHFL",
+            "fn declared<T>(value: T)\n-> T effect Pure;\n",
+            "",
+        };
+        bool all_idempotent = true;
+        for (const auto &source : sources) {
+            const auto once = ahfl::formatter::format_source(source);
+            if (!once.success) {
+                all_idempotent = false;
+                break;
+            }
+            const auto twice = ahfl::formatter::format_source(once.formatted);
+            if (!twice.success || twice.formatted != once.formatted) {
+                all_idempotent = false;
+                break;
+            }
+        }
+        check(all_idempotent, "formatter is idempotent (format(format(x)) == format(x))");
     }
 
     std::printf("%d/%d tests passed\n", pass_count, test_count);
