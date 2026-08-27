@@ -44,7 +44,8 @@ capstone)已全部落库并测试。
 ## Objective 2 — 第二护城河(形式化验证)从"可跑"推到"可信"
 
 > 承接 M3(BMC 契约语义,原推 Q1,已于 8 月机动提前完成)。核心已 `stabilized`,
-> **真实求解器 CI 证据仍是本 Objective 的开放 KR。**
+> **真实求解器证据已闭环**:真实 Z3(KR2.4)+ 从源码构建的真实 NuSMV(KR2.5)均有
+> `AHFL_Z3_PATH` / `AHFL_SMV_CHECKER`-门控 ctest 留证。
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
@@ -61,7 +62,7 @@ capstone)已全部落库并测试。
 ## Objective 3 — 已落库但未产品化的 backlog 主线收口
 
 > 把"有源码 / handler"的能力推到"有用户入口 / 端到端路径 / CI 门禁 / 产品体验"。
-> 依据 `issue-backlog-global-gaps.zh.md` §3.1–§3.4。**本 Objective 是本季主要开放面。**
+> 依据 `issue-backlog-global-gaps.zh.md` §3.1–§3.4。**本 Objective 6 个 KR 已全部 ✅。**
 
 | KR | 目标(可验收) | 状态 | 证据 / 待做 |
 |----|----------------|------|-------------|
